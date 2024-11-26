@@ -35,7 +35,7 @@ ti_points = 10
 
 #lambdas = [ 0.0001 0.02 0.04 0.06 0.08 0.10  0.15  0.20  0.25  0.30  0.40  0.50  0.60  0.70 0.75 0.80 0.85 0.90 0.92 0.94 0.96 0.98 0.9999 ] # MBAR
 
-sdr_dist = 20.00
+sdr_dist = 40.00
 
 #dec_method = dd
 
@@ -61,7 +61,7 @@ water_model     = TIP3P   # Water model (SPCE, TIP4PEW, TIP3P, TIP3PF or OPC)
 #num_waters      = 13000   # Number of waters in the system
 buffer_x        = 12      # Box solvation buffer in the x axis
 buffer_y        = 12      # Box solvation buffer in the y axis 
-buffer_z        = 12      # Box solvation buffer in the z axis 
+buffer_z        = 25      # Box solvation buffer in the z axis 
 lig_buffer      = 15      # Buffer size for the three axes of the ligand-only box
 
 # Counterions 
