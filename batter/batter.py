@@ -3,104 +3,100 @@ Provide the primary functions for preparing and processing FEP systems.
 """
 
 import os
+import sys
 import shutil
 import subprocess as sp
 import tempfile
 import MDAnalysis as mda
+from MDAnalysis.topology.guessers import guess_types
+
 from typing import List, Tuple
 import loguru
+from loguru import logger
+
+# set info level for the logger
+#logger.remove()
+#logger.add(sys.stdout, level='INFO')
+
 import numpy as np
 from MDAnalysis.analysis.align import alignto
+from .utils import run_with_log, ANTECHAMBER, TLEAP, CPPTRAJ, PARMCHK2
 
-
-class FEPSystem:
+class System:
     """
     A class to represent and process a Free Energy Perturbation (FEP) system.
     """
 
     def __init__(self,
-                 protein_path: str,
+                 complex_mae: str,
                  ligand_path: str,
-                 reference_path: str,
                  output_dir: str,
                  retain_lig_h: bool = True,
-                 ligand_ph: float = 7.4):
+                 ligand_ph: float = 7.4,
+                 ligand_param: str = 'gaff2',
+                 amberhome: str = '/home/groups/rondror/software/amber20/amber20_src',
+                 ):
         """
         Initialize the FEPSystem class.
 
         Parameters
         ----------
-        protein_path : str
-            Path to the protein file.
+        complex_mae : str
+            Path to the complex file in Maestro format.
+            The protein is already aligned to the reference protein structure.
         ligand_path : str
             Path to the ligand file.
-        reference_path : str
-            Path to the reference protein file.
         output_dir : str
             Directory where output files will be saved.
         retain_lig_h : bool, optional
             Whether to retain hydrogens in the ligand. Default is True.
         ligand_ph : float, optional
             pH value for protonating the ligand. Default is 7.4.
+        ligand_param : str, optional
+            Parameter set for the ligand. Default is 'gaff'.
+            Options are 'gaff' and 'gaff2'.
+        amberhome : str, optional
+            Path to the AMBER installation directory. Default is '/home/groups/rondror/software/amber20/amber20_src'.
         """
-        self.protein_path = protein_path
+        self.complex_mae = complex_mae
         self.ligand_path = ligand_path
-        self.reference_path = reference_path
         # set to absolute path
-        self.output_dir = os.path.abspath(output_dir)
+        self.output_dir = os.path.abspath(output_dir) + '/'
 
         self.retain_lig_h = retain_lig_h
         self.ligand_ph = ligand_ph
+        self.ligand_param = ligand_param
+        if self.ligand_param not in ['gaff', 'gaff2']:
+            raise ValueError(f"Invalid ligand_param: {self.ligand_param}"
+                                "Options are 'gaff' and 'gaff2'")
+        if self.ligand_param == 'gaff':
+            raise NotImplementedError("gaff is not supported yet for dabble (maybe?)")
+        self.amberhome = amberhome
 
-        self.protein = mda.Universe(protein_path)
+        # Write initial files
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(f"{self.output_dir}/ff", exist_ok=True)
+
         self.ligand = mda.Universe(ligand_path)
 
         # Process ligand and create the complex
         self._process_ligand()
-        self.complex = mda.Merge(self.protein.atoms, self.ligand.atoms)
+        self._prepare_ligand_parameters()
 
-        # Write initial files
-        os.makedirs(self.output_dir, exist_ok=True)
-        self.protein.atoms.write(f"{self.output_dir}/protein.pdb")
-        self.ligand.atoms.write(f"{self.output_dir}/ligand.pdb")
-        self.complex.atoms.write(f"{self.output_dir}/complex.pdb")
-        
-        self.reference = mda.Universe(self.reference_path)
-        self._process_reference()
-        self._align_system()
+        self._prepare_system()
 
-    def prepare_system(self):
-        """
-        Placeholder for further system preparation steps.
-        """
-        pass
-
-    def _align_system(self):
-        """
-        Align the protein and ligand to the reference protein structure.
-        """
-        # Determine the root of the package
-        package_root = os.path.dirname(os.path.abspath(__file__))
-        usalign_path = os.path.join(package_root, 'USalign')
-
-        logger.info('Aligning the protein and ligand to the reference protein structure')
-        
-        # Construct the alignment command
-        complex_path = f"{self.output_dir}/complex.pdb"
-        reference_path = f"{self.output_dir}/reference_amber.pdb"
-        output_prefix = f"{self.output_dir}/aligned-nc"
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            command = f"{usalign_path} {complex_path} {reference_path} -mm 0 -ter 2 -o {output_prefix}"
-            run_with_log(command, working_dir=tmp_dir)
-
-        aligned = mda.Universe(f"{output_prefix}.pdb")
-        old_rmsd, new_rmsd = alignto(self.complex, aligned, select="protein and backbone")
-
-        self.complex.atoms.write(f"{self.output_dir}/complex_aligned.pdb")
-        logger.info(f"RMSD before alignment: {old_rmsd:.3f} Å")
-        logger.info(f"RMSD after alignment: {new_rmsd:.3f} Å")
-
-
+    def _prepare_system(self):
+        # dabble the system
+        logger.info('Dabbling the complex')
+        export_amberhome = f'AMBERHOME={self.amberhome}'
+        dabble_path = '/scratch/users/yuzhuang/miniforge3/envs/few/bin/dabble'
+        input_pdb = self.complex_mae
+        output_prmtop = f"{self.output_dir}/complex_dabbled.prmtop"
+        ligand_lib = f"{self.output_dir}/ff/ligand.lib"
+        ligand_param = f"{self.output_dir}/ligand.frcmod"
+        dabble_command = f'{export_amberhome} {dabble_path} -i {input_pdb} -o {output_prmtop} -top {ligand_lib} -par {ligand_param} --hmr -w 10 -m 17.5 -O -ff amber -M water --verbose | tee {self.output_dir}/dabble.log'
+        run_with_log(dabble_command)
+        logger.info('Complex dabbling completed')
 
     def _process_ligand(self):
         """
@@ -108,7 +104,7 @@ class FEPSystem:
         """
 
         # Ensure the ligand file is in PDB format
-        loguru.logger.info(f'Processing ligand file: {self.ligand_path}')
+        logger.info(f'Processing ligand file: {self.ligand_path}')
         if not self.ligand_path.endswith('.pdb'):
             converted_path = f"{self.output_dir}/ligand.pdb"
             self.ligand.atoms.write(converted_path)
@@ -118,6 +114,7 @@ class FEPSystem:
         # retain hydrogens from the ligand
         if self.retain_lig_h:
             # convert mol2 to get charge
+            shutil.copy(self.ligand_path, f"{self.output_dir}/ligand.pdb")
             run_with_log(f"obabel -i pdb {noh_path} -o mol2 -O {self.output_dir}/ligand.mol2")
 
         else:
@@ -128,92 +125,62 @@ class FEPSystem:
             # Add hydrogens based on the specified pH
             run_with_log(f"obabel -i pdb {noh_path} -o pdb -O {self.output_dir}/ligand.pdb -p {self.ligand_ph:.2f}")
             run_with_log(f"obabel -i pdb {noh_path} -o mol2 -O {self.output_dir}/ligand.mol2 -p {self.ligand_ph:.2f}")
+
+        self.ligand_path = f"{self.output_dir}/ligand.pdb"
+        self.ligand = mda.Universe(self.ligand_path)
         self.ligand_mol2_path = f"{self.output_dir}/ligand.mol2"
         self.ligand_mol2 = mda.Universe(self.ligand_mol2_path)
 
         self.ligand_charge = np.round(np.sum(self.ligand_mol2.atoms.charges))
-        loguru.logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
-        loguru.logger.info(f'The net charge of the ligand is {self.ligand_charge}')
+        logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
+        logger.info(f'The net charge of the ligand is {self.ligand_charge}')
 
-    def _process_reference(self, usalign='./USalign'):
-        """Remove chain info from the reference"""
-#        run_with_log(f"pdb4amber -i {self.reference_path} -o {self.output_dir}/reference_amber.pdb -y")
-#        ref_amber = mda.Universe(f"{self.output_dir}/reference_amber.pdb")
-        self.reference.del_TopologyAttr('chainIDs')
-        self.reference.select_atoms('protein').write(f"{self.output_dir}/reference_amber.pdb")
+    def _prepare_ligand_parameters(self):
+        """Prepare ligand parameters for the system"""
+        # Get ligand parameters
+        logger.info('Preparing ligand parameters')
+        antechamber_command = f'{ANTECHAMBER} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_param} -nc {self.ligand_charge}'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_with_log(antechamber_command, working_dir=tmpdir)
+        shutil.copy(f"{self.output_dir}/ligand_ante.mol2", f"{self.output_dir}/ff/ligand.mol2")
 
+        if self.ligand_param == 'gaff':
+            run_with_log(f'{PARMCHK2} -i {self.output_dir}/ligand_ante.mol2 -f mol2 -o {self.output_dir}/ligand.frcmod -s 1')
+        elif self.ligand_param == 'gaff2':
+            run_with_log(f'{PARMCHK2} -i {self.output_dir}/ligand_ante.mol2 -f mol2 -o {self.output_dir}/ligand.frcmod -s 2')
+        shutil.copy(f"{self.output_dir}/ligand.frcmod", f"{self.output_dir}/ff/ligand.frcmod")
 
-from loguru import logger
-import subprocess as sp
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_with_log(f'{ANTECHAMBER} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
 
-def run_with_log(command, level='debug', working_dir=None):
-    """
-    Run a subprocess command and log its output using loguru logger.
+        # get lib file
+        tleap_script = f"""
+        source leaprc.protein.ff14SB
+        source leaprc.{self.ligand_param}
+        lig = loadmol2 {self.output_dir}/ff/ligand.mol2
+        loadamberparams {self.output_dir}/ff/ligand.frcmod
+        saveoff lig {self.output_dir}/ff/ligand.lib
+        saveamberparm lig {self.output_dir}/ff/ligand.prmtop {self.output_dir}/ff/ligand.inpcrd
 
-    Parameters
-    ----------
-    command : str
-        The command to execute.
-    level : str, optional
-        The log level for logging the command output. Default is 'debug'.
-    working_dir : str, optional
-        The working directory for the command. Default is
-        the current working directory.
+        quit
+        """
+        with open(f"{self.output_dir}/tleap.in", 'w') as f:
+            f.write(tleap_script)
+        run_with_log(f"{TLEAP} -f {self.output_dir}/tleap.in")
 
-    Raises
-    ------
-    ValueError
-        If an invalid log level is provided.
-    subprocess.CalledProcessError
-        If the command exits with a non-zero status.
-    """
-    if working_dir is None:
-        working_dir = os.getcwd()
-    # Map log level to loguru logger methods
-    log_methods = {
-        'debug': logger.debug,
-        'info': logger.info,
-        'warning': logger.warning,
-        'error': logger.error,
-        'critical': logger.critical
-    }
+        logger.info('Ligand parameters prepared')
 
-    log = log_methods.get(level)
-    if log is None:
-        raise ValueError(f"Invalid log level: {level}")
-
-    log(f"Running command: {command}")
-    try:
-        # Run the command and capture output
-        result = sp.run(
-            command,
-            shell=True,
-            stdout=sp.PIPE,
-            stderr=sp.PIPE,
-            text=True,
-            check=True,
-            cwd=working_dir
-        )
-
-        # Log stdout and stderr line by line
-        if result.stdout:
-            log("Command output:")
-            for line in result.stdout.splitlines():
-                log(line)
-
-        if result.stderr:
-            log("Command errors:")
-            for line in result.stderr.splitlines():
-                log(line)
-
-    except sp.CalledProcessError as e:
-        log(f"Command failed with return code {e.returncode}")
-        if e.stdout:
-            log("Command output before failure:")
-            for line in e.stdout.splitlines():
-                log(line)
-        if e.stderr:
-            log("Command error output:")
-            for line in e.stderr.splitlines():
-                log(line)
-        raise
+        
+class MembraneSystem(System):
+    def _prepare_system(self):
+        # dabble the system
+        logger.info('Dabbling the complex')
+        export_amberhome = f'AMBERHOME={self.amberhome}'
+        dabble_path = '/scratch/users/yuzhuang/miniforge3/envs/few/bin/dabble'
+        input_mae = self.complex_mae
+        output_prmtop = f"{self.output_dir}/complex_dabbled.prmtop"
+        ligand_lib = f"{self.output_dir}/ff/ligand.lib"
+        ligand_param = f"{self.output_dir}/ligand.frcmod"
+        dabble_command = f'{export_amberhome} {dabble_path} -i {input_mae} -o {output_prmtop} -top {ligand_lib} -par {ligand_param} --hmr -w 10 -m 17.5 -O -ff amber --verbose | tee {self.output_dir}/dabble.log'
+        run_with_log(dabble_command)
+        logger.info('Complex dabbling completed')
