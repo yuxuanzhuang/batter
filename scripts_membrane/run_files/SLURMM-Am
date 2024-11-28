@@ -13,6 +13,34 @@
 scontrol show job $SLURM_JOB_ID
 
 source $GROUP_HOME/software/amber20/amber20_src/setup_amber.sh
-source run-local.bash
 
-exit
+# Attempt to run 'source run-local.bash' up to three times
+MAX_ATTEMPTS=3
+attempt=1
+
+while [ $attempt -le $MAX_ATTEMPTS ]; do
+    echo "Attempt $attempt to run simulations..."
+    
+    # Run the command and capture the output and error
+    output=$(source run-local.bash 2>&1 | tee /dev/tty)
+
+    # Check for the specific error message
+    if echo "$output" | grep -q "Terminated Abnormally!"; then
+        echo "Detected error: STOP PMEMD Terminated Abnormally!"
+    else
+        echo "Successfully ran simulations on attempt $attempt"
+        break
+    fi
+
+    attempt=$((attempt + 1))
+    if [ $attempt -le $MAX_ATTEMPTS ]; then
+        echo "Retrying... (Attempt $attempt of $MAX_ATTEMPTS)"
+    fi
+done
+
+if [ $attempt -gt $MAX_ATTEMPTS ]; then
+    echo "Failed to run simulations after $MAX_ATTEMPTS attempts."
+    exit 1
+fi
+
+exit 0

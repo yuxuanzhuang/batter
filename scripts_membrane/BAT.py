@@ -13,6 +13,7 @@ from lib import analysis
 import numpy as np
 from lib.utils import run_with_log, antechamber, tleap, cpptraj
 import MDAnalysis as mda
+import pandas as pd
 
 from loguru import logger
 # set logging level to INFO
@@ -326,6 +327,14 @@ if other_mol == ['']:
 if lipid_mol == ['']:
     lipid_mol = []
 
+if lipid_mol:
+        # convert back to lipid
+    charmm_amber_lipid_df = pd.read_csv('build_files/charmmlipid2amber.csv', header=1, sep=',')
+
+    logger.info(f'Converting lipid input: {lipid_mol} to: \n')
+    lipid_mol.extend(charmm_amber_lipid_df.query('residue in @lipid_mol')['replace'].apply(lambda x: x.split()[1]).unique().tolist())
+    logger.info(f'Amber lipids: {lipid_mol}')
+
 # Number of simulations, 1 equilibrium and 1 production
 apr_sim = 2
 
@@ -584,11 +593,6 @@ if stage == 'equil':
             os.chdir('../')
             continue
     
-        if lipid_mol:
-            # Get updated lipid molecule name
-            u = mda.Universe(f'build_files/lipids_amber.pdb')
-            lipid_resnames = set([resname for resname in u.residues.resnames])
-            lipid_mol = list(lipid_resnames)
         # Solvate system with ions
         print('Creating box...')
         build.create_box(comp, hmr, pose, mol, molr,
@@ -608,7 +612,10 @@ if stage == 'equil':
                              molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
             shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
         shutil.copy('./'+pose+'/disang%02d.rest' % int(0), './'+pose+'/disang.rest')
-        setup.sim_files(hmr, temperature, mol, num_sim, pose, comp, win, stage, eq_steps1, eq_steps2, rng)
+        setup.sim_files(hmr, temperature, mol,
+                        num_sim, pose, comp, win,
+                        stage, eq_steps1, eq_steps2, rng,
+                        lipid_sim=lipid_mol)
         os.chdir('../')
     if len(aa1_poses) != 0:
         print('\n')
@@ -654,8 +661,19 @@ elif stage == 'fe':
                     win = k
                     if int(win) == 0:
                         print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
-                        anch = build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                               receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        anch = build.build_dec(
+                                        fwin, hmr, mol, pose,
+                                        molr, poser, comp, win,
+                                        water_model, ntpr, ntwr,
+                                        ntwe, ntwx, cut, gamma_ln, barostat,
+                                        receptor_ff, ligand_ff, dt,
+                                        sdr_dist, dec_method,
+                                        l1_x, l1_y, l1_z,
+                                        l1_range, min_adis, max_adis,
+                                        ion_def, other_mol, solv_shell,
+                                        # set lipid_mol to empty list
+                                        # because it's a ligand box
+                                        lipid_mol=[], lipid_ff=lipid_ff)
                         if anch == 'anch1':
                             aa1_poses.append(pose)
                             break
@@ -667,15 +685,19 @@ elif stage == 'fe':
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
                         setup.sim_files(hmr, temperature, mol, num_sim, pose,
-                                        comp, win, stage, c_steps1, c_steps2, rng)
+                                        comp, win, stage, c_steps1, c_steps2, rng,
+                                        lipid_sim=False)
                     else:
                         print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
                         build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                        receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                                        receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis,
+                                        ion_def, other_mol, solv_shell,
+                                        lipid_mol=[], lipid_ff=lipid_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
                         setup.sim_files(hmr, temperature, mol, num_sim, pose,
-                                        comp, win, stage, c_steps1, c_steps2, rng)
+                                        comp, win, stage, c_steps1, c_steps2, rng,
+                                        lipid_sim=False)
                 if anch != 'all':
                     break
                 os.chdir('../')
@@ -691,8 +713,14 @@ elif stage == 'fe':
                     win = k
                     if int(win) == 0:
                         print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
-                        anch = build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                               receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        anch = build.build_dec(
+                                    fwin, hmr, mol, pose,
+                                    molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
+                                    receptor_ff, ligand_ff, dt,
+                                    sdr_dist, dec_method, l1_x, l1_y, l1_z,
+                                    l1_range, min_adis, max_adis, ion_def,
+                                    other_mol, solv_shell,
+                                    lipid_mol, lipid_ff)
                         if anch == 'anch1':
                             aa1_poses.append(pose)
                             break
@@ -700,18 +728,37 @@ elif stage == 'fe':
                             aa2_poses.append(pose)
                             break
                         print('Creating box for protein/simultaneous release...')
-                        build.create_box(comp, hmr, pose, mol, molr, num_waters, water_model, ion_def, neut, buffer_x, buffer_y, buffer_z, stage,
-                                         ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat, receptor_ff, ligand_ff, dt, dec_method, other_mol, solv_shell)
+                        build.create_box(comp, hmr, pose,
+                                         mol, molr, num_waters,
+                                         water_model, ion_def, neut,
+                                         buffer_x, buffer_y, buffer_z, stage,
+                                         ntpr, ntwr, ntwe, ntwx,
+                                         cut, gamma_ln, barostat,
+                                         receptor_ff, ligand_ff, dt,
+                                         dec_method, other_mol, solv_shell,
+                                         lipid_mol, lipid_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
-                        setup.sim_files(hmr, temperature, mol, num_sim, pose, comp, win, stage, steps1, steps2, rng)
+                        setup.sim_files(hmr, temperature, mol, num_sim,
+                                        pose, comp, win, stage, steps1, steps2, rng,
+                                        lipid_sim=lipid_mol)
                     else:
                         print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
-                        build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                        receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        build.build_dec(fwin, hmr, mol, pose,
+                                        molr, poser, comp, win,
+                                        water_model, ntpr, ntwr, ntwe,
+                                        ntwx, cut, gamma_ln, barostat,
+                                        receptor_ff, ligand_ff, dt,
+                                        sdr_dist, dec_method, l1_x, l1_y, l1_z,
+                                        l1_range, min_adis, max_adis, ion_def,
+                                        other_mol, solv_shell,
+                                        lipid_mol, lipid_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
-                        setup.sim_files(hmr, temperature, mol, num_sim, pose, comp, win, stage, steps1, steps2, rng)
+                        setup.sim_files(hmr, temperature, mol,
+                                        num_sim, pose, comp, win,
+                                        stage, steps1, steps2, rng,
+                                        lipid_sim=lipid_mol)
                 if anch != 'all':
                     break
                 os.chdir('../')
@@ -732,23 +779,37 @@ elif stage == 'fe':
                     win = k
                     print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
                     if int(win) == 0:
-                        anch = build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                               receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        anch = build.build_dec(fwin, hmr, mol, pose,
+                                               molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
+                                               receptor_ff, ligand_ff, dt,
+                                               sdr_dist, dec_method, l1_x, l1_y, l1_z,
+                                               l1_range, min_adis, max_adis,
+                                               ion_def, other_mol, solv_shell,
+                                               lipid_mol, lipid_ff)
                         if anch == 'anch1':
                             aa1_poses.append(pose)
                             break
                         if anch == 'anch2':
                             aa2_poses.append(pose)
                             break
-                        build.create_box(comp, hmr, pose, mol, molr, num_waters, water_model, ion_def, neut, buffer_x, buffer_y, buffer_z, stage,
-                                         ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat, receptor_ff, ligand_ff, dt, dec_method, other_mol, solv_shell)
+                        build.create_box(comp, hmr, pose, mol,
+                                         molr, num_waters, water_model, ion_def, neut, buffer_x, buffer_y, buffer_z, stage,
+                                         ntpr, ntwr, ntwe, ntwx, cut,
+                                         gamma_ln, barostat, receptor_ff,
+                                         ligand_ff, dt, dec_method,
+                                         other_mol,solv_shell,
+                                         lipid_mol, lipid_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
                         setup.dec_files(temperature, mol, num_sim, pose, comp, win, stage,
                                         steps1, steps2, weight, lambdas, dec_method, ntwx)
                     else:
                         build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                        receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                                        receptor_ff, ligand_ff,
+                                        dt, sdr_dist, dec_method, l1_x, l1_y, l1_z,
+                                        l1_range, min_adis, max_adis, ion_def,
+                                        other_mol, solv_shell,
+                                        lipid_mol, lipid_ff)
                         setup.dec_files(temperature, mol, num_sim, pose, comp, win, stage,
                                         steps1, steps2, weight, lambdas, dec_method, ntwx)
                 if anch != 'all':
@@ -766,8 +827,13 @@ elif stage == 'fe':
                     win = k
                     if int(win) == 0:
                         print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
-                        anch = build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                               receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        anch = build.build_dec(fwin, hmr, mol, pose, molr,
+                                               poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
+                                               receptor_ff, ligand_ff, dt,
+                                               sdr_dist, dec_method, l1_x, l1_y, l1_z,
+                                               l1_range, min_adis, max_adis, ion_def,
+                                               other_mol, solv_shell,
+                                               lipid_mol, lipid_ff)
                         if anch == 'anch1':
                             aa1_poses.append(pose)
                             break
@@ -775,15 +841,22 @@ elif stage == 'fe':
                             aa2_poses.append(pose)
                             break
                         print('Creating box for ligand decoupling in bulk...')
-                        build.ligand_box(mol, lig_buffer, water_model, neut, ion_def, comp, ligand_ff)
+                        build.ligand_box(mol, lig_buffer, water_model,
+                                         neut, ion_def, comp, ligand_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
                         setup.dec_files(temperature, mol, num_sim, pose, comp, win, stage,
                                         steps1, steps2, weight, lambdas, dec_method, ntwx)
                     else:
                         print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
-                        build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                        receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        build.build_dec(fwin, hmr, mol, pose, molr, poser,
+                                        comp, win, water_model, ntpr, ntwr, ntwe,
+                                        ntwx, cut, gamma_ln, barostat,
+                                        receptor_ff, ligand_ff, dt, sdr_dist,
+                                        dec_method, l1_x, l1_y, l1_z, l1_range,
+                                        min_adis, max_adis, ion_def,
+                                        other_mol, solv_shell,
+                                        lipid_mol, lipid_ff)
                         setup.dec_files(temperature, mol, num_sim, pose, comp, win, stage,
                                         steps1, steps2, weight, lambdas, dec_method, ntwx)
                 if anch != 'all':
@@ -800,23 +873,40 @@ elif stage == 'fe':
                     win = k
                     print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
                     if int(win) == 0:
-                        anch = build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                               receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        anch = build.build_dec(fwin, hmr, mol, pose, molr,
+                                               poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
+                                               receptor_ff, ligand_ff, dt,
+                                               sdr_dist, dec_method,
+                                               l1_x, l1_y, l1_z, l1_range, min_adis,
+                                               max_adis, ion_def,
+                                               other_mol, solv_shell,
+                                               lipid_mol, lipid_ff)
                         if anch == 'anch1':
                             aa1_poses.append(pose)
                             break
                         if anch == 'anch2':
                             aa2_poses.append(pose)
                             break
-                        build.create_box(comp, hmr, pose, mol, molr, num_waters, water_model, ion_def, neut, buffer_x, buffer_y, buffer_z, stage,
-                                         ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat, receptor_ff, ligand_ff, dt, dec_method, other_mol, solv_shell)
+                        build.create_box(comp, hmr, pose, mol,
+                                         molr, num_waters, water_model,
+                                         ion_def, neut, buffer_x, buffer_y, buffer_z, stage,
+                                         ntpr, ntwr, ntwe, ntwx, cut,
+                                         gamma_ln, barostat, receptor_ff,
+                                         ligand_ff, dt, dec_method,
+                                         other_mol, solv_shell,
+                                         lipid_mol, lipid_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
                         setup.dec_files(temperature, mol, num_sim, pose, comp, win, stage,
                                         steps1, steps2, weight, lambdas, dec_method, ntwx)
                     else:
-                        build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                        receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        build.build_dec(fwin, hmr, mol, pose, molr,
+                                        poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
+                                        receptor_ff, ligand_ff, dt,
+                                        sdr_dist, dec_method, l1_x, l1_y, l1_z,
+                                        l1_range, min_adis, max_adis, ion_def,
+                                        other_mol, solv_shell,
+                                        lipid_mol, lipid_ff)
                         setup.dec_files(temperature, mol, num_sim, pose, comp, win, stage,
                                         steps1, steps2, weight, lambdas, dec_method, ntwx)
                 if anch != 'all':
@@ -835,8 +925,15 @@ elif stage == 'fe':
                     win = k
                     if win == 0:
                         print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
-                        anch = build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                               receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        anch = build.build_dec(fwin, hmr, mol, pose,
+                                               molr, poser, comp, win,
+                                               water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
+                                               receptor_ff, ligand_ff, dt,
+                                               sdr_dist, dec_method,
+                                               l1_x, l1_y, l1_z, l1_range,
+                                               min_adis, max_adis, ion_def,
+                                               other_mol, solv_shell,
+                                               lipid_mol, lipid_ff)
                         if anch == 'anch1':
                             aa1_poses.append(pose)
                             break
@@ -846,17 +943,34 @@ elif stage == 'fe':
                         if anch != 'altm':
                             print('Creating box for attaching restraints...')
                             build.create_box(comp, hmr, pose, mol, molr, num_waters, water_model, ion_def, neut, buffer_x, buffer_y, buffer_z, stage,
-                                             ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat, receptor_ff, ligand_ff, dt, dec_method, other_mol, solv_shell)
+                                             ntpr, ntwr, ntwe, ntwx, cut,
+                                             gamma_ln, barostat,
+                                             receptor_ff, ligand_ff,
+                                             dt, dec_method, other_mol, solv_shell,
+                                             lipid_mol, lipid_ff)
+                        print('Creating restraints for attaching...')
+                        print(f'pose: {pose} rest: {rest} bb_start: {bb_start} bb_end: {bb_end} weight: {weight} stage: {stage} mol: {mol} molr: {molr} comp: {comp} bb_equil: {bb_equil} sdr_dist: {sdr_dist} dec_method: {dec_method} other_mol: {other_mol}')
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
-                        setup.sim_files(hmr, temperature, mol, num_sim, pose, comp, win, stage, steps1, steps2, rng)
+                        setup.sim_files(hmr, temperature, mol,
+                                        num_sim, pose, comp, win,
+                                        stage, steps1, steps2, rng,
+                                        lipid_sim=lipid_mol)
                     else:
                         print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
-                        build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
-                                        receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis, ion_def, other_mol, solv_shell)
+                        build.build_dec(fwin, hmr, mol, pose, molr,
+                                        poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
+                                        receptor_ff, ligand_ff, dt,
+                                        sdr_dist, dec_method, l1_x, l1_y, l1_z,
+                                        l1_range, min_adis, max_adis, ion_def,
+                                        other_mol, solv_shell,
+                                        lipid_mol, lipid_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
-                        setup.sim_files(hmr, temperature, mol, num_sim, pose, comp, win, stage, steps1, steps2, rng)
+                        setup.sim_files(hmr, temperature, mol,
+                                        num_sim, pose, comp, win,
+                                        stage, steps1, steps2, rng,
+                                        lipid_sim=lipid_mol)
                 if anch == 'anch1' or anch == 'anch2':
                     break
                 os.chdir('../')

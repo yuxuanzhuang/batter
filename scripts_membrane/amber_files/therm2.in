@@ -8,7 +8,7 @@ Thermalizing, NVT.
   irest = 1,
   ntpr = 500,
   ntwr = 25000,
-  ntwx = 0,
+  ntwx = 2500,
   ioutfm = 1,
   iwrap = 1,
   ntf = 2,
@@ -24,7 +24,7 @@ Thermalizing, NVT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = ':1',
+  restraintmask = '@CA,C,N | :1',
   infe = 1,
  /
  &pmd
