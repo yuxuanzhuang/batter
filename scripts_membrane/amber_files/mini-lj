@@ -6,9 +6,10 @@ Minimizing.
   imin = 1,
   ntx = 1, 
   ntpr = 50,
-  maxcyc = 1000,
-  ncyc = 1000,
+  maxcyc = 500,
+  ncyc = 500,
   irest = 0,
+  ntmin = 2,
   ntf = 1,
   ntc = 1,
   ntb = 1,
@@ -28,7 +29,7 @@ Minimizing.
  /
  &pmd
  output_file = 'cmass.txt'
- output_freq = 1000
+ output_freq = 500
  cv_file = 'cv.in'
  /
  &wt type = 'END', /

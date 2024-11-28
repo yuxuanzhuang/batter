@@ -20,7 +20,7 @@ Equilibrate, NPT.
   ig = -1,
   ntp = 1,
   barostat = _barostat_,
-  nstlim = 100000,
+  nstlim = 10000,
   dt = _step_,
   nmropt = 1,
   pencut = -1,

@@ -14,34 +14,31 @@ scontrol show job $SLURM_JOB_ID
 
 source $GROUP_HOME/software/amber20/amber20_src/setup_amber.sh
 
-# Attempt to run 'source run-local.bash' up to three times
+# Define the maximum number of attempts
 MAX_ATTEMPTS=3
-attempt=1
+RETRY_COUNT=${RETRY_COUNT:-1}  # Default to 1 if not set
 
-while [ $attempt -le $MAX_ATTEMPTS ]; do
-    echo "Attempt $attempt to run simulations..."
-    
-    # Run the command and capture the output and error
-    output=$(source run-local.bash 2>&1 | tee output.log)
-    cat output.log
+# Run the simulation
+echo "Attempt $RETRY_COUNT to run simulations..."
+source run-local.bash 2>&1 | tee run.log
+error_code=${PIPESTATUS[0]}  # Capture the exit status of 'source run-local.bash'
 
-    # Check for the specific error message
-    if echo "$output" | grep -q "Terminated Abnormally!"; then
-        echo "Detected error: STOP PMEMD Terminated Abnormally!"
+if [ $error_code -eq 0 ]; then
+    echo "Simulation completed successfully on attempt $RETRY_COUNT."
+else
+    echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
+
+    # Check if the maximum attempts have been reached
+    if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
+        NEXT_RETRY=$((RETRY_COUNT + 1))
+        echo "Resubmitting the job for attempt $NEXT_RETRY..."
+        
+        # Submit the same script with an incremented retry count
+        sbatch --export=RETRY_COUNT=$NEXT_RETRY $0
     else
-        echo "Successfully ran simulations on attempt $attempt"
-        break
+        echo "Maximum attempts ($MAX_ATTEMPTS) reached. Simulation failed."
+        exit 1
     fi
-
-    attempt=$((attempt + 1))
-    if [ $attempt -le $MAX_ATTEMPTS ]; then
-        echo "Retrying... (Attempt $attempt of $MAX_ATTEMPTS)"
-    fi
-done
-
-if [ $attempt -gt $MAX_ATTEMPTS ]; then
-    echo "Failed to run simulations after $MAX_ATTEMPTS attempts."
-    exit 1
 fi
 
 exit 0

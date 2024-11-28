@@ -1,24 +1,15 @@
-
-
-x=0
-while [  $x -lt 10 ]; do
-cd e0$x
-sbatch SLURMM-run
-cd ../
-cd v0$x
-sbatch SLURMM-run
-cd ../
-let x=x+1
+for folder in e[0-9]*; do
+    if [ -d "$folder" ]; then # Check if it's a directory
+        cd "$folder"
+        sbatch SLURMM-run
+        cd ../
+    fi
 done
 
-if [ $x -ge 10 ]; then
-while [  $x -lt 12 ]; do
-cd e$x
-sbatch SLURMM-run
-cd ../
-cd v$x
-sbatch SLURMM-run
-cd ../
-let x=x+1
+for folder in v[0-9]*; do
+    if [ -d "$folder" ]; then # Check if it's a directory
+        cd "$folder"
+        sbatch SLURMM-run
+        cd ../
+    fi
 done
-fi
