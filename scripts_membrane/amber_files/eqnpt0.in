@@ -21,7 +21,7 @@ Equilibrate, NPT.
   ntp = _p_coupling_,
   csurften = _c_surften_,
   barostat = _barostat_,
-  nstlim = 10000,
+  nstlim = 250000,
   dt = _step_,
   nmropt = 1,
   pencut = -1,

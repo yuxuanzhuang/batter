@@ -118,6 +118,10 @@ cut = '9.0'
 barostat = '2'
 ti_points = 0
 
+logger.info('Starting the setup of the free energy calculations')
+logger.info('This script has been adapted to prepare for membrane protein system')
+logger.info('Now reading the input file')
+
 # Read arguments that define input file and stage
 if len(sys.argv) < 5:
     scripts.help_message()
@@ -334,7 +338,7 @@ if lipid_mol:
         # convert back to lipid
     charmm_amber_lipid_df = pd.read_csv('build_files/charmmlipid2amber.csv', header=1, sep=',')
 
-    logger.info(f'Converting lipid input: {lipid_mol} to: \n')
+    logger.info(f'Converting lipid input: {lipid_mol}')
     lipid_mol.extend(charmm_amber_lipid_df.query('residue in @lipid_mol')['replace'].apply(lambda x: x.split()[1]).unique().tolist())
     logger.info(f'Amber lipids: {lipid_mol}')
 
@@ -413,9 +417,9 @@ if calc_type != 'crystal':
                     break
 
 logger.info(f'Receptor/complex structures: {celp_st}')
-logger.info('Ligand names: {mols}')
-logger.info('Cobinders names: {other_mol}')
-logger.info('Lipid names: {lipid_mol}')
+logger.info(f'Ligand names: {mols}')
+logger.info(f'Cobinders names: {other_mol}')
+logger.info(f'Lipid names: {lipid_mol}')
 
 for i in range(0, len(mols)):
     if mols[i] in other_mol:
@@ -502,7 +506,7 @@ if dec_int == 'ti':
     else:
         logger.error('Wrong input! Please choose a positive integer for the ti_points variable when using the TI-GQ method')
         sys.exit(1)
-    logger.info(f'lambda values: {lambdas})
+    logger.info(f'lambda values: {lambdas}')
     logger.info(f'Gaussian weights: {weights}')
 elif dec_int == 'mbar':
     if lambdas == []:

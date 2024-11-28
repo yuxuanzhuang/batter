@@ -18,7 +18,7 @@ Thermalizing, NVT.
   gamma_ln = _gamma_ln_,
   ig = -1,
   ntp = 0,
-  nstlim = 25000,
+  nstlim = 5000,
   dt = _step_,
   nmropt = 1,
   pencut = -1,
