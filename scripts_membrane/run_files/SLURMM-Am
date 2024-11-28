@@ -22,7 +22,8 @@ while [ $attempt -le $MAX_ATTEMPTS ]; do
     echo "Attempt $attempt to run simulations..."
     
     # Run the command and capture the output and error
-    output=$(source run-local.bash 2>&1 | tee /dev/tty)
+    output=$(source run-local.bash 2>&1 | tee output.log)
+    cat output.log
 
     # Check for the specific error message
     if echo "$output" | grep -q "Terminated Abnormally!"; then

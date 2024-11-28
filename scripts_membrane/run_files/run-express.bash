@@ -1,6 +1,6 @@
 cd rest
-cp ./run_files/run-all-dd.bash ./
-source run-all-dd.bash
+cp ./run_files/run-merge.bash ./
+source run-merge.bash
 cd ../
 cd sdr/
 cp ./run_files/run-sdr.bash ./

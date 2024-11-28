@@ -23,7 +23,7 @@ solv_shell = 4      # Water molecules around the protein that will be kept in th
 
 # Variables for setting up equilibrium and free energy calculations, also used on analysis       
 
-fe_type = sdr-rest  # Type of free energy calculations (rest, dd, sdr, dd-rest, sdr-rest, custom)
+fe_type = express  # Type of free energy calculations (rest, dd, sdr, dd-rest, sdr-rest, custom)
 
 components = [ e v ] # Used with custom option for fe_type. Do not include b component here. 
 
@@ -106,6 +106,14 @@ w_steps2	=  200000    # Number of steps per window for component w (production)
 
 f_steps1	=  100000    # Number of steps per window for component f (equilibrium) 
 f_steps2	=  200000    # Number of steps per window for component f (production)     
+
+n_steps1	=  100000    # Number of steps per window for component n (equilibrium)
+n_steps2	=  200000    # Number of steps per window for component n (production)
+
+m_steps1	=  100000    # Number of steps per window for component m (equilibrium)
+m_steps2	=  200000    # Number of steps per window for component m (production)
+
+
 
 # Conformational restraints on the protein backbone
 

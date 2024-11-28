@@ -13,6 +13,9 @@ from lib import analysis
 import numpy as np
 from lib.utils import run_with_log, antechamber, tleap, cpptraj
 import MDAnalysis as mda
+# ignore UserWarning from MDAnalysis
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 import pandas as pd
 
 from loguru import logger
@@ -181,7 +184,7 @@ for i in range(0, len(lines)):
                 if value.lower() in {'dock', 'rank', 'crystal'}:
                     calc_type = value.lower()
                 else:
-                    print('Please choose dock, rank, or crystal for the calculation type')
+                    logger.error('Please choose dock, rank, or crystal for the calculation type')
                     sys.exit(1)
             case 'retain_lig_prot':
                 retain_lig_prot = value.lower()
@@ -203,38 +206,38 @@ for i in range(0, len(lines)):
             case 'fe_type':
                 fe_type = value.lower()
                 if fe_type not in {'rest', 'dd', 'sdr', 'sdr-rest', 'express', 'dd-rest', 'relative', 'custom'}:
-                    print('Free energy type not recognized. Please choose a valid option.')
+                    logger.error('Free energy type not recognized. Please choose a valid option.')
                     sys.exit(1)
             case 'dec_int':
                 dec_int = value.lower()
                 if dec_int not in {'mbar', 'ti'}:
-                    print('Decoupling integration method not recognized. Please choose ti or mbar.')
+                    logger.error('Decoupling integration method not recognized. Please choose ti or mbar.')
                     sys.exit(1)
             case 'dec_method':
                 dec_method = value.lower()
                 if dec_method not in {'dd', 'sdr', 'exchange'}:
-                    print('Decoupling method not recognized. Please choose dd, sdr, or exchange.')
+                    logger.error('Decoupling method not recognized. Please choose dd, sdr, or exchange.')
                     sys.exit(1)
             case 'blocks':
                 blocks = scripts.check_input('int', value, input_file, key)
             case 'hmr':
                 hmr = value.lower()
                 if hmr not in {'yes', 'no'}:
-                    print('Wrong input! Please use yes or no for hydrogen mass repartitioning.')
+                    logger.error('Wrong input! Please use yes or no for hydrogen mass repartitioning.')
                     sys.exit(1)
             # Handle multi-choice options:
             case 'water_model':
                 if value.lower() in {'tip3p', 'tip4pew', 'spce', 'opc', 'tip3pf'}:
                     water_model = value.upper()
                 else:
-                    print('Water model not supported. Please choose TIP3P, TIP4PEW, SPCE, OPC or TIP3PF')
+                    logger.error('Water model not supported. Please choose TIP3P, TIP4PEW, SPCE, OPC or TIP3PF')
                     sys.exit(1)
             case 'num_waters':
                 num_waters = scripts.check_input('int', value, input_file, key)
             case 'neutralize_only':
                 neut = value.lower()
                 if neut not in {'yes', 'no'}:
-                    print('Wrong input! Please use yes or no to indicate whether neutralization only or extra ions will be added.')
+                    logger.error('Wrong input! Please use yes or no to indicate whether neutralization only or extra ions will be added.')
                     sys.exit(1)
             case 'cation':
                 cation = value
@@ -255,7 +258,7 @@ for i in range(0, len(lines)):
             case 'rec_bb':
                 rec_bb = value.lower()
                 if rec_bb not in {'yes', 'no'}:
-                    print('Wrong input! Please use yes or no to indicate whether protein backbone restraints will be used.')
+                    logger.error('Wrong input! Please use yes or no to indicate whether protein backbone restraints will be used.')
                     sys.exit(1)
             case 'bb_start' | 'bb_end':
                 newline = value.strip('\'\"-,.:;#()][').split(',')
@@ -276,7 +279,7 @@ for i in range(0, len(lines)):
             case 'ligand_ff':
                 ligand_ff = value.lower()
                 if ligand_ff not in {'gaff', 'gaff2'}:
-                    print('Wrong input! Available options for ligand force-field are gaff and gaff2.')
+                    logger.error('Wrong input! Available options for ligand force-field are gaff and gaff2.')
                     sys.exit(1)
             case 'ligand_ph' | 'ligand_charge':
                 globals()[key] = scripts.check_input('float', value, input_file, key)
@@ -285,7 +288,7 @@ for i in range(0, len(lines)):
             case 'software':
                 software = value.lower()
                 if software not in {'openmm', 'amber'}:
-                    print('Simulation software not recognized. Please choose openmm or amber.')
+                    logger.error('Simulation software not recognized. Please choose openmm or amber.')
                     sys.exit(1)
             # New lipid options
             case 'lipid_mol':
@@ -295,30 +298,30 @@ for i in range(0, len(lines)):
             case 'lipid_ff':
                 lipid_ff = value.lower()
                 if lipid_ff not in {'lipid21'}:
-                    print('Wrong input! Available options for lipid force-field are lipid21.')
+                    logger.error('Wrong input! Available options for lipid force-field are lipid21.')
                     sys.exit(1)
             case _:
-                print(f"Unrecognized key: {key}")
+                logger.error(f"Unrecognized key: {key}")
                 sys.exit(1)
 
 if len(bb_start) != len(bb_end):
-    print('Wrong input! Please use arrays of the same size for bb_start and bb_end.')
+    logger.error('Wrong input! Please use arrays of the same size for bb_start and bb_end.')
     sys.exit(1)
 
 if num_waters == 0 and buffer_z == 0:
-    print('Wrong input! Please choose either a number of water molecules or a z buffer value.')
+    logger.error('Wrong input! Please choose either a number of water molecules or a z buffer value.')
     sys.exit(1)
 
 if num_waters != 0 and buffer_z != 0:
-    print('Wrong input! Please choose either a number of water molecules or a z buffer value.')
+    logger.error('Wrong input! Please choose either a number of water molecules or a z buffer value.')
     sys.exit(1)
 
 if buffer_x <= solv_shell or buffer_y <= solv_shell:
-    print('Wrong input! Solvation buffers cannot be smaller than the solv_shell variable.')
+    logger.error('Wrong input! Solvation buffers cannot be smaller than the solv_shell variable.')
     sys.exit(1)
 
 if buffer_z != 0 and buffer_z <= solv_shell:
-    print('Wrong input! Solvation buffers cannot be smaller than the solv_shell variable.')
+    logger.error('Wrong input! Solvation buffers cannot be smaller than the solv_shell variable.')
     sys.exit(1)
 
 if other_mol == ['']:
@@ -343,7 +346,7 @@ if fe_type == 'custom':
     try:
         dec_method
     except NameError:
-        print('Wrong input! Please choose a decoupling method (dd, sdr or exchange) when using the custom option.')
+        logger.error('Wrong input! Please choose a decoupling method (dd, sdr or exchange) when using the custom option.')
         sys.exit(1)
 elif fe_type == 'rest':
     components = ['c', 'a', 'l', 't', 'r']
@@ -368,12 +371,12 @@ elif fe_type == 'relative':
     dec_method = 'exchange'
 
 if (dec_method == 'sdr' or dec_method == 'exchange') and sdr_dist == 0:
-    print('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
+    logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
     sys.exit(1)
 
 for i in components:
     if i == 'n' and sdr_dist == 0:
-        print('Wrong input! Please choose a positive value for the sdr_dist variable when using the n component.')
+        logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when using the n component.')
         sys.exit(1)
 
 # Do not apply protein backbone restraints
@@ -409,16 +412,14 @@ if calc_type != 'crystal':
                     mols.append(lig_name)
                     break
 
-print('Receptor/complex structures:')
-print(celp_st)
-print('Ligand names')
-print(mols)
-print('Cobinders names:')
-print(other_mol)
+logger.info(f'Receptor/complex structures: {celp_st}')
+logger.info('Ligand names: {mols}')
+logger.info('Cobinders names: {other_mol}')
+logger.info('Lipid names: {lipid_mol}')
 
 for i in range(0, len(mols)):
     if mols[i] in other_mol:
-        print('Same residue name ('+mols[i]+') found in ligand name and cobinders, please change one of them')
+        logger.error('Same residue name ('+mols[i]+') found in ligand name and cobinders, please change one of them')
         sys.exit(1)
 
 
@@ -499,47 +500,47 @@ if dec_int == 'ti':
         for i in range(0, len(y)):
             weights.append(float(y[i]/2))
     else:
-        print('Wrong input! Please choose a positive integer for the ti_points variable when using the TI-GQ method')
+        logger.error('Wrong input! Please choose a positive integer for the ti_points variable when using the TI-GQ method')
         sys.exit(1)
-    print('lambda values:', lambdas)
-    print('Gaussian weights:', weights)
+    logger.info(f'lambda values: {lambdas})
+    logger.info(f'Gaussian weights: {weights}')
 elif dec_int == 'mbar':
     if lambdas == []:
-        print('Wrong input! Please choose a set of lambda values when using the MBAR method')
+        logger.error('Wrong input! Please choose a set of lambda values when using the MBAR method')
         sys.exit(1)
     if ti_points != 0:
-        print('Wrong input! Do not define the ti_points variable when applying the MBAR method, instead choose a set of lambda values')
+        logger.error('Wrong input! Do not define the ti_points variable when applying the MBAR method, instead choose a set of lambda values')
         sys.exit(1)
-    print('lambda values:', lambdas)
+    logger.info(f'lambda values: {lambdas}')
 
 
 # Adjust components and windows for OpenMM
 
 if software == 'openmm' and stage == 'fe':
     components_inp = list(components)
-    print(components_inp)
+    logger.info(f'Components: {components_inp}')
     if sdr_dist == 0:
         dec_method_inp = dec_method
         components = ['t', 'c']
     elif dec_method != 'exchange':
         dec_method_inp = dec_method
-        print(dec_method_inp)
+        logger.info(f'Decoupling method: {dec_method_inp}')
         dec_method = 'sdr'
         components = ['t', 'c', 'n', 'v']
     else:
         dec_method_inp = dec_method
-        print(dec_method_inp)
+        logger.info(f'Decoupling method: {dec_method_inp}')
         components = ['t', 'c', 'n', 'v', 'x']
     attach_rest_inp = list(attach_rest)
-    print(attach_rest_inp)
+    logger.info(f'Attach rest: {attach_rest_inp}')
     attach_rest = [100.0]
     lambdas_inp = list(lambdas)
-    print(lambdas_inp)
+    logger.info(f'Lambdas: {lambdas_inp}')
     lambdas = [0.0]
     dt = str(float(dt)*1000)
-    print(dt)
+    logger.info(f'Timestep: {dt} fs')
     cut = str(float(cut)/10)
-    print(cut)
+    logger.info(f'Cutoff: {cut} nm')
 
     # Convert equil output file
     os.chdir('equil')
@@ -559,6 +560,7 @@ if software == 'openmm' and stage == 'fe':
 
 
 if stage == 'equil':
+    logger.info('Equilibration stage')
     comp = 'q'
     win = 0
     # Create equilibrium systems for all poses listed in the input file
@@ -570,7 +572,7 @@ if stage == 'equil':
         rng = len(release_eq) - 1
         if not os.path.exists('./all-poses/'+pose+'.pdb'):
             continue
-        print('Setting up '+str(poses_def[i]))
+        logger.info('Setting up '+str(poses_def[i]))
         # Get number of simulations
         num_sim = len(release_eq)
         # Create aligned initial complex
@@ -594,7 +596,7 @@ if stage == 'equil':
             continue
     
         # Solvate system with ions
-        print('Creating box...')
+        logger.info('Creating box...')
         build.create_box(comp, hmr, pose, mol, molr,
                          num_waters, water_model, ion_def,
                          neut, buffer_x, buffer_y, buffer_z,
@@ -604,10 +606,10 @@ if stage == 'equil':
                          other_mol, solv_shell,
                          lipid_mol, lipid_ff)
         # Apply restraints and prepare simulation files
-        print('Equil release weights:')
+        logger.info('Equil release weights:')
         for i in range(0, len(release_eq)):
             weight = release_eq[i]
-            print('%s' % str(weight))
+            logger.debug('%s' % str(weight))
             setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                              molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
             shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
@@ -618,17 +620,18 @@ if stage == 'equil':
                         lipid_sim=lipid_mol)
         os.chdir('../')
     if len(aa1_poses) != 0:
-        print('\n')
-        print('WARNING: Could not find the ligand first anchor L1 for', aa1_poses)
-        print('The ligand is most likely not in the defined binding site in these systems.')
+        logger.warning('\n')
+        logger.warning('WARNING: Could not find the ligand first anchor L1 for', aa1_poses)
+        logger.warning('The ligand is most likely not in the defined binding site in these systems.')
     if len(aa2_poses) != 0:
-        print('\n')
-        print('WARNING: Could not find the ligand L2 or L3 anchors for', aa2_poses)
-        print('Try reducing the min_adis parameter in the input file.')
+        logger.warning('\n')
+        logger.warning('WARNING: Could not find the ligand L2 or L3 anchors for', aa2_poses)
+        logger.warning('Try reducing the min_adis parameter in the input file.')
 
-    print('Equilibration systems have been created for all poses listed in the input file.')
+    logger.info('Equilibration systems have been created for all poses listed in the input file.')
 
 elif stage == 'fe':
+    logger.info('Start setting simulations in free energy stage')
     # Create systems for all poses after preparation
     num_sim = apr_sim
     # Create and move to free energy directory
@@ -643,7 +646,7 @@ elif stage == 'fe':
         fwin = len(release_eq) - 1
         if not os.path.exists('../equil/'+pose):
             continue
-        print('Setting up '+str(poses_def[i]))
+        logger.info('Setting up '+str(poses_def[i]))
         # Create and move to pose directory
         if not os.path.exists(pose):
             os.makedirs(pose)
@@ -660,7 +663,7 @@ elif stage == 'fe':
                     weight = attach_rest[k]
                     win = k
                     if int(win) == 0:
-                        print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
                         anch = build.build_dec(
                                         fwin, hmr, mol, pose,
                                         molr, poser, comp, win,
@@ -680,7 +683,7 @@ elif stage == 'fe':
                         if anch == 'anch2':
                             aa2_poses.append(pose)
                             break
-                        print('Creating box for ligand only...')
+                        logger.info('Creating box for ligand only...')
                         build.ligand_box(mol, lig_buffer, water_model, neut, ion_def, comp, ligand_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
@@ -688,7 +691,7 @@ elif stage == 'fe':
                                         comp, win, stage, c_steps1, c_steps2, rng,
                                         lipid_sim=False)
                     else:
-                        print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
                         build.build_dec(fwin, hmr, mol, pose, molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
                                         receptor_ff, ligand_ff, dt, sdr_dist, dec_method, l1_x, l1_y, l1_z, l1_range, min_adis, max_adis,
                                         ion_def, other_mol, solv_shell,
@@ -712,7 +715,7 @@ elif stage == 'fe':
                     weight = attach_rest[k]
                     win = k
                     if int(win) == 0:
-                        print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
                         anch = build.build_dec(
                                     fwin, hmr, mol, pose,
                                     molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
@@ -727,7 +730,7 @@ elif stage == 'fe':
                         if anch == 'anch2':
                             aa2_poses.append(pose)
                             break
-                        print('Creating box for protein/simultaneous release...')
+                        logger.info('Creating box for protein/simultaneous release...')
                         build.create_box(comp, hmr, pose,
                                          mol, molr, num_waters,
                                          water_model, ion_def, neut,
@@ -743,7 +746,7 @@ elif stage == 'fe':
                                         pose, comp, win, stage, steps1, steps2, rng,
                                         lipid_sim=lipid_mol)
                     else:
-                        print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
                         build.build_dec(fwin, hmr, mol, pose,
                                         molr, poser, comp, win,
                                         water_model, ntpr, ntwr, ntwe,
@@ -777,7 +780,7 @@ elif stage == 'fe':
                 for k in range(0, len(lambdas)):
                     weight = lambdas[k]
                     win = k
-                    print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
+                    logger.info('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
                     if int(win) == 0:
                         anch = build.build_dec(fwin, hmr, mol, pose,
                                                molr, poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
@@ -826,7 +829,7 @@ elif stage == 'fe':
                     weight = lambdas[k]
                     win = k
                     if int(win) == 0:
-                        print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
                         anch = build.build_dec(fwin, hmr, mol, pose, molr,
                                                poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
                                                receptor_ff, ligand_ff, dt,
@@ -840,7 +843,7 @@ elif stage == 'fe':
                         if anch == 'anch2':
                             aa2_poses.append(pose)
                             break
-                        print('Creating box for ligand decoupling in bulk...')
+                        logger.info('Creating box for ligand decoupling in bulk...')
                         build.ligand_box(mol, lig_buffer, water_model,
                                          neut, ion_def, comp, ligand_ff)
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
@@ -848,7 +851,7 @@ elif stage == 'fe':
                         setup.dec_files(temperature, mol, num_sim, pose, comp, win, stage,
                                         steps1, steps2, weight, lambdas, dec_method, ntwx)
                     else:
-                        print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
                         build.build_dec(fwin, hmr, mol, pose, molr, poser,
                                         comp, win, water_model, ntpr, ntwr, ntwe,
                                         ntwx, cut, gamma_ln, barostat,
@@ -871,7 +874,7 @@ elif stage == 'fe':
                 for k in range(0, len(lambdas)):
                     weight = lambdas[k]
                     win = k
-                    print('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
+                    logger.info('window: %s%02d lambda: %s' % (comp, int(win), str(weight)))
                     if int(win) == 0:
                         anch = build.build_dec(fwin, hmr, mol, pose, molr,
                                                poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
@@ -924,7 +927,7 @@ elif stage == 'fe':
                     weight = attach_rest[k]
                     win = k
                     if win == 0:
-                        print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
                         anch = build.build_dec(fwin, hmr, mol, pose,
                                                molr, poser, comp, win,
                                                water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
@@ -941,15 +944,14 @@ elif stage == 'fe':
                             aa2_poses.append(pose)
                             break
                         if anch != 'altm':
-                            print('Creating box for attaching restraints...')
+                            logger.info('Creating box for attaching restraints...')
                             build.create_box(comp, hmr, pose, mol, molr, num_waters, water_model, ion_def, neut, buffer_x, buffer_y, buffer_z, stage,
                                              ntpr, ntwr, ntwe, ntwx, cut,
                                              gamma_ln, barostat,
                                              receptor_ff, ligand_ff,
                                              dt, dec_method, other_mol, solv_shell,
                                              lipid_mol, lipid_ff)
-                        print('Creating restraints for attaching...')
-                        print(f'pose: {pose} rest: {rest} bb_start: {bb_start} bb_end: {bb_end} weight: {weight} stage: {stage} mol: {mol} molr: {molr} comp: {comp} bb_equil: {bb_equil} sdr_dist: {sdr_dist} dec_method: {dec_method} other_mol: {other_mol}')
+                        logger.info('Creating restraints for attaching...')
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                          molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
                         setup.sim_files(hmr, temperature, mol,
@@ -957,7 +959,7 @@ elif stage == 'fe':
                                         stage, steps1, steps2, rng,
                                         lipid_sim=lipid_mol)
                     else:
-                        print('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
+                        logger.info('window: %s%02d weight: %s' % (comp, int(win), str(weight)))
                         build.build_dec(fwin, hmr, mol, pose, molr,
                                         poser, comp, win, water_model, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat,
                                         receptor_ff, ligand_ff, dt,
@@ -976,18 +978,19 @@ elif stage == 'fe':
                 os.chdir('../')
         os.chdir('../')
     if len(aa1_poses) != 0:
-        print('\n')
-        print('WARNING: Could not find the ligand first anchor L1 for', aa1_poses)
-        print('The ligand most likely left the binding site during equilibration of these systems.')
+        logger.warning('\n')
+        logger.warning('WARNING: Could not find the ligand first anchor L1 for', aa1_poses)
+        logger.warning('The ligand most likely left the binding site during equilibration of these systems.')
         for i in aa1_poses:
             shutil.rmtree('./'+i+'')
     if len(aa2_poses) != 0:
-        print('\n')
-        print('WARNING: Could not find the ligand L2 or L3 anchors for', aa2_poses)
-        print('Try reducing the min_adis parameter in the input file.')
+        logger.warning('\n')
+        logger.warning('WARNING: Could not find the ligand L2 or L3 anchors for', aa2_poses)
+        logger.warning('Try reducing the min_adis parameter in the input file.')
         for i in aa2_poses:
             shutil.rmtree('./'+i+'')
 elif stage == 'analysis':
+    logger.info('Analysis stage')
     # Free energy analysis for OpenMM
     if software == 'openmm':
         for i in range(0, len(poses_def)):
@@ -1007,6 +1010,7 @@ elif stage == 'analysis':
 # Convert equilibration folders to openmm
 
 if software == 'openmm' and stage == 'equil':
+    logger.info('Converting equilibration folders to OpenMM')
 
     # Adjust a few variables
     cut = str(float(cut)/10)
@@ -1018,7 +1022,7 @@ if software == 'openmm' and stage == 'equil':
         pose = poses_def[i]
         rng = len(release_eq) - 1
         if os.path.exists(pose):
-            print(pose)
+            logger.info(pose)
             os.rename(pose, pose+'-amber')
             os.mkdir(pose)
             os.chdir(pose)
@@ -1075,7 +1079,6 @@ if software == 'openmm' and stage == 'equil':
                 fin.close()
             os.chdir('../')
             shutil.rmtree('./'+pose+'-amber')
-    print(os.getcwd())
 
 if software == 'openmm' and stage == 'fe':
 
@@ -1094,19 +1097,19 @@ if software == 'openmm' and stage == 'fe':
 
     # Start script
 
-    print('')
-    print('#############################')
-    print('## OpenMM patch for BAT.py ##')
-    print('#############################')
-    print('')
-    print('Components: ', components)
-    print('')
-    print('Decoupling lambdas: ', lambdas)
-    print('')
-    print('Restraint lambdas: ', lambdas_rest)
-    print('')
-    print('Integration Method: ', dec_int.upper())
-    print('')
+    logger.info('')
+    logger.info('#############################')
+    logger.info('## OpenMM patch for BAT.py ##')
+    logger.info('#############################')
+    logger.info('')
+    logger.info('Components: ', components)
+    logger.info('')
+    logger.info('Decoupling lambdas: ', lambdas)
+    logger.info('')
+    logger.info('Restraint lambdas: ', lambdas_rest)
+    logger.info('')
+    logger.info('Integration Method: ', dec_int.upper())
+    logger.info('')
 
     # Generate folder and restraints for all components and windows
     for i in range(0, len(poses_def)):
@@ -1549,7 +1552,6 @@ if software == 'openmm' and stage == 'fe':
                         os.chdir('../')
                     os.chdir('../')
                 os.chdir('../')
-        print(os.getcwd())
 
         # Clean up amber windows
         dirpath = os.path.join('rest', 't00')
