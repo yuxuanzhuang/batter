@@ -2,11 +2,13 @@ from loguru import logger
 import subprocess as sp
 import os
 
-# Constants for common programs
 antechamber = 'antechamber'
 tleap = 'tleap'
 cpptraj = 'cpptraj'
 parmchk2 = 'parmchk2'
+charmmlipid2amber = 'charmmlipid2amber.py'
+obabel = '/home/groups/rondror/software/openbabel/bin/obabel'
+vmd = '/home/groups/rondror/software/vmd-1.9.4/bin/vmd'
 
 def run_with_log(command, level='debug', working_dir=None,
                  error_match=None):
@@ -52,8 +54,8 @@ def run_with_log(command, level='debug', working_dir=None,
     if log is None:
         raise ValueError(f"Invalid log level: {level}")
 
-    logger.info(f"Running command: {command}")
-    logger.info(f"Working directory: {working_dir}")
+    logger.debug(f"Running command: {command}")
+    logger.debug(f"Working directory: {working_dir}")
     try:
         # Run the command and capture output
         result = sp.run(
@@ -68,6 +70,10 @@ def run_with_log(command, level='debug', working_dir=None,
 
         if error_match:
             if error_match in result.stdout or error_match in result.stderr:
+                logger.info(f"Command failed with matched error: "
+                            f"{error_match}")
+                logger.info(f"Command output: {result.stdout}")
+                logger.info(f"Command errors: {result.stderr}")
                 raise sp.CalledProcessError(
                     returncode=1,
                     cmd=command,
@@ -87,7 +93,7 @@ def run_with_log(command, level='debug', working_dir=None,
                 log(line)
 
     except sp.CalledProcessError as e:
-        log(f"Command failed with return code {e.returncode}")
+        logger.info(f"Command failed with return code {e.returncode}")
         if e.stdout:
             log("Command output before failure:")
             for line in e.stdout.splitlines():
