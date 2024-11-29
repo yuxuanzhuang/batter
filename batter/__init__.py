@@ -2,6 +2,7 @@
 
 # Add imports here
 from .batter import *
+from .utils.utils import *
 
 
 from ._version import __version__

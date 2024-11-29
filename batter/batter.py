@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 #logger.add(sys.stdout, level='INFO')
 
 import numpy as np
-from .utils.utils import (
+from .utils import (
         run_with_log,
         antechamber,
         tleap,

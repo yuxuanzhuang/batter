@@ -1,6 +1,16 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import (
+    BaseModel,
+    Field,
+    validator,
+    model_validator,
+    field_validator
+    )
+
 from typing import List, Optional, Dict, Union
 import numpy as np
+from loguru import logger
+import pandas as pd
+from batter.data import charmmlipid2amber
 
 FEP_COMPONENTS = ['a', 'l', 't',
                   'm', 'n', 'c',
@@ -8,9 +18,10 @@ FEP_COMPONENTS = ['a', 'l', 't',
                   'f', 'w', 'x']
 
 class SimulationConfig(BaseModel):
+    software: str = Field("amber", info={'description': "Software to use (amber, openmm)"})
     # Calculation definitions
     calc_type: str = Field(..., info={'description': "Calculation type (dock, rank, crystal)"})
-    celp_st: List[str] = Field(default_factory=list, info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
+    celpp_receptor: str = Field("", info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
     poses_list: List[str] = Field(default_factory=list, info={'description': "List of poses"})
 
     # Molecular definitions
@@ -27,11 +38,11 @@ class SimulationConfig(BaseModel):
     # Variables for setting up equilibrium and free energy calculations, also used on analysis 
     fe_type: str = Field(..., info={'description': "Free energy type (rest, dd, sdr, etc.)"})
     components: List[str] = Field(default_factory=list, info={'description': "Used with custom option for fe_type. Do not include b component here."})
-    release_eq: List[str] = Field(default_factory=list, info={'description': "Short attach/release weights"})
-    attach_rest: List[str] = Field(default_factory=list, info={'description': "Short attach/release weights"})
-    ti_points: Optional[int] = Field(None, info={'description': "# of TI points for Gaussian quadrature"})
+    release_eq: List[float] = Field(default_factory=list, info={'description': "Short attach/release weights"})
+    attach_rest: List[float] = Field(default_factory=list, info={'description': "Short attach/release weights"})
+    ti_points: Optional[int] = Field(0, info={'description': "# of TI points for Gaussian quadrature"})
     lambdas: List[float] = Field(default_factory=list, info={'description': "Lambda values for TI"})
-    sdr_dist: Optional[float] = Field(None, info={'description': "SDR distance to place the ligand"})
+    sdr_dist: Optional[float] = Field(0, info={'description': "SDR distance to place the ligand"})
     dec_method: Optional[str] = Field(None, info={'description': "Decoupling method, can be `dd` or `sdr`"})
 
     # Additional variables for analysis 
@@ -49,11 +60,11 @@ class SimulationConfig(BaseModel):
     
     # Water model, number and box size in the x and y direction
     water_model: str = Field("TIP3P", info={'description': "Water model (SPCE, TIP4PEW, TIP3P, TIP3PF or OPC)"})
-    num_waters: Optional[int] = Field(None, info={'description': "Number of water molecules in the system"})
-    buffer_x: Optional[float] = Field(None, info={'description': "Buffer size along X-axis; this will be omitted in membrane simulations"})
-    buffer_y: Optional[float] = Field(None, info={'description': "Buffer size along Y-axis; this will be omitted in membrane simulations"})
-    buffer_z: Optional[float] = Field(None, info={'description': "Buffer size along Z-axis"})
-    lig_buffer: Optional[float] = Field(None, info={'description': "Buffer size around the ligand box"})
+    num_waters: Optional[int] = Field(0, info={'description': "Number of water molecules in the system"})
+    buffer_x: Optional[float] = Field(0, info={'description': "Buffer size along X-axis; this will be omitted in membrane simulations"})
+    buffer_y: Optional[float] = Field(0, info={'description': "Buffer size along Y-axis; this will be omitted in membrane simulations"})
+    buffer_z: Optional[float] = Field(0, info={'description': "Buffer size along Z-axis"})
+    lig_buffer: Optional[float] = Field(0, info={'description': "Buffer size around the ligand box"})
 
     # Counterions 
     neutralize_only: str = Field("no", info={'description': "Neutralize only or also ionize (yes or no)"})
@@ -65,9 +76,11 @@ class SimulationConfig(BaseModel):
     hmr: str = Field("no", info={'description': "Apply hydorgen mass repartitioning (yes/no)"})
     temperature: float = Field(..., info={'description': "Simulation temperature"})
     # n_steps
+    eq_steps1: int = Field(0, info={'description': "Number of steps for equilibration stage 1"})
+    eq_steps2: int = Field(0, info={'description': "Number of steps for equilibration stage 2"})
     n_steps_dict: Dict[str, int] = Field(
         default_factory=lambda: {
-            f'{comp}_steps{ind}: 0' for comp in ['eq'] + FEP_COMPONENTS
+            f'{comp}_steps{ind}: 0' for comp in FEP_COMPONENTS
             for ind in ['1', '2']
         },
         info={'description': "Number of steps for each stage in AMBER and eq"})
@@ -80,12 +93,12 @@ class SimulationConfig(BaseModel):
 
     # Conformational restraints on the protein backbone
     rec_bb: str = Field("no", info={'description': "Use protein backbone dihedrals conformational restraints"})
-    bb_start: Optional[Union[List[str], str]] = Field(
-        None,
+    bb_start: Optional[Union[List[int], int]] = Field(
+        0,
         description="Start of the backbone section to restrain; can be a list or a comma-separated string"
     )
-    bb_end: Optional[Union[List[str], str]] = Field(
-        None,
+    bb_end: Optional[Union[List[int], int]] = Field(
+        1,
         description="End of the backbone section to restrain; can be a list or a comma-separated string"
     )
     bb_equil: str = Field("no", info={'description': "Keep this backbone section rigid during equilibration"})
@@ -97,20 +110,20 @@ class SimulationConfig(BaseModel):
     l1_range: Optional[float] = Field(None, info={'description': "search radius for the first ligand anchor L1 "})
     min_adis: Optional[float] = Field(None, info={'description': "minimum distance between anchors"})
     max_adis: Optional[float] = Field(None, info={'description': "maximum distance between anchors"})
-    dlambda: Optional[float] = Field(None, info={'description': "lambda width for splitting initial lambda into two close windows"})
+    dlambda: Optional[float] = Field(0.001, info={'description': "lambda width for splitting initial lambda into two close windows"})
 
     # Amber options for production simulations
-    ntpr: int = Field(1000, info={'description': "print energy every ntpr steps to output file (controls DD output)"})
-    ntwr: int = Field(10000, info={'description': "write the restart file every ntwr steps"})
-    ntwe: int = Field(0, info={'description': "write the energy file every ntwe steps"})
-    ntwx: int = Field(2500, info={'description': "write the trajectory file every ntwx steps"})
-    cut: float = Field(9.0, info={'description': "nonbonded cutoff in Angstroms"})
-    gamma_ln: float = Field(1.0, info={'description': "collision frequency in ps^-1 for Langevin Dynamics (temperature control)"})
-    barostat: int = Field(2, info={'description': "type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)"})
-    dt: float = Field(0.004, info={'description': "time step in ps"})
+    ntpr: str = Field('1000', info={'description': "print energy every ntpr steps to output file (controls DD output)"})
+    ntwr: str = Field('10000', info={'description': "write the restart file every ntwr steps"})
+    ntwe: str = Field('0', info={'description': "write the energy file every ntwe steps"})
+    ntwx: str = Field('2500', info={'description': "write the trajectory file every ntwx steps"})
+    cut: str = Field('9.0', info={'description': "nonbonded cutoff in Angstroms"})
+    gamma_ln: str = Field('1.0', info={'description': "collision frequency in ps^-1 for Langevin Dynamics (temperature control)"})
+    barostat: str = Field('2', info={'description': "type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)"})
+    dt: str = Field('0.004', info={'description': "time step in ps"})
 
     # OpenMM specific options for production simulations
-    itcheck: int = Field(100, info={'description': "write checkpoint file every itcheck iterations"})
+    itcheck: str = Field('100', info={'description': "write checkpoint file every itcheck iterations"})
 
     # Force field options for receptor and ligand
     receptor_ff: str = Field("protein.ff14SB", info={'description': "Force field for the protein"})
@@ -124,19 +137,23 @@ class SimulationConfig(BaseModel):
 
     weights: List[float] = Field(default_factory=list, info={'description': "Gaussian quadrature weights for TI"})
     components: List[str] = Field(default_factory=list, info={'description': "Free energy components"})
-    # ?
-    aa1_poses: List[str] = Field(default_factory=list, info={'description': "AA1 poses"})
-    # ?
-    aa2_poses: List[str] = Field(default_factory=list, info={'description': "AA2 poses"})
     mols: List[str] = Field(default_factory=list, info={'description': "Molecules"})
-
-    @property
-    def rng(self) -> int:
-        return len(release_eq) - 1
-
-    @property
-    def ion_def(self) -> List:
-        return [self.cation, self.anion, self.ion_conc]
+    rng: int = Field(0, info={'description': "Range of release_eq"})
+    ion_def: List = Field(default_factory=list, info={'description': "Ion definition"})
+    poses_def: List = Field(default_factory=list, info={'description': "Poses definition"})
+    dic_steps1: Dict = Field(default_factory=dict, info={'description': "Steps dictionary for stage 1"})
+    dic_steps2: Dict = Field(default_factory=dict, info={'description': "Steps dictionary for stage 2"})
+    dic_itera1: Dict = Field(default_factory=dict, info={'description': "Iterations dictionary for stage 1"})
+    dic_itera2: Dict = Field(default_factory=dict, info={'description': "Iterations dictionary for stage 2"})
+    H1: str = Field("", info={'description': "H1 (p1)"})
+    H2: str = Field("", info={'description': "H2 (p2)"})
+    H3: str = Field("", info={'description': "H3 (p3)"})
+    rest: List[float] = Field(default_factory=list, info={'description': "Rest definition"})
+    celp_st: List[str] = Field(default_factory=list, info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
+    neut: str = Field("", info={'description': "Neutralize"})
+    
+    # Number of simulations, 1 equilibrium and 1 production
+    apr_sim: int = Field(2, info={'description': "Number of simulations"})
 
     @property
     def poses_def(self) -> List:
@@ -148,58 +165,157 @@ class SimulationConfig(BaseModel):
             case "crystal":
                 return self.celp_st
 
-    @property
-    def dic_steps1(self) -> Dict:
-        dict_steps = {}
-        for comp in FEP_COMPONENTS:
-            dict_steps[f'{comp}'] = self.n_steps_dict[f'{comp}_steps1']
-        return dict_steps
-
-    @property
-    def dic_steps2(self) -> Dict:
-        dict_steps = {}
-        for comp in FEP_COMPONENTS:
-            dict_steps[f'{comp}'] = self.n_steps_dict[f'{comp}_steps2']
-        return dict_steps
-
-    @property
-    def dic_itera1(self) -> Dict:
-        dict_iters = {}
-        for comp in FEP_COMPONENTS:
-            dict_iters[f'{comp}'] = self.n_iter_dict[f'{comp}_itera1']
-        return dict_iters
-
-    @property
-    def dic_itera2(self) -> Dict:
-        dict_iters = {}
-        for comp in FEP_COMPONENTS:
-            dict_iters[f'{comp}'] = self.n_iter_dict[f'{comp}_itera2']
-        return dict_iters
-
-    @validator("lambdas", pre=True, always=True)
-    def initialize_ti(cls, value, values):
+    @model_validator(mode="after")
+    def initialize_ti(self):
         """
         Calculate lambdas and weights dynamically if dec_int is 'ti'.
         """
-        dec_int = values.get("dec_int")
-        ti_points = values.get("ti_points")
+        dec_int = self.dec_int
+        ti_points = self.ti_points
 
         if dec_int == "ti":
             if ti_points and ti_points > 0:
                 x, y = np.polynomial.legendre.leggauss(ti_points)
                 lambdas = [(xi + 1) / 2 for xi in x]  # Adjust Gaussian lambdas
                 weights = [wi / 2 for wi in y]       # Adjust Gaussian weights
-                logger.info(f"Lambda values: {lambdas}")
-                logger.info(f"Gaussian weights: {weights}")
+                logger.debug(f"Lambda values: {lambdas}")
+                logger.debug(f"Gaussian weights: {weights}")
                 # Update the values dictionary with both lambdas and weights
-                values["lambdas"] = lambdas
-                values["weights"] = weights
-                return lambdas
+                self.lambdas = lambdas
+                self.weights = weights
             else:
                 raise ValueError(
                     "Invalid input! ti_points must be a positive integer for the TI-GQ method."
                 )
-        return value
+        
+        self.rng = len(self.release_eq) - 1
+        self.ion_def = [self.cation, self.anion, self.ion_conc]
+        
+        if self.calc_type == "dock":
+            self.poses_def = [f'pose{pose}' for pose in self.poses_list]
+        elif self.calc_type == "rank":
+            self.poses_def = self.ligand_list
+        elif self.calc_type == "crystal":
+            self.poses_def = self.celp_st
+
+        for comp in FEP_COMPONENTS:
+            self.dic_steps1.update({f'{comp}': self.n_steps_dict[f'{comp}_steps1']})
+            self.dic_steps2.update({f'{comp}': self.n_steps_dict[f'{comp}_steps2']})
+            self.dic_itera1.update({f'{comp}': self.n_iter_dict[f'{comp}_itera1']})
+            self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
+
+        self.components = self.components
+
+        # Obtain all ligand names
+        poses_def = self.poses_def
+        if self.calc_type != 'crystal':
+            mols = []
+            for i in range(0, len(poses_def)):
+                with open('./all-poses/%s.pdb' % poses_def[i].lower()) as f_in:
+                    lines = (line.rstrip() for line in f_in)
+                    lines = list(line for line in lines if line)  # Non-blank lines in a list
+                    for j in range(0, len(lines)):
+                        if (lines[j][0:6].strip() == 'ATOM') or (lines[j][0:6].strip() == 'HETATM'):
+                            lig_name = (lines[j][17:20].strip())
+                            mols.append(lig_name)
+                            break
+
+        for i in range(0, len(mols)):
+            if mols[i] in self.other_mol:
+                logger.error('Same residue name ('+mols[i]+') found in ligand name and cobinders, please change one of them')
+                sys.exit(1)
+        self.mols = mols
+
+        self.H1 = self.p1
+        self.H2 = self.p2
+        self.H3 = self.p3
+
+        self.rest = [
+            self.rec_dihcf_force,
+            self.rec_discf_force,
+            self.lig_distance_force,
+            self.lig_angle_force,
+            self.lig_dihcf_force,
+            self.rec_com_force,
+            self.lig_com_force
+            ]
+
+        self.celp_st = self.celpp_receptor
+
+        num_waters = self.num_waters
+        buffer_z = self.buffer_z
+
+        if num_waters == 0 and buffer_z == 0:
+            raise ValueError("Either 'num_waters' or 'buffer_z' must be provided (non-zero values).")
+        
+        if num_waters != 0 and buffer_z != 0:
+            raise ValueError("Cannot specify both 'num_waters' and 'buffer_z' (non-zero values).")
+        
+        lipid_mol = self.lipid_mol
+        logger.info(f'Converting lipid input: {lipid_mol}')
+        charmm_amber_lipid_df = pd.read_csv(charmmlipid2amber, header=1, sep=',')
+
+        amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
+        amber_lipid_mol = amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
+        
+        # extend instead of replacing so that we can have both
+        lipid_mol.extend(amber_lipid_mol)
+        self.lipid_mol = lipid_mol
+        logger.info(f'New lipid_mol list: {self.lipid_mol}')
+
+        if self.rec_bb == 'no':
+            self.bb_start = [1]
+            self.bb_end = [0]
+            self.bb_equil = 'no'
+            logger.debug("No backbone dihedral restraints")
+        else:
+            if isinstance(self.bb_start, int):
+                self.bb_start = [self.bb_start]
+            if isinstance(self.bb_end, int):
+                self.bb_end = [self.bb_end]
+        self.neut = self.neutralize_only
+
+        match self.fe_type:
+            case 'custom':
+                if self.dec_method is None:
+                    logger.error('Wrong input! Please choose a decoupling method' +
+                    '(dd, sdr or exchange) when using the custom option.')
+                    sys.exit(1)
+            case 'rest':
+                self.components = ['c', 'a', 'l', 't', 'r']
+                self.dec_method = 'dd'
+            case 'sdr':
+                self.components = ['e', 'v']
+                self.dec_method = 'sdr'
+            case 'dd':
+                self.components = ['e', 'v', 'f', 'w']
+                self.dec_method = 'dd'
+            case 'sdr-rest':
+                self.components = ['c', 'a', 'l', 't', 'r', 'e', 'v']
+                self.dec_method = 'sdr'
+            case 'express':
+                self.components = ['m', 'n', 'e', 'v']
+                self.dec_method = 'sdr'
+            case 'dd-rest':
+                self.components = ['c', 'a', 'l', 't', 'r', 'e', 'v', 'f', 'w']
+                self.dec_method = 'dd'
+            case 'relative':
+                self.components =  ['x', 'e', 'n', 'm']
+                self.dec_method = 'exchange'
+
+        if (self.dec_method == 'sdr' or self.dec_method == 'exchange') and self.sdr_dist == 0:
+            logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
+            sys.exit(1)
+
+        logger.info(f'------------------ Simulation Configuration ------------------')
+        logger.info(f'Software: {self.software}')
+        logger.info(f'Receptor/complex structures: {self.celp_st}')
+        logger.info(f'Ligand names: {self.mols}')
+        logger.info(f'Cobinders names: {self.other_mol}')
+        logger.info(f'Lipid names: {self.lipid_mol}')
+        logger.info(f'--------------------------------------------------------------')
+        logger.info(f'Finished initializing simulation configuration.')
+
 
     @validator("calc_type")
     def validate_calc_type(cls, value):
@@ -210,12 +326,16 @@ class SimulationConfig(BaseModel):
 
     @validator("fe_type")
     def validate_fe_type(cls, value):
-        valid_types = {"rest", "dd", "sdr", "sdr-rest", "express", "relative", "custom"}
+        valid_types = {"rest", "dd",
+                       "sdr", "sdr-rest",
+                       "dd-rest",
+                       "express", "relative",
+                       "custom"}
         if value not in valid_types:
             raise ValueError(f"Invalid fe_type: {value}. Must be one of {valid_types}.")
         return value
 
-    @validator("retain_lig_prot", "rec_bb")
+    @validator("retain_lig_prot", "rec_bb", 'neutralize_only', 'hmr', 'bb_equil')
     def validate_yes_no(cls, value):
         if value.lower() not in {"yes", "no"}:
             raise ValueError(f"Invalid value: {value}. Must be 'yes' or 'no'.")
@@ -256,6 +376,25 @@ def parse_input_file(input_file: str) -> dict:
                     parameters[key] = value
                 else:
                     raise ValueError(f"Invalid line: {line}")
+                    
+    # merge FEP_COMPONENTS into a dict
+    n_steps_dict = {}
+    n_iter_dict = {}
+
+    for comp in FEP_COMPONENTS:
+        for ind in ['1', '2']:
+            key = f'{comp}_steps{ind}'
+            if key in parameters:
+                n_steps_dict[key] = int(parameters[key])
+            else:
+                n_steps_dict[key] = 0
+            key = f'{comp}_itera{ind}'
+            if key in parameters:
+                n_iter_dict[key] = int(parameters[key])
+            else:
+                n_iter_dict[key] = 0
+    parameters['n_steps_dict'] = n_steps_dict
+    parameters['n_iter_dict'] = n_iter_dict
 
     return parameters
 
