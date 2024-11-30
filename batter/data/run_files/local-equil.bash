@@ -20,7 +20,7 @@ check_sim_failure() {
 }
 
 # Minimization
-pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
+pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
 check_sim_failure "Minimization"
 
 # Heating steps

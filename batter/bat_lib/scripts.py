@@ -151,6 +151,5 @@ def num_to_mask(pdb_file):
           atomname = lines[i][12:16].strip() 
           resid = lines[i][22:26].strip() 
           number = lines[i][6:11].strip()  
-          chain = lines[i][21:22].strip()
-          atm_num.append(':'+resid+'@'+atomname+'/'+chain)
+          atm_num.append(':'+resid+'@'+atomname)
     return atm_num

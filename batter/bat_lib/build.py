@@ -149,7 +149,6 @@ def build_equil(pose, celp_st, mol,
             .query('old_chain == @protein_chain')
     )
     # check not empty
-
     if h1_entry.empty or h2_entry.empty or h3_entry.empty:
         raise ValueError('Could not find the receptor anchors in the protein sequence')
     
@@ -646,13 +645,20 @@ def build_dec(fwin, hmr, mol,
         for file in glob.glob('../../../equil/%s/vac*' % pose.lower()):
             shutil.copy(file, './')
         run_with_log(cpptraj + ' -p full.prmtop -y md%02d.rst7 -x rec_file.pdb' % fwin)
+        renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
+                header=None, names=['old_resname',
+                                    'old_chain',
+                                    'old_resid',
+                                    'new_resname', 'new_resid'])
+        u = mda.Universe('rec_file.pdb')
+
+        for residue in u.select_atoms('protein').residues:
+            resid_str = residue.resid
+            residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
+
         if lipid_mol:
 
-            u = mda.Universe('rec_file.pdb')
             # fix lipid resids
-            renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
-                header=None, names=['old_resname', 'old_resid',
-                                    'new_resname', 'new_resid'])
             revised_resids = []
             resid_counter = 1
             prev_resid = 0
@@ -673,7 +679,7 @@ def build_dec(fwin, hmr, mol,
             final_resids[len(revised_resids):] = np.arange(next_resnum, total_residues - len(revised_resids) + next_resnum)
             u.atoms.residues.resids = final_resids
 
-            u.atoms.write('rec_file.pdb')
+        u.atoms.write('rec_file.pdb')
 
         # Used for retrieving the box size
         shutil.copy('rec_file.pdb', 'equil-reference.pdb')
@@ -1254,7 +1260,7 @@ def build_dec(fwin, hmr, mol,
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
                     oth_rsnmlist.append(molecule)
-                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom)
+                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
                     oth_chainlist.append(lines[i][21].strip())
                     oth_atom += 1
                     total_atom += 1
@@ -1308,16 +1314,22 @@ def build_dec(fwin, hmr, mol,
 
         # Positions for the dummy atoms
         for i in range(0, dum_atom):
-            build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                             ('ATOM', i+1, atom_namelist[i], resname_list[i], resid_list[i]))
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                             ('ATOM', i+1, atom_namelist[i], resname_list[i], chain_list[i], resid_list[i]))
             build_file.write('%8.3f%8.3f%8.3f' % (float(coords[i][0]), float(coords[i][1]), float(coords[i][2])))
             build_file.write('%6.2f%6.2f\n' % (0, 0))
             build_file.write('TER\n')
 
+        chain_tmp = 'None'
         # Positions of the receptor atoms
         for i in range(dum_atom, dum_atom + recep_atom):
-            build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                             ('ATOM', i+1, atom_namelist[i], resname_list[i], resid_list[i]))
+            if chain_list[i] != chain_tmp:
+                if resname_list[i] not in other_mol and resname_list[i] != 'WAT':
+                    build_file.write('TER\n')
+            chain_tmp = chain_list[i]
+
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                             ('ATOM', i+1, atom_namelist[i], resname_list[i], chain_list[i], resid_list[i]))
             build_file.write('%8.3f%8.3f%8.3f' % (float(coords[i][0]), float(coords[i][1]), float(coords[i][2])))
 
             build_file.write('%6.2f%6.2f\n' % (0, 0))
@@ -1328,14 +1340,14 @@ def build_dec(fwin, hmr, mol,
         # Positions of the ligand atoms
         for i in range(dum_atom + recep_atom, dum_atom + recep_atom + lig_atom):
             if comp == 'n':
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, atom_namelist[i], mol, float(lig_resid)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, atom_namelist[i], mol, chain_list[i], float(lig_resid)))
                 build_file.write('%8.3f%8.3f%8.3f' %
                                  (float(coords[i][0]), float(coords[i][1]), float(coords[i][2]+sdr_dist)))
                 build_file.write('%6.2f%6.2f\n' % (0, 0))
             elif comp != 'r':
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, atom_namelist[i], mol, float(lig_resid)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, atom_namelist[i], mol, chain_list[i], float(lig_resid)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(coords[i][0]), float(coords[i][1]), float(coords[i][2])))
                 build_file.write('%6.2f%6.2f\n' % (0, 0))
 
@@ -1347,8 +1359,8 @@ def build_dec(fwin, hmr, mol,
         build_file = open('build.pdb', 'a')
         if (comp == 'e'):
             for i in range(0, lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, lig_atomlist[i], mol, float(lig_resid+1)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid+1)))
                 build_file.write('%8.3f%8.3f%8.3f' %
                                  (float(lig_coords[i][0]), float(lig_coords[i][1]), float(lig_coords[i][2])))
 
@@ -1357,16 +1369,16 @@ def build_dec(fwin, hmr, mol,
 
             if dec_method == 'sdr' or dec_method == 'exchange':
                 for i in range(0, lig_atom):
-                    build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                     ('ATOM', i+1, lig_atomlist[i], mol, float(lig_resid+2)))
+                    build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                     ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid+2)))
                     build_file.write('%8.3f%8.3f%8.3f' % (float(lig_coords[i][0]), float(
                         lig_coords[i][1]), float(lig_coords[i][2]+sdr_dist)))
 
                     build_file.write('%6.2f%6.2f\n' % (0, 0))
                 build_file.write('TER\n')
                 for i in range(0, lig_atom):
-                    build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                     ('ATOM', i+1, lig_atomlist[i], mol, float(lig_resid+3)))
+                    build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                     ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid+3)))
                     build_file.write('%8.3f%8.3f%8.3f' % (float(lig_coords[i][0]), float(
                         lig_coords[i][1]), float(lig_coords[i][2]+sdr_dist)))
 
@@ -1374,8 +1386,8 @@ def build_dec(fwin, hmr, mol,
                 build_file.write('TER\n')
         if comp == 'v' and (dec_method == 'sdr' or dec_method == 'exchange'):
             for i in range(0, lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, lig_atomlist[i], mol, float(lig_resid + 1)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid + 1)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(lig_coords[i][0]), float(
                     lig_coords[i][1]), float(lig_coords[i][2]+sdr_dist)))
 
@@ -1385,24 +1397,24 @@ def build_dec(fwin, hmr, mol,
         # Other ligands for relative calculations
         if (comp == 'x'):
             for i in range(0, ref_lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, float(lig_resid + 1)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, lig_chainlist[i], float(lig_resid + 1)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(ref_lig_coords[i][0]), float(
                     ref_lig_coords[i][1]), float(ref_lig_coords[i][2]+sdr_dist)))
 
                 build_file.write('%6.2f%6.2f\n' % (0, 0))
             build_file.write('TER\n')
             for i in range(0, ref_lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, float(lig_resid + 2)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, lig_chainlist[i], float(lig_resid + 2)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(ref_lig_coords[i][0]), float(
                     ref_lig_coords[i][1]), float(ref_lig_coords[i][2])))
 
                 build_file.write('%6.2f%6.2f\n' % (0, 0))
             build_file.write('TER\n')
             for i in range(0, lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, lig_atomlist[i], mol, float(lig_resid+3)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid+3)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(lig_coords[i][0]), float(
                     lig_coords[i][1]), float(lig_coords[i][2]+sdr_dist)))
 
@@ -1414,8 +1426,8 @@ def build_dec(fwin, hmr, mol,
             if oth_rsidlist[i] != oth_tmp:
                 build_file.write('TER\n')
             oth_tmp = oth_rsidlist[i]
-            build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                             ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_rsidlist[i]))
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                             ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_chainlist[i], oth_rsidlist[i]))
             build_file.write('%8.3f%8.3f%8.3f' %
                              (float(oth_coords[i][0]), float(oth_coords[i][1]), float(oth_coords[i][2])))
 
@@ -1442,8 +1454,8 @@ def build_dec(fwin, hmr, mol,
             # Create system with one or two ligands
             build_file = open('build.pdb', 'w')
             for i in range(0, lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                 ('ATOM', i+1, lig_atomlist[i], mol, float(lig_resid)))
+                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                 ('ATOM', i+1, lig_atomlist[i], mol, chain_list[i], float(lig_resid)))
                 build_file.write('%8.3f%8.3f%8.3f' %
                                  (float(lig_coords[i][0]), float(lig_coords[i][1]), float(lig_coords[i][2])))
 
@@ -1451,8 +1463,8 @@ def build_dec(fwin, hmr, mol,
             build_file.write('TER\n')
             if comp == 'f':
                 for i in range(0, lig_atom):
-                    build_file.write('%-4s  %5s %-4s %3s  %4.0f    ' %
-                                     ('ATOM', i+1, lig_atomlist[i], mol, float(lig_resid + 1)))
+                    build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                     ('ATOM', i+1, lig_atomlist[i], mol, chain_list[i], float(lig_resid + 1)))
                     build_file.write('%8.3f%8.3f%8.3f' %
                                      (float(lig_coords[i][0]), float(lig_coords[i][1]), float(lig_coords[i][2])))
 
@@ -1853,7 +1865,13 @@ def create_box(comp, hmr,
     
     renum_data['revised_resid'] = revised_resids
 
-    u = mda.Universe('full_pre.pdb')
+    try:
+        u = mda.Universe('full_pre.pdb')
+    except ValueError('could not convert'):
+        raise ValueError('The system is toooo big! '
+                         'tleap write incorrect PDB when '
+                         'residue exceed 100,000.'
+                         'I am not sure how to fix it yet.')
 
     u_orig = mda.Universe('equil-reference.pdb')
 
