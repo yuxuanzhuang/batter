@@ -215,7 +215,7 @@ class System:
         logger.debug(f'Number of water molecules: {water_ag.n_residues}')
         
         # modify the chaininfo to be unique for each segment
-        current_chain = 65
+        current_chain = 66
         u_prot.atoms.tempfactors = 0
         for segment in u_sys.select_atoms('protein').segments:
             resid_seg = segment.residues.resids
@@ -227,6 +227,8 @@ class System:
         
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(f'segid {self.receptor_segment} and protein')
+            protein_anchor.atoms.chainIDs = 'A'
+            protein_anchor.atoms.tempfactors = 65
             other_protein = u_prot.select_atoms(f'not segid {self.receptor_segment} and protein')
             u_merged = mda.Merge(protein_anchor,
                                  other_protein,

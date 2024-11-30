@@ -13,7 +13,7 @@ import numpy as np
 #from batter.utils.utils import run_with_log, antechamber, tleap, cpptraj
 #from batter.batter import System
 from batter.input_process import get_configure_from_file
-from batter.lib import build, setup, analysis, scripts
+from batter.bat_lib import build, setup, analysis, scripts
 from batter.data import run_files, openmm_files
 import MDAnalysis as mda
 # ignore UserWarning from MDAnalysis
