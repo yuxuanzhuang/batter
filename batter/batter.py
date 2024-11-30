@@ -61,6 +61,7 @@ class System:
                  ligand_param: str = 'gaff2',
                  lipid_mol: List[str] = [],
                  lipid_ff: str = 'lipid21',
+                 overwrite: bool = False,
                  ):
         """
         Initialize the FEPSystem class.
@@ -104,6 +105,8 @@ class System:
             Default is an empty list.
         lipid_ff : str, optional
             Force field for lipid atoms. Default is 'lipid21'.
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
         """
         self.stage = stage
         self.system_name = system_name
@@ -112,6 +115,7 @@ class System:
         self.system_dimensions = system_dimensions
         self.ligand_path = ligand_path
         self.ligand_poses = ligand_poses
+        self.overwrite = overwrite
 
         # check input existence
         if not os.path.exists(protein_input):
@@ -126,13 +130,13 @@ class System:
         if not os.path.exists(self.output_dir):
             if self.stage == 'equil':
                 os.makedirs(self.output_dir)
-                os.makedirs(f"{self.output_dir}/all-poses", exist_ok=True)
-                os.makedirs(f"{self.output_dir}/build_files", exist_ok=True)
-
             else:
                 raise FileNotFoundError(
                     f"Output directory not found: {self.output_dir}"
                     "Please run the equilibration stage first")
+
+        os.makedirs(f"{self.output_dir}/all-poses", exist_ok=True)
+        os.makedirs(f"{self.output_dir}/build_files", exist_ok=True)
 
         os.makedirs(f"{self.stage_path}", exist_ok=True)
         os.makedirs(f"{self.stage_path}/ff", exist_ok=True)
@@ -161,10 +165,22 @@ class System:
 
         if self.stage == 'equil':
             # Process the system
-            #self._process_system()
+            overwite_system = self.overwrite
+            if not os.path.exists(f"{self.output_dir}/all-poses/{self.system_name}_docked.pdb"):
+                overwite_system = True
+            if not os.path.exists(f"{self.output_dir}/build_files/reference.pdb"):
+                overwite_system = True
+            if overwite_system:
+                self._process_system()
             # Process ligand and prepare the parameters
-            self._process_ligand()
+            overwite_ligand = self.overwrite
+            if not os.path.exists(f"{self.output_dir}/ff/ligand.lib"):
+                overwite_ligand = True
+            if overwite_ligand:
+                self._process_ligand()
+            
             self._prepare_ligand_poses()
+
             # Prepare the system
             self._prepare_system()
 
@@ -205,7 +221,7 @@ class System:
             raise ValueError(f"Invalid system_dimensions: {self.system_dimensions}")
         u_merged.dimensions = box_dim
         # save as *_docked.pdb that matched `input-dd-amber.in`
-        u_merged.atoms.write(f"{self.output_dir}/all-poses/system_docked.pdb")
+        u_merged.atoms.write(f"{self.output_dir}/all-poses/{self.system_name}_docked.pdb")
         protein_ref = u_sys.select_atoms('protein')
         protein_ref.write(f"{self.output_dir}/build_files/reference.pdb")
 
@@ -217,16 +233,19 @@ class System:
 
         # Ensure the ligand file is in PDB format
         logger.info(f'Processing ligand file: {self.ligand_path}')
-        if not self.ligand_path.endswith('.pdb'):
-            converted_path = f"{self.output_dir}/ligand.pdb"
-            self.ligand.atoms.write(converted_path)
-            self.ligand_path = converted_path
-            self.ligand = mda.Universe(self.ligand_path)
+        
+        ligand = mda.Universe(self.ligand_path)
+        converted_path = f"{self.output_dir}/ligand.pdb"
+        ligand.atoms.write(converted_path)
+        self.ligand_path = converted_path
 
         # retain hydrogens from the ligand
         if self.retain_lig_h:
             # convert mol2 to get charge
-            shutil.copy(self.ligand_path, f"{self.output_dir}/ligand.pdb")
+            try:
+                shutil.copy(self.ligand_path, f"{self.output_dir}/ligand.pdb")
+            except shutil.SameFileError:
+                pass
             run_with_log(f"{obabel} -i pdb {self.ligand_path} -o mol2 -O {self.output_dir}/ligand.mol2")
 
         else:
@@ -241,9 +260,9 @@ class System:
         self.ligand_path = f"{self.output_dir}/ligand.pdb"
         self.ligand = mda.Universe(self.ligand_path)
         self.ligand_mol2_path = f"{self.output_dir}/ligand.mol2"
-        self.ligand_mol2 = mda.Universe(self.ligand_mol2_path)
+        ligand_mol2 = mda.Universe(self.ligand_mol2_path)
 
-        self.ligand_charge = np.round(np.sum(self.ligand_mol2.atoms.charges))
+        self.ligand_charge = np.round(np.sum(ligand_mol2.atoms.charges))
         logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
         logger.info(f'The net charge of the ligand is {self.ligand_charge}')
 
@@ -254,10 +273,12 @@ class System:
         """Prepare ligand parameters for the system"""
         # Get ligand parameters
         logger.info('Preparing ligand parameters')
-        antechamber_command = f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_param} -nc {self.ligand_charge}'
+        # antechamber_command = f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_param} -nc {self.ligand_charge}'
+        antechamber_command = f'{antechamber} -i {self.ligand_mol2_path} -fi mol2 -o {self.output_dir}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_param} -nc {self.ligand_charge}'
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(antechamber_command, working_dir=tmpdir)
         shutil.copy(f"{self.output_dir}/ligand_ante.mol2", f"{self.stage_path}/ff/ligand.mol2")
+        self.ligand_mol2_path = f"{self.stage_path}/ff/ligand.mol2"
 
         if self.ligand_param == 'gaff':
             run_with_log(f'{parmchk2} -i {self.output_dir}/ligand_ante.mol2 -f mol2 -o {self.output_dir}/ligand.frcmod -s 1')
@@ -266,7 +287,9 @@ class System:
         shutil.copy(f"{self.output_dir}/ligand.frcmod", f"{self.stage_path}/ff/ligand.frcmod")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
+        #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
+            run_with_log(f'{antechamber} -i {self.ligand_mol2_path} -fi mol2 -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
+
 
         # get lib file
         tleap_script = f"""
@@ -298,16 +321,19 @@ class System:
             if not pose.endswith('.pdb'):
                 # try to convert the pose to pdb
                 u = mda.Universe(pose)
-                u.atoms.write(f"{self.output_dir}/all_poses/pose{i}.pdb")
-                pose = f"{self.output_dir}/all_poses/pose{i}.pdb"
+                u.atoms.write(f"{self.output_dir}/all-poses/pose{i}.pdb")
+                pose = f"{self.output_dir}/all-poses/pose{i}.pdb"
             if not self.retain_lig_h:
-                noh_path = f"{self.output_dir}/all_poses/pose{i}_noh.pdb"
+                noh_path = f"{self.output_dir}/all-poses/pose{i}_noh.pdb"
                 run_with_log(f"{obabel} -i pdb {pose} -o pdb -O {noh_path} -d")
 
                 # Add hydrogens based on the specified pH
                 run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {pose} -p {self.ligand_ph:.2f}")
 
-            new_pose_paths.append(pose)
+            if not os.path.exists(f"{self.output_dir}/all-poses/pose{i}.pdb"):
+                shutil.copy(pose, f"{self.output_dir}/all-poses/pose{i}.pdb") 
+
+            new_pose_paths.append(f"{self.output_dir}/all-poses/pose{i}.pdb")
         
         self.ligand_poses = new_pose_paths
 

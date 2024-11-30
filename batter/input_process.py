@@ -21,7 +21,7 @@ class SimulationConfig(BaseModel):
     software: str = Field("amber", info={'description': "Software to use (amber, openmm)"})
     # Calculation definitions
     calc_type: str = Field(..., info={'description': "Calculation type (dock, rank, crystal)"})
-    celpp_receptor: str = Field("", info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
+    celpp_receptor: Union[List[str], str] = Field(..., info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
     poses_list: List[str] = Field(default_factory=list, info={'description': "List of poses"})
 
     # Molecular definitions
@@ -149,21 +149,11 @@ class SimulationConfig(BaseModel):
     H2: str = Field("", info={'description': "H2 (p2)"})
     H3: str = Field("", info={'description': "H3 (p3)"})
     rest: List[float] = Field(default_factory=list, info={'description': "Rest definition"})
-    celp_st: List[str] = Field(default_factory=list, info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
+    celp_st: Union[List[str], str] = Field(default_factory=list, info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
     neut: str = Field("", info={'description': "Neutralize"})
     
     # Number of simulations, 1 equilibrium and 1 production
     apr_sim: int = Field(2, info={'description': "Number of simulations"})
-
-    @property
-    def poses_def(self) -> List:
-        match self.calc_type:
-            case "dock":
-                return [f'pose{pose}' for pose in self.poses_list]
-            case "rank":
-                return self.ligand_list
-            case "crystal":
-                return self.celp_st
 
     @model_validator(mode="after")
     def initialize_ti(self):
@@ -191,9 +181,16 @@ class SimulationConfig(BaseModel):
         self.rng = len(self.release_eq) - 1
         self.ion_def = [self.cation, self.anion, self.ion_conc]
         
+        if not isinstance(self.celpp_receptor, list):
+            self.celp_st = self.celpp_receptor.strip('\'\"-,.:;#()][').split(',')
+        else:
+            self.celp_st = self.celpp_receptor
+            
         if self.calc_type == "dock":
+            self.celp_st = self.celp_st[0]
             self.poses_def = [f'pose{pose}' for pose in self.poses_list]
         elif self.calc_type == "rank":
+            self.celp_st = self.celp_st[0]
             self.poses_def = self.ligand_list
         elif self.calc_type == "crystal":
             self.poses_def = self.celp_st
@@ -205,26 +202,6 @@ class SimulationConfig(BaseModel):
             self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
 
         self.components = self.components
-
-        # Obtain all ligand names
-        poses_def = self.poses_def
-        if self.calc_type != 'crystal':
-            mols = []
-            for i in range(0, len(poses_def)):
-                with open('./all-poses/%s.pdb' % poses_def[i].lower()) as f_in:
-                    lines = (line.rstrip() for line in f_in)
-                    lines = list(line for line in lines if line)  # Non-blank lines in a list
-                    for j in range(0, len(lines)):
-                        if (lines[j][0:6].strip() == 'ATOM') or (lines[j][0:6].strip() == 'HETATM'):
-                            lig_name = (lines[j][17:20].strip())
-                            mols.append(lig_name)
-                            break
-
-        for i in range(0, len(mols)):
-            if mols[i] in self.other_mol:
-                logger.error('Same residue name ('+mols[i]+') found in ligand name and cobinders, please change one of them')
-                sys.exit(1)
-        self.mols = mols
 
         self.H1 = self.p1
         self.H2 = self.p2
@@ -240,8 +217,6 @@ class SimulationConfig(BaseModel):
             self.lig_com_force
             ]
 
-        self.celp_st = self.celpp_receptor
-
         num_waters = self.num_waters
         buffer_z = self.buffer_z
 
@@ -252,16 +227,17 @@ class SimulationConfig(BaseModel):
             raise ValueError("Cannot specify both 'num_waters' and 'buffer_z' (non-zero values).")
         
         lipid_mol = self.lipid_mol
-        logger.info(f'Converting lipid input: {lipid_mol}')
-        charmm_amber_lipid_df = pd.read_csv(charmmlipid2amber, header=1, sep=',')
+        if lipid_mol:
+            logger.info(f'Converting lipid input: {lipid_mol}')
+            charmm_amber_lipid_df = pd.read_csv(charmmlipid2amber, header=1, sep=',')
 
-        amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
-        amber_lipid_mol = amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
-        
-        # extend instead of replacing so that we can have both
-        lipid_mol.extend(amber_lipid_mol)
-        self.lipid_mol = lipid_mol
-        logger.info(f'New lipid_mol list: {self.lipid_mol}')
+            amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
+            amber_lipid_mol = amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
+            
+            # extend instead of replacing so that we can have both
+            lipid_mol.extend(amber_lipid_mol)
+            self.lipid_mol = lipid_mol
+            logger.info(f'New lipid_mol list: {self.lipid_mol}')
 
         if self.rec_bb == 'no':
             self.bb_start = [1]
@@ -307,14 +283,15 @@ class SimulationConfig(BaseModel):
             logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
             sys.exit(1)
 
-        logger.info(f'------------------ Simulation Configuration ------------------')
-        logger.info(f'Software: {self.software}')
-        logger.info(f'Receptor/complex structures: {self.celp_st}')
-        logger.info(f'Ligand names: {self.mols}')
-        logger.info(f'Cobinders names: {self.other_mol}')
-        logger.info(f'Lipid names: {self.lipid_mol}')
-        logger.info(f'--------------------------------------------------------------')
-        logger.info(f'Finished initializing simulation configuration.')
+
+        logger.debug(f'------------------ Simulation Configuration ------------------')
+        logger.debug(f'Software: {self.software}')
+        logger.debug(f'Receptor/complex structures: {self.celp_st}')
+        logger.debug(f'Ligand names: {self.mols}')
+        logger.debug(f'Cobinders names: {self.other_mol}')
+        logger.debug(f'Lipid names: {self.lipid_mol}')
+        logger.debug(f'--------------------------------------------------------------')
+        logger.debug(f'Finished initializing simulation configuration.')
 
 
     @validator("calc_type")
@@ -368,8 +345,14 @@ def parse_input_file(input_file: str) -> dict:
                     # if the value is a list, split it by commas
                     if '[' in value and ']' in value:
                         value = value.strip('\'\"-,.:;#()][')
+                        if key in ['poses_list', 'ligand_list', 'other_mol',
+                                   'celpp_receptor', 'ligand_name',
+                                   'bb_start', 'bb_end', 'lipid_mol']:
+                            split_sep = ','
+                        else:
+                            split_sep = None
                         try:
-                            value = [v.strip() for v in value.split()]
+                            value = [v.strip() for v in value.split(split_sep)]
                         except ValueError:
                             value = value
 

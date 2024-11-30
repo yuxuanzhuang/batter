@@ -23,7 +23,12 @@ requires-python = ">=3.8"
 dependencies = [
     "MDAnalysis",
     "loguru",
+    "pydantic",
+    "click",
 ]
+
+[project.scripts]
+batter = "batter.cli:main"
 
 # Update the urls once the hosting is set up.
 #[project.urls]
