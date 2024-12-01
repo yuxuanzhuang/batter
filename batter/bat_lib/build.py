@@ -55,9 +55,12 @@ def build_equil(pose, celp_st, mol,
     except OSError as e:
         logger.warning('Directory not copied. Error: %s' % e)
     os.chdir('build_files')
-    # if reference.pdb in ../../all-poses/
+
     if os.path.exists('../../all-poses/reference.pdb'):
         shutil.copy('../../all-poses/reference.pdb', './')
+    else:
+        # use itself as reference
+        shutil.copy('../../all-poses/%s_docked.pdb' % (celp_st), './reference.pdb')
 
     if calc_type == 'dock':
         shutil.copy('../../all-poses/%s_docked.pdb' % (celp_st), './rec_file.pdb')
@@ -148,8 +151,25 @@ def build_equil(pose, celp_st, mol,
             .query('old_resid == @h3_resid')
             .query('old_chain == @protein_chain')
     )
+    if h1_entry.empty or h2_entry.empty or h3_entry.empty:
+        logger.warning('Receptor is not set as chain A; '
+                       'trying to fetch the first residue '
+                       'from the protein and it may be wrong.')
+        h1_entry = (renum_data
+                .query('old_resid == @h1_resid')
+        )
+        h2_entry = (renum_data
+                .query('old_resid == @h2_resid')
+        )
+        h3_entry = (renum_data
+                .query('old_resid == @h3_resid')
+        )
     # check not empty
     if h1_entry.empty or h2_entry.empty or h3_entry.empty:
+        renum_data.to_csv('protein_renum_err.txt', sep='\t', index=False)  
+        logger.error('Could not find the receptor anchors in the protein sequence')
+        logger.error('Please check the residue numbering in the receptor file')
+        logger.error(f'The renum is stored in {os.getcwd()}/protein_renum_err.txt')
         raise ValueError('Could not find the receptor anchors in the protein sequence')
     
     p1_resid = h1_entry['new_resid'].values[0]
@@ -161,7 +181,7 @@ def build_equil(pose, celp_st, mol,
     P2 = f':{p2_resid}@{h2_atom}'
     P3 = f':{p3_resid}@{h3_atom}'
 
-    logger.info('Receptor anchors:')
+    logger.debug('Receptor anchors:')
     logger.info(f'P1: {P1}')
     logger.info(f'P2: {P2}')
     logger.info(f'P3: {P3}')

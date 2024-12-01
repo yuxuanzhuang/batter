@@ -10,7 +10,7 @@ import numpy as np
 #from batter.batter import System
 from batter.input_process import get_configure_from_file
 from batter.bat_lib import build, setup, analysis, scripts
-from batter.data import run_files, openmm_files
+from batter.data import run_files, openmm_files, frontier_files
 import MDAnalysis as mda
 # ignore UserWarning from MDAnalysis
 import warnings
@@ -35,7 +35,10 @@ import click
               help='Path to the input file.')
 @click.option('-s', '--stage',
               required=True,
-              type=click.Choice(['equil', 'fe', 'analysis'],
+              type=click.Choice([
+                    'equil', 'fe', 'analysis',
+                    'frontier'
+              ],
                     case_sensitive=False),
               help='Simulation stage to execute.')
 @click.option('-w', '--work-dir',
@@ -140,6 +143,13 @@ def batpy(input_file, stage, work_dir, pose_dir):
             sys.exit(1)
         click.echo("Performing analysis...")
         fe_analysis()
+    elif stage == "frontier":
+        # check fe exists
+        if not os.path.exists('fe'):
+            click.echo("Free energy folder does not exist.")
+            sys.exit(1)
+        click.echo("Generate frontier files...")
+        generate_frontier_files()
     else:
         click.echo(f"Invalid stage: {stage}")
         sys.exit(1)
@@ -587,7 +597,7 @@ def fe():
                                             receptor_ff, ligand_ff,
                                             dt, dec_method, other_mol, solv_shell,
                                             lipid_mol, lipid_ff)
-                        logger.info('Creating restraints for attaching...')
+                        logger.debug('Creating restraints for attaching...')
                         setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                                         molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
                         setup.sim_files(hmr, temperature, mol,
@@ -627,7 +637,7 @@ def fe():
             shutil.rmtree('./'+i+'')
     logger.info('Free energy systems have been created for all poses listed in the input file.')
     logger.info('now cd fe/pose0')
-    logger.info(f'cp {run_files}/run-express.bash')
+    logger.info(f'cp {run_files}/run-express.bash .')
     logger.info('and bash run-express.bash')
 
 def fe_analysis():
@@ -1218,3 +1228,107 @@ def openmm_fe_post():
     # if os.path.exists(dirpath) and os.path.isdir(dirpath):
     #   shutil.rmtree(dirpath)
         os.chdir('../')
+
+def generate_frontier_files(version=24):
+    """
+    Generate the frontier files for the system
+    to run them in a bundle.
+    
+    # Example simulations 
+    """
+    dec_method_folder_dict = {
+        'dd': 'dd',
+        'sdr': 'sdr',
+        'exchange': 'sdr',
+    }
+    component_2_folder_dict = {
+      'v': dec_method_folder_dict[dec_method],
+      'e': dec_method_folder_dict[dec_method],
+      'w': dec_method_folder_dict[dec_method],
+      'f': dec_method_folder_dict[dec_method],
+      'x': 'exchange_files',
+      'a': 'rest',
+      'l': 'rest',
+      't': 'rest',
+      'r': 'rest',
+      'c': 'rest',
+      'm': 'rest',
+      'n': 'rest',
+    }
+    sim_stages = {
+        'rest': ['mini', 'therm1', 'therm2', 'eqnpt0', 'eqnpt_00',
+                 'eqnpt_01', 'eqnpt_02', 'eqnpt_03', 'eqnpt_04',
+                 'mdin-00', 'mdin-01', 'mdin-02'
+        ],
+        'sdr': ['mini', 'heat', 'eqnpt0', 'eqnpt_00',
+                 'eqnpt_01', 'eqnpt_02', 'eqnpt_03', 'eqnpt_04',
+                 'mdin-00', 'mdin-01', 'mdin-02'
+        ],
+    }
+    # write a groupfile for each component
+    def write_2_pose(pose, components):
+        """
+        Write a groupfile for each component in the pose
+        """
+        pose_name = f'fe/{pose}/'
+        os.makedirs(pose_name, exist_ok=True)
+        for component in components:
+            folder_name = component_2_folder_dict[component]
+            sim_folder_temp = f'{pose_name}/{folder_name}/{component}'
+            if component in ['x', 'e', 'v', 'w', 'f']:
+                n_sims = len(lambdas)
+            else:
+                n_sims = len(attach_rest)
+
+            stage_previous = f'{sim_folder_temp}00/full.inpcrd'
+
+            for stage in sim_stages[component_2_folder_dict[component]]:
+                groupfile_name = f'{pose_name}/groupfiles/{component}_{stage}.groupfile'
+                with open(groupfile_name, 'w') as f:
+                    for i in range(n_sims):
+                        sim_folder_name = f'{sim_folder_temp}{i:02d}'
+                        prmtop = f'{sim_folder_name}/full.hmr.prmtop'
+                        inpcrd = f'{sim_folder_name}/full.inpcrd'
+                        f.write(f'# {component} {i} {stage}\n')
+                        f.write(
+                            f'-O -i {stage.split("_")[0]}.in -p {prmtop} -c {stage_previous} '
+                            f'-o {stage}.out -r {stage}.rst7 -x {stage}.nc '
+                            f'-ref {inpcrd}\n'
+                            )
+                    stage_previous = f'{sim_folder_name}/{stage}.rst7'
+
+    def write_sbatch_file(pose, components):
+
+        for component in components:
+            file_temp = f'{frontier_files}/fep_run.sbatch'
+            lines = open(file_temp).readlines()
+            lines.append(f'\n')
+            lines.append(f'# {pose} {component}\n')
+
+            sbatch_file = f'fe/fep_{component}_{pose}.sbatch'
+            groupfile_names = [
+                f'{pose}/groupfiles/{component}_{stage}.groupfile' for stage in sim_stages[component_2_folder_dict[component]]
+            ]
+            logger.info(f'groupfile_names: {groupfile_names}')
+            for g_name in groupfile_names:
+                if component in ['x', 'e', 'v', 'w', 'f']:
+                    n_sims = len(lambdas)
+                else:
+                    n_sims = len(attach_rest)
+                n_nodes = int(np.ceil(n_sims / 8))
+                lines.append(
+            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -rem 3 -ng {n_sims} -groupfile {g_name}\n'
+                )
+            lines = [line.replace('NUM_NODES', str(n_nodes)) for line in lines]
+            with open(sbatch_file, 'w') as f:
+                f.writelines(lines)
+        
+
+    for pose in poses_def:
+        write_2_pose(pose, components)
+        write_sbatch_file(pose, components)
+        logger.info(f'Generated groupfiles for {pose}')
+    # copy env.amber.24
+    env_amber_file = f'{frontier_files}/env.amber.{version}'
+    shutil.copy(env_amber_file, 'fe/env.amber')
+    logger.info('Generated groupfiles for all poses')

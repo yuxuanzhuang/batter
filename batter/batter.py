@@ -54,8 +54,8 @@ class System:
                  system_dimensions: Tuple[float, float, float],
                  ligand_path: str,
                  receptor_segment: str = None,
+                 protein_align: str = 'name CA and resid 60 to 250',
                  ligand_poses: List[str] = [],
-                 protein_anchor: str = 'CA',
                  output_dir: str = 'FEP',
                  retain_lig_h: bool = True,
                  ligand_ph: float = 7.4,
@@ -63,6 +63,7 @@ class System:
                  lipid_mol: List[str] = [],
                  lipid_ff: str = 'lipid21',
                  overwrite: bool = False,
+                 
                  ):
         """
         Initialize the FEPSystem class.
@@ -97,6 +98,9 @@ class System:
             is not the first protein entry of the system_input,
             it will cause problems when bat.py is trying to 
             get the protein anchor.
+        protein_align : str
+            The selection string for aligning the protein to the system.
+            Default is 'name CA and resid 60 to 250'.
         ligand_poses : List[str], optional
             List of ligand poses to be included in the simulations.
             If it is empty, the pose from ligand_path will be used.
@@ -124,6 +128,7 @@ class System:
         self.system_dimensions = system_dimensions
         self.ligand_path = ligand_path
         self.receptor_segment = receptor_segment
+        self.protein_align = protein_align
         self.ligand_poses = ligand_poses
         self.overwrite = overwrite
 
@@ -173,6 +178,7 @@ class System:
         if self.membrane_simulation:
             self._prepare_membrane()
 
+        self._get_alignment()
         if self.stage == 'equil':
             # Process the system
             overwite_system = self.overwrite
@@ -192,6 +198,37 @@ class System:
             # Prepare the system
             self._prepare_system()
 
+    def _get_alignment(self):
+        """
+        Prepare for the alignment of the protein and ligand to the system.
+        """
+        u_prot = mda.Universe(self.protein_input)
+        u_sys = mda.Universe(self.system_input, format='XPDB')
+
+        # get translation-rotation matrix
+        mobile = u_prot.select_atoms(self.protein_align).select_atoms('name CA')
+        ref = u_sys.select_atoms(self.protein_align).select_atoms('name CA')
+
+        mobile_com = mobile.center(weights=None)
+        ref_com = ref.center(weights=None)
+        mobile_coord = mobile.positions - mobile_com
+        ref_coord = ref.positions - ref_com
+
+        _ = align._fit_to(
+                mobile_coordinates=mobile_coord,
+                ref_coordinates=ref_coord,
+                mobile_atoms=u_prot.atoms,
+                mobile_com=mobile_com,
+                ref_com=ref_com)
+        
+        self.u_prot = u_prot
+        self.u_sys = u_sys
+        # store these for ligand alignment
+        self.mobile_com = mobile_com 
+        self.ref_com = ref_com
+        self.mobile_coord = mobile_coord
+        self.ref_coord = ref_coord
+
     def _process_system(self):
         """
         Generate the protein, reference, and lipid (if applicable) files.
@@ -200,15 +237,9 @@ class System:
         we want to align the protein to the system so the membrane is 
         properly positioned.
         """
-        u_prot = mda.Universe(self.protein_input)
-        u_sys = mda.Universe(self.system_input, format='XPDB')
-        rms_res = align.alignto(
-                u_prot,
-                u_sys,
-                select='name CA and resid 60 to 250',
-                match_atoms=False) 
-        logger.debug(f'Protein RMSD before: {rms_res[0]}')
-        logger.debug(f'Protein RMSD after: {rms_res[1]}')
+        u_prot = self.u_prot
+        u_sys = self.u_sys
+
         membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
         logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
         water_ag = u_sys.select_atoms('byres (resname TIP3 and around 20 (protein or resname POPC))')
@@ -260,46 +291,6 @@ class System:
         protein_ref = u_prot.select_atoms('protein')
         protein_ref.write(f"{self.output_dir}/all-poses/reference.pdb")
 
-    def _process_system_old(self):
-        """
-        for archiving
-        """
-        u_prot = mda.Universe(self.protein_input)
-        u_sys = mda.Universe(self.system_input, format='XPDB')
-        u_sys_aligned = mda.Universe(self.system_input, format = 'XPDB')
-        rms_res = align.alignto(u_sys_aligned,
-                u_prot,
-                select='name CA and resid 60 to 250',
-                match_atoms=False) 
-        logger.debug(f'Protein RMSD before: {rms_res[0]}')
-        logger.debug(f'Protein RMSD after: {rms_res[1]}')
-        membrane_ag = u_sys_aligned.select_atoms(f'resname {" ".join(self.lipid_mol)}')
-        logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
-        water_ag = u_sys_aligned.select_atoms('byres (resname TIP3 and around 20 (protein or resname POPC))')
-        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
-        u_merged = mda.Merge(u_prot.select_atoms('protein'), membrane_ag, water_ag)
-        water = u_merged.select_atoms('resname TIP3')
-        logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
-        logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
-        # set OW, OH2 to O
-        # Otherwise tleap cannot recognize the water molecules
-        water.select_atoms('name OW').names = 'O'
-        water.select_atoms('name OH2').names = 'O'
-
-        box_dim = np.zeros(6)
-        if len(self.system_dimensions) == 3:
-            box_dim[:3] = self.system_dimensions
-            box_dim[3:] = 90.0
-        elif len(self.system_dimensions) == 6:
-            box_dim = self.system_dimensions
-        else:
-            raise ValueError(f"Invalid system_dimensions: {self.system_dimensions}")
-        u_merged.dimensions = box_dim
-        # save as *_docked.pdb that matched `input-dd-amber.in`
-        u_merged.atoms.write(f"{self.output_dir}/all-poses/{self.system_name}_docked.pdb")
-        protein_ref = u_sys.select_atoms('protein')
-        protein_ref.write(f"{self.output_dir}/build_files/reference.pdb")
-
 
     def _process_ligand(self):
         """
@@ -341,7 +332,8 @@ class System:
         logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
         logger.info(f'The net charge of the ligand is {self.ligand_charge}')
 
-        self._prepare_ligand_parameters()
+        # For now, we don't need to prepare ligand parameters
+#        self._prepare_ligand_parameters()
 
 
     def _prepare_ligand_parameters(self):
@@ -393,11 +385,12 @@ class System:
         
         new_pose_paths = []
         for i, pose in enumerate(self.ligand_poses):
-            if not pose.endswith('.pdb'):
-                # try to convert the pose to pdb
-                u = mda.Universe(pose)
-                u.atoms.write(f"{self.output_dir}/all-poses/pose{i}.pdb")
-                pose = f"{self.output_dir}/all-poses/pose{i}.pdb"
+            # align to the system
+            u = mda.Universe(pose)
+            self._align_2_system(u.atoms)
+            u.atoms.write(f"{self.output_dir}/all-poses/pose{i}.pdb")
+            pose = f"{self.output_dir}/all-poses/pose{i}.pdb"
+
             if not self.retain_lig_h:
                 noh_path = f"{self.output_dir}/all-poses/pose{i}_noh.pdb"
                 run_with_log(f"{obabel} -i pdb {pose} -o pdb -O {noh_path} -d")
@@ -412,6 +405,13 @@ class System:
         
         self.ligand_poses = new_pose_paths
 
+    def _align_2_system(self, mobile_atoms):
+        _ = align._fit_to(
+            mobile_coordinates=self.mobile_coord,
+            ref_coordinates=self.ref_coord,
+            mobile_atoms=mobile_atoms,
+            mobile_com=self.mobile_com,
+            ref_com=self.ref_com)
 
     def _prepare_membrane(self):
         """

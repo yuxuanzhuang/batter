@@ -12,7 +12,7 @@
 # Main command goes here
 scontrol show job $SLURM_JOB_ID
 
-source $GROUP_HOME/software/amber20/amber20_src/setup_amber.sh
+source $GROUP_HOME/software/amber20/amber20_src/setup_amber.sh > /dev/null 2>&1
 
 # Define the maximum number of attempts
 MAX_ATTEMPTS=3
