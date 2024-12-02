@@ -381,7 +381,6 @@ def parse_input_file(input_file: str) -> dict:
 
     return parameters
 
-
 def get_configure_from_file(file_path: str) -> Dict:
     """
     Parse the input file, validate parameters, and return a simulation configuration.
@@ -390,43 +389,3 @@ def get_configure_from_file(file_path: str) -> Dict:
 
     config = SimulationConfig(**raw_params)
     return config
-
-
-def configure_simulation(config: SimulationConfig) -> Dict:
-    """
-    Validate and configure the simulation based on input parameters.
-    """
-    # Validate mutually exclusive inputs
-    if config.num_waters is None and config.buffer_z is None:
-        raise ValueError("Either 'num_waters' or 'buffer_z' must be provided.")
-    if config.num_waters and config.buffer_z:
-        raise ValueError("Cannot specify both 'num_waters' and 'buffer_z'.")
-
-    # Define components based on fe_type
-    components = []
-    if config.fe_type == "rest":
-        components = ["c", "a", "l", "t", "r"]
-    elif config.fe_type == "sdr":
-        components = ["e", "v"]
-    elif config.fe_type == "dd":
-        components = ["e", "v", "f", "w"]
-    elif config.fe_type == "custom":
-        if not config.dec_int:
-            raise ValueError("Custom fe_type requires a specified decoupling method.")
-    config.components = components
-
-    # Gaussian Quadrature for TI
-    if config.dec_int == "ti" and config.ti_points:
-        x, y = np.polynomial.legendre.leggauss(config.ti_points)
-        config.lambdas = [(xi + 1) / 2 for xi in x]
-
-    # Return the configuration dictionary
-    return {
-        "temperature": config.temperature,
-        "calc_type": config.calc_type,
-        "components": config.components,
-        "lambdas": config.lambdas,
-        "ion_def": config.ion_def,
-        "lipid_mol": config.lipid_mol,
-        "rec_bb": config.rec_bb,
-    }
