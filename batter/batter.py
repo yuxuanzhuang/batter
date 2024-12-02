@@ -2,6 +2,16 @@
 Provide the primary functions for preparing and processing FEP systems.
 """
 
+from .utils import (
+    run_with_log,
+    antechamber,
+    tleap,
+    cpptraj,
+    parmchk2,
+    charmmlipid2amber,
+    obabel,
+    vmd)
+import numpy as np
 import os
 import sys
 import shutil
@@ -22,19 +32,9 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # set info level for the logger
-#logger.remove()
-#logger.add(sys.stdout, level='INFO')
+# logger.remove()
+# logger.add(sys.stdout, level='INFO')
 
-import numpy as np
-from .utils import (
-        run_with_log,
-        antechamber,
-        tleap,
-        cpptraj,
-        parmchk2,
-        charmmlipid2amber,
-        obabel,
-        vmd)
 
 class System:
     """
@@ -63,7 +63,7 @@ class System:
                  lipid_mol: List[str] = [],
                  lipid_ff: str = 'lipid21',
                  overwrite: bool = False,
-                 
+
                  ):
         """
         Initialize the FEPSystem class.
@@ -155,24 +155,24 @@ class System:
 
         os.makedirs(f"{self.stage_path}", exist_ok=True)
         os.makedirs(f"{self.stage_path}/ff", exist_ok=True)
-            
+
         self.retain_lig_h = retain_lig_h
         self.ligand_ph = ligand_ph
         self.ligand_param = ligand_param
         if self.ligand_param not in ['gaff', 'gaff2']:
             raise ValueError(f"Invalid ligand_param: {self.ligand_param}"
-                                "Options are 'gaff' and 'gaff2'")
+                             "Options are 'gaff' and 'gaff2'")
         if self.ligand_param == 'gaff':
             raise NotImplementedError("gaff is not supported yet for dabble (maybe?)")
         self.lipid_mol = lipid_mol
         if not self.lipid_mol:
             self.membrane_simulation = False
         else:
-            self.membrane_simulation = True 
+            self.membrane_simulation = True
         self.lipid_ff = lipid_ff
         if self.lipid_ff != 'lipid21':
             raise ValueError(f"Invalid lipid_ff: {self.lipid_ff}"
-                                "Only 'lipid21' is available")
+                             "Only 'lipid21' is available")
 
         # Prepare the membrane parameters
         if self.membrane_simulation:
@@ -192,7 +192,7 @@ class System:
                 overwite_ligand = True
             if overwite_ligand:
                 self._process_ligand()
-            
+
             self._prepare_ligand_poses()
 
             # Prepare the system
@@ -215,16 +215,16 @@ class System:
         ref_coord = ref.positions - ref_com
 
         _ = align._fit_to(
-                mobile_coordinates=mobile_coord,
-                ref_coordinates=ref_coord,
-                mobile_atoms=u_prot.atoms,
-                mobile_com=mobile_com,
-                ref_com=ref_com)
-        
+            mobile_coordinates=mobile_coord,
+            ref_coordinates=ref_coord,
+            mobile_atoms=u_prot.atoms,
+            mobile_com=mobile_com,
+            ref_com=ref_com)
+
         self.u_prot = u_prot
         self.u_sys = u_sys
         # store these for ligand alignment
-        self.mobile_com = mobile_com 
+        self.mobile_com = mobile_com
         self.ref_com = ref_com
         self.mobile_coord = mobile_coord
         self.ref_coord = ref_coord
@@ -244,7 +244,7 @@ class System:
         logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
         water_ag = u_sys.select_atoms('byres (resname TIP3 and around 20 (protein or resname POPC))')
         logger.debug(f'Number of water molecules: {water_ag.n_residues}')
-        
+
         # modify the chaininfo to be unique for each segment
         current_chain = 66
         u_prot.atoms.tempfactors = 0
@@ -252,10 +252,11 @@ class System:
             resid_seg = segment.residues.resids
             resid_seq = " ".join([str(resid) for resid in resid_seg])
             chain_id = segment.atoms.chainIDs[0]
-            u_prot.select_atoms(f'resid {resid_seq} and chainID {chain_id} and protein').atoms.tempfactors = current_chain
+            u_prot.select_atoms(
+                f'resid {resid_seq} and chainID {chain_id} and protein').atoms.tempfactors = current_chain
             current_chain += 1
         u_prot.atoms.chainIDs = [chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors]
-        
+
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(f'segid {self.receptor_segment} and protein')
             protein_anchor.atoms.chainIDs = 'A'
@@ -267,8 +268,8 @@ class System:
                                  water_ag)
         else:
             u_merged = mda.Merge(u_prot.select_atoms('protein'),
-                                membrane_ag,
-                                water_ag)
+                                 membrane_ag,
+                                 water_ag)
         water = u_merged.select_atoms('resname TIP3')
         logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
         logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
@@ -291,7 +292,6 @@ class System:
         protein_ref = u_prot.select_atoms('protein')
         protein_ref.write(f"{self.output_dir}/all-poses/reference.pdb")
 
-
     def _process_ligand(self):
         """
         Process the ligand, including adding or removing hydrogens as needed.
@@ -299,7 +299,7 @@ class System:
 
         # Ensure the ligand file is in PDB format
         logger.info(f'Processing ligand file: {self.ligand_path}')
-        
+
         ligand = mda.Universe(self.ligand_path)
         converted_path = f"{self.output_dir}/ligand.pdb"
         ligand.atoms.write(converted_path)
@@ -335,7 +335,6 @@ class System:
         # For now, we don't need to prepare ligand parameters
 #        self._prepare_ligand_parameters()
 
-
     def _prepare_ligand_parameters(self):
         """Prepare ligand parameters for the system"""
         # Get ligand parameters
@@ -354,9 +353,9 @@ class System:
         shutil.copy(f"{self.output_dir}/ligand.frcmod", f"{self.stage_path}/ff/ligand.frcmod")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-        #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
-            run_with_log(f'{antechamber} -i {self.ligand_mol2_path} -fi mol2 -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
-
+            #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
+            run_with_log(
+                f'{antechamber} -i {self.ligand_mol2_path} -fi mol2 -o {self.output_dir}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
 
         # get lib file
         tleap_script = f"""
@@ -375,14 +374,13 @@ class System:
 
         logger.info('Ligand parameters prepared')
 
-
     def _prepare_ligand_poses(self):
         """
         Prepare ligand poses for the system.
         """
         if not self.ligand_poses:
             self.ligand_poses = [self.ligand_path]
-        
+
         new_pose_paths = []
         for i, pose in enumerate(self.ligand_poses):
             # align to the system
@@ -399,10 +397,10 @@ class System:
                 run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {pose} -p {self.ligand_ph:.2f}")
 
             if not os.path.exists(f"{self.output_dir}/all-poses/pose{i}.pdb"):
-                shutil.copy(pose, f"{self.output_dir}/all-poses/pose{i}.pdb") 
+                shutil.copy(pose, f"{self.output_dir}/all-poses/pose{i}.pdb")
 
             new_pose_paths.append(f"{self.output_dir}/all-poses/pose{i}.pdb")
-        
+
         self.ligand_poses = new_pose_paths
 
     def _align_2_system(self, mobile_atoms):
@@ -425,17 +423,17 @@ class System:
         # read charmmlipid2amber file
         charmm_csv_path = resources.files("batter") / "data/charmmlipid2amber.csv"
         charmm_amber_lipid_df = pd.read_csv(charmm_csv_path, header=1, sep=',')
-        
+
         lipid_mol = self.lipid_mol
         logger.info(f'Converting lipid input: {lipid_mol}')
         amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
         amber_lipid_mol = amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
-        
+
         # extend instead of replacing so that we can have both
         lipid_mol.extend(amber_lipid_mol)
         self.lipid_mol = lipid_mol
         logger.info(f'New lipid_mol list: {self.lipid_mol}')
-    
+
     def _prepare_system(self):
         """
         Prepare the system for the FEP simulation.
