@@ -5,7 +5,17 @@ batter
 [![codecov](https://codecov.io/gh/REPLACE_WITH_OWNER_ACCOUNT/batter/branch/main/graph/badge.svg)](https://codecov.io/gh/REPLACE_WITH_OWNER_ACCOUNT/batter/branch/main)
 
 
-A python package that set up FEP simulations with bat.py
+This is a refactored version of the `BAT.py` package rewritten in object-oriented style.
+
+The major changes are the support for calculating absolute binding free energy of membrane proteins, currently in AMBER+sdg+express mode.
+
+Probably a lot of the code is not working yet, but the structure is there.
+
+To install it, first clone the repository:
+    
+    ```bash
+    pip install -e .
+    ```
 
 ### Copyright
 
