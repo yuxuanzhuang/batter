@@ -68,6 +68,9 @@ def batpy(input_file, stage, work_dir, pose_dir):
     logger.info('Reading input file')
     for field, value in sim_config.model_dump().items():
         logger.info(f"{field}: {value}")
+        # It's a bit hacky
+        # The future plan is to pass sim_config directly
+        # and be more object-oriented.
         globals()[field] = value
 
     sim_config_input = sim_config.model_dump()
@@ -138,6 +141,7 @@ def batpy(input_file, stage, work_dir, pose_dir):
         if software == 'openmm':
             openmm_fe_post()
 
+        os.chdir('../')
         click.echo("Generate frontier files...")
         generate_frontier_files()
 
