@@ -3,10 +3,20 @@ channels:
 
   - defaults
 dependencies:
-    # Base depends
+  # Base depends
   - python
   - pip
-
+  - MDAnalysis
+  - MDAnalysisTests
+  - loguru
+  - pydantic
+  - click
+  ## Bat.py
+  - openbabel
+  - ambertools
+  - openmm
+  - openmmtools
+  
     # Testing
   - pytest
   - pytest-cov
