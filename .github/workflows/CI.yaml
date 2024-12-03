@@ -47,11 +47,11 @@ jobs:
           create-args: >- 
             python=${{ matrix.python-version }}
       
-      # reinstall libsqlite because vmd has an issue
-      # undefined symbol: sqlite3_trace_v2
+      # reinstall libsqlite because vmd has an unknown issue
+      # leading to error: undefined symbol: sqlite3_trace_v2
       - name: Reinstall libsqlite
         run: |
-          conda install libsqlite --force-reinstall
+          conda install -c blaze sqlite3 -y --force-reinstall --override-channels
 
       - name: Install package
         # conda setup requires this special shell
