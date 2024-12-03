@@ -17,8 +17,6 @@ dependencies:
   - openmm
   - openmmtools
   - vmd
-  # issue with vmd?
-  - libsqlite<3.46.0
   # Testing
   - pytest
   - pytest-cov
