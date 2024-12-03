@@ -257,6 +257,7 @@ class System:
             current_chain += 1
         u_prot.atoms.chainIDs = [chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors]
 
+
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(f'segid {self.receptor_segment} and protein')
             protein_anchor.atoms.chainIDs = 'A'

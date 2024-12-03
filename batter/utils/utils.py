@@ -8,7 +8,11 @@ cpptraj = 'cpptraj'
 parmchk2 = 'parmchk2'
 charmmlipid2amber = 'charmmlipid2amber.py'
 obabel = '/home/groups/rondror/software/openbabel/bin/obabel'
+if not os.path.exists(obabel):
+    obabel = 'obabel'
 vmd = '/home/groups/rondror/software/vmd-1.9.4/bin/vmd'
+if not os.path.exists(vmd):
+    vmd = 'vmd'
 
 def run_with_log(command, level='debug', working_dir=None,
                  error_match=None):
