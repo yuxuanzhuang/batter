@@ -16,7 +16,8 @@ dependencies:
   - ambertools
   - openmm
   - openmmtools
-  - vmd
+  # install vmd-python instead of vmd
+  - vmd-python
   # Testing
   - pytest
   - pytest-cov

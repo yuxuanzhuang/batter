@@ -24,7 +24,8 @@ jobs:
         # os: [macOS-latest, ubuntu-latest, windows-latest]
         os: [ubuntu-latest]
 
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11",]
+        # "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -47,12 +48,6 @@ jobs:
           create-args: >- 
             python=${{ matrix.python-version }}
       
-      # reinstall libsqlite because vmd has an unknown issue
-      # leading to error: undefined symbol: sqlite3_trace_v2
-      - name: Reinstall libsqlite
-        run: |
-          conda install -c blaze sqlite3 -y --force-reinstall --override-channels
-
       - name: Install package
         # conda setup requires this special shell
         shell: bash -l {0}

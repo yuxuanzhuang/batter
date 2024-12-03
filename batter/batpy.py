@@ -162,6 +162,8 @@ def batpy(input_file, stage, work_dir, pose_dir):
     else:
         click.echo(f"Invalid stage: {stage}")
         sys.exit(1)
+    click.echo(f"Output dir: {work_dir}")
+    click.echo("Happy FEP")
 
 
 def openmm_fe_pre():
