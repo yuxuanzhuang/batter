@@ -38,6 +38,7 @@ batter = "batter.cli:main"
 [project.optional-dependencies]
 test = [
   "pytest>=6.1.2",
+  "pytest-snapshot",
 ]
 
 [tool.setuptools]

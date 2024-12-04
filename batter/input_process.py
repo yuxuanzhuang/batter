@@ -4,7 +4,7 @@ from pydantic import (
     validator,
     model_validator,
     field_validator
-    )
+)
 
 from typing import List, Optional, Dict, Union
 import numpy as np
@@ -17,27 +17,31 @@ FEP_COMPONENTS = ['a', 'l', 't',
                   'r', 'e', 'v',
                   'f', 'w', 'x']
 
+
 class SimulationConfig(BaseModel):
     software: str = Field("amber", info={'description': "Software to use (amber, openmm)"})
     # Calculation definitions
     calc_type: str = Field(..., info={'description': "Calculation type (dock, rank, crystal)"})
-    celpp_receptor: Union[List[str], str] = Field(..., info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
+    celpp_receptor: Union[List[str], str] = Field(..., info={
+                                                  'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
     poses_list: List[str] = Field(default_factory=list, info={'description': "List of poses"})
 
     # Molecular definitions
-    ## Protein anchor
-    p1 : str = Field("", info={'description': "Protein anchor P1"})
-    p2 : str = Field("", info={'description': "Protein anchor P2"})
-    p3 : str = Field("", info={'description': "Protein anchor P3"})
+    # Protein anchor
+    p1: str = Field("", info={'description': "Protein anchor P1"})
+    p2: str = Field("", info={'description': "Protein anchor P2"})
+    p3: str = Field("", info={'description': "Protein anchor P3"})
 
     ligand_list: List[str] = Field(default_factory=list, info={'description': "List of ligands"})
     other_mol: List[str] = Field(default_factory=list, info={'description': "Other co-binding molecules"})
-    solv_shell: Optional[float] = Field(None, info={'description': "Water molecules around the protein that will be kept in the initial structure (in angstroms)"})
+    solv_shell: Optional[float] = Field(
+        None, info={'description': "Water molecules around the protein that will be kept in the initial structure (in angstroms)"})
     lipid_mol: List[str] = Field(default_factory=list, info={'description': "Lipid molecules resname"})
 
-    # Variables for setting up equilibrium and free energy calculations, also used on analysis 
+    # Variables for setting up equilibrium and free energy calculations, also used on analysis
     fe_type: str = Field(..., info={'description': "Free energy type (rest, dd, sdr, etc.)"})
-    components: List[str] = Field(default_factory=list, info={'description': "Used with custom option for fe_type. Do not include b component here."})
+    components: List[str] = Field(default_factory=list, info={
+                                  'description': "Used with custom option for fe_type. Do not include b component here."})
     release_eq: List[float] = Field(default_factory=list, info={'description': "Short attach/release weights"})
     attach_rest: List[float] = Field(default_factory=list, info={'description': "Short attach/release weights"})
     ti_points: Optional[int] = Field(0, info={'description': "# of TI points for Gaussian quadrature"})
@@ -45,28 +49,34 @@ class SimulationConfig(BaseModel):
     sdr_dist: Optional[float] = Field(0, info={'description': "SDR distance to place the ligand"})
     dec_method: Optional[str] = Field(None, info={'description': "Decoupling method, can be `dd` or `sdr`"})
 
-    # Additional variables for analysis 
+    # Additional variables for analysis
     dec_int: Optional[str] = Field("mbar", info={'description': "Decoupling integration method (mbar/ti)"})
     blocks: Optional[int] = Field(0, info={'description': "Number of blocks for MBAR"})
 
     # Force constants
-    rec_dihcf_force: float = Field(0.0, info={'description': "Protein conformational dihedral spring constant - kcal/mol/rad**2"})
-    rec_discf_force: float = Field(0.0, info={'description': "Protein conformational distance spring constant - kcal/mol/Angstrom**2"})
-    lig_distance_force: float = Field(0.0, info={'description': "Guest pulling distance spring constant kcal/mol/Angstrom**2"})
+    rec_dihcf_force: float = Field(
+        0.0, info={'description': "Protein conformational dihedral spring constant - kcal/mol/rad**2"})
+    rec_discf_force: float = Field(
+        0.0, info={'description': "Protein conformational distance spring constant - kcal/mol/Angstrom**2"})
+    lig_distance_force: float = Field(
+        0.0, info={'description': "Guest pulling distance spring constant kcal/mol/Angstrom**2"})
     lig_angle_force: float = Field(0.0, info={'description': "Guest angle/dihedral spring constant - kcal/mol/rad**2"})
-    lig_dihcf_force: float = Field(0.0, info={'description': "Guest conformational dihedral spring constant - kcal/mol/rad**2"})
+    lig_dihcf_force: float = Field(
+        0.0, info={'description': "Guest conformational dihedral spring constant - kcal/mol/rad**2"})
     rec_com_force: float = Field(0.0, info={'description': "Protein COM spring constant"})
     lig_com_force: float = Field(0.0, info={'description': "Guest COM spring constant for simultaneous decoupling"})
-    
+
     # Water model, number and box size in the x and y direction
     water_model: str = Field("TIP3P", info={'description': "Water model (SPCE, TIP4PEW, TIP3P, TIP3PF or OPC)"})
     num_waters: Optional[int] = Field(0, info={'description': "Number of water molecules in the system"})
-    buffer_x: Optional[float] = Field(0, info={'description': "Buffer size along X-axis; this will be omitted in membrane simulations"})
-    buffer_y: Optional[float] = Field(0, info={'description': "Buffer size along Y-axis; this will be omitted in membrane simulations"})
+    buffer_x: Optional[float] = Field(
+        0, info={'description': "Buffer size along X-axis; this will be omitted in membrane simulations"})
+    buffer_y: Optional[float] = Field(
+        0, info={'description': "Buffer size along Y-axis; this will be omitted in membrane simulations"})
     buffer_z: Optional[float] = Field(0, info={'description': "Buffer size along Z-axis"})
     lig_buffer: Optional[float] = Field(0, info={'description': "Buffer size around the ligand box"})
 
-    # Counterions 
+    # Counterions
     neutralize_only: str = Field("no", info={'description': "Neutralize only or also ionize (yes or no)"})
     cation: str = Field("Na+", info={'description': "Cation"})
     anion: str = Field("Cl-", info={'description': "Anion"})
@@ -110,16 +120,20 @@ class SimulationConfig(BaseModel):
     l1_range: Optional[float] = Field(None, info={'description': "search radius for the first ligand anchor L1 "})
     min_adis: Optional[float] = Field(None, info={'description': "minimum distance between anchors"})
     max_adis: Optional[float] = Field(None, info={'description': "maximum distance between anchors"})
-    dlambda: Optional[float] = Field(0.001, info={'description': "lambda width for splitting initial lambda into two close windows"})
+    dlambda: Optional[float] = Field(
+        0.001, info={'description': "lambda width for splitting initial lambda into two close windows"})
 
     # Amber options for production simulations
-    ntpr: str = Field('1000', info={'description': "print energy every ntpr steps to output file (controls DD output)"})
+    ntpr: str = Field(
+        '1000', info={'description': "print energy every ntpr steps to output file (controls DD output)"})
     ntwr: str = Field('10000', info={'description': "write the restart file every ntwr steps"})
     ntwe: str = Field('0', info={'description': "write the energy file every ntwe steps"})
     ntwx: str = Field('2500', info={'description': "write the trajectory file every ntwx steps"})
     cut: str = Field('9.0', info={'description': "nonbonded cutoff in Angstroms"})
-    gamma_ln: str = Field('1.0', info={'description': "collision frequency in ps^-1 for Langevin Dynamics (temperature control)"})
-    barostat: str = Field('2', info={'description': "type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)"})
+    gamma_ln: str = Field(
+        '1.0', info={'description': "collision frequency in ps^-1 for Langevin Dynamics (temperature control)"})
+    barostat: str = Field(
+        '2', info={'description': "type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)"})
     dt: str = Field('0.004', info={'description': "time step in ps"})
 
     # OpenMM specific options for production simulations
@@ -128,10 +142,11 @@ class SimulationConfig(BaseModel):
     # Force field options for receptor and ligand
     receptor_ff: str = Field("protein.ff14SB", info={'description': "Force field for the protein"})
     ligand_ff: str = Field("gaff2", info={'description': "Force field for the ligand"})
-    ligand_ph : float = Field(7.4, info={'description': "Ligand pH"})
+    ligand_ph: float = Field(7.4, info={'description': "Ligand pH"})
     retain_lig_prot: str = Field("no", info={'description': "Retain ligand protonation (yes/no)"})
     ligand_charge: Optional[int] = Field(None, info={'description': "Ligand charge"})
-    lipid_ff: str = Field("lipid21", info={'description': "Force field for the lipids; currently only lipid21 is supported"})
+    lipid_ff: str = Field(
+        "lipid21", info={'description': "Force field for the lipids; currently only lipid21 is supported"})
 
     # Internal usage
 
@@ -149,9 +164,10 @@ class SimulationConfig(BaseModel):
     H2: str = Field("", info={'description': "H2 (p2)"})
     H3: str = Field("", info={'description': "H3 (p3)"})
     rest: List[float] = Field(default_factory=list, info={'description': "Rest definition"})
-    celp_st: Union[List[str], str] = Field(default_factory=list, info={'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
+    celp_st: Union[List[str], str] = Field(default_factory=list, info={
+                                           'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
     neut: str = Field("", info={'description': "Neutralize"})
-    
+
     # Number of simulations, 1 equilibrium and 1 production
     apr_sim: int = Field(2, info={'description': "Number of simulations"})
 
@@ -177,15 +193,15 @@ class SimulationConfig(BaseModel):
                 raise ValueError(
                     "Invalid input! ti_points must be a positive integer for the TI-GQ method."
                 )
-        
+
         self.rng = len(self.release_eq) - 1
         self.ion_def = [self.cation, self.anion, self.ion_conc]
-        
+
         if not isinstance(self.celpp_receptor, list):
             self.celp_st = self.celpp_receptor.strip('\'\"-,.:;#()][').split(',')
         else:
             self.celp_st = self.celpp_receptor
-            
+
         if self.calc_type == "dock":
             self.celp_st = self.celp_st[0]
             self.poses_def = [f'pose{pose}' for pose in self.poses_list]
@@ -215,17 +231,17 @@ class SimulationConfig(BaseModel):
             self.lig_dihcf_force,
             self.rec_com_force,
             self.lig_com_force
-            ]
+        ]
 
         num_waters = self.num_waters
         buffer_z = self.buffer_z
 
         if num_waters == 0 and buffer_z == 0:
             raise ValueError("Either 'num_waters' or 'buffer_z' must be provided (non-zero values).")
-        
+
         if num_waters != 0 and buffer_z != 0:
             raise ValueError("Cannot specify both 'num_waters' and 'buffer_z' (non-zero values).")
-        
+
         lipid_mol = self.lipid_mol
         if lipid_mol:
             logger.info(f'Converting lipid input: {lipid_mol}')
@@ -233,7 +249,7 @@ class SimulationConfig(BaseModel):
 
             amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
             amber_lipid_mol = amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
-            
+
             # extend instead of replacing so that we can have both
             lipid_mol.extend(amber_lipid_mol)
             self.lipid_mol = lipid_mol
@@ -255,7 +271,7 @@ class SimulationConfig(BaseModel):
             case 'custom':
                 if self.dec_method is None:
                     logger.error('Wrong input! Please choose a decoupling method' +
-                    '(dd, sdr or exchange) when using the custom option.')
+                                 '(dd, sdr or exchange) when using the custom option.')
                     sys.exit(1)
             case 'rest':
                 self.components = ['c', 'a', 'l', 't', 'r']
@@ -276,13 +292,12 @@ class SimulationConfig(BaseModel):
                 self.components = ['c', 'a', 'l', 't', 'r', 'e', 'v', 'f', 'w']
                 self.dec_method = 'dd'
             case 'relative':
-                self.components =  ['x', 'e', 'n', 'm']
+                self.components = ['x', 'e', 'n', 'm']
                 self.dec_method = 'exchange'
 
         if (self.dec_method == 'sdr' or self.dec_method == 'exchange') and self.sdr_dist == 0:
             logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
             sys.exit(1)
-
 
         logger.debug(f'------------------ Simulation Configuration ------------------')
         logger.debug(f'Software: {self.software}')
@@ -292,16 +307,16 @@ class SimulationConfig(BaseModel):
         logger.debug(f'Lipid names: {self.lipid_mol}')
         logger.debug(f'--------------------------------------------------------------')
         logger.debug(f'Finished initializing simulation configuration.')
+        return self
 
-
-    @validator("calc_type")
+    @field_validator("calc_type", mode="before")
     def validate_calc_type(cls, value):
         valid_types = {"dock", "rank", "crystal"}
         if value not in valid_types:
             raise ValueError(f"Invalid calc_type: {value}. Must be one of {valid_types}.")
         return value
 
-    @validator("fe_type")
+    @field_validator("fe_type", mode="before")
     def validate_fe_type(cls, value):
         valid_types = {"rest", "dd",
                        "sdr", "sdr-rest",
@@ -312,7 +327,7 @@ class SimulationConfig(BaseModel):
             raise ValueError(f"Invalid fe_type: {value}. Must be one of {valid_types}.")
         return value
 
-    @validator("retain_lig_prot", "rec_bb", 'neutralize_only', 'hmr', 'bb_equil')
+    @field_validator("retain_lig_prot", "rec_bb", "neutralize_only", "hmr", "bb_equil", mode="before")
     def validate_yes_no(cls, value):
         if value.lower() not in {"yes", "no"}:
             raise ValueError(f"Invalid value: {value}. Must be 'yes' or 'no'.")
@@ -322,19 +337,19 @@ class SimulationConfig(BaseModel):
 def parse_input_file(input_file: str) -> dict:
     """
     Parses an input file to extract parameters as a dictionary.
-    
+
     Parameters
     ----------
     input_file : str
         The path to the input file.
     """
     parameters = {}
-    
+
     with open(input_file) as f_in:
         # Remove spaces, tabs, and blank lines
         lines = (line.strip(' \t\n\r') for line in f_in)
         lines = list(line for line in lines if line and not line.startswith('#'))  # Non-blank, non-comment lines
-        
+
         for line in lines:
             # Split the line using the equal sign, and remove comments
             if '=' in line:
@@ -359,7 +374,7 @@ def parse_input_file(input_file: str) -> dict:
                     parameters[key] = value
                 else:
                     raise ValueError(f"Invalid line: {line}")
-                    
+
     # merge FEP_COMPONENTS into a dict
     n_steps_dict = {}
     n_iter_dict = {}
@@ -380,6 +395,7 @@ def parse_input_file(input_file: str) -> dict:
     parameters['n_iter_dict'] = n_iter_dict
 
     return parameters
+
 
 def get_configure_from_file(file_path: str) -> Dict:
     """
