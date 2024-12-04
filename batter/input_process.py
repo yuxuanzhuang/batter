@@ -244,7 +244,7 @@ class SimulationConfig(BaseModel):
 
         lipid_mol = self.lipid_mol
         if lipid_mol:
-            logger.info(f'Converting lipid input: {lipid_mol}')
+            logger.debug(f'Converting lipid input: {lipid_mol}')
             charmm_amber_lipid_df = pd.read_csv(charmmlipid2amber, header=1, sep=',')
 
             amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
@@ -253,7 +253,7 @@ class SimulationConfig(BaseModel):
             # extend instead of replacing so that we can have both
             lipid_mol.extend(amber_lipid_mol)
             self.lipid_mol = lipid_mol
-            logger.info(f'New lipid_mol list: {self.lipid_mol}')
+            logger.debug(f'New lipid_mol list: {self.lipid_mol}')
 
         if self.rec_bb == 'no':
             self.bb_start = [1]
