@@ -25,6 +25,13 @@ dependencies = [
     "loguru",
     "pydantic",
     "click",
+# Bat.py
+    "openbabel",
+    "ambertools",
+#   "openmm",
+#   "openmmtools",
+# install vmd-python instead of vmd
+#   "vmd-python",
 ]
 
 [project.scripts]
@@ -38,6 +45,7 @@ batter = "batter.cli:main"
 [project.optional-dependencies]
 test = [
   "pytest>=6.1.2",
+  "pytest-snapshot",
 ]
 
 [tool.setuptools]
