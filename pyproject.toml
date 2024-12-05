@@ -25,6 +25,13 @@ dependencies = [
     "loguru",
     "pydantic",
     "click",
+# Bat.py
+    "openbabel",
+    "ambertools",
+#   "openmm",
+#   "openmmtools",
+# install vmd-python instead of vmd
+#   "vmd-python",
 ]
 
 [project.scripts]
