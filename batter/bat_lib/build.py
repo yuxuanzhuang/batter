@@ -269,8 +269,8 @@ def build_equil(pose, celp_st, mol,
 
     # Get ligand parameters
     if not os.path.exists('../ff/%s.mol2' % mol.lower()):
-#        run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower() +
-#                     '.mol2 -fo mol2 -c bcc -s 2 -at '+ligand_ff.lower()+' -nc %d' % ligand_charge)
+ #        run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower() +
+ #                     '.mol2 -fo mol2 -c bcc -s 2 -at '+ligand_ff.lower()+' -nc %d' % ligand_charge)
         run_with_log(
             f'{antechamber} -i {mol.lower()}.mol2 -fi mol2 -o {mol.lower()}.mol2 '
             f'-fo mol2 -c bcc -s 2 -at {ligand_ff.lower()} -nc {ligand_charge}')
@@ -282,7 +282,7 @@ def build_equil(pose, celp_st, mol,
             run_with_log(parmchk2 + ' -i '+mol.lower()+'.mol2 -f mol2 -o '+mol.lower()+'.frcmod -s 2')
         shutil.copy('./%s.frcmod' % (mol.lower()), '../ff/')
         
-#    run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower()+'.pdb -fo pdb')
+ #    run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower()+'.pdb -fo pdb')
     run_with_log(
         f'{antechamber} -i {mol.lower()}.mol2 -fi mol2 -o {mol.lower()}.pdb -fo pdb')
 
@@ -1206,7 +1206,7 @@ def build_dec(fwin, hmr, mol,
         oth_atom = 0
         total_atom = 0
         resid_lig = 0
-        resname_lig = mol
+        resname_lig = self.mol
 
         # Read coordinates for dummy atoms
         if dec_method == 'sdr' or dec_method == 'exchange':

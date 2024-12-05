@@ -29,6 +29,7 @@ from typing import List, Tuple
 import loguru
 from loguru import logger
 from batter.input_process import SimulationConfig, get_configure_from_file
+from batter.builder import EquilibrationBuilder
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -143,9 +144,6 @@ class System:
         os.makedirs(f"{self.poses_folder}", exist_ok=True)
         os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
 
-        os.makedirs(f"{self.equil_folder}", exist_ok=True)
-        os.makedirs(f"{self.equil_folder}/ff", exist_ok=True)
-
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ph = ligand_ph
         self.ligand_ff = ligand_ff
@@ -172,7 +170,7 @@ class System:
             self._get_alignment()
             self._process_system()
             # Process ligand and prepare the parameters
-        if self.overwrite or not os.path.exists(f"{self.equil_folder}/ff/ligand.frcmod"):
+        if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/ligand.frcmod"):
             self._process_ligand()
             self._prepare_ligand_poses()
         logger.info('System loaded and prepared')
@@ -320,14 +318,13 @@ class System:
         antechamber_command = f'{antechamber} -i {self.ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(antechamber_command, working_dir=tmpdir)
-        shutil.copy(f"{self.ligandff_folder}/ligand_ante.mol2", f"{self.equil_folder}/ff/ligand.mol2")
-        self.ligand_mol2_path = f"{self.equil_folder}/ff/ligand.mol2"
+        shutil.copy(f"{self.ligandff_folder}/ligand_ante.mol2", f"{self.ligandff_folder}/ligand.mol2")
+        self.ligand_mol2_path = f"{self.ligandff_folder}/ligand.mol2"
 
         if self.ligand_ff == 'gaff':
             run_with_log(f'{parmchk2} -i {self.ligandff_folder}/ligand_ante.mol2 -f mol2 -o {self.ligandff_folder}/ligand.frcmod -s 1')
         elif self.ligand_ff == 'gaff2':
             run_with_log(f'{parmchk2} -i {self.ligandff_folder}/ligand_ante.mol2 -f mol2 -o {self.ligandff_folder}/ligand.frcmod -s 2')
-        shutil.copy(f"{self.ligandff_folder}/ligand.frcmod", f"{self.equil_folder}/ff/ligand.frcmod")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
@@ -338,10 +335,10 @@ class System:
         tleap_script = f"""
         source leaprc.protein.ff14SB
         source leaprc.{self.ligand_ff}
-        lig = loadmol2 {self.equil_folder}/ff/ligand.mol2
-        loadamberparams {self.equil_folder}/ff/ligand.frcmod
-        saveoff lig {self.equil_folder}/ff/ligand.lib
-        saveamberparm lig {self.equil_folder}/ff/ligand.prmtop {self.equil_folder}/ff/ligand.inpcrd
+        lig = loadmol2 {self.ligandff_folder}/ligand.mol2
+        loadamberparams {self.ligandff_folder}/ligand.frcmod
+        saveoff lig {self.ligandff_folder}/ligand.lib
+        saveamberparm lig {self.ligandff_folder}/ligand.prmtop {self.ligandff_folder}/ligand.inpcrd
 
         quit
         """
@@ -414,7 +411,8 @@ class System:
 
     def prepare(self,
             stage: str,
-            input_file: Union[str, SimulationConfig]):
+            input_file: Union[str, SimulationConfig],
+            overwrite: bool = False):
         """
         Prepare the system for the FEP simulation.
 
@@ -424,8 +422,11 @@ class System:
             The stage of the simulation. Options are 'equil' and 'fe'.
         input_file : str
             Path to the input file for the simulation.
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
         """
         logger.info('Preparing the system')
+        self.overwrite = overwrite
 
         if isinstance(input_file, str):
             sim_config: SimulationConfig  = get_configure_from_file(input_file)
@@ -447,8 +448,9 @@ class System:
         if stage == 'equil':
             self.sim_config = sim_config
             # save the input file to the equil directory
+            os.makedirs(f"{self.equil_folder}", exist_ok=True)
             with open(f"{self.equil_folder}/sim_config.json", 'w') as f:
-                json.dump(sim_config.model_dump(), f, indent=4)
+                json.dump(sim_config.model_dump(), f, indent=2)
             
             self._prepare_equil_system()
             logger.info('Equil System prepared')
@@ -468,16 +470,28 @@ class System:
         sim_config = self.sim_config
         logger.info('Prepare for equilibration stage')
         if not os.path.exists(f"{self.equil_folder}/all-poses"):
+            logger.debug(f'Copying all-poses folder from {self.poses_folder} to {self.equil_folder}/all-poses')
             shutil.copytree(self.poses_folder,
                         f"{self.equil_folder}/all-poses")
         if not os.path.exists(f"{self.equil_folder}/ff"):
+            logger.debug(f'Copying ff folder from {self.ligandff_folder} to {self.equil_folder}/ff')
             shutil.copytree(self.ligandff_folder,
                         f"{self.equil_folder}/ff")
+
+        for pose in self.sim_config.poses_def:
+            logger.info(f'Preparing pose: {pose}')
+            equil_builder = EquilibrationBuilder(
+                system=self,
+                pose_name=pose,
+                sim_config=sim_config,
+                working_dir=f'{self.equil_folder}',
+                overwrite=self.overwrite
+            ).build()
+
+
                         
         
 
-
-    
     def _prepare_fe_system(self):
         """
         Prepare the free energy system.
