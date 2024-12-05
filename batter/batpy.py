@@ -1276,7 +1276,6 @@ def generate_frontier_files(version=24):
     }
     sim_stages = {
         'rest': [
-            'mini.in',
             'therm1.in', 'therm2.in',
             'eqnpt0.in',
             'eqnpt.in_00',
@@ -1285,7 +1284,6 @@ def generate_frontier_files(version=24):
             'mdin-00', 'mdin-01', 'mdin-02'
         ],
         'sdr': [
-            'mini.in',
             'heat.in',
             'eqnpt0.in',
             'eqnpt.in_00',
@@ -1311,7 +1309,7 @@ def generate_frontier_files(version=24):
             else:
                 n_sims = len(attach_rest)
 
-            stage_previous = f'{sim_folder_temp}00/full.inpcrd'
+            stage_previous = f'{sim_folder_temp}00/md-min.rst7'
 
             for stage in sim_stages[component_2_folder_dict[component]]:
                 groupfile_name = f'{pose_name}/groupfiles/{component}_{stage}.groupfile'
@@ -1320,9 +1318,25 @@ def generate_frontier_files(version=24):
                         sim_folder_name = f'{sim_folder_temp}{i:02d}'
                         prmtop = f'{sim_folder_name}/full.hmr.prmtop'
                         inpcrd = f'{sim_folder_name}/full.inpcrd'
+                        mdinput = f'{sim_folder_name}/{stage.split("_")[0]}'
+                        # Read and modify the MD input file to update the relative path
+                        with open(f'fe/{mdinput}', 'r') as infile:
+                            input_lines = infile.readlines()
+
+                        new_mdinput = f'fe/{sim_folder_name}/{stage.split("_")[0]}_frontier'
+                        with open(new_mdinput, 'w') as outfile:
+                            for line in input_lines:
+                                if 'cv_file' in line:
+                                    line = f"cv_file = '{sim_folder_name}/cv.in'\n"
+                                if 'output_file' in line:
+                                    line = f"output_file = '{sim_folder_name}/cmass.txt'\n"
+                                if 'disang' in line:
+                                    line = f"DISANG={sim_folder_name}/disang.rest\n"
+                                outfile.write(line)
+
                         f.write(f'# {component} {i} {stage}\n')
                         f.write(
-                            f'-O -i {sim_folder_name}/{stage.split("_")[0]} -p {prmtop} -c {stage_previous} '
+                            f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous} '
                             f'-o {sim_folder_name}/{stage}.out -r {sim_folder_name}/{stage}.rst7 -x {sim_folder_name}/{stage}.nc '
                             f'-ref {inpcrd}\n'
                         )
@@ -1352,7 +1366,7 @@ def generate_frontier_files(version=24):
                 )
             lines = [line
                      .replace('NUM_NODES', str(n_nodes))
-                     .replace('FEP_SIM', f'fep_{component}_{pose}') for line in lines]
+                     .replace('FEP_SIM_XXX', f'fep_{component}_{pose}') for line in lines]
             with open(sbatch_file, 'w') as f:
                 f.writelines(lines)
 

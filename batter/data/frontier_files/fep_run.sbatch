@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH -A BIP235
-#SBATCH -J FEP_SIM
+#SBATCH -J FEP_SIM_XXX
 #SBATCH -o %x-%j.out
 #SBATCH -t 2:00:00
 #SBATCH -p batch               ##partition (queue) to use
@@ -10,7 +10,7 @@
 #SBATCH --open-mode=append
 #SBATCH --dependency=singleton
 
-source ~/env.amber
+source ~/env.amber > /dev/null 2>&1
 echo $AMBERHOME
 
 if [ -z "${AMBERHOME}" ]; then echo "AMBERHOME is not set" && exit 0; fi
