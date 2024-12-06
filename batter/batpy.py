@@ -1281,15 +1281,13 @@ def generate_frontier_files(version=24):
             'eqnpt.in_00',
             'eqnpt.in_01', 'eqnpt.in_02',
             'eqnpt.in_03', 'eqnpt.in_04',
-            'mdin-00', 'mdin-01', 'mdin-02'
         ],
         'sdr': [
-            'heat.in',
+            'heat.in_00',
             'eqnpt0.in',
             'eqnpt.in_00',
             'eqnpt.in_01', 'eqnpt.in_02',
             'eqnpt.in_03', 'eqnpt.in_04',
-            'mdin-00', 'mdin-01', 'mdin-02'
         ],
     }
     # write a groupfile for each component
@@ -1298,6 +1296,8 @@ def generate_frontier_files(version=24):
         """
         Write a groupfile for each component in the pose
         """
+        all_replicates = []
+
         pose_name = f'fe/{pose}/'
         os.makedirs(pose_name, exist_ok=True)
         os.makedirs(f'{pose_name}/groupfiles', exist_ok=True)
@@ -1338,19 +1338,23 @@ def generate_frontier_files(version=24):
                         f.write(
                             f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous} '
                             f'-o {sim_folder_name}/{stage}.out -r {sim_folder_name}/{stage}.rst7 -x {sim_folder_name}/{stage}.nc '
-                            f'-ref {inpcrd}\n'
+                            f'-ref {inpcrd} -inf {sim_folder_name}/{stage}.mdinfo -l {sim_folder_name}/{stage}.log '
+                            f'-e {sim_folder_name}/{stage}.mden\n'
                         )
+                        if stage == 'eqnpt.in_04':
+                            all_replicates.append(sim_folder_name)
                     stage_previous = f'{sim_folder_name}/{stage}.rst7'
+        return all_replicates
 
     def write_sbatch_file(pose, components):
-
         for component in components:
+            # write the sbatch file for equilibration
             file_temp = f'{frontier_files}/fep_run.sbatch'
             lines = open(file_temp).readlines()
-            lines.append(f'\n')
+            lines.append(f'\n\n\n')
             lines.append(f'# {pose} {component}\n')
 
-            sbatch_file = f'fe/fep_{component}_{pose}.sbatch'
+            sbatch_file = f'fe/fep_{component}_{pose}_eq.sbatch'
             groupfile_names = [
                 f'{pose}/groupfiles/{component}_{stage}.groupfile' for stage in sim_stages[component_2_folder_dict[component]]
             ]
@@ -1370,10 +1374,96 @@ def generate_frontier_files(version=24):
             with open(sbatch_file, 'w') as f:
                 f.writelines(lines)
 
+    def write_groupfile_production(all_replicates):
+        # Read and modify the MD input file to update the relative path
+
+        for replicate in all_replicates:
+            with open(f'fe/{replicate}/mdin-02', 'r') as infile:
+                input_lines = infile.readlines()
+            new_mdinput = f'fe/{replicate}/mdin_frontier'
+            with open(new_mdinput, 'w') as outfile:
+                for line in input_lines:
+                    if 'cv_file' in line:
+                        line = f"cv_file = '{replicate}/cv.in'\n"
+                    if 'output_file' in line:
+                        line = f"output_file = '{replicate}/cmass.txt'\n"
+                    if 'disang' in line:
+                        line = f"DISANG={replicate}/disang.rest\n"
+                    if 'nstlim' in line:
+                        line = '  nstlim = 1000000,\n'
+                    outfile.write(line)
+
+    def write_production(all_replicates):
+        file_temp = f'{frontier_files}/fep_run.sbatch'
+        temp_lines = open(file_temp).readlines()
+        temp_lines.append(f'\n\n\n')
+
+
+        # write the sbatch file for one long production
+        groupfile_name_prod = 'mdin.groupfile'
+        groupfile_name_prod_extend = 'mdin_extend.groupfile'
+
+        n_sims = len(all_replicates)
+        n_nodes = int(np.ceil(n_sims / 8))
+
+        # run the production
+        sbatch_file = f'fe/fep_md.sbatch'
+        lines = [line
+                    .replace('NUM_NODES', str(n_nodes))
+                    .replace('FEP_SIM_XXX', f'fep_md') for line in temp_lines]
+        lines.append(
+            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {groupfile_name_prod}\n'
+        )
+        with open(sbatch_file, 'w') as f:
+            f.writelines(lines)
+
+        # extend the production
+        sbatch_file = f'fe/fep_md_extend.sbatch'
+        lines = [
+            line.replace('NUM_NODES', str(n_nodes))
+                .replace('FEP_SIM_XXX', 'fep_md')
+            for line in temp_lines
+        ]
+        lines.extend([
+            '# Get the latest mdin-xxx.rst7 file in the current directory\n',
+            'latest_file=$(ls mdin-???.rst7 2>/dev/null | sort | tail -n 1)\n\n',
+            '# Check if any mdin-xxx.rst7 files exist\n',
+            'if [[ -z "$latest_file" ]]; then\n',
+            '  echo "No old production files found in the current directory."\n',
+            '  echo "Run sbatch fep_md.sbatch."\n',
+            '  exit 1\n',
+            'fi\n\n',
+            '# Extract the latest number (xxx) and calculate the next number\n',
+            'latest_num=$(echo "$latest_file" | grep -oP \'\\d{2}\')\n',
+            'next_num=$(printf "%02d" $((10#$latest_num + 1)))\n\n',
+            '# Replace REPNUM in the groupfile with the next number\n',
+            'sed "s/REPNUM/$next_num/g" mdin_extend.groupfile > current_mdin.groupfile\n\n',
+            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile current_mdin.groupfile\n'
+        ])
+        with open(sbatch_file, 'w') as f:
+            f.writelines(lines)
+
+        with open(f'fe/{groupfile_name_prod}', 'w') as f:
+            for replicate in all_replicates:
+                f.write(f'-O -i {replicate}/mdin_frontier -p {replicate}/full.hmr.prmtop -c {replicate}/eqnpt.in_04.rst7 '
+                        f'-o {replicate}/mdin-00.out -r {replicate}/mdin-00.rst7 -x {replicate}/mdin-00.nc '
+                        f'-ref {replicate}/mdin-00.rst7 -inf {replicate}/mdin-00.mdinfo -l {replicate}/mdin-00.log '
+                        f'-e {replicate}/mdin-00.mden\n')
+
+        with open(f'fe/{groupfile_name_prod_extend}', 'w') as f:
+            for replicate in all_replicates:
+                f.write(f'-O -i {replicate}/mdin_frontier -p {replicate}/full.hmr.prmtop -c {replicate}/mdin-REPNUM.rst7 '
+                        f'-o {replicate}/mdin-REPNUM.out -r {replicate}/mdin-REPNUM.rst7 -x {replicate}/mdin-REPNUM.nc '
+                        f'-ref {replicate}/mdin-REPNUM.rst7 -inf {replicate}/mdin-REPNUM.mdinfo -l {replicate}/mdin-REPNUM.log '
+                        f'-e {replicate}/mdin-REPNUM.mden\n')
+
+    all_replicates = []
     for pose in poses_def:
-        write_2_pose(pose, components)
+        all_replicates.extend(write_2_pose(pose, components))
         write_sbatch_file(pose, components)
         logger.info(f'Generated groupfiles for {pose}')
+    write_production(all_replicates)
+    write_groupfile_production(all_replicates)
     # copy env.amber.24
     env_amber_file = f'{frontier_files}/env.amber.{version}'
     shutil.copy(env_amber_file, 'fe/env.amber')
