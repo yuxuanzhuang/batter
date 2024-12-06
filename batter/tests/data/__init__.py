@@ -2,6 +2,7 @@ from importlib import resources
 
 _base_ref = resources.files('batter.tests.data')
 
+# Input files
 example_input_files = (_base_ref / 'example_input')
 
 DD_OPENMM = (example_input_files / 'input-dd-openmm.in')
@@ -18,3 +19,6 @@ TEX_AMBER_DOCK = (example_input_files / 'input-tex-amber-dock.in')
 
 # lipid
 SDR_AMBER_MBAR_LIPID = (example_input_files / 'input-sdr-am-mbar-lipid.in')
+
+# System files
+MOR_MP_INPUT = (_base_ref / '7T2G_mp')

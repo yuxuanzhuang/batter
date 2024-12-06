@@ -24,6 +24,7 @@ import pandas as pd
 from importlib import resources
 import json
 from typing import Union
+from pathlib import Path
 
 from typing import List, Tuple
 import loguru
@@ -41,6 +42,10 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class System:
     """
     A class to represent and process a Free Energy Perturbation (FEP) system.
+
+    It will prepare the input files of protein system with **one** ligand species.
+
+    TODO: what if there are multiple ligands from the input file?
 
     After the preparation of the equil system, run through the equilibration simulation and then
     prepare the fe system. The output of the equil system will be used as
@@ -411,7 +416,7 @@ class System:
 
     def prepare(self,
             stage: str,
-            input_file: Union[str, SimulationConfig],
+            input_file: Union[str, Path, SimulationConfig],
             overwrite: bool = False):
         """
         Prepare the system for the FEP simulation.
@@ -428,8 +433,9 @@ class System:
         logger.info('Preparing the system')
         self.overwrite = overwrite
 
-        if isinstance(input_file, str):
-            sim_config: SimulationConfig  = get_configure_from_file(input_file)
+        if isinstance(input_file, (str, Path)):
+            file_path = Path(input_file) if isinstance(input_file, str) else input_file
+            sim_config: SimulationConfig  = get_configure_from_file(file_path)
         elif isinstance(input_file, SimulationConfig):
             sim_config = input_file
         else:
@@ -487,15 +493,16 @@ class System:
                 working_dir=f'{self.equil_folder}',
                 overwrite=self.overwrite
             ).build()
-
-
-                        
-        
+    
+        logger.info('Equilibration systems have been created for all poses listed in the input file.')
+        logger.info(f'now cd equil/pose0')
+        logger.info(f'sbatch SLURMM-run')
 
     def _prepare_fe_system(self):
         """
         Prepare the free energy system.
         """
+        raise NotImplementedError("Free energy system preparation is not implemented yet")
 
     @property
     def poses_folder(self):

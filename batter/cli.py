@@ -15,6 +15,7 @@ import numpy as np
 from batter.input_process import get_configure_from_file
 from batter.bat_lib import build, setup, analysis, scripts
 from batter.data import run_files, openmm_files
+from batter.utils.error_report import error_report
 import MDAnalysis as mda
 # ignore UserWarning from MDAnalysis
 import warnings
@@ -34,6 +35,7 @@ def main(args=None):
     pass
 
 main.add_command(batpy.batpy)
+main.add_command(error_report)
 
 if __name__ == "__main__":
     main()  # pragma: no cover
