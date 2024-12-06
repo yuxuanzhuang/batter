@@ -172,9 +172,10 @@ def build_equil(pose, celp_st, mol,
         logger.error(f'The renum is stored in {os.getcwd()}/protein_renum_err.txt')
         raise ValueError('Could not find the receptor anchors in the protein sequence')
     
-    p1_resid = h1_entry['new_resid'].values[0]
-    p2_resid = h2_entry['new_resid'].values[0]
-    p3_resid = h3_entry['new_resid'].values[0]
+    # +1 because the first residue will be dummy
+    p1_resid = h1_entry['new_resid'].values[0] + 1
+    p2_resid = h2_entry['new_resid'].values[0] + 1
+    p3_resid = h3_entry['new_resid'].values[0] + 1
     p1_vmd = f'{p1_resid}'
 
     P1 = f':{p1_resid}@{h1_atom}'
