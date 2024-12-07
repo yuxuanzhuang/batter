@@ -1417,9 +1417,11 @@ def generate_frontier_files(version=24):
 
         # run the production
         sbatch_file = f'fe/fep_md.sbatch'
-        lines = [line
-                    .replace('NUM_NODES', str(n_nodes))
-                    .replace('FEP_SIM_XXX', f'fep_md') for line in temp_lines]
+        folder = os.getcwd()
+        lines = [
+            line.replace('NUM_NODES', str(n_nodes))
+                .replace('FEP_SIM_XXX', f'fep_md_{folder}')
+            for line in temp_lines]
         lines.append(
             f'srun -N {n_nodes} -n {n_sims} pmemd.hip_SPFP.MPI -ng {n_sims} -groupfile {groupfile_name_prod}\n'
         )
@@ -1430,7 +1432,7 @@ def generate_frontier_files(version=24):
         sbatch_file = f'fe/fep_md_extend.sbatch'
         lines = [
             line.replace('NUM_NODES', str(n_nodes))
-                .replace('FEP_SIM_XXX', 'fep_md')
+                .replace('FEP_SIM_XXX', 'fep_md_{folder}')
             for line in temp_lines
         ]
         lines.extend([
