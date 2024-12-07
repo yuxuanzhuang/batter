@@ -1276,6 +1276,7 @@ def generate_frontier_files(version=24):
     }
     sim_stages = {
         'rest': [
+            'mini.in',
             'therm1.in', 'therm2.in',
             'eqnpt0.in',
             'eqnpt.in_00',
@@ -1283,6 +1284,7 @@ def generate_frontier_files(version=24):
             'eqnpt.in_03', 'eqnpt.in_04',
         ],
         'sdr': [
+            'mini.in',
             'heat.in_00',
             'eqnpt0.in',
             'eqnpt.in_00',
@@ -1309,12 +1311,13 @@ def generate_frontier_files(version=24):
             else:
                 n_sims = len(attach_rest)
 
-            stage_previous = f'{sim_folder_temp}00/md-min.rst7'
+            stage_previous = f'{sim_folder_temp}REPXXX/full.inpcrd'
 
             for stage in sim_stages[component_2_folder_dict[component]]:
                 groupfile_name = f'{pose_name}/groupfiles/{component}_{stage}.groupfile'
                 with open(groupfile_name, 'w') as f:
                     for i in range(n_sims):
+                        #stage_previous_temp = stage_previous.replace('00', f'{i:02d}')
                         sim_folder_name = f'{sim_folder_temp}{i:02d}'
                         prmtop = f'{sim_folder_name}/full.hmr.prmtop'
                         inpcrd = f'{sim_folder_name}/full.inpcrd'
@@ -1336,14 +1339,14 @@ def generate_frontier_files(version=24):
 
                         f.write(f'# {component} {i} {stage}\n')
                         f.write(
-                            f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous} '
+                            f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
                             f'-o {sim_folder_name}/{stage}.out -r {sim_folder_name}/{stage}.rst7 -x {sim_folder_name}/{stage}.nc '
                             f'-ref {inpcrd} -inf {sim_folder_name}/{stage}.mdinfo -l {sim_folder_name}/{stage}.log '
                             f'-e {sim_folder_name}/{stage}.mden\n'
                         )
                         if stage == 'eqnpt.in_04':
                             all_replicates.append(sim_folder_name)
-                    stage_previous = f'{sim_folder_name}/{stage}.rst7'
+                    stage_previous = f'{sim_folder_temp}REPXXX/{stage}.rst7'
         return all_replicates
 
     def write_sbatch_file(pose, components):
@@ -1365,9 +1368,15 @@ def generate_frontier_files(version=24):
                 else:
                     n_sims = len(attach_rest)
                 n_nodes = int(np.ceil(n_sims / 8))
-                lines.append(
-                    f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
-                )
+                if 'mini' in g_name:
+                    # run with pmemd.mpi for minimization
+                    lines.append(
+                        f'srun -N {n_nodes} -n {n_sims * 8} pmemd.MPI -ng {n_sims} -groupfile {g_name}\n'
+                    )
+                else:
+                    lines.append(
+                        f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
+                    )
             lines = [line
                      .replace('NUM_NODES', str(n_nodes))
                      .replace('FEP_SIM_XXX', f'fep_{component}_{pose}') for line in lines]

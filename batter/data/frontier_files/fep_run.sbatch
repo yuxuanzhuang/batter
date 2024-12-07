@@ -2,7 +2,7 @@
 #SBATCH -A BIP235
 #SBATCH -J FEP_SIM_XXX
 #SBATCH -o %x-%j.out
-#SBATCH -t 2:00:00
+#SBATCH -t 00:30:00
 #SBATCH -p batch               ##partition (queue) to use
 #SBATCH -N NUM_NODES           ##Number of nodes
 #SBATCH -S 0
