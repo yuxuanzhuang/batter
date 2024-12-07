@@ -582,10 +582,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     # First do a quick sanity check to see if all simulations are done
 
     def check_file_exists(path):
-        # check md00.nc, md01.nc, md02.nc exist
-        for i in range(0, 3):
-            if not os.path.exists(path + '/md%02d.rst7' % i):
-                return False
+        if not os.path.exists(path + '/mdin-00.rst7') and not os.path.exists(path + '/md00.rst7'):
+            return False
         return True
 
     unfinished = []
