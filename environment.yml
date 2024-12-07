@@ -1,0 +1,15 @@
+name: batter
+channels:
+  - conda-forge  # Place conda-forge first for priority
+  - defaults
+dependencies:
+  # Conda dependencies
+  - ambertools
+  # vmd is problematic to install with error about sqlite
+  - vmd-python
+  - openbabel
+  # Uncomment the following lines if/when OpenMM and OpenMMTools are needed
+  # - openmm
+  # - openmmtools
+  - python=3.11
+  - pip

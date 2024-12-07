@@ -20,7 +20,14 @@ To install, first clone the repository and then run the following command:
 
 .. code-block:: bash
 
+    git clone git@github.com:yuxuanzhuang/batter.git
+    cd batter
+
+    conda env create -f environment.yml
+    conda activate batter
     pip install -e .
+
+This will install the package in editable mode, so you can make changes to the code and see the changes reflected in the package.
 
 Usage
 -------------------------------
