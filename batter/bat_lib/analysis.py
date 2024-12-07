@@ -711,16 +711,18 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                     win = j
                     os.chdir('%s%02d' % (comp, int(win)))
                     potl = open('energies.dat', "w")
-                    with open("md-02.out", "r") as fin:
-                        n = 0
-                        for line in fin:
-                            cols = line.split()
-                            if 'MBAR Energy analysis' in line:
-                                if n != 0:
-                                    potl.write('\n')
-                                n = n+1
-                            if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
-                                potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
+                    md_out_files = glob.glob('md*.out')
+                    for md_out_file in md_out_files:
+                        with open(md_out_file, "r") as fin:
+                            n = 0
+                            for line in fin:
+                                cols = line.split()
+                                if 'MBAR Energy analysis' in line:
+                                    if n != 0:
+                                        potl.write('\n')
+                                    n = n+1
+                                if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
+                                    potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
                     potl.write('\n')
                     potl.close()
                     # Separate in blocks
