@@ -597,8 +597,12 @@ def restraints(pose, rest, bb_start, bb_end, weight, stage, mol, molr, comp, bb_
                 '# Anchor atoms', P1, P2, P3, L1, L2, L3, 'stage = '+stage))
             restraints_file.write('noexitonerror\n')
             restraints_file.write('parm vac.prmtop\n')
+            # TODO: this is a hack to just read in all the potential trajectories
+            # Do this properly when running the analysis
             for i in range(2, 11):
                 restraints_file.write('trajin md%02.0f.nc\n' % i)
+#            for i in range(1, 11):
+#               restraints_file.write('trajin mdin-%02.0f.nc\n' % i)
             for i in range(3+nd, 9+nd):
                 arr = rst[i].split()
                 if len(arr) == 2:
