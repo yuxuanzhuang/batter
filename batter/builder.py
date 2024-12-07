@@ -172,9 +172,9 @@ class EquilibrationBuilder(SystemBuilder):
         lipid_mol = self.sim_config.lipid_mol
         solv_shell = self.sim_config.solv_shell
         mol_u = mda.Universe(f'{self.pose_name}.pdb')
-        if len(mol_u.residues) > 1:
+        if len(set(mol_u.residues.resnames)) > 1:
             raise ValueError(f'The ligand {self.pose_name} has more than one residue: '
-                             f'{mol_u.residues}')
+                             f'{mol_u.atoms.resnames}')
         self.mol = mol_u.residues[0].resname
         mol = self.mol
         if mol in other_mol:
@@ -285,9 +285,10 @@ class EquilibrationBuilder(SystemBuilder):
             logger.error(f'The renum is stored in {os.getcwd()}/protein_renum_err.txt')
             raise ValueError('Could not find the receptor anchors in the protein sequence')
 
-        p1_resid = h1_entry['new_resid'].values[0]
-        p2_resid = h2_entry['new_resid'].values[0]
-        p3_resid = h3_entry['new_resid'].values[0]
+        # +1 because a dummy atom is added at the beginning
+        p1_resid = h1_entry['new_resid'].values[0] + 1
+        p2_resid = h2_entry['new_resid'].values[0] + 1
+        p3_resid = h3_entry['new_resid'].values[0] + 1
         p1_vmd = f'{p1_resid}'
 
         P1 = f':{p1_resid}@{h1_atom}'
