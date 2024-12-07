@@ -469,6 +469,44 @@ class System:
             self._prepare_fe_system()
             logger.info('FE System prepared')
 
+    def submit(self, stage: str, cluster: str = 'slurm'):
+        """
+        Submit the simulation to the cluster.
+
+        Parameters
+        ----------
+        stage : str
+            The stage of the simulation. Options are 'equil' and 'fe'.
+        cluster : str
+            The cluster to submit the simulation.
+            Options are 'slurm' and 'frontier'.
+        """
+        if cluster == 'frontier':
+            self._submit_frontier(stage)
+            logger.info(f'Frontier {stage} job submitted!')
+            return
+
+        if stage == 'equil':
+            logger.info('Submit equilibration stage')
+            for pose in self.sim_config.poses_def:
+                run_with_log(f'sbatch SLURMM-run',
+                            working_dir=f'{self.equil_folder}/{pose}')
+            logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
+
+        elif stage == 'fe':
+            logger.info('Submit free energy stage')
+            for pose in self.sim_config.poses_def:
+                shutil.copy(f'{self.fe_folder}/{pose}/rest/run_files/run-express.bash',
+                            f'{self.fe_folder}/{pose}')
+                run_with_log(f'bash run-express.bash',
+                            working_dir=f'{self.fe_folder}/{pose}')
+            logger.info('Free energy systems have been submitted for all poses listed in the input file.')
+        else:
+            raise ValueError(f"Invalid stage: {stage}")
+
+    def _submit_frontier(self, stage: str):
+        raise NotImplementedError("Frontier submission is not implemented yet")
+
     def _prepare_equil_system(self):
         """
         Prepare the equilibration system.
