@@ -1,5 +1,5 @@
 #!/usr/bin/env python2
-import glob as glob
+import glob
 import os as os
 import re as re
 import shutil as shutil
@@ -582,10 +582,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     # First do a quick sanity check to see if all simulations are done
 
     def check_file_exists(path):
-        # check md00.nc, md01.nc, md02.nc exist
-        for i in range(0, 3):
-            if not os.path.exists(path + '/md%02d.rst7' % i):
-                return False
+        if not os.path.exists(path + '/mdin-00.rst7') and not os.path.exists(path + '/md00.rst7'):
+            return False
         return True
 
     unfinished = []
@@ -636,7 +634,31 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                         k_a = rest[3]
                         fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
                 # Get restraint trajectory file
-                run_with_log(cpptraj + ' -i restraints.in > restraints.log 2>&1')
+
+                # temp fix for frontier
+                # Find all files matching the pattern 'mdin-xx.nc' in the folder
+                mdin_files = glob.glob('mdin-*.nc')
+                # Sort them numerically by the number in the filename
+                mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
+                # Read the 'restraints.in' file
+                with open('restraints.in', 'r') as f:
+                    lines = f.readlines()
+                # Find the line number containing 'trajin md10.nc'
+                line_index = next((i for i, line in enumerate(lines) if 'trajin md10.nc' in line), -1)
+                if line_index == -1:
+                    raise ValueError("Line containing 'trajin md10.nc' not found in 'restraints.in'.")
+                # Rewrite 'restraints.in' with the mdin files appended after the 'trajin md10.nc' line
+                with open('restraints.in', 'w') as f:
+                    # Write lines up to and including the target line
+                    f.writelines(lines[:line_index + 1])
+                    # Append the sorted mdin files
+                    for mdin_file in mdin_files:
+                        f.write(f'trajin {mdin_file}\n')
+                    # Write the remaining lines
+                    f.writelines(lines[line_index + 1:])
+                # Run cpptraj with logging
+                run_with_log(f"{cpptraj} -i restraints.in > restraints.log 2>&1")
+
                 # Separate in blocks
                 with open("restraints.dat", "r") as fin:
                     for line in fin:
@@ -689,16 +711,18 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                     win = j
                     os.chdir('%s%02d' % (comp, int(win)))
                     potl = open('energies.dat', "w")
-                    with open("md-02.out", "r") as fin:
-                        n = 0
-                        for line in fin:
-                            cols = line.split()
-                            if 'MBAR Energy analysis' in line:
-                                if n != 0:
-                                    potl.write('\n')
-                                n = n+1
-                            if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
-                                potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
+                    md_out_files = glob.glob('md*.out')
+                    for md_out_file in md_out_files:
+                        with open(md_out_file, "r") as fin:
+                            n = 0
+                            for line in fin:
+                                cols = line.split()
+                                if 'MBAR Energy analysis' in line:
+                                    if n != 0:
+                                        potl.write('\n')
+                                    n = n+1
+                                if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
+                                    potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
                     potl.write('\n')
                     potl.close()
                     # Separate in blocks
