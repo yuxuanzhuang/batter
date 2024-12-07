@@ -1375,7 +1375,7 @@ def generate_frontier_files(version=24):
                     )
                 else:
                     lines.append(
-                        f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
+                        f'srun -N {n_nodes} -n {n_sims} pmemd.hip_SPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
                     )
             lines = [line
                      .replace('NUM_NODES', str(n_nodes))
@@ -1421,7 +1421,7 @@ def generate_frontier_files(version=24):
                     .replace('NUM_NODES', str(n_nodes))
                     .replace('FEP_SIM_XXX', f'fep_md') for line in temp_lines]
         lines.append(
-            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {groupfile_name_prod}\n'
+            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_SPFP.MPI -ng {n_sims} -groupfile {groupfile_name_prod}\n'
         )
         with open(sbatch_file, 'w') as f:
             f.writelines(lines)
@@ -1434,20 +1434,23 @@ def generate_frontier_files(version=24):
             for line in temp_lines
         ]
         lines.extend([
-            '# Get the latest mdin-xxx.rst7 file in the current directory\n',
-            'latest_file=$(ls mdin-???.rst7 2>/dev/null | sort | tail -n 1)\n\n',
-            '# Check if any mdin-xxx.rst7 files exist\n',
+            '# Get the latest mdin-xx.rst7 file in the current directory\n',
+            'latest_file=$(ls pose0/sdr/e00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)\n\n',
+            '# Check if any mdin-xx.rst7 files exist\n',
             'if [[ -z "$latest_file" ]]; then\n',
             '  echo "No old production files found in the current directory."\n',
             '  echo "Run sbatch fep_md.sbatch."\n',
             '  exit 1\n',
             'fi\n\n',
-            '# Extract the latest number (xxx) and calculate the next number\n',
-            'latest_num=$(echo "$latest_file" | grep -oP \'\\d{2}\')\n',
+            '# Extract the latest number (xx) and calculate the next number\n',
+            'latest_num=$(echo "$latest_file" | grep -oP \'(?<=-)\d{2}(?=\\.rst7)\')\n',
             'next_num=$(printf "%02d" $((10#$latest_num + 1)))\n\n',
-            '# Replace REPNUM in the groupfile with the next number\n',
-            'sed "s/REPNUM/$next_num/g" mdin_extend.groupfile > current_mdin.groupfile\n\n',
-            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile current_mdin.groupfile\n'
+            '# Replace REPNUM in the groupfile with the current number\n',
+            'sed "s/CURRNUM/$latest_num/g" mdin_extend.groupfile > temp_mdin.groupfile\n',
+            '# Replace NEXTNUM in the groupfile with the next number\n',
+            'sed "s/NEXTNUM/$next_num/g" temp_mdin.groupfile > current_mdin.groupfile\n\n',
+            '# Run the production simulation\n',
+            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_SPFP.MPI -ng {n_sims} -groupfile current_mdin.groupfile\n'
         ])
         with open(sbatch_file, 'w') as f:
             f.writelines(lines)
@@ -1456,15 +1459,15 @@ def generate_frontier_files(version=24):
             for replicate in all_replicates:
                 f.write(f'-O -i {replicate}/mdin_frontier -p {replicate}/full.hmr.prmtop -c {replicate}/eqnpt.in_04.rst7 '
                         f'-o {replicate}/mdin-00.out -r {replicate}/mdin-00.rst7 -x {replicate}/mdin-00.nc '
-                        f'-ref {replicate}/mdin-00.rst7 -inf {replicate}/mdin-00.mdinfo -l {replicate}/mdin-00.log '
+                        f'-ref {replicate}/full.inpcrd -inf {replicate}/mdin-00.mdinfo -l {replicate}/mdin-00.log '
                         f'-e {replicate}/mdin-00.mden\n')
 
         with open(f'fe/{groupfile_name_prod_extend}', 'w') as f:
             for replicate in all_replicates:
-                f.write(f'-O -i {replicate}/mdin_frontier -p {replicate}/full.hmr.prmtop -c {replicate}/mdin-REPNUM.rst7 '
-                        f'-o {replicate}/mdin-REPNUM.out -r {replicate}/mdin-REPNUM.rst7 -x {replicate}/mdin-REPNUM.nc '
-                        f'-ref {replicate}/mdin-REPNUM.rst7 -inf {replicate}/mdin-REPNUM.mdinfo -l {replicate}/mdin-REPNUM.log '
-                        f'-e {replicate}/mdin-REPNUM.mden\n')
+                f.write(f'-O -i {replicate}/mdin_frontier -p {replicate}/full.hmr.prmtop -c {replicate}/mdin-CURRNUM.rst7 '
+                        f'-o {replicate}/mdin-NEXTNUM.out -r {replicate}/mdin-NEXTNUM.rst7 -x {replicate}/mdin-NEXTNUM.nc '
+                        f'-ref {replicate}/full.inpcrd -inf {replicate}/mdin-NEXTNUM.mdinfo -l {replicate}/mdin-NEXTNUM.log '
+                        f'-e {replicate}/mdin-NEXTNUM.mden\n')
 
     all_replicates = []
     for pose in poses_def:
