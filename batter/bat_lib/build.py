@@ -509,6 +509,8 @@ def build_equil(pose, celp_st, mol,
     coords = dum_coords + recep_coords + lig_coords + oth_coords
     atom_namelist = dum_atomlist + recep_atomlist + lig_atomlist + oth_atomlist
     resid_list = dum_rsidlist + recep_rsidlist + lig_rsidlist + oth_rsidlist
+    resid_list = [resid if resid < 10000 else (resid % 10000) + 1 for resid in resid_list]
+
     resname_list = dum_rsnmlist + recep_rsnmlist + lig_rsnmlist + oth_rsnmlist
     chain_list = dum_chainlist + recep_chainlist + lig_chainlist + oth_chainlist
     lig_resid = str(recep_last + dum_atom + 1)
@@ -1289,6 +1291,8 @@ def build_dec(fwin, hmr, mol,
         coords = dum_coords + recep_coords + lig_coords + oth_coords
         atom_namelist = dum_atomlist + recep_atomlist + lig_atomlist + oth_atomlist
         resid_list = dum_rsidlist + recep_rsidlist + lig_rsidlist + oth_rsidlist
+        resid_list = [resid if resid < 10000 else (resid % 10000) + 1 for resid in resid_list]
+
         resname_list = dum_rsnmlist + recep_rsnmlist + lig_rsnmlist + oth_rsnmlist
         chain_list = dum_chainlist + recep_chainlist + lig_chainlist + oth_chainlist
         lig_resid = recep_last + dum_atom
@@ -1447,6 +1451,7 @@ def build_dec(fwin, hmr, mol,
             if oth_rsidlist[i] != oth_tmp:
                 build_file.write('TER\n')
             oth_tmp = oth_rsidlist[i]
+            oth_tmp = oth_tmp if oth_tmp < 10000 else (oth_tmp % 10000) + 1
             build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
                              ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_chainlist[i], oth_rsidlist[i]))
             build_file.write('%8.3f%8.3f%8.3f' %

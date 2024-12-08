@@ -68,7 +68,6 @@ class System:
                  lipid_mol: List[str] = [],
                  lipid_ff: str = 'lipid21',
                  overwrite: bool = False,
-
                  ):
         """
         Initialize the FEPSystem class.
@@ -223,10 +222,21 @@ class System:
         logger.info('Processing the system')
         u_prot = self.u_prot
         u_sys = self.u_sys
+        try:
+            u_sys.atoms.chainIDs
+        except AttributeError:
+            u_sys.add_TopologyAttr('chainIDs')
+
+        memb_seg = u_sys.add_Segment(segid='MEMB')
+        water_seg = u_sys.add_Segment(segid='WATR')
 
         membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
+        membrane_ag.chainIDs = 'M'
+        membrane_ag.residues.segments = memb_seg
         logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
-        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 20 (protein or resname POPC))')
+        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 10 (protein or resname POPC))')
+        water_ag.chainIDs = 'W'
+        water_ag.residues.segments = water_seg
         logger.debug(f'Number of water molecules: {water_ag.n_residues}')
 
         # modify the chaininfo to be unique for each segment
@@ -240,7 +250,6 @@ class System:
                 f'resid {resid_seq} and chainID {chain_id} and protein').atoms.tempfactors = current_chain
             current_chain += 1
         u_prot.atoms.chainIDs = [chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors]
-
 
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(f'segid {self.receptor_segment} and protein')
@@ -358,6 +367,8 @@ class System:
         """
         Prepare ligand poses for the system.
         """
+        logger.info('Preparing ligand poses')
+
         if not self.ligand_poses:
             self.ligand_poses = [self.ligand_path]
 
@@ -365,6 +376,14 @@ class System:
         for i, pose in enumerate(self.ligand_poses):
             # align to the system
             u = mda.Universe(pose)
+            try:
+                u.atoms.chainIDs
+            except AttributeError:
+                u.add_TopologyAttr('chainIDs')
+            lig_seg = u.add_Segment(segid='LIG')
+            u.atoms.chainIDs = 'L'
+            u.atoms.residues.segments = lig_seg
+            
             self._align_2_system(u.atoms)
             u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
             pose = f"{self.poses_folder}/pose{i}.pdb"
