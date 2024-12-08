@@ -39,6 +39,47 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # logger.add(sys.stdout, level='INFO')
 
 
+DEC_FOLDER_DICT = {
+    'dd': 'dd',
+    'sdr': 'sdr',
+    'exchange': 'sdr',
+}
+
+AVAILABLE_COMPONENTS = ['v', 'e', 'w', 'f',
+                       'x', 'a', 'l', 't',
+                       'r', 'c', 'm', 'n']
+
+
+COMPONENTS_FOLDER_DICT = {
+    'v': 'sdr',
+    'e': 'sdr',
+    'w': 'sdr',
+    'f': 'sdr',
+    'x': 'exchange_files',
+    'a': 'rest',
+    'l': 'rest',
+    't': 'rest',
+    'r': 'rest',
+    'c': 'rest',
+    'm': 'rest',
+    'n': 'rest',
+}
+
+COMPONENTS_LAMBDA_DICT = {
+    'v': 'lambdas',
+    'e': 'lambdas',
+    'w': 'lambdas',
+    'f': 'lambdas',
+    'x': 'lambdas',
+    'a': 'attach_rest',
+    'l': 'attach_rest',
+    't': 'attach_rest',
+    'r': 'attach_rest',
+    'c': 'attach_rest',
+    'm': 'attach_rest',
+    'n': 'attach_rest',
+}
+
 class System:
     """
     A class to represent and process a Free Energy Perturbation (FEP) system.
@@ -482,9 +523,23 @@ class System:
         
         if stage == 'fe':
             self.sim_config = sim_config
+            if not os.path.exists(f"{self.equil_folder}"):
+                raise FileNotFoundError(f"Equilibration not generated yet. Run prepare('equil') first.")
+        
+            if not os.path.exists(f"{self.equil_folder}/{self.sim_config.poses_def[0]}/md-03.rst7"):
+                raise FileNotFoundError(f"Equilibration not finished yet. First run the equilibration.")
+
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
             if sim_config_eq != sim_config.model_dump():
-                raise ValueError(f"Equilibration and free energy simulation configurations are different")
+#                raise ValueError(f"Equilibration and free energy simulation configurations are different")
+                warnings.warn(f"Equilibration and free energy simulation configurations are different")
+                # get the difference
+                diff = {k: v for k, v in sim_config_eq.items() if sim_config.model_dump().get(k) != v}
+                logger.warning(f"Different configurations: {diff}")
+            os.makedirs(f"{self.fe_folder}", exist_ok=True)
+            with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
+                json.dump(sim_config.model_dump(), f, indent=2)
+
             self._prepare_fe_system()
             logger.info('FE System prepared')
 
@@ -531,6 +586,11 @@ class System:
         Prepare the equilibration system.
         """
         sim_config = self.sim_config
+        if self.overwrite:
+            logger.info('Overwrite is set. Removing existing equilibration files')
+            shutil.rmtree(self.equil_folder, ignore_errors=True)
+        os.makedirs(f"{self.equil_folder}", exist_ok=True)
+
         logger.info('Prepare for equilibration stage')
         if not os.path.exists(f"{self.equil_folder}/all-poses"):
             logger.debug(f'Copying all-poses folder from {self.poses_folder} to {self.equil_folder}/all-poses')
@@ -548,7 +608,6 @@ class System:
                 pose_name=pose,
                 sim_config=sim_config,
                 working_dir=f'{self.equil_folder}',
-                overwrite=self.overwrite
             ).build()
     
         logger.info('Equilibration systems have been created for all poses listed in the input file.')
@@ -560,6 +619,33 @@ class System:
         Prepare the free energy system.
         """
         raise NotImplementedError("Free energy system preparation is not implemented yet")
+        sim_config = self.sim_config
+        if self.overwrite:
+            logger.info('Overwrite is set. Removing existing free energy files')
+            shutil.rmtree(self.fe_folder, ignore_errors=True)
+        os.makedirs(f"{self.fe_folder}", exist_ok=True)
+
+        logger.info('Prepare for free energy stage')
+
+        for pose in self.sim_config.poses_def:
+            logger.info(f'Preparing pose: {pose}')
+            # copy ff folder
+            shutil.copytree(self.ligandff_folder,
+                            f"{self.fe_folder}/{pose}/ff")
+            for component in sim_config.components:
+                logger.info(f'Preparing component: {component}')
+                lambdas_comp = sim_config[COMPONENTS_LAMBDA_DICT[component]]
+                n_sims = len(lambdas_comp)
+                for i, lambdas in enumerate(lambdas_comp):
+                    fe_builder = FreeEnergyBuilder(
+                        win=i,
+                        component=component,
+                        system=self,
+                        pose_name=pose,
+                        sim_config=sim_config,
+                        working_dir=f'{self.fe_folder}',
+                    ).build()
+            
 
     @property
     def poses_folder(self):

@@ -1209,7 +1209,7 @@ def build_dec(fwin, hmr, mol,
         oth_atom = 0
         total_atom = 0
         resid_lig = 0
-        resname_lig = self.mol
+        resname_lig = mol
 
         # Read coordinates for dummy atoms
         if dec_method == 'sdr' or dec_method == 'exchange':

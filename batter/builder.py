@@ -10,6 +10,7 @@ import numpy as np
 import MDAnalysis as mda
 from contextlib import contextmanager
 import tempfile
+import warnings
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.data import build_files as build_files_orig
@@ -29,15 +30,23 @@ from batter.utils import (
 
 
 class SystemBuilder(ABC):
+    """
+    The base class for all system builders.
+
+    The process to build a system involves the following steps:
+    1. `_build_complex`: Build the complex.
+    2. `_create_box`: Create the box.
+    3. `_restraints`: Add restraints.
+    4. `_sim_files`: Create simulation files, e.g. input files for AMBER.
+
+    """
     stage = None
-    win = None
 
     def __init__(self,
                  system: 'batter.System',
                  pose_name: str,
                  sim_config: SimulationConfig,
                  working_dir: str,
-                 overwrite: bool = False
                  ):
         """
         The base class for all system builders.
@@ -57,7 +66,6 @@ class SystemBuilder(ABC):
         self.pose_name = pose_name
         self.sim_config = sim_config
         self.working_dir = working_dir
-        self.overwrite = overwrite
         if not os.path.exists(working_dir):
             os.makedirs(working_dir)
 
@@ -65,11 +73,13 @@ class SystemBuilder(ABC):
         with self._change_dir(self.working_dir):
             logger.info(f'Building {self.pose_name}...')
             logger.debug(f'Working directory: {os.getcwd()}')
-            with self._change_dir('build_files'):
-                logger.debug(f'Copying build files to {os.getcwd()}')
-                anchor_found = self._build_complex()
-            if not anchor_found:
-                return None
+            if not os.path.exists('build_files'):
+                with self._change_dir('build_files'):
+                    logger.debug(f'Creating build_files in  {os.getcwd()}')
+                    anchor_found = self._build_complex()
+                    if not anchor_found:
+                        warnings.warn(f'Could not find the ligand anchors for {self.pose_name}.')
+                        return None
             with self._change_dir(self.pose_name):
                 print(f'Building the system in {os.getcwd()}')
                 self._create_simulation_dir()
@@ -133,11 +143,14 @@ class SystemBuilder(ABC):
 
 class EquilibrationBuilder(SystemBuilder):
     stage = 'equil'
-    win = 0
 
     def _build_complex(self):
-        sdr_dist = 0
-        self.sdr_dist = sdr_dist
+        # only one window for equilibration
+        self.win = 0
+
+        # no ligand copy for equilibration
+        self.sdr_dist = sdr_dist = 0
+        
         H1 = self.sim_config.H1
         H2 = self.sim_config.H2
         H3 = self.sim_config.H3
@@ -148,10 +161,10 @@ class EquilibrationBuilder(SystemBuilder):
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
 
-        if os.path.exists(f'build_files') and not self.overwrite:
-            return False
+        if os.path.exists(f'build_files'):
+            raise ValueError(f'build_files already exists in {os.getcwd()}'
+                             f'run `prepare(overwrite=True)` to overwrite the files')
         else:
-            shutil.rmtree(f'build_files', ignore_errors=True)
             shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
@@ -690,10 +703,10 @@ class EquilibrationBuilder(SystemBuilder):
             p_coupling = '1'
             c_surften = '0'
 
-        if os.path.exists(f'../{amber_files_path}') and not self.overwrite:
-            raise ValueError(f'../{amber_files_path} already exists. Set overwrite=True to overwrite it.')
+        if os.path.exists(f'../{amber_files_path}'):
+            raise ValueError(f'../{amber_files_path} already exists.'
+                             f'run prepare(overwrite=True) to overwrite it.')
         else:
-            shutil.rmtree(f'../{amber_files_path}', ignore_errors=True)
             shutil.copytree(
                 amber_files_orig,
                 f'../{amber_files_path}',
@@ -1225,3 +1238,251 @@ class EquilibrationBuilder(SystemBuilder):
                         num_sim, pose, comp, win,
                         stage, eq_steps1, eq_steps2, rng,
                         lipid_sim=lipid_mol)
+    
+    def _find_anchor(self):
+        """
+        Probably find anchor in equil and fe
+        builders can be combined
+        """
+        # TODO
+        raise NotImplementedError('Not implemented yet')
+
+
+
+class FreeEnergyBuilder(SystemBuilder):
+    stage = 'fe'
+    def __init__(self,
+                 win: int,
+                 component: str,
+                 system: "batter.System",
+                 pose_name: str,
+                 sim_config: SimulationConfig,
+                 working_dir: str,
+    ):
+        self.win = win
+        self.component = component
+        super().__init__(system, pose_name, sim_config, working_dir)
+        lipid_mol = self.lipid_mol
+        if lipid_mol:
+            self.build_file_path = 'build_files'
+            self.amber_files_path = './amber_files'
+            # This will not effect SDR/DD
+            # because semi-isotropic barostat is not supported
+            # with TI simulations
+            self.p_coupling = '3'
+            self.c_surften = '3'
+        else:
+            # TODO: probably not needed
+            self.build_file_path = 'build_files_no_lipid'
+            self.amber_files_path = './amber_files_no_lipid'
+            self.p_coupling = '1'
+            self.c_surften = '0'
+    
+    def _build_complex(self):
+        """
+        Copying files from equilibration
+        """
+        shutil.copytree('../../equil/build_files',
+                        '.', dirs_exist_ok=True)
+        fwin = len(self.sim_config.release_eq) - 1
+        # Get last state from equilibrium simulations
+        shutil.copy(f'../../equil/{pose}/md{fwin:02d}.rst7', './')
+        shutil.copy(f'../../equil/{pose}/full.pdb', './aligned-nc.pdb')
+        shutil.copy(f'../../equil/{pose}/build_amber_renum.txt', './')
+        for file in glob.glob(f'../../equil/{pose.lower()}/full*.prmtop'):
+            shutil.copy(file, './')
+        for file in glob.glob(f'../../equil/{pose.lower()}/vac*'):
+            shutil.copy(file, './')
+        run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
+        renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
+                header=None, names=['old_resname',
+                                    'old_chain',
+                                    'old_resid',
+                                    'new_resname', 'new_resid'])
+        u = mda.Universe('rec_file.pdb')
+
+        for residue in u.select_atoms('protein').residues:
+            resid_str = residue.resid
+            residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
+
+        if lipid_mol:
+            # fix lipid resids
+            revised_resids = []
+            resid_counter = 1
+            prev_resid = 0
+            for i, row in renum_data.iterrows():
+                if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
+                    revised_resids.append(resid_counter)
+                    resid_counter += 1
+                else:
+                    revised_resids.append(resid_counter - 1)
+                prev_resid = row['old_resid']
+            
+            renum_data['revised_resid'] = revised_resids
+            revised_resids = np.array(revised_resids)
+            total_residues = u.atoms.residues.n_residues
+            final_resids = np.zeros(total_residues, dtype=int)
+            final_resids[:len(revised_resids)] = revised_resids
+            next_resnum = revised_resids[-1] + 1
+            final_resids[len(revised_resids):] = np.arange(next_resnum, total_residues - len(revised_resids) + next_resnum)
+            u.atoms.residues.resids = final_resids
+
+        u.atoms.write('rec_file.pdb')
+
+        # Used for retrieving the box size
+        shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+
+        # convert back to lipid
+
+        # Split initial receptor file
+        with open("split-ini.tcl", "rt") as fin:
+            with open("split.tcl", "wt") as fout:
+                if other_mol:
+                    other_mol_vmd = " ".join(other_mol)
+                else:
+                    other_mol_vmd = 'XXX'
+                if lipid_mol:
+                    lipid_mol_vmd = " ".join(lipid_mol)
+                else:
+                    lipid_mol_vmd = 'XXX'
+                for line in fin:
+                    fout.write(line
+                    .replace('SHLL', '%4.2f' % solv_shell)
+                    .replace('OTHRS', str(other_mol_vmd))
+                    .replace('LIPIDS', str(lipid_mol_vmd))
+                    .replace('mmm', mol.lower())
+                    .replace('MMM', mol.upper()))
+        run_with_log('vmd -dispdev text -e split.tcl')
+
+        # Remove possible remaining molecules
+        if not other_mol:
+            open('others.pdb', 'w').close()
+        if not lipid_mol:
+            open('lipids.pdb', 'w').close()
+
+        # Create raw complex and clean it
+        filenames = ['dummy.pdb',
+                     'protein.pdb',
+                    f'{mol.lower()}.pdb',
+                     'others.pdb',
+                     'lipids.pdb',
+                     'crystalwat.pdb']
+        with open('./complex-merge.pdb', 'w') as outfile:
+            for fname in filenames:
+                with open(fname) as infile:
+                    for line in infile:
+                        outfile.write(line)
+        with open('complex-merge.pdb') as oldfile, open('complex.pdb', 'w') as newfile:
+            for line in oldfile:
+                if not 'CRYST1' in line and not 'CONECT' in line and not 'END' in line:
+                    newfile.write(line)
+
+        # Read protein anchors and size from equilibrium
+        with open(f'../../equil/{pose}/equil-{mol.lower}.pdb', 'r') as f:
+            data = f.readline().split()
+            P1 = data[2].strip()
+            P2 = data[3].strip()
+            P3 = data[4].strip()
+            first_res = data[8].strip()
+            recep_last = data[9].strip()
+
+        # Get protein first anchor residue number and protein last residue number from equil simulations
+        p1_resid = P1.split('@')[0][1:]
+        p1_atom = P1.split('@')[1]
+        rec_res = int(recep_last)+1
+        p1_vmd = p1_resid
+
+        # Replace names in initial files and VMD scripts
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                for line in fin:
+                    fout.write(line
+                        .replace('MMM', mol)
+                        .replace('mmm', mol.lower())
+                        .replace('NN', p1_atom)
+                        .replace('P1A', p1_vmd)
+                        .replace('FIRST', '2')
+                        .replace('LAST', str(rec_res))
+                        .replace('STAGE', 'fe')
+                        .replace('XDIS', '%4.2f' % l1_x)
+                        .replace('YDIS', '%4.2f' % l1_y)
+                        .replace('ZDIS', '%4.2f' % l1_z)
+                        .replace('RANG', '%4.2f' % l1_range)
+                        .replace('DMAX', '%4.2f' % max_adis)
+                        .replace('DMIN', '%4.2f' % min_adis)
+                        .replace('SDRD', '%4.2f' % sdr_dist)
+                        .replace('OTHRS', str(other_mol_vmd))
+                        .replace('LIPIDS', str(lipid_mol_vmd))
+                        )
+
+        # Align to reference (equilibrium) structure using VMD's measure fit
+        run_with_log('vmd -dispdev text -e measure-fit.tcl')
+
+        # Put in AMBER format and find ligand anchor atoms
+        with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
+            for line in oldfile:
+                splitdata = line.split()
+                if len(splitdata) > 3:
+                    newfile.write(line)
+        run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
+
+        # fix lipid resids
+        if lipid_mol:
+            u = mda.Universe('aligned_amber.pdb')
+            renum_txt = 'aligned_amber_renum.txt'
+            
+            renum_data = pd.read_csv(
+                    renum_txt,
+                    sep='\s+',
+                    header=None,
+                    names=['old_resname', 'old_resid',
+                        'new_resname', 'new_resid'])
+
+            revised_resids = []
+            resid_counter = 1
+            prev_resid = 0
+            for i, row in renum_data.iterrows():
+                if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
+                    revised_resids.append(resid_counter)
+                    resid_counter += 1
+                else:
+                    revised_resids.append(resid_counter - 1)
+                prev_resid = row['old_resid']
+            # set correct residue number
+            revised_resids = np.array(revised_resids)
+            u.atoms.residues.resids = final_resids[:len(revised_resids)]
+            u.atoms.write('aligned_amber.pdb')
+        
+        run_with_log('vmd -dispdev text -e prep.tcl', error_match='anchor not found')
+
+        # Check size of anchor file
+        anchor_file = 'anchors.txt'
+        if os.stat(anchor_file).st_size == 0:
+            os.chdir('../')
+            return 'anch1'
+        f = open(anchor_file, 'r')
+        for line in f:
+            splitdata = line.split()
+            if len(splitdata) < 3:
+                os.rename('./anchors.txt', 'anchors-'+pose+'.txt')
+                os.chdir('../')
+                return 'anch2'
+        os.rename('./anchors.txt', 'anchors-'+pose+'.txt')
+
+        # Read ligand anchors obtained from VMD
+        lig_resid = str(int(recep_last) + 2)
+        anchor_file = 'anchors-'+pose+'.txt'
+        f = open(anchor_file, 'r')
+        for line in f:
+            splitdata = line.split()
+            L1 = ":"+lig_resid+"@"+splitdata[0]
+            L2 = ":"+lig_resid+"@"+splitdata[1]
+            L3 = ":"+lig_resid+"@"+splitdata[2]
+
+        # Write anchors and last protein residue to original pdb file
+        with open('fe-%s.pdb' % mol.lower(), 'r') as fin:
+            data = fin.read().splitlines(True)
+        with open('fe-%s.pdb' % mol.lower(), 'w') as fout:
+            fout.write('%-8s  %6s  %6s  %6s  %6s  %6s  %6s  %6s  %4s\n' %
+                       ('REMARK A', P1, P2, P3, L1, L2, L3, first_res, recep_last))
+            fout.writelines(data[1:])
