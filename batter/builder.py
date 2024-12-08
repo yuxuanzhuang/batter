@@ -70,6 +70,7 @@ class SystemBuilder(ABC):
             os.makedirs(working_dir)
 
     def build(self):
+        
         with self._change_dir(self.working_dir):
             logger.info(f'Building {self.pose_name}...')
             logger.debug(f'Working directory: {os.getcwd()}')
@@ -80,6 +81,11 @@ class SystemBuilder(ABC):
                     if not anchor_found:
                         warnings.warn(f'Could not find the ligand anchors for {self.pose_name}.')
                         return None
+
+            self.mol = mda.Universe(f'build_files/{self.pose_name}.pdb').residues[0].resname
+            self.other_mol = self.sim_config.other_mol
+            self.lipid_mol = self.sim_config.lipid_mol
+
             with self._change_dir(self.pose_name):
                 print(f'Building the system in {os.getcwd()}')
                 self._create_simulation_dir()
@@ -188,8 +194,7 @@ class EquilibrationBuilder(SystemBuilder):
         if len(set(mol_u.residues.resnames)) > 1:
             raise ValueError(f'The ligand {self.pose_name} has more than one residue: '
                              f'{mol_u.atoms.resnames}')
-        self.mol = mol_u.residues[0].resname
-        mol = self.mol
+        mol = mol_u.residues[0].resname
         if mol in other_mol:
             raise ValueError(f'The ligand {mol}'
                              f'cannot be in the other_mol list: '

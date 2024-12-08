@@ -1351,6 +1351,8 @@ def generate_frontier_files(version=24):
 
     def write_sbatch_file(pose, components):
         for component in components:
+            folder = os.getcwd()
+            folder = '_'.join(folder.split(os.sep)[-4:])
             # write the sbatch file for equilibration
             file_temp = f'{frontier_files}/fep_run.sbatch'
             lines = open(file_temp).readlines()
@@ -1379,7 +1381,7 @@ def generate_frontier_files(version=24):
                     )
             lines = [line
                      .replace('NUM_NODES', str(n_nodes))
-                     .replace('FEP_SIM_XXX', f'fep_{component}_{pose}') for line in lines]
+                     .replace('FEP_SIM_XXX', f'{folder}_{component}_{pose}') for line in lines]
             with open(sbatch_file, 'w') as f:
                 f.writelines(lines)
 
@@ -1399,7 +1401,7 @@ def generate_frontier_files(version=24):
                     if 'disang' in line:
                         line = f"DISANG={replicate}/disang.rest\n"
                     if 'nstlim' in line:
-                        line = '  nstlim = 1000000,\n'
+                        line = '  nstlim = 100000,\n'
                     outfile.write(line)
 
     def write_production(all_replicates):
@@ -1418,6 +1420,7 @@ def generate_frontier_files(version=24):
         # run the production
         sbatch_file = f'fe/fep_md.sbatch'
         folder = os.getcwd()
+        folder = '_'.join(folder.split(os.sep)[-4:])
         lines = [
             line.replace('NUM_NODES', str(n_nodes))
                 .replace('FEP_SIM_XXX', f'fep_md_{folder}')
@@ -1432,7 +1435,7 @@ def generate_frontier_files(version=24):
         sbatch_file = f'fe/fep_md_extend.sbatch'
         lines = [
             line.replace('NUM_NODES', str(n_nodes))
-                .replace('FEP_SIM_XXX', 'fep_md_{folder}')
+                .replace('FEP_SIM_XXX', f'fep_md_{folder}')
             for line in temp_lines
         ]
         lines.extend([

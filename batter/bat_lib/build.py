@@ -509,7 +509,7 @@ def build_equil(pose, celp_st, mol,
     coords = dum_coords + recep_coords + lig_coords + oth_coords
     atom_namelist = dum_atomlist + recep_atomlist + lig_atomlist + oth_atomlist
     resid_list = dum_rsidlist + recep_rsidlist + lig_rsidlist + oth_rsidlist
-    resid_list = [resid if resid < 10000 else (resid % 10000) + 1 for resid in resid_list]
+    resid_list = [resid if resid < 10000 else (resid % 9999) + 1 for resid in resid_list]
 
     resname_list = dum_rsnmlist + recep_rsnmlist + lig_rsnmlist + oth_rsnmlist
     chain_list = dum_chainlist + recep_chainlist + lig_chainlist + oth_chainlist
@@ -1291,7 +1291,7 @@ def build_dec(fwin, hmr, mol,
         coords = dum_coords + recep_coords + lig_coords + oth_coords
         atom_namelist = dum_atomlist + recep_atomlist + lig_atomlist + oth_atomlist
         resid_list = dum_rsidlist + recep_rsidlist + lig_rsidlist + oth_rsidlist
-        resid_list = [resid if resid < 10000 else (resid % 10000) + 1 for resid in resid_list]
+        resid_list = [resid if resid < 10000 else (resid % 9999) + 1 for resid in resid_list]
 
         resname_list = dum_rsnmlist + recep_rsnmlist + lig_rsnmlist + oth_rsnmlist
         chain_list = dum_chainlist + recep_chainlist + lig_chainlist + oth_chainlist
@@ -1451,9 +1451,9 @@ def build_dec(fwin, hmr, mol,
             if oth_rsidlist[i] != oth_tmp:
                 build_file.write('TER\n')
             oth_tmp = oth_rsidlist[i]
-            oth_tmp = oth_tmp if oth_tmp < 10000 else (oth_tmp % 10000) + 1
+            oth_tmp = oth_tmp if oth_tmp < 10000 else (oth_tmp % 9999) + 1
             build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                             ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_chainlist[i], oth_rsidlist[i]))
+                             ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_chainlist[i], oth_tmp))
             build_file.write('%8.3f%8.3f%8.3f' %
                              (float(oth_coords[i][0]), float(oth_coords[i][1]), float(oth_coords[i][2])))
 
@@ -1893,11 +1893,28 @@ def create_box(comp, hmr,
 
     try:
         u = mda.Universe('full_pre.pdb')
-    except ValueError('could not convert'):
-        raise ValueError('The system is toooo big! '
-                         'tleap write incorrect PDB when '
-                         'residue exceed 100,000.'
-                         'I am not sure how to fix it yet.')
+    except:
+        with open('full_pre.pdb', 'r') as f:
+            lines = f.readlines()
+        adjusted_lines = []
+        for line in lines:
+            try:
+                resid = int(line[22:29].strip())  # Extract residue number
+                if resid >= 100000:
+                    resid = (resid % 99999) + 1  # Wrap residue number
+                    line = f"{line[:22]}{str(resid).rjust(5)}{line[28:]}"  # Replace residue number
+            except:
+                pass
+            adjusted_lines.append(line)
+
+        with open('full_pre.pdb', 'w') as f:
+            f.writelines(adjusted_lines)
+
+        u = mda.Universe('full_pre.pdb')
+#        raise ValueError('The system is toooo big! '
+#                         'tleap write incorrect PDB when '
+#                         'residue exceed 100,000.'
+#                         'I am not sure how to fix it yet.')
 
     u_orig = mda.Universe('equil-reference.pdb')
 
