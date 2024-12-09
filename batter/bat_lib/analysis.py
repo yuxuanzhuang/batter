@@ -3,8 +3,6 @@ import glob
 import os as os
 import re as re
 import shutil as shutil
-import signal as signal
-import subprocess as sp
 import sys as sys
 import math
 import numpy as np
@@ -652,12 +650,15 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                     # Write lines up to and including the target line
                     f.writelines(lines[:line_index + 1])
                     # Append the sorted mdin files
-                    for mdin_file in mdin_files:
+                    # all but the last file to avoid a running simulation
+                    for mdin_file in mdin_files[:-1]:
                         f.write(f'trajin {mdin_file}\n')
                     # Write the remaining lines
                     f.writelines(lines[line_index + 1:])
                 # Run cpptraj with logging
+                logger.debug('Running cpptraj')
                 run_with_log(f"{cpptraj} -i restraints.in > restraints.log 2>&1")
+                logger.debug('cpptraj finished')
 
                 # Separate in blocks
                 with open("restraints.dat", "r") as fin:
@@ -678,6 +679,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             if dec_int == 'ti':
                 # Get dvdl values from output file
                 for j in range(0, len(lambdas)):
+                    logger.debug('Lambda: %s' % lambdas[j])
                     data = []
                     win = j
                     os.chdir('%s%02d' % (comp, int(win)))
@@ -707,6 +709,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             elif dec_int == 'mbar':
                 # Get potential energy values from output file
                 for j in range(0, len(lambdas)):
+                    logger.debug('Lambda: %s' % lambdas[j])
                     data = []
                     win = j
                     os.chdir('%s%02d' % (comp, int(win)))
@@ -742,6 +745,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                                     fout.write(line)
                         fout.close()
                     os.chdir('../')
+                logger.debug('MBAR energies done')
         os.chdir('../')
 
     os.chdir('../../')
@@ -749,12 +753,14 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     # Get free energies for the whole run
     for i in range(0, len(components)):
         comp = components[i]
+        logger.debug('Get free energies for Component: %s' % comp)
         if comp == 'a' or comp == 'l' or comp == 't' or comp == 'c' or comp == 'r' or comp == 'm' or comp == 'n':
             rest_file = 'restraints.dat'
             mode = 'all'
             fe_mbar(comp, pose, mode, rest_file, temperature)
             mode = 'sub'
             fe_mbar(comp, pose, mode, rest_file, temperature)
+            logger.debug('MBAR for rest done')
         else:
             if dec_int == 'ti':
                 rest_file = 'dvdl.dat'
@@ -766,6 +772,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, temperature)
                 mode = 'sub'
                 fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, temperature)
+                logger.debug('MBAR for SDR done')
 
     # Get free energies for the blocks
     for i in range(0, len(components)):
@@ -1019,11 +1026,10 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             os.chdir('../')
 
     # Create Results folder
-    if not os.path.exists('Results'):
-        os.makedirs('Results')
-
+    os.makedirs('Results', exist_ok=True)
     # Copy complex pdb structure
-        shutil.copy('./build_files/complex.pdb', './Results/')
+    shutil.copy('./build_files/complex.pdb', './Results/')
+
 
     # Get MBAR free energy averages for the blocks
     for k in range(0, blocks):

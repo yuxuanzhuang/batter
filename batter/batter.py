@@ -34,11 +34,6 @@ from batter.builder import EquilibrationBuilder
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# set info level for the logger
-# logger.remove()
-# logger.add(sys.stdout, level='INFO')
-
-
 DEC_FOLDER_DICT = {
     'dd': 'dd',
     'sdr': 'sdr',
@@ -579,7 +574,17 @@ class System:
             raise ValueError(f"Invalid stage: {stage}")
 
     def _submit_frontier(self, stage: str):
-        raise NotImplementedError("Frontier submission is not implemented yet")
+        if stage == 'equil':
+            raise NotImplementedError("Frontier submission is not implemented yet")
+        elif stage == 'fe':
+            if not os.path.exists(f"{self.fe_folder}/current_mdin.groupfile"):
+                run_with_log(f'sbatch fep_md.sbatch',
+                            working_dir=f'{self.fe_folder}')
+                
+            run_with_log(f'sbatch fep_md_extend.sbatch',
+                        working_dir=f'{self.fe_folder}')
+        else:
+            raise ValueError(f"Invalid stage: {stage}")
 
     def _prepare_equil_system(self):
         """

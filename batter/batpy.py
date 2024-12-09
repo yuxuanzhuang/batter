@@ -10,6 +10,7 @@ import signal as signal
 import subprocess as sp
 import sys as sys
 import numpy as np
+import json
 # from batter.utils.utils import run_with_log, antechamber, tleap, cpptraj
 # from batter.batter import System
 from batter.input_process import get_configure_from_file
@@ -20,13 +21,6 @@ import MDAnalysis as mda
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# set logging level to INFO
-logger.remove()
-logger.add(
-    sys.stderr,
-    format="<green>{level}</green> | {message}",
-    level="INFO"
-)
 
 
 @click.command(no_args_is_help='--help')
@@ -51,10 +45,30 @@ logger.add(
               default='all-poses',
               type=click.Path(exists=True),
               help='Directory containing the poses; default is "all-poses".')
-def batpy(input_file, stage, work_dir, pose_dir):
+@click.option('-v', '--verbose',
+              is_flag=True,
+              help='Print verbose output.')
+def batpy(input_file, stage, work_dir, pose_dir, verbose):
     """
     A script for running BAT.py simulations.
     """
+    if verbose:
+        logger.info('Verbose mode enabled')
+        # set logging level to INFO
+        logger.remove()
+        logger.add(
+            click.get_text_stream('stdout'),
+            format="<green>{level}</green> | {message}",
+            level='DEBUG'
+        )
+    else:
+        logger.remove()
+        logger.add(
+            click.get_text_stream('stdout'),
+            format="<green>{level}</green> | {message}",
+            level='INFO'
+        )
+        
     click.echo(f"Running with input file: {input_file}")
     click.echo(f"Simulation stage: {stage}")
     click.echo(f"Working directory: {work_dir}")
@@ -67,14 +81,14 @@ def batpy(input_file, stage, work_dir, pose_dir):
     sim_config = get_configure_from_file(input_file)
     logger.info('Reading input file')
     for field, value in sim_config.model_dump().items():
-        logger.info(f"{field}: {value}")
+        logger.debug(f"{field}: {value}")
         # It's a bit hacky
         # The future plan is to pass sim_config directly
         # and be more object-oriented.
         globals()[field] = value
 
     sim_config_input = sim_config.model_dump()
-    logger.info('-'*50)
+    logger.debug('-'*50)
     # Set working directory
 
     if not os.path.exists(work_dir):
@@ -85,6 +99,8 @@ def batpy(input_file, stage, work_dir, pose_dir):
     except shutil.SameFileError:
         pass
 
+    json.dump(sim_config_input, open(os.path.join(work_dir, 'sim_config.json'), 'w'))
+
     # Copy pose directory to working directory
 
     if not os.path.exists(os.path.join(work_dir, 'all-poses')):
@@ -92,9 +108,6 @@ def batpy(input_file, stage, work_dir, pose_dir):
         shutil.copytree(pose_dir,
                         os.path.join(work_dir, 'all-poses'))
     os.chdir(work_dir)
-
-    with open('sim_config.pkl', 'wb') as f:
-        pickle.dump(sim_config, f)
 
     # Get all mols
     global mols
@@ -1384,11 +1397,39 @@ def generate_frontier_files(version=24):
                      .replace('FEP_SIM_XXX', f'{folder}_{component}_{pose}') for line in lines]
             with open(sbatch_file, 'w') as f:
                 f.writelines(lines)
+    def calculate_performance(n_atoms, comp):
+        # Very rough estimate of the performance of the simulations
+        # for 200000-atom systems: rest: 100 ns/day, sdr: 50 ns/day
+        # for 70000-atom systems: rest: 200 ns/day, sdr: 100 ns/day
+        # run 30 mins for each simulation
+        if comp not in ['e', 'v', 'w', 'f', 'x']:
+            if n_atoms < 80000:
+                return 150
+            else:
+                return 80
+        else:
+            if n_atoms < 80000:
+                return 80
+            else:
+                return 40
 
+        
     def write_groupfile_production(all_replicates):
         # Read and modify the MD input file to update the relative path
 
         for replicate in all_replicates:
+            # get a estimated number of steps can be finished in 30 mins
+            # that is the current tested submission time
+            inpcrd_file = f'fe/{replicate}/full.inpcrd'
+            # read the second line of the inpcrd file
+            with open(inpcrd_file, 'r') as infile:
+                lines = infile.readlines()
+                n_atoms = int(lines[1])
+                comp = replicate.split('/')[-1][0]
+            performance = calculate_performance(n_atoms, comp)
+            n_steps = int(30 / 60 / 24 * performance * 1000 * 1000 / 4)
+            n_steps = int(n_steps // 100000 * 100000)
+
             with open(f'fe/{replicate}/mdin-02', 'r') as infile:
                 input_lines = infile.readlines()
             new_mdinput = f'fe/{replicate}/mdin_frontier'
@@ -1401,7 +1442,7 @@ def generate_frontier_files(version=24):
                     if 'disang' in line:
                         line = f"DISANG={replicate}/disang.rest\n"
                     if 'nstlim' in line:
-                        line = '  nstlim = 100000,\n'
+                        line = f'  nstlim = {n_steps},\n'
                     outfile.write(line)
 
     def write_production(all_replicates):
