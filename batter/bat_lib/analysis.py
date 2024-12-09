@@ -603,7 +603,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         raise Exception('Some of the simulations are not done yet '
                         'or there\'s an error running the simulations\n')
     
-    def generate_restraints(comp, win):
+    def generate_results_rest(comp, win):
         data = []
         os.chdir('%s%02d' % (comp, int(win)))
         if (comp == 't' or comp == 'm') and win == 0:
@@ -636,11 +636,10 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         # Read the 'restraints.in' file
         with open('restraints.in', 'r') as f:
             lines = f.readlines()
-        # Find the line number containing 'trajin md10.nc'
-        line_index = next((i for i, line in enumerate(lines) if 'trajin md10.nc' in line), -1)
-        if line_index == -1:
-            raise ValueError("Line containing 'trajin md10.nc' not found in 'restraints.in'.")
-        # Rewrite 'restraints.in' with the mdin files appended after the 'trajin md10.nc' line
+        # remove lines contains 'trajin'
+        lines = [line for line in lines if 'trajin' not in line]
+        # get the line index of parm
+        line_index = lines.index([line for line in lines if 'parm' in line][0])
         with open('restraints.in', 'w') as f:
             # Write lines up to and including the target line
             f.writelines(lines[:line_index + 1])
@@ -667,88 +666,87 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             fout.close()
         os.chdir('../')
 
+    def generate_results_dd(dec_int, comp, win):
+        if dec_int == 'ti':
+            # Get dvdl values from output file 
+            data = []
+            os.chdir('%s%02d' % (comp, int(win)))
+            dvdl = open('dvdl.dat', "w")
+            with open("md-02.out", "r") as fin:
+                s = 0
+                n = 0
+                for line in fin:
+                    if 'TI region  1' in line:
+                        s = 1
+                    if 'DV/DL  = ' in line and s == 1:
+                        n = n+1
+                        splitdata = line.split()
+                        data.append(splitdata[2])
+                        dvdl.write('%5d   %9.4f\n' % (n, float(splitdata[2])))
+                        s = 0
+                    if 'A V E' in line:
+                        break
+                dvdl.close()
+            # Separate in blocks
+            for k in range(0, blocks):
+                fout = open('dvdl%02d.dat' % (k+1), "w")
+                for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
+                    fout.write('%5d   %9.4f\n' % (t+1, float(data[t])))
+                fout.close()
+            os.chdir('../')
+        elif dec_int == 'mbar':
+            # Get potential energy values from output file
+            data = []
+            os.chdir('%s%02d' % (comp, int(win)))
+            potl = open('energies.dat', "w")
+            md_out_files = glob.glob('md*.out')
+            for md_out_file in md_out_files:
+                with open(md_out_file, "r") as fin:
+                    n = 0
+                    for line in fin:
+                        cols = line.split()
+                        if 'MBAR Energy analysis' in line:
+                            if n != 0:
+                                potl.write('\n')
+                            n = n+1
+                        if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
+                            potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
+            potl.write('\n')
+            potl.close()
+            # Separate in blocks
+            for k in range(0, blocks):
+                s = 0
+                fout = open('ener%02d.dat' % (k+1), "w")
+                with open("energies.dat", "r") as fin:
+                    for line in fin:
+                        cols = line.split()
+                        low = int(k*int(round(n/blocks)))+1
+                        high = int((k+1)*int(round(n/blocks)))+1
+                        if len(cols) >= 1 and int(cols[0]) == low:
+                            s = 1
+                        if len(cols) >= 1 and int(cols[0]) == high:
+                            s = 0
+                        if s == 1:
+                            fout.write(line)
+                fout.close()
+            os.chdir('../')
+    
     for i in range(0, len(components)):
         comp = components[i]
         logger.debug('Component: %s' % comp)
         if comp in components_dict['rest']:
             os.chdir('rest')
-            Parallel(n_jobs=6)(delayed(generate_restraints)(comp, win) for win in range(len(attach_rest)))
+            if True:
+                Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win) for win in range(len(attach_rest)))
                 
         elif comp in components_dict['dd']:
             if dec_method == 'dd':
                 os.chdir(dec_method)
             if dec_method == 'sdr' or dec_method == 'exchange':
                 os.chdir('sdr')
-            if dec_int == 'ti':
-                # Get dvdl values from output file
-                for j in range(0, len(lambdas)):
-                    logger.debug('Lambda: %s' % lambdas[j])
-                    data = []
-                    win = j
-                    os.chdir('%s%02d' % (comp, int(win)))
-                    dvdl = open('dvdl.dat', "w")
-                    with open("md-02.out", "r") as fin:
-                        s = 0
-                        n = 0
-                        for line in fin:
-                            if 'TI region  1' in line:
-                                s = 1
-                            if 'DV/DL  = ' in line and s == 1:
-                                n = n+1
-                                splitdata = line.split()
-                                data.append(splitdata[2])
-                                dvdl.write('%5d   %9.4f\n' % (n, float(splitdata[2])))
-                                s = 0
-                            if 'A V E' in line:
-                                break
-                        dvdl.close()
-                    # Separate in blocks
-                    for k in range(0, blocks):
-                        fout = open('dvdl%02d.dat' % (k+1), "w")
-                        for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
-                            fout.write('%5d   %9.4f\n' % (t+1, float(data[t])))
-                        fout.close()
-                    os.chdir('../')
-            elif dec_int == 'mbar':
-                # Get potential energy values from output file
-                for j in range(0, len(lambdas)):
-                    logger.debug('Lambda: %s' % lambdas[j])
-                    data = []
-                    win = j
-                    os.chdir('%s%02d' % (comp, int(win)))
-                    potl = open('energies.dat', "w")
-                    md_out_files = glob.glob('md*.out')
-                    for md_out_file in md_out_files:
-                        with open(md_out_file, "r") as fin:
-                            n = 0
-                            for line in fin:
-                                cols = line.split()
-                                if 'MBAR Energy analysis' in line:
-                                    if n != 0:
-                                        potl.write('\n')
-                                    n = n+1
-                                if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
-                                    potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
-                    potl.write('\n')
-                    potl.close()
-                    # Separate in blocks
-                    for k in range(0, blocks):
-                        s = 0
-                        fout = open('ener%02d.dat' % (k+1), "w")
-                        with open("energies.dat", "r") as fin:
-                            for line in fin:
-                                cols = line.split()
-                                low = int(k*int(round(n/blocks)))+1
-                                high = int((k+1)*int(round(n/blocks)))+1
-                                if len(cols) >= 1 and int(cols[0]) == low:
-                                    s = 1
-                                if len(cols) >= 1 and int(cols[0]) == high:
-                                    s = 0
-                                if s == 1:
-                                    fout.write(line)
-                        fout.close()
-                    os.chdir('../')
-                logger.debug('MBAR energies done')
+            if True:
+                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_int, comp, win) for win in range(len(lambdas)))
+        logger.debug('MBAR energies done')
         os.chdir('../')
 
     os.chdir('../../')
@@ -1559,32 +1557,31 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
                     Upot[k, l, 0:Neff[k]] = (beta*rfc[l, 0]*((val[0:Neff[k], k, 0]-req[l, 0])**2))
 
     val = []
-
-    print("Running MBAR... ")
+    np.savetxt(f'./data/Upot_{comp}.dat', Upot.reshape(K*K, np.max(Neff)), fmt='%12.7f')
     mbar = MBAR(Upot, Neff)
 
-    print("Calculate Free Energy Differences Between States")
+    logger.debug("Calculate Free Energy Differences Between States")
     [Deltaf, dDeltaf] = mbar.getFreeEnergyDifferences()
 
     min = np.argmin(Deltaf[0])
 
     # Write to file
-    print("Free Energy Differences (in units of kcal/mol)")
-    print("%9s %8s %8s %12s %12s" % ('bin', 'f', 'df', 'deq', 'dfc'))
+    logger.debug("Free Energy Differences (in units of kcal/mol)")
+    logger.debug("%9s %8s %8s %12s %12s" % ('bin', 'f', 'df', 'deq', 'dfc'))
     datfile = open('./data/mbar-'+comp+'-'+mode+'.dat', 'w')
     for k in range(K):
         if comp != 'u':  # Attach/release
-            print("%10.5f %10.5f %10.5f %12.7f %12.7f" %
+            logger.debug("%10.5f %10.5f %10.5f %12.7f %12.7f" %
                   (rfc[k, 0]/rfc[-1, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
             datfile.write("%10.5f %10.5f %10.5f %12.7f %12.7f\n" %
                           (rfc[k, 0]/rfc[-1, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
         else:  # Umbrella/Translation
-            print("%10.5f %10.5f %10.5f %12.7f %12.7f" %
+            logger.debug("%10.5f %10.5f %10.5f %12.7f %12.7f" %
                   (req[k, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
             datfile.write("%10.5f %10.5f %10.5f %12.7f %12.7f\n" %
                           (req[k, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
     datfile.close()
-    print("\n\n")
+    logger.debug("\n\n")
 
     os.chdir('../../../')
 
