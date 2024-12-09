@@ -10,6 +10,7 @@ from batter.bat_lib.pymbar import MBAR, timeseries # multistate Bennett acceptan
 from pathlib import Path
 from batter.utils import run_with_log, antechamber, tleap, cpptraj, parmchk2
 from loguru import logger
+from joblib import Parallel, delayed
 
 
 def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lambdas, dic_itera1, dic_itera2, itera_steps, dt, dlambda, dec_int, weights, blocks, ti_points):
@@ -601,76 +602,78 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         logger.error(f"The following folders are missing files: {', '.join(unfinished)}")
         raise Exception('Some of the simulations are not done yet '
                         'or there\'s an error running the simulations\n')
+    
+    def generate_restraints(comp, win):
+        data = []
+        os.chdir('%s%02d' % (comp, int(win)))
+        if (comp == 't' or comp == 'm') and win == 0:
+            # Calculate analytical release for dd and sdr
+            with open('disang.rest', "r") as f_in:
+                lines = (line.rstrip() for line in f_in)
+                lines = list(line for line in lines if '#Lig_TR' in line)
+                splitdata = lines[0].split()
+                r0 = float(splitdata[6].strip(','))
+                splitdata = lines[1].split()
+                a1_0 = float(splitdata[6].strip(','))
+                splitdata = lines[2].split()
+                t1_0 = float(splitdata[6].strip(','))
+                splitdata = lines[3].split()
+                a2_0 = float(splitdata[6].strip(','))
+                splitdata = lines[4].split()
+                t2_0 = float(splitdata[6].strip(','))
+                splitdata = lines[5].split()
+                t3_0 = float(splitdata[6].strip(','))
+                k_r = rest[2]
+                k_a = rest[3]
+                fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
+        # Get restraint trajectory file
+
+        # temp fix for frontier
+        # Find all files matching the pattern 'mdin-xx.nc' in the folder
+        mdin_files = glob.glob('mdin-*.nc')
+        # Sort them numerically by the number in the filename
+        mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
+        # Read the 'restraints.in' file
+        with open('restraints.in', 'r') as f:
+            lines = f.readlines()
+        # Find the line number containing 'trajin md10.nc'
+        line_index = next((i for i, line in enumerate(lines) if 'trajin md10.nc' in line), -1)
+        if line_index == -1:
+            raise ValueError("Line containing 'trajin md10.nc' not found in 'restraints.in'.")
+        # Rewrite 'restraints.in' with the mdin files appended after the 'trajin md10.nc' line
+        with open('restraints.in', 'w') as f:
+            # Write lines up to and including the target line
+            f.writelines(lines[:line_index + 1])
+            # Append the sorted mdin files
+            # all but the last file to avoid a running simulation
+            for mdin_file in mdin_files[:-1]:
+                f.write(f'trajin {mdin_file}\n')
+            # Write the remaining lines
+            f.writelines(lines[line_index + 1:])
+        # Run cpptraj with logging
+        logger.debug('Running cpptraj')
+        run_with_log(f"{cpptraj} -i restraints.in > restraints.log 2>&1")
+        logger.debug('cpptraj finished')
+
+        # Separate in blocks
+        with open("restraints.dat", "r") as fin:
+            for line in fin:
+                if not '#' in line:
+                    data.append(line)
+        for k in range(0, blocks):
+            fout = open('rest%02d.dat' % (k+1), "w")
+            for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
+                fout.write(data[t])
+            fout.close()
+        os.chdir('../')
 
     for i in range(0, len(components)):
         comp = components[i]
         logger.debug('Component: %s' % comp)
         if comp in components_dict['rest']:
             os.chdir('rest')
-            for j in range(0, len(attach_rest)):
-                data = []
-                win = j
-                os.chdir('%s%02d' % (comp, int(win)))
-                if (comp == 't' or comp == 'm') and win == 0:
-                    # Calculate analytical release for dd and sdr
-                    with open('disang.rest', "r") as f_in:
-                        lines = (line.rstrip() for line in f_in)
-                        lines = list(line for line in lines if '#Lig_TR' in line)
-                        splitdata = lines[0].split()
-                        r0 = float(splitdata[6].strip(','))
-                        splitdata = lines[1].split()
-                        a1_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[2].split()
-                        t1_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[3].split()
-                        a2_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[4].split()
-                        t2_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[5].split()
-                        t3_0 = float(splitdata[6].strip(','))
-                        k_r = rest[2]
-                        k_a = rest[3]
-                        fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
-                # Get restraint trajectory file
-
-                # temp fix for frontier
-                # Find all files matching the pattern 'mdin-xx.nc' in the folder
-                mdin_files = glob.glob('mdin-*.nc')
-                # Sort them numerically by the number in the filename
-                mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
-                # Read the 'restraints.in' file
-                with open('restraints.in', 'r') as f:
-                    lines = f.readlines()
-                # Find the line number containing 'trajin md10.nc'
-                line_index = next((i for i, line in enumerate(lines) if 'trajin md10.nc' in line), -1)
-                if line_index == -1:
-                    raise ValueError("Line containing 'trajin md10.nc' not found in 'restraints.in'.")
-                # Rewrite 'restraints.in' with the mdin files appended after the 'trajin md10.nc' line
-                with open('restraints.in', 'w') as f:
-                    # Write lines up to and including the target line
-                    f.writelines(lines[:line_index + 1])
-                    # Append the sorted mdin files
-                    # all but the last file to avoid a running simulation
-                    for mdin_file in mdin_files[:-1]:
-                        f.write(f'trajin {mdin_file}\n')
-                    # Write the remaining lines
-                    f.writelines(lines[line_index + 1:])
-                # Run cpptraj with logging
-                logger.debug('Running cpptraj')
-                run_with_log(f"{cpptraj} -i restraints.in > restraints.log 2>&1")
-                logger.debug('cpptraj finished')
-
-                # Separate in blocks
-                with open("restraints.dat", "r") as fin:
-                    for line in fin:
-                        if not '#' in line:
-                            data.append(line)
-                for k in range(0, blocks):
-                    fout = open('rest%02d.dat' % (k+1), "w")
-                    for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
-                        fout.write(data[t])
-                    fout.close()
-                os.chdir('../')
+            Parallel(n_jobs=6)(delayed(generate_restraints)(comp, win) for win in range(len(attach_rest)))
+                
         elif comp in components_dict['dd']:
             if dec_method == 'dd':
                 os.chdir(dec_method)
