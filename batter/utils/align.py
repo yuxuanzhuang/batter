@@ -8,6 +8,8 @@ from batter.utils import run_with_log
 from loguru import logger
 import shutil
 from pathlib import Path
+import sys
+import os
 
 from importlib import resources
 
@@ -34,9 +36,10 @@ def align_with_usalign(input_file, reference_file, remove_residues=[], output_fi
     else:
         output_file_align = output_file.replace('.pdb', f'_aligned')
     # usalign
-    logger.debug(f'{usalign} {temp_file} {reference_file} -mm 0 -ter 2 -o {output_file_align}')
-    run_with_log(f'{usalign} {temp_file} {reference_file} -mm 0 -ter 2 -o {temp_file}',
-                    working_dir=tempfile.gettempdir())
+    reference_file =os.path.abspath(reference_file)
+    run_with_log(f'{usalign} {temp_file} {reference_file} -mm 0 -ter 2 -o {temp_file.replace(".pdb", "")}',
+                    working_dir=Path(temp_file).parent,
+                    error_match='Cannot parse file')
     # create the folder
     Path(f'{output_file_align}.pdb').parent.mkdir(parents=True, exist_ok=True)
     shutil.move(temp_file, f'{output_file_align}.pdb')
@@ -47,11 +50,16 @@ def align_with_usalign(input_file, reference_file, remove_residues=[], output_fi
 @click.option('--reference_file', '-r', type=click.Path(exists=True), required=True)
 @click.option('--remove_residues', '-no', multiple=True, type=str)
 @click.option('--output_file', '-o', type=click.Path())
+@click.option('--verbose', '-v', is_flag=True)
 def aligning(input_file,
              reference_file,
              remove_residues=[],
-             output_file=None):
+             output_file=None,
+             verbose=False):
     """Align the structures in the input files to the reference file"""
+    if verbose:
+        logger.remove()
+        logger.add(sys.stderr, level='DEBUG')
     align_with_usalign(input_file, reference_file, remove_residues, output_file)
 
 
