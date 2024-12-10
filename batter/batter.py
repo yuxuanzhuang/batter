@@ -592,6 +592,21 @@ class System:
         if stage == 'equil':
             raise NotImplementedError("Frontier submission is not implemented yet")
         elif stage == 'fe':
+            running_fe_equi = False
+            for pose in self.sim_config.poses_def:
+                if not os.path.exists(f"{self.fe_folder}/{pose}/rest/m00/eqnpt.in_04.rst7"):
+                    run_with_log(f'sbatch fep_m_{pose}_eq.sbatch',
+                            working_dir=f'{self.fe_folder}')
+                    run_with_log(f'sbatch fep_n_{pose}_eq.sbatch',
+                            working_dir=f'{self.fe_folder}')
+                    run_with_log(f'sbatch fep_e_{pose}_eq.sbatch',
+                            working_dir=f'{self.fe_folder}')
+                    run_with_log(f'sbatch fep_v_{pose}_eq.sbatch',
+                            working_dir=f'{self.fe_folder}')
+                    running_fe_equi = True
+            if running_fe_equi:
+                return
+                                  
             if not os.path.exists(f"{self.fe_folder}/current_mdin.groupfile"):
                 run_with_log(f'sbatch fep_md.sbatch',
                             working_dir=f'{self.fe_folder}')

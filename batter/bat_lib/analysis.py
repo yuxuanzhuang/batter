@@ -604,6 +604,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                         'or there\'s an error running the simulations\n')
     
     def generate_results_rest(comp, win):
+        os.chdir('rest')
         data = []
         os.chdir('%s%02d' % (comp, int(win)))
         if (comp == 't' or comp == 'm') and win == 0:
@@ -664,9 +665,14 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
                 fout.write(data[t])
             fout.close()
-        os.chdir('../')
+        os.chdir('../../')
 
-    def generate_results_dd(dec_int, comp, win):
+    def generate_results_dd(dec_method, dec_int, comp, win):
+        logger.debug(os.getcwd())
+        if dec_method == 'dd':
+            os.chdir(dec_method)
+        if dec_method == 'sdr' or dec_method == 'exchange':
+            os.chdir('sdr')
         if dec_int == 'ti':
             # Get dvdl values from output file 
             data = []
@@ -693,7 +699,6 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
                     fout.write('%5d   %9.4f\n' % (t+1, float(data[t])))
                 fout.close()
-            os.chdir('../')
         elif dec_int == 'mbar':
             # Get potential energy values from output file
             data = []
@@ -729,25 +734,23 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                         if s == 1:
                             fout.write(line)
                 fout.close()
-            os.chdir('../')
+        os.chdir('../..')
     
     for i in range(0, len(components)):
         comp = components[i]
         logger.debug('Component: %s' % comp)
+        logger.debug(os.getcwd())
+
         if comp in components_dict['rest']:
-            os.chdir('rest')
             if True:
+                logger.debug(os.getcwd())
                 Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win) for win in range(len(attach_rest)))
-                
+            
         elif comp in components_dict['dd']:
-            if dec_method == 'dd':
-                os.chdir(dec_method)
-            if dec_method == 'sdr' or dec_method == 'exchange':
-                os.chdir('sdr')
             if True:
-                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_int, comp, win) for win in range(len(lambdas)))
+                logger.debug(os.getcwd())
+                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_method, dec_int, comp, win) for win in range(len(lambdas)))
         logger.debug('MBAR energies done')
-        os.chdir('../')
 
     os.chdir('../../')
 

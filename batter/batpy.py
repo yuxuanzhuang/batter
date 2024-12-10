@@ -1427,7 +1427,8 @@ def generate_frontier_files(version=24):
                 n_atoms = int(lines[1])
                 comp = replicate.split('/')[-1][0]
             performance = calculate_performance(n_atoms, comp)
-            n_steps = int(30 / 60 / 24 * performance * 1000 * 1000 / 4)
+            # estimate the number of steps to run in 20 mins
+            n_steps = int(20 / 60 / 24 * performance * 1000 * 1000 / 4)
             n_steps = int(n_steps // 100000 * 100000)
 
             with open(f'fe/{replicate}/mdin-02', 'r') as infile:
