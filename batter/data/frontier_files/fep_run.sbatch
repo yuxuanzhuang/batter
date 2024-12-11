@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -A BIP235
 #SBATCH -J FEP_SIM_XXX
-#SBATCH -o %x-%j.out
+#SBATCH -o %x.out
 #SBATCH -t 00:30:00
 #SBATCH -p batch               ##partition (queue) to use
 #SBATCH -N NUM_NODES           ##Number of nodes
