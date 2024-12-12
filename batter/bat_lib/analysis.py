@@ -344,6 +344,7 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
                 resfile.write('%-20s %8.2f\n' % ('Binding free energy;', blck_sdr))
             # Merged results
             if fb_m != 0 or fb_n != 0:
+                
                 fb_rel = fb_bd + fb_n
                 resfile.write('\n----------------------------------------------\n')
                 resfile.write('Merged components SDR method')
@@ -497,7 +498,8 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Lennard-Jones ('+dec_int.upper()+');', fe_vs, sd_vs))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release restraints;', fe_n, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release ligand TR;', fe_bd, 0))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', merged_sdr, sd_merg_sdr))
     if dec_method == 'exchange':
         if fe_t != 0 or fe_c != 0 or fe_r != 0 or fe_a != 0 or fe_l != 0:
@@ -525,6 +527,8 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('LJ exchange ('+dec_int.upper()+');', fe_x, sd_x))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release restraints;', fe_n, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release ligand TR;', fe_bd, 0))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
@@ -602,33 +606,37 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         logger.error(f"The following folders are missing files: {', '.join(unfinished)}")
         raise Exception('Some of the simulations are not done yet '
                         'or there\'s an error running the simulations\n')
+
+    def generate_analytical_rest(comp):
+        os.chdir('rest')
+        os.chdir(f'{comp}00')
+        # Calculate analytical release for dd and sdr
+        with open('disang.rest', "r") as f_in:
+            lines = (line.rstrip() for line in f_in)
+            lines = list(line for line in lines if '#Lig_TR' in line)
+            splitdata = lines[0].split()
+            r0 = float(splitdata[6].strip(','))
+            splitdata = lines[1].split()
+            a1_0 = float(splitdata[6].strip(','))
+            splitdata = lines[2].split()
+            t1_0 = float(splitdata[6].strip(','))
+            splitdata = lines[3].split()
+            a2_0 = float(splitdata[6].strip(','))
+            splitdata = lines[4].split()
+            t2_0 = float(splitdata[6].strip(','))
+            splitdata = lines[5].split()
+            t3_0 = float(splitdata[6].strip(','))
+            k_r = rest[2]
+            k_a = rest[3]
+            fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
+            logger.info('Release ligand TR: %s' % fe_bd)
+        os.chdir('../../')
+        return fe_bd
     
     def generate_results_rest(comp, win):
         os.chdir('rest')
         data = []
         os.chdir('%s%02d' % (comp, int(win)))
-        if (comp == 't' or comp == 'm') and win == 0:
-            # Calculate analytical release for dd and sdr
-            with open('disang.rest', "r") as f_in:
-                lines = (line.rstrip() for line in f_in)
-                lines = list(line for line in lines if '#Lig_TR' in line)
-                splitdata = lines[0].split()
-                r0 = float(splitdata[6].strip(','))
-                splitdata = lines[1].split()
-                a1_0 = float(splitdata[6].strip(','))
-                splitdata = lines[2].split()
-                t1_0 = float(splitdata[6].strip(','))
-                splitdata = lines[3].split()
-                a2_0 = float(splitdata[6].strip(','))
-                splitdata = lines[4].split()
-                t2_0 = float(splitdata[6].strip(','))
-                splitdata = lines[5].split()
-                t3_0 = float(splitdata[6].strip(','))
-                k_r = rest[2]
-                k_a = rest[3]
-                fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
-        # Get restraint trajectory file
-
         # temp fix for frontier
         # Find all files matching the pattern 'mdin-xx.nc' in the folder
         mdin_files = glob.glob('mdin-*.nc')
@@ -705,7 +713,9 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             os.chdir('%s%02d' % (comp, int(win)))
             potl = open('energies.dat', "w")
             md_out_files = glob.glob('md*.out')
-            for md_out_file in md_out_files:
+            sorted_md_out_files = sorted(md_out_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
+            # all but the last file to avoid a running simulation
+            for md_out_file in sorted_md_out_files[:-1]:
                 with open(md_out_file, "r") as fin:
                     n = 0
                     for line in fin:
@@ -742,6 +752,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         logger.debug(os.getcwd())
 
         if comp in components_dict['rest']:
+            if comp == 't' or comp == 'm':
+                fe_bd = generate_analytical_rest(comp)
             if True:
                 logger.debug(os.getcwd())
                 Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win) for win in range(len(attach_rest)))
@@ -1161,6 +1173,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 resfile.write('%-20s %8.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fb_es))
                 resfile.write('%-20s %8.2f\n' % ('Lennard-Jones ('+dec_int.upper()+');', fb_vs))
                 resfile.write('%-20s %8.2f\n\n' % ('Release all;', fb_rel))
+                
+
                 resfile.write('%-20s %8.2f\n' % ('Binding free energy;', blckm_sdr))
         if dec_method == 'exchange' and os.path.exists('./sdr/data/'):
             if fb_t != 0 or fb_c != 0 or fb_r != 0 or fb_a != 0 or fb_l != 0:
@@ -1272,6 +1286,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Lennard-Jones ('+dec_int.upper()+');', fe_vs, sd_vs))
+            resfile.write('%-20s %8.2f;    %3.2f\n' % ('Ligand TR;', fe_bd, 0))
+            resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relase no TR;', fe_bd, sd_n))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', merged_sdr, sd_merg_sdr))
     if dec_method == 'exchange' and os.path.exists('./sdr/data/'):
@@ -1300,6 +1316,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('LJ exchange ('+dec_int.upper()+');', fe_x, sd_x))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release restraints;', fe_n, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release ligand TR;', fe_bd, 0))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')

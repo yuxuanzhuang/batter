@@ -1363,16 +1363,20 @@ def generate_frontier_files(version=24):
                                         n_steps = int(20 / 60 / 24 * performance * 1000 * 1000 / 4)
                                         n_steps = int(n_steps // 100000 * 100000)
                                         line = f'  nstlim = {n_steps},\n'
+                                    if 'ntp = ' in line:
+                                        line = '  ntp = 0,\n'
+                                    if 'csurften' in line:
+                                        line = '\n'
                                 outfile.write(line)
 
                         f.write(f'# {component} {i} {stage}\n')
                         if stage == 'mdin.in':
-                            f.write(f'-O -i {sim_folder_name}/mdin_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/eqnpt.in_04.rst7 '
+                            f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/eqnpt.in_04.rst7 '
                                     f'-o {sim_folder_name}/mdin-00.out -r {sim_folder_name}/mdin-00.rst7 -x {sim_folder_name}/mdin-00.nc '
                                     f'-ref {sim_folder_name}/full.inpcrd -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
                                     f'-e {sim_folder_name}/mdin-00.mden\n')
                         elif stage == 'mdin.in.extend':
-                            f.write(f'-O -i {sim_folder_name}/mdin_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mdin-CURRNUM.rst7 '
+                            f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mdin-CURRNUM.rst7 '
                                     f'-o {sim_folder_name}/mdin-NEXTNUM.out -r {sim_folder_name}/mdin-NEXTNUM.rst7 -x {sim_folder_name}/mdin-NEXTNUM.nc '
                                     f'-ref {sim_folder_name}/full.inpcrd -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
                                     f'-e {sim_folder_name}/mdin-NEXTNUM.mden\n')
