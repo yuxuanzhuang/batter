@@ -203,8 +203,8 @@ class EquilibrationBuilder(SystemBuilder):
         shutil.copy(f'{self.pose_name}.pdb', f'{mol.lower()}.pdb')
 
         # rename pose param
-        shutil.copy(f'../ff/ligand.frcmod', f'../ff/{mol.lower()}.frcmod')
-        shutil.copy(f'../ff/ligand.mol2', f'../ff/{mol.lower()}.mol2')
+        # shutil.copy(f'../ff/ligand.frcmod', f'../ff/{mol.lower()}.frcmod')
+        # shutil.copy(f'../ff/ligand.mol2', f'../ff/{mol.lower()}.mol2')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
@@ -222,7 +222,7 @@ class EquilibrationBuilder(SystemBuilder):
                         fout.write(line.replace('SHLL', '%4.2f' % solv_shell)
                                    .replace('OTHRS', str(other_mol_vmd))
                                    .replace('LIPIDS', str(lipid_mol_vmd))
-                                   .replace('MMM', mol.upper()))
+                                   .replace('MMM', mol))
         run_with_log('vmd -dispdev text -e split.tcl')
 
         # Remove possible remaining molecules
@@ -761,12 +761,12 @@ class EquilibrationBuilder(SystemBuilder):
             tleap_vac.write('# Load the necessary parameters\n')
             for mol in other_mol:
                 tleap_vac.write(f'loadamberparams ../ff/{mol.lower()}.frcmod\n')
-                tleap_vac.write(f'{mol.upper()} = loadmol2 ../ff/{mol.lower()}.mol2\n')
+                tleap_vac.write(f'{mol} = loadmol2 ../ff/{mol.lower()}.mol2\n')
             tleap_vac.write(f'loadamberparams ../ff/{mol.lower()}.frcmod\n')
-            tleap_vac.write(f'{mol.upper()} = loadmol2 ../ff/{mol.lower()}.mol2\n\n')
+            tleap_vac.write(f'{mol} = loadmol2 ../ff/{mol.lower()}.mol2\n\n')
             if comp == 'x':
                 tleap_vac.write(f'loadamberparams ../ff/{molr.lower()}.frcmod\n')
-                tleap_vac.write(f'{molr.upper()} = loadmol2 ../ff/{molr.lower()}.mol2\n\n')
+                tleap_vac.write(f'{molr} = loadmol2 ../ff/{molr.lower()}.mol2\n\n')
             tleap_vac.write('# Load the water parameters\n')
             if water_model.lower() != 'tip3pf':
                 tleap_vac.write(f'source leaprc.water.{water_model.lower()}\n\n')
@@ -782,7 +782,7 @@ class EquilibrationBuilder(SystemBuilder):
         tleap_vac_ligand = open('tleap_vac_ligand.in', 'a')
         tleap_vac_ligand.write('# Load the ligand parameters\n')
         tleap_vac_ligand.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-        tleap_vac_ligand.write('%s = loadmol2 %s.mol2\n\n' % (mol.upper(), mol.lower()))
+        tleap_vac_ligand.write('%s = loadmol2 %s.mol2\n\n' % (mol, mol.lower()))
         tleap_vac_ligand.write('model = loadpdb %s.pdb\n\n' % (mol.lower()))
         tleap_vac_ligand.write('check model\n')
         tleap_vac_ligand.write('savepdb model vac_ligand.pdb\n')
@@ -980,13 +980,13 @@ class EquilibrationBuilder(SystemBuilder):
         tleap_solvate.write('# Load the necessary parameters\n')
         for i in range(0, len(other_mol)):
             tleap_solvate.write('loadamberparams %s.frcmod\n' % (other_mol[i].lower()))
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n' % (other_mol[i].upper(), other_mol[i].lower()))
+            tleap_solvate.write('%s = loadmol2 %s.mol2\n' % (other_mol[i], other_mol[i].lower()))
         tleap_solvate.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-        tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (mol.upper(), mol.lower()))
+        tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (mol, mol.lower()))
         if comp == 'x':
             tleap_solvate.write('loadamberparams %s.frcmod\n' % (molr.lower()))
         if comp == 'x':
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (molr.upper(), molr.lower()))
+            tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (molr, molr.lower()))
         tleap_solvate.write('# Load the water and jc ion parameters\n')
         if water_model.lower() != 'tip3pf':
             tleap_solvate.write('source leaprc.water.%s\n\n' % (water_model.lower()))
@@ -1145,13 +1145,13 @@ class EquilibrationBuilder(SystemBuilder):
         tleap_solvate.write('# Load the necessary parameters\n')
         for i in range(0, len(other_mol)):
             tleap_solvate.write('loadamberparams %s.frcmod\n' % (other_mol[i].lower()))
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n' % (other_mol[i].upper(), other_mol[i].lower()))
+            tleap_solvate.write('%s = loadmol2 %s.mol2\n' % (other_mol[i], other_mol[i].lower()))
         tleap_solvate.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-        tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (mol.upper(), mol.lower()))
+        tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (mol, mol.lower()))
         if comp == 'x':
             tleap_solvate.write('loadamberparams %s.frcmod\n' % (molr.lower()))
         if comp == 'x':
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (molr.upper(), molr.lower()))
+            tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (molr, molr.lower()))
         tleap_solvate.write('# Load the water and jc ion parameters\n')
         if water_model.lower() != 'tip3pf':
             tleap_solvate.write('source leaprc.water.%s\n\n' % (water_model.lower()))
@@ -1356,7 +1356,7 @@ class FreeEnergyBuilder(SystemBuilder):
                     .replace('OTHRS', str(other_mol_vmd))
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
-                    .replace('MMM', mol.upper()))
+                    .replace('MMM', mol))
         run_with_log('vmd -dispdev text -e split.tcl')
 
         # Remove possible remaining molecules

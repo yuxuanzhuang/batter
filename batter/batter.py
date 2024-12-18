@@ -25,6 +25,7 @@ from importlib import resources
 import json
 from typing import Union
 from pathlib import Path
+import pickle
 
 from typing import List, Tuple
 import loguru
@@ -81,37 +82,72 @@ class System:
 
     It will prepare the input files of protein system with **one** ligand species.
 
-    TODO: what if there are multiple ligands from the input file?
-
     After the preparation of the equil system, run through the equilibration simulation and then
     prepare the fe system. The output of the equil system will be used as
     the input for the fe system.
     """
-
     def __init__(self,
-                 system_name: str,
-                 protein_input: str,
-                 system_topology: str,
-                 ligand_path: str,
-                 receptor_segment: str = None,
-                 system_coordinate: str = None,
-                 protein_align: str = 'name CA and resid 60 to 250',
-                 ligand_poses: List[str] = [],
-                 output_dir: str = 'FEP',
-                 retain_lig_prot: bool = True,
-                 ligand_ph: float = 7.4,
-                 ligand_ff: str = 'gaff2',
-                 lipid_mol: List[str] = [],
-                 lipid_ff: str = 'lipid21',
-                 overwrite: bool = False,
-                 ):
+                 folder: str,
+                ):
         """
-        Initialize the FEPSystem class.
+        Initialize the System class with the folder name.
+        If the folder does not exist, a new system will be created.
+        If the folder exists, the system will be loaded.
 
         Parameters
         ----------
-        system_name : str
-            The name of the system.
+        folder : str
+            The folder containing the system files.
+        """
+        self.output_dir = os.path.abspath(folder) + '/'
+        if not os.path.exists(self.output_dir):
+            logger.info(f"Creating a new system: {self.output_dir}")
+            os.makedirs(self.output_dir)
+        else:
+            logger.info(f"Loading an existing system: {self.output_dir}")
+            self._load_system()
+
+    def _load_system(self):
+        """
+        Load the system from the folder.
+        """
+        try:
+            with open(f"{self.output_dir}/system.pkl", 'rb') as f:
+                self = pickle.load(f)
+        except:
+            logger.info(f"Failed to load the system state: {self.output_dir}")
+
+        if not os.path.exists(f"{self.output_dir}/all-poses"):
+            logger.info(f"The folder does not contain all-poses: {self.output_dir}")
+            return
+        if not os.path.exists(f"{self.output_dir}/equil"):
+            logger.info(f"The folder does not contain equil: {self.output_dir}")
+            return
+        if not os.path.exists(f"{self.output_dir}/fe"):
+            logger.info(f"The folder does not contain fe: {self.output_dir}")
+            return
+
+    def create_system(
+                    self,
+                    system_name: str,
+                    protein_input: str,
+                    system_topology: str,
+                    ligand_paths: List[str],
+                    receptor_segment: str = None,
+                    system_coordinate: str = None,
+                    protein_align: str = 'name CA and resid 60 to 250',
+                    retain_lig_prot: bool = True,
+                    ligand_ph: float = 7.4,
+                    ligand_ff: str = 'gaff2',
+                    lipid_mol: List[str] = [],
+                    lipid_ff: str = 'lipid21',
+                    overwrite: bool = False,
+                    ):
+        """
+        Create a new single-ligand single-receptor system.
+
+        Parameters
+        ----------
         protein_input : str
             Path to the protein file in PDB format.
             It should be exported from Maestro,
@@ -128,8 +164,10 @@ class System:
             it can be a snapshot of the equilibrated system.
             If it is not provided, the coordinates from the system_topology
             will be used if available.
-        ligand_path : str
-            Path to the ligand file.
+        ligand_paths : List[str]
+            List of ligand files. It can be either PDB or mol2 format.
+            It will be stored in the `all-poses` folder as `pose0.pdb`,
+            `pose1.pdb`, etc.
         receptor_segment : str
             The segment of the receptor in the system_topology.
             It will be used to set the protein anchor for the ligand.
@@ -141,11 +179,6 @@ class System:
         protein_align : str
             The selection string for aligning the protein to the system.
             Default is 'name CA and resid 60 to 250'.
-        ligand_poses : List[str], optional
-            List of ligand poses to be included in the simulations.
-            If it is empty, the pose from ligand_path will be used.
-        output_dir : str
-            Directory where output files will be saved.
         retain_lig_prot : bool, optional
             Whether to retain hydrogens in the ligand. Default is True.
         ligand_ph : float, optional
@@ -165,10 +198,12 @@ class System:
         self.protein_input = protein_input
         self.system_topology = system_topology
         self.system_coordinate = system_coordinate
-        self.ligand_path = ligand_path
+        self.ligand_paths = ligand_paths
+        if not isinstance(ligand_paths, list):
+            raise ValueError(f"Invalid ligand_paths: {ligand_paths}, "
+                              "ligand_paths should be a list of ligand files")
         self.receptor_segment = receptor_segment
         self.protein_align = protein_align
-        self.ligand_poses = ligand_poses
         self.overwrite = overwrite
 
         # check input existence
@@ -176,8 +211,12 @@ class System:
             raise FileNotFoundError(f"Protein input file not found: {protein_input}")
         if not os.path.exists(system_topology):
             raise FileNotFoundError(f"System input file not found: {system_topology}")
-        if not os.path.exists(ligand_path):
-            raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
+        for ligand_path in ligand_paths:
+            if not os.path.exists(ligand_path):
+                raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
+        
+        self._process_ligands()
+
         if system_coordinate is None and not os.path.exists(system_coordinate):
             raise FileNotFoundError(f"System coordinate file not found: {system_coordinate}")
         
@@ -191,11 +230,6 @@ class System:
             self.u_sys.load_new(system_coordinate, format='INPCRD')
         if not self.u_sys.atoms.dimensions and self.system_coordinate is None:
             raise ValueError(f"No dimension of the box was found in the system_topology or system_coordinate")
-
-        # set to absolute path
-        self.output_dir = os.path.abspath(output_dir) + '/'
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
 
         os.makedirs(f"{self.poses_folder}", exist_ok=True)
         os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
@@ -222,14 +256,35 @@ class System:
         if self.membrane_simulation:
             self._prepare_membrane()
 
+        self._get_alignment()
+
         if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
-            self._get_alignment()
             self._process_system()
             # Process ligand and prepare the parameters
-        if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/ligand.frcmod"):
-            self._process_ligand()
-            self._prepare_ligand_poses()
+        for ligand_path in self.unique_ligand_paths:
+            self._ligand_path = ligand_path
+            self._ligand = mda.Universe(ligand_path)
+            if len(set(self._ligand.atoms.resnames)) > 1:
+                raise ValueError(f"Multiple ligand molecules {set(self._ligand.atoms.resnames)} found in the ligand file: {ligand_path}")
+            self._mol = self._ligand.atoms.resnames[0].lower()
+            if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{self._mol}.frcmod"):
+                logger.info(f'Processing ligand: {self._mol}')
+                self._process_ligand()
+                self._prepare_ligand_poses()
+        
+        # dump the system configuration
+        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+            pickle.dump(self, f)
+
         logger.info('System loaded and prepared')
+
+    def _process_ligands(self):
+        """
+        Process the ligands to get the ligand paths.
+        e.g., for ABFE, it will be a single ligand.
+        For RBFE, it will be multiple ligands.
+        """
+        raise ImplementationError("This method should be implemented in the subclass")
 
     def _get_alignment(self):
         """
@@ -343,31 +398,32 @@ class System:
         """
 
         # Ensure the ligand file is in PDB format
-        logger.info(f'Processing ligand file: {self.ligand_path}')
+        logger.info(f'Processing ligand file: {self._ligand_path}')
 
-        ligand = mda.Universe(self.ligand_path)
-        converted_path = f"{self.ligandff_folder}/ligand.pdb"
-        ligand.atoms.write(converted_path)
-        self.ligand_path = converted_path
+        ligand = self._ligand
+        mol = self._mol
+        ligand_path = f"{self.ligandff_folder}/{mol}.pdb"
+        ligand.atoms.residues.resnames = mol
+        ligand.atoms.write(ligand_path)
 
         # retain hydrogens from the ligand
         if self.retain_lig_prot:
             # convert mol2 to get charge
-            run_with_log(f"{obabel} -i pdb {self.ligand_path} -o mol2 -O {self.ligandff_folder}/ligand.mol2")
+            run_with_log(f"{obabel} -i pdb {ligand_path} -o mol2 -O {self.ligandff_folder}/{mol}.mol2")
 
         else:
             # Remove hydrogens from the ligand
-            noh_path = f"{self.ligandff_folder}/ligand_noh.pdb"
+            noh_path = f"{self.ligandff_folder}/{mol}_noh.pdb"
             run_with_log(f"{obabel} -i pdb {self.ligand_path} -o pdb -O {noh_path} -d")
 
             # Add hydrogens based on the specified pH
-            run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {self.ligandff_folder}/ligand.pdb -p {self.ligand_ph:.2f}")
-            run_with_log(f"{obabel} -i pdb {noh_path} -o mol2 -O {self.ligandff_folder}/ligand.mol2 -p {self.ligand_ph:.2f}")
+            run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {self.ligandff_folder}/{mol}.pdb -p {self.ligand_ph:.2f}")
+            run_with_log(f"{obabel} -i pdb {noh_path} -o mol2 -O {self.ligandff_folder}/{mol}.mol2 -p {self.ligand_ph:.2f}")
 
-        self.ligand_path = f"{self.ligandff_folder}/ligand.pdb"
-        self.ligand = mda.Universe(self.ligand_path)
-        self.ligand_mol2_path = f"{self.ligandff_folder}/ligand.mol2"
-        ligand_mol2 = mda.Universe(self.ligand_mol2_path)
+        self._ligand_path = f"{self.ligandff_folder}/{mol}.pdb"
+        self._ligand = mda.Universe(self._ligand_path)
+        self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
+        ligand_mol2 = mda.Universe(self._ligand_mol2_path)
 
         self.ligand_charge = np.round(np.sum(ligand_mol2.atoms.charges))
         logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
@@ -378,32 +434,34 @@ class System:
     def _prepare_ligand_parameters(self):
         """Prepare ligand parameters for the system"""
         # Get ligand parameters
-        logger.info('Preparing ligand parameters')
+        mol = self._mol
+        logger.info(f'Preparing ligand {mol} parameters')
+
         # antechamber_command = f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
-        antechamber_command = f'{antechamber} -i {self.ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
+        antechamber_command = f'{antechamber} -i {self._ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(antechamber_command, working_dir=tmpdir)
-        shutil.copy(f"{self.ligandff_folder}/ligand_ante.mol2", f"{self.ligandff_folder}/ligand.mol2")
-        self.ligand_mol2_path = f"{self.ligandff_folder}/ligand.mol2"
+        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.mol2", f"{self.ligandff_folder}/{mol}.mol2")
+        self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
 
         if self.ligand_ff == 'gaff':
-            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/ligand_ante.mol2 -f mol2 -o {self.ligandff_folder}/ligand.frcmod -s 1')
+            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 1')
         elif self.ligand_ff == 'gaff2':
-            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/ligand_ante.mol2 -f mol2 -o {self.ligandff_folder}/ligand.frcmod -s 2')
+            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 2')
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
+            #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb', working_dir=tmpdir)
             run_with_log(
-                f'{antechamber} -i {self.ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/ligand_ante.pdb -fo pdb', working_dir=tmpdir)
+                f'{antechamber} -i {self._ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb', working_dir=tmpdir)
 
         # get lib file
         tleap_script = f"""
         source leaprc.protein.ff14SB
         source leaprc.{self.ligand_ff}
-        lig = loadmol2 {self.ligandff_folder}/ligand.mol2
-        loadamberparams {self.ligandff_folder}/ligand.frcmod
-        saveoff lig {self.ligandff_folder}/ligand.lib
-        saveamberparm lig {self.ligandff_folder}/ligand.prmtop {self.ligandff_folder}/ligand.inpcrd
+        lig = loadmol2 {self.ligandff_folder}/{mol}.mol2
+        loadamberparams {self.ligandff_folder}/{mol}.frcmod
+        saveoff lig {self.ligandff_folder}/{mol}.lib
+        saveamberparm lig {self.ligandff_folder}/{mol}.prmtop {self.ligandff_folder}/{mol}.inpcrd
 
         quit
         """
@@ -412,7 +470,7 @@ class System:
         run_with_log(f"{tleap} -f tleap.in",
                         working_dir=self.ligandff_folder)
 
-        logger.info('Ligand parameters prepared')
+        logger.info('Ligand {mol} parameters prepared')
 
     def _prepare_ligand_poses(self):
         """
@@ -420,11 +478,8 @@ class System:
         """
         logger.info('Preparing ligand poses')
 
-        if not self.ligand_poses:
-            self.ligand_poses = [self.ligand_path]
-
         new_pose_paths = []
-        for i, pose in enumerate(self.ligand_poses):
+        for i, pose in enumerate(self.ligand_paths):
             # align to the system
             u = mda.Universe(pose)
             try:
@@ -434,6 +489,7 @@ class System:
             lig_seg = u.add_Segment(segid='LIG')
             u.atoms.chainIDs = 'L'
             u.atoms.residues.segments = lig_seg
+            u.atoms.residues.resnames = u.atoms.resnames[0].lower()
             
             self._align_2_system(u.atoms)
             u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
@@ -451,7 +507,7 @@ class System:
 
             new_pose_paths.append(f"{self.poses_folder}/pose{i}.pdb")
 
-        self.ligand_poses = new_pose_paths
+        self.ligand_paths = new_pose_paths
 
     def _align_2_system(self, mobile_atoms):
         _ = align._fit_to(
@@ -525,6 +581,7 @@ class System:
             self.sim_config = sim_config
             # save the input file to the equil directory
             os.makedirs(f"{self.equil_folder}", exist_ok=True)
+            logger.info(f'Prepare for equilibration stage at {self.equil_folder}')
             with open(f"{self.equil_folder}/sim_config.json", 'w') as f:
                 json.dump(sim_config.model_dump(), f, indent=2)
             
@@ -541,7 +598,7 @@ class System:
 
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
             if sim_config_eq != sim_config.model_dump():
-#                raise ValueError(f"Equilibration and free energy simulation configurations are different")
+            # raise ValueError(f"Equilibration and free energy simulation configurations are different")
                 warnings.warn(f"Equilibration and free energy simulation configurations are different")
                 # get the difference
                 diff = {k: v for k, v in sim_config_eq.items() if sim_config.model_dump().get(k) != v}
@@ -681,7 +738,6 @@ class System:
                         working_dir=f'{self.fe_folder}',
                     ).build()
             
-
     @property
     def poses_folder(self):
         return f"{self.output_dir}/all-poses"
@@ -701,3 +757,32 @@ class System:
     @property
     def analysis_folder(self):
         return f"{self.output_dir}/analysis"
+    
+    @property
+    def ligand_poses(self):
+        return self.ligand_paths
+
+
+class ABFESystem(System):
+    """
+    A class to represent and process a Absolute Binding Free Energy Perturbation (FEP) system
+    using the BAT.py methods.
+    """
+    def _process_ligands(self):
+        # check if they are the same ligand
+        n_atoms = mda.Universe(self.ligand_paths[0]).atoms.n_atoms
+        for ligand_path in self.ligand_paths:
+            if mda.Universe(ligand_path).atoms.n_atoms != n_atoms:
+                raise ValueError(f"Number of atoms in the ligands are different: {ligand_path}")
+
+        # set the ligand path to the first ligand
+        self.unique_ligand_paths = [self.ligand_paths[0]]
+class RBFESystem(System):
+    """
+    A class to represent and process a Relative Binding Free Energy Perturbation (FEP) system
+    using the separated topology methodology in BAT.py.
+    """
+    def _process_ligands(self):
+        # check if they are the same ligand
+        # set the ligand path to the first ligand
+        self.unique_ligand_paths = self.ligand_paths
