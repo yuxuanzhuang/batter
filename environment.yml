@@ -8,6 +8,8 @@ dependencies:
   # vmd is problematic to install with error about sqlite
   - vmd-python
   - openbabel
+  # rdkit to get charges
+  - rdkit
   # Uncomment the following lines if/when OpenMM and OpenMMTools are needed
   # - openmm
   # - openmmtools

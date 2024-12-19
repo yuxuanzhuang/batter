@@ -18,7 +18,7 @@ import shutil
 import subprocess as sp
 import tempfile
 import MDAnalysis as mda
-from MDAnalysis.topology.guessers import guess_types
+from MDAnalysis.guesser import DefaultGuesser
 from MDAnalysis.analysis import align
 import pandas as pd
 from importlib import resources
@@ -284,7 +284,7 @@ class System:
         e.g., for ABFE, it will be a single ligand.
         For RBFE, it will be multiple ligands.
         """
-        raise ImplementationError("This method should be implemented in the subclass")
+        raise NotImplementedError("This method should be implemented in the subclass")
 
     def _get_alignment(self):
         """
@@ -407,26 +407,29 @@ class System:
         ligand.atoms.write(ligand_path)
 
         # retain hydrogens from the ligand
-        if self.retain_lig_prot:
-            # convert mol2 to get charge
-            run_with_log(f"{obabel} -i pdb {ligand_path} -o mol2 -O {self.ligandff_folder}/{mol}.mol2")
-
-        else:
+        if not self.retain_lig_prot:
             # Remove hydrogens from the ligand
             noh_path = f"{self.ligandff_folder}/{mol}_noh.pdb"
-            run_with_log(f"{obabel} -i pdb {self.ligand_path} -o pdb -O {noh_path} -d")
-
+            ligand.guess_TopologyAttrs(to_guess=['elements'])
+            ligand.select_atoms('not hydrogen').write(noh_path)
             # Add hydrogens based on the specified pH
+            logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
             run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {self.ligandff_folder}/{mol}.pdb -p {self.ligand_ph:.2f}")
-            run_with_log(f"{obabel} -i pdb {noh_path} -o mol2 -O {self.ligandff_folder}/{mol}.mol2 -p {self.ligand_ph:.2f}")
+            
+            ligand = mda.Universe(f"{self.ligandff_folder}/{mol}.pdb")
+            
+        ligand.guess_TopologyAttrs(to_guess=['elements'])
+        guesser = DefaultGuesser(ligand)
+        ligand.add_TopologyAttr('charges')
+        ligand.atoms.charges = guesser.guess_gasteiger_charges(ligand.atoms)
+        ligand.atoms.write(ligand_path)
+        run_with_log(f"{obabel} -i pdb {ligand_path} -o mol2 -O {self.ligandff_folder}/{mol}.mol2")
 
-        self._ligand_path = f"{self.ligandff_folder}/{mol}.pdb"
-        self._ligand = mda.Universe(self._ligand_path)
+        self._ligand_path = ligand_path
+        self._ligand = mda.Universe(ligand_path)
         self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
-        ligand_mol2 = mda.Universe(self._ligand_mol2_path)
 
-        self.ligand_charge = np.round(np.sum(ligand_mol2.atoms.charges))
-        logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
+        self.ligand_charge = np.round(np.sum(ligand.atoms.charges))
         logger.info(f'The net charge of the ligand is {self.ligand_charge}')
 
         self._prepare_ligand_parameters()
@@ -470,7 +473,7 @@ class System:
         run_with_log(f"{tleap} -f tleap.in",
                         working_dir=self.ligandff_folder)
 
-        logger.info('Ligand {mol} parameters prepared')
+        logger.info(f'Ligand {mol} parameters prepared')
 
     def _prepare_ligand_poses(self):
         """
@@ -777,6 +780,8 @@ class ABFESystem(System):
 
         # set the ligand path to the first ligand
         self.unique_ligand_paths = [self.ligand_paths[0]]
+
+
 class RBFESystem(System):
     """
     A class to represent and process a Relative Binding Free Energy Perturbation (FEP) system

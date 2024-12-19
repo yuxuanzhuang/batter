@@ -1,20 +1,16 @@
 """
-Unit and regression tests for the batter package.
+Tests for the ABFESystem.
 """
 
 # Import package, test suite, and other packages as needed
 import sys
-import numpy as np
-import pytest
 from pytest import fixture
 import tempfile
 from pathlib import Path
 
-import batter
-from batter import System
+from batter import ABFESystem
 
 from .data import MOR_MP_INPUT
-
 
 def test_batter_imported():
     """Sample test, will always pass so long as the import statement worked."""
@@ -22,34 +18,30 @@ def test_batter_imported():
 
 
 @fixture
-def system():
+def abfe_system():
     protein_file = MOR_MP_INPUT / 'protein_input.pdb'
     system_file = MOR_MP_INPUT / 'system_input.pdb'
     ligand_file = MOR_MP_INPUT / 'ligand_input.pdb'
     system_inpcrd = MOR_MP_INPUT / 'system_input.inpcrd'
 
-    # Read the last line of the inpcrd file to get dimensions
-    with open(system_inpcrd) as f:
-        lines = f.readlines()
-        box = np.array([float(x) for x in lines[-1].split()])
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)  # Convert to pathlib.Path for compatibility
-        test_system = System(
+        test_system = ABFESystem(folder=temp_path)
+        test_system.create_system(
             system_name='7T2G',
             protein_input=protein_file,
-            system_input=system_file,
-            system_dimensions=box,
-            ligand_path=ligand_file,
-            output_dir=temp_path,
+            system_topology=system_file,
+            system_coordinate=system_inpcrd,
+            ligand_paths=[ligand_file],
             lipid_mol=['POPC']
         )
         yield test_system, temp_path  # Pass both the System object and the temporary directory
 
 
-def test_system_exist(system):
+def test_system_exist(abfe_system):
     """Test creating a System object."""
-    test_system, temp_dir = system
+    test_system, temp_dir = abfe_system
 
     all_poses_dir = temp_dir / 'all-poses'
     assert all_poses_dir.exists(), "All poses directory is missing"
@@ -68,16 +60,15 @@ def test_system_exist(system):
         assert (ligand_ff_dir / file_name).exists(), f"Missing ligand file: {file_name}"
 
 
-def test_system_equil(system):
+def test_system_equil(abfe_system):
     """Test equilibration of a System object."""
-    test_system, temp_dir = system
+    test_system, temp_dir = abfe_system
 
     input_file = MOR_MP_INPUT / 'lipid.in'
     test_system.prepare(
         stage='equil',
         input_file=input_file
     )
-
 
     equil_dir = temp_dir / 'equil' / 'pose0'
     assert equil_dir.exists(), "Equilibration directory is missing"
