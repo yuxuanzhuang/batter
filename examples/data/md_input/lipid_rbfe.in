@@ -8,7 +8,7 @@
 
 calc_type = dock                                # docked or crystal structure
 celpp_receptor = 7T2G                # Choose CELPP receptor in upper case or pdb code in lower case
-poses_list = [0]                   # List of poses for docked calculations, called pose0.pdb, pose1.pdb, pose2.pdb, etc. 
+poses_list = [0, 1]                   # List of poses for docked calculations, called pose0.pdb, pose1.pdb, pose2.pdb, etc. 
 
 # Protein anchors, using original protein sequence 
 P1 = :147@CA
@@ -127,9 +127,9 @@ bb_equil        = yes       # Keep this backbone section rigid during equilibrat
 
 # Ligand anchor search definitions
 
-l1_x            =  2.1     # X distance between P1 and center of L1 search range
-l1_y            =  -6.8     # Y distance between P1 and center of L1 search range  
-l1_z            =  3.9     # Z distance between P1 and center of L1 search range  
+l1_x            =  -3.54    # X distance between P1 and center of L1 search range
+l1_y            =  4.20     # Y distance between P1 and center of L1 search range  
+l1_z            =  4.08    # Z distance between P1 and center of L1 search range  
 l1_range        =  2.50     # search radius for the first ligand anchor L1 
 min_adis        =  3.00     # minimum distance between anchors
 max_adis        =  7.00     # maximum distance between anchors

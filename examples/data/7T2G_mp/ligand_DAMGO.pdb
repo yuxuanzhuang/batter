@@ -1,75 +1,181 @@
-CRYST1   89.935   85.774  112.995  90.00  90.00  90.00 P 1           1
-ATOM      1  N1  DAMGX   1      -1.892   3.742   6.248  1.00  0.00      B357  
-ATOM      2  CA1 DAMGX   1      -2.494   2.672   7.073  1.00  0.00      B357  
-ATOM      3  C2  DAMGX   1      -1.413   1.911   7.851  1.00  0.00      B357  
-ATOM      4  O1  DAMGX   1      -0.238   2.260   7.821  1.00  0.00      B357  
-ATOM      5  CB1 DAMGX   1      -3.385   1.738   6.184  1.00  0.00      B357  
-ATOM      6  CG1 DAMGX   1      -3.969   0.463   6.809  1.00  0.00      B357  
-ATOM      7  CD1 DAMGX   1      -4.927   0.532   7.844  1.00  0.00      B357  
-ATOM      8  CD2 DAMGX   1      -3.472  -0.805   6.415  1.00  0.00      B357  
-ATOM      9  CE1 DAMGX   1      -5.387  -0.634   8.487  1.00  0.00      B357  
-ATOM     10  CE2 DAMGX   1      -3.920  -1.964   7.069  1.00  0.00      B357  
-ATOM     11  CZ1 DAMGX   1      -4.876  -1.884   8.111  1.00  0.00      B357  
-ATOM     12  OH  DAMGX   1      -5.324  -3.015   8.728  1.00  0.00      B357  
-ATOM     13  N2  DAMGX   1      -1.799   0.884   8.621  1.00  0.00      B357  
-ATOM     14  CA2 DAMGX   1      -0.936   0.061   9.469  1.00  0.00      B357  
-ATOM     15  CB2 DAMGX   1      -1.670  -1.265   9.695  1.00  0.00      B357  
-ATOM     16  C3  DAMGX   1      -0.735   0.812  10.789  1.00  0.00      B357  
-ATOM     17  O2  DAMGX   1      -1.204   0.371  11.838  1.00  0.00      B357  
-ATOM     18  N3  DAMGX   1      -0.107   1.997  10.712  1.00  0.00      B357  
-ATOM     19  CA3 DAMGX   1       0.087   2.973  11.772  1.00  0.00      B357  
-ATOM     20  C4  DAMGX   1      -1.219   3.507  12.411  1.00  0.00      B357  
-ATOM     21  O3  DAMGX   1      -2.294   2.985  12.124  1.00  0.00      B357  
-ATOM     22  C1  DAMGX   1       0.137   5.227  13.567  1.00  0.00      B357  
-ATOM     23  N4  DAMGX   1      -1.137   4.516  13.319  1.00  0.00      B357  
-ATOM     24  CA4 DAMGX   1      -2.310   4.960  14.106  1.00  0.00      B357  
-ATOM     25  C5  DAMGX   1      -2.600   3.972  15.248  1.00  0.00      B357  
-ATOM     26  O4  DAMGX   1      -3.736   3.603  15.508  1.00  0.00      B357  
-ATOM     27  CB3 DAMGX   1      -3.556   5.329  13.243  1.00  0.00      B357  
-ATOM     28  CG2 DAMGX   1      -3.240   6.022  11.933  1.00  0.00      B357  
-ATOM     29  CD3 DAMGX   1      -2.431   7.195  11.922  1.00  0.00      B357  
-ATOM     30  CE3 DAMGX   1      -2.127   7.816  10.699  1.00  0.00      B357  
-ATOM     31  CZ2 DAMGX   1      -2.574   7.257   9.479  1.00  0.00      B357  
-ATOM     32  CE4 DAMGX   1      -3.369   6.111   9.487  1.00  0.00      B357  
-ATOM     33  CD4 DAMGX   1      -3.707   5.495  10.713  1.00  0.00      B357  
-ATOM     34  CA5 DAMGX   1      -1.540   2.422  16.888  1.00  0.00      B357  
-ATOM     35  N5  DAMGX   1      -1.519   3.485  15.901  1.00  0.00      B357  
-ATOM     36  C6  DAMGX   1      -1.428   1.034  16.215  1.00  0.00      B357  
-ATOM     37  O5  DAMGX   1      -0.345   0.298  16.779  1.00  0.00      B357  
-ATOM     38  H1  DAMGX   1      -2.365   4.002   5.399  1.00  0.00      B357  
-ATOM     39  H2  DAMGX   1      -1.806   4.666   6.718  1.00  0.00      B357  
-ATOM     40  H3  DAMGX   1      -0.906   3.577   6.062  1.00  0.00      B357  
-ATOM     41  HA4 DAMGX   1      -3.113   3.163   7.821  1.00  0.00      B357  
-ATOM     42  HB3 DAMGX   1      -4.222   2.335   5.808  1.00  0.00      B357  
-ATOM     43  HB2 DAMGX   1      -2.826   1.448   5.286  1.00  0.00      B357  
-ATOM     44  HD1 DAMGX   1      -5.334   1.466   8.184  1.00  0.00      B357  
-ATOM     45  HD2 DAMGX   1      -2.734  -0.896   5.649  1.00  0.00      B357  
-ATOM     46  HE1 DAMGX   1      -6.118  -0.545   9.265  1.00  0.00      B357  
-ATOM     47  HE2 DAMGX   1      -3.535  -2.936   6.785  1.00  0.00      B357  
-ATOM     48  HH  DAMGX   1      -6.054  -2.834   9.287  1.00  0.00      B357  
-ATOM     49  H4  DAMGX   1      -2.773   0.648   8.640  1.00  0.00      B357  
-ATOM     50  HA5 DAMGX   1       0.033  -0.113   9.001  1.00  0.00      B357  
-ATOM     51  HB1 DAMGX   1      -1.118  -1.916  10.355  1.00  0.00      B357  
-ATOM     52  HB5 DAMGX   1      -2.658  -1.132  10.127  1.00  0.00      B357  
-ATOM     53  HB7 DAMGX   1      -1.797  -1.818   8.758  1.00  0.00      B357  
-ATOM     54  H5  DAMGX   1       0.134   2.273   9.766  1.00  0.00      B357  
-ATOM     55  HA3 DAMGX   1       0.706   2.520  12.556  1.00  0.00      B357  
-ATOM     56  HA2 DAMGX   1       0.630   3.801  11.335  1.00  0.00      B357  
-ATOM     57 H1_1 DAMGX   1       0.065   5.939  14.380  1.00  0.00      B357  
-ATOM     58 H1_2 DAMGX   1       0.946   4.528  13.836  1.00  0.00      B357  
-ATOM     59 H1_3 DAMGX   1       0.421   5.781  12.679  1.00  0.00      B357  
-ATOM     60  HA6 DAMGX   1      -2.048   5.891  14.605  1.00  0.00      B357  
-ATOM     61  HB4 DAMGX   1      -4.217   5.974  13.823  1.00  0.00      B357  
-ATOM     62  HB6 DAMGX   1      -4.130   4.437  13.034  1.00  0.00      B357  
-ATOM     63  HD3 DAMGX   1      -2.079   7.635  12.840  1.00  0.00      B357  
-ATOM     64  HE3 DAMGX   1      -1.572   8.733  10.691  1.00  0.00      B357  
-ATOM     65  HZ  DAMGX   1      -2.326   7.756   8.546  1.00  0.00      B357  
-ATOM     66  HE4 DAMGX   1      -3.733   5.708   8.548  1.00  0.00      B357  
-ATOM     67  HD4 DAMGX   1      -4.297   4.595  10.711  1.00  0.00      B357  
-ATOM     68  HA1 DAMGX   1      -2.465   2.467  17.476  1.00  0.00      B357  
-ATOM     69  HA7 DAMGX   1      -0.734   2.606  17.591  1.00  0.00      B357  
-ATOM     70  HN  DAMGX   1      -0.634   3.878  15.643  1.00  0.00      B357  
-ATOM     71 HXT1 DAMGX   1      -1.259   1.125  15.142  1.00  0.00      B357  
-ATOM     72 HXT2 DAMGX   1      -2.356   0.486  16.334  1.00  0.00      B357  
-ATOM     73  HO  DAMGX   1       0.461   0.784  16.591  1.00  0.00      B357  
-END
+HEADER    MEMBRANE PROTEIN                        10-MAY-18   6DDF
+TITLE     MU OPIOID RECEPTOR-GI PROTEIN COMPLEX
+EXPDTA    ELECTRON MICROSCOPY
+REMARK   2 RESOLUTION.    3.50 ANGSTROMS
+REMARK   4 6DDF COMPLIES WITH FORMAT V. 3.30,
+REMARK 245   TEMPERATURE (KELVIN)              : NULL
+REMARK 245   PH                             : 7.50
+REMARK 350 BIOMOLECULE: 1
+REMARK 350 APPLY THE FOLLOWING TO CHAINS: A, B, C, R, D
+REMARK 350   BIOMT1  1   1.000000 0.000000 0.000000   0.000000
+REMARK 350   BIOMT2  1   0.000000 1.000000 0.000000   0.000000
+REMARK 350   BIOMT3  1   0.000000 0.000000 1.000000   0.000000
+REMARK 888
+REMARK 888 WRITTEN BY MAESTRO (A PRODUCT OF SCHRODINGER, LLC)
+HETATM    1  N   DAM R   1       4.480  -7.819   6.048  1.00 35.94           N1+
+HETATM    2  CA  DAM R   1       3.772  -8.849   6.798  1.00 35.94           C  
+HETATM    3  C   DAM R   1       4.757  -9.509   7.745  1.00 35.94           C  
+HETATM    4  O   DAM R   1       5.960  -9.455   7.519  1.00 35.94           O  
+HETATM    5  CB  DAM R   1       3.156  -9.879   5.858  1.00 35.94           C  
+HETATM    6  CG  DAM R   1       2.174 -10.802   6.523  1.00 35.94           C  
+HETATM    7  CD1 DAM R   1       0.901 -10.364   6.845  1.00 35.94           C  
+HETATM    8  CD2 DAM R   1       2.513 -12.108   6.831  1.00 35.94           C  
+HETATM    9  CE1 DAM R   1      -0.008 -11.200   7.458  1.00 35.94           C  
+HETATM   10  CE2 DAM R   1       1.607 -12.956   7.445  1.00 35.94           C  
+HETATM   11  CZ  DAM R   1       0.348 -12.495   7.753  1.00 35.94           C  
+HETATM   12  OH  DAM R   1      -0.556 -13.331   8.362  1.00 35.94           O  
+HETATM   13  N   DAM R   1       4.259 -10.121   8.813  1.00 35.65           N  
+HETATM   14  CA  DAM R   1       5.140 -10.774   9.768  1.00 35.65           C  
+HETATM   15  CB  DAM R   1       4.474 -11.997  10.361  1.00 35.65           C  
+HETATM   16  C   DAM R   1       5.496  -9.790  10.855  1.00 35.65           C  
+HETATM   17  O   DAM R   1       5.143  -9.990  12.012  1.00 35.65           O  
+HETATM   18  N   DAM R   1       6.176  -8.714  10.468  1.00 35.73           N  
+HETATM   19  CA  DAM R   1       6.476  -7.613  11.365  1.00 35.73           C  
+HETATM   20  C   DAM R   1       5.212  -6.941  11.873  1.00 35.73           C  
+HETATM   21  O   DAM R   1       4.168  -7.084  11.233  1.00 35.73           O  
+HETATM   22  C1  DAM R   1       6.558  -5.886  13.656  1.00 35.07           C  
+HETATM   23  N   DAM R   1       5.321  -6.209  12.989  1.00 35.07           N  
+HETATM   24  CA  DAM R   1       4.183  -5.767  13.800  1.00 35.07           C  
+HETATM   25  C   DAM R   1       3.432  -7.016  14.230  1.00 35.07           C  
+HETATM   26  O   DAM R   1       2.498  -7.546  13.630  1.00 35.07           O  
+HETATM   27  CB  DAM R   1       3.176  -4.797  13.146  1.00 35.07           C  
+HETATM   28  CG  DAM R   1       3.702  -3.997  12.019  1.00 35.07           C  
+HETATM   29  CD1 DAM R   1       4.751  -3.098  12.218  1.00 35.07           C  
+HETATM   30  CE1 DAM R   1       5.228  -2.350  11.154  1.00 35.07           C  
+HETATM   31  CZ  DAM R   1       4.647  -2.483   9.898  1.00 35.07           C  
+HETATM   32  CE2 DAM R   1       3.595  -3.371   9.694  1.00 35.07           C  
+HETATM   33  CD2 DAM R   1       3.122  -4.127  10.758  1.00 35.07           C  
+HETATM   34  CA  DAM R   1       3.297  -8.650  15.857  1.00 31.27           C  
+HETATM   35  N   DAM R   1       4.090  -7.514  15.397  1.00 31.27           N  
+HETATM   36  C   DAM R   1       3.884 -10.012  15.423  1.00 31.27           C  
+HETATM   37  O   DAM R   1       4.950 -10.350  16.360  1.00 31.27           O  
+HETATM   38  H1  DAM R   1       3.840  -7.367   5.410  1.00  0.00           H  
+HETATM   39  H2  DAM R   1       4.856  -7.135   6.688  1.00  0.00           H  
+HETATM   40  H3  DAM R   1       5.234  -8.241   5.525  1.00  0.00           H  
+HETATM   41  HA  DAM R   1       2.979  -8.381   7.381  1.00  0.00           H  
+HETATM   42  HB3 DAM R   1       3.949 -10.468   5.396  1.00  0.00           H  
+HETATM   43  HB2 DAM R   1       2.666  -9.366   5.031  1.00  0.00           H  
+HETATM   44  HD1 DAM R   1       0.605  -9.351   6.616  1.00  0.00           H  
+HETATM   45  HD2 DAM R   1       3.499 -12.481   6.592  1.00  0.00           H  
+HETATM   46  HE1 DAM R   1      -0.995 -10.836   7.705  1.00  0.00           H  
+HETATM   47  HE2 DAM R   1       1.890 -13.972   7.679  1.00  0.00           H  
+HETATM   48  HH  DAM R   1      -0.156 -14.192   8.498  1.00  0.00           H  
+HETATM   49  H   DAM R   1       3.261 -10.136   8.967  1.00  0.00           H  
+HETATM   50  HA  DAM R   1       6.052 -11.081   9.257  1.00  0.00           H  
+HETATM   51  HB1 DAM R   1       5.149 -12.471  11.073  1.00  0.00           H  
+HETATM   52  HB2 DAM R   1       3.558 -11.700  10.872  1.00  0.00           H  
+HETATM   53  HB3 DAM R   1       4.233 -12.702   9.565  1.00  0.00           H  
+HETATM   54  H   DAM R   1       6.506  -8.640   9.516  1.00  0.00           H  
+HETATM   55  HA3 DAM R   1       7.092  -6.880  10.845  1.00  0.00           H  
+HETATM   56  HA2 DAM R   1       7.056  -7.982  12.211  1.00  0.00           H  
+HETATM   57 H1_1 DAM R   1       6.348  -5.278  14.537  1.00  0.00           H  
+HETATM   58 H1_2 DAM R   1       7.058  -6.805  13.961  1.00  0.00           H  
+HETATM   59 H1_3 DAM R   1       7.203  -5.329  12.977  1.00  0.00           H  
+HETATM   60  HA  DAM R   1       4.576  -5.287  14.696  1.00  0.00           H  
+HETATM   61  HB1 DAM R   1       2.776  -4.127  13.907  1.00  0.00           H  
+HETATM   62  HB2 DAM R   1       2.302  -5.355  12.814  1.00  0.00           H  
+HETATM   63  HD1 DAM R   1       5.189  -2.988  13.199  1.00  0.00           H  
+HETATM   64  HE1 DAM R   1       6.050  -1.664  11.302  1.00  0.00           H  
+HETATM   65  HZ  DAM R   1       5.012  -1.894   9.069  1.00  0.00           H  
+HETATM   66  HE2 DAM R   1       3.153  -3.469   8.713  1.00  0.00           H  
+HETATM   67  HD2 DAM R   1       2.303  -4.815  10.608  1.00  0.00           H  
+HETATM   68  HA1 DAM R   1       2.279  -8.557  15.479  1.00  0.00           H  
+HETATM   69  HA2 DAM R   1       3.217  -8.619  16.944  1.00  0.00           H  
+HETATM   70  HN  DAM R   1       4.934  -7.070  15.729  1.00  0.00           H  
+HETATM   71 1HXT DAM R   1       4.298  -9.926  14.419  1.00  0.00           H  
+HETATM   72 2HXT DAM R   1       3.106 -10.774  15.470  1.00  0.00           H  
+HETATM   73  HO  DAM R   1       5.336 -11.195  16.116  1.00  0.00           H  
+CONECT    1    2   38   39   40
+CONECT    2    1    3    5   41
+CONECT    3    2    4   13
+CONECT    3    4
+CONECT    4    3
+CONECT    4    3
+CONECT    5    2    6   42   43
+CONECT    6    5    7    8
+CONECT    6    7
+CONECT    7    6    9   44
+CONECT    7    6
+CONECT    8    6   10   45
+CONECT    8   10
+CONECT    9    7   11   46
+CONECT    9   11
+CONECT   10    8   11   47
+CONECT   10    8
+CONECT   11    9   10   12
+CONECT   11    9
+CONECT   12   11   48
+CONECT   13    3   14   49
+CONECT   14   13   15   16   50
+CONECT   15   14   51   52   53
+CONECT   16   14   17   18
+CONECT   16   17
+CONECT   17   16
+CONECT   17   16
+CONECT   18   16   19   54
+CONECT   19   18   20   55   56
+CONECT   20   19   21   23
+CONECT   20   21
+CONECT   21   20
+CONECT   21   20
+CONECT   22   23   57   58   59
+CONECT   23   20   22   24
+CONECT   24   23   25   27   60
+CONECT   25   24   26   35
+CONECT   25   26
+CONECT   26   25
+CONECT   26   25
+CONECT   27   24   28   61   62
+CONECT   28   27   29   33
+CONECT   28   29
+CONECT   29   28   30   63
+CONECT   29   28
+CONECT   30   29   31   64
+CONECT   30   31
+CONECT   31   30   32   65
+CONECT   31   30
+CONECT   32   31   33   66
+CONECT   32   33
+CONECT   33   28   32   67
+CONECT   33   32
+CONECT   34   35   36   68   69
+CONECT   35   25   34   70
+CONECT   36   34   37   71   72
+CONECT   37   36   73
+CONECT   38    1
+CONECT   39    1
+CONECT   40    1
+CONECT   41    2
+CONECT   42    5
+CONECT   43    5
+CONECT   44    7
+CONECT   45    8
+CONECT   46    9
+CONECT   47   10
+CONECT   48   12
+CONECT   49   13
+CONECT   50   14
+CONECT   51   15
+CONECT   52   15
+CONECT   53   15
+CONECT   54   18
+CONECT   55   19
+CONECT   56   19
+CONECT   57   22
+CONECT   58   22
+CONECT   59   22
+CONECT   60   24
+CONECT   61   27
+CONECT   62   27
+CONECT   63   29
+CONECT   64   30
+CONECT   65   31
+CONECT   66   32
+CONECT   67   33
+CONECT   68   34
+CONECT   69   34
+CONECT   70   35
+CONECT   71   36
+CONECT   72   36
+CONECT   73   37
+END   

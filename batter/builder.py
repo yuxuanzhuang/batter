@@ -75,12 +75,14 @@ class SystemBuilder(ABC):
             logger.info(f'Building {self.pose_name}...')
             logger.debug(f'Working directory: {os.getcwd()}')
             if not os.path.exists('build_files'):
-                with self._change_dir('build_files'):
-                    logger.debug(f'Creating build_files in  {os.getcwd()}')
-                    anchor_found = self._build_complex()
-                    if not anchor_found:
-                        warnings.warn(f'Could not find the ligand anchors for {self.pose_name}.')
-                        return None
+                shutil.rmtree('build_files', ignore_errors=True)
+            os.makedirs('build_files', exist_ok=True)
+            with self._change_dir('build_files'):
+                logger.debug(f'Creating build_files in  {os.getcwd()}')
+                anchor_found = self._build_complex()
+                if not anchor_found:
+                    warnings.warn(f'Could not find the ligand anchors for {self.pose_name}.')
+                    return None
 
             self.mol = mda.Universe(f'build_files/{self.pose_name}.pdb').residues[0].resname
             self.other_mol = self.sim_config.other_mol
@@ -168,10 +170,9 @@ class EquilibrationBuilder(SystemBuilder):
         min_adis = self.sim_config.min_adis
 
         if os.path.exists(f'build_files'):
-            raise ValueError(f'build_files already exists in {os.getcwd()}'
-                             f'run `prepare(overwrite=True)` to overwrite the files')
-        else:
-            shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
+            shutil.rmtree(f'build_files')
+        
+        shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
         shutil.copy(f'dum.mol2', f'../ff/dum.mol2')
@@ -709,10 +710,9 @@ class EquilibrationBuilder(SystemBuilder):
             c_surften = '0'
 
         if os.path.exists(f'../{amber_files_path}'):
-            raise ValueError(f'../{amber_files_path} already exists.'
-                             f'run prepare(overwrite=True) to overwrite it.')
-        else:
-            shutil.copytree(
+            shutil.rmtree(f'../{amber_files_path}')
+        
+        shutil.copytree(
                 amber_files_orig,
                 f'../{amber_files_path}',
                 dirs_exist_ok=True)
