@@ -8,7 +8,7 @@
 
 calc_type = dock                                # docked or crystal structure
 celpp_receptor = 7T2G                # Choose CELPP receptor in upper case or pdb code in lower case
-poses_list = [0, 1, 2]                   # List of poses for docked calculations, called pose0.pdb, pose1.pdb, pose2.pdb, etc. 
+poses_list = [0]                   # List of poses for docked calculations, called pose0.pdb, pose1.pdb, pose2.pdb, etc. 
 
 # Protein anchors, using original protein sequence 
 P1 = :147@CA
@@ -23,7 +23,7 @@ solv_shell = 4      # Water molecules around the protein that will be kept in th
 
 # Variables for setting up equilibrium and free energy calculations, also used on analysis       
 
-fe_type = relative  # Type of free energy calculations (rest, dd, sdr, dd-rest, sdr-rest, custom)
+fe_type = express  # Type of free energy calculations (rest, dd, sdr, dd-rest, sdr-rest, custom)
 
 components = [ e v ] # Used with custom option for fe_type. Do not include b component here. 
 
@@ -115,9 +115,6 @@ n_steps2	=  200000    # Number of steps per window for component n (production)
 m_steps1	=  100000    # Number of steps per window for component m (equilibrium)
 m_steps2	=  200000    # Number of steps per window for component m (production)
 
-x_steps1	=  100000    # Number of steps per window for component m (equilibrium)
-x_steps2	=  200000    # Number of steps per window for component m (production)
-
 # Conformational restraints on the protein backbone
 
 rec_bb		= no       # Use protein backbone dihedrals conformational restraints
@@ -127,9 +124,9 @@ bb_equil        = yes       # Keep this backbone section rigid during equilibrat
 
 # Ligand anchor search definitions
 
-l1_x            =  2.07    # X distance between P1 and center of L1 search range
-l1_y            =  -6.71    # Y distance between P1 and center of L1 search range  
-l1_z            =  4.09   # Z distance between P1 and center of L1 search range  
+l1_x            =  1.98   # X distance between P1 and center of L1 search range
+l1_y            =  -6.75     # Y distance between P1 and center of L1 search range  
+l1_z            =  4.06    # Z distance between P1 and center of L1 search range  
 l1_range        =  2.50     # search radius for the first ligand anchor L1 
 min_adis        =  3.00     # minimum distance between anchors
 max_adis        =  7.00     # maximum distance between anchors
