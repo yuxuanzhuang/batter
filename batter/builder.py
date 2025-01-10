@@ -84,7 +84,8 @@ class SystemBuilder(ABC):
                     warnings.warn(f'Could not find the ligand anchors for {self.pose_name}.')
                     return None
 
-            self.mol = mda.Universe(f'build_files/{self.pose_name}.pdb').residues[0].resname
+            mol = mda.Universe(f'build_files/{self.pose_name}.pdb').residues[0].resname
+            self.mol = mol
             self.other_mol = self.sim_config.other_mol
             self.lipid_mol = self.sim_config.lipid_mol
 
@@ -200,8 +201,13 @@ class EquilibrationBuilder(SystemBuilder):
             raise ValueError(f'The ligand {mol}'
                              f'cannot be in the other_mol list: '
                              f'{other_mol}')
-        # copy pose
-        shutil.copy(f'{self.pose_name}.pdb', f'{mol.lower()}.pdb')
+        # rename pose atom name
+        shutil.copy(f'../ff/{mol.lower()}.mol2', '.')
+
+        ante_mol = mda.Universe(f'{mol.lower()}.mol2')
+        mol_u.atoms.names = ante_mol.atoms.names
+        mol_u.atoms.residues.resnames = mol
+        mol_u.atoms.write(f'{mol.lower()}.pdb')
 
         # rename pose param
         # shutil.copy(f'../ff/ligand.frcmod', f'../ff/{mol.lower()}.frcmod')

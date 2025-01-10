@@ -261,16 +261,29 @@ class System:
         if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
             self._process_system()
             # Process ligand and prepare the parameters
-        for ligand_path in self.unique_ligand_paths:
+        
+        self.unique_mol_names = []
+        for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
             self._ligand_path = ligand_path
             self._ligand = mda.Universe(ligand_path)
             if len(set(self._ligand.atoms.resnames)) > 1:
                 raise ValueError(f"Multiple ligand molecules {set(self._ligand.atoms.resnames)} found in the ligand file: {ligand_path}")
-            self._mol = self._ligand.atoms.resnames[0].lower()
+            mol_name = self._ligand.atoms.resnames[0].lower()
+            # if mol_name is less than 2 characters
+            # add ind to the end
+            # otherwise tleap will fail later
+            if len(mol_name) <= 2:
+                logger.warning(f"Elongating the ligand name: {mol_name} to {mol_name}{ind}")
+                mol_name = f'{mol_name}{ind}'
+            elif len(mol_name) > 3:
+                logger.warning(f"Shortening the ligand name: {mol_name} to {mol_name[:3]}")
+                mol_name = mol_name[:3]
+            self._mol = mol_name
+            self.unique_mol_names.append(mol_name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{self._mol}.frcmod"):
                 logger.info(f'Processing ligand: {self._mol}')
                 self._process_ligand()
-                self._prepare_ligand_poses()
+        self._prepare_ligand_poses()
         
         # dump the system configuration
         with open(f"{self.output_dir}/system.pkl", 'wb') as f:
@@ -427,6 +440,7 @@ class System:
 
         self._ligand_path = ligand_path
         self._ligand = mda.Universe(ligand_path)
+        
         self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
 
         self.ligand_charge = np.round(np.sum(ligand.atoms.charges))
@@ -456,6 +470,8 @@ class System:
             #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb', working_dir=tmpdir)
             run_with_log(
                 f'{antechamber} -i {self._ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb', working_dir=tmpdir)
+        # copy _ante.pdb to .pdb
+        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.pdb", f"{self.ligandff_folder}/{mol}.pdb")
 
         # get lib file
         tleap_script = f"""
@@ -483,6 +499,10 @@ class System:
 
         new_pose_paths = []
         for i, pose in enumerate(self.ligand_paths):
+            if len(self.unique_mol_names) > 1:
+                mol_name = self.unique_mol_names[i]
+            else:
+                mol_name = self.unique_mol_names[0]
             # align to the system
             u = mda.Universe(pose)
             try:
@@ -492,7 +512,7 @@ class System:
             lig_seg = u.add_Segment(segid='LIG')
             u.atoms.chainIDs = 'L'
             u.atoms.residues.segments = lig_seg
-            u.atoms.residues.resnames = u.atoms.resnames[0].lower()
+            u.atoms.residues.resnames = mol_name
             
             self._align_2_system(u.atoms)
             u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
@@ -695,6 +715,12 @@ class System:
             logger.debug(f'Copying ff folder from {self.ligandff_folder} to {self.equil_folder}/ff')
             shutil.copytree(self.ligandff_folder,
                         f"{self.equil_folder}/ff")
+
+        if len(self.sim_config.poses_def) != len(self.ligand_paths):
+            logger.warning(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
+                           f"does not match the number of ligands: {len(self.ligand_paths)}")
+            logger.warning(f"Using the ligand paths for the poses")
+        self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
 
         for pose in self.sim_config.poses_def:
             logger.info(f'Preparing pose: {pose}')
