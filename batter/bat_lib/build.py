@@ -637,7 +637,7 @@ def build_dec(fwin, hmr, mol,
         p_coupling = '1'
         c_surften = '0'
     if comp == 'n':
-        dec_method == 'sdr'
+        dec_method = 'sdr'
 
     if comp == 'a' or comp == 'l' or comp == 't' or comp == 'm' or comp == 'c' or comp == 'r':
         dec_method = 'dd'
@@ -650,7 +650,7 @@ def build_dec(fwin, hmr, mol,
         if (dec_method == 'sdr' or dec_method == 'exchange') and os.path.exists('../build_files'):
             shutil.rmtree(f'../{build_file_path}')
         try:
-            shutil.copytree('../../../equil/build_files',
+            shutil.copytree(build_files_orig,
                             f'../{build_file_path}')
         # Directories are the same
         except shutil.Error as e:
@@ -1154,7 +1154,7 @@ def build_dec(fwin, hmr, mol,
         try:
             shutil.copy(f'../../{build_file_path}/%s.pdb' % mol.lower(), './')
             shutil.copy(f'../../{build_file_path}/fe-%s.pdb' % mol.lower(), './build-ini.pdb')
-            shutil.copy(f'../../{build_file_path}/fe-%s.pdb' % mol.lower(), './')
+            shutil.copy(f'../../{build_file_paah}/fe-%s.pdb' % mol.lower(), './')
             shutil.copy(f'../../{build_file_path}/anchors-'+pose+'.txt', './')
             shutil.copy(f'../../{build_file_path}/equil-reference.pdb', './')
         except:
@@ -1512,6 +1512,7 @@ def build_dec(fwin, hmr, mol,
             tleap_vac.close()
 
             p = run_with_log(tleap + ' -s -f tleap_vac.in > tleap_vac.log')
+            
     # Copy system from other attach component
     if int(win) == 0 and altm != 'None':
         logger.debug('Copying system from %s' % altm)

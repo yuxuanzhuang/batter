@@ -18,7 +18,7 @@ Equilibrate, NPT.
   temp0 = _temperature_,
   gamma_ln = _gamma_ln_,
   ig = -1,
-  ntp = 1,
+  ntp = _p_coupling_,
   barostat = _barostat_,
   nstlim = 10000,
   dt = _step_,

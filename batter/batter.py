@@ -30,8 +30,9 @@ import pickle
 from typing import List, Tuple
 import loguru
 from loguru import logger
+
 from batter.input_process import SimulationConfig, get_configure_from_file
-from batter.builder import EquilibrationBuilder
+from batter.builder import BuilderFactory
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -581,6 +582,7 @@ class System:
         """
         logger.info('Preparing the system')
         self.overwrite = overwrite
+        self.builders_factory = BuilderFactory()
 
         if isinstance(input_file, (str, Path)):
             file_path = Path(input_file) if isinstance(input_file, str) else input_file
@@ -618,7 +620,7 @@ class System:
         
             if not os.path.exists(f"{self.equil_folder}/{self.sim_config.poses_def[0]}/md03.rst7"):
                 raise FileNotFoundError(f"Equilibration not finished yet. First run the equilibration.")
-
+                
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
             if sim_config_eq != sim_config.model_dump():
             # raise ValueError(f"Equilibration and free energy simulation configurations are different")
@@ -626,7 +628,14 @@ class System:
                 # get the difference
                 diff = {k: v for k, v in sim_config_eq.items() if sim_config.model_dump().get(k) != v}
                 logger.warning(f"Different configurations: {diff}")
+                orig = {k: sim_config.model_dump().get(k) for k in diff.keys()}
+                logger.warning(f"Original configuration: {orig}")
+            if self.overwrite:
+                logger.info('Overwrite is set. ')
+                logger.info(f'Removing {self.fe_folder}')
+                shutil.rmtree(self.fe_folder, ignore_errors=True)
             os.makedirs(f"{self.fe_folder}", exist_ok=True)
+
             with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
                 json.dump(sim_config.model_dump(), f, indent=2)
 
@@ -701,10 +710,6 @@ class System:
         Prepare the equilibration system.
         """
         sim_config = self.sim_config
-        if self.overwrite:
-            logger.info('Overwrite is set. Removing existing equilibration files')
-            shutil.rmtree(self.equil_folder, ignore_errors=True)
-        os.makedirs(f"{self.equil_folder}", exist_ok=True)
 
         logger.info('Prepare for equilibration stage')
         if not os.path.exists(f"{self.equil_folder}/all-poses"):
@@ -724,7 +729,8 @@ class System:
 
         for pose in self.sim_config.poses_def:
             logger.info(f'Preparing pose: {pose}')
-            equil_builder = EquilibrationBuilder(
+            equil_builder = self.builders_factory.get_builder(
+                stage='equil',
                 system=self,
                 pose_name=pose,
                 sim_config=sim_config,
@@ -739,26 +745,25 @@ class System:
         """
         Prepare the free energy system.
         """
-        raise NotImplementedError("Free energy system preparation is not implemented yet")
+        # raise NotImplementedError("Free energy system preparation is not implemented yet")
         sim_config = self.sim_config
-        if self.overwrite:
-            logger.info('Overwrite is set. Removing existing free energy files')
-            shutil.rmtree(self.fe_folder, ignore_errors=True)
-        os.makedirs(f"{self.fe_folder}", exist_ok=True)
 
         logger.info('Prepare for free energy stage')
-
         for pose in self.sim_config.poses_def:
             logger.info(f'Preparing pose: {pose}')
             # copy ff folder
             shutil.copytree(self.ligandff_folder,
-                            f"{self.fe_folder}/{pose}/ff")
+                            f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
+
             for component in sim_config.components:
                 logger.info(f'Preparing component: {component}')
-                lambdas_comp = sim_config[COMPONENTS_LAMBDA_DICT[component]]
+                lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
                 n_sims = len(lambdas_comp)
+                logger.info(f'Number of simulations: {n_sims}')
                 for i, lambdas in enumerate(lambdas_comp):
-                    fe_builder = FreeEnergyBuilder(
+                    logger.info(f'Preparing simulation: {lambdas}')
+                    fe_builder = self.builders_factory.get_builder(
+                        stage='fe',
                         win=i,
                         component=component,
                         system=self,

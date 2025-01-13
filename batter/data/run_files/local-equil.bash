@@ -14,6 +14,9 @@ check_sim_failure() {
     elif grep -q "command not found" "$log_file"; then
         echo "$stage Simulation failed; simulaiton command not found."
         exit 1
+    elif grep -q "ERROR: Calculation halted" "$log_file"; then
+        echo "$stage Simulation failed; calculation halted."
+        exit 1
     else
         echo "$stage complete."
     fi

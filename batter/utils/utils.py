@@ -16,6 +16,37 @@ vmd = '/home/groups/rondror/software/vmd-1.9.4/bin/vmd'
 if not os.path.exists(vmd):
     vmd = 'vmd'
 
+COMPONENTS_LAMBDA_DICT = {
+    'v': 'lambdas',
+    'e': 'lambdas',
+    'w': 'lambdas',
+    'f': 'lambdas',
+    'x': 'lambdas',
+    'a': 'attach_rest',
+    'l': 'attach_rest',
+    't': 'attach_rest',
+    'r': 'attach_rest',
+    'c': 'attach_rest',
+    'm': 'attach_rest',
+    'n': 'attach_rest',
+}
+
+COMPONENTS_FOLDER_DICT = {
+    'v': 'sdr',
+    'e': 'sdr',
+    'w': 'sdr',
+    'f': 'sdr',
+    'x': 'exchange_files',
+    'a': 'rest',
+    'l': 'rest',
+    't': 'rest',
+    'r': 'rest',
+    'c': 'rest',
+    'm': 'rest',
+    'n': 'rest',
+}
+
+
 def run_with_log(command, level='debug', working_dir=None,
                  error_match=None):
     """
@@ -109,3 +140,13 @@ def run_with_log(command, level='debug', working_dir=None,
             for line in e.stderr.splitlines():
                 log(line)
         raise
+
+def log_info(func):
+    """
+    A wrapper function that print out current working directory and function name
+    """
+    def wrapper(*args, **kwargs):
+        logger.debug(f"Current working directory: {os.getcwd()}")
+        logger.debug(f"Running function: {func.__name__}")
+        return func(*args, **kwargs)
+    return wrapper

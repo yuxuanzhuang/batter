@@ -11,9 +11,9 @@ celpp_receptor = 7T2G                # Choose CELPP receptor in upper case or pd
 poses_list = [0]                   # List of poses for docked calculations, called pose0.pdb, pose1.pdb, pose2.pdb, etc. 
 
 # Protein anchors, using original protein sequence 
-P1 = :147@CA
-P2 = :117@CA
-P3 = :326@CA
+P1 = :149@CA
+P2 = :119@CA
+P3 = :328@CA
 
 # Molecules other than receptor and ligand 
 
