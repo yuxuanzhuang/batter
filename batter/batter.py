@@ -11,11 +11,14 @@ from .utils import (
     charmmlipid2amber,
     obabel,
     vmd)
+
+import inspect
 import numpy as np
 import os
 import sys
 import shutil
 import subprocess as sp
+from contextlib import contextmanager
 import tempfile
 import MDAnalysis as mda
 from MDAnalysis.guesser import DefaultGuesser
@@ -26,12 +29,16 @@ import json
 from typing import Union
 from pathlib import Path
 import pickle
+import time
+from tqdm import tqdm
 
 from typing import List, Tuple
 import loguru
 from loguru import logger
 
 from batter.input_process import SimulationConfig, get_configure_from_file
+from batter.bat_lib import analysis
+
 from batter.builder import BuilderFactory
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -113,8 +120,11 @@ class System:
         Load the system from the folder.
         """
         try:
-            with open(f"{self.output_dir}/system.pkl", 'rb') as f:
-                self = pickle.load(f)
+            system_file = os.path.join(self.output_dir, "system.pkl")
+            with open(system_file, 'rb') as f:
+                loaded_state = pickle.load(f)
+                # Update self with loaded attributes
+                self.__dict__.update(loaded_state.__dict__)
         except:
             logger.info(f"Failed to load the system state: {self.output_dir}")
 
@@ -195,16 +205,27 @@ class System:
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
         """
+        # Log every argument
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        
+        for arg in args:
+            logger.info(f"{arg}: {values[arg]}")
+
         self.system_name = system_name
         self.protein_input = protein_input
         self.system_topology = system_topology
         self.system_coordinate = system_coordinate
         self.ligand_paths = ligand_paths
+        self.mols = []
         if not isinstance(ligand_paths, list):
             raise ValueError(f"Invalid ligand_paths: {ligand_paths}, "
                               "ligand_paths should be a list of ligand files")
         self.receptor_segment = receptor_segment
         self.protein_align = protein_align
+        self.retain_lig_prot = retain_lig_prot
+        self.ligand_ph = ligand_ph
+        self.ligand_ff = ligand_ff
         self.overwrite = overwrite
 
         # check input existence
@@ -235,9 +256,6 @@ class System:
         os.makedirs(f"{self.poses_folder}", exist_ok=True)
         os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
 
-        self.retain_lig_prot = retain_lig_prot
-        self.ligand_ph = ligand_ph
-        self.ligand_ff = ligand_ff
         if self.ligand_ff not in ['gaff', 'gaff2']:
             raise ValueError(f"Invalid ligand_ff: {self.ligand_ff}"
                              "Options are 'gaff' and 'gaff2'")
@@ -276,13 +294,22 @@ class System:
             if len(mol_name) <= 2:
                 logger.warning(f"Elongating the ligand name: {mol_name} to {mol_name}{ind}")
                 mol_name = f'{mol_name}{ind}'
+                if mol_name in self.unique_mol_names:
+                    mol_name = f'{mol_name[:2]}{ind}'
+                    if mol_name in self.unique_mol_names:
+                        raise ValueError(f"Cannot find a unique name for the ligand: {mol_name}")
             elif len(mol_name) > 3:
                 logger.warning(f"Shortening the ligand name: {mol_name} to {mol_name[:3]}")
                 mol_name = mol_name[:3]
+                if mol_name in self.unique_mol_names:
+                    mol_name = f'{mol_name[:2]}{ind}'
+                    if mol_name in self.unique_mol_names:
+                        raise ValueError(f"Cannot find a unique name for the ligand: {mol_name}")
             self._mol = mol_name
+            self.mols.append(mol_name)
             self.unique_mol_names.append(mol_name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{self._mol}.frcmod"):
-                logger.info(f'Processing ligand: {self._mol}')
+                logger.debug(f'Processing ligand: {self._mol}')
                 self._process_ligand()
         self._prepare_ligand_poses()
         
@@ -304,7 +331,7 @@ class System:
         """
         Prepare for the alignment of the protein and ligand to the system.
         """
-        logger.info('Getting the alignment of the protein and ligand to the system')
+        logger.debug('Getting the alignment of the protein and ligand to the system')
         u_prot = mda.Universe(self.protein_input)
         u_sys = self.u_sys
 
@@ -339,7 +366,7 @@ class System:
         we want to align the protein to the system so the membrane is 
         properly positioned.
         """
-        logger.info('Processing the system')
+        logger.debug('Processing the system')
         u_prot = self.u_prot
         u_sys = self.u_sys
         try:
@@ -412,7 +439,7 @@ class System:
         """
 
         # Ensure the ligand file is in PDB format
-        logger.info(f'Processing ligand file: {self._ligand_path}')
+        logger.debug(f'Processing ligand file: {self._ligand_path}')
 
         ligand = self._ligand
         mol = self._mol
@@ -427,7 +454,7 @@ class System:
             ligand.guess_TopologyAttrs(to_guess=['elements'])
             ligand.select_atoms('not hydrogen').write(noh_path)
             # Add hydrogens based on the specified pH
-            logger.info(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
+            logger.debug(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
             run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {self.ligandff_folder}/{mol}.pdb -p {self.ligand_ph:.2f}")
             
             ligand = mda.Universe(f"{self.ligandff_folder}/{mol}.pdb")
@@ -445,7 +472,7 @@ class System:
         self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
 
         self.ligand_charge = np.round(np.sum(ligand.atoms.charges))
-        logger.info(f'The net charge of the ligand is {self.ligand_charge}')
+        logger.info(f'The net charge of the ligand {mol} in {ligand_path} is {self.ligand_charge}')
 
         self._prepare_ligand_parameters()
 
@@ -453,7 +480,7 @@ class System:
         """Prepare ligand parameters for the system"""
         # Get ligand parameters
         mol = self._mol
-        logger.info(f'Preparing ligand {mol} parameters')
+        logger.debug(f'Preparing ligand {mol} parameters')
 
         # antechamber_command = f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
         antechamber_command = f'{antechamber} -i {self._ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
@@ -490,13 +517,13 @@ class System:
         run_with_log(f"{tleap} -f tleap.in",
                         working_dir=self.ligandff_folder)
 
-        logger.info(f'Ligand {mol} parameters prepared')
+        logger.debug(f'Ligand {mol} parameters prepared')
 
     def _prepare_ligand_poses(self):
         """
         Prepare ligand poses for the system.
         """
-        logger.info('Preparing ligand poses')
+        logger.debug('ligand poses')
 
         new_pose_paths = []
         for i, pose in enumerate(self.ligand_paths):
@@ -548,7 +575,7 @@ class System:
         which e.g. for POPC, it will be PC, PA, OL.
         see: https://ambermd.org/AmberModels_lipids.php
         """
-        logger.info('Input: membrane system')
+        logger.debug('Input: membrane system')
 
         # read charmmlipid2amber file
         charmm_csv_path = resources.files("batter") / "data/charmmlipid2amber.csv"
@@ -564,26 +591,9 @@ class System:
         self.lipid_mol = lipid_mol
         logger.debug(f'New lipid_mol list: {self.lipid_mol}')
 
-    def prepare(self,
-            stage: str,
-            input_file: Union[str, Path, SimulationConfig],
-            overwrite: bool = False):
-        """
-        Prepare the system for the FEP simulation.
-
-        Parameters
-        ----------
-        stage : str
-            The stage of the simulation. Options are 'equil' and 'fe'.
-        input_file : str
-            Path to the input file for the simulation.
-        overwrite : bool, optional
-            Whether to overwrite the existing files. Default is False.
-        """
-        logger.info('Preparing the system')
-        self.overwrite = overwrite
-        self.builders_factory = BuilderFactory()
-
+    def _get_sim_config(self,
+                       input_file: Union[str, Path, SimulationConfig]
+    ):
         if isinstance(input_file, (str, Path)):
             file_path = Path(input_file) if isinstance(input_file, str) else input_file
             sim_config: SimulationConfig  = get_configure_from_file(file_path)
@@ -601,12 +611,37 @@ class System:
         if sim_config.retain_lig_prot == 'no':
             logger.warning(f"The protonation state of the ligand will be "
                            f"reassigned to pH {self.ligand_ph:.2f}")
+        self.sim_config = sim_config
+
+    def prepare(self,
+            stage: str,
+            input_file: Union[str, Path, SimulationConfig],
+            overwrite: bool = False):
+        """
+        Prepare the system for the FEP simulation.
+
+        Parameters
+        ----------
+        stage : str
+            The stage of the simulation. Options are 'equil' and 'fe'.
+        input_file : str
+            Path to the input file for the simulation.
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
+        """
+        logger.debug('Preparing the system')
+        self.overwrite = overwrite
+        self.builders_factory = BuilderFactory()
+
+        self._get_sim_config(input_file)
+        sim_config = self.sim_config
         
         if stage == 'equil':
-            self.sim_config = sim_config
+            if self.overwrite:
+                logger.debug(f'Overwriting {self.equil_folder}')
+                shutil.rmtree(self.equil_folder, ignore_errors=True)
             # save the input file to the equil directory
             os.makedirs(f"{self.equil_folder}", exist_ok=True)
-            logger.info(f'Prepare for equilibration stage at {self.equil_folder}')
             with open(f"{self.equil_folder}/sim_config.json", 'w') as f:
                 json.dump(sim_config.model_dump(), f, indent=2)
             
@@ -614,7 +649,6 @@ class System:
             logger.info('Equil System prepared')
         
         if stage == 'fe':
-            self.sim_config = sim_config
             if not os.path.exists(f"{self.equil_folder}"):
                 raise FileNotFoundError(f"Equilibration not generated yet. Run prepare('equil') first.")
         
@@ -631,8 +665,7 @@ class System:
                 orig = {k: sim_config.model_dump().get(k) for k in diff.keys()}
                 logger.warning(f"Original configuration: {orig}")
             if self.overwrite:
-                logger.info('Overwrite is set. ')
-                logger.info(f'Removing {self.fe_folder}')
+                logger.debug(f'Overwriting {self.fe_folder}')
                 shutil.rmtree(self.fe_folder, ignore_errors=True)
             os.makedirs(f"{self.fe_folder}", exist_ok=True)
 
@@ -711,7 +744,7 @@ class System:
         """
         sim_config = self.sim_config
 
-        logger.info('Prepare for equilibration stage')
+        logger.info(f'Prepare for equilibration stage at {self.equil_folder}')
         if not os.path.exists(f"{self.equil_folder}/all-poses"):
             logger.debug(f'Copying all-poses folder from {self.poses_folder} to {self.equil_folder}/all-poses')
             shutil.copytree(self.poses_folder,
@@ -732,14 +765,14 @@ class System:
             equil_builder = self.builders_factory.get_builder(
                 stage='equil',
                 system=self,
-                pose_name=pose,
+                pose=pose,
                 sim_config=sim_config,
-                working_dir=f'{self.equil_folder}',
+                working_dir=f'{self.equil_folder}'
             ).build()
     
         logger.info('Equilibration systems have been created for all poses listed in the input file.')
-        logger.info(f'now cd equil/pose0')
-        logger.info(f'sbatch SLURMM-run')
+        logger.debug(f'now cd equil/pose0')
+        logger.debug(f'sbatch SLURMM-run')
 
     def _prepare_fe_system(self):
         """
@@ -749,29 +782,155 @@ class System:
         sim_config = self.sim_config
 
         logger.info('Prepare for free energy stage')
+        # molr (molecule reference) and poser (pose reference)
+        # are used for exchange FE simulations.
+        molr = self.mols[0]
+        poser = self.sim_config.poses_def[0]
+
+
+        pbar = tqdm(total=len(self.sim_config.poses_def))
         for pose in self.sim_config.poses_def:
-            logger.info(f'Preparing pose: {pose}')
+            logger.debug(f'Preparing pose: {pose}')
             # copy ff folder
             shutil.copytree(self.ligandff_folder,
                             f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
 
             for component in sim_config.components:
-                logger.info(f'Preparing component: {component}')
+                logger.debug(f'Preparing component: {component}')
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
                 n_sims = len(lambdas_comp)
-                logger.info(f'Number of simulations: {n_sims}')
+                logger.debug(f'Number of simulations: {n_sims}')
                 for i, lambdas in enumerate(lambdas_comp):
-                    logger.info(f'Preparing simulation: {lambdas}')
+                    logger.debug(f'Preparing simulation: {lambdas}')
+                    pbar.set_description(f"Preparing pose={pose}, comp={component}, win={lambdas}")
                     fe_builder = self.builders_factory.get_builder(
                         stage='fe',
                         win=i,
                         component=component,
                         system=self,
-                        pose_name=pose,
+                        pose=pose,
                         sim_config=sim_config,
                         working_dir=f'{self.fe_folder}',
+                        molr=molr,
+                        poser=poser
                     ).build()
-            
+            pbar.update(1)
+        
+    def analysis(self):
+        """
+        Analyze the simulation results.
+        """
+        blocks = self.sim_config.blocks
+        components = self.sim_config.components
+        temperature = self.sim_config.temperature
+        attach_rest = self.sim_config.attach_rest
+        lambdas = self.sim_config.lambdas
+        weights = self.sim_config.weights
+        dec_int = self.sim_config.dec_int
+        dec_method = self.sim_config.dec_method
+        rest = self.sim_config.rest
+        dic_steps1 = self.sim_config.dic_steps1
+        dic_steps2 = self.sim_config.dic_steps2
+        dt = self.sim_config.dt
+        poses_def = self.sim_config.poses_def
+
+        with self._change_dir(self.output_dir):
+            for pose in poses_def:
+                analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
+                                weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
+                os.chdir('../../')
+    
+    def run_pipeline(self,
+                     input_file: Union[str, Path, SimulationConfig],
+                     overwrite: bool = False
+    ):
+        """
+        Run the whole pipeline for calculating the binding free energy
+        after you `create_system`.
+
+        """
+        logger.info('Running the pipeline')
+        self._get_sim_config(input_file)
+
+        if self._check_equilibration():
+            #1 prepare the system
+            logger.info('Preparing the system')
+            self.prepare(
+                stage='equil',
+                input_file=input_file,
+                overwrite=overwrite
+            )
+            logger.info('Submitting the equilibration')
+            #2 submit the equilibration
+            self.submit(
+                stage='equil',
+            )
+
+            # Check for equilibration to finish
+            logger.info('Checking the equilibration')
+            while self._check_equilibration():
+                logger.info('Equilibration is still running. Waiting for 1 hour.')
+                time.sleep(60*60)
+        else:
+            logger.info('Equilibration is already finished')
+
+
+
+        #4, submit the free energy calculation
+        if self._check_fe():
+            #3 prepare the free energy calculation
+            logger.info('Preparing the free energy calculation')
+            self.prepare(
+                stage='fe',
+                input_file=input_file,
+                overwrite=overwrite
+            )
+            logger.info('Submitting the free energy calculation')
+            self.submit(
+                stage='fe',
+            )
+            # Check the free energy calculation to finish
+            logger.info('Checking the free energy calculation')
+            while self._check_fe():
+                logger.info('Free energy calculation is still running. Waiting for 1 hour.')
+                time.sleep(60*60)
+        else:
+            logger.info('Free energy calculation is already finished')
+
+        #5 analyze the results
+        logger.info('Analyzing the results')
+        self.analysis()
+
+        logger.info('Pipeline finished')
+        logger.info(f'The results are in the {self.output_dir}')
+
+    def _check_equilibration(self):
+        """
+        Check if the equilibration is finished by checking the FINISHED file
+        """
+        for pose in self.sim_config.poses_def:
+            if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
+                return True
+        return False
+
+    def _check_fe(self):
+        """
+        Check if the free energy calculation is finished by 
+        """
+        for pose in self.sim_config.poses_def:
+            for comp in self.sim_config.components:
+                if COMPONENTS_FOLDER_DICT[comp] == 'rest':
+                    for j in range(0, len(self.sim_config.attach_rest)):
+                        folder_2_check = f'{self.fe_folder}/{pose}/rest/{comp}{j:02d}'
+                        if not os.path.exists(f"{folder_2_check}/FINISHED"):
+                            return True
+                else:
+                    for j in range(0, len(self.sim_config.lambdas)):
+                        folder_2_check = f'{self.fe_folder}/{pose}/{self.sim_config.dec_method}/{comp}{j:02d}'
+                        if not os.path.exists(f"{folder_2_check}/FINISHED"):
+                            return True
+        return False
+
     @property
     def poses_folder(self):
         return f"{self.output_dir}/all-poses"
@@ -795,12 +954,31 @@ class System:
     @property
     def ligand_poses(self):
         return self.ligand_paths
+    
+    @contextmanager
+    def _change_dir(self, new_dir):
+        cwd = os.getcwd()
+        os.makedirs(new_dir, exist_ok=True)
+        os.chdir(new_dir)
+        logger.debug(f'Changed directory to {os.getcwd()}')
+        yield
+        os.chdir(cwd)
+        logger.debug(f'Changed directory back to {os.getcwd()}')
 
 
 class ABFESystem(System):
     """
-    A class to represent and process a Absolute Binding Free Energy Perturbation (FEP) system
-    using the BAT.py methods.
+    A class to represent and process a Absolute Binding Free Energy (ABFE) Perturbation (FEP) system
+    using the BAT.py methods. It gets inputs of a protein and a single ligand type
+    with the possibility of providing multiple poses of the ligand.
+    The ABFE of the ligand of each binding poses 
+    to the provided **protein conformation** will be calculated.
+
+    If you have multiple ligands with different protein starting conformations,
+    create multiple `ABFESystem`s.
+
+    If you have multiple ligands with the same protein starting conformation,
+    create one `MABFESystem` with multiple ligands as input.
     """
     def _process_ligands(self):
         # check if they are the same ligand
@@ -811,6 +989,17 @@ class ABFESystem(System):
 
         # set the ligand path to the first ligand
         self.unique_ligand_paths = [self.ligand_paths[0]]
+
+
+class MABFESystem(System):
+    """
+    A class to represent and process a Absolute Binding Free Energy Perturbation (FEP) system
+    using the BAT.py methods. It gets inputs of a protein and multiple single ligand types.
+    The ABFE of the ligands to the provided **protein conformation** will be calculated
+    """
+    def _process_ligands(self):
+        # check if they are the same ligand
+        self.unique_ligand_paths = self.ligand_paths
 
 
 class RBFESystem(System):

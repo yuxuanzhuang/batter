@@ -1,7 +1,7 @@
 #!/usr/bin/env python2
 import glob
-import os as os
-import re as re
+import os
+import re
 import shutil as shutil
 import sys as sys
 import math
@@ -599,6 +599,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                     unfinished.append(f'fe/{pose}/{folder_2_check}')
         elif comp in components_dict['dd']:
             for j in range(0, len(lambdas)):
+                if dec_method == 'exchange':
+                    dec_method = 'sdr'
                 folder_2_check = f'{dec_method}/{comp}{j:02d}'
                 if not check_file_exists(folder_2_check):
                     unfinished.append(f'fe/{pose}/{folder_2_check}')
@@ -640,8 +642,13 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         # temp fix for frontier
         # Find all files matching the pattern 'mdin-xx.nc' in the folder
         mdin_files = glob.glob('mdin-*.nc')
-        # Sort them numerically by the number in the filename
         mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
+        # Find all files matching the pattern 'mdin-xx.nc' in the folder
+        mdin_files2 = glob.glob('md*.nc')
+        mdin_files2.sort(key=lambda x: int(x.split('.')[0].split('md')[1]))
+        
+        mdin_files = mdin_files + mdin_files2
+        # Sort them numerically by the number in the filename
         # Read the 'restraints.in' file
         with open('restraints.in', 'r') as f:
             lines = f.readlines()
@@ -653,8 +660,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             # Write lines up to and including the target line
             f.writelines(lines[:line_index + 1])
             # Append the sorted mdin files
-            # all but the last file to avoid a running simulation
-            for mdin_file in mdin_files[:-1]:
+            for mdin_file in mdin_files[:]:
                 f.write(f'trajin {mdin_file}\n')
             # Write the remaining lines
             f.writelines(lines[line_index + 1:])
@@ -712,7 +718,9 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             data = []
             os.chdir('%s%02d' % (comp, int(win)))
             potl = open('energies.dat', "w")
-            md_out_files = glob.glob('md*.out')
+            md_out_files = glob.glob('md-*.out')
+            md_out_files = [f for f in md_out_files if re.match(r'md-\d+.out', f)]
+
             sorted_md_out_files = sorted(md_out_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
             # all but the last file to avoid a running simulation
             for md_out_file in sorted_md_out_files[:-1]:
@@ -1045,7 +1053,6 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     os.makedirs('Results', exist_ok=True)
     # Copy complex pdb structure
     shutil.copy('./build_files/complex.pdb', './Results/')
-
 
     # Get MBAR free energy averages for the blocks
     for k in range(0, blocks):

@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#SBATCH --job-name="STAGE-POSE"
+#SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
 #SBATCH --partition=rondror
 #SBATCH --nodes=1
-#SBATCH --output=STAGE-POSE.out
-#SBATCH --error=STAGE-POSE.err
+#SBATCH --output=STAGE-POSE-%j.out
+#SBATCH --error=STAGE-POSE-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH -t 12:00:00
@@ -12,7 +12,7 @@
 # Main command goes here
 scontrol show job $SLURM_JOB_ID
 
-source $GROUP_HOME/software/amber20/amber20_src/setup_amber.sh > /dev/null 2>&1
+source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 
 # Define the maximum number of attempts
 MAX_ATTEMPTS=3
@@ -32,13 +32,15 @@ else
     if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
         NEXT_RETRY=$((RETRY_COUNT + 1))
         echo "Resubmitting the job for attempt $NEXT_RETRY..."
-        
         # Submit the same script with an incremented retry count
         sbatch --export=RETRY_COUNT=$NEXT_RETRY $0
+        exit 0
     else
         echo "Maximum attempts ($MAX_ATTEMPTS) reached. Simulation failed."
         exit 1
     fi
 fi
 
+# write FINISHED to a file
+echo "FINISHED" > FINISHED
 exit 0

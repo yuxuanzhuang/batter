@@ -19,12 +19,12 @@ Thermalizing, NVT.
   ig = -1,
   ntp = 0,
   nstlim = 25000,
-  dt = _step_,
+  dt = 0.001,
   nmropt = 1,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '@CA,C,N | :1-2',
+  restraintmask = '@CA,C,N,P31 | :1-2',
   infe = 1,
  /
  &pmd

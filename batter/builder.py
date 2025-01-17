@@ -47,7 +47,7 @@ class SystemBuilder(ABC):
 
     def __init__(self,
                  system: 'batter.System',
-                 pose_name: str,
+                 pose: str,
                  sim_config: SimulationConfig,
                  working_dir: str,
                  ):
@@ -58,7 +58,7 @@ class SystemBuilder(ABC):
         ----------
         system : batter.System
             The system to build.
-        pose_name : str
+        pose : str
             The name of the pose
         sim_config : batter.input_process.SimulationConfig
             The simulation configuration.
@@ -66,19 +66,20 @@ class SystemBuilder(ABC):
             The working directory.
         """
         self.system = system
-        self.pose_name = pose_name
+        self.pose = pose
         self.sim_config = sim_config
         self.other_mol = self.sim_config.other_mol
         self.lipid_mol = self.sim_config.lipid_mol
 
         self.working_dir = working_dir
+
         if not os.path.exists(working_dir):
             os.makedirs(working_dir)
 
     def build(self):
     
         with self._change_dir(self.working_dir):
-            logger.debug(f'Building {self.pose_name}...')
+            logger.debug(f'Building {self.pose}...')
             if self.win == 0:
                 # if os.path.exists('build_files'):
                 #     shutil.rmtree('build_files', ignore_errors=True)
@@ -87,16 +88,25 @@ class SystemBuilder(ABC):
                     logger.debug(f'Creating build_files in  {os.getcwd()}')
                     anchor_found = self._build_complex()
                     if not anchor_found:
-                        logger.warning(f'Could not find the ligand anchors for {self.pose_name}.')
+                        logger.warning(f'Could not find the ligand anchors for {self.pose}.')
                         return None
-            mol = mda.Universe(f'build_files/{self.pose_name}.pdb').residues[0].resname
-            self.mol = mol
-
-            with self._change_dir(self.pose_name):
+                # move the build files to the pose folder
+                if os.path.exists(f'{self.pose}/build_files'):
+                    shutil.rmtree(f'{self.pose}/build_files', ignore_errors=True)
+                shutil.move('build_files', f'{self.pose}/build_files')
+                if self.comp == 'x':
+                    if os.path.exists(f'{self.pose}/exchange_files'):
+                        shutil.rmtree(f'{self.pose}/exchange_files', ignore_errors=True)
+                    shutil.copytree('exchange_files', f'{self.pose}/exchange_files')
+                
+            with self._change_dir(self.pose):
+                mol = mda.Universe(f'build_files/{self.pose}.pdb').residues[0].resname
+                self.mol = mol
                 os.makedirs(self.comp_folder, exist_ok=True)
                 with self._change_dir(self.comp_folder):
-                    self._create_amber_files()
-                    self._create_run_files()   
+                    if self.win == 0:
+                        self._create_amber_files()
+                        self._create_run_files()   
                     os.makedirs(self.window_folder, exist_ok=True)
                     with self._change_dir(self.window_folder):
                         if self.win == 0:
@@ -105,7 +115,7 @@ class SystemBuilder(ABC):
                             self._copy_simulation_dir()
                         if self.win == 0:
                             self._create_box()
-                        self._restraints()
+                            self._restraints()
                         self._sim_files()
         return self
 
@@ -118,6 +128,8 @@ class SystemBuilder(ABC):
         2. Set the parameters of the ligand (TODO: has it been done already?)
         3. Find anchor atoms.
         4. Add dummy atoms
+        It should return True if the anchor atoms are found,
+        False otherwise.
         """
         raise NotImplementedError()
 
@@ -142,7 +154,7 @@ class SystemBuilder(ABC):
         if lipid_mol:
             amber_files_path = 'amber_files'
             p_coupling = self.p_coupling if hasattr(self, 'p_coupling') else '3'
-            c_surften = self.c_surften if hasattr(self, 'c_surften') else '1'
+            c_surften = self.c_surften if hasattr(self, 'c_surften') else '3'
         else:
             amber_files_path = 'amber_files_no_lipid'
             p_coupling = '1'
@@ -199,7 +211,23 @@ class SystemBuilder(ABC):
         """
         Copy the simulation directory from the previous window.
         """
-        shutil.copytree(f'../{self.comp}00', '.', dirs_exist_ok=True)
+        source_dir = f'../{self.comp}00'
+
+        shutil.copytree(source_dir, '.', dirs_exist_ok=True)
+
+        # Create symlinks for PDB and PRMTOP files
+        for file_extension in ['*.pdb', '*.prmtop']:
+            for file_path in glob.glob(f'{source_dir}/{file_extension}'):
+                file_name = os.path.basename(file_path)
+                target_path = os.path.join('.', file_name)
+
+                # Remove existing files or symlinks
+                if os.path.exists(target_path) or os.path.islink(target_path):
+                    os.remove(target_path)
+                try:
+                    os.symlink(file_path, target_path)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to create symlink for {file_path}: {e}")
 
     @log_info
     def _create_box(self):
@@ -216,7 +244,12 @@ class SystemBuilder(ABC):
         other_mol = self.other_mol
         mol = self.mol
         comp = self.comp
-        molr = self.mol
+        if comp == 'x':
+            molr = self.molr
+            poser = self.poser
+        else:
+            molr = mol
+            poser = self.pose
         buffer_x = self.sim_config.buffer_x
         buffer_y = self.sim_config.buffer_y
         buffer_z = self.sim_config.buffer_z
@@ -237,7 +270,7 @@ class SystemBuilder(ABC):
         for file in glob.glob('../ff/*'):
             if file.endswith('.in'):
                 continue
-            shutil.copy(file, './')
+            shutil.copy(file, '.')
 
 
         # Copy tleap files that are used for restraint generation and analysis
@@ -740,7 +773,7 @@ class EquilibrationBuilder(SystemBuilder):
         # only one window for equilibration
 
         # no ligand copy for equilibration
-        sdr_dist = self.sd_dist
+        sdr_dist = self.sdr_dist
         
         H1 = self.sim_config.H1
         H2 = self.sim_config.H2
@@ -765,15 +798,15 @@ class EquilibrationBuilder(SystemBuilder):
                     f'reference.pdb')
         shutil.copy(f'{all_pose_folder}/{system_name}_docked.pdb',
                     f'rec_file.pdb')
-        shutil.copy(f'{all_pose_folder}/{self.pose_name}.pdb',
+        shutil.copy(f'{all_pose_folder}/{self.pose}.pdb',
                     f'.')
 
         other_mol = self.sim_config.other_mol
         lipid_mol = self.sim_config.lipid_mol
         solv_shell = self.sim_config.solv_shell
-        mol_u = mda.Universe(f'{self.pose_name}.pdb')
+        mol_u = mda.Universe(f'{self.pose}.pdb')
         if len(set(mol_u.residues.resnames)) > 1:
-            raise ValueError(f'The ligand {self.pose_name} has more than one residue: '
+            raise ValueError(f'The ligand {self.pose} has more than one residue: '
                              f'{mol_u.atoms.resnames}')
         mol = mol_u.residues[0].resname
         if mol in other_mol:
@@ -899,10 +932,7 @@ class EquilibrationBuilder(SystemBuilder):
         P2 = f':{p2_resid}@{h2_atom}'
         P3 = f':{p3_resid}@{h3_atom}'
 
-        logger.debug('Receptor anchors:')
-        logger.info(f'P1: {P1}')
-        logger.info(f'P2: {P2}')
-        logger.info(f'P3: {P3}')
+        logger.info(f'Receptor anchors: P1: {P1}; P2: {P2}; P3: {P3}')
         self.P1 = P1
         self.P2 = P2
         self.P3 = P3
@@ -918,7 +948,7 @@ class EquilibrationBuilder(SystemBuilder):
         self.other_mol = other_mol
 
         if any(mol[:3] != mol for mol in lipid_mol):
-            logger.warning(
+            logger.debug(
                 'The residue names of the lipids are four-letter names.'
                 'They were truncated to three-letter names'
                 'for compatibility with AMBER.')
@@ -1027,7 +1057,7 @@ class EquilibrationBuilder(SystemBuilder):
         anchor_file = 'anchors.txt'
         if os.stat(anchor_file).st_size == 0:
             logger.warning('\n')
-            logger.warning(f'WARNING: Could not find the ligand first anchor L1 for {self.pose_name}')
+            logger.warning(f'WARNING: Could not find the ligand first anchor L1 for {self.pose}')
             logger.warning('The ligand is most likely not in the defined binding site in these systems.')
             return False
 
@@ -1037,18 +1067,41 @@ class EquilibrationBuilder(SystemBuilder):
             if len(splitdata) < 3:
                 os.rename('./anchors.txt', 'anchors-'+pose+'.txt')
                 logger.warning('\n')
-                logger.warning(f'WARNING: Could not find the ligand L2 or L3 anchors for {self.pose_name}')
+                logger.warning(f'WARNING: Could not find the ligand L2 or L3 anchors for {self.pose}')
                 logger.warning('Try reducing the min_adis parameter in the input file.')
                 return False
 
         os.rename('./anchors.txt',
-                  f'anchors-{self.pose_name}.txt')
+                  f'anchors-{self.pose}.txt')
         return True
 
     @log_info
     def _create_run_files(self):
-        # equilbration has no run_files
-        pass
+        hmr = self.sim_config.hmr
+
+        # Copy folder for running simulations
+        if not os.path.exists('./run_files'):
+            shutil.copytree(run_files_orig, '../run_files', dirs_exist_ok=True)
+        if hmr == 'no':
+            replacement = 'full.prmtop'
+            for dname, dirs, files in os.walk('../run_files'):
+                for fname in files:
+                    fpath = os.path.join(dname, fname)
+                    with open(fpath) as f:
+                        s = f.read()
+                        s = s.replace('full.hmr.prmtop', replacement)
+                    with open(fpath, "w") as f:
+                        f.write(s)
+        elif hmr == 'yes':
+            replacement = 'full.hmr.prmtop'
+            for dname, dirs, files in os.walk('../run_files'):
+                for fname in files:
+                    fpath = os.path.join(dname, fname)
+                    with open(fpath) as f:
+                        s = f.read()
+                        s = s.replace('full.prmtop', replacement)
+                    with open(fpath, "w") as f:
+                        f.write(s)
 
     @log_info
     def _create_simulation_dir(self):
@@ -1080,7 +1133,7 @@ class EquilibrationBuilder(SystemBuilder):
         resid_lig = 0
         resname_lig = self.mol
         mol = self.mol
-        pose = self.pose_name
+        pose = self.pose
         other_mol = self.other_mol
         lipid_mol = self.lipid_mol
 
@@ -1091,16 +1144,16 @@ class EquilibrationBuilder(SystemBuilder):
         P3 = self.P3
 
         # Copy a few files
-        shutil.copy('../build_files/equil-%s.pdb' % mol.lower(), './')
+        shutil.copy('build_files/equil-%s.pdb' % mol.lower(), './')
 
         # Use equil-reference.pdb to retrieve the box size
-        shutil.copy('../build_files/equil-%s.pdb' % mol.lower(), './equil-reference.pdb')
-        shutil.copy('../build_files/%s-noh.pdb' % mol.lower(), './%s.pdb' % mol.lower())
-        shutil.copy('../build_files/anchors-'+pose+'.txt', './anchors.txt')
+        shutil.copy('build_files/equil-%s.pdb' % mol.lower(), './equil-reference.pdb')
+        shutil.copy('build_files/%s-noh.pdb' % mol.lower(), './%s.pdb' % mol.lower())
+        shutil.copy('build_files/anchors-'+pose+'.txt', './anchors.txt')
 
         # Read coordinates for dummy atoms
         for i in range(1, 2):
-            shutil.copy('../build_files/dum'+str(i)+'.pdb', './')
+            shutil.copy('build_files/dum'+str(i)+'.pdb', './')
             with open('dum'+str(i)+'.pdb') as dum_in:
                 lines = (line.rstrip() for line in dum_in)
                 lines = list(line for line in lines if line)
@@ -1182,10 +1235,7 @@ class EquilibrationBuilder(SystemBuilder):
             L2 = ":"+lig_resid+"@"+splitdata[1]
             L3 = ":"+lig_resid+"@"+splitdata[2]
 
-        logger.info('Ligand anchors:')
-        logger.info(f'L1: {L1}')
-        logger.info(f'L2: {L2}')
-        logger.info(f'L3: {L3}')
+        logger.info(f'Ligand anchors: L1: {L1}; L2: {L2}; L3: {L3}')
 
         # Write the new pdb file
         build_file = open('build.pdb', 'w')
@@ -1268,14 +1318,15 @@ class EquilibrationBuilder(SystemBuilder):
     def _restraints(self):
         # TODO: remove it
         os.chdir('..')
-        pose = self.pose_name
+        pose = self.pose
         rest = self.sim_config.rest
         bb_start = self.sim_config.bb_start
         bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
-        molr = self.mol
         comp = self.comp
+        molr = self.mol
+
         bb_equil = self.sim_config.bb_equil
         sdr_dist = self.sim_config.sdr_dist
         dec_method = self.dec_method
@@ -1291,6 +1342,7 @@ class EquilibrationBuilder(SystemBuilder):
                              molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
             shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
         shutil.copy('./'+pose+'/disang%02d.rest' % int(0), './'+pose+'/disang.rest')
+        os.chdir(pose)
 
     @log_info
     def _sim_files(self):
@@ -1298,21 +1350,84 @@ class EquilibrationBuilder(SystemBuilder):
         temperature = self.sim_config.temperature
         mol = self.mol
         num_sim = len(self.sim_config.release_eq)
-        pose = self.pose_name
+        pose = self.pose
         comp = self.comp
         win = self.win
         stage = self.stage
-        eq_steps1 = self.sim_config.eq_steps1
-        eq_steps2 = self.sim_config.eq_steps2
+        steps1 = self.sim_config.eq_steps1
+        steps2 = self.sim_config.eq_steps2
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
 
-        os.symlink(f'{pose}/amber_files', 'amber_files')
+        if lipid_mol:
+            amber_file_path = 'amber_files'
+        else:
+            amber_file_path = 'amber_files_no_lipid'
+        
 
-        setup.sim_files(hmr, temperature, mol,
-                        num_sim, pose, comp, win,
-                        stage, eq_steps1, eq_steps2, rng,
-                        lipid_sim=lipid_mol)
+        # Find anchors
+        with open('disang.rest', 'r') as f:
+            data = f.readline().split()
+            L1 = data[6].strip()
+            L2 = data[7].strip()
+            L3 = data[8].strip()
+
+        # Get number of atoms in vacuum
+        with open('./vac.pdb') as myfile:
+            data = myfile.readlines()
+            vac_atoms = data[-3][6:11].strip()
+
+        # Create minimization and NPT equilibration files for big box and small ligand box
+        with open(f"{amber_file_path}/mini.in", "rt") as fin:
+            with open("./mini.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+        with open(f"{amber_file_path}/therm1.in", "rt") as fin:
+            with open("./therm1.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+        with open(f"{amber_file_path}/therm2.in", "rt") as fin:
+            with open("./therm2.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
+                        '_L3_', L3).replace('_temperature_', str(temperature)))
+        with open(f"{amber_file_path}/eqnpt0.in", "rt") as fin:
+            with open("./eqnpt0.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)))
+        with open(f"{amber_file_path}/eqnpt.in", "rt") as fin:
+            with open("./eqnpt.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)))
+
+        # Create gradual release files for equilibrium
+        for i in range(0, num_sim):
+            with open(f'{amber_file_path}/mdin-equil', "rt") as fin:
+                with open("./mdin-%02d" % int(i), "wt") as fout:
+                    if i == (num_sim-1):
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace('disang_file', 'disang%02d' % int(i)))
+                    else:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps1)).replace('disang_file', 'disang%02d' % int(i)))
+
+        with open('../run_files/local-'+stage+'.bash', "rt") as fin:
+            with open("./run-local.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('RANGE', str(rng)))
+        with open('../run_files/PBS-Am', "rt") as fin:
+            with open("./PBS-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', stage).replace('POSE', pose))
+        with open('../run_files/SLURMM-Am', "rt") as fin:
+            with open("./SLURMM-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace(
+                        'STAGE', stage).replace(
+                            'POSE', pose).replace(
+                                'SYSTEMNAME', self.system.system_name))
     
     def _find_anchor(self):
         """
@@ -1329,12 +1444,17 @@ class FreeEnergyBuilder(SystemBuilder):
                  win: int,
                  component: str,
                  system: "batter.System",
-                 pose_name: str,
+                 pose: str,
                  sim_config: SimulationConfig,
-                 working_dir: str,):
+                 working_dir: str,
+                 molr: str,
+                 poser: str,):
         self.win = win
         self.comp = component
-        super().__init__(system, pose_name, sim_config, working_dir)
+        self.molr = molr
+        self.poser = poser
+
+        super().__init__(system, pose, sim_config, working_dir)
 
         dec_method = self.sim_config.dec_method
         if component == 'n':
@@ -1348,7 +1468,7 @@ class FreeEnergyBuilder(SystemBuilder):
             
         self.dec_method = dec_method
 
-        os.makedirs(f"{self.working_dir}/{pose_name}/{COMPONENTS_FOLDER_DICT[component]}", exist_ok=True)
+        os.makedirs(f"{self.working_dir}/{pose}/{COMPONENTS_FOLDER_DICT[component]}", exist_ok=True)
         self.comp_folder = f"{COMPONENTS_FOLDER_DICT[component]}"
         self.window_folder = f"{self.comp}{self.win:02d}"
 
@@ -1383,7 +1503,7 @@ class FreeEnergyBuilder(SystemBuilder):
         """
         Copying files from equilibration
         """
-        pose = self.pose_name
+        pose = self.pose
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
         
@@ -1407,17 +1527,17 @@ class FreeEnergyBuilder(SystemBuilder):
         shutil.copy(f'dum.mol2', f'../ff/dum.mol2')
         shutil.copy(f'dum.frcmod', f'../ff/dum.frcmod')
 
-        shutil.copy(f'../../equil/build_files/{self.pose_name}.pdb', './')
+        shutil.copy(f'../../equil/{pose}/build_files/{self.pose}.pdb', './')
         # Get last state from equilibrium simulations
         shutil.copy(f'../../equil/{pose}/md{fwin:02d}.rst7', './')
         shutil.copy(f'../../equil/{pose}/full.pdb', './aligned-nc.pdb')
         shutil.copy(f'../../equil/{pose}/build_amber_renum.txt', './')
-        for file in glob.glob(f'../../equil/{pose.lower()}/full*.prmtop'):
+        for file in glob.glob(f'../../equil/{pose}/full*.prmtop'):
             shutil.copy(file, './')
-        for file in glob.glob(f'../../equil/{pose.lower()}/vac*'):
+        for file in glob.glob(f'../../equil/{pose}/vac*'):
             shutil.copy(file, './')
         
-        mol = mda.Universe(f'{self.pose_name}.pdb').residues[0].resname
+        mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
 
         run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
@@ -1458,8 +1578,6 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # Used for retrieving the box size
         shutil.copy('rec_file.pdb', 'equil-reference.pdb')
-
-        # convert back to lipid
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
@@ -1578,6 +1696,7 @@ class FreeEnergyBuilder(SystemBuilder):
             # set correct residue number
             revised_resids = np.array(revised_resids)
             u.atoms.residues.resids = final_resids[:len(revised_resids)]
+
             u.atoms.write('aligned_amber.pdb')
         
         run_with_log('vmd -dispdev text -e prep.tcl', error_match='anchor not found')
@@ -1585,14 +1704,12 @@ class FreeEnergyBuilder(SystemBuilder):
         # Check size of anchor file
         anchor_file = 'anchors.txt'
         if os.stat(anchor_file).st_size == 0:
-            os.chdir('../')
             return 'anch1'
         f = open(anchor_file, 'r')
         for line in f:
             splitdata = line.split()
             if len(splitdata) < 3:
                 os.rename('./anchors.txt', 'anchors-'+pose+'.txt')
-                os.chdir('../')
                 return 'anch2'
         os.rename('./anchors.txt', 'anchors-'+pose+'.txt')
 
@@ -1672,6 +1789,8 @@ class FreeEnergyBuilder(SystemBuilder):
         total_atom = 0
         resid_lig = 0
         mol = self.mol
+        molr = self.molr
+        poser = self.poser
         resname_lig = mol
         other_mol = self.other_mol
         lipid_mol = self.lipid_mol
@@ -1680,16 +1799,18 @@ class FreeEnergyBuilder(SystemBuilder):
 
         dec_method = self.dec_method
 
-        # create symlink of amber_files_path
+        if os.path.exists('amber_files') or os.path.islink('amber_files'):
+            os.remove('amber_files')
+
         os.symlink(f'../{self.amber_files_path}', 'amber_files')
 
-        for file in glob.glob(f'../../../{self.build_file_path}/vac_ligand*'):
+        for file in glob.glob(f'../../{self.build_file_path}/vac_ligand*'):
             shutil.copy(file, './')
-        shutil.copy(f'../../../{self.build_file_path}/{mol.lower()}.pdb', './')
-        shutil.copy(f'../../../{self.build_file_path}/fe-{mol.lower()}.pdb', './build-ini.pdb')
-        shutil.copy(f'../../../{self.build_file_path}/fe-{mol.lower()}.pdb', './')
-        shutil.copy(f'../../../{self.build_file_path}/anchors-{self.pose_name}.txt', './')
-        shutil.copy(f'../../../{self.build_file_path}/equil-reference.pdb', './')
+        shutil.copy(f'../../{self.build_file_path}/{mol.lower()}.pdb', './')
+        shutil.copy(f'../../{self.build_file_path}/fe-{mol.lower()}.pdb', './build-ini.pdb')
+        shutil.copy(f'../../{self.build_file_path}/fe-{mol.lower()}.pdb', './')
+        shutil.copy(f'../../{self.build_file_path}/anchors-{self.pose}.txt', './')
+        shutil.copy(f'../../{self.build_file_path}/equil-reference.pdb', './')
 
         for file in glob.glob('../../../ff/*.mol2'):
             shutil.copy(file, './')
@@ -1702,7 +1823,7 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # Get TER statements
         ter_atom = []
-        with open(f'../../../{self.build_file_path}/rec_file.pdb') as oldfile, open('rec_file-clean.pdb', 'w') as newfile:
+        with open(f'../../{self.build_file_path}/rec_file.pdb') as oldfile, open('rec_file-clean.pdb', 'w') as newfile:
             for line in oldfile:
                 if not 'WAT' in line:
                     newfile.write(line)
@@ -1717,7 +1838,7 @@ class FreeEnergyBuilder(SystemBuilder):
         # Read coordinates for dummy atoms
         if dec_method == 'sdr' or dec_method == 'exchange':
             for i in range(1, 3):
-                shutil.copy(f'../../../{self.build_file_path}/dum'+str(i)+'.pdb', './')
+                shutil.copy(f'../../{self.build_file_path}/dum'+str(i)+'.pdb', './')
                 with open('dum'+str(i)+'.pdb') as dum_in:
                     lines = (line.rstrip() for line in dum_in)
                     lines = list(line for line in lines if line)
@@ -1731,7 +1852,7 @@ class FreeEnergyBuilder(SystemBuilder):
                     total_atom += 1
         else:
             for i in range(1, 2):
-                shutil.copy(f'../../../{self.build_file_path}/dum'+str(i)+'.pdb', './')
+                shutil.copy(f'../../{self.build_file_path}/dum'+str(i)+'.pdb', './')
                 with open('dum'+str(i)+'.pdb') as dum_in:
                     lines = (line.rstrip() for line in dum_in)
                     lines = list(line for line in lines if line)
@@ -1803,12 +1924,12 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # Get coordinates from reference ligand
         if comp == 'x':
-            shutil.copy('../../../exchange_files/%s.pdb' % molr.lower(), './')
-            shutil.copy('../../../exchange_files/anchors-'+poser+'.txt', './')
-            shutil.copy('../../../exchange_files/vac_ligand.pdb', './vac_reference.pdb')
-            shutil.copy('../../../exchange_files/vac_ligand.prmtop', './vac_reference.prmtop')
-            shutil.copy('../../../exchange_files/vac_ligand.inpcrd', './vac_reference.inpcrd')
-            shutil.copy('../../../exchange_files/fe-%s.pdb' % molr.lower(), './build-ref.pdb')
+            shutil.copy('../../exchange_files/%s.pdb' % molr.lower(), './')
+            shutil.copy('../../exchange_files/anchors-'+poser+'.txt', './')
+            shutil.copy('../../exchange_files/vac_ligand.pdb', './vac_reference.pdb')
+            shutil.copy('../../exchange_files/vac_ligand.prmtop', './vac_reference.prmtop')
+            shutil.copy('../../exchange_files/vac_ligand.inpcrd', './vac_reference.inpcrd')
+            shutil.copy('../../exchange_files/fe-%s.pdb' % molr.lower(), './build-ref.pdb')
 
             ref_lig_coords = []
             ref_lig_atomlist = []
@@ -2015,17 +2136,16 @@ class FreeEnergyBuilder(SystemBuilder):
             tleap_vac.close()
 
             p = run_with_log(tleap + ' -s -f tleap_vac.in > tleap_vac.log')
-
- 
+        
     @log_info
     def _restraints(self):
-        pose = self.pose_name
+        pose = self.pose
         rest = self.sim_config.rest
         bb_start = self.sim_config.bb_start
         bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
-        molr = self.mol
+        molr = self.molr
         comp = self.comp
         bb_equil = self.sim_config.bb_equil
         sdr_dist = self.sim_config.sdr_dist
@@ -3021,9 +3141,6 @@ class FreeEnergyBuilder(SystemBuilder):
             disang_file.write('\n')
             disang_file.close()
 
-        if stage != 'fe':
-            os.chdir('../')
-
     @log_info
     def _sim_files(self):
         amber_file_path = 'amber_files'
@@ -3032,7 +3149,7 @@ class FreeEnergyBuilder(SystemBuilder):
         temperature = self.sim_config.temperature
         mol = self.mol
         num_sim = len(self.sim_config.release_eq)
-        pose = self.pose_name
+        pose = self.pose
         comp = self.comp
         win = self.win
         stage = self.stage
@@ -3068,11 +3185,11 @@ class FreeEnergyBuilder(SystemBuilder):
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
                             '_L3_', L3).replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt0.in", "rt") as fin:
+            with open(f"{amber_file_path}/eqnpt0-fe.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt.in", "rt") as fin:
+            with open(f"{amber_file_path}/eqnpt-fe.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)))
@@ -3172,7 +3289,8 @@ class FreeEnergyBuilder(SystemBuilder):
         with open('../run_files/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name))
 
 
 class SDRFreeEnergyBuilder(FreeEnergyBuilder):
@@ -3184,7 +3302,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         temperature = self.sim_config.temperature
         mol = self.mol
         num_sim = len(self.sim_config.release_eq)
-        pose = self.pose_name
+        pose = self.pose
         comp = self.comp
         win = self.win
         stage = self.stage
@@ -3193,31 +3311,29 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-
-
-
         lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
         weight = lambdas[self.win]
 
-
+        # Read 'disang.rest' and extract L1, L2, L3
         with open('disang.rest', 'r') as f:
             data = f.readline().split()
-            L1 = data[6].strip()
-            L2 = data[7].strip()
-            L3 = data[8].strip()
+            L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
-        # Get number of atoms in vacuum
-        with open('./vac.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = data[-3][6:11].strip()
+        # Read 'vac.pdb' once
+        with open('./vac.pdb') as f:
+            lines = f.readlines()
 
-        # Get last ligand residue number
-        with open('./vac.pdb') as f_in:
-            lines = (line.rstrip() for line in f_in)
-            lines = list(line for line in lines if line)  # Non-blank lines in a list
-            for i in range(0, len(lines)):
-                if lines[i][17:20].strip() == mol.lower():
-                    last_lig = lines[i][22:26].strip()
+        # Get number of atoms in vacuum (third-to-last line)
+        vac_atoms = lines[-3][6:11].strip()
+
+        # Get the last ligand residue number
+        last_lig = None
+        for line in lines:
+            if line[17:20].strip().lower() == mol.lower():  # Compare residue name
+                last_lig = line[22:26].strip()  # Extract residue number
+
+        if last_lig is None:
+            raise ValueError(f"No ligand residue matching '{mol}' found in vac.pdb")
 
         if (comp == 'v'):
             # Create simulation files for vdw decoupling
@@ -3332,7 +3448,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             with open('../run_files/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name))
 
         if (comp == 'e'):
             # Create simulation files for charge decoupling
@@ -3450,68 +3567,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             with open('../run_files/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
-
-        if (comp == 'x'):
-            # Create simulation files for vdw exchange
-            with open('./vac.pdb') as myfile:
-                data = myfile.readlines()
-                mk4 = int(last_lig)
-                mk3 = int(mk4 - 1)
-                mk2 = int(mk4 - 2)
-                mk1 = int(mk4 - 3)
-            for i in range(0, num_sim+1):
-                with open('../amber_files/mdin-ex', "rt") as fin:
-                    with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(round(steps1/2))).replace(
-                                    'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
-                        else:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace(
-                                    'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
-                mdin = open("./mdin-%02d" % int(i), 'a')
-                mdin.write('  mbar_states = %02d\n' % len(lambdas))
-                mdin.write('  mbar_lambda = ')
-                for i in range(0, len(lambdas)):
-                    mdin.write(' %6.5f,' % (lambdas[i]))
-                mdin.write('\n')
-                mdin.write('  infe = 1,\n')
-                mdin.write(' /\n')
-                mdin.write(' &pmd \n')
-                mdin.write(' output_file = \'cmass.txt\' \n')
-                mdin.write(' output_freq = %02d \n' % int(ntwx))
-                mdin.write(' cv_file = \'cv.in\' \n')
-                mdin.write(' /\n')
-                mdin.write(' &wt type = \'END\' , /\n')
-                mdin.write('DISANG=disang.rest\n')
-                mdin.write('LISTOUT=POUT\n')
-
-            with open("../amber_files/eqnpt-ex.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                            'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
-            with open("../amber_files/heat-ex.in", "rt") as fin:
-                with open("./heat.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                            'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
-
-            # Create running scripts for local and server
-            with open('../run_files/local-dd.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open('../run_files/PBS-Am', "rt") as fin:
-                with open("./PBS-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
-            with open('../run_files/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name))
 
         if (comp == 'f'):
             mk1 = '1'
@@ -3563,7 +3620,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             with open('../run_files/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name))
 
         if (comp == 'w'):
             for i in range(0, num_sim+1):
@@ -3614,9 +3672,338 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             with open('../run_files/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name))
 
-        os.chdir('../')
+
+class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
+    @log_info
+    def _build_complex(self):
+        """
+        Copying files from equilibration
+        """
+
+        anchor_found = super()._build_complex()
+
+        if anchor_found == True:
+            if not os.path.exists('../exchange_files'):
+                shutil.copytree(f'../{self.build_file_path}',
+                                '../exchange_files')
+            with self._change_dir('../exchange_files'):
+                self._build_exchange_files()
+            
+            return True
+        else:
+            return anchor_found
+
+    def _build_exchange_files(self):
+        build_file_path = self.build_file_path
+        mol = self.mol
+        molr = self.molr
+        pose = self.pose
+        poser = self.poser
+        lipid_mol = self.lipid_mol
+        other_mol = self.other_mol
+        
+        # sim config values
+        solv_shell = self.sim_config.solv_shell
+        l1_x = self.sim_config.l1_x
+        l1_y = self.sim_config.l1_y
+        l1_z = self.sim_config.l1_z
+        l1_range = self.sim_config.l1_range
+        max_adis = self.sim_config.max_adis
+        min_adis = self.sim_config.min_adis
+        sdr_dist = self.sim_config.sdr_dist
+        fwin = len(self.sim_config.release_eq) - 1
+
+        # Build reference ligand from last state of equilibrium simulations
+        
+        shutil.copy('../../equil/'+poser+'/md%02d.rst7' % fwin, './')
+        shutil.copy('../../equil/'+pose+'/full.pdb', './aligned-nc.pdb')
+        for file in glob.glob('../../equil/%s/full*.prmtop' % poser.lower()):
+            shutil.copy(file, './')
+        for file in glob.glob('../../equil/%s/vac*' % poser.lower()):
+            shutil.copy(file, './')
+        run_with_log(cpptraj + ' -p full.prmtop -y md%02d.rst7 -x rec_file.pdb' % fwin)
+
+        # restore resid index
+        
+        shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+
+        # Split initial receptor file
+        with open("split-ini.tcl", "rt") as fin:
+            with open("split.tcl", "wt") as fout:
+                if other_mol:
+                    other_mol_vmd = " ".join(other_mol)
+                else:
+                    other_mol_vmd = 'XXX'
+                if lipid_mol:
+                    lipid_mol_vmd = " ".join(lipid_mol)
+                else:
+                    lipid_mol_vmd = 'XXX'
+                for line in fin:
+                    fout.write(line
+                    .replace('SHLL', '%4.2f' % solv_shell)
+                    .replace('OTHRS', str(other_mol_vmd))
+                    .replace('LIPIDS', str(lipid_mol_vmd))
+                    .replace('mmm', molr.lower())
+                    .replace('MMM', molr.lower()))
+        run_with_log('vmd -dispdev text -e split.tcl')
+
+        # Remove possible remaining molecules
+        if not other_mol:
+            open('others.pdb', 'w').close()
+        if not lipid_mol:
+            open('lipids.pdb', 'w').close()
+
+        # Create raw complex and clean it
+        filenames = ['dummy.pdb',
+                    'protein.pdb',
+                    '%s.pdb' % molr.lower(),
+                    'others.pdb',
+                    'lipids.pdb',
+                    'crystalwat.pdb']
+        with open('./complex-merge.pdb', 'w') as outfile:
+            for fname in filenames:
+                with open(fname) as infile:
+                    for line in infile:
+                        outfile.write(line)
+        with open('complex-merge.pdb') as oldfile, open('complex.pdb', 'w') as newfile:
+            for line in oldfile:
+                if not 'CRYST1' in line and not 'CONECT' in line and not 'END' in line:
+                    newfile.write(line)
+
+        # Read protein anchors and size from equilibrium
+        with open('../../equil/'+poser+'/equil-%s.pdb' % molr.lower(), 'r') as f:
+            data = f.readline().split()
+            P1 = data[2].strip()
+            P2 = data[3].strip()
+            P3 = data[4].strip()
+            first_res = data[8].strip()
+            recep_last = data[9].strip()
+
+        # Get protein first anchor residue number and protein last residue number from equil simulations
+        p1_resid = P1.split('@')[0][1:]
+        p1_atom = P1.split('@')[1]
+        rec_res = int(recep_last)+1
+        p1_vmd = p1_resid
+
+        # Replace names in initial files and VMD scripts
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                for line in fin:
+                    fout.write(line
+                    .replace('MMM', molr)
+                    .replace('mmm', molr.lower())
+                    .replace('NN', p1_atom)
+                    .replace('P1A', p1_vmd)
+                    .replace('FIRST', '2')
+                    .replace('LAST', str(rec_res))
+                    .replace('STAGE', 'fe')
+                    .replace('XDIS', '%4.2f' % l1_x)
+                    .replace('YDIS', '%4.2f' % l1_y)
+                    .replace('ZDIS', '%4.2f' % l1_z)
+                    .replace('RANG', '%4.2f' % l1_range)
+                    .replace('DMAX', '%4.2f' % max_adis)
+                    .replace('DMIN', '%4.2f' % min_adis)
+                    .replace('SDRD', '%4.2f' % sdr_dist)
+                    .replace('OTHRS', str(other_mol_vmd))
+                    .replace('LIPIDS', str(lipid_mol_vmd))
+                    )
+
+        # Align to reference (equilibrium) structure using VMD's measure fit
+        run_with_log('vmd -dispdev text -e measure-fit.tcl')
+
+        # Put in AMBER format and find ligand anchor atoms
+        with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
+            for line in oldfile:
+                splitdata = line.split()
+                if len(splitdata) > 3:
+                    newfile.write(line)
+        run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
+
+        u = mda.Universe('aligned_amber.pdb')
+        # Fix lipid
+        if lipid_mol:
+            renum_txt = 'aligned_amber_renum.txt'
+            
+            renum_data = pd.read_csv(
+                    renum_txt,
+                    sep='\s+',
+                    header=None,
+                    names=['old_resname', 'old_resid',
+                        'new_resname', 'new_resid'])
+
+            revised_resids = []
+            resid_counter = 1
+            prev_resid = 0
+            for i, row in renum_data.iterrows():
+                if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
+                    revised_resids.append(resid_counter)
+                    resid_counter += 1
+                else:
+                    revised_resids.append(resid_counter - 1)
+                prev_resid = row['old_resid']
+            u.atoms.residues.resids = revised_resids
+
+            u.atoms.write('aligned_amber.pdb')
+
+        run_with_log('vmd -dispdev text -e prep.tcl', error_match='anchor not found')
+
+        # Check size of anchor file
+        anchor_file = 'anchors.txt'
+        if os.stat(anchor_file).st_size == 0:
+            return 'anch1'
+        f = open(anchor_file, 'r')
+        for line in f:
+            splitdata = line.split()
+            if len(splitdata) < 3:
+                os.rename('./anchors.txt', 'anchors-'+poser+'.txt')
+                return 'anch2'
+        os.rename('./anchors.txt', 'anchors-'+poser+'.txt')
+
+        # Read ligand anchors obtained from VMD
+        lig_resid = str(int(recep_last) + 2)
+        anchor_file = 'anchors-'+poser+'.txt'
+        f = open(anchor_file, 'r')
+        for line in f:
+            splitdata = line.split()
+            L1 = ":"+lig_resid+"@"+splitdata[0]
+            L2 = ":"+lig_resid+"@"+splitdata[1]
+            L3 = ":"+lig_resid+"@"+splitdata[2]
+
+        # Write anchors and last protein residue to original pdb file
+        with open('fe-%s.pdb' % molr.lower(), 'r') as fin:
+            data = fin.read().splitlines(True)
+        with open('fe-%s.pdb' % molr.lower(), 'w') as fout:
+            fout.write('%-8s  %6s  %6s  %6s  %6s  %6s  %6s  %6s  %4s\n' %
+                       ('REMARK A', P1, P2, P3, L1, L2, L3, first_res, recep_last))
+            fout.writelines(data[1:])
+
+        # Get parameters from equilibrium
+        if not os.path.exists('../ff'):
+            os.makedirs('../ff')
+        for file in glob.glob('../../../equil/ff/*.mol2'):
+            shutil.copy(file, '../ff/')
+        for file in glob.glob('../../../equil/ff/*.frcmod'):
+            shutil.copy(file, '../ff/')
+        shutil.copy('../../equil/ff/%s.mol2' % (molr.lower()), '../ff/')
+        shutil.copy('../../equil/ff/%s.frcmod' % (molr.lower()), '../ff/')
+        shutil.copy('../../equil/ff/dum.mol2', '../ff/')
+        shutil.copy('../../equil/ff/dum.frcmod', '../ff/')
+    
+    @log_info
+    def _sim_files(self):
+        # Find anchors
+        
+        amber_file_path = 'amber_files'
+
+        hmr = self.sim_config.hmr
+        temperature = self.sim_config.temperature
+        mol = self.mol
+        num_sim = len(self.sim_config.release_eq)
+        pose = self.pose
+        comp = self.comp
+        win = self.win
+        stage = self.stage
+        steps1 = self.sim_config.eq_steps1
+        steps2 = self.sim_config.eq_steps2
+        rng = self.sim_config.rng
+        lipid_mol = self.lipid_mol
+        
+        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        weight = lambdas[self.win]
+        ntwx = self.sim_config.ntwx
+
+        with open('disang.rest', 'r') as f:
+            data = f.readline().split()
+            L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
+
+        # Read and parse 'vac.pdb' once to reduce repeated file reads
+        with open('./vac.pdb') as f:
+            lines = f.readlines()
+
+        # Get the number of atoms in vacuum (from the third-to-last line)
+        vac_atoms = lines[-3][6:11].strip()
+
+        # Find the last ligand residue number
+        last_lig = None
+        for line in lines:
+            if line[17:20].strip().lower() == mol.lower():
+                last_lig = line[22:26].strip()
+
+        if last_lig is None:
+            raise ValueError(f"No ligand residue matching '{mol}' found in vac.pdb")
+
+        # Calculate simulation parameters
+        mk4 = int(last_lig)
+        mk1, mk2, mk3 = mk4 - 3, mk4 - 2, mk4 - 1
+
+
+        for i in range(0, num_sim+1):
+            with open('../amber_files/mdin-ex', "rt") as fin:
+                with open("./mdin-%02d" % int(i), "wt") as fout:
+                    if i == 1 or i == 0:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(round(steps1/2))).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                    else:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+            mdin = open("./mdin-%02d" % int(i), 'a')
+            mdin.write('  mbar_states = %02d\n' % len(lambdas))
+            mdin.write('  mbar_lambda = ')
+            for i in range(0, len(lambdas)):
+                mdin.write(' %6.5f,' % (lambdas[i]))
+            mdin.write('\n')
+            mdin.write('  infe = 1,\n')
+            mdin.write(' /\n')
+            mdin.write(' &pmd \n')
+            mdin.write(' output_file = \'cmass.txt\' \n')
+            mdin.write(' output_freq = %02d \n' % int(ntwx))
+            mdin.write(' cv_file = \'cv.in\' \n')
+            mdin.write(' /\n')
+            mdin.write(' &wt type = \'END\' , /\n')
+            mdin.write('DISANG=disang.rest\n')
+            mdin.write('LISTOUT=POUT\n')
+
+        with open("../amber_files/mini-ex", "rt") as fin:
+                    with open("./mini.in", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+        with open("../amber_files/eqnpt0-ex.in", "rt") as fin:
+            with open("./eqnpt0.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                        'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+        with open("../amber_files/eqnpt-ex.in", "rt") as fin:
+            with open("./eqnpt.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
+                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+        with open("../amber_files/heat-ex.in", "rt") as fin:
+            with open("./heat.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
+                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+
+
+        # Create running scripts for local and server
+        with open('../run_files/local-dd.bash', "rt") as fin:
+            with open("./run-local.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
+        with open('../run_files/PBS-Am', "rt") as fin:
+            with open("./PBS-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+        with open('../run_files/SLURMM-Am', "rt") as fin:
+            with open("./SLURMM-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name))
 
 
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):
@@ -3627,15 +4014,18 @@ class BuilderFactory:
     @staticmethod
     def get_builder(stage,
                     system,
-                    pose_name,
+                    pose,
                     sim_config,
                     working_dir,
                     win=0,
-                    component='q'):
+                    component='q',
+                    molr=None,
+                    poser=None,
+    ):
         if stage == 'equil':
             return EquilibrationBuilder(
                 system=system,
-                pose_name=pose_name,
+                pose=pose,
                 sim_config=sim_config,
                 working_dir=working_dir,
             )
@@ -3643,20 +4033,34 @@ class BuilderFactory:
         match component:
             case 'n' | 'm':
                 return RESTFreeEnergyBuilder(
-                    system=system,
-                    pose_name=pose_name,
-                    sim_config=sim_config,
-                    working_dir=working_dir,
-                    win=win,
-                    component=component,
-
-                )
+                system=system,
+                pose=pose,
+                sim_config=sim_config,
+                working_dir=working_dir,
+                win=win,
+                component=component,
+                molr=molr,
+                poser=poser,
+            )
             case 'e' | 'v':
                 return SDRFreeEnergyBuilder(
+                system=system,
+                pose=pose,
+                sim_config=sim_config,
+                working_dir=working_dir,
+                win=win,
+                component=component,
+                molr=molr,
+                poser=poser,
+            )
+            case 'x':
+                return EXFreeEnergyBuilder(
                     system=system,
-                    pose_name=pose_name,
+                    pose=pose,
                     sim_config=sim_config,
                     working_dir=working_dir,
                     win=win,
                     component=component,
+                    molr=molr,
+                    poser=poser,
                 )

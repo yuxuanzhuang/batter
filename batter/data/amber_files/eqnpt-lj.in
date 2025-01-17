@@ -5,6 +5,7 @@ Equilibrate, NPT.
  &cntrl
   imin = 0,
   ntx = 5,
+  ntxo = 1,
   irest = 1,
   ntpr = 500,
   ntwr = 500,
@@ -18,7 +19,7 @@ Equilibrate, NPT.
   temp0 = _temperature_,
   gamma_ln = _gamma_ln_,
   ig = -1,
-  ntp = _p_coupling_,
+  ntp = 1,
   barostat = _barostat_,
   nstlim = 3500,
   dt = _step_,

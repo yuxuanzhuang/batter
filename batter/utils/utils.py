@@ -36,7 +36,7 @@ COMPONENTS_FOLDER_DICT = {
     'e': 'sdr',
     'w': 'sdr',
     'f': 'sdr',
-    'x': 'exchange_files',
+    'x': 'sdr',
     'a': 'rest',
     'l': 'rest',
     't': 'rest',
@@ -45,6 +45,12 @@ COMPONENTS_FOLDER_DICT = {
     'm': 'rest',
     'n': 'rest',
 }
+
+COMPONENTS_DICT = {
+        'rest': ['a', 'l', 't', 'c', 'r', 'm', 'n'],
+        'dd': ['e', 'v', 'f', 'w', 'x'],
+    }
+
 
 
 def run_with_log(command, level='debug', working_dir=None,
