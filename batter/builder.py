@@ -115,7 +115,7 @@ class SystemBuilder(ABC):
                             self._copy_simulation_dir()
                         if self.win == 0:
                             self._create_box()
-                            self._restraints()
+                        self._restraints()
                         self._sim_files()
         return self
 
@@ -210,14 +210,16 @@ class SystemBuilder(ABC):
     def _copy_simulation_dir(self):
         """
         Copy the simulation directory from the previous window.
+        In reality, only symlink necessary files to reduce the disk usage.
         """
         source_dir = f'../{self.comp}00'
-
-        shutil.copytree(source_dir, '.', dirs_exist_ok=True)
+        files_to_symlink = ['full.prmtop', 'full.inpcrd', 'full.pdb', 'vac.pdb']
+        if self.sim_config.hmr == 'yes':
+            files_to_symlink.append('full.hmr.prmtop')
 
         # Create symlinks for PDB and PRMTOP files
-        for file_extension in ['*.pdb', '*.prmtop']:
-            for file_path in glob.glob(f'{source_dir}/{file_extension}'):
+        for file_basename in files_to_symlink:
+            for file_path in glob.glob(f'{source_dir}/{file_basename}'):
                 file_name = os.path.basename(file_path)
                 target_path = os.path.join('.', file_name)
 
@@ -2139,6 +2141,11 @@ class FreeEnergyBuilder(SystemBuilder):
         
     @log_info
     def _restraints(self):
+        # TODO: Refactor this method
+        # This is just a hack to avoid the restraints for lambda windows
+        # when win is not 0
+        if self.win != 0 and COMPONENTS_LAMBDA_DICT[self.comp] == 'lambdas':
+            return
         pose = self.pose
         rest = self.sim_config.rest
         bb_start = self.sim_config.bb_start
@@ -2719,8 +2726,8 @@ class FreeEnergyBuilder(SystemBuilder):
                 # Do this properly when running the analysis
                 for i in range(2, 11):
                     restraints_file.write('trajin md%02.0f.nc\n' % i)
-     #            for i in range(1, 11):
-     #               restraints_file.write('trajin mdin-%02.0f.nc\n' % i)
+         #            for i in range(1, 11):
+         #               restraints_file.write('trajin mdin-%02.0f.nc\n' % i)
                 for i in range(3+nd, 9+nd):
                     arr = rst[i].split()
                     if len(arr) == 2:

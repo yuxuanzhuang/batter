@@ -816,10 +816,14 @@ class System:
                     ).build()
             pbar.update(1)
         
-    def analysis(self):
+    def analysis(self,
+        input_file: Union[str, Path, SimulationConfig]=None):
         """
         Analyze the simulation results.
         """
+        if input_file is not None:
+            self._get_sim_config(input_file)
+            
         blocks = self.sim_config.blocks
         components = self.sim_config.components
         temperature = self.sim_config.temperature
