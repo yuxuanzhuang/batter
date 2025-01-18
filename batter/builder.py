@@ -1489,7 +1489,12 @@ class FreeEnergyBuilder(SystemBuilder):
 
             # For all systems
             # We will use NVT ensemble during TI simulations
-            self.p_coupling = '0'
+            # self.p_coupling = '0'
+            # self.c_surften = '0'
+            
+            # For all systems
+            # We will use NPT isotropic p-coup ensemble during TI simulations
+            self.p_coupling = '1'
             self.c_surften = '0'
         else:
             # TODO: probably not needed
@@ -1497,7 +1502,7 @@ class FreeEnergyBuilder(SystemBuilder):
             self.amber_files_path = './amber_files_no_lipid'
             # self.p_coupling = '1'
             # self.c_surften = '0'
-            self.p_coupling = '0'
+            self.p_coupling = '1'
             self.c_surften = '0'
         
     @log_info
@@ -3313,8 +3318,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         comp = self.comp
         win = self.win
         stage = self.stage
-        steps1 = self.sim_config.eq_steps1
-        steps2 = self.sim_config.eq_steps2
+        steps1 = self.sim_config.dic_steps1[comp]
+        steps2 = self.sim_config.dic_steps2[comp]
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
@@ -3913,8 +3918,8 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         comp = self.comp
         win = self.win
         stage = self.stage
-        steps1 = self.sim_config.eq_steps1
-        steps2 = self.sim_config.eq_steps2
+        steps1 = self.sim_config.dic_steps1[comp]
+        steps2 = self.sim_config.dic_steps2[comp]
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         

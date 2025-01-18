@@ -23,7 +23,7 @@ Runs equilibrium stage
   ig = -1,
   ntp = _p_coupling_,
   csurften = _c_surften_,
-  fswitch=10.0,
+  fswitch = 10.0,
   barostat = _barostat_,
   nstlim = _num-steps_,
   dt = _step_,
