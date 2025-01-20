@@ -81,8 +81,6 @@ class SystemBuilder(ABC):
         with self._change_dir(self.working_dir):
             logger.debug(f'Building {self.pose}...')
             if self.win == 0:
-                # if os.path.exists('build_files'):
-                #     shutil.rmtree('build_files', ignore_errors=True)
                 os.makedirs('build_files', exist_ok=True)
                 with self._change_dir('build_files'):
                     logger.debug(f'Creating build_files in  {os.getcwd()}')
@@ -203,17 +201,21 @@ class SystemBuilder(ABC):
     def _create_simulation_dir(self):
         """
         Create the simulation directory.
+        This is only done for the first window.
         """
         raise NotImplementedError()
 
     @log_info
     def _copy_simulation_dir(self):
         """
-        Copy the simulation directory from the previous window.
+        Copy the simulation directory from the first window.
         In reality, only symlink necessary files to reduce the disk usage.
         """
         source_dir = f'../{self.comp}00'
-        files_to_symlink = ['full.prmtop', 'full.inpcrd', 'full.pdb', 'vac.pdb']
+        files_to_symlink = ['full.prmtop', 'full.inpcrd', 'full.pdb',
+                            'vac.pdb', 'vac_ligand.pdb',
+                            'vac.prmtop', 'vac_ligand.prmtop',
+                            f'fe-{self.mol}.pdb', f'{self.mol}.mol2']
         if self.sim_config.hmr == 'yes':
             files_to_symlink.append('full.hmr.prmtop')
 
@@ -230,6 +232,13 @@ class SystemBuilder(ABC):
                     os.symlink(file_path, target_path)
                 except Exception as e:
                     raise RuntimeError(f"Failed to create symlink for {file_path}: {e}")
+        
+        files_to_copy = ['disang.rest', 'cv.in']
+        for file_basename in files_to_copy:
+            for file_path in glob.glob(f'{source_dir}/{file_basename}'):
+                file_name = os.path.basename(file_path)
+                target_path = os.path.join('.', file_name)
+                shutil.copy(file_path, target_path)
 
     @log_info
     def _create_box(self):
@@ -3165,8 +3174,8 @@ class FreeEnergyBuilder(SystemBuilder):
         comp = self.comp
         win = self.win
         stage = self.stage
-        steps1 = self.sim_config.eq_steps1
-        steps2 = self.sim_config.eq_steps2
+        steps1 = self.sim_config.dic_steps1[comp]
+        steps2 = self.sim_config.dic_steps2[comp]
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
 
@@ -3184,71 +3193,71 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # Create minimization and NPT equilibration files for big box and small ligand box
         if comp != 'c' and comp != 'r' and comp != 'n':
-            with open(f"{amber_file_path}/mini.in", "rt") as fin:
+            with open(f"../{amber_file_path}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
-            with open(f"{amber_file_path}/therm1.in", "rt") as fin:
+            with open(f"../{amber_file_path}/therm1.in", "rt") as fin:
                 with open("./therm1.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
-            with open(f"{amber_file_path}/therm2.in", "rt") as fin:
+            with open(f"../{amber_file_path}/therm2.in", "rt") as fin:
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
                             '_L3_', L3).replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt0-fe.in", "rt") as fin:
+            with open(f"../{amber_file_path}/eqnpt0-fe.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt-fe.in", "rt") as fin:
+            with open(f"../{amber_file_path}/eqnpt-fe.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)))
         elif (comp == 'r' or comp == 'c'):
-            with open(f"{amber_file_path}/mini-lig.in", "rt") as fin:
+            with open(f"../{amber_file_path}/mini-lig.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
                             fout.write(line)
-            with open(f"{amber_file_path}/therm1-lig.in", "rt") as fin:
+            with open(f"../{amber_file_path}/therm1-lig.in", "rt") as fin:
                 with open("./therm1.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
                             fout.write(line)
-            with open(f"{amber_file_path}/therm2-lig.in", "rt") as fin:
+            with open(f"../{amber_file_path}/therm2-lig.in", "rt") as fin:
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
                             fout.write(line.replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt0-lig.in", "rt") as fin:
+            with open(f"../{amber_file_path}/eqnpt0-lig.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt-lig.in", "rt") as fin:
+            with open(f"../{amber_file_path}/eqnpt-lig.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
                             fout.write(line.replace('_temperature_', str(temperature)))
         else:  # n component
-            with open(f"{amber_file_path}/mini-sim.in", "rt") as fin:
+            with open(f"../{amber_file_path}/mini-sim.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
-            with open(f"{amber_file_path}/therm1-sim.in", "rt") as fin:
+            with open(f"../{amber_file_path}/therm1-sim.in", "rt") as fin:
                 with open("./therm1.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
-            with open(f"{amber_file_path}/therm2-sim.in", "rt") as fin:
+            with open(f"../{amber_file_path}/therm2-sim.in", "rt") as fin:
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
                             '_L3_', L3).replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt0-sim.in", "rt") as fin:
+            with open(f"../{amber_file_path}/eqnpt0-sim.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)))
-            with open(f"{amber_file_path}/eqnpt-sim.in", "rt") as fin:
+            with open(f"../{amber_file_path}/eqnpt-sim.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)))
@@ -4019,8 +4028,9 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
 
 
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):
-    pass
-
+    """
+    Builder for restrain free energy calculations system
+    """
 
 class BuilderFactory:
     @staticmethod
@@ -4076,3 +4086,5 @@ class BuilderFactory:
                     molr=molr,
                     poser=poser,
                 )
+            case _:
+                raise ValueError(f"Invalid component: {component} for now")

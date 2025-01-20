@@ -43,6 +43,11 @@ from batter.builder import BuilderFactory
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
+from batter.utils import (
+    COMPONENTS_LAMBDA_DICT,
+    COMPONENTS_FOLDER_DICT,
+)
+
 DEC_FOLDER_DICT = {
     'dd': 'dd',
     'sdr': 'sdr',
@@ -53,36 +58,6 @@ AVAILABLE_COMPONENTS = ['v', 'e', 'w', 'f',
                        'x', 'a', 'l', 't',
                        'r', 'c', 'm', 'n']
 
-
-COMPONENTS_FOLDER_DICT = {
-    'v': 'sdr',
-    'e': 'sdr',
-    'w': 'sdr',
-    'f': 'sdr',
-    'x': 'exchange_files',
-    'a': 'rest',
-    'l': 'rest',
-    't': 'rest',
-    'r': 'rest',
-    'c': 'rest',
-    'm': 'rest',
-    'n': 'rest',
-}
-
-COMPONENTS_LAMBDA_DICT = {
-    'v': 'lambdas',
-    'e': 'lambdas',
-    'w': 'lambdas',
-    'f': 'lambdas',
-    'x': 'lambdas',
-    'a': 'attach_rest',
-    'l': 'attach_rest',
-    't': 'attach_rest',
-    'r': 'attach_rest',
-    'c': 'attach_rest',
-    'm': 'attach_rest',
-    'n': 'attach_rest',
-}
 
 class System:
     """
@@ -123,6 +98,8 @@ class System:
             system_file = os.path.join(self.output_dir, "system.pkl")
             with open(system_file, 'rb') as f:
                 loaded_state = pickle.load(f)
+                # in case the folder is moved
+                loaded_state.output_dir = self.output_dir
                 # Update self with loaded attributes
                 self.__dict__.update(loaded_state.__dict__)
         except:
@@ -603,11 +580,11 @@ class System:
             raise ValueError(f"Invalid input_file: {input_file}")
         logger.info(f'Simulation configuration: {sim_config}')
         if sim_config.lipid_ff != self.lipid_ff:
-            raise ValueError(f"Invalid lipid_ff in the input: {sim_config.lipid_ff}"
+            logger.warning(f"Invalid lipid_ff in the input: {sim_config.lipid_ff}"
                              f"System is prepared with {self.lipid_ff}")
         if sim_config.ligand_ff != self.ligand_ff:
-            raise ValueError(f"Invalid ligand_ff in the input: {sim_config.ligand_ff}"
-                             f"System is prepared with {self.ligand_ff}")
+            logger.warning(f"Invalid ligand_ff in the input: {sim_config.ligand_ff}"
+                                f"System is prepared with {self.ligand_ff}")
         if sim_config.retain_lig_prot == 'no':
             logger.warning(f"The protonation state of the ligand will be "
                            f"reassigned to pH {self.ligand_ph:.2f}")
@@ -674,6 +651,10 @@ class System:
 
             self._prepare_fe_system()
             logger.info('FE System prepared')
+
+        # dump the system configuration
+        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+            pickle.dump(self, f)
 
     def submit(self, stage: str, cluster: str = 'slurm'):
         """
@@ -854,6 +835,8 @@ class System:
 
         """
         logger.info('Running the pipeline')
+        start_time = time.time()
+        logger.info(f'Start time: {time.ctime()}')
         self._get_sim_config(input_file)
 
         if self._check_equilibration():
@@ -877,8 +860,6 @@ class System:
                 time.sleep(60*60)
         else:
             logger.info('Equilibration is already finished')
-
-
 
         #4, submit the free energy calculation
         if self._check_fe():
@@ -907,33 +888,58 @@ class System:
 
         logger.info('Pipeline finished')
         logger.info(f'The results are in the {self.output_dir}')
+        end_time = time.time()
+        logger.info(f'End time: {time.ctime()}')
+        total_time = end_time - start_time
+        logger.info(f'Total time: {total_time:.2f} seconds')
+        
+        # dump the system configuration
+        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+            pickle.dump(self, f)
 
     def _check_equilibration(self):
         """
         Check if the equilibration is finished by checking the FINISHED file
         """
+        sim_finished = {}
         for pose in self.sim_config.poses_def:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
-                return True
-        return False
+                sim_finished[pose] = False
+
+        if all(sim_finished.values()):
+            logger.debug('Equilibration is finished')
+            return False
+        else:
+            not_finished = [k for k, v in sim_finished.items() if not v]
+            logger.info(f'Not finished: {not_finished}')
+            return True
 
     def _check_fe(self):
         """
         Check if the free energy calculation is finished by 
         """
+        sim_finished = {}
         for pose in self.sim_config.poses_def:
             for comp in self.sim_config.components:
-                if COMPONENTS_FOLDER_DICT[comp] == 'rest':
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                if comp_folder == 'rest':
                     for j in range(0, len(self.sim_config.attach_rest)):
                         folder_2_check = f'{self.fe_folder}/{pose}/rest/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
-                            return True
+                            sim_finished[f'{pose}/rest/{comp}{j:02d}'] = False
                 else:
                     for j in range(0, len(self.sim_config.lambdas)):
-                        folder_2_check = f'{self.fe_folder}/{pose}/{self.sim_config.dec_method}/{comp}{j:02d}'
+                        folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
-                            return True
-        return False
+                            sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
+        # if all are finished, return False
+        if all(sim_finished.values()):
+            logger.debug('Free energy calculation is finished')
+            return False
+        else:
+            not_finished = [k for k, v in sim_finished.items() if not v]
+            logger.info(f'Not finished: {not_finished}')
+            return True
 
     @property
     def poses_folder(self):
