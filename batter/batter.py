@@ -96,16 +96,19 @@ class System:
         """
         Load the system from the folder.
         """
-        try:
-            system_file = os.path.join(self.output_dir, "system.pkl")
-            with open(system_file, 'rb') as f:
-                loaded_state = pickle.load(f)
-                # in case the folder is moved
-                loaded_state.output_dir = self.output_dir
-                # Update self with loaded attributes
-                self.__dict__.update(loaded_state.__dict__)
-        except:
-            logger.info(f"Failed to load the system state: {self.output_dir}")
+        if not os.path.exists(f"{self.output_dir}/system.pkl"):
+            logger.info(f"The folder does not contain system.pkl: {self.output_dir}")
+            return
+        
+        system_file = os.path.join(self.output_dir, "system.pkl")
+
+        with open(system_file, 'rb') as f:
+            loaded_state = pickle.load(f)
+            # in case the folder is moved
+            loaded_state.output_dir = self.output_dir
+            # Update self with loaded attributes
+            self.__dict__.update(loaded_state.__dict__)
+
 
         if not os.path.exists(f"{self.output_dir}/all-poses"):
             logger.info(f"The folder does not contain all-poses: {self.output_dir}")
@@ -1062,9 +1065,10 @@ class System:
             logger.info('Equilibration is already finished')
 
         #4, submit the free energy calculation
+        logger.info('Running free energy calculation')
+
         if self._check_fe():
             #3 prepare the free energy calculation
-            logger.info('Preparing the free energy calculation')
             self.prepare(
                 stage='fe',
                 input_file=input_file,
@@ -1115,10 +1119,17 @@ class System:
         Check if the equilibration is finished by checking the FINISHED file
         """
         sim_finished = {}
+        sim_failed = {}
         for pose in self.sim_config.poses_def:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 sim_finished[pose] = False
+            elif os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
+                sim_failed[pose] = True
 
+        if any(sim_failed.values()):
+            logger.error(f'Equilibration failed: {sim_failed}')
+            raise ValueError(f'Equilibration failed: {sim_failed}')
+            
         if all(sim_finished.values()):
             logger.debug('Equilibration is finished')
             return False
@@ -1132,6 +1143,7 @@ class System:
         Check if the free energy calculation is finished by 
         """
         sim_finished = {}
+        sim_failed = {}
         for pose in self.sim_config.poses_def:
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
@@ -1140,12 +1152,19 @@ class System:
                         folder_2_check = f'{self.fe_folder}/{pose}/rest/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
                             sim_finished[f'{pose}/rest/{comp}{j:02d}'] = False
+                        elif os.path.exists(f"{folder_2_check}/FAILED"):
+                            sim_failed[f'{pose}/rest/{comp}{j:02d}'] = True
                 else:
                     for j in range(0, len(self.sim_config.lambdas)):
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
                             sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
+                        elif os.path.exists(f"{folder_2_check}/FAILED"):
+                            sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
         # if all are finished, return False
+        if any(sim_failed.values()):
+            logger.error(f'Free energy calculation failed: {sim_failed}')
+            return True
         if all(sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False

@@ -36,6 +36,7 @@ else
         sbatch --export=RETRY_COUNT=$NEXT_RETRY $0
         exit 0
     else
+        echo "FAILED" > FAILED
         echo "Maximum attempts ($MAX_ATTEMPTS) reached. Simulation failed."
         exit 1
     fi

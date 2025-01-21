@@ -46,14 +46,15 @@ from batter import MABFESystem
 # --- Input ---
 protein_file = 'data/7T2G_mp/protein_input.pdb'
 system_file = 'data/7T2G_mp/system_input.pdb'
-ligand_files = [
-    'data/7T2G_mp/ligand_MP.pdb',
-    'data/7T2G_mp/ligand_MP2.pdb',
-]
+
+ligand_files = ['data/7T2G_mp/ligand_MP.pdb',
+                'data/7T2G_mp/ligand_MP2.pdb',
+                'data/7T2G_mp/ligand_DAMGO.pdb']
+
 #system_coordinate = 'data/7T2G_mp/system_input.inpcrd'
 system_coordinate = 'data/7T2G_mp/equilibrated.rst'
-output_folder = 'test/abfe_pipeline'
-input_file = 'data/md_input/lipid_abfe_temp.in'
+output_folder = 'test/abfe'
+input_file = 'input_files/lipid_abfe.in'
 overwrite = False
 
 # --- Run the pipeline ---
