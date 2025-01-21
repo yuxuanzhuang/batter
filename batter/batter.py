@@ -585,14 +585,14 @@ class System:
             raise ValueError(f"Invalid input_file: {input_file}")
         logger.info(f'Simulation configuration: {sim_config}')
         if sim_config.lipid_ff != self.lipid_ff:
-            logger.warning(f"Invalid lipid_ff in the input: {sim_config.lipid_ff}"
+            logger.warning(f"Different lipid_ff in the input: {sim_config.lipid_ff}"
                              f"System is prepared with {self.lipid_ff}")
         if sim_config.ligand_ff != self.ligand_ff:
-            logger.warning(f"Invalid ligand_ff in the input: {sim_config.ligand_ff}"
+            logger.warning(f"Different ligand_ff in the input: {sim_config.ligand_ff}"
                                 f"System is prepared with {self.ligand_ff}")
-        if sim_config.retain_lig_prot == 'no':
-            logger.warning(f"The protonation state of the ligand will be "
-                           f"reassigned to pH {self.ligand_ph:.2f}")
+        if sim_config.retain_lig_prot != self.retain_lig_prot:
+            logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}"
+                            "System is prepared with {self.retain_lig_prot}")
         self.sim_config = sim_config
 
     def prepare(self,
@@ -618,6 +618,12 @@ class System:
         self._get_sim_config(input_file)
         sim_config = self.sim_config
         
+        if len(self.sim_config.poses_def) != len(self.ligand_paths):
+            logger.warning(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
+                           f"does not match the number of ligands: {len(self.ligand_paths)}")
+            logger.warning(f"Using the ligand paths for the poses")
+        self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
+
         if stage == 'equil':
             if self.overwrite:
                 logger.debug(f'Overwriting {self.equil_folder}')
@@ -740,12 +746,6 @@ class System:
             shutil.copytree(self.ligandff_folder,
                         f"{self.equil_folder}/ff")
 
-        if len(self.sim_config.poses_def) != len(self.ligand_paths):
-            logger.warning(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
-                           f"does not match the number of ligands: {len(self.ligand_paths)}")
-            logger.warning(f"Using the ligand paths for the poses")
-        self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
-
         for pose in self.sim_config.poses_def:
             logger.info(f'Preparing pose: {pose}')
             equil_builder = self.builders_factory.get_builder(
@@ -770,6 +770,7 @@ class System:
         logger.info('Prepare for free energy stage')
         # molr (molecule reference) and poser (pose reference)
         # are used for exchange FE simulations.
+
         molr = self.mols[0]
         poser = self.sim_config.poses_def[0]
 
@@ -929,8 +930,14 @@ class System:
                 cv_lines.append(generate_colvar_block(atm_index, rmsf_val[0], ref_pos[i]))
             
             for cv_file in cv_files:
-                # copy original cv file to backup
-                shutil.copy(cv_file, cv_file + '.bak')
+                
+                # if .bak exists, to avoid multiple appending
+                # first copy the original cv file to the backup
+                if os.path.exists(cv_file + '.bak'):
+                    shutil.copy(cv_file + '.bak', cv_file)
+                else:
+                    # copy original cv file to backup
+                    shutil.copy(cv_file, cv_file + '.bak')
                 
                 with open(cv_file, 'a') as f:
                     f.write("\n")
@@ -1035,6 +1042,12 @@ class System:
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')
         self._get_sim_config(input_file)
+        
+        if len(self.sim_config.poses_def) != len(self.ligand_paths):
+            logger.warning(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
+                           f"does not match the number of ligands: {len(self.ligand_paths)}")
+            logger.warning(f"Using the ligand paths for the poses")
+        self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
 
         if self._check_equilibration():
             #1 prepare the system

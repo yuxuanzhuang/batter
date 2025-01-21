@@ -34,7 +34,7 @@ output_folder: str
     The folder will be created if it does not exist.
 
 input_file: str
-    Path to the input file for the ABFE calculation
+    Path to the input file for the RBFE calculation
     that stores the simulation configuration.
 
 overwrite: bool
@@ -71,4 +71,6 @@ system.create_system(
 
 system.run_pipeline(
     input_file=input_file,
+#    avg_struc=f'test/active_avg.pdb',
+#    rmsf_file=f'test/active_rmsf.txt'
 )

@@ -71,4 +71,6 @@ system.create_system(
 
 system.run_pipeline(
     input_file=input_file,
+#    avg_struc=f'test/active_avg.pdb',
+#    rmsf_file=f'test/active_rmsf.txt'
 )

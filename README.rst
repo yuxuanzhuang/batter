@@ -31,7 +31,30 @@ This will install the package in editable mode, so you can make changes to the c
 
 Usage
 -------------------------------
-Below are examples of how to run the code as a command-line tool. Input files can be found in the `examples` folder.
+It is advisable to use the package as a python script or inside a jupyter notebook.
+
+See the `examples` folder for examples of how to use the package.
+
+- `run_batter_abfe.ipynb` is an example of how to run ABFE simulations.
+- `run_batter_rbfe.ipynb` is an example of how to run RBFE simulations.
+- `abfe_rest.ipynb` and `rbfe_rest.ipynb` are examples of running with flat-bottom restraints
+    - `generate_rmsf_restratins.ipynb` is an example of how to generate RMSF restraints.
+    - you will also need a patched version of AMBER24 to run these simulations.
+- `rbfe_pipeline.py` and `abfe_pipeline.py` are examples of how to run the simulations in an
+automatic pipeline.
+    - `submit_pipeline.sbatch` is an example of how to submit the pipeline to a cluster.
+
+See the `scripts` folder for scripts that might be helpful in running the simulations.
+
+- `cancel_jobs.sh` is a script that can be used to cancel all FE-related jobs on a cluster.
+- `mbar_rest.ipynb` is a notebook to check the validity of the MBAR results with REST.
+- `mbar_sdr.ipynb` is a notebook to check the validity of the MBAR results with SDR.
+
+**NOT RECOMMENDED**
+
+Alternatively, below are examples of how to run the code as a command-line tool.
+It still ultilizes the old scripts and it is not well tested.
+Input files can be found in the `examples` folder.
 
 **Run Equilibration**
 
