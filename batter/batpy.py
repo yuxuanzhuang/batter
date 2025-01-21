@@ -43,7 +43,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
                    'default is the current directory.')
 @click.option('-p', '--pose-dir',
               default='all-poses',
-              type=click.Path(exists=True),
+              required=False,
               help='Directory containing the poses; default is "all-poses".')
 @click.option('-v', '--verbose',
               is_flag=True,

@@ -39,6 +39,8 @@ from loguru import logger
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
 
+from MDAnalysis.analysis import rms, align
+
 from batter.builder import BuilderFactory
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -796,12 +798,178 @@ class System:
                         poser=poser
                     ).build()
             pbar.update(1)
+
+    def add_rmsf_restraints(self,
+                            stage: str,
+                            avg_struc: str,
+                            rmsf_file: str,
+                            force_constant: float = 100):
+        """
+        Add RMSF restraints to the system.
+        Similar to https://pubs.acs.org/doi/10.1021/acs.jctc.3c00899?ref=pdf
+
+        Steps to generate required files:
+
+        1. Get conformational ensemble from unbiased production simulatinos
+        e.g. For inactive and active states, run unbiased production simulations
+        of both states. Calculate representative distances in the binding pocket,
+        then use them to structure the conformational space
+        into distinct clusters and to compare the two ensembles.
+
+        Eventually, you will generate a trajectory of representative structures
+        for each state/cluster.
+
+        2. Calculate the RMSF of the representative structures
+
+        ```python
+        from MDAnalysis.analysis import rms, align
         
+        u = mda.Universe('state0.pdb', 'state0.xtc')
+        gpcr_sel = 'protein and name CA'
+        average = align.AverageStructure(u, u, select=gpcr_sel,
+                                        ref_frame=0).run()
+        ref = average.results.universe
+        aligner = align.AlignTraj(u, ref,
+                                select=gpcr_sel,
+                                in_memory=True).run()
+        
+        R = rms.RMSF(gpcr_atoms).run()
+
+        ref.atoms.write('state0_avg.pdb')
+
+        rmsf_values = R.results.rmsf
+        with open('state0_rmsf.txt', 'w') as f:
+            for resid, rmsf in zip(gpcr_atoms.resids, rmsf_values):
+                f.write(f'{resid} {rmsf}\n')
+        ```
+
+        3. Use the RMSF values to create flat bottom restraints
+        for the FEP simulations with
+        `system.add_rmsf_restraints(
+            avg_struc='state0_avg.pdb',
+            rmsf_file='state1_rmsf.txt')`
+
+        The restraints will be stored in `cv.in` file with a format
+ 
+        ```bash
+        &colvar 
+        cv_type = 'DISTANCE_TO_COORD' 
+        cv_ni = 1, cv_i = 1
+        cv_nr = 4, cv_r = ref_x, ref_y, ref_z, rmsf_value
+        anchor_position = 0, 0, rmsf_value, 999
+        anchor_strength = 0, force_constant
+        / 
+        ```
+        where rmsf_value is the RMSF value of the residue and 
+        ref_x, ref_y, ref_z are the coordinates of the residue
+        in the average structure.
+
+        **You need to use the modified version of amber24
+        (`$GROUP_HOME/software/amber24`) to use the RMSF restraints.**
+
+        Parameters
+        ----------
+        stage : str
+            The stage of the simulation.
+            Options are 'equil' and 'fe'.
+        avg_struc : str
+            The path of the average structure of the
+            representative conformations.
+        rmsf_file : str
+            The path of the RMSF file.
+        force_constant : float, optional
+            The force constant of the restraints. Default is 100.
+        """
+        logger.debug('Adding RMSF restraints')
+
+        def generate_colvar_block(atm_index,
+                                  dis_cutoff,
+                                  ref_position,
+                                  force_constant=100):
+            colvar_block = "&colvar\n"
+            colvar_block += " cv_type = 'DISTANCE_TO_COORD'\n"
+            colvar_block += f" cv_ni = 1, cv_i = {atm_index}\n"
+            colvar_block += f" cv_nr = 4, cv_r = {ref_position[0]:2f}, {ref_position[1]:2f}, {ref_position[2]:2f}, {dis_cutoff:2f}\n"
+            colvar_block += f" anchor_position = 0, 0, {dis_cutoff}, 999\n"
+            colvar_block += f" anchor_strength = 0, {force_constant:2f}\n"
+            colvar_block += "/\n"
+            return colvar_block
+
+        def write_colvar_block(ref_u, cv_files):
+
+            avg_u = mda.Universe(avg_struc)
+            gpcr_sel = 'protein and name CA'
+
+            aligner = align.AlignTraj(
+                        avg_u, ref_u,
+                        select=gpcr_sel,
+                        match_atoms=False,
+                        in_memory=True).run()
+
+            ref_pos = np.zeros([avg_u.atoms.n_atoms, 3])
+
+            rmsf_values = np.loadtxt(rmsf_file)
+            gpcr_ref = ref_u.select_atoms(gpcr_sel)
+
+            cv_lines = []
+            for i, atm in enumerate(avg_u.atoms):
+                ref_pos[i] = atm.position
+                resid_i = atm.resid
+                rmsf_val = rmsf_values[rmsf_values[:, 0] == resid_i, 1]
+                if len(rmsf_val) == 0:
+                    logger.warning(f"resid: {resid_i} not found in rmsf file")
+                    continue
+                # print(f"resid: {resid_i}, rmsf: {rmsf_val[0]} Å")
+                # print(f"ref_pos: {ref_pos[i]}")
+                atm_index = gpcr_ref[i].index + 1
+        #        print(generate_colvar_block(atm_index, rmsf_val[0], ref_pos[i]))
+                cv_lines.append(generate_colvar_block(atm_index, rmsf_val[0], ref_pos[i]))
+            
+            for cv_file in cv_files:
+                # copy original cv file to backup
+                shutil.copy(cv_file, cv_file + '.bak')
+                
+                with open(cv_file, 'a') as f:
+                    f.write("\n")
+                    for line in cv_lines:
+                        f.write(line)
+
+        if stage == 'equil':
+            for pose in self.sim_config.poses_def:
+                u_ref = mda.Universe(
+                        f"{self.equil_folder}/{pose}/full.pdb",
+                        f"{self.equil_folder}/{pose}/full.inpcrd")
+
+                cv_files = [f"{self.equil_folder}/{pose}/cv.in"]
+                write_colvar_block(u_ref, cv_files)
+
+        
+        elif stage == 'fe':
+            for pose in self.sim_config.poses_def:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    u_ref = mda.Universe(
+                            f"{folder_comp}/{comp}00/full.pdb",
+                            f"{folder_comp}/{comp}00/full.inpcrd")
+                    if comp_folder == 'rest':
+                        cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
+                            for j in range(0, len(self.sim_config.attach_rest))]
+                    else:
+                        cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
+                            for j in range(0, len(self.sim_config.lambdas))]
+                    
+                    write_colvar_block(u_ref, cv_files)
+        else:
+            raise ValueError(f"Invalid stage: {stage}")
+        logger.debug('RMSF restraints added')
+
     def analysis(self,
         input_file: Union[str, Path, SimulationConfig]=None):
         """
         Analyze the simulation results.
         """
+        self.fe_results = {}
         if input_file is not None:
             self._get_sim_config(input_file)
             
@@ -821,20 +989,46 @@ class System:
 
         with self._change_dir(self.output_dir):
             for pose in poses_def:
-                analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
+                fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
                                 weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
+                self.fe_results[pose] = [fe_value, fe_std]
                 os.chdir('../../')
+        for i, (pose, fe) in enumerate(self.fe_results.items()):
+            mol_name = self.mols[i]
+            logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
     
     def run_pipeline(self,
                      input_file: Union[str, Path, SimulationConfig],
-                     overwrite: bool = False
-    ):
+                     overwrite: bool = False,              
+                     avg_struc: str = None,
+                     rmsf_file: str = None):
         """
         Run the whole pipeline for calculating the binding free energy
         after you `create_system`.
 
+        Parameters
+        ----------
+        input_file : str
+            The input file for the simulation.
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
+        avg_struc : str
+            The path of the average structure of the
+            representative conformations. Default is None,
+            which means no RMSF restraints are added.
+        rmsf_file : str
+            The path of the RMSF file. Default is None,
+            which means no RMSF restraints are added.
+
         """
         logger.info('Running the pipeline')
+        if avg_struc is not None and rmsf_file is not None:
+            rmsf_restraints = True
+        elif avg_struc is not None or rmsf_file is not None:
+            raise ValueError("Both avg_struc and rmsf_file should be provided")
+        else:
+            rmsf_restraints = False
+
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')
         self._get_sim_config(input_file)
@@ -847,6 +1041,12 @@ class System:
                 input_file=input_file,
                 overwrite=overwrite
             )
+            if rmsf_restraints:
+                self.add_rmsf_restraints(
+                    stage='equil',
+                    avg_struc=avg_struc,
+                    rmsf_file=rmsf_file
+                )
             logger.info('Submitting the equilibration')
             #2 submit the equilibration
             self.submit(
@@ -870,6 +1070,12 @@ class System:
                 input_file=input_file,
                 overwrite=overwrite
             )
+            if rmsf_restraints:
+                self.add_rmsf_restraints(
+                    stage='fe',
+                    avg_struc=avg_struc,
+                    rmsf_file=rmsf_file
+                )
             logger.info('Submitting the free energy calculation')
             self.submit(
                 stage='fe',
@@ -892,6 +1098,13 @@ class System:
         logger.info(f'End time: {time.ctime()}')
         total_time = end_time - start_time
         logger.info(f'Total time: {total_time:.2f} seconds')
+        logger.info(f'Results')
+        logger.info(f'---------------------------------')
+        logger.info(f'Mol\tPose\tFree Energy (kcal/mol)')
+        logger.info(f'---------------------------------')
+        for i, (pose, fe) in enumerate(self.fe_results.items()):
+            mol_name = self.mols[i]
+            logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
         
         # dump the system configuration
         with open(f"{self.output_dir}/system.pkl", 'wb') as f:

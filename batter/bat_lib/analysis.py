@@ -526,9 +526,9 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('LJ exchange ('+dec_int.upper()+');', fe_x, sd_x))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release restraints;', fe_n, sd_n))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release ligand TR;', fe_bd, 0))
+            resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Restraints;', fe_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Analytical ligand TR;', fe_bd))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
@@ -563,7 +563,7 @@ def generate_analytical_rest(comp, rest, temperature):
         k_r = rest[2]
         k_a = rest[3]
         fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
-        logger.info(f'Analytical release ligand TR: {fe_bd:.2f} kcal/mol')
+        logger.debug(f'Analytical release ligand TR: {fe_bd:.2f} kcal/mol')
     os.chdir('../../')
     return fe_bd
 
@@ -689,22 +689,22 @@ def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
 
 
 def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt):
-    logger.info('Calculating free energies')
-    logger.info('----------------------------------------------')
-    logger.info('Blocks: %s' % blocks)
-    logger.info('Components: %s' % components)
-    logger.info('Temperature: %s' % temperature)
-    logger.info('Pose: %s' % pose)
-    logger.info('Attach rest: %s' % attach_rest)
-    logger.info('Lambdas: %s' % lambdas)
-    logger.info('Weights: %s' % weights)
-    logger.info('Dec Int: %s' % dec_int)
-    logger.info('Dec Method: %s' % dec_method)
-    logger.info('Rest: %s' % rest)
-    logger.info('Dic Steps1: %s' % dic_steps1)
-    logger.info('Dic Steps2: %s' % dic_steps2)
-    logger.info('dt: %s' % dt)
-    logger.info('----------------------------------------------')
+    logger.debug('Calculating free energies')
+    logger.debug('----------------------------------------------')
+    logger.debug('Blocks: %s' % blocks)
+    logger.debug('Components: %s' % components)
+    logger.debug('Temperature: %s' % temperature)
+    logger.debug('Pose: %s' % pose)
+    logger.debug('Attach rest: %s' % attach_rest)
+    logger.debug('Lambdas: %s' % lambdas)
+    logger.debug('Weights: %s' % weights)
+    logger.debug('Dec Int: %s' % dec_int)
+    logger.debug('Dec Method: %s' % dec_method)
+    logger.debug('Rest: %s' % rest)
+    logger.debug('Dic Steps1: %s' % dic_steps1)
+    logger.debug('Dic Steps2: %s' % dic_steps2)
+    logger.debug('dt: %s' % dt)
+    logger.debug('----------------------------------------------')
 
     # Total simulation time
     total_time = 0
@@ -713,7 +713,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             total_time = total_time + (dic_steps1[i]+dic_steps2[i])*len(attach_rest)*float(dt)/1000
         else:
             total_time = total_time + (dic_steps1[i]+dic_steps2[i])*len(lambdas)*float(dt)/1000
-    logger.info(f'Total simulation time: {total_time:.1f} ns')
+    logger.debug(f'Total simulation time: {total_time:.1f} ns')
 
     # Set initial values to zero
     fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
@@ -1263,6 +1263,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release ligand CF;', fe_c, sd_c))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release protein CF;', fe_r, sd_r))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', total_dd, sd_dd))
+            fe_value = total_dd
+            fe_std = sd_dd
         # Merged results
         if fe_m != 0 or fe_n != 0:
             fe_rel = fe_bd + fe_n
@@ -1277,6 +1279,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Bulk Elect ('+dec_int.upper()+');', fe_f, sd_f))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', merged_dd, sd_merg_dd))
+            fe_value = merged_dd
+            fe_std = sd_merg_dd
     if dec_method == 'sdr' and os.path.exists('./sdr/data/'):
         if fe_t != 0 or fe_c != 0 or fe_r != 0 or fe_a != 0 or fe_l != 0:
             resfile.write('\n----------------------------------------------\n')
@@ -1292,6 +1296,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release ligand CF;', fe_c, sd_c))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release protein CF;', fe_r, sd_r))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', total_sdr, sd_sdr))
+            fe_value = total_sdr
+            fe_std = sd_sdr
         # Merged results
         if fe_m != 0 or fe_n != 0:
             fe_rel = fe_bd + fe_n
@@ -1305,6 +1311,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Ligand TR;', fe_bd, 0))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', merged_sdr, sd_merg_sdr))
+            fe_value = merged_sdr
+            fe_std = sd_merg_sdr
     if dec_method == 'exchange' and os.path.exists('./sdr/data/'):
         if fe_t != 0 or fe_c != 0 or fe_r != 0 or fe_a != 0 or fe_l != 0:
             resfile.write('\n----------------------------------------------\n')
@@ -1320,6 +1328,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release ligand CF;', fe_c, sd_c))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release protein CF;', fe_r, sd_r))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', total_exc, sd_exc))
+            fe_value = total_exc
+            fe_std = sd_exc
         # Merged results
         if fe_m != 0 or fe_n != 0:
             fe_rel = fe_bd + fe_n
@@ -1330,10 +1340,12 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('LJ exchange ('+dec_int.upper()+');', fe_x, sd_x))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release restraints;', fe_n, sd_n))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release ligand TR;', fe_bd, 0))
+            resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Restraints;', fe_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Analytical ligand TR;', fe_bd))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
+            fe_value = merged_exc
+            fe_std = sd_merg_exc
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
     cit = 'on'
@@ -1348,8 +1360,12 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     # Print final results
     with open('./Results/Results.dat', 'r') as f:
         for line in f:
+            if 'Total simulation' in line:
+                break
             logger.info(line, end='')
-    logger.info('Results written to Results folder')
+    logger.debug('Results written to Results folder')
+
+    return fe_value, fe_std
 
 
 def fe_mbar(comp, pose, mode, rest_file, temperature):
