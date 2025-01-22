@@ -585,14 +585,15 @@ class System:
             raise ValueError(f"Invalid input_file: {input_file}")
         logger.info(f'Simulation configuration: {sim_config}')
         if sim_config.lipid_ff != self.lipid_ff:
-            logger.warning(f"Different lipid_ff in the input: {sim_config.lipid_ff}"
+            logger.warning(f"Different lipid_ff in the input: {sim_config.lipid_ff}\n"
                              f"System is prepared with {self.lipid_ff}")
         if sim_config.ligand_ff != self.ligand_ff:
-            logger.warning(f"Different ligand_ff in the input: {sim_config.ligand_ff}"
+            logger.warning(f"Different ligand_ff in the input: {sim_config.ligand_ff}\n"
                                 f"System is prepared with {self.ligand_ff}")
-        if sim_config.retain_lig_prot != self.retain_lig_prot:
-            logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}"
-                            "System is prepared with {self.retain_lig_prot}")
+        sim_config_retain_lig_prot = sim_config.retain_lig_prot == 'yes'
+        if sim_config_retain_lig_prot != self.retain_lig_prot:
+            logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}\n"
+                            f"System is prepared with {self.retain_lig_prot}")
         self.sim_config = sim_config
 
     def prepare(self,
