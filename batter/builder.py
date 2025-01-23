@@ -528,7 +528,7 @@ class SystemBuilder(ABC):
         tleap_solvate.write('model = loadpdb build.pdb\n\n')
         tleap_solvate.write('# Create water box with chosen model\n')
         tleap_solvate.write('solvatebox model ' + water_box +
-                            ' {' + str(buffer_x) + ' ' + str(buffer_y) + ' ' + str(buff) + '} 1.5\n\n')
+                            ' {' + str(buffer_x) + ' ' + str(buffer_y) + ' ' + str(buff) + '} 0.7\n\n')
         if tleap_remove is not None:
             tleap_solvate.write('# Remove a few waters manually\n')
             for water in tleap_remove:

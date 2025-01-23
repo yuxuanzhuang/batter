@@ -19,7 +19,7 @@ heating
    pencut = -1
    ntr = 1,
    restraint_wt = 50.0,
-   restraintmask = '@CA,C,N,P31 | :1-2',
+   restraintmask = ':1-2',
    ntwe = 1000,
    ntwx = 1000,
    ntpr = 1000,
@@ -40,7 +40,7 @@ heating
  /
  &wt
    type='TEMP0',
-   istep1 = 0, istep2 = 2000,
+   istep1 = 0, istep2 = 3000,
    value1 = 50.0, value2 = _temperature_
  /
 
