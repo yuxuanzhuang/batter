@@ -5,6 +5,7 @@ Equilibrate, NPT.
  &cntrl
   imin = 0,
   ntx = 5,
+  ntxo = 1,
   irest = 1,
   ntpr = 500,
   ntwr = 500,

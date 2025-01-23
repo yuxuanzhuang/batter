@@ -2,6 +2,7 @@ batter
 ==============================
 
 .. [//]: # (Badges)
+
 .. image:: https://github.com/yuxuanzhuang/batter/workflows/CI/badge.svg
    :target: https://github.com/yuxuanzhuang/batter/actions?query=workflow%3ACI
 
@@ -12,7 +13,7 @@ This is a refactored version of the `BAT.py` package rewritten in object-oriente
 
 The major changes include support for calculating the absolute binding free energy of membrane proteins, currently in AMBER+sdg+express mode.
 
-Note: Some parts of the code may still be under development, but the overall structure is in place.
+**Note:** Some parts of the code may still be under development, but the overall structure is in place.
 
 Installation
 -------------------------------
@@ -31,7 +32,27 @@ This will install the package in editable mode, so you can make changes to the c
 
 Usage
 -------------------------------
-Below are examples of how to run the code as a command-line tool. Input files can be found in the `examples` folder.
+It is advisable to use the package as a Python script or inside a Jupyter notebook.
+
+See the `examples` folder for examples of how to use the package:
+
+- `run_batter_abfe.ipynb`: Example of how to run ABFE simulations.
+- `run_batter_rbfe.ipynb`: Example of how to run RBFE simulations.
+- `abfe_rest.ipynb` and `rbfe_rest.ipynb`: Examples of running with flat-bottom restraints.
+  - `generate_rmsf_restratins.ipynb`: Example of how to generate RMSF restraints.
+  - You will also need a patched version of AMBER24 to run these simulations.
+- `rbfe_pipeline.py` and `abfe_pipeline.py`: Examples of how to run the simulations in an automatic pipeline.
+  - `submit_pipeline.sbatch`: Example of how to submit the pipeline to a cluster.
+
+See the `scripts` folder for scripts that might be helpful in running the simulations:
+
+- `cancel_jobs.sh`: Script to cancel all FE-related jobs on a cluster.
+- `mbar_rest.ipynb`: Notebook to check the validity of the MBAR results with REST.
+- `mbar_sdr.ipynb`: Notebook to check the validity of the MBAR results with SDR.
+
+**NOT RECOMMENDED**
+
+Alternatively, below are examples of how to run the code as a command-line tool. It still utilizes the old scripts and is not well tested. Input files can be found in the `examples` folder.
 
 **Run Equilibration**
 
@@ -53,9 +74,9 @@ Below are examples of how to run the code as a command-line tool. Input files ca
 
 Copyright
 -------------------------------
-Copyright (c) 2024, Yuxuan Zhuang
+**Copyright (c) 2024, Yuxuan Zhuang**
 
 Acknowledgements
 -------------------------------
-Project based on the 
+This project is based on the 
 `Computational Molecular Science Python Cookiecutter <https://github.com/molssi/cookiecutter-cms>`_ version 1.10.

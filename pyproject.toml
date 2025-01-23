@@ -25,6 +25,7 @@ dependencies = [
     "loguru",
     "pydantic",
     "click",
+    "rdkit",
 ]
 
 [project.scripts]

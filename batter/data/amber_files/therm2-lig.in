@@ -19,7 +19,7 @@ Thermalizing, NVT.
   ig = -1,
   ntp = 0,
   nstlim = 25000,
-  dt = _step_,
+  dt = 0.001,
   nmropt = 1,
   pencut = -1,
  /

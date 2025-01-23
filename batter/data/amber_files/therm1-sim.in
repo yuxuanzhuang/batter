@@ -26,7 +26,7 @@ Thermalizing, NVT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '@CA,C,N | :1-2',
+  restraintmask = '@CA,C,N,P31 | :1-2',
   infe = 1,
  /
  &pmd

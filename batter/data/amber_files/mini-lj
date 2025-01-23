@@ -5,6 +5,7 @@ Minimizing.
  &cntrl
   imin = 1,
   ntx = 1, 
+  ntxo = 1,
   ntpr = 50,
   maxcyc = 500,
   ncyc = 500,

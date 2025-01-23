@@ -1,10 +1,8 @@
 #!/usr/bin/env python2
 import glob
-import os as os
-import re as re
+import os
+import re
 import shutil as shutil
-import signal as signal
-import subprocess as sp
 import sys as sys
 import math
 import numpy as np
@@ -12,6 +10,7 @@ from batter.bat_lib.pymbar import MBAR, timeseries # multistate Bennett acceptan
 from pathlib import Path
 from batter.utils import run_with_log, antechamber, tleap, cpptraj, parmchk2
 from loguru import logger
+from joblib import Parallel, delayed
 
 
 def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lambdas, dic_itera1, dic_itera2, itera_steps, dt, dlambda, dec_int, weights, blocks, ti_points):
@@ -345,6 +344,7 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
                 resfile.write('%-20s %8.2f\n' % ('Binding free energy;', blck_sdr))
             # Merged results
             if fb_m != 0 or fb_n != 0:
+                
                 fb_rel = fb_bd + fb_n
                 resfile.write('\n----------------------------------------------\n')
                 resfile.write('Merged components SDR method')
@@ -498,7 +498,8 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Lennard-Jones ('+dec_int.upper()+');', fe_vs, sd_vs))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release restraints;', fe_n, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release ligand TR;', fe_bd, 0))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', merged_sdr, sd_merg_sdr))
     if dec_method == 'exchange':
         if fe_t != 0 or fe_c != 0 or fe_r != 0 or fe_a != 0 or fe_l != 0:
@@ -525,7 +526,9 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('LJ exchange ('+dec_int.upper()+');', fe_x, sd_x))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Restraints;', fe_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Analytical ligand TR;', fe_bd))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
@@ -538,24 +541,170 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
         resfile.write('D. J. Huggins (2022) "Comparing the Performance of Different AMBER Protein Forcefields, Partial Charge Assignments, and Water Models for Absolute Binding Free Energy Calculations." Journal of Chemical Theory and Computation, 18, 2616.\n\n')
     resfile.close()
 
+def generate_analytical_rest(comp, rest, temperature):
+    os.chdir('rest')
+    os.chdir(f'{comp}00')
+    # Calculate analytical release for dd and sdr
+    with open('disang.rest', "r") as f_in:
+        lines = (line.rstrip() for line in f_in)
+        lines = list(line for line in lines if '#Lig_TR' in line)
+        splitdata = lines[0].split()
+        r0 = float(splitdata[6].strip(','))
+        splitdata = lines[1].split()
+        a1_0 = float(splitdata[6].strip(','))
+        splitdata = lines[2].split()
+        t1_0 = float(splitdata[6].strip(','))
+        splitdata = lines[3].split()
+        a2_0 = float(splitdata[6].strip(','))
+        splitdata = lines[4].split()
+        t2_0 = float(splitdata[6].strip(','))
+        splitdata = lines[5].split()
+        t3_0 = float(splitdata[6].strip(','))
+        k_r = rest[2]
+        k_a = rest[3]
+        fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
+        logger.debug(f'Analytical release ligand TR: {fe_bd:.2f} kcal/mol')
+    os.chdir('../../')
+    return fe_bd
+
+def generate_results_rest(comp, win, blocks, working_dir):
+    os.chdir(working_dir)
+    os.chdir('rest')
+    data = []
+    os.chdir('%s%02d' % (comp, int(win)))
+    # temp fix for frontier
+    # Find all files matching the pattern 'mdin-xx.nc' in the folder
+    mdin_files = glob.glob('mdin-*.nc')
+    mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
+    # Find all files matching the pattern 'mdin-xx.nc' in the folder
+    mdin_files2 = glob.glob('md*.nc')
+    mdin_files2.sort(key=lambda x: int(x.split('.')[0].split('md')[1]))
+    
+    mdin_files = mdin_files + mdin_files2
+    # Sort them numerically by the number in the filename
+    # Read the 'restraints.in' file
+    with open('restraints.in', 'r') as f:
+        lines = f.readlines()
+    # remove lines contains 'trajin'
+    lines = [line for line in lines if 'trajin' not in line]
+    # get the line index of parm
+    line_index = lines.index([line for line in lines if 'parm' in line][0])
+    with open('restraints.in', 'w') as f:
+        # Write lines up to and including the target line
+        f.writelines(lines[:line_index + 1])
+        # Append the sorted mdin files
+        for mdin_file in mdin_files[:]:
+            f.write(f'trajin {mdin_file}\n')
+        # Write the remaining lines
+        f.writelines(lines[line_index + 1:])
+    # Run cpptraj with logging
+    logger.debug('Running cpptraj')
+    run_with_log(f"{cpptraj} -i restraints.in > restraints.log 2>&1")
+    logger.debug('cpptraj finished')
+
+    # Separate in blocks
+    with open("restraints.dat", "r") as fin:
+        for line in fin:
+            if not '#' in line:
+                data.append(line)
+    for k in range(0, blocks):
+        fout = open('rest%02d.dat' % (k+1), "w")
+        for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
+            fout.write(data[t])
+        fout.close()
+    os.chdir('../../')
+
+def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
+    os.chdir(working_dir)
+    logger.debug(os.getcwd())
+    if dec_method == 'dd':
+        os.chdir(dec_method)
+    if dec_method == 'sdr' or dec_method == 'exchange':
+        os.chdir('sdr')
+    if dec_int == 'ti':
+        # Get dvdl values from output file 
+        data = []
+        os.chdir('%s%02d' % (comp, int(win)))
+        dvdl = open('dvdl.dat', "w")
+        with open("md-02.out", "r") as fin:
+            s = 0
+            n = 0
+            for line in fin:
+                if 'TI region  1' in line:
+                    s = 1
+                if 'DV/DL  = ' in line and s == 1:
+                    n = n+1
+                    splitdata = line.split()
+                    data.append(splitdata[2])
+                    dvdl.write('%5d   %9.4f\n' % (n, float(splitdata[2])))
+                    s = 0
+                if 'A V E' in line:
+                    break
+            dvdl.close()
+        # Separate in blocks
+        for k in range(0, blocks):
+            fout = open('dvdl%02d.dat' % (k+1), "w")
+            for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
+                fout.write('%5d   %9.4f\n' % (t+1, float(data[t])))
+            fout.close()
+    elif dec_int == 'mbar':
+        # Get potential energy values from output file
+        data = []
+        os.chdir('%s%02d' % (comp, int(win)))
+        potl = open('energies.dat', "w")
+        md_out_files = glob.glob('md-*.out')
+        md_out_files = [f for f in md_out_files if re.match(r'md-\d+.out', f)]
+
+        sorted_md_out_files = sorted(md_out_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
+        for md_out_file in sorted_md_out_files[:]:
+            with open(md_out_file, "r") as fin:
+                n = 0
+                for line in fin:
+                    cols = line.split()
+                    if 'MBAR Energy analysis' in line:
+                        if n != 0:
+                            potl.write('\n')
+                        n = n+1
+                    if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
+                        potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
+        potl.write('\n')
+        potl.close()
+        # Separate in blocks
+        for k in range(0, blocks):
+            s = 0
+            fout = open('ener%02d.dat' % (k+1), "w")
+            with open("energies.dat", "r") as fin:
+                for line in fin:
+                    cols = line.split()
+                    low = int(k*int(round(n/blocks)))+1
+                    high = int((k+1)*int(round(n/blocks)))+1
+                    if len(cols) >= 1 and int(cols[0]) == low:
+                        s = 1
+                    if len(cols) >= 1 and int(cols[0]) == high:
+                        s = 0
+                    if s == 1:
+                        fout.write(line)
+            fout.close()
+    os.chdir('../..')
+
 
 def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt):
-    logger.info('Calculating free energies')
-    logger.info('----------------------------------------------')
-    logger.info('Blocks: %s' % blocks)
-    logger.info('Components: %s' % components)
-    logger.info('Temperature: %s' % temperature)
-    logger.info('Pose: %s' % pose)
-    logger.info('Attach rest: %s' % attach_rest)
-    logger.info('Lambdas: %s' % lambdas)
-    logger.info('Weights: %s' % weights)
-    logger.info('Dec Int: %s' % dec_int)
-    logger.info('Dec Method: %s' % dec_method)
-    logger.info('Rest: %s' % rest)
-    logger.info('Dic Steps1: %s' % dic_steps1)
-    logger.info('Dic Steps2: %s' % dic_steps2)
-    logger.info('dt: %s' % dt)
-    logger.info('----------------------------------------------')
+    logger.debug('Calculating free energies')
+    logger.debug('----------------------------------------------')
+    logger.debug('Blocks: %s' % blocks)
+    logger.debug('Components: %s' % components)
+    logger.debug('Temperature: %s' % temperature)
+    logger.debug('Pose: %s' % pose)
+    logger.debug('Attach rest: %s' % attach_rest)
+    logger.debug('Lambdas: %s' % lambdas)
+    logger.debug('Weights: %s' % weights)
+    logger.debug('Dec Int: %s' % dec_int)
+    logger.debug('Dec Method: %s' % dec_method)
+    logger.debug('Rest: %s' % rest)
+    logger.debug('Dic Steps1: %s' % dic_steps1)
+    logger.debug('Dic Steps2: %s' % dic_steps2)
+    logger.debug('dt: %s' % dt)
+    logger.debug('----------------------------------------------')
 
     # Total simulation time
     total_time = 0
@@ -564,7 +713,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             total_time = total_time + (dic_steps1[i]+dic_steps2[i])*len(attach_rest)*float(dt)/1000
         else:
             total_time = total_time + (dic_steps1[i]+dic_steps2[i])*len(lambdas)*float(dt)/1000
-    logger.info('Total simulation time: %s ns' % total_time)
+    logger.debug(f'Total simulation time: {total_time:.1f} ns')
 
     # Set initial values to zero
     fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
@@ -596,165 +745,55 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                     unfinished.append(f'fe/{pose}/{folder_2_check}')
         elif comp in components_dict['dd']:
             for j in range(0, len(lambdas)):
-                folder_2_check = f'{dec_method}/{comp}{j:02d}'
+                if dec_method == 'exchange':
+                    dec_method_2_check = 'sdr'
+                else:
+                    dec_method_2_check = dec_method
+                folder_2_check = f'{dec_method_2_check}/{comp}{j:02d}'
                 if not check_file_exists(folder_2_check):
                     unfinished.append(f'fe/{pose}/{folder_2_check}')
     if unfinished:
         logger.error(f"The following folders are missing files: {', '.join(unfinished)}")
         raise Exception('Some of the simulations are not done yet '
                         'or there\'s an error running the simulations\n')
-
+    
     for i in range(0, len(components)):
         comp = components[i]
         logger.debug('Component: %s' % comp)
+        logger.debug(os.getcwd())
+
         if comp in components_dict['rest']:
-            os.chdir('rest')
-            for j in range(0, len(attach_rest)):
-                data = []
-                win = j
-                os.chdir('%s%02d' % (comp, int(win)))
-                if (comp == 't' or comp == 'm') and win == 0:
-                    # Calculate analytical release for dd and sdr
-                    with open('disang.rest', "r") as f_in:
-                        lines = (line.rstrip() for line in f_in)
-                        lines = list(line for line in lines if '#Lig_TR' in line)
-                        splitdata = lines[0].split()
-                        r0 = float(splitdata[6].strip(','))
-                        splitdata = lines[1].split()
-                        a1_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[2].split()
-                        t1_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[3].split()
-                        a2_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[4].split()
-                        t2_0 = float(splitdata[6].strip(','))
-                        splitdata = lines[5].split()
-                        t3_0 = float(splitdata[6].strip(','))
-                        k_r = rest[2]
-                        k_a = rest[3]
-                        fe_bd = fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
-                # Get restraint trajectory file
-
-                # temp fix for frontier
-                # Find all files matching the pattern 'mdin-xx.nc' in the folder
-                mdin_files = glob.glob('mdin-*.nc')
-                # Sort them numerically by the number in the filename
-                mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
-                # Read the 'restraints.in' file
-                with open('restraints.in', 'r') as f:
-                    lines = f.readlines()
-                # Find the line number containing 'trajin md10.nc'
-                line_index = next((i for i, line in enumerate(lines) if 'trajin md10.nc' in line), -1)
-                if line_index == -1:
-                    raise ValueError("Line containing 'trajin md10.nc' not found in 'restraints.in'.")
-                # Rewrite 'restraints.in' with the mdin files appended after the 'trajin md10.nc' line
-                with open('restraints.in', 'w') as f:
-                    # Write lines up to and including the target line
-                    f.writelines(lines[:line_index + 1])
-                    # Append the sorted mdin files
-                    for mdin_file in mdin_files:
-                        f.write(f'trajin {mdin_file}\n')
-                    # Write the remaining lines
-                    f.writelines(lines[line_index + 1:])
-                # Run cpptraj with logging
-                run_with_log(f"{cpptraj} -i restraints.in > restraints.log 2>&1")
-
-                # Separate in blocks
-                with open("restraints.dat", "r") as fin:
-                    for line in fin:
-                        if not '#' in line:
-                            data.append(line)
-                for k in range(0, blocks):
-                    fout = open('rest%02d.dat' % (k+1), "w")
-                    for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
-                        fout.write(data[t])
-                    fout.close()
-                os.chdir('../')
+            if comp == 't' or comp == 'm':
+                fe_bd = generate_analytical_rest(comp, rest, temperature)
+            if True:
+                logger.debug(os.getcwd())
+                # Each worker might not inherit the correct working directory
+                # Forcing it to the correct one
+                working_dir = os.getcwd()
+                Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win, blocks, working_dir) for win in range(len(attach_rest)))
+            
         elif comp in components_dict['dd']:
-            if dec_method == 'dd':
-                os.chdir(dec_method)
-            if dec_method == 'sdr' or dec_method == 'exchange':
-                os.chdir('sdr')
-            if dec_int == 'ti':
-                # Get dvdl values from output file
-                for j in range(0, len(lambdas)):
-                    data = []
-                    win = j
-                    os.chdir('%s%02d' % (comp, int(win)))
-                    dvdl = open('dvdl.dat', "w")
-                    with open("md-02.out", "r") as fin:
-                        s = 0
-                        n = 0
-                        for line in fin:
-                            if 'TI region  1' in line:
-                                s = 1
-                            if 'DV/DL  = ' in line and s == 1:
-                                n = n+1
-                                splitdata = line.split()
-                                data.append(splitdata[2])
-                                dvdl.write('%5d   %9.4f\n' % (n, float(splitdata[2])))
-                                s = 0
-                            if 'A V E' in line:
-                                break
-                        dvdl.close()
-                    # Separate in blocks
-                    for k in range(0, blocks):
-                        fout = open('dvdl%02d.dat' % (k+1), "w")
-                        for t in range(k*int(round(len(data)//blocks)), (k+1)*int(round(len(data)//blocks))):
-                            fout.write('%5d   %9.4f\n' % (t+1, float(data[t])))
-                        fout.close()
-                    os.chdir('../')
-            elif dec_int == 'mbar':
-                # Get potential energy values from output file
-                for j in range(0, len(lambdas)):
-                    data = []
-                    win = j
-                    os.chdir('%s%02d' % (comp, int(win)))
-                    potl = open('energies.dat', "w")
-                    md_out_files = glob.glob('md*.out')
-                    for md_out_file in md_out_files:
-                        with open(md_out_file, "r") as fin:
-                            n = 0
-                            for line in fin:
-                                cols = line.split()
-                                if 'MBAR Energy analysis' in line:
-                                    if n != 0:
-                                        potl.write('\n')
-                                    n = n+1
-                                if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
-                                    potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
-                    potl.write('\n')
-                    potl.close()
-                    # Separate in blocks
-                    for k in range(0, blocks):
-                        s = 0
-                        fout = open('ener%02d.dat' % (k+1), "w")
-                        with open("energies.dat", "r") as fin:
-                            for line in fin:
-                                cols = line.split()
-                                low = int(k*int(round(n/blocks)))+1
-                                high = int((k+1)*int(round(n/blocks)))+1
-                                if len(cols) >= 1 and int(cols[0]) == low:
-                                    s = 1
-                                if len(cols) >= 1 and int(cols[0]) == high:
-                                    s = 0
-                                if s == 1:
-                                    fout.write(line)
-                        fout.close()
-                    os.chdir('../')
-        os.chdir('../')
+            if True:
+                logger.debug(os.getcwd())
+                # Each worker might not inherit the correct working directory
+                # Forcing it to the correct one
+                working_dir = os.getcwd()
+                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_method, dec_int, comp, win, blocks, working_dir) for win in range(len(lambdas)))
+        logger.debug('MBAR energies done')
 
     os.chdir('../../')
 
     # Get free energies for the whole run
     for i in range(0, len(components)):
         comp = components[i]
+        logger.debug('Get free energies for Component: %s' % comp)
         if comp == 'a' or comp == 'l' or comp == 't' or comp == 'c' or comp == 'r' or comp == 'm' or comp == 'n':
             rest_file = 'restraints.dat'
             mode = 'all'
             fe_mbar(comp, pose, mode, rest_file, temperature)
             mode = 'sub'
             fe_mbar(comp, pose, mode, rest_file, temperature)
+            logger.debug('MBAR for rest done')
         else:
             if dec_int == 'ti':
                 rest_file = 'dvdl.dat'
@@ -766,6 +805,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, temperature)
                 mode = 'sub'
                 fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, temperature)
+                logger.debug('MBAR for SDR done')
 
     # Get free energies for the blocks
     for i in range(0, len(components)):
@@ -1019,11 +1059,9 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             os.chdir('../')
 
     # Create Results folder
-    if not os.path.exists('Results'):
-        os.makedirs('Results')
-
+    os.makedirs('Results', exist_ok=True)
     # Copy complex pdb structure
-        shutil.copy('./build_files/complex.pdb', './Results/')
+    shutil.copy('./build_files/complex.pdb', './Results/')
 
     # Get MBAR free energy averages for the blocks
     for k in range(0, blocks):
@@ -1151,6 +1189,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 resfile.write('%-20s %8.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fb_es))
                 resfile.write('%-20s %8.2f\n' % ('Lennard-Jones ('+dec_int.upper()+');', fb_vs))
                 resfile.write('%-20s %8.2f\n\n' % ('Release all;', fb_rel))
+                
+
                 resfile.write('%-20s %8.2f\n' % ('Binding free energy;', blckm_sdr))
         if dec_method == 'exchange' and os.path.exists('./sdr/data/'):
             if fb_t != 0 or fb_c != 0 or fb_r != 0 or fb_a != 0 or fb_l != 0:
@@ -1223,6 +1263,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release ligand CF;', fe_c, sd_c))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release protein CF;', fe_r, sd_r))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', total_dd, sd_dd))
+            fe_value = total_dd
+            fe_std = sd_dd
         # Merged results
         if fe_m != 0 or fe_n != 0:
             fe_rel = fe_bd + fe_n
@@ -1237,6 +1279,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Bulk Elect ('+dec_int.upper()+');', fe_f, sd_f))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', merged_dd, sd_merg_dd))
+            fe_value = merged_dd
+            fe_std = sd_merg_dd
     if dec_method == 'sdr' and os.path.exists('./sdr/data/'):
         if fe_t != 0 or fe_c != 0 or fe_r != 0 or fe_a != 0 or fe_l != 0:
             resfile.write('\n----------------------------------------------\n')
@@ -1252,6 +1296,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release ligand CF;', fe_c, sd_c))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release protein CF;', fe_r, sd_r))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', total_sdr, sd_sdr))
+            fe_value = total_sdr
+            fe_std = sd_sdr
         # Merged results
         if fe_m != 0 or fe_n != 0:
             fe_rel = fe_bd + fe_n
@@ -1262,8 +1308,11 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Lennard-Jones ('+dec_int.upper()+');', fe_vs, sd_vs))
+            resfile.write('%-20s %8.2f;    %3.2f\n' % ('Ligand TR;', fe_bd, 0))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Binding free energy;', merged_sdr, sd_merg_sdr))
+            fe_value = merged_sdr
+            fe_std = sd_merg_sdr
     if dec_method == 'exchange' and os.path.exists('./sdr/data/'):
         if fe_t != 0 or fe_c != 0 or fe_r != 0 or fe_a != 0 or fe_l != 0:
             resfile.write('\n----------------------------------------------\n')
@@ -1279,6 +1328,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release ligand CF;', fe_c, sd_c))
             resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release protein CF;', fe_r, sd_r))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', total_exc, sd_exc))
+            fe_value = total_exc
+            fe_std = sd_exc
         # Merged results
         if fe_m != 0 or fe_n != 0:
             fe_rel = fe_bd + fe_n
@@ -1289,8 +1340,12 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Attach all;', fe_m, sd_m))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Electrostatic ('+dec_int.upper()+');', fe_es, sd_es))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('LJ exchange ('+dec_int.upper()+');', fe_x, sd_x))
-            resfile.write('%-20s %8.2f;    %3.2f\n\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('%-20s %8.2f;    %3.2f\n' % ('Release all;', fe_rel, sd_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Restraints;', fe_n))
+            resfile.write('    %-20s %8.2f;\n' % ('- Analytical ligand TR;', fe_bd))
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
+            fe_value = merged_exc
+            fe_std = sd_merg_exc
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
     cit = 'on'
@@ -1305,8 +1360,12 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     # Print final results
     with open('./Results/Results.dat', 'r') as f:
         for line in f:
+            if 'Total simulation' in line:
+                break
             logger.info(line, end='')
-    logger.info('Results written to Results folder')
+    logger.debug('Results written to Results folder')
+
+    return fe_value, fe_std
 
 
 def fe_mbar(comp, pose, mode, rest_file, temperature):
@@ -1550,32 +1609,31 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
                     Upot[k, l, 0:Neff[k]] = (beta*rfc[l, 0]*((val[0:Neff[k], k, 0]-req[l, 0])**2))
 
     val = []
-
-    print("Running MBAR... ")
+    np.savetxt(f'./data/Upot_{comp}.dat', Upot.reshape(K*K, np.max(Neff)), fmt='%12.7f')
     mbar = MBAR(Upot, Neff)
 
-    print("Calculate Free Energy Differences Between States")
+    logger.debug("Calculate Free Energy Differences Between States")
     [Deltaf, dDeltaf] = mbar.getFreeEnergyDifferences()
 
     min = np.argmin(Deltaf[0])
 
     # Write to file
-    print("Free Energy Differences (in units of kcal/mol)")
-    print("%9s %8s %8s %12s %12s" % ('bin', 'f', 'df', 'deq', 'dfc'))
+    logger.debug("Free Energy Differences (in units of kcal/mol)")
+    logger.debug("%9s %8s %8s %12s %12s" % ('bin', 'f', 'df', 'deq', 'dfc'))
     datfile = open('./data/mbar-'+comp+'-'+mode+'.dat', 'w')
     for k in range(K):
         if comp != 'u':  # Attach/release
-            print("%10.5f %10.5f %10.5f %12.7f %12.7f" %
+            logger.debug("%10.5f %10.5f %10.5f %12.7f %12.7f" %
                   (rfc[k, 0]/rfc[-1, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
             datfile.write("%10.5f %10.5f %10.5f %12.7f %12.7f\n" %
                           (rfc[k, 0]/rfc[-1, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
         else:  # Umbrella/Translation
-            print("%10.5f %10.5f %10.5f %12.7f %12.7f" %
+            logger.debug("%10.5f %10.5f %10.5f %12.7f %12.7f" %
                   (req[k, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
             datfile.write("%10.5f %10.5f %10.5f %12.7f %12.7f\n" %
                           (req[k, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
     datfile.close()
-    print("\n\n")
+    logger.debug("\n\n")
 
     os.chdir('../../../')
 

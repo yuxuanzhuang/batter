@@ -40,7 +40,6 @@ foreach {x2 y2 z2} $d2 {break}
 set xl [expr $x2+$xd]
 set yl [expr $y2+$yd]
 set zl [expr $z2+$zd]
-put "ligand center is $xl $yl $zl"
 
 foreach {x1 y1 z1} $d1 {break}
 set xc [expr abs($x1-$xl)]

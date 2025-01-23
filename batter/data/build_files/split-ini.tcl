@@ -1,6 +1,6 @@
 mol load pdb rec_file.pdb
 set dum [atomselect 0 "resname DUM"]
-set prot [atomselect 0 "protein"]
+set prot [atomselect 0 "protein and not resname MMM"]
 set othrs [atomselect 0 "resname OTHRS and not water and same residue as within SHLL of (protein or resname MMM)"]
 set lipid [atomselect 0 "resname LIPIDS"]
 set wat [atomselect 0 "water and same residue as within SHLL of (protein or resname MMM)"]

@@ -270,8 +270,8 @@ def build_equil(pose, celp_st, mol,
 
     # Get ligand parameters
     if not os.path.exists('../ff/%s.mol2' % mol.lower()):
-#        run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower() +
-#                     '.mol2 -fo mol2 -c bcc -s 2 -at '+ligand_ff.lower()+' -nc %d' % ligand_charge)
+ #        run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower() +
+ #                     '.mol2 -fo mol2 -c bcc -s 2 -at '+ligand_ff.lower()+' -nc %d' % ligand_charge)
         run_with_log(
             f'{antechamber} -i {mol.lower()}.mol2 -fi mol2 -o {mol.lower()}.mol2 '
             f'-fo mol2 -c bcc -s 2 -at {ligand_ff.lower()} -nc {ligand_charge}')
@@ -283,7 +283,7 @@ def build_equil(pose, celp_st, mol,
             run_with_log(parmchk2 + ' -i '+mol.lower()+'.mol2 -f mol2 -o '+mol.lower()+'.frcmod -s 2')
         shutil.copy('./%s.frcmod' % (mol.lower()), '../ff/')
         
-#    run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower()+'.pdb -fo pdb')
+ #    run_with_log(antechamber + ' -i '+mol.lower()+'-h.pdb -fi pdb -o '+mol.lower()+'.pdb -fo pdb')
     run_with_log(
         f'{antechamber} -i {mol.lower()}.mol2 -fi mol2 -o {mol.lower()}.pdb -fo pdb')
 
@@ -509,6 +509,8 @@ def build_equil(pose, celp_st, mol,
     coords = dum_coords + recep_coords + lig_coords + oth_coords
     atom_namelist = dum_atomlist + recep_atomlist + lig_atomlist + oth_atomlist
     resid_list = dum_rsidlist + recep_rsidlist + lig_rsidlist + oth_rsidlist
+    resid_list = [resid if resid < 10000 else (resid % 9999) + 1 for resid in resid_list]
+
     resname_list = dum_rsnmlist + recep_rsnmlist + lig_rsnmlist + oth_rsnmlist
     chain_list = dum_chainlist + recep_chainlist + lig_chainlist + oth_chainlist
     lig_resid = str(recep_last + dum_atom + 1)
@@ -635,7 +637,7 @@ def build_dec(fwin, hmr, mol,
         p_coupling = '1'
         c_surften = '0'
     if comp == 'n':
-        dec_method == 'sdr'
+        dec_method = 'sdr'
 
     if comp == 'a' or comp == 'l' or comp == 't' or comp == 'm' or comp == 'c' or comp == 'r':
         dec_method = 'dd'
@@ -648,7 +650,7 @@ def build_dec(fwin, hmr, mol,
         if (dec_method == 'sdr' or dec_method == 'exchange') and os.path.exists('../build_files'):
             shutil.rmtree(f'../{build_file_path}')
         try:
-            shutil.copytree('../../../equil/build_files',
+            shutil.copytree(build_files_orig,
                             f'../{build_file_path}')
         # Directories are the same
         except shutil.Error as e:
@@ -1152,7 +1154,7 @@ def build_dec(fwin, hmr, mol,
         try:
             shutil.copy(f'../../{build_file_path}/%s.pdb' % mol.lower(), './')
             shutil.copy(f'../../{build_file_path}/fe-%s.pdb' % mol.lower(), './build-ini.pdb')
-            shutil.copy(f'../../{build_file_path}/fe-%s.pdb' % mol.lower(), './')
+            shutil.copy(f'../../{build_file_paah}/fe-%s.pdb' % mol.lower(), './')
             shutil.copy(f'../../{build_file_path}/anchors-'+pose+'.txt', './')
             shutil.copy(f'../../{build_file_path}/equil-reference.pdb', './')
         except:
@@ -1289,6 +1291,8 @@ def build_dec(fwin, hmr, mol,
         coords = dum_coords + recep_coords + lig_coords + oth_coords
         atom_namelist = dum_atomlist + recep_atomlist + lig_atomlist + oth_atomlist
         resid_list = dum_rsidlist + recep_rsidlist + lig_rsidlist + oth_rsidlist
+        resid_list = [resid if resid < 10000 else (resid % 9999) + 1 for resid in resid_list]
+
         resname_list = dum_rsnmlist + recep_rsnmlist + lig_rsnmlist + oth_rsnmlist
         chain_list = dum_chainlist + recep_chainlist + lig_chainlist + oth_chainlist
         lig_resid = recep_last + dum_atom
@@ -1447,8 +1451,9 @@ def build_dec(fwin, hmr, mol,
             if oth_rsidlist[i] != oth_tmp:
                 build_file.write('TER\n')
             oth_tmp = oth_rsidlist[i]
+            oth_tmp = oth_tmp if oth_tmp < 10000 else (oth_tmp % 9999) + 1
             build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                             ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_chainlist[i], oth_rsidlist[i]))
+                             ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_chainlist[i], oth_tmp))
             build_file.write('%8.3f%8.3f%8.3f' %
                              (float(oth_coords[i][0]), float(oth_coords[i][1]), float(oth_coords[i][2])))
 
@@ -1507,6 +1512,7 @@ def build_dec(fwin, hmr, mol,
             tleap_vac.close()
 
             p = run_with_log(tleap + ' -s -f tleap_vac.in > tleap_vac.log')
+            
     # Copy system from other attach component
     if int(win) == 0 and altm != 'None':
         logger.debug('Copying system from %s' % altm)
@@ -1888,11 +1894,28 @@ def create_box(comp, hmr,
 
     try:
         u = mda.Universe('full_pre.pdb')
-    except ValueError('could not convert'):
-        raise ValueError('The system is toooo big! '
-                         'tleap write incorrect PDB when '
-                         'residue exceed 100,000.'
-                         'I am not sure how to fix it yet.')
+    except:
+        with open('full_pre.pdb', 'r') as f:
+            lines = f.readlines()
+        adjusted_lines = []
+        for line in lines:
+            try:
+                resid = int(line[22:29].strip())  # Extract residue number
+                if resid >= 100000:
+                    resid = (resid % 99999) + 1  # Wrap residue number
+                    line = f"{line[:22]}{str(resid).rjust(5)}{line[28:]}"  # Replace residue number
+            except:
+                pass
+            adjusted_lines.append(line)
+
+        with open('full_pre.pdb', 'w') as f:
+            f.writelines(adjusted_lines)
+
+        u = mda.Universe('full_pre.pdb')
+#        raise ValueError('The system is toooo big! '
+#                         'tleap write incorrect PDB when '
+#                         'residue exceed 100,000.'
+#                         'I am not sure how to fix it yet.')
 
     u_orig = mda.Universe('equil-reference.pdb')
 
