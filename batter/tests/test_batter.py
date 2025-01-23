@@ -55,7 +55,7 @@ def test_system_exist(abfe_system):
     ligand_ff_dir = temp_dir / 'ff'
     assert ligand_ff_dir.exists(), "Ligand force field directory 'ff' is missing"
 
-    expected_ligand_files = ['ligand.frcmod', 'ligand.lib', 'ligand.mol2']
+    expected_ligand_files = ['sc3.frcmod', 'sc3.lib', 'sc3.mol2']
     for file_name in expected_ligand_files:
         assert (ligand_ff_dir / file_name).exists(), f"Missing ligand file: {file_name}"
 
