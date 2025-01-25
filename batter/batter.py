@@ -73,6 +73,7 @@ class System:
     """
     def __init__(self,
                  folder: str,
+                 work_dir: str = '.',
                 ):
         """
         Initialize the System class with the folder name.
@@ -83,14 +84,21 @@ class System:
         ----------
         folder : str
             The folder containing the system files.
+        work_dir : str, optional
+            The working directory for the system. Default is '.'.
+            This is useful when the system is created in a different directory.
         """
         self.output_dir = os.path.abspath(folder) + '/'
+        cwd = os.getcwd()
+        self.work_dir = work_dir
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
             os.makedirs(self.output_dir)
         else:
             logger.info(f"Loading an existing system: {self.output_dir}")
+            os.chdir(self.work_dir)
             self._load_system()
+            os.chdir(cwd)
 
     def _load_system(self):
         """
@@ -102,12 +110,17 @@ class System:
         
         system_file = os.path.join(self.output_dir, "system.pkl")
 
-        with open(system_file, 'rb') as f:
-            loaded_state = pickle.load(f)
-            # in case the folder is moved
-            loaded_state.output_dir = self.output_dir
-            # Update self with loaded attributes
-            self.__dict__.update(loaded_state.__dict__)
+        try:
+            with open(system_file, 'rb') as f:
+                loaded_state = pickle.load(f)
+                # in case the folder is moved
+                loaded_state.output_dir = self.output_dir
+                # Update self with loaded attributes
+                self.__dict__.update(loaded_state.__dict__)
+        except Exception as e:
+            logger.error(f"Error loading the system: {e}")
+            logger.error(f"Add `work_dir` to the original folder that"
+                          " created the system might help")
 
 
         if not os.path.exists(f"{self.output_dir}/all-poses"):
@@ -363,7 +376,7 @@ class System:
         membrane_ag.chainIDs = 'M'
         membrane_ag.residues.segments = memb_seg
         logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
-        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 10 (protein or resname POPC))')
+        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 15 (protein or resname POPC))')
         water_ag.chainIDs = 'W'
         water_ag.residues.segments = water_seg
         logger.debug(f'Number of water molecules: {water_ag.n_residues}')
@@ -461,6 +474,10 @@ class System:
     def _prepare_ligand_parameters(self):
         """Prepare ligand parameters for the system"""
         # Get ligand parameters
+        # TODO: build a library of ligand parameters
+        # and check if the ligand is in the library
+        # if not, then prepare the ligand parameters
+
         mol = self._mol
         logger.debug(f'Preparing ligand {mol} parameters')
 
@@ -999,7 +1016,7 @@ class System:
         poses_def = self.sim_config.poses_def
 
         with self._change_dir(self.output_dir):
-            for pose in poses_def:
+            for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
                 fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
                                 weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
                 self.fe_results[pose] = [fe_value, fe_std]
@@ -1012,7 +1029,9 @@ class System:
                      input_file: Union[str, Path, SimulationConfig],
                      overwrite: bool = False,              
                      avg_struc: str = None,
-                     rmsf_file: str = None):
+                     rmsf_file: str = None,
+                     only_equil: bool = False,
+                     ):
         """
         Run the whole pipeline for calculating the binding free energy
         after you `create_system`.
@@ -1030,7 +1049,9 @@ class System:
         rmsf_file : str
             The path of the RMSF file. Default is None,
             which means no RMSF restraints are added.
-
+        only_equil : bool, optional
+            Whether to run only the equilibration stage.
+            Default is False.
         """
         logger.info('Running the pipeline')
         if avg_struc is not None and rmsf_file is not None:
@@ -1077,6 +1098,10 @@ class System:
                 time.sleep(60*60)
         else:
             logger.info('Equilibration is already finished')
+        if only_equil:
+            logger.info('only_equil is set to True. '
+                        'Skipping the free energy calculation.')
+            return
 
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')

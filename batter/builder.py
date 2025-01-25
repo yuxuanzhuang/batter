@@ -279,7 +279,7 @@ class SystemBuilder(ABC):
 
         # copy all the files from the ff directory
         for file in glob.glob('../ff/*'):
-            if file.endswith('.in'):
+            if file.endswith('.in') or file.endswith('.pdb'):
                 continue
             shutil.copy(file, '.')
 
@@ -528,7 +528,7 @@ class SystemBuilder(ABC):
         tleap_solvate.write('model = loadpdb build.pdb\n\n')
         tleap_solvate.write('# Create water box with chosen model\n')
         tleap_solvate.write('solvatebox model ' + water_box +
-                            ' {' + str(buffer_x) + ' ' + str(buffer_y) + ' ' + str(buff) + '} 0.7\n\n')
+                            ' {' + str(buffer_x) + ' ' + str(buffer_y) + ' ' + str(buff) + '} 1\n\n')
         if tleap_remove is not None:
             tleap_solvate.write('# Remove a few waters manually\n')
             for water in tleap_remove:

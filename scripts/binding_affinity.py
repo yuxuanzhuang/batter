@@ -9,4 +9,4 @@ T = 310  # K
 
 # Calculate Kd
 Kd = math.exp(delta_G / (R * T)) / 1e-9  # nM
-print(f"Kd = {Kd:.2f} nM")
+print(f"Kd = {Kd:.4f} nM")

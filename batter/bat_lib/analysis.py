@@ -753,9 +753,10 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 if not check_file_exists(folder_2_check):
                     unfinished.append(f'fe/{pose}/{folder_2_check}')
     if unfinished:
-        logger.error(f"The following folders are missing files: {', '.join(unfinished)}")
-        raise Exception('Some of the simulations are not done yet '
-                        'or there\'s an error running the simulations\n')
+        logger.warning(f"The following folders are missing files: {', '.join(unfinished)}")
+        return np.nan, np.nan
+        #raise Exception('Some of the simulations are not done yet '
+        #                'or there\'s an error running the simulations\n')
     
     for i in range(0, len(components)):
         comp = components[i]
@@ -1362,7 +1363,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         for line in f:
             if 'Total simulation' in line:
                 break
-            logger.info(line, end='')
+            logger.debug(line, end='')
     logger.debug('Results written to Results folder')
 
     return fe_value, fe_std
