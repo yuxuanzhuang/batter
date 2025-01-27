@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
-#SBATCH --partition=rondror
+#SBATCH --partition=PARTITIONNAME
 #SBATCH --nodes=1
 #SBATCH --output=STAGE-POSE-%j.out
 #SBATCH --error=STAGE-POSE-%j.err

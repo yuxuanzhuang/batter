@@ -1448,7 +1448,8 @@ class EquilibrationBuilder(SystemBuilder):
                     fout.write(line.replace(
                         'STAGE', stage).replace(
                             'POSE', pose).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
     
     def _find_anchor(self):
         """
@@ -3320,8 +3321,11 @@ class FreeEnergyBuilder(SystemBuilder):
         with open('../run_files/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                    fout.write(line.replace('STAGE', pose).replace(
+                                    'POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition_name))
+                                )
 
 
 class SDRFreeEnergyBuilder(FreeEnergyBuilder):
@@ -3480,7 +3484,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
         if (comp == 'e'):
             # Create simulation files for charge decoupling
@@ -3599,7 +3604,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
         if (comp == 'f'):
             mk1 = '1'
@@ -3652,7 +3658,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
         if (comp == 'w'):
             for i in range(0, num_sim+1):
@@ -3704,7 +3711,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
 
 class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
@@ -4034,7 +4042,8 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
 
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):

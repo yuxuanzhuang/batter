@@ -630,7 +630,9 @@ class System:
     def prepare(self,
             stage: str,
             input_file: Union[str, Path, SimulationConfig],
-            overwrite: bool = False):
+            overwrite: bool = False,
+            partition: str = 'rondror',
+            ):
         """
         Prepare the system for the FEP simulation.
 
@@ -642,10 +644,13 @@ class System:
             Path to the input file for the simulation.
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
+        partition : str, optional
+            The partition to submit the job. Default is 'rondror'.
         """
         logger.debug('Preparing the system')
         self.overwrite = overwrite
         self.builders_factory = BuilderFactory()
+        self.partition = partition
 
         self._get_sim_config(input_file)
         sim_config = self.sim_config
@@ -1045,6 +1050,7 @@ class System:
                      avg_struc: str = None,
                      rmsf_file: str = None,
                      only_equil: bool = False,
+                     partition: str = 'owners',
                      ):
         """
         Run the whole pipeline for calculating the binding free energy
@@ -1066,6 +1072,9 @@ class System:
         only_equil : bool, optional
             Whether to run only the equilibration stage.
             Default is False.
+        partition : str, optional
+            The partition to submit the job.
+            Default is 'rondror'.
         """
         logger.info('Running the pipeline')
         if avg_struc is not None and rmsf_file is not None:
@@ -1091,7 +1100,8 @@ class System:
             self.prepare(
                 stage='equil',
                 input_file=input_file,
-                overwrite=overwrite
+                overwrite=overwrite,
+                partition=partition
             )
             if rmsf_restraints:
                 self.add_rmsf_restraints(
@@ -1125,7 +1135,8 @@ class System:
             self.prepare(
                 stage='fe',
                 input_file=input_file,
-                overwrite=overwrite
+                overwrite=overwrite,
+                partition=partition
             )
             if rmsf_restraints:
                 self.add_rmsf_restraints(
