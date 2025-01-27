@@ -540,6 +540,14 @@ class SystemBuilder(ABC):
         tleap_solvate.close()
         p = run_with_log(tleap + ' -s -f tleap_solvate_pre.in > tleap_solvate_pre.log')
 
+        # get # of water molecules inside build.pdb
+        # to be used for the next iteration
+        num_waters = 0
+        with open('build.pdb') as myfile:
+            for line in myfile:
+                if 'WAT' in line:
+                    num_waters += 1
+
         # Retrieve residue number for lipids
         # because tleap separates them into different residues
 
@@ -590,7 +598,9 @@ class SystemBuilder(ABC):
         water = u.select_atoms(
             f'byres (resname WAT and prop z > {membrane_region_z_min} and prop z < {membrane_region_z_max})')
 
-        water_around_prot = u.select_atoms('byres (resname WAT and around 5 protein)')
+        #water_around_prot = u.select_atoms('byres (resname WAT and around 5 protein)')
+        
+        water_around_prot = u.select_atoms('resname WAT').residues[:num_waters].atoms
 
         final_system = u.atoms - water
         final_system = final_system | water_around_prot
@@ -2063,7 +2073,7 @@ class FreeEnergyBuilder(SystemBuilder):
         if (comp == 'x'):
             for i in range(0, ref_lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, lig_chainlist[i], float(lig_resid + 1)))
+                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, ref_lig_chainlist[i], float(lig_resid + 1)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(ref_lig_coords[i][0]), float(
                     ref_lig_coords[i][1]), float(ref_lig_coords[i][2]+sdr_dist)))
 
@@ -2071,7 +2081,7 @@ class FreeEnergyBuilder(SystemBuilder):
             build_file.write('TER\n')
             for i in range(0, ref_lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, lig_chainlist[i], float(lig_resid + 2)))
+                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, ref_lig_chainlist[i], float(lig_resid + 2)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(ref_lig_coords[i][0]), float(
                     ref_lig_coords[i][1]), float(ref_lig_coords[i][2])))
 

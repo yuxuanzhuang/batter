@@ -327,9 +327,15 @@ class System:
         Prepare for the alignment of the protein and ligand to the system.
         """
         logger.debug('Getting the alignment of the protein and ligand to the system')
-        u_prot = mda.Universe(self.protein_input)
-        u_sys = self.u_sys
 
+        # translate the cog of protein to the origin
+        # 
+        u_prot = mda.Universe(self.protein_input)
+
+        u_sys = self.u_sys
+        cog_prot = u_sys.select_atoms('protein and name CA C N O').center_of_geometry()
+        u_sys.atoms.positions -= cog_prot
+        
         # get translation-rotation matrix
         mobile = u_prot.select_atoms(self.protein_align).select_atoms('name CA')
         ref = u_sys.select_atoms(self.protein_align).select_atoms('name CA')
@@ -345,6 +351,10 @@ class System:
             mobile_atoms=u_prot.atoms,
             mobile_com=mobile_com,
             ref_com=ref_com)
+
+        cog_prot = u_prot.select_atoms('protein and name CA C N O').center_of_geometry()
+        u_prot.atoms.positions -= cog_prot
+        self.translation = cog_prot
 
         self.u_prot = u_prot
         # store these for ligand alignment
@@ -560,12 +570,16 @@ class System:
         self.ligand_paths = new_pose_paths
 
     def _align_2_system(self, mobile_atoms):
+
         _ = align._fit_to(
             mobile_coordinates=self.mobile_coord,
             ref_coordinates=self.ref_coord,
             mobile_atoms=mobile_atoms,
             mobile_com=self.mobile_com,
             ref_com=self.ref_com)
+
+        # need to translate the mobile_atoms to the system
+        mobile_atoms.positions -= self.translation
 
     def _prepare_membrane(self):
         """
@@ -1094,8 +1108,8 @@ class System:
             # Check for equilibration to finish
             logger.info('Checking the equilibration')
             while self._check_equilibration():
-                logger.info('Equilibration is still running. Waiting for 1 hour.')
-                time.sleep(60*60)
+                logger.info('Equilibration is still running. Waiting for 0.5 hour.')
+                time.sleep(30*60)
         else:
             logger.info('Equilibration is already finished')
         if only_equil:
@@ -1162,7 +1176,7 @@ class System:
         for pose in self.sim_config.poses_def:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 sim_finished[pose] = False
-            elif os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
+            if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
                 sim_failed[pose] = True
 
         if any(sim_failed.values()):
@@ -1191,14 +1205,14 @@ class System:
                         folder_2_check = f'{self.fe_folder}/{pose}/rest/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
                             sim_finished[f'{pose}/rest/{comp}{j:02d}'] = False
-                        elif os.path.exists(f"{folder_2_check}/FAILED"):
+                        if os.path.exists(f"{folder_2_check}/FAILED"):
                             sim_failed[f'{pose}/rest/{comp}{j:02d}'] = True
                 else:
                     for j in range(0, len(self.sim_config.lambdas)):
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
                             sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
-                        elif os.path.exists(f"{folder_2_check}/FAILED"):
+                        if os.path.exists(f"{folder_2_check}/FAILED"):
                             sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
         # if all are finished, return False
         if any(sim_failed.values()):
@@ -1289,6 +1303,8 @@ class RBFESystem(System):
     using the separated topology methodology in BAT.py.
     """
     def _process_ligands(self):
-        # check if they are the same ligand
-        # set the ligand path to the first ligand
         self.unique_ligand_paths = self.ligand_paths
+        if len(self.unique_ligand_paths) <= 1:
+            raise ValueError("RBFESystem requires at least two ligands "
+                             "for the relative binding free energy calculation")
+        logger.info(f'Reference ligand: {self.unique_ligand_paths[0]}')

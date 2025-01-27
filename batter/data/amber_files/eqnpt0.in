@@ -20,6 +20,7 @@ Equilibrate, NPT.
   gamma_ln = _gamma_ln_,
   ig = -1,
   ntp = _p_coupling_,
+  mcbarint = 10,
   csurften = _c_surften_,
   barostat = _barostat_,
   nstlim = 100000,
@@ -28,7 +29,7 @@ Equilibrate, NPT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '@CA,P31 | :1',
+  restraintmask = '@CA,C,N,P31 | :1',
   infe = 1,
  /
  &pmd
