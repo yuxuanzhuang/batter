@@ -4,6 +4,12 @@
 PRMTOP="full.hmr.prmtop"
 INPCRD="full.inpcrd"
 log_file="run.log"
+overwrite=${OVERWRITE:-0}
+
+if [[ -f FINISHED ]]; then
+    echo "Simulation is complete."
+    exit 0
+fi
 
 check_sim_failure() {
     local stage=$1
@@ -25,38 +31,56 @@ check_sim_failure() {
     fi
 }
 
-# Minimization steps
-# use CPU for minimization
-pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o min.out -r min.rst7 -ref $INPCRD > "$log_file" 2>&1
-check_sim_failure "Minimization"
 
-# Heating steps
-pmemd.cuda -O -i heat.in -p $PRMTOP -c min.rst7 -o heat.out -r heat.rst7 -x heat.nc -ref $INPCRD > "$log_file" 2>&1
-check_sim_failure "Heating"
+if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
+    echo "Skipping equilibration step steps."
+else
+    # Minimization steps
+    # use CPU for minimization
+    pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o min.out -r min.rst7 -ref $INPCRD > "$log_file" 2>&1
+    check_sim_failure "Minimization"
 
-# Equilibration with protein and lipid restrained
-pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c heat.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref heat.rst7 > "$log_file" 2>&1
-check_sim_failure "Pre Equilibration"
+    # Heating steps
+    pmemd.cuda -O -i heat.in -p $PRMTOP -c min.rst7 -o heat.out -r heat.rst7 -x heat.nc -ref $INPCRD > "$log_file" 2>&1
+    check_sim_failure "Heating"
 
-# Equilibration with COM restrained
-pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref $INPCRD > "$log_file" 2>&1
-check_sim_failure "Equilibration stage 0"
-for step in {1..4}; do
-    prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
-    curr=$(printf "eqnpt%02d" $step)
-    pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $INPCRD > "$log_file" 2>&1
-    check_sim_failure "Equilibration stage $step"
-done
+    # Equilibration with protein and lipid restrained
+    pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c heat.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref heat.rst7 > "$log_file" 2>&1
+    check_sim_failure "Pre Equilibration"
 
-# Initial MD production run
-pmemd.cuda -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md00.nc -ref $INPCRD > "$log_file" 2>&1
-check_sim_failure "MD stage 0"
+    # Equilibration with COM restrained
+    pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref $INPCRD > "$log_file" 2>&1
+    check_sim_failure "Equilibration stage 0"
+    for step in {1..4}; do
+        prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
+        curr=$(printf "eqnpt%02d" $step)
+        pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $INPCRD > "$log_file" 2>&1
+        check_sim_failure "Equilibration stage $step"
+    done
+fi
 
-# Additional MD production runs
-for i in {1..2}; do
-    prev=$(printf "md%02d.rst7" $((i - 1)))
-    curr=$(printf "md%02d" $i)
+if [[ $overwrite -eq 0 && -f md01.rst7 ]]; then
+    echo "Skipping md00 steps."
+else
+    # Initial MD production run
+    pmemd.cuda -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md00.nc -ref $INPCRD > "$log_file" 2>&1
+    check_sim_failure "MD stage 0"
+fi
 
-    pmemd.cuda -O -i mdin-${curr: -2} -p $PRMTOP -c $prev -o md-${curr: -2}.out -r $curr.rst7 -x md${curr: -2}.nc -ref $INPCRD > "$log_file" 2>&1
-    check_sim_failure "MD stage $i"
-done
+if [[ $overwrite -eq 0 && -f md02.rst7 ]]; then
+    echo "Skipping md01 steps."
+else
+    # Initial MD production run
+    pmemd.cuda -O -i mdin-01 -p $PRMTOP -c md00.rst7 -o md-01.out -r md01.rst7 -x md01.nc -ref $INPCRD > "$log_file" 2>&1
+    check_sim_failure "MD stage 1"
+fi
+
+if [[ $overwrite -eq 0 && -f output.pdb ]]; then
+    echo "Skipping md02 steps."
+else
+    # Initial MD production run
+    pmemd.cuda -O -i mdin-02 -p $PRMTOP -c md01.rst7 -o md-02.out -r md02.rst7 -x md02.nc -ref $INPCRD > "$log_file" 2>&1
+    check_sim_failure "MD stage 2"
+fi
+
+cpptraj -p $PRMTOP -y md02.rst7 -x output.pdb > "$log_file" 2>&1

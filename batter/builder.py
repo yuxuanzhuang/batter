@@ -3323,9 +3323,8 @@ class FreeEnergyBuilder(SystemBuilder):
                 for line in fin:
                     fout.write(line.replace('STAGE', pose).replace(
                                     'POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition_name))
-                                )
+                                        'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
 
 class SDRFreeEnergyBuilder(FreeEnergyBuilder):
