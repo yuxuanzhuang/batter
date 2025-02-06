@@ -3973,6 +3973,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
+        molr = self.molr
         num_sim = len(self.sim_config.release_eq)
         pose = self.pose
         comp = self.comp
@@ -4045,25 +4046,25 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
-                            '_lig_name_', mol))
+                            '_lig_name_', f'{mol},{molr}'))
         with open("../amber_files/eqnpt0-ex.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                         'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
-                            '_lig_name_', mol))
+                            '_lig_name_', f'{mol},{molr}'))
         with open("../amber_files/eqnpt-ex.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
                         'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
-                            '_lig_name_', mol))
+                            '_lig_name_', f'{mol},{molr}'))
         with open("../amber_files/heat-ex.in", "rt") as fin:
             with open("./heat.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
                         'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
-                            '_lig_name_', mol))
+                            '_lig_name_', f'{mol},{molr}'))
 
 
         # Create running scripts for local and server

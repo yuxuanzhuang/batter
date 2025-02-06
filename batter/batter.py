@@ -17,6 +17,7 @@ import numpy as np
 import os
 import sys
 import shutil
+import glob
 import subprocess as sp
 from contextlib import contextmanager
 import tempfile
@@ -634,6 +635,11 @@ class System:
         if sim_config_retain_lig_prot != self.retain_lig_prot:
             logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}\n"
                             f"System is prepared with {self.retain_lig_prot}")
+        
+        if sim_config.fe_type == 'relative' and not isinstance(self, RBFESystem):
+            raise ValueError(f"Invalid fe_type: {sim_config.fe_type}, "
+                 "should be 'relative' for RBFE system")
+                 
         self.sim_config = sim_config
 
     def prepare(self,
@@ -980,14 +986,32 @@ class System:
                 if os.path.exists(cv_file + '.bak'):
                     shutil.copy(cv_file + '.bak', cv_file)
                 else:
-                    # copy original cv file to backup
+                    # copy original cv file for backup
                     shutil.copy(cv_file, cv_file + '.bak')
                 
-                with open(cv_file, 'a') as f:
+                with open(cv_file, 'r') as f:
+                    lines = f.readlines()
+
+                with open(cv_file + '.eq0', 'w') as f:
+                    for line in lines:
+                        f.write(line)
                     f.write("\n")
                     for line in cv_lines:
                         f.write(line)
-
+                
+                for i, line in enumerate(lines):
+                    if 'anchor_strength' in line:
+                        lines[i] = line.replace('anchor_strength =    10.0000,    10.0000,',
+                                    f'anchor_strength =    0,   0,')
+                        break
+                    
+                with open(cv_file, 'w') as f:
+                    for line in lines:
+                        f.write(line)
+                    f.write("\n")
+                    for line in cv_lines:
+                        f.write(line)
+                
         if stage == 'equil':
             for pose in self.sim_config.poses_def:
                 u_ref = mda.Universe(
@@ -996,8 +1020,29 @@ class System:
 
                 cv_files = [f"{self.equil_folder}/{pose}/cv.in"]
                 write_colvar_block(u_ref, cv_files)
+                
+                eqnpt0 = f"{self.equil_folder}/{pose}/eqnpt0.in"
+                
+                with open(eqnpt0, 'r') as f:
+                    lines = f.readlines()
+                with open(eqnpt0, 'w') as f:
+                    for line in lines:
+                        if 'cv.in' in line:
+                            f.write(line.replace('cv.in', 'cv.in.eq0'))
+                        else:
+                            f.write(line)
+                
+                eqnpt = f"{self.equil_folder}/{pose}/eqnpt.in"
+                
+                with open(eqnpt, 'r') as f:
+                    lines = f.readlines()
+                with open(eqnpt, 'w') as f:
+                    for line in lines:
+                        if 'cv.in' in line:
+                            f.write(line.replace('cv.in', 'cv.in.bak'))
+                        else:
+                            f.write(line)
 
-        
         elif stage == 'fe':
             for pose in self.sim_config.poses_def:
                 for comp in self.sim_config.components:
@@ -1014,6 +1059,28 @@ class System:
                             for j in range(0, len(self.sim_config.lambdas))]
                     
                     write_colvar_block(u_ref, cv_files)
+                    
+                    eq_in_files = glob.glob(f"{folder_comp}/*/eqnpt0.in")
+                    for eq_in_file in eq_in_files:
+                        with open(eq_in_file, 'r') as f:
+                            lines = f.readlines()
+                        with open(eq_in_file, 'w') as f:
+                            for line in lines:
+                                if 'cv.in' in line:
+                                    f.write(line.replace('cv.in', 'cv.in.eq0'))
+                                else:
+                                    f.write(line)
+                    
+                    eq_in_files = glob.glob(f"{folder_comp}/*/eqnpt.in")
+                    for eq_in_file in eq_in_files:
+                        with open(eq_in_file, 'r') as f:
+                            lines = f.readlines()
+                        with open(eq_in_file, 'w') as f:
+                            for line in lines:
+                                if 'cv.in' in line:
+                                    f.write(line.replace('cv.in', 'cv.in.bak'))
+                                else:
+                                    f.write(line)
         else:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('RMSF restraints added')
