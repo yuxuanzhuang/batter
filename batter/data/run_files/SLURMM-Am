@@ -7,7 +7,7 @@
 #SBATCH --error=STAGE-POSE-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
-#SBATCH -t 12:00:00
+#SBATCH -t 8:00:00
 #SBATCH --signal=USR1@60  # Send SIGUSR1 60 seconds before job preemption
 
 
@@ -23,12 +23,16 @@ cleanup() {
     # if FAILED file exists, then the job failed
     if [ -f FAILED ]; then
         echo "Job failed remark found. Job failed."
+        exit 0
     fi
     if [ -f FINISHED ]; then
         echo "Job finished remark found. Job finished."
+        exit 0
     fi
     # else, resubmit the job
     sbatch --export=OVERWRITE=0 $0
+
+    exit 0
 }
 
 trap cleanup SIGTERM SIGINT SIGUSR1

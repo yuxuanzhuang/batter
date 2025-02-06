@@ -21,14 +21,14 @@ Equilibrate, NPT.
   ig = -1,
   ntp = _p_coupling_,
   csurften = _c_surften_,
-  barostat = _barostat_,
+  barostat = 2,
   nstlim = 20000,
-  dt = _step_,
+  dt = 0.001,
   nmropt = 1,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = ':1',
+  restraintmask = '(@CA | :1 | :_lig_name_) & !@H=',
   infe = 1,
  /
  &pmd

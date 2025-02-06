@@ -666,7 +666,11 @@ def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
                             potl.write('\n')
                         n = n+1
                     if len(cols) >= 2 and cols[0] == 'Energy' and cols[1] == 'at':
-                        potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
+                        try:
+                            potl.write('%5d  %6s   %10s\n' % (n, cols[2], cols[4]))
+                        except:
+                            raise Exception(f'Error reading {cols} as energy'
+                                            f' in file {md_out_file}')
         potl.write('\n')
         potl.close()
         # Separate in blocks
@@ -1837,20 +1841,23 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
             # Parse Data
             n = 0
             lambdas = []
-            for line in restdat:
-                cols = line.split()
-                if len(cols) >= 1:
-                    lambdas.append(float(cols[1]))
-                if len(cols) == 0:
-                    break
-            for line in restdat:
-                cols = line.split()
-                if len(cols) >= 1:
-                    if '**' not in cols[2]:
-                        lamb = float(cols[1].strip())
-                        val[n, k, lambdas.index(lamb)] = cols[2]
-                if len(cols) == 0:
-                    n += 1
+            try:
+                for line in restdat:
+                    cols = line.split()
+                    if len(cols) >= 1:
+                        lambdas.append(float(cols[1]))
+                    if len(cols) == 0:
+                        break
+                for line in restdat:
+                    cols = line.split()
+                    if len(cols) >= 1:
+                        if '**' not in cols[2]:
+                            lamb = float(cols[1].strip())
+                            val[n, k, lambdas.index(lamb)] = cols[2]
+                    if len(cols) == 0:
+                        n += 1
+            except:
+                raise ValueError(f'Error reading data from file {filename}')
             N[k] = n
 
             # Calculate reduced potential

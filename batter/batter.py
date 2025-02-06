@@ -73,7 +73,6 @@ class System:
     """
     def __init__(self,
                  folder: str,
-                 work_dir: str = '.',
                 ):
         """
         Initialize the System class with the folder name.
@@ -84,21 +83,14 @@ class System:
         ----------
         folder : str
             The folder containing the system files.
-        work_dir : str, optional
-            The working directory for the system. Default is '.'.
-            This is useful when the system is created in a different directory.
         """
         self.output_dir = os.path.abspath(folder) + '/'
-        cwd = os.getcwd()
-        self.work_dir = work_dir
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
             os.makedirs(self.output_dir)
         else:
             logger.info(f"Loading an existing system: {self.output_dir}")
-            os.chdir(self.work_dir)
             self._load_system()
-            os.chdir(cwd)
 
     def _load_system(self):
         """
@@ -119,9 +111,6 @@ class System:
                 self.__dict__.update(loaded_state.__dict__)
         except Exception as e:
             logger.error(f"Error loading the system: {e}")
-            logger.error(f"Add `work_dir` to the original folder that"
-                          " created the system might help")
-
 
         if not os.path.exists(f"{self.output_dir}/all-poses"):
             logger.info(f"The folder does not contain all-poses: {self.output_dir}")
@@ -208,13 +197,13 @@ class System:
             logger.info(f"{arg}: {values[arg]}")
 
         self.system_name = system_name
-        self.protein_input = protein_input
-        self.system_topology = system_topology
-        self.system_coordinate = system_coordinate
-        self.ligand_paths = ligand_paths
+        self._protein_input = self._convert_2_relative_path(protein_input)
+        self._system_topology = self._convert_2_relative_path(system_topology)
+        self._system_coordinate = self._convert_2_relative_path(system_coordinate)
+        self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
         self.mols = []
-        if not isinstance(ligand_paths, list):
-            raise ValueError(f"Invalid ligand_paths: {ligand_paths}, "
+        if not isinstance(self.ligand_paths, list):
+            raise ValueError(f"Invalid ligand_paths: {self.ligand_paths}, "
                               "ligand_paths should be a list of ligand files")
         self.receptor_segment = receptor_segment
         self.protein_align = protein_align
@@ -224,11 +213,11 @@ class System:
         self.overwrite = overwrite
 
         # check input existence
-        if not os.path.exists(protein_input):
+        if not os.path.exists(self.protein_input):
             raise FileNotFoundError(f"Protein input file not found: {protein_input}")
-        if not os.path.exists(system_topology):
+        if not os.path.exists(self.system_topology):
             raise FileNotFoundError(f"System input file not found: {system_topology}")
-        for ligand_path in ligand_paths:
+        for ligand_path in self.ligand_paths:
             if not os.path.exists(ligand_path):
                 raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
         
@@ -308,11 +297,31 @@ class System:
                 self._process_ligand()
         self._prepare_ligand_poses()
         
-        # dump the system configuration
-        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-            pickle.dump(self, f)
+        self.save()
 
         logger.info('System loaded and prepared')
+
+    def _convert_2_relative_path(self, path):
+        """
+        Convert the path to a relative path to the output directory.
+        """
+        return os.path.relpath(path, self.output_dir)
+
+    @property
+    def protein_input(self):
+        return f"{self.output_dir}/{self._protein_input}"
+
+    @property
+    def system_topology(self):
+        return f"{self.output_dir}/{self._system_topology}"
+
+    @property
+    def system_coordinate(self):
+        return f"{self.output_dir}/{self._system_coordinate}"
+
+    @property
+    def ligand_paths(self):
+        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self._ligand_paths]
 
     def _process_ligands(self):
         """
@@ -567,7 +576,7 @@ class System:
 
             new_pose_paths.append(f"{self.poses_folder}/pose{i}.pdb")
 
-        self.ligand_paths = new_pose_paths
+        self._ligand_paths = [self._convert_2_relative_path(pose) for pose in new_pose_paths]
 
     def _align_2_system(self, mobile_atoms):
 
@@ -700,9 +709,7 @@ class System:
             self._prepare_fe_system()
             logger.info('FE System prepared')
 
-        # dump the system configuration
-        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-            pickle.dump(self, f)
+        self.save()
 
     def submit(self, stage: str, cluster: str = 'slurm'):
         """
@@ -1011,11 +1018,33 @@ class System:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('RMSF restraints added')
 
-    def analysis(self,
-        input_file: Union[str, Path, SimulationConfig]=None):
+    def analysis(
+        self,
+        input_file: Union[str, Path, SimulationConfig]=None,
+        load=True
+        ):
         """
         Analyze the simulation results.
+
+        Parameters
+        ----------
+        input_file : str
+            The input file for the simulation.
+            Default is None and will use the input file
+            used for the simulation.
+        load : bool, optional
+            Whether to load the system fe results from before
+            Default is True.
         """
+        if load:
+            try:
+                self.fe_results
+                for i, (pose, fe) in enumerate(self.fe_results.items()):
+                    mol_name = self.mols[i]
+                    logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
+                return
+            except AttributeError:
+                pass
         self.fe_results = {}
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -1043,6 +1072,9 @@ class System:
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
+        
+        self.save()
+        
     
     def run_pipeline(self,
                      input_file: Union[str, Path, SimulationConfig],
@@ -1151,8 +1183,8 @@ class System:
             # Check the free energy calculation to finish
             logger.info('Checking the free energy calculation')
             while self._check_fe():
-                logger.info('Free energy calculation is still running. Waiting for 1 hour.')
-                time.sleep(60*60)
+                logger.info('Free energy calculation is still running. Waiting for 0.5 hour.')
+                time.sleep(30*60)
         else:
             logger.info('Free energy calculation is already finished')
 
@@ -1174,7 +1206,12 @@ class System:
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
         
-        # dump the system configuration
+        self.save()
+        
+    def save(self):
+        """
+        Save the system to a pickle file.
+        """
         with open(f"{self.output_dir}/system.pkl", 'wb') as f:
             pickle.dump(self, f)
 

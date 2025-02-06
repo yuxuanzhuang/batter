@@ -26,26 +26,33 @@ check_sim_failure() {
         echo "$stage Simulation failed."
         cat $log_file
         exit 1
+    elif grep -q "Error" "$log_file"; then
+        echo "$stage Simulation failed."
+        cat $log_file
+        exit 1
     else
         echo "$stage complete."
     fi
 }
 
 
-if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
-    echo "Skipping equilibration step steps."
+if [[ $overwrite -eq 0 && -f eqnpt_pre.rst7 ]]; then
+    echo "Skipping minimization steps."
 else
-    # Minimization steps
-    # use CPU for minimization
-    pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o min.out -r min.rst7 -ref $INPCRD > "$log_file" 2>&1
+    # Minimization
+    pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
     check_sim_failure "Minimization"
+fi
 
+if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
+    echo "Skipping equilibration steps."
+else
     # Heating steps
-    pmemd.cuda -O -i heat.in -p $PRMTOP -c min.rst7 -o heat.out -r heat.rst7 -x heat.nc -ref $INPCRD > "$log_file" 2>&1
-    check_sim_failure "Heating"
+    # pmemd.cuda -O -i heat.in -p $PRMTOP -c min.rst7 -o heat.out -r heat.rst7 -x heat.nc -ref $INPCRD > "$log_file" 2>&1
+    # check_sim_failure "Heating"
 
     # Equilibration with protein and lipid restrained
-    pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c heat.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref heat.rst7 > "$log_file" 2>&1
+    pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref mini.rst7 > "$log_file" 2>&1
     check_sim_failure "Pre Equilibration"
 
     # Equilibration with COM restrained

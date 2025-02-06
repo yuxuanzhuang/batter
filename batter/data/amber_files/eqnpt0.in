@@ -4,9 +4,9 @@
 Equilibrate, NPT.
  &cntrl
   imin = 0,
-  ntx = 5,
+  ntx = 1,
   ntxo = 1,
-  irest = 1,
+  irest = 0,
   ntpr = 10000,
   ntwr = 10000,
   ntwx = 10000,
@@ -22,14 +22,14 @@ Equilibrate, NPT.
   ntp = _p_coupling_,
   mcbarint = 10,
   csurften = _c_surften_,
-  barostat = _barostat_,
+  barostat = 2,
   nstlim = 100000,
   dt = 0.001,
   nmropt = 1,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '@CA,C,N,P31 | :1',
+  restraintmask = '(@CA,C,N,P31 | :1 | :_lig_name_) & !@H=',
   infe = 1,
  /
  &pmd

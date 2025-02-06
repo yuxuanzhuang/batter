@@ -1402,24 +1402,29 @@ class EquilibrationBuilder(SystemBuilder):
         with open(f"{amber_file_path}/mini.in", "rt") as fin:
             with open("./mini.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/therm1.in", "rt") as fin:
             with open("./therm1.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/therm2.in", "rt") as fin:
             with open("./therm2.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                        '_L3_', L3).replace('_temperature_', str(temperature)))
+                        '_L3_', L3).replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/eqnpt0.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_temperature_', str(temperature)))
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/eqnpt.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_temperature_', str(temperature)))
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
 
         # Create gradual release files for equilibrium
         for i in range(0, num_sim):
@@ -3207,24 +3212,29 @@ class FreeEnergyBuilder(SystemBuilder):
             with open(f"../{amber_file_path}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm1.in", "rt") as fin:
                 with open("./therm1.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm2.in", "rt") as fin:
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                            '_L3_', L3).replace('_temperature_', str(temperature)))
+                            '_L3_', L3).replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt0-fe.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt-fe.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         elif (comp == 'r' or comp == 'c'):
             with open(f"../{amber_file_path}/mini-lig.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
@@ -3240,38 +3250,46 @@ class FreeEnergyBuilder(SystemBuilder):
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
-                            fout.write(line.replace('_temperature_', str(temperature)))
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt0-lig.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt-lig.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
-                            fout.write(line.replace('_temperature_', str(temperature)))
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         else:  # n component
             with open(f"../{amber_file_path}/mini-sim.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm1-sim.in", "rt") as fin:
                 with open("./therm1.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm2-sim.in", "rt") as fin:
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                            '_L3_', L3).replace('_temperature_', str(temperature)))
+                            '_L3_', L3).replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt0-sim.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt-sim.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
 
         if (comp != 'c' and comp != 'r' and comp != 'n'):
             for i in range(0, num_sim+1):
@@ -3409,22 +3427,26 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt0.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/eqnpt-lj.in", "rt") as fin:
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-lj.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/mini-lj", "rt") as fin:
                     with open("./mini.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
 
             # Simulation files for double decoupling
             elif (dec_method == 'dd'):
@@ -3463,12 +3485,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-lj-dd.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -3528,22 +3552,26 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt0.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/eqnpt-ch.in", "rt") as fin:
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-ch.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/mini-ch", "rt") as fin:
                     with open("./mini.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
 
             elif (dec_method == 'dd'):
                 with open('./vac.pdb') as myfile:
@@ -3583,12 +3611,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-ch-dd.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -3637,12 +3667,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./heat.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' %
-                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
             with open("../amber_files/eqnpt-ch-lig.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' %
-                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -3690,12 +3722,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./heat.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
             with open("../amber_files/eqnpt-lj-lig.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -4010,22 +4044,26 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     with open("./mini.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
         with open("../amber_files/eqnpt0-ex.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
-                        'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                        'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
         with open("../amber_files/eqnpt-ex.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
         with open("../amber_files/heat-ex.in", "rt") as fin:
             with open("./heat.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
 
 
         # Create running scripts for local and server

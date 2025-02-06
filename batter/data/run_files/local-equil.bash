@@ -31,21 +31,26 @@ check_sim_failure() {
     fi
 }
 
-if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
-    echo "Skipping equilibration step steps."
+if [[ $overwrite -eq 0 && -f eqnpt_pre.rst7 ]]; then
+    echo "Skipping EM steps." 
 else
     # Minimization
     pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
     check_sim_failure "Minimization"
+fi
 
+if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
+    echo "Skipping equilibration steps."
+else
     # Heating steps
-    pmemd.cuda -O -i therm1.in -p $PRMTOP -c mini.rst7 -o therm1.out -r therm1.rst7 -x therm1.nc -ref $INPCRD > "$log_file" 2>&1
-    check_sim_failure "Heating 1"
-    pmemd.cuda -O -i therm2.in -p $PRMTOP -c therm1.rst7 -o therm2.out -r therm2.rst7 -x therm2.nc -ref therm1.rst7 > "$log_file" 2>&1
-    check_sim_failure "Heating 2"
+    # pmemd.cuda -O -i therm1.in -p $PRMTOP -c mini.rst7 -o therm1.out -r therm1.rst7 -x therm1.nc -ref $INPCRD > "$log_file" 2>&1
+    # check_sim_failure "Heating 1"
+    # pmemd.cuda -O -i therm2.in -p $PRMTOP -c therm1.rst7 -o therm2.out -r therm2.rst7 -x therm2.nc -ref therm1.rst7 > "$log_file" 2>&1
+    # check_sim_failure "Heating 2"
 
     # Equilibration with protein restrained
-    pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c therm2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref therm2.rst7 > "$log_file" 2>&1
+    # pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c therm2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref therm2.rst7 > "$log_file" 2>&1
+    pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref mini.rst7 > "$log_file" 2>&1
     check_sim_failure "Pre equilibration"
 
     # Equilibration with COM restrained
@@ -59,7 +64,7 @@ else
     done
 fi
 
-if [[ $overwrite -eq 0 && -f md-01.rst7 ]]; then
+if [[ $overwrite -eq 0 && -f md01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
 # Initial MD run
