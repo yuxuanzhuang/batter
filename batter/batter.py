@@ -1027,7 +1027,7 @@ class System:
                     lines = f.readlines()
                 with open(eqnpt0, 'w') as f:
                     for line in lines:
-                        if 'cv.in' in line:
+                        if 'cv.in' in line and 'cv.in.eq0' not in line:
                             f.write(line.replace('cv.in', 'cv.in.eq0'))
                         else:
                             f.write(line)
@@ -1038,7 +1038,7 @@ class System:
                     lines = f.readlines()
                 with open(eqnpt, 'w') as f:
                     for line in lines:
-                        if 'cv.in' in line:
+                        if 'cv.in' in line and 'cv.in.bak' not in line:
                             f.write(line.replace('cv.in', 'cv.in.bak'))
                         else:
                             f.write(line)
@@ -1066,7 +1066,7 @@ class System:
                             lines = f.readlines()
                         with open(eq_in_file, 'w') as f:
                             for line in lines:
-                                if 'cv.in' in line:
+                                if 'cv.in' in line and 'cv.in.eq0' not in line:
                                     f.write(line.replace('cv.in', 'cv.in.eq0'))
                                 else:
                                     f.write(line)
@@ -1077,7 +1077,7 @@ class System:
                             lines = f.readlines()
                         with open(eq_in_file, 'w') as f:
                             for line in lines:
-                                if 'cv.in' in line:
+                                if 'cv.in' in line and 'cv.in.bak' not in line:
                                     f.write(line.replace('cv.in', 'cv.in.bak'))
                                 else:
                                     f.write(line)
