@@ -39,6 +39,7 @@ from loguru import logger
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
+from batter.utils.slurm_job import SLURMJob
 
 from MDAnalysis.analysis import rms, align
 
@@ -86,6 +87,9 @@ class System:
             The folder containing the system files.
         """
         self.output_dir = os.path.abspath(folder) + '/'
+
+        self._slurm_jobs = {}
+
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
             os.makedirs(self.output_dir)
@@ -717,7 +721,12 @@ class System:
 
         self.save()
 
-    def submit(self, stage: str, cluster: str = 'slurm'):
+    def submit(self,
+               stage: str,
+               cluster: str = 'slurm',
+               partition=None,
+               overwrite: bool = False,
+               ):
         """
         Submit the simulation to the cluster.
 
@@ -728,6 +737,12 @@ class System:
         cluster : str
             The cluster to submit the simulation.
             Options are 'slurm' and 'frontier'.
+        partition : str, optional
+            The partition to submit the job. Default is None,
+            which means the default partition during prepartiion
+            will be used.
+        overwrite : bool, optional
+            Whether to overwrite and re-run all the existing simulations.
         """
         if cluster == 'frontier':
             self._submit_frontier(stage)
@@ -737,8 +752,43 @@ class System:
         if stage == 'equil':
             logger.info('Submit equilibration stage')
             for pose in self.sim_config.poses_def:
-                run_with_log(f'sbatch SLURMM-run',
-                            working_dir=f'{self.equil_folder}/{pose}')
+                # check existing jobs
+                if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
+                    logger.info(f'Equilibration for {pose} has been finished')
+                    logger.info(f'add overwrite=True to re-run the simulation')
+                    continue
+                if os.path.exists(f"{self.equil_folder}/{pose}/FAILED") and not overwrite:
+                    logger.info(f'Equilibration for {pose} has failed')
+                    logger.info(f'add overwrite=True to re-run the simulation')
+                    continue
+                if f'equil_{pose}' in self._slurm_jobs:
+                    # check if it's finished
+                    slurm_job = self._slurm_jobs[f'equil_{pose}']
+                    # if the job is finished but the FINISHED file is not created
+                    # resubmit the job
+                    if not slurm_job.is_still_running():
+                        slurm_job.submit()
+                        continue
+                    elif overwrite:
+                        slurm_job.cancel()
+                        slurm_job.submit()
+                    else:
+                        logger.info(f'Equilibration job for {pose} is still running')
+                        continue
+
+                if overwrite:
+                    # remove FINISHED and FAILED
+                    os.remove(f"{self.equils_folder}/{pose}/FINISHED", ignore_errors=True)
+                    os.remove(f"{self.equils_folder}/{pose}/FAILED", ignore_errors=True)
+
+                slurm_job = SLURMJob(
+                                filename=f'{self.equil_folder}/{pose}/SLURMM-run',
+                                partition=partition)
+                slurm_job.submit()
+                self._slurm_jobs.update(
+                    {f'equil_{pose}': slurm_job}
+                )
+
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
 
         elif stage == 'fe':
@@ -1374,6 +1424,10 @@ class System:
         yield
         os.chdir(cwd)
         logger.debug(f'Changed directory back to {os.getcwd()}')
+    
+    @property
+    def slurm_jobs(self):
+        return self._slurm_jobs
 
 
 class ABFESystem(System):
