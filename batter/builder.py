@@ -279,7 +279,7 @@ class SystemBuilder(ABC):
 
         # copy all the files from the ff directory
         for file in glob.glob('../ff/*'):
-            if file.endswith('.in'):
+            if file.endswith('.in') or file.endswith('.pdb'):
                 continue
             shutil.copy(file, '.')
 
@@ -528,7 +528,7 @@ class SystemBuilder(ABC):
         tleap_solvate.write('model = loadpdb build.pdb\n\n')
         tleap_solvate.write('# Create water box with chosen model\n')
         tleap_solvate.write('solvatebox model ' + water_box +
-                            ' {' + str(buffer_x) + ' ' + str(buffer_y) + ' ' + str(buff) + '} 0.7\n\n')
+                            ' {' + str(buffer_x) + ' ' + str(buffer_y) + ' ' + str(buff) + '} 1\n\n')
         if tleap_remove is not None:
             tleap_solvate.write('# Remove a few waters manually\n')
             for water in tleap_remove:
@@ -539,6 +539,14 @@ class SystemBuilder(ABC):
         tleap_solvate.write('quit')
         tleap_solvate.close()
         p = run_with_log(tleap + ' -s -f tleap_solvate_pre.in > tleap_solvate_pre.log')
+
+        # get # of water molecules inside build.pdb
+        # to be used for the next iteration
+        num_waters = 0
+        with open('build.pdb') as myfile:
+            for line in myfile:
+                if 'WAT' in line:
+                    num_waters += 1
 
         # Retrieve residue number for lipids
         # because tleap separates them into different residues
@@ -590,7 +598,9 @@ class SystemBuilder(ABC):
         water = u.select_atoms(
             f'byres (resname WAT and prop z > {membrane_region_z_min} and prop z < {membrane_region_z_max})')
 
-        water_around_prot = u.select_atoms('byres (resname WAT and around 5 protein)')
+        #water_around_prot = u.select_atoms('byres (resname WAT and around 5 protein)')
+        
+        water_around_prot = u.select_atoms('resname WAT').residues[:num_waters].atoms
 
         final_system = u.atoms - water
         final_system = final_system | water_around_prot
@@ -1392,24 +1402,29 @@ class EquilibrationBuilder(SystemBuilder):
         with open(f"{amber_file_path}/mini.in", "rt") as fin:
             with open("./mini.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/therm1.in", "rt") as fin:
             with open("./therm1.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/therm2.in", "rt") as fin:
             with open("./therm2.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                        '_L3_', L3).replace('_temperature_', str(temperature)))
+                        '_L3_', L3).replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/eqnpt0.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_temperature_', str(temperature)))
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         with open(f"{amber_file_path}/eqnpt.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_temperature_', str(temperature)))
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
 
         # Create gradual release files for equilibrium
         for i in range(0, num_sim):
@@ -1438,7 +1453,8 @@ class EquilibrationBuilder(SystemBuilder):
                     fout.write(line.replace(
                         'STAGE', stage).replace(
                             'POSE', pose).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
     
     def _find_anchor(self):
         """
@@ -2063,7 +2079,7 @@ class FreeEnergyBuilder(SystemBuilder):
         if (comp == 'x'):
             for i in range(0, ref_lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, lig_chainlist[i], float(lig_resid + 1)))
+                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, ref_lig_chainlist[i], float(lig_resid + 1)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(ref_lig_coords[i][0]), float(
                     ref_lig_coords[i][1]), float(ref_lig_coords[i][2]+sdr_dist)))
 
@@ -2071,7 +2087,7 @@ class FreeEnergyBuilder(SystemBuilder):
             build_file.write('TER\n')
             for i in range(0, ref_lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, lig_chainlist[i], float(lig_resid + 2)))
+                                 ('ATOM', i+1, ref_lig_atomlist[i], molr, ref_lig_chainlist[i], float(lig_resid + 2)))
                 build_file.write('%8.3f%8.3f%8.3f' % (float(ref_lig_coords[i][0]), float(
                     ref_lig_coords[i][1]), float(ref_lig_coords[i][2])))
 
@@ -3196,24 +3212,29 @@ class FreeEnergyBuilder(SystemBuilder):
             with open(f"../{amber_file_path}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm1.in", "rt") as fin:
                 with open("./therm1.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm2.in", "rt") as fin:
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                            '_L3_', L3).replace('_temperature_', str(temperature)))
+                            '_L3_', L3).replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt0-fe.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt-fe.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         elif (comp == 'r' or comp == 'c'):
             with open(f"../{amber_file_path}/mini-lig.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
@@ -3229,38 +3250,46 @@ class FreeEnergyBuilder(SystemBuilder):
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
-                            fout.write(line.replace('_temperature_', str(temperature)))
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt0-lig.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt-lig.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         if not 'restraint' in line and not 'ntr = 1' in line:
-                            fout.write(line.replace('_temperature_', str(temperature)))
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         else:  # n component
             with open(f"../{amber_file_path}/mini-sim.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm1-sim.in", "rt") as fin:
                 with open("./therm1.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3))
+                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/therm2-sim.in", "rt") as fin:
                 with open("./therm2.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                            '_L3_', L3).replace('_temperature_', str(temperature)))
+                            '_L3_', L3).replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt0-sim.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
             with open(f"../{amber_file_path}/eqnpt-sim.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)))
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
 
         if (comp != 'c' and comp != 'r' and comp != 'n'):
             for i in range(0, num_sim+1):
@@ -3310,8 +3339,10 @@ class FreeEnergyBuilder(SystemBuilder):
         with open('../run_files/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                    fout.write(line.replace('STAGE', pose).replace(
+                                    'POSE', '%s%02d' % (comp, int(win))).replace(
+                                        'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
 
 class SDRFreeEnergyBuilder(FreeEnergyBuilder):
@@ -3396,22 +3427,26 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt0.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/eqnpt-lj.in", "rt") as fin:
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-lj.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/mini-lj", "rt") as fin:
                     with open("./mini.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
 
             # Simulation files for double decoupling
             elif (dec_method == 'dd'):
@@ -3450,12 +3485,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-lj-dd.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -3470,7 +3507,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
         if (comp == 'e'):
             # Create simulation files for charge decoupling
@@ -3514,22 +3552,26 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt0.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/eqnpt-ch.in", "rt") as fin:
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-ch.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/mini-ch", "rt") as fin:
                     with open("./mini.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', mol))
 
             elif (dec_method == 'dd'):
                 with open('./vac.pdb') as myfile:
@@ -3569,12 +3611,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                     with open("./eqnpt.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
                 with open("../amber_files/heat-ch-dd.in", "rt") as fin:
                     with open("./heat.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -3589,7 +3633,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
         if (comp == 'f'):
             mk1 = '1'
@@ -3622,12 +3667,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./heat.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' %
-                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
             with open("../amber_files/eqnpt-ch-lig.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' %
-                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                                float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -3642,7 +3689,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
         if (comp == 'w'):
             for i in range(0, num_sim+1):
@@ -3674,12 +3722,14 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./heat.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
             with open("../amber_files/eqnpt-lj-lig.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
 
             # Create running scripts for local and server
             with open('../run_files/local-dd.bash', "rt") as fin:
@@ -3694,7 +3744,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
 
 class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
@@ -3922,6 +3973,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
+        molr = self.molr
         num_sim = len(self.sim_config.release_eq)
         pose = self.pose
         comp = self.comp
@@ -3993,22 +4045,26 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     with open("./mini.in", "wt") as fout:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', f'{mol},{molr}'))
         with open("../amber_files/eqnpt0-ex.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
-                        'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                        'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', f'{mol},{molr}'))
         with open("../amber_files/eqnpt-ex.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', f'{mol},{molr}'))
         with open("../amber_files/heat-ex.in", "rt") as fin:
             with open("./heat.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                        'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
+                            '_lig_name_', f'{mol},{molr}'))
 
 
         # Create running scripts for local and server
@@ -4024,7 +4080,8 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name))
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
 
 
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):

@@ -17,6 +17,7 @@ import numpy as np
 import os
 import sys
 import shutil
+import glob
 import subprocess as sp
 from contextlib import contextmanager
 import tempfile
@@ -102,13 +103,15 @@ class System:
         
         system_file = os.path.join(self.output_dir, "system.pkl")
 
-        with open(system_file, 'rb') as f:
-            loaded_state = pickle.load(f)
-            # in case the folder is moved
-            loaded_state.output_dir = self.output_dir
-            # Update self with loaded attributes
-            self.__dict__.update(loaded_state.__dict__)
-
+        try:
+            with open(system_file, 'rb') as f:
+                loaded_state = pickle.load(f)
+                # in case the folder is moved
+                loaded_state.output_dir = self.output_dir
+                # Update self with loaded attributes
+                self.__dict__.update(loaded_state.__dict__)
+        except Exception as e:
+            logger.error(f"Error loading the system: {e}")
 
         if not os.path.exists(f"{self.output_dir}/all-poses"):
             logger.info(f"The folder does not contain all-poses: {self.output_dir}")
@@ -195,13 +198,13 @@ class System:
             logger.info(f"{arg}: {values[arg]}")
 
         self.system_name = system_name
-        self.protein_input = protein_input
-        self.system_topology = system_topology
-        self.system_coordinate = system_coordinate
-        self.ligand_paths = ligand_paths
+        self._protein_input = self._convert_2_relative_path(protein_input)
+        self._system_topology = self._convert_2_relative_path(system_topology)
+        self._system_coordinate = self._convert_2_relative_path(system_coordinate)
+        self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
         self.mols = []
-        if not isinstance(ligand_paths, list):
-            raise ValueError(f"Invalid ligand_paths: {ligand_paths}, "
+        if not isinstance(self.ligand_paths, list):
+            raise ValueError(f"Invalid ligand_paths: {self.ligand_paths}, "
                               "ligand_paths should be a list of ligand files")
         self.receptor_segment = receptor_segment
         self.protein_align = protein_align
@@ -211,11 +214,11 @@ class System:
         self.overwrite = overwrite
 
         # check input existence
-        if not os.path.exists(protein_input):
+        if not os.path.exists(self.protein_input):
             raise FileNotFoundError(f"Protein input file not found: {protein_input}")
-        if not os.path.exists(system_topology):
+        if not os.path.exists(self.system_topology):
             raise FileNotFoundError(f"System input file not found: {system_topology}")
-        for ligand_path in ligand_paths:
+        for ligand_path in self.ligand_paths:
             if not os.path.exists(ligand_path):
                 raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
         
@@ -295,11 +298,31 @@ class System:
                 self._process_ligand()
         self._prepare_ligand_poses()
         
-        # dump the system configuration
-        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-            pickle.dump(self, f)
+        self.save()
 
         logger.info('System loaded and prepared')
+
+    def _convert_2_relative_path(self, path):
+        """
+        Convert the path to a relative path to the output directory.
+        """
+        return os.path.relpath(path, self.output_dir)
+
+    @property
+    def protein_input(self):
+        return f"{self.output_dir}/{self._protein_input}"
+
+    @property
+    def system_topology(self):
+        return f"{self.output_dir}/{self._system_topology}"
+
+    @property
+    def system_coordinate(self):
+        return f"{self.output_dir}/{self._system_coordinate}"
+
+    @property
+    def ligand_paths(self):
+        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self._ligand_paths]
 
     def _process_ligands(self):
         """
@@ -314,9 +337,15 @@ class System:
         Prepare for the alignment of the protein and ligand to the system.
         """
         logger.debug('Getting the alignment of the protein and ligand to the system')
-        u_prot = mda.Universe(self.protein_input)
-        u_sys = self.u_sys
 
+        # translate the cog of protein to the origin
+        # 
+        u_prot = mda.Universe(self.protein_input)
+
+        u_sys = self.u_sys
+        cog_prot = u_sys.select_atoms('protein and name CA C N O').center_of_geometry()
+        u_sys.atoms.positions -= cog_prot
+        
         # get translation-rotation matrix
         mobile = u_prot.select_atoms(self.protein_align).select_atoms('name CA')
         ref = u_sys.select_atoms(self.protein_align).select_atoms('name CA')
@@ -332,6 +361,10 @@ class System:
             mobile_atoms=u_prot.atoms,
             mobile_com=mobile_com,
             ref_com=ref_com)
+
+        cog_prot = u_prot.select_atoms('protein and name CA C N O').center_of_geometry()
+        u_prot.atoms.positions -= cog_prot
+        self.translation = cog_prot
 
         self.u_prot = u_prot
         # store these for ligand alignment
@@ -363,7 +396,7 @@ class System:
         membrane_ag.chainIDs = 'M'
         membrane_ag.residues.segments = memb_seg
         logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
-        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 10 (protein or resname POPC))')
+        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 15 (protein or resname POPC))')
         water_ag.chainIDs = 'W'
         water_ag.residues.segments = water_seg
         logger.debug(f'Number of water molecules: {water_ag.n_residues}')
@@ -461,6 +494,10 @@ class System:
     def _prepare_ligand_parameters(self):
         """Prepare ligand parameters for the system"""
         # Get ligand parameters
+        # TODO: build a library of ligand parameters
+        # and check if the ligand is in the library
+        # if not, then prepare the ligand parameters
+
         mol = self._mol
         logger.debug(f'Preparing ligand {mol} parameters')
 
@@ -540,15 +577,19 @@ class System:
 
             new_pose_paths.append(f"{self.poses_folder}/pose{i}.pdb")
 
-        self.ligand_paths = new_pose_paths
+        self._ligand_paths = [self._convert_2_relative_path(pose) for pose in new_pose_paths]
 
     def _align_2_system(self, mobile_atoms):
+
         _ = align._fit_to(
             mobile_coordinates=self.mobile_coord,
             ref_coordinates=self.ref_coord,
             mobile_atoms=mobile_atoms,
             mobile_com=self.mobile_com,
             ref_com=self.ref_com)
+
+        # need to translate the mobile_atoms to the system
+        mobile_atoms.positions -= self.translation
 
     def _prepare_membrane(self):
         """
@@ -594,12 +635,19 @@ class System:
         if sim_config_retain_lig_prot != self.retain_lig_prot:
             logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}\n"
                             f"System is prepared with {self.retain_lig_prot}")
+        
+        if sim_config.fe_type == 'relative' and not isinstance(self, RBFESystem):
+            raise ValueError(f"Invalid fe_type: {sim_config.fe_type}, "
+                 "should be 'relative' for RBFE system")
+                 
         self.sim_config = sim_config
 
     def prepare(self,
             stage: str,
             input_file: Union[str, Path, SimulationConfig],
-            overwrite: bool = False):
+            overwrite: bool = False,
+            partition: str = 'rondror',
+            ):
         """
         Prepare the system for the FEP simulation.
 
@@ -611,10 +659,13 @@ class System:
             Path to the input file for the simulation.
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
+        partition : str, optional
+            The partition to submit the job. Default is 'rondror'.
         """
         logger.debug('Preparing the system')
         self.overwrite = overwrite
         self.builders_factory = BuilderFactory()
+        self.partition = partition
 
         self._get_sim_config(input_file)
         sim_config = self.sim_config
@@ -664,9 +715,7 @@ class System:
             self._prepare_fe_system()
             logger.info('FE System prepared')
 
-        # dump the system configuration
-        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-            pickle.dump(self, f)
+        self.save()
 
     def submit(self, stage: str, cluster: str = 'slurm'):
         """
@@ -937,14 +986,32 @@ class System:
                 if os.path.exists(cv_file + '.bak'):
                     shutil.copy(cv_file + '.bak', cv_file)
                 else:
-                    # copy original cv file to backup
+                    # copy original cv file for backup
                     shutil.copy(cv_file, cv_file + '.bak')
                 
-                with open(cv_file, 'a') as f:
+                with open(cv_file, 'r') as f:
+                    lines = f.readlines()
+
+                with open(cv_file + '.eq0', 'w') as f:
+                    for line in lines:
+                        f.write(line)
                     f.write("\n")
                     for line in cv_lines:
                         f.write(line)
-
+                
+                for i, line in enumerate(lines):
+                    if 'anchor_strength' in line:
+                        lines[i] = line.replace('anchor_strength =    10.0000,    10.0000,',
+                                    f'anchor_strength =    0,   0,')
+                        break
+                    
+                with open(cv_file, 'w') as f:
+                    for line in lines:
+                        f.write(line)
+                    f.write("\n")
+                    for line in cv_lines:
+                        f.write(line)
+                
         if stage == 'equil':
             for pose in self.sim_config.poses_def:
                 u_ref = mda.Universe(
@@ -953,8 +1020,29 @@ class System:
 
                 cv_files = [f"{self.equil_folder}/{pose}/cv.in"]
                 write_colvar_block(u_ref, cv_files)
+                
+                eqnpt0 = f"{self.equil_folder}/{pose}/eqnpt0.in"
+                
+                with open(eqnpt0, 'r') as f:
+                    lines = f.readlines()
+                with open(eqnpt0, 'w') as f:
+                    for line in lines:
+                        if 'cv.in' in line and 'cv.in.eq0' not in line:
+                            f.write(line.replace('cv.in', 'cv.in.eq0'))
+                        else:
+                            f.write(line)
+                
+                eqnpt = f"{self.equil_folder}/{pose}/eqnpt.in"
+                
+                with open(eqnpt, 'r') as f:
+                    lines = f.readlines()
+                with open(eqnpt, 'w') as f:
+                    for line in lines:
+                        if 'cv.in' in line and 'cv.in.bak' not in line:
+                            f.write(line.replace('cv.in', 'cv.in.bak'))
+                        else:
+                            f.write(line)
 
-        
         elif stage == 'fe':
             for pose in self.sim_config.poses_def:
                 for comp in self.sim_config.components:
@@ -971,15 +1059,59 @@ class System:
                             for j in range(0, len(self.sim_config.lambdas))]
                     
                     write_colvar_block(u_ref, cv_files)
+                    
+                    eq_in_files = glob.glob(f"{folder_comp}/*/eqnpt0.in")
+                    for eq_in_file in eq_in_files:
+                        with open(eq_in_file, 'r') as f:
+                            lines = f.readlines()
+                        with open(eq_in_file, 'w') as f:
+                            for line in lines:
+                                if 'cv.in' in line and 'cv.in.eq0' not in line:
+                                    f.write(line.replace('cv.in', 'cv.in.eq0'))
+                                else:
+                                    f.write(line)
+                    
+                    eq_in_files = glob.glob(f"{folder_comp}/*/eqnpt.in")
+                    for eq_in_file in eq_in_files:
+                        with open(eq_in_file, 'r') as f:
+                            lines = f.readlines()
+                        with open(eq_in_file, 'w') as f:
+                            for line in lines:
+                                if 'cv.in' in line and 'cv.in.bak' not in line:
+                                    f.write(line.replace('cv.in', 'cv.in.bak'))
+                                else:
+                                    f.write(line)
         else:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('RMSF restraints added')
 
-    def analysis(self,
-        input_file: Union[str, Path, SimulationConfig]=None):
+    def analysis(
+        self,
+        input_file: Union[str, Path, SimulationConfig]=None,
+        load=True
+        ):
         """
         Analyze the simulation results.
+
+        Parameters
+        ----------
+        input_file : str
+            The input file for the simulation.
+            Default is None and will use the input file
+            used for the simulation.
+        load : bool, optional
+            Whether to load the system fe results from before
+            Default is True.
         """
+        if load:
+            try:
+                self.fe_results
+                for i, (pose, fe) in enumerate(self.fe_results.items()):
+                    mol_name = self.mols[i]
+                    logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
+                return
+            except AttributeError:
+                pass
         self.fe_results = {}
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -999,7 +1131,7 @@ class System:
         poses_def = self.sim_config.poses_def
 
         with self._change_dir(self.output_dir):
-            for pose in poses_def:
+            for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
                 fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
                                 weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
                 self.fe_results[pose] = [fe_value, fe_std]
@@ -1007,12 +1139,18 @@ class System:
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
+        
+        self.save()
+        
     
     def run_pipeline(self,
                      input_file: Union[str, Path, SimulationConfig],
                      overwrite: bool = False,              
                      avg_struc: str = None,
-                     rmsf_file: str = None):
+                     rmsf_file: str = None,
+                     only_equil: bool = False,
+                     partition: str = 'owners',
+                     ):
         """
         Run the whole pipeline for calculating the binding free energy
         after you `create_system`.
@@ -1030,7 +1168,12 @@ class System:
         rmsf_file : str
             The path of the RMSF file. Default is None,
             which means no RMSF restraints are added.
-
+        only_equil : bool, optional
+            Whether to run only the equilibration stage.
+            Default is False.
+        partition : str, optional
+            The partition to submit the job.
+            Default is 'rondror'.
         """
         logger.info('Running the pipeline')
         if avg_struc is not None and rmsf_file is not None:
@@ -1056,7 +1199,8 @@ class System:
             self.prepare(
                 stage='equil',
                 input_file=input_file,
-                overwrite=overwrite
+                overwrite=overwrite,
+                partition=partition
             )
             if rmsf_restraints:
                 self.add_rmsf_restraints(
@@ -1073,10 +1217,14 @@ class System:
             # Check for equilibration to finish
             logger.info('Checking the equilibration')
             while self._check_equilibration():
-                logger.info('Equilibration is still running. Waiting for 1 hour.')
-                time.sleep(60*60)
+                logger.info('Equilibration is still running. Waiting for 0.5 hour.')
+                time.sleep(30*60)
         else:
             logger.info('Equilibration is already finished')
+        if only_equil:
+            logger.info('only_equil is set to True. '
+                        'Skipping the free energy calculation.')
+            return
 
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')
@@ -1086,7 +1234,8 @@ class System:
             self.prepare(
                 stage='fe',
                 input_file=input_file,
-                overwrite=overwrite
+                overwrite=overwrite,
+                partition=partition
             )
             if rmsf_restraints:
                 self.add_rmsf_restraints(
@@ -1101,8 +1250,8 @@ class System:
             # Check the free energy calculation to finish
             logger.info('Checking the free energy calculation')
             while self._check_fe():
-                logger.info('Free energy calculation is still running. Waiting for 1 hour.')
-                time.sleep(60*60)
+                logger.info('Free energy calculation is still running. Waiting for 0.5 hour.')
+                time.sleep(30*60)
         else:
             logger.info('Free energy calculation is already finished')
 
@@ -1124,7 +1273,12 @@ class System:
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
         
-        # dump the system configuration
+        self.save()
+        
+    def save(self):
+        """
+        Save the system to a pickle file.
+        """
         with open(f"{self.output_dir}/system.pkl", 'wb') as f:
             pickle.dump(self, f)
 
@@ -1137,7 +1291,7 @@ class System:
         for pose in self.sim_config.poses_def:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 sim_finished[pose] = False
-            elif os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
+            if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
                 sim_failed[pose] = True
 
         if any(sim_failed.values()):
@@ -1166,14 +1320,14 @@ class System:
                         folder_2_check = f'{self.fe_folder}/{pose}/rest/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
                             sim_finished[f'{pose}/rest/{comp}{j:02d}'] = False
-                        elif os.path.exists(f"{folder_2_check}/FAILED"):
+                        if os.path.exists(f"{folder_2_check}/FAILED"):
                             sim_failed[f'{pose}/rest/{comp}{j:02d}'] = True
                 else:
                     for j in range(0, len(self.sim_config.lambdas)):
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if not os.path.exists(f"{folder_2_check}/FINISHED"):
                             sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
-                        elif os.path.exists(f"{folder_2_check}/FAILED"):
+                        if os.path.exists(f"{folder_2_check}/FAILED"):
                             sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
         # if all are finished, return False
         if any(sim_failed.values()):
@@ -1264,6 +1418,8 @@ class RBFESystem(System):
     using the separated topology methodology in BAT.py.
     """
     def _process_ligands(self):
-        # check if they are the same ligand
-        # set the ligand path to the first ligand
         self.unique_ligand_paths = self.ligand_paths
+        if len(self.unique_ligand_paths) <= 1:
+            raise ValueError("RBFESystem requires at least two ligands "
+                             "for the relative binding free energy calculation")
+        logger.info(f'Reference ligand: {self.unique_ligand_paths[0]}')
