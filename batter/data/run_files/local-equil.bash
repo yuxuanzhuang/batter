@@ -59,7 +59,7 @@ else
     for step in {1..4}; do
         prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
         curr=$(printf "eqnpt%02d" $step)
-        pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref eqnpt_pre.rst7 > "$log_file" 2>&1
+        pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev > "$log_file" 2>&1
         check_sim_failure "Equilibration stage $step"
     done
 fi
@@ -68,7 +68,7 @@ if [[ $overwrite -eq 0 && -f md01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
 # Initial MD run
-pmemd.cuda -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md00.nc -ref eqnpt_pre.rst7 > $log_file 2>&1
+pmemd.cuda -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md00.nc -ref eqnpt04.rst7 > $log_file 2>&1
 check_sim_failure "MD stage 0"
 fi
 
@@ -83,7 +83,7 @@ while [ $i -le RANGE ]; do
     if [[ $overwrite -eq 0 && -f md$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
-        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt_pre.rst7 > $log_file 2>&1
+        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 > $log_file 2>&1
         check_sim_failure "MD stage $i"
     fi
     i=$((i + 1))
