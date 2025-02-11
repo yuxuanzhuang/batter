@@ -89,6 +89,8 @@ class System:
         self.output_dir = os.path.abspath(folder) + '/'
 
         self._slurm_jobs = {}
+        self.sim_finished = {}
+        self.sim_failed = {}
 
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
@@ -857,8 +859,6 @@ class System:
             ).build()
     
         logger.info('Equilibration systems have been created for all poses listed in the input file.')
-        logger.debug(f'now cd equil/pose0')
-        logger.debug(f'sbatch SLURMM-run')
 
     def _prepare_fe_system(self):
         """
@@ -1344,6 +1344,9 @@ class System:
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
                 sim_failed[pose] = True
 
+        self.sim_finished.update(sim_finished)
+        self.sim_failed.update(sim_failed)
+
         if any(sim_failed.values()):
             logger.error(f'Equilibration failed: {sim_failed}')
             raise ValueError(f'Equilibration failed: {sim_failed}')
@@ -1353,7 +1356,7 @@ class System:
             return False
         else:
             not_finished = [k for k, v in sim_finished.items() if not v]
-            logger.info(f'Not finished: {not_finished}')
+            logger.debug(f'Not finished: {not_finished}')
             return True
 
     def _check_fe(self):
@@ -1379,6 +1382,8 @@ class System:
                             sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
                         if os.path.exists(f"{folder_2_check}/FAILED"):
                             sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
+        self.sim_finished.update(sim_finished)
+        self.sim_failed.update(sim_failed)
         # if all are finished, return False
         if any(sim_failed.values()):
             logger.error(f'Free energy calculation failed: {sim_failed}')
@@ -1388,8 +1393,31 @@ class System:
             return False
         else:
             not_finished = [k for k, v in sim_finished.items() if not v]
-            logger.info(f'Not finished: {not_finished}')
+            logger.debug(f'Not finished: {not_finished}')
             return True
+
+    def check_jobs(self):
+        """
+        Check the status of the jobs.
+        """
+        logger.info('Checking the status of the jobs in')
+        logger.info(f'{self.output_dir}')
+        if self._check_equilibration():
+            logger.info('Equilibration is still running')
+        else:
+            if self._check_fe():
+                logger.info('Free energy calculation is still running')
+        
+        not_finished = [k for k, v in self.sim_finished.items() if not v]
+
+        if len(not_finished) == 0:
+            logger.info('All jobs are finished')
+        else:
+            for pose in self.sim_config.poses_def:
+                logger.info(f'Not finished in {pose}:')
+                not_finished_pose = [k for k in not_finished if pose in k]
+                not_finished_pose = [job.split('/')[-1] for job in not_finished_pose]
+                logger.info(not_finished_pose)
 
     @property
     def poses_folder(self):
