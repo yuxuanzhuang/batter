@@ -27,12 +27,12 @@ Equilibrate, NPT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '(@CA,C,N,P31 | :2 | :_lig_name_) & !@H=',
+  restraintmask = '(@CA,C,O,N,P31 | :_lig_name_) & !@H=',
   icfe = 1, clambda = lbd_val,
   timask1 = ':mk1,mk4', timask2 = ':mk2,mk3',
   ifsc=0, crgmask = ':mk2,mk4',
   gti_chg_keep = 0,
-  infe = 1,
+  infe = 0,
  /
  &pmd
  output_file = 'cmass.txt'

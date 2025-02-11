@@ -28,7 +28,7 @@ Equilibrate, NPT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '(@CA | :2 | :_lig_name_) & !@H=',
+  restraintmask = '(@CA | :_lig_name_) & !@H=',
   infe = 1,
  /
  &pmd
