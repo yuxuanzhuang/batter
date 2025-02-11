@@ -683,7 +683,7 @@ class System:
             # save the input file to the equil directory
             os.makedirs(f"{self.equil_folder}", exist_ok=True)
             with open(f"{self.equil_folder}/sim_config.json", 'w') as f:
-                json.dump(sim_config.model_dump(), f, indent=2)
+                json.dump(self.sim_config.model_dump(), f, indent=2)
             
             self._prepare_equil_system()
             logger.info('Equil System prepared')
@@ -710,7 +710,7 @@ class System:
             os.makedirs(f"{self.fe_folder}", exist_ok=True)
 
             with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
-                json.dump(sim_config.model_dump(), f, indent=2)
+                json.dump(self.sim_config.model_dump(), f, indent=2)
 
             self._prepare_fe_system()
             logger.info('FE System prepared')
@@ -1142,7 +1142,74 @@ class System:
         
         self.save()
         
-    
+    @staticmethod
+    def _find_anchor_atoms(u_prot,
+                           u_lig,
+                           anchor_atoms,
+                           ligand_anchor_atom):
+        """
+        Function to find the anchor atoms for the ligand
+        and the protein.
+
+        Parameters
+        ----------
+        u_prot : mda.Universe
+            The protein universe.
+        u_lig : mda.Universe
+            The ligand universe.
+        anchor_atoms : List[str]
+            The list of three protein anchor atoms (selection strings)
+            used to restrain ligand.
+        ligand_anchor_atom : str
+            The ligand anchor atom (selection string) used as a potential
+            ligand anchor atom.
+        
+        Returns
+        -------
+        l1_x : float
+            The x distance of the ligand anchor atom from the protein anchor atom.
+        l1_y : float
+            The y distance of the ligand anchor atom from the protein anchor atom.
+        l1_z : float
+            The z distance of the ligand anchor atom from the protein anchor atom.
+        p1_formatted : str
+            The formatted string of the first protein anchor atom.
+        p2_formatted : str
+            The formatted string of the second protein anchor atom.
+        p3_formatted : str
+            The formatted string of the third protein anchor atom.
+        """
+
+        u_merge = mda.Merge(u_prot.atoms, u_lig.atoms)
+        P1_atom = u_merge.select_atoms(anchor_atoms[0])
+        P2_atom = u_merge.select_atoms(anchor_atoms[1])
+        P3_atom = u_merge.select_atoms(anchor_atoms[2])
+        if P1_atom.n_atoms != 1 or P2_atom.n_atoms != 1 or P3_atom.n_atoms != 1:
+            raise ValueError('Error: more than one atom selected in the anchor atoms')
+        if P1_atom.n_atoms == 0 or P2_atom.n_atoms == 0 or P3_atom.n_atoms == 0:
+            raise ValueError('Error: anchor atom not found')
+        
+        if ligand_anchor_atom is not None:
+            lig_atom = u_merge.select_atoms(ligand_anchor_atom)
+            if lig_atom.n_atoms == 0:
+                raise ValueError('Error: ligand anchor atom not found')
+        else:
+            lig_atom = u_lig.atoms
+
+        # get ll_x,y,z distances
+        r_vect = lig_atom.center_of_mass() - P1_atom.positions
+        logger.info(f'l1_x: {r_vect[0][0]:.2f}')
+        logger.info(f'l1_y: {r_vect[0][1]:.2f}')
+        logger.info(f'l1_z: {r_vect[0][2]:.2f}')
+
+        p1_formatted = f':{P1_atom.resids[0]}@{P1_atom.names[0]}'
+        p2_formatted = f':{P2_atom.resids[0]}@{P2_atom.names[0]}'
+        p3_formatted = f':{P3_atom.resids[0]}@{P3_atom.names[0]}'
+        logger.info(f'Receptor anchor atoms: P1: {p1_formatted}, P2: {p2_formatted}, P3: {p3_formatted}')
+        return (r_vect[0][0], r_vect[0][1], r_vect[0][2],
+                p1_formatted, p2_formatted, p3_formatted)
+              
+
     def run_pipeline(self,
                      input_file: Union[str, Path, SimulationConfig],
                      overwrite: bool = False,              
@@ -1150,6 +1217,8 @@ class System:
                      rmsf_file: str = None,
                      only_equil: bool = False,
                      partition: str = 'owners',
+                     anchor_atoms: List[str] = None,
+                     ligand_anchor_atom: str = None,
                      ):
         """
         Run the whole pipeline for calculating the binding free energy
@@ -1174,8 +1243,22 @@ class System:
         partition : str, optional
             The partition to submit the job.
             Default is 'rondror'.
+        anchor_atoms : List[str], optional
+            The list of three protein anchor atoms (selection strings)
+            used to restrain ligand.
+            It will also be used to set l1x, l1y, l1z values that defines
+            the binding pocket.
+            Default is None and will use the atoms listed in the input file.
+        ligand_anchor_atom : str, optional
+            The ligand anchor atom (selection string) used as a potential
+            ligand anchor atom.
+            Default is None and will use the atom that is closed to the 
+            center of mass of the ligand.
+            Note only the first ligand in the ligand_paths will be used
+            to create the binding pocket.
         """
         logger.info('Running the pipeline')
+
         if avg_struc is not None and rmsf_file is not None:
             rmsf_restraints = True
         elif avg_struc is not None or rmsf_file is not None:
@@ -1192,13 +1275,30 @@ class System:
                            f"does not match the number of ligands: {len(self.ligand_paths)}")
             logger.warning(f"Using the ligand paths for the poses")
         self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        
+        if anchor_atoms is not None:
+            u_prot = mda.Universe(f'{self.output_dir}/all-poses/reference.pdb')
+            u_lig = mda.Universe(f'{self.output_dir}/all-poses/pose0.pdb')
+            l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
+                        u_prot,
+                        u_lig,
+                        anchor_atoms,
+                        ligand_anchor_atom)
+        
+            self.sim_config.l1_x = l1_x
+            self.sim_config.l1_y = l1_y
+            self.sim_config.l1_z = l1_z
+
+            self.sim_config.p1 = p1
+            self.sim_config.p2 = p2
+            self.sim_config.p3 = p3
 
         if self._check_equilibration():
             #1 prepare the system
             logger.info('Preparing the system')
             self.prepare(
                 stage='equil',
-                input_file=input_file,
+                input_file=self.sim_config,
                 overwrite=overwrite,
                 partition=partition
             )
@@ -1233,7 +1333,7 @@ class System:
             #3 prepare the free energy calculation
             self.prepare(
                 stage='fe',
-                input_file=input_file,
+                input_file=self.sim_config,
                 overwrite=overwrite,
                 partition=partition
             )

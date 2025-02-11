@@ -160,9 +160,9 @@ class SimulationConfig(BaseModel):
     dic_steps2: Dict = Field(default_factory=dict, info={'description': "Steps dictionary for stage 2"})
     dic_itera1: Dict = Field(default_factory=dict, info={'description': "Iterations dictionary for stage 1"})
     dic_itera2: Dict = Field(default_factory=dict, info={'description': "Iterations dictionary for stage 2"})
-    H1: str = Field("", info={'description': "H1 (p1)"})
-    H2: str = Field("", info={'description': "H2 (p2)"})
-    H3: str = Field("", info={'description': "H3 (p3)"})
+    #H1: str = Field("", info={'description': "H1 (p1)"})
+    #H2: str = Field("", info={'description': "H2 (p2)"})
+    #H3: str = Field("", info={'description': "H3 (p3)"})
     rest: List[float] = Field(default_factory=list, info={'description': "Rest definition"})
     celp_st: Union[List[str], str] = Field(default_factory=list, info={
                                            'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
@@ -170,6 +170,18 @@ class SimulationConfig(BaseModel):
 
     # Number of simulations, 1 equilibrium and 1 production
     apr_sim: int = Field(2, info={'description': "Number of simulations"})
+
+    @property
+    def H1(self):
+        return self.p1
+    
+    @property
+    def H2(self):
+        return self.p2
+
+    @property
+    def H3(self):
+        return self.p3
 
     @model_validator(mode="after")
     def initialize_ti(self):
@@ -219,9 +231,6 @@ class SimulationConfig(BaseModel):
 
         self.components = self.components
 
-        self.H1 = self.p1
-        self.H2 = self.p2
-        self.H3 = self.p3
 
         self.rest = [
             self.rec_dihcf_force,
