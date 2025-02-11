@@ -4,6 +4,7 @@ Provide the primary functions for preparing and processing FEP systems.
 
 from .utils import (
     run_with_log,
+    save_state,
     antechamber,
     tleap,
     cpptraj,
@@ -30,6 +31,8 @@ import json
 from typing import Union
 from pathlib import Path
 import pickle
+from functools import wraps
+
 import time
 from tqdm import tqdm
 
@@ -91,6 +94,8 @@ class System:
         self._slurm_jobs = {}
         self.sim_finished = {}
         self.sim_failed = {}
+        self._eq_prepared = False
+        self._fe_prepared = False
 
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
@@ -129,6 +134,7 @@ class System:
             logger.info(f"The folder does not contain fe: {self.output_dir}")
             return
 
+    @save_state
     def create_system(
                     self,
                     system_name: str,
@@ -304,8 +310,6 @@ class System:
                 self._process_ligand()
         self._prepare_ligand_poses()
         
-        self.save()
-
         logger.info('System loaded and prepared')
 
     def _convert_2_relative_path(self, path):
@@ -648,6 +652,7 @@ class System:
                  
         self.sim_config = sim_config
 
+    @save_state
     def prepare(self,
             stage: str,
             input_file: Union[str, Path, SimulationConfig],
@@ -686,6 +691,10 @@ class System:
             if self.overwrite:
                 logger.debug(f'Overwriting {self.equil_folder}')
                 shutil.rmtree(self.equil_folder, ignore_errors=True)
+                self._eq_prepared = False
+            elif self._eq_prepared:
+                logger.info(f'Equilibration already prepared')
+                return
             # save the input file to the equil directory
             os.makedirs(f"{self.equil_folder}", exist_ok=True)
             with open(f"{self.equil_folder}/sim_config.json", 'w') as f:
@@ -693,6 +702,7 @@ class System:
             
             self._prepare_equil_system()
             logger.info('Equil System prepared')
+            self._eq_prepared = True
         
         if stage == 'fe':
             if not os.path.exists(f"{self.equil_folder}"):
@@ -713,6 +723,10 @@ class System:
             if self.overwrite:
                 logger.debug(f'Overwriting {self.fe_folder}')
                 shutil.rmtree(self.fe_folder, ignore_errors=True)
+                self._fe_prepared = False
+            elif self._fe_prepared:
+                logger.info(f'Free energy already prepared')
+                return
             os.makedirs(f"{self.fe_folder}", exist_ok=True)
 
             with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
@@ -720,8 +734,7 @@ class System:
 
             self._prepare_fe_system()
             logger.info('FE System prepared')
-
-        self.save()
+            self._fe_prepared = True
 
     def submit(self,
                stage: str,
@@ -756,12 +769,10 @@ class System:
             for pose in self.sim_config.poses_def:
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
-                    logger.info(f'Equilibration for {pose} has been finished')
-                    logger.info(f'add overwrite=True to re-run the simulation')
+                    logger.debug(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
                     continue
                 if os.path.exists(f"{self.equil_folder}/{pose}/FAILED") and not overwrite:
-                    logger.info(f'Equilibration for {pose} has failed')
-                    logger.info(f'add overwrite=True to re-run the simulation')
+                    logger.warning(f'Equilibration for {pose} has failed; add overwrite=True to re-run the simulation')
                     continue
                 if f'equil_{pose}' in self._slurm_jobs:
                     # check if it's finished
@@ -774,6 +785,7 @@ class System:
                     elif overwrite:
                         slurm_job.cancel()
                         slurm_job.submit()
+                        continue
                     else:
                         logger.info(f'Equilibration job for {pose} is still running')
                         continue
@@ -787,6 +799,7 @@ class System:
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
                                 partition=partition)
                 slurm_job.submit()
+                logger.info(f'Equilibration job for {pose} submitted')
                 self._slurm_jobs.update(
                     {f'equil_{pose}': slurm_job}
                 )
@@ -796,10 +809,48 @@ class System:
         elif stage == 'fe':
             logger.info('Submit free energy stage')
             for pose in self.sim_config.poses_def:
-                shutil.copy(f'{self.fe_folder}/{pose}/rest/run_files/run-express.bash',
-                            f'{self.fe_folder}/{pose}')
-                run_with_log(f'bash run-express.bash',
-                            working_dir=f'{self.fe_folder}/{pose}')
+                #shutil.copy(f'{self.fe_folder}/{pose}/rest/run_files/run-express.bash',
+                #            f'{self.fe_folder}/{pose}')
+                #run_with_log(f'bash run-express.bash',
+                #            working_dir=f'{self.fe_folder}/{pose}')
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                    for j in range(len(windows)):
+                        folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
+                        if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
+                            logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
+                            continue
+                        if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
+                            logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
+                            continue
+                        if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
+                            slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
+                            if not slurm_job.is_still_running():
+                                slurm_job.submit()
+                                continue
+                            elif overwrite:
+                                slurm_job.cancel()
+                                slurm_job.submit()
+                                continue
+                            else:
+                                logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
+                                continue
+                        if overwrite:
+                            # remove FINISHED and FAILED
+                            os.remove(f"{folder_2_check}/FINISHED", ignore_errors=True)
+                            os.remove(f"{folder_2_check}/FAILED", ignore_errors=True)
+
+                        slurm_job = SLURMJob(
+                                        filename=f'{folder_2_check}/SLURMM-run',
+                                        partition=partition)
+                        slurm_job.submit()
+                        logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
+                        self._slurm_jobs.update(
+                            {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
+                        )
+
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
         else:
             raise ValueError(f"Invalid stage: {stage}")
@@ -1101,12 +1152,9 @@ class System:
                     u_ref = mda.Universe(
                             f"{folder_comp}/{comp}00/full.pdb",
                             f"{folder_comp}/{comp}00/full.inpcrd")
-                    if comp_folder == 'rest':
-                        cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
-                            for j in range(0, len(self.sim_config.attach_rest))]
-                    else:
-                        cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
-                            for j in range(0, len(self.sim_config.lambdas))]
+                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                    cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
+                        for j in range(0, len(windows))]
                     
                     write_colvar_block(u_ref, cv_files)
                     
@@ -1260,6 +1308,7 @@ class System:
                 p1_formatted, p2_formatted, p3_formatted)
               
 
+    @save_state
     def run_pipeline(self,
                      input_file: Union[str, Path, SimulationConfig],
                      overwrite: bool = False,              
@@ -1423,14 +1472,6 @@ class System:
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
         
-        self.save()
-        
-    def save(self):
-        """
-        Save the system to a pickle file.
-        """
-        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-            pickle.dump(self, f)
 
     def _check_equilibration(self):
         """
@@ -1468,20 +1509,14 @@ class System:
         for pose in self.sim_config.poses_def:
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                if comp_folder == 'rest':
-                    for j in range(0, len(self.sim_config.attach_rest)):
-                        folder_2_check = f'{self.fe_folder}/{pose}/rest/{comp}{j:02d}'
-                        if not os.path.exists(f"{folder_2_check}/FINISHED"):
-                            sim_finished[f'{pose}/rest/{comp}{j:02d}'] = False
-                        if os.path.exists(f"{folder_2_check}/FAILED"):
-                            sim_failed[f'{pose}/rest/{comp}{j:02d}'] = True
-                else:
-                    for j in range(0, len(self.sim_config.lambdas)):
-                        folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
-                        if not os.path.exists(f"{folder_2_check}/FINISHED"):
-                            sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
-                        if os.path.exists(f"{folder_2_check}/FAILED"):
-                            sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
+                windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                for j in range(0, len(windows)):
+                    folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
+                    if not os.path.exists(f"{folder_2_check}/FINISHED"):
+                        sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
+                    if os.path.exists(f"{folder_2_check}/FAILED"):
+                        sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
+
         self.sim_finished.update(sim_finished)
         self.sim_failed.update(sim_failed)
         # if all are finished, return False
@@ -1605,3 +1640,4 @@ class RBFESystem(System):
             raise ValueError("RBFESystem requires at least two ligands "
                              "for the relative binding free energy calculation")
         logger.info(f'Reference ligand: {self.unique_ligand_paths[0]}')
+

@@ -1,6 +1,8 @@
 from loguru import logger
 import subprocess as sp
 import os
+import pickle
+from functools import wraps
 
 antechamber = 'antechamber'
 tleap = 'tleap'
@@ -155,4 +157,13 @@ def log_info(func):
         logger.debug(f"Current working directory: {os.getcwd()}")
         logger.debug(f"Running function: {func.__name__}")
         return func(*args, **kwargs)
+    return wrapper
+
+def save_state(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        result = method(self, *args, **kwargs)
+        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+            pickle.dump(self, f)
+        return result
     return wrapper
