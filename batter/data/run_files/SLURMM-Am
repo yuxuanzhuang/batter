@@ -8,32 +8,20 @@
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH -t 8:00:00
-#SBATCH --signal=USR1@60  # Send SIGUSR1 60 seconds before job preemption
-
+#SBATCH -d singleton
 
 scontrol show job $SLURM_JOB_ID
 
 # Define the retry count and overwrite variables
 RETRY_COUNT=${RETRY_COUNT:-1}  # Default to 1 if not set
 OVERWRITE=${OVERWRITE:-1}  # Default to 1 if not set
+
+# if requeue, set overwrite to 0
+if [ -n "$SLURM_REQUEUE" ]; then
+    OVERWRITE=0
+fi
+
 echo "RETRY_COUNT=$RETRY_COUNT, OVERWRITE=$OVERWRITE"
-
-cleanup() {
-    echo "Job $SLURM_JOB_ID is being killed. Running cleanup..."
-    # if FAILED file exists, then the job failed
-    if [ -f FAILED ]; then
-        echo "Job failed remark found. Job failed."
-        exit 0
-    fi
-    if [ -f FINISHED ]; then
-        echo "Job finished remark found. Job finished."
-        exit 0
-    fi
-    # else, resubmit the job
-    sbatch --export=OVERWRITE=0 $0
-
-    exit 0
-}
 
 trap cleanup SIGTERM SIGINT SIGUSR1
  

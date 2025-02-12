@@ -167,3 +167,17 @@ def save_state(method):
             pickle.dump(self, f)
         return result
     return wrapper
+
+def fail_report_wrapper(func):
+    """
+    Function to report failure of a method
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f'Error in {func}: {e}')
+            logger.error(f'all args: {args}; kwargs: {kwargs}')
+            raise
+    return wrapper

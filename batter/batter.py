@@ -42,6 +42,7 @@ from loguru import logger
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
+from batter.results import FEResult
 from batter.utils.slurm_job import SLURMJob
 
 from MDAnalysis.analysis import rms, align
@@ -75,6 +76,7 @@ class System:
     After the preparation of the equil system, run through the equilibration simulation and then
     prepare the fe system. The output of the equil system will be used as
     the input for the fe system.
+
     """
     def __init__(self,
                  folder: str,
@@ -92,10 +94,11 @@ class System:
         self.output_dir = os.path.abspath(folder) + '/'
 
         self._slurm_jobs = {}
-        self.sim_finished = {}
-        self.sim_failed = {}
+        self._sim_finished = {}
+        self._sim_failed = {}
         self._eq_prepared = False
         self._fe_prepared = False
+        self._fe_results = {}
 
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
@@ -736,6 +739,7 @@ class System:
             logger.info('FE System prepared')
             self._fe_prepared = True
 
+    @save_state
     def submit(self,
                stage: str,
                cluster: str = 'slurm',
@@ -1183,6 +1187,7 @@ class System:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('RMSF restraints added')
 
+    @save_state
     def analysis(
         self,
         input_file: Union[str, Path, SimulationConfig]=None,
@@ -1202,15 +1207,10 @@ class System:
             Default is True.
         """
         if load:
-            try:
-                self.fe_results
-                for i, (pose, fe) in enumerate(self.fe_results.items()):
-                    mol_name = self.mols[i]
-                    logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
-                return
-            except AttributeError:
-                pass
-        self.fe_results = {}
+            for pose in self.sim_config.poses_def:
+                self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                logger.info(f'{pose}:\t{self.fe_results[pose].fe:.2f} ± {self.fe_results[pose].fe_std:.2f}')
+            return
         if input_file is not None:
             self._get_sim_config(input_file)
             
@@ -1232,13 +1232,11 @@ class System:
             for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
                 fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
                                 weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
-                self.fe_results[pose] = [fe_value, fe_std]
+                self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
-        
-        self.save()
+            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
         
     @staticmethod
     def _find_anchor_atoms(u_prot,
@@ -1472,7 +1470,6 @@ class System:
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
         
-
     def _check_equilibration(self):
         """
         Check if the equilibration is finished by checking the FINISHED file
@@ -1482,21 +1479,23 @@ class System:
         for pose in self.sim_config.poses_def:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 sim_finished[pose] = False
+            else:
+                sim_finished[pose] = True
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
                 sim_failed[pose] = True
 
-        self.sim_finished.update(sim_finished)
-        self.sim_failed.update(sim_failed)
+        self._sim_finished.update(sim_finished)
+        self._sim_failed.update(sim_failed)
 
-        if any(sim_failed.values()):
-            logger.error(f'Equilibration failed: {sim_failed}')
-            raise ValueError(f'Equilibration failed: {sim_failed}')
+        if any(self._sim_failed.values()):
+            logger.error(f'Equilibration failed: {self._sim_failed}')
+            raise ValueError(f'Equilibration failed: {self._sim_failed}')
             
-        if all(sim_finished.values()):
+        if all(self._sim_finished.values()):
             logger.debug('Equilibration is finished')
             return False
         else:
-            not_finished = [k for k, v in sim_finished.items() if not v]
+            not_finished = [k for k, v in self._sim_finished.items() if not v]
             logger.debug(f'Not finished: {not_finished}')
             return True
 
@@ -1514,20 +1513,22 @@ class System:
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                     if not os.path.exists(f"{folder_2_check}/FINISHED"):
                         sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
+                    else:
+                        sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
                     if os.path.exists(f"{folder_2_check}/FAILED"):
                         sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
 
-        self.sim_finished.update(sim_finished)
-        self.sim_failed.update(sim_failed)
+        self._sim_finished.update(sim_finished)
+        self._sim_failed.update(sim_failed)
         # if all are finished, return False
-        if any(sim_failed.values()):
-            logger.error(f'Free energy calculation failed: {sim_failed}')
+        if any(self._sim_failed.values()):
+            logger.error(f'Free energy calculation failed: {self._sim_failed}')
             return True
-        if all(sim_finished.values()):
+        if all(self._sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False
         else:
-            not_finished = [k for k, v in sim_finished.items() if not v]
+            not_finished = [k for k, v in self._sim_finished.items() if not v]
             logger.debug(f'Not finished: {not_finished}')
             return True
 
@@ -1543,7 +1544,7 @@ class System:
             if self._check_fe():
                 logger.info('Free energy calculation is still running')
         
-        not_finished = [k for k, v in self.sim_finished.items() if not v]
+        not_finished = [k for k, v in self._sim_finished.items() if not v]
 
         if len(not_finished) == 0:
             logger.info('All jobs are finished')
@@ -1574,6 +1575,10 @@ class System:
     def analysis_folder(self):
         return f"{self.output_dir}/analysis"
     
+    @property
+    def fe_results(self):
+        return self._fe_results
+
     @property
     def ligand_poses(self):
         return self.ligand_paths
