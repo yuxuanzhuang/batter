@@ -18,3 +18,4 @@ dependencies:
   # plotting
   - prettypyplot
   - seaborn
+  - openff-toolkit

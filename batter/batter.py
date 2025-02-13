@@ -5,6 +5,7 @@ Provide the primary functions for preparing and processing FEP systems.
 from .utils import (
     run_with_log,
     save_state,
+    safe_directory,
     antechamber,
     tleap,
     cpptraj,
@@ -140,6 +141,7 @@ class System:
             logger.info(f"The folder does not contain fe: {self.output_dir}")
             return
 
+    @safe_directory
     @save_state
     def create_system(
                     self,
@@ -744,6 +746,7 @@ class System:
                  
         self.sim_config = sim_config
 
+    @safe_directory
     @save_state
     def prepare(self,
             stage: str,
@@ -828,6 +831,7 @@ class System:
             logger.info('FE System prepared')
             self._fe_prepared = True
 
+    @safe_directory
     @save_state
     def submit(self,
                stage: str,
@@ -1295,6 +1299,7 @@ class System:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('RMSF restraints added')
 
+    @safe_directory
     @save_state
     def analysis(
         self,
@@ -1414,6 +1419,7 @@ class System:
                 p1_formatted, p2_formatted, p3_formatted)
               
 
+    @safe_directory
     @save_state
     def run_pipeline(self,
                      input_file: Union[str, Path, SimulationConfig],

@@ -181,3 +181,16 @@ def fail_report_wrapper(func):
             logger.error(f'all args: {args}; kwargs: {kwargs}')
             raise
     return wrapper
+
+
+def safe_directory(func):
+    """Decorator to ensure function returns to the original directory if an error occurs."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        original_dir = os.getcwd()  # Save the current directory
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            os.chdir(original_dir)  # Return to original directory on failure
+            raise e  # Re-raise the exception
+    return wrapper
