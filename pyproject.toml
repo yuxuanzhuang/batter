@@ -25,7 +25,8 @@ dependencies = [
     "loguru",
     "pydantic",
     "click",
-    "openff-toolkit",
+    "rdkit",
+    "pandas",
 ]
 
 [project.scripts]

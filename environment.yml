@@ -4,18 +4,15 @@ channels:
   - defaults
 dependencies:
   # Conda dependencies
-  - ambertools
+  - ambertools=23.6
   # vmd is problematic to install with error about sqlite
-  - vmd-python
+  # - vmd-python
   - openbabel
-  # rdkit to get charges
   - rdkit
-  # Uncomment the following lines if/when OpenMM and OpenMMTools are needed
-  # - openmm
-  # - openmmtools
+  - pandas
   - python=3.11
   - pip
-  # plotting
   - prettypyplot
   - seaborn
-  - openff-toolkit
+  # openff to get charge
+  - openff-toolkit-base

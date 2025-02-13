@@ -32,10 +32,12 @@ class SLURMJob:
             raise RuntimeError("Failed to submit job after 3 attempts.")
 
     def _submit(self):
-        if self.overwrite:
-            cmd = ["OVERWRITE=1", "sbatch"]
-        else:
-            cmd = ["OVERWRITE=0", "sbatch"]
+
+        # Prepare the environment: copy current environment and update OVERWRITE variable.
+        env = os.environ.copy()
+        env["OVERWRITE"] = "1" if self.overwrite else "0"
+
+        cmd = ["sbatch"]
         if self.partition:
             cmd.append(f"--partition={self.partition}")
         cmd.append(self.file_basename)
@@ -44,7 +46,8 @@ class SLURMJob:
             cmd,
             cwd=self.path,
             capture_output=True,
-            text=True
+            text=True,
+            env=env,
         )
 
         if result.returncode != 0:

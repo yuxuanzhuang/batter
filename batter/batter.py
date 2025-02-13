@@ -33,7 +33,10 @@ from typing import Union
 from pathlib import Path
 import pickle
 from functools import wraps
-from openff.toolkit import Molecule
+try:
+    from openff.toolkit import Molecule
+except:
+    raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit`")
 from rdkit import Chem
 
 import time
@@ -103,6 +106,7 @@ class System:
         self._eq_prepared = False
         self._fe_prepared = False
         self._fe_results = {}
+        self.mols = []
         self._max_num_jobs = 2000
 
         if not os.path.exists(self.output_dir):
@@ -224,7 +228,6 @@ class System:
         self._system_topology = self._convert_2_relative_path(system_topology)
         self._system_coordinate = self._convert_2_relative_path(system_coordinate)
         self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
-        self.mols = []
         if not isinstance(self.ligand_paths, list):
             raise ValueError(f"Invalid ligand_paths: {self.ligand_paths}, "
                               "ligand_paths should be a list of ligand files")
@@ -290,6 +293,10 @@ class System:
         
         self.unique_mol_names = []
         for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
+            try:
+                ligand_name = self.mols[ind-1]
+            except:
+                ligand_name = None
             self._ligand_path = ligand_path
             ligand_factory = LigandFactory()
             ligand = ligand_factory.create_ligand(
@@ -297,11 +304,10 @@ class System:
                     index=ind,
                     output_dir=self.ligandff_folder,
                     # TODO: use dictionary for ligand_paths
-                    # ligand_name=,
+                    ligand_name=ligand_name,
                     retain_lig_prot=self.retain_lig_prot,
                     ligand_ff=self.ligand_ff) 
             ligand.generate_unique_name(self.unique_mol_names)
-            self._mol = ligand.name
             self.mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
@@ -727,7 +733,7 @@ class System:
                                 partition=partition)
                 slurm_job.submit(overwrite=overwrite)
                 n_jobs_submitted += 1
-                logger.info(f'Equilibration job for {pose} submitted')
+                logger.info(f'Equilibration job for {pose} submitted: {slurm_job.job_id}')
                 self._slurm_jobs.update(
                     {f'equil_{pose}': slurm_job}
                 )
@@ -1351,7 +1357,8 @@ class System:
             # Check for equilibration to finish
             logger.info('Checking the equilibration')
             while self._check_equilibration():
-                logger.info('Equilibration is still running. Waiting for 0.5 hour.')
+                n_finished = len([k for k, v in self._sim_finished.items() if v])
+                logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 time.sleep(30*60)
         else:
             logger.info('Equilibration is already finished')
@@ -1384,7 +1391,9 @@ class System:
             # Check the free energy calculation to finish
             logger.info('Checking the free energy calculation')
             while self._check_fe():
-                logger.info('Free energy calculation is still running. Waiting for 0.5 hour.')
+                # get finishd jobs
+                finished = [k for k, v in self._sim_finished.items() if v]
+                logger.info(f'Finished jobs: {finished} / {len(self._sim_finished)}')
                 time.sleep(30*60)
         else:
             logger.info('Free energy calculation is already finished')

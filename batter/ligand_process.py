@@ -176,6 +176,8 @@ class PDB_Ligand(Ligand):
         self._ligand_object = ligand.atoms.convert_to("RDKIT")
 
     def _get_mol_name(self):
+        if self._name is not None:
+            return
         self._name = self._ligand_u.atoms.resnames[0]
 
 
