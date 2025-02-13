@@ -16,14 +16,14 @@ scontrol show job $SLURM_JOB_ID
 RETRY_COUNT=${RETRY_COUNT:-1}  # Default to 1 if not set
 OVERWRITE=${OVERWRITE:-1}  # Default to 1 if not set
 
-# if requeue, set overwrite to 0
-if [ -n "$SLURM_REQUEUE" ]; then
+# Detect if the job has been restarted due to preemption
+RESTARTS=$(scontrol show job $SLURM_JOB_ID | awk '/Restarts/ {print $2}' | cut -d= -f2)
+if [ "$RESTARTS" -gt 0 ]; then
     OVERWRITE=0
+    echo "Job was restarted ($RESTARTS times), setting OVERWRITE=0"
 fi
 
 echo "RETRY_COUNT=$RETRY_COUNT, OVERWRITE=$OVERWRITE"
-
-trap cleanup SIGTERM SIGINT SIGUSR1
  
 source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 

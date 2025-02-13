@@ -32,6 +32,8 @@ from typing import Union
 from pathlib import Path
 import pickle
 from functools import wraps
+from openff.toolkit import Molecule
+from rdkit import Chem
 
 import time
 from tqdm import tqdm
@@ -99,6 +101,7 @@ class System:
         self._eq_prepared = False
         self._fe_prepared = False
         self._fe_results = {}
+        self._max_num_jobs = 2000
 
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
@@ -284,33 +287,51 @@ class System:
         self.unique_mol_names = []
         for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
             self._ligand_path = ligand_path
-            self._ligand = mda.Universe(ligand_path)
-            if len(set(self._ligand.atoms.resnames)) > 1:
-                raise ValueError(f"Multiple ligand molecules {set(self._ligand.atoms.resnames)} found in the ligand file: {ligand_path}")
-            mol_name = self._ligand.atoms.resnames[0].lower()
+            # raise warning inf ligand is a PDB
+            if not ligand_path.lower().endswith('.sdf'):
+                logger.warning(f"A sdf file is preferred for the ligand: {ligand_path}")
+                self._ligand = mda.Universe(ligand_path)
+
+                if len(set(self._ligand.atoms.resnames)) > 1:
+                    raise ValueError(f"Multiple ligand molecules {set(self._ligand.atoms.resnames)} found in the ligand file: {ligand_path}")
+                mol_name = self._ligand.atoms.resnames[0].lower()
+            else:
+                # use basename of the ligand file
+                molecule = Chem.MolFromMolFile(ligand_path, removeHs=False)
+                if molecule.HasProp("_Name"):
+                    mol_name = molecule.GetProp("_Name")
+                else: 
+                    mol_name = os.path.basename(ligand_path).split('.')[0].lower()
+
+
+            old_mol_name = mol_name
             # if mol_name is less than 2 characters
             # add ind to the end
             # otherwise tleap will fail later
             if len(mol_name) <= 2:
-                logger.warning(f"Elongating the ligand name: {mol_name} to {mol_name}{ind}")
                 mol_name = f'{mol_name}{ind}'
                 if mol_name in self.unique_mol_names:
                     mol_name = f'{mol_name[:2]}{ind}'
                     if mol_name in self.unique_mol_names:
                         raise ValueError(f"Cannot find a unique name for the ligand: {mol_name}")
+                logger.warning(f"Elongating the ligand name: {old_mol_name} to {mol_name}{ind}")
             elif len(mol_name) > 3:
-                logger.warning(f"Shortening the ligand name: {mol_name} to {mol_name[:3]}")
                 mol_name = mol_name[:3]
                 if mol_name in self.unique_mol_names:
                     mol_name = f'{mol_name[:2]}{ind}'
                     if mol_name in self.unique_mol_names:
                         raise ValueError(f"Cannot find a unique name for the ligand: {mol_name}")
+                logger.warning(f"Shortening the ligand name: {old_mol_name} to {mol_name[:3]}")
             self._mol = mol_name
             self.mols.append(mol_name)
             self.unique_mol_names.append(mol_name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{self._mol}.frcmod"):
                 logger.debug(f'Processing ligand: {self._mol}')
-                self._process_ligand()
+                if ligand_path.lower().endswith('.sdf'):
+                    self._process_ligand_sdf()
+                else:
+                    logger.warning(f"A mol2 file is preferred for the ligand: {ligand_path}") 
+                    self._process_ligand_pdb()
         self._prepare_ligand_poses()
         
         logger.info('System loaded and prepared')
@@ -461,9 +482,72 @@ class System:
         protein_ref = u_prot.select_atoms('protein')
         protein_ref.write(f"{self.poses_folder}/reference.pdb")
 
-    def _process_ligand(self):
+    def _process_ligand_sdf(self):
         """
-        Process the ligand, including adding or removing hydrogens as needed.
+        Process the ligand sdf, including adding or removing hydrogens as needed.
+        """
+        logger.debug(f'Processing ligand file: {self._ligand_path}')
+        if not self.retain_lig_prot:
+            raise NotImplementedError("Removing hydrogens from sdf is not supported yet")
+        ligand_path = self._ligand_path
+        mol = self._mol
+        molecule = Molecule(self._ligand_path)
+        molecule.assign_partial_charges(
+            partial_charge_method='am1bcc'
+        )
+
+        self.ligand_charge = np.round(np.sum([charge._magnitude for charge in molecule.partial_charges]))
+        logger.info(f'The net charge of the ligand {mol} in {ligand_path} is {self.ligand_charge}')
+
+        molecule.to_file(f"{self.ligandff_folder}/{mol}.sdf", 'sdf')
+        self._ligand_sdf_path = f"{self.ligandff_folder}/{mol}.sdf"
+        self._prepare_ligand_parameters_sdf()
+
+    def _prepare_ligand_parameters_sdf(self):
+        """Prepare ligand parameters for the system"""
+        # Get ligand parameters
+        mol = self._mol
+        logger.debug(f'Preparing ligand {mol} parameters')
+        antechamber_command = f'{antechamber} -i {self._ligand_sdf_path} -fi sdf -o {self.ligandff_folder}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol}'
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_with_log(antechamber_command, working_dir=tmpdir)
+        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.mol2", f"{self.ligandff_folder}/{mol}.mol2")
+        self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
+
+        if self.ligand_ff == 'gaff':
+            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 1')
+        elif self.ligand_ff == 'gaff2':
+            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 2')
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_with_log(
+                f'{antechamber} -i {self._ligand_sdf_path} -fi sdf -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb -rn {mol}', working_dir=tmpdir)
+
+        # copy _ante.pdb to .pdb
+        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.pdb", f"{self.ligandff_folder}/{mol}.pdb")
+
+        # get lib file
+        tleap_script = f"""
+        source leaprc.protein.ff14SB
+        source leaprc.{self.ligand_ff}
+        lig = loadmol2 {self.ligandff_folder}/{mol}.mol2
+        loadamberparams {self.ligandff_folder}/{mol}.frcmod
+        saveoff lig {self.ligandff_folder}/{mol}.lib
+        saveamberparm lig {self.ligandff_folder}/{mol}.prmtop {self.ligandff_folder}/{mol}.inpcrd
+
+        quit
+        """
+        with open(f"{self.ligandff_folder}/tleap.in", 'w') as f:
+            f.write(tleap_script)
+        run_with_log(f"{tleap} -f tleap.in",
+                        working_dir=self.ligandff_folder)
+
+        logger.debug(f'Ligand {mol} parameters prepared')
+
+
+    def _process_ligand_pdb(self):
+        """
+        Process the ligand PDB, including adding or removing hydrogens as needed.
         """
 
         # Ensure the ligand file is in PDB format
@@ -502,9 +586,9 @@ class System:
         self.ligand_charge = np.round(np.sum(ligand.atoms.charges))
         logger.info(f'The net charge of the ligand {mol} in {ligand_path} is {self.ligand_charge}')
 
-        self._prepare_ligand_parameters()
+        self._prepare_ligand_parameters_pdb()
 
-    def _prepare_ligand_parameters(self):
+    def _prepare_ligand_parameters_pdb(self):
         """Prepare ligand parameters for the system"""
         # Get ligand parameters
         # TODO: build a library of ligand parameters
@@ -564,7 +648,12 @@ class System:
             else:
                 mol_name = self.unique_mol_names[0]
             # align to the system
-            u = mda.Universe(pose)
+            if not pose.lower().endswith('.sdf'):
+                u = mda.Universe(pose)
+            else:
+                molecule = Chem.MolFromMolFile(pose, removeHs=False)
+                u = mda.Universe(molecule)
+                u.add_TopologyAttr('resnames')
             try:
                 u.atoms.chainIDs
             except AttributeError:
@@ -763,6 +852,7 @@ class System:
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
+        n_jobs_submitted = 0
         if cluster == 'frontier':
             self._submit_frontier(stage)
             logger.info(f'Frontier {stage} job submitted!')
@@ -771,12 +861,19 @@ class System:
         if stage == 'equil':
             logger.info('Submit equilibration stage')
             for pose in self.sim_config.poses_def:
+                # check n_jobs_submitted is less than the max_jobs
+                while n_jobs_submitted >= self._max_num_jobs:
+                    time.sleep(120)
+                    n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
+
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
                     logger.debug(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
+                    self._slurm_jobs.pop(f'equil_{pose}', None)
                     continue
                 if os.path.exists(f"{self.equil_folder}/{pose}/FAILED") and not overwrite:
                     logger.warning(f'Equilibration for {pose} has failed; add overwrite=True to re-run the simulation')
+                    self._slurm_jobs.pop(f'equil_{pose}', None)
                     continue
                 if f'equil_{pose}' in self._slurm_jobs:
                     # check if it's finished
@@ -785,10 +882,12 @@ class System:
                     # resubmit the job
                     if not slurm_job.is_still_running():
                         slurm_job.submit()
+                        n_jobs_submitted += 1
                         continue
                     elif overwrite:
                         slurm_job.cancel()
                         slurm_job.submit()
+                        n_jobs_submitted += 1
                         continue
                     else:
                         logger.info(f'Equilibration job for {pose} is still running')
@@ -803,6 +902,7 @@ class System:
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
                                 partition=partition)
                 slurm_job.submit()
+                n_jobs_submitted += 1
                 logger.info(f'Equilibration job for {pose} submitted')
                 self._slurm_jobs.update(
                     {f'equil_{pose}': slurm_job}
@@ -822,21 +922,28 @@ class System:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
                     for j in range(len(windows)):
+                        if n_jobs_submitted >= self._max_num_jobs:
+                            time.sleep(120)
+                            n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                             logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
                             continue
                         if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                             logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
                             continue
                         if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
                             slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
                             if not slurm_job.is_still_running():
                                 slurm_job.submit()
+                                n_jobs_submitted += 1
                                 continue
                             elif overwrite:
                                 slurm_job.cancel()
                                 slurm_job.submit()
+                                n_jobs_submitted += 1
                                 continue
                             else:
                                 logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
@@ -850,6 +957,7 @@ class System:
                                         filename=f'{folder_2_check}/SLURMM-run',
                                         partition=partition)
                         slurm_job.submit()
+                        n_jobs_submitted += 1
                         logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                         self._slurm_jobs.update(
                             {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
@@ -1316,6 +1424,7 @@ class System:
                      partition: str = 'owners',
                      anchor_atoms: List[str] = None,
                      ligand_anchor_atom: str = None,
+                     max_num_jobs: int = 500
                      ):
         """
         Run the whole pipeline for calculating the binding free energy
@@ -1353,9 +1462,12 @@ class System:
             center of mass of the ligand.
             Note only the first ligand in the ligand_paths will be used
             to create the binding pocket.
+        max_num_jobs : int, optional
+            The maximum number of jobs to submit at a time.
+            Default is 500.
         """
         logger.info('Running the pipeline')
-
+        self._max_num_jobs = max_num_jobs
         if avg_struc is not None and rmsf_file is not None:
             rmsf_restraints = True
         elif avg_struc is not None or rmsf_file is not None:
@@ -1484,8 +1596,8 @@ class System:
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
                 sim_failed[pose] = True
 
-        self._sim_finished.update(sim_finished)
-        self._sim_failed.update(sim_failed)
+        self._sim_finished = sim_finished
+        self._sim_failed = sim_failed
 
         if any(self._sim_failed.values()):
             logger.error(f'Equilibration failed: {self._sim_failed}')
@@ -1518,8 +1630,8 @@ class System:
                     if os.path.exists(f"{folder_2_check}/FAILED"):
                         sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
 
-        self._sim_finished.update(sim_finished)
-        self._sim_failed.update(sim_failed)
+        self._sim_finished = sim_finished
+        self._sim_failed = sim_failed
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
