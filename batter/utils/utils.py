@@ -185,7 +185,7 @@ def fail_report_wrapper(func):
 
 def safe_directory(func):
     """Decorator to ensure function returns to the original directory if an error occurs."""
-    @functools.wraps(func)
+    @wraps(func)
     def wrapper(*args, **kwargs):
         original_dir = os.getcwd()  # Save the current directory
         try:

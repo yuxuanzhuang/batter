@@ -2,7 +2,7 @@ import os
 import subprocess
 from datetime import datetime
 from loguru import logger
-
+import time
 
 class SLURMJob:
     def __init__(self, filename, partition=None):
@@ -16,6 +16,21 @@ class SLURMJob:
         self.jobid = None
 
     def submit(self):
+        """
+        Submit the job to the SLURM queue.
+        It will be tried three times in case of failure.
+        """
+        for _ in range(3):
+            try:
+                self._submit()
+                break
+            except RuntimeError as e:
+                logger.error(f"Failed to submit job: {e}")
+                time.sleep(30)
+        else:
+            raise RuntimeError("Failed to submit job after 3 attempts.")
+
+    def _submit(self):
         cmd = ["sbatch"]
         if self.partition:
             cmd.append(f"--partition={self.partition}")

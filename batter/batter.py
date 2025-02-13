@@ -2,7 +2,7 @@
 Provide the primary functions for preparing and processing FEP systems.
 """
 
-from .utils import (
+from batter.utils import (
     run_with_log,
     save_state,
     safe_directory,
@@ -46,6 +46,7 @@ from loguru import logger
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
 from batter.results import FEResult
+from batter.ligand_process import LigandFactory
 from batter.utils.slurm_job import SLURMJob
 
 from MDAnalysis.analysis import rms, align
@@ -200,7 +201,8 @@ class System:
         ligand_ph : float, optional
             pH value for protonating the ligand. Default is 7.4.
         ligand_ff : str, optional
-            Parameter set for the ligand. Default is 'gaff'.
+            Parameter set for the ligand. Default is 'gaff2'.
+            'gaff' is not supported yet.
             Options are 'gaff' and 'gaff2'.
         lipid_mol : List[str], optional
             List of lipid molecules to be included in the simulations.
@@ -289,51 +291,22 @@ class System:
         self.unique_mol_names = []
         for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
             self._ligand_path = ligand_path
-            # raise warning inf ligand is a PDB
-            if not ligand_path.lower().endswith('.sdf'):
-                logger.warning(f"A sdf file is preferred for the ligand: {ligand_path}")
-                self._ligand = mda.Universe(ligand_path)
-
-                if len(set(self._ligand.atoms.resnames)) > 1:
-                    raise ValueError(f"Multiple ligand molecules {set(self._ligand.atoms.resnames)} found in the ligand file: {ligand_path}")
-                mol_name = self._ligand.atoms.resnames[0].lower()
-            else:
-                # use basename of the ligand file
-                molecule = Chem.MolFromMolFile(ligand_path, removeHs=False)
-                if molecule.HasProp("_Name"):
-                    mol_name = molecule.GetProp("_Name")
-                else: 
-                    mol_name = os.path.basename(ligand_path).split('.')[0].lower()
-
-
-            old_mol_name = mol_name
-            # if mol_name is less than 2 characters
-            # add ind to the end
-            # otherwise tleap will fail later
-            if len(mol_name) <= 2:
-                mol_name = f'{mol_name}{ind}'
-                if mol_name in self.unique_mol_names:
-                    mol_name = f'{mol_name[:2]}{ind}'
-                    if mol_name in self.unique_mol_names:
-                        raise ValueError(f"Cannot find a unique name for the ligand: {mol_name}")
-                logger.warning(f"Elongating the ligand name: {old_mol_name} to {mol_name}{ind}")
-            elif len(mol_name) > 3:
-                mol_name = mol_name[:3]
-                if mol_name in self.unique_mol_names:
-                    mol_name = f'{mol_name[:2]}{ind}'
-                    if mol_name in self.unique_mol_names:
-                        raise ValueError(f"Cannot find a unique name for the ligand: {mol_name}")
-                logger.warning(f"Shortening the ligand name: {old_mol_name} to {mol_name[:3]}")
-            self._mol = mol_name
-            self.mols.append(mol_name)
-            self.unique_mol_names.append(mol_name)
-            if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{self._mol}.frcmod"):
-                logger.debug(f'Processing ligand: {self._mol}')
-                if ligand_path.lower().endswith('.sdf'):
-                    self._process_ligand_sdf()
-                else:
-                    logger.warning(f"A mol2 file is preferred for the ligand: {ligand_path}") 
-                    self._process_ligand_pdb()
+            ligand_factory = LigandFactory()
+            ligand = ligand_factory.create_ligand(
+                    ligand_file=ligand_path,
+                    index=ind,
+                    output_dir=self.ligandff_folder,
+                    # TODO: use dictionary for ligand_paths
+                    # ligand_name=,
+                    retain_lig_prot=self.retain_lig_prot,
+                    ligand_ff=self.ligand_ff) 
+            ligand.generate_unique_name(self.unique_mol_names)
+            self._mol = ligand.name
+            self.mols.append(ligand.name)
+            self.unique_mol_names.append(ligand.name)
+            if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
+                ligand.prepare_ligand_parameters_sdf()
+            
         self._prepare_ligand_poses()
         
         logger.info('System loaded and prepared')
@@ -483,159 +456,6 @@ class System:
         u_merged.atoms.write(f"{self.poses_folder}/{self.system_name}_docked.pdb")
         protein_ref = u_prot.select_atoms('protein')
         protein_ref.write(f"{self.poses_folder}/reference.pdb")
-
-    def _process_ligand_sdf(self):
-        """
-        Process the ligand sdf, including adding or removing hydrogens as needed.
-        """
-        logger.debug(f'Processing ligand file: {self._ligand_path}')
-        if not self.retain_lig_prot:
-            raise NotImplementedError("Removing hydrogens from sdf is not supported yet")
-        ligand_path = self._ligand_path
-        mol = self._mol
-        molecule = Molecule(self._ligand_path)
-        molecule.assign_partial_charges(
-            partial_charge_method='am1bcc'
-        )
-
-        self.ligand_charge = np.round(np.sum([charge._magnitude for charge in molecule.partial_charges]))
-        logger.info(f'The net charge of the ligand {mol} in {ligand_path} is {self.ligand_charge}')
-
-        molecule.to_file(f"{self.ligandff_folder}/{mol}.sdf", 'sdf')
-        self._ligand_sdf_path = f"{self.ligandff_folder}/{mol}.sdf"
-        self._prepare_ligand_parameters_sdf()
-
-    def _prepare_ligand_parameters_sdf(self):
-        """Prepare ligand parameters for the system"""
-        # Get ligand parameters
-        mol = self._mol
-        logger.debug(f'Preparing ligand {mol} parameters')
-        antechamber_command = f'{antechamber} -i {self._ligand_sdf_path} -fi sdf -o {self.ligandff_folder}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol}'
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_with_log(antechamber_command, working_dir=tmpdir)
-        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.mol2", f"{self.ligandff_folder}/{mol}.mol2")
-        self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
-
-        if self.ligand_ff == 'gaff':
-            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 1')
-        elif self.ligand_ff == 'gaff2':
-            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 2')
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_with_log(
-                f'{antechamber} -i {self._ligand_sdf_path} -fi sdf -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb -rn {mol}', working_dir=tmpdir)
-
-        # copy _ante.pdb to .pdb
-        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.pdb", f"{self.ligandff_folder}/{mol}.pdb")
-
-        # get lib file
-        tleap_script = f"""
-        source leaprc.protein.ff14SB
-        source leaprc.{self.ligand_ff}
-        lig = loadmol2 {self.ligandff_folder}/{mol}.mol2
-        loadamberparams {self.ligandff_folder}/{mol}.frcmod
-        saveoff lig {self.ligandff_folder}/{mol}.lib
-        saveamberparm lig {self.ligandff_folder}/{mol}.prmtop {self.ligandff_folder}/{mol}.inpcrd
-
-        quit
-        """
-        with open(f"{self.ligandff_folder}/tleap.in", 'w') as f:
-            f.write(tleap_script)
-        run_with_log(f"{tleap} -f tleap.in",
-                        working_dir=self.ligandff_folder)
-
-        logger.debug(f'Ligand {mol} parameters prepared')
-
-
-    def _process_ligand_pdb(self):
-        """
-        Process the ligand PDB, including adding or removing hydrogens as needed.
-        """
-
-        # Ensure the ligand file is in PDB format
-        logger.debug(f'Processing ligand file: {self._ligand_path}')
-
-        ligand = self._ligand
-        mol = self._mol
-        ligand_path = f"{self.ligandff_folder}/{mol}.pdb"
-        ligand.atoms.residues.resnames = mol
-        ligand.atoms.write(ligand_path)
-
-        # retain hydrogens from the ligand
-        if not self.retain_lig_prot:
-            # Remove hydrogens from the ligand
-            noh_path = f"{self.ligandff_folder}/{mol}_noh.pdb"
-            ligand.guess_TopologyAttrs(to_guess=['elements'])
-            ligand.select_atoms('not hydrogen').write(noh_path)
-            # Add hydrogens based on the specified pH
-            logger.debug(f'The babel protonation of the ligand is for pH {self.ligand_ph:.2f}')
-            run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {self.ligandff_folder}/{mol}.pdb -p {self.ligand_ph:.2f}")
-            
-            ligand = mda.Universe(f"{self.ligandff_folder}/{mol}.pdb")
-            
-        ligand.guess_TopologyAttrs(to_guess=['elements'])
-        guesser = DefaultGuesser(ligand)
-        ligand.add_TopologyAttr('charges')
-        ligand.atoms.charges = guesser.guess_gasteiger_charges(ligand.atoms)
-        ligand.atoms.write(ligand_path)
-        run_with_log(f"{obabel} -i pdb {ligand_path} -o mol2 -O {self.ligandff_folder}/{mol}.mol2")
-
-        self._ligand_path = ligand_path
-        self._ligand = mda.Universe(ligand_path)
-        
-        self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
-
-        self.ligand_charge = np.round(np.sum(ligand.atoms.charges))
-        logger.info(f'The net charge of the ligand {mol} in {ligand_path} is {self.ligand_charge}')
-
-        self._prepare_ligand_parameters_pdb()
-
-    def _prepare_ligand_parameters_pdb(self):
-        """Prepare ligand parameters for the system"""
-        # Get ligand parameters
-        # TODO: build a library of ligand parameters
-        # and check if the ligand is in the library
-        # if not, then prepare the ligand parameters
-
-        mol = self._mol
-        logger.debug(f'Preparing ligand {mol} parameters')
-
-        # antechamber_command = f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/ligand_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
-        antechamber_command = f'{antechamber} -i {self._ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge}'
-        with tempfile.TemporaryDirectory() as tmpdir:
-            run_with_log(antechamber_command, working_dir=tmpdir)
-        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.mol2", f"{self.ligandff_folder}/{mol}.mol2")
-        self._ligand_mol2_path = f"{self.ligandff_folder}/{mol}.mol2"
-
-        if self.ligand_ff == 'gaff':
-            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 1')
-        elif self.ligand_ff == 'gaff2':
-            run_with_log(f'{parmchk2} -i {self.ligandff_folder}/{mol}_ante.mol2 -f mol2 -o {self.ligandff_folder}/{mol}.frcmod -s 2')
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            #    run_with_log(f'{antechamber} -i {self.ligand_path} -fi pdb -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb', working_dir=tmpdir)
-            run_with_log(
-                f'{antechamber} -i {self._ligand_mol2_path} -fi mol2 -o {self.ligandff_folder}/{mol}_ante.pdb -fo pdb', working_dir=tmpdir)
-        # copy _ante.pdb to .pdb
-        shutil.copy(f"{self.ligandff_folder}/{mol}_ante.pdb", f"{self.ligandff_folder}/{mol}.pdb")
-
-        # get lib file
-        tleap_script = f"""
-        source leaprc.protein.ff14SB
-        source leaprc.{self.ligand_ff}
-        lig = loadmol2 {self.ligandff_folder}/{mol}.mol2
-        loadamberparams {self.ligandff_folder}/{mol}.frcmod
-        saveoff lig {self.ligandff_folder}/{mol}.lib
-        saveamberparm lig {self.ligandff_folder}/{mol}.prmtop {self.ligandff_folder}/{mol}.inpcrd
-
-        quit
-        """
-        with open(f"{self.ligandff_folder}/tleap.in", 'w') as f:
-            f.write(tleap_script)
-        run_with_log(f"{tleap} -f tleap.in",
-                        working_dir=self.ligandff_folder)
-
-        logger.debug(f'Ligand {mol} parameters prepared')
 
     def _prepare_ligand_poses(self):
         """
@@ -1319,11 +1139,6 @@ class System:
             Whether to load the system fe results from before
             Default is True.
         """
-        if load:
-            for pose in self.sim_config.poses_def:
-                self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                logger.info(f'{pose}:\t{self.fe_results[pose].fe:.2f} ± {self.fe_results[pose].fe_std:.2f}')
-            return
         if input_file is not None:
             self._get_sim_config(input_file)
             
@@ -1343,6 +1158,9 @@ class System:
 
         with self._change_dir(self.output_dir):
             for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
+                if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
+                        self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                        continue
                 fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
                                 weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
                 self.fe_results[pose] = FEResult('Results/Results.dat')
