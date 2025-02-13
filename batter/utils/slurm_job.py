@@ -15,11 +15,12 @@ class SLURMJob:
         self.partition = partition
         self.jobid = None
 
-    def submit(self):
+    def submit(self, overwrite=False):
         """
         Submit the job to the SLURM queue.
         It will be tried three times in case of failure.
         """
+        self.overwrite = overwrite
         for _ in range(3):
             try:
                 self._submit()
@@ -31,7 +32,10 @@ class SLURMJob:
             raise RuntimeError("Failed to submit job after 3 attempts.")
 
     def _submit(self):
-        cmd = ["sbatch"]
+        if self.overwrite:
+            cmd = ["OVERWRITE=1", "sbatch"]
+        else:
+            cmd = ["OVERWRITE=0", "sbatch"]
         if self.partition:
             cmd.append(f"--partition={self.partition}")
         cmd.append(self.file_basename)

@@ -710,7 +710,7 @@ class System:
                         continue
                     elif overwrite:
                         slurm_job.cancel()
-                        slurm_job.submit()
+                        slurm_job.submit(overwrite=True)
                         n_jobs_submitted += 1
                         continue
                     else:
@@ -725,7 +725,7 @@ class System:
                 slurm_job = SLURMJob(
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
                                 partition=partition)
-                slurm_job.submit()
+                slurm_job.submit(overwrite=overwrite)
                 n_jobs_submitted += 1
                 logger.info(f'Equilibration job for {pose} submitted')
                 self._slurm_jobs.update(
@@ -766,12 +766,13 @@ class System:
                                 continue
                             elif overwrite:
                                 slurm_job.cancel()
-                                slurm_job.submit()
+                                slurm_job.submit(overwrite=True)
                                 n_jobs_submitted += 1
                                 continue
                             else:
                                 logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
                                 continue
+
                         if overwrite:
                             # remove FINISHED and FAILED
                             os.remove(f"{folder_2_check}/FINISHED", ignore_errors=True)
@@ -780,7 +781,7 @@ class System:
                         slurm_job = SLURMJob(
                                         filename=f'{folder_2_check}/SLURMM-run',
                                         partition=partition)
-                        slurm_job.submit()
+                        slurm_job.submit(overwrite=overwrite)
                         n_jobs_submitted += 1
                         logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                         self._slurm_jobs.update(

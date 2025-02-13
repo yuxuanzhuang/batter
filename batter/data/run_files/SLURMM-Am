@@ -3,6 +3,7 @@
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
 #SBATCH --partition=PARTITIONNAME
 #SBATCH --nodes=1
+#SBATCH --open-mode=append
 #SBATCH --output=STAGE-POSE-%j.out
 #SBATCH --error=STAGE-POSE-%j.err
 #SBATCH --gres=gpu:1
@@ -12,23 +13,25 @@
 
 scontrol show job $SLURM_JOB_ID
 
-# Define the retry count and overwrite variables
-RETRY_COUNT=${RETRY_COUNT:-1}  # Default to 1 if not set
-OVERWRITE=${OVERWRITE:-1}  # Default to 1 if not set
+OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
 
-# Detect if the job has been restarted due to preemption
-RESTARTS=$(scontrol show job $SLURM_JOB_ID | awk '/Restarts/ {print $2}' | cut -d= -f2)
-if [ "$RESTARTS" -gt 0 ]; then
-    OVERWRITE=0
-    echo "Job was restarted ($RESTARTS times), setting OVERWRITE=0"
+# Set a path for the retry count file on a shared filesystem.
+# Change this path as needed.
+ATTEMPT_FILE="$HOME/job_attempt.txt"
+
+# Initialize the attempt count file if it doesn't exist.
+if [ ! -f "$ATTEMPT_FILE" ]; then
+    echo "1" > "$ATTEMPT_FILE"
 fi
 
-echo "RETRY_COUNT=$RETRY_COUNT, OVERWRITE=$OVERWRITE"
- 
-source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
+# Read the current retry count.
+RETRY_COUNT=$(cat "$ATTEMPT_FILE")
+echo "Current attempt: $RETRY_COUNT"
 
-# Define the maximum number of attempts
+# Define the maximum number of attempts.
 MAX_ATTEMPTS=3
+
+source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."
@@ -40,12 +43,13 @@ if [ $error_code -eq 0 ]; then
 else
     echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
 
-    # Check if the maximum attempts have been reached
     if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
         NEXT_RETRY=$((RETRY_COUNT + 1))
-        echo "Resubmitting the job for attempt $NEXT_RETRY..."
-        # Submit the same script with an incremented retry count
-        sbatch --export=RETRY_COUNT=$NEXT_RETRY,OVERWRITE=1 $0
+        # Update the file with the new retry count.
+        echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
+        echo "Requeuing the job for attempt $NEXT_RETRY..."
+        # Requeue the same job (retains the same job ID).
+        scontrol requeue $SLURM_JOB_ID
         exit 0
     else
         echo "FAILED" > FAILED
