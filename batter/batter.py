@@ -733,7 +733,7 @@ class System:
                                 partition=partition)
                 slurm_job.submit(overwrite=overwrite)
                 n_jobs_submitted += 1
-                logger.info(f'Equilibration job for {pose} submitted: {slurm_job.job_id}')
+                logger.info(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
                     {f'equil_{pose}': slurm_job}
                 )
@@ -1148,6 +1148,12 @@ class System:
         """
         if input_file is not None:
             self._get_sim_config(input_file)
+        
+        if self._check_fe():
+            logger.info('FE simulation is not finished yet')
+            self.check_jobs()
+            return
+            
             
         blocks = self.sim_config.blocks
         components = self.sim_config.components
@@ -1170,6 +1176,10 @@ class System:
                         continue
                 fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
                                 weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
+                # if failed; it will return nan
+                if np.isnan(fe_value):
+                    logger.warning(f'FE calculation failed for {pose}')
+                    continue
                 self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
         for i, (pose, fe) in enumerate(self.fe_results.items()):
