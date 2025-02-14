@@ -1432,7 +1432,7 @@ class System:
         logger.info(f'---------------------------------')
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
+            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.std:.2f}')
         
     @save_state
     def _check_equilibration(self):
