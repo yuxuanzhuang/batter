@@ -36,7 +36,7 @@ from functools import wraps
 try:
     from openff.toolkit import Molecule
 except:
-    raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit`")
+    raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
 from rdkit import Chem
 
 import time
@@ -699,15 +699,15 @@ class System:
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
                     logger.debug(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
-                    self._slurm_jobs.pop(f'equil_{pose}', None)
+                    self._slurm_jobs.pop(f'{pose}', None)
                     continue
                 if os.path.exists(f"{self.equil_folder}/{pose}/FAILED") and not overwrite:
                     logger.warning(f'Equilibration for {pose} has failed; add overwrite=True to re-run the simulation')
-                    self._slurm_jobs.pop(f'equil_{pose}', None)
+                    self._slurm_jobs.pop(f'{pose}', None)
                     continue
-                if f'equil_{pose}' in self._slurm_jobs:
+                if f'{pose}' in self._slurm_jobs:
                     # check if it's finished
-                    slurm_job = self._slurm_jobs[f'equil_{pose}']
+                    slurm_job = self._slurm_jobs[f'{pose}']
                     # if the job is finished but the FINISHED file is not created
                     # resubmit the job
                     if not slurm_job.is_still_running():
@@ -735,7 +735,7 @@ class System:
                 n_jobs_submitted += 1
                 logger.info(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
-                    {f'equil_{pose}': slurm_job}
+                    {f'{pose}': slurm_job}
                 )
 
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
@@ -757,15 +757,15 @@ class System:
                             n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
-                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                            self._slurm_jobs.pop(f'{pose}/{comp_folder}/{comp}{j:02d}', None)
                             logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
                             continue
                         if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
-                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                            self._slurm_jobs.pop(f'{pose}/{comp_folder}/{comp}{j:02d}', None)
                             logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
                             continue
-                        if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
-                            slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
+                        if f'{pose}/{comp_folder}/{comp}{j:02d}' in self._slurm_jobs:
+                            slurm_job = self._slurm_jobs[f'{pose}/{comp_folder}/{comp}{j:02d}']
                             if not slurm_job.is_still_running():
                                 slurm_job.submit()
                                 n_jobs_submitted += 1
@@ -791,7 +791,7 @@ class System:
                         n_jobs_submitted += 1
                         logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                         self._slurm_jobs.update(
-                            {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
+                            {f'{pose}/{comp_folder}/{comp}{j:02d}': slurm_job}
                         )
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
@@ -1369,6 +1369,10 @@ class System:
             while self._check_equilibration():
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
                 logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                not_finished = [k for k, v in self._sim_finished.items() if not v]
+                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                for job in not_finished_slurm_jobs:
+                    self._continue_job(self._slurm_jobs[job])
                 time.sleep(30*60)
         else:
             logger.info('Equilibration is already finished')
@@ -1404,6 +1408,10 @@ class System:
                 # get finishd jobs
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
                 logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                not_finished = [k for k, v in self._sim_finished.items() if not v]
+                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                for job in not_finished_slurm_jobs:
+                    self._continue_job(self._slurm_jobs[job])
                 time.sleep(30*60)
         else:
             logger.info('Free energy calculation is already finished')
@@ -1426,6 +1434,7 @@ class System:
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe[0]:.2f} ± {fe[1]:.2f}')
         
+    @save_state
     def _check_equilibration(self):
         """
         Check if the equilibration is finished by checking the FINISHED file
@@ -1455,6 +1464,7 @@ class System:
             logger.debug(f'Not finished: {not_finished}')
             return True
 
+    @save_state
     def _check_fe(self):
         """
         Check if the free energy calculation is finished by 
@@ -1487,6 +1497,15 @@ class System:
             not_finished = [k for k, v in self._sim_finished.items() if not v]
             logger.debug(f'Not finished: {not_finished}')
             return True
+
+    @staticmethod
+    def _continue_job(job: SLURMJob):
+        """
+        Continue the job if it is not finished.
+        """
+        if not job.is_still_running():
+            job.submit()
+            logger.info(f'Job {job.job_name} is resubmitted')
 
     def check_jobs(self):
         """
