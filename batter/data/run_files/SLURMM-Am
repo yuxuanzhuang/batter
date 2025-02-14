@@ -8,7 +8,7 @@
 #SBATCH --error=STAGE-POSE-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
-#SBATCH -t 8:00:00
+#SBATCH -t 16:00:00
 #SBATCH -d singleton
 
 scontrol show job $SLURM_JOB_ID
@@ -17,7 +17,7 @@ OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
 
 # Set a path for the retry count file on a shared filesystem.
 # Change this path as needed.
-ATTEMPT_FILE="$HOME/job_attempt.txt"
+ATTEMPT_FILE="job_attempt.txt"
 
 # Initialize the attempt count file if it doesn't exist.
 if [ ! -f "$ATTEMPT_FILE" ]; then

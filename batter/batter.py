@@ -1402,8 +1402,8 @@ class System:
             logger.info('Checking the free energy calculation')
             while self._check_fe():
                 # get finishd jobs
-                finished = [k for k, v in self._sim_finished.items() if v]
-                logger.info(f'Finished jobs: {finished} / {len(self._sim_finished)}')
+                n_finished = len([k for k, v in self._sim_finished.items() if v])
+                logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 time.sleep(30*60)
         else:
             logger.info('Free energy calculation is already finished')
