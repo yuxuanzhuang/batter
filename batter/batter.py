@@ -362,9 +362,12 @@ class System:
         u_sys.atoms.positions -= cog_prot
         
         # get translation-rotation matrix
-        mobile = u_prot.select_atoms(self.protein_align).select_atoms('name CA')
-        ref = u_sys.select_atoms(self.protein_align).select_atoms('name CA')
+        mobile = u_prot.select_atoms(self.protein_align).select_atoms('name CA and not resname NMA ACE')
+        ref = u_sys.select_atoms(self.protein_align).select_atoms('name CA and not resname NMA ACE')
 
+        if mobile.n_atoms != ref.n_atoms:
+            raise ValueError(f"Number of atoms in the alignment selection is different: protein_input: {mobile.n_atoms} and system_input {ref.n_atoms}"
+            f"The selection string is {self.protein_align} and name CA and not resname NMA ACE")
         mobile_com = mobile.center(weights=None)
         ref_com = ref.center(weights=None)
         mobile_coord = mobile.positions - mobile_com
