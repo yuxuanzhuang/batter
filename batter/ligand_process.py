@@ -174,6 +174,9 @@ class PDB_Ligand(Ligand):
         ligand = mda.Universe(self.ligand_file)
         self._ligand_u = ligand
         self._ligand_object = ligand.atoms.convert_to("RDKIT")
+        if self._ligand_object is None:
+            raise ValueError(f"Failed to load ligand from {self.ligand_file}"
+                                " with RDKit. Check if the ligand is correct")
 
     def _get_mol_name(self):
         if self._name is not None:
@@ -188,6 +191,9 @@ class SDF_Ligand(Ligand):
                 removeHs=not self.retain_lig_prot)
         if not self.retain_lig_prot:
             ligand = Chem.AddHs(ligand)
+        if ligand is None:
+            raise ValueError(f"Failed to load ligand from {self.ligand_file}"
+                                " with RDKit. Check if the ligand is correct")
         self._ligand_object = ligand
 
 
@@ -198,6 +204,9 @@ class MOL2_Ligand(Ligand):
             removeHs=not self.retain_lig_prot)
         if not self.retain_lig_prot:
             ligand = Chem.AddHs(ligand)
+        if ligand is None:
+            raise ValueError(f"Failed to load ligand from {self.ligand_file}"
+                                " with RDKit. Check if the ligand is correct")
         self._ligand_object = ligand
 
 
