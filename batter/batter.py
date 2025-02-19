@@ -45,6 +45,8 @@ from tqdm import tqdm
 from typing import List, Tuple
 import loguru
 from loguru import logger
+logger.add(sys.stdout, level='INFO')
+logger.add("batter.log", level='INFO')
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
@@ -163,6 +165,7 @@ class System:
                     lipid_mol: List[str] = [],
                     lipid_ff: str = 'lipid21',
                     overwrite: bool = False,
+                    verbose: bool = False,
                     ):
         """
         Create a new single-ligand single-receptor system.
@@ -215,8 +218,19 @@ class System:
             Force field for lipid atoms. Default is 'lipid21'.
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
+        verbose : bool, optional
+            The verbosity of the output. If True, it will print the debug messages.
+            Default is False.
         """
         # Log every argument
+        if verbose:
+            logger.remove()
+            logger.add(sys.stdout, level='DEBUG')
+            logger.add("batter.log", level='DEBUG')
+            logger.debug('Verbose mode is on')
+            logger.debug('Creating a new system')
+
+        self.verbose = True
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)
         
@@ -1269,6 +1283,7 @@ class System:
                      anchor_atoms: List[str] = None,
                      ligand_anchor_atom: str = None,
                      max_num_jobs: int = 500
+                     verbose: bool = False
                      ):
         """
         Run the whole pipeline for calculating the binding free energy
@@ -1309,7 +1324,14 @@ class System:
         max_num_jobs : int, optional
             The maximum number of jobs to submit at a time.
             Default is 500.
+        verbose : bool, optional
+            Whether to print the verbose output. Default is False.
         """
+        if verbose:
+            logger.remove()
+            logger.add(sys.stdout, level='DEBUG')
+            logger.add(f'batter.log', level='DEBUG')
+            logger.info('Verbose output is set to True')
         logger.info('Running the pipeline')
         self._max_num_jobs = max_num_jobs
         if avg_struc is not None and rmsf_file is not None:

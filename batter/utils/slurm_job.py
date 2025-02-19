@@ -15,18 +15,29 @@ class SLURMJob:
         self.partition = partition
         self.jobid = None
 
-    def submit(self, overwrite=False):
+    def submit(self, overwrite=False,
+               requeue=False):
         """
         Submit the job to the SLURM queue.
         It will be tried three times in case of failure.
         """
         self.overwrite = overwrite
+        if requeue:
+            for _ in range(3):
+                try:
+                    self._requeue()
+                    break
+                except RuntimeError as e:
+                    logger.error(f"Failed to requeue job: {e}; retrying in 30 seconds")
+                    time.sleep(30)
+            else:
+                raise RuntimeError("Failed to requeue job after 3 attempts.")
         for _ in range(3):
             try:
                 self._submit()
                 break
             except RuntimeError as e:
-                logger.error(f"Failed to submit job: {e}")
+                logger.error(f"Failed to submit job: {e}; retrying in 30 seconds")
                 time.sleep(30)
         else:
             raise RuntimeError("Failed to submit job after 3 attempts.")
@@ -66,6 +77,30 @@ class SLURMJob:
 
         self.jobid = parts[3]  # The fourth token is the job ID
         logger.debug(f"JobID {self.jobid} submitted.")
+
+    def _requeue(self):
+        env = os.environ.copy()
+        env["OVERWRITE"] = "1" if self.overwrite else "0"
+
+        if not self.jobid:
+            raise RuntimeError("No jobid. Have you submitted the job yet?")
+
+        result = subprocess.run(
+            ["scontrol", "requeue", self.jobid],
+            capture_output=True,
+            text=True,
+            env=env
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                "scontrol command failed.\n"
+                f"Exit code: {result.returncode}\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}"
+            )
+
+        logger.debug(f"JobID {self.jobid} requeued.")
 
     def check_status(self):
         if not self.jobid:

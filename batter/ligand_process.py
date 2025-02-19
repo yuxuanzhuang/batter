@@ -133,7 +133,7 @@ class Ligand(ABC):
         mol = self.name
         logger.debug(f'Preparing ligand {mol} parameters')
         abspath_sdf = os.path.abspath(self._ligand_sdf_path)
-        antechamber_command = f'{antechamber} -i {abspath_sdf} -fi sdf -o {self.output_dir}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol}'
+        antechamber_command = f'{antechamber} -i {abspath_sdf} -fi sdf -o {self.output_dir}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol} -dr no'
 
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(antechamber_command, working_dir=tmpdir)
@@ -147,7 +147,7 @@ class Ligand(ABC):
         
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(
-                f'{antechamber} -i {self._ligand_sdf_path} -fi sdf -o {self.output_dir}/{mol}_ante.pdb -fo pdb -rn {mol}', working_dir=tmpdir)
+                f'{antechamber} -i {self._ligand_sdf_path} -fi sdf -o {self.output_dir}/{mol}_ante.pdb -fo pdb -rn {mol} -dr no', working_dir=tmpdir)
 
         # copy _ante.pdb to .pdb
         shutil.copy(f"{self.output_dir}/{mol}_ante.pdb", f"{self.output_dir}/{mol}.pdb")
