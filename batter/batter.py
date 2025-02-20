@@ -46,7 +46,6 @@ from typing import List, Tuple
 import loguru
 from loguru import logger
 logger.add(sys.stdout, level='INFO')
-logger.add("batter.log", level='INFO')
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
@@ -101,6 +100,7 @@ class System:
             The folder containing the system files.
         """
         self.output_dir = os.path.abspath(folder) + '/'
+        logger.add(f"{self.output_dir}/batter.log", level='INFO')
 
         self._slurm_jobs = {}
         self._sim_finished = {}
@@ -135,9 +135,10 @@ class System:
                 loaded_state.output_dir = self.output_dir
                 # Update self with loaded attributes
                 self.__dict__.update(loaded_state.__dict__)
+                logger.add(f"{self.output_dir}/batter.log", level='INFO')
+
         except Exception as e:
             logger.error(f"Error loading the system: {e}")
-
         if not os.path.exists(f"{self.output_dir}/all-poses"):
             logger.info(f"The folder does not contain all-poses: {self.output_dir}")
             return
@@ -226,7 +227,7 @@ class System:
         if verbose:
             logger.remove()
             logger.add(sys.stdout, level='DEBUG')
-            logger.add("batter.log", level='DEBUG')
+            logger.add(f"{self.output_dir}/batter.log", level='DEBUG')
             logger.debug('Verbose mode is on')
             logger.debug('Creating a new system')
 
@@ -1282,7 +1283,7 @@ class System:
                      partition: str = 'owners',
                      anchor_atoms: List[str] = None,
                      ligand_anchor_atom: str = None,
-                     max_num_jobs: int = 500
+                     max_num_jobs: int = 500,
                      verbose: bool = False
                      ):
         """
@@ -1330,7 +1331,7 @@ class System:
         if verbose:
             logger.remove()
             logger.add(sys.stdout, level='DEBUG')
-            logger.add(f'batter.log', level='DEBUG')
+            logger.add(f'{self.output_dir}/batter.log', level='DEBUG')
             logger.info('Verbose output is set to True')
         logger.info('Running the pipeline')
         self._max_num_jobs = max_num_jobs
@@ -1457,7 +1458,7 @@ class System:
         logger.info(f'---------------------------------')
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.std:.2f}')
+            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
         
     @save_state
     def _check_equilibration(self):
