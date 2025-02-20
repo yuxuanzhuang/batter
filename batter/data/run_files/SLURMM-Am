@@ -29,7 +29,7 @@ RETRY_COUNT=$(cat "$ATTEMPT_FILE")
 echo "Current attempt: $RETRY_COUNT"
 
 # Define the maximum number of attempts.
-MAX_ATTEMPTS=3
+MAX_ATTEMPTS=5
 
 source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 
@@ -49,7 +49,10 @@ else
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
         echo "Requeuing the job for attempt $NEXT_RETRY..."
         # Requeue the same job (retains the same job ID).
-        scontrol requeue $SLURM_JOB_ID
+        # Exclude the node where the job failed.
+        # wait for 2 min
+        sleep 120
+        scontrol requeue $SLURM_JOB_ID --exclude=$(scontrol show job $SLURM_JOB_ID | grep NodeList | awk -F= '{print $2}')
         exit 0
     else
         echo "FAILED" > FAILED
