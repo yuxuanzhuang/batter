@@ -26,6 +26,7 @@ dependencies = [
     "pydantic",
     "click",
     "rdkit",
+    "pandas",
 ]
 
 [project.scripts]

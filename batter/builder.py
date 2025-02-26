@@ -954,6 +954,8 @@ class EquilibrationBuilder(SystemBuilder):
         P3 = f':{p3_resid}@{h3_atom}'
 
         logger.info(f'Receptor anchors: P1: {P1}; P2: {P2}; P3: {P3}')
+        logger.info(f'Note this is not the same residue number as in the receptor file'
+                    'because the residues were renumbered from 1.')
         self.P1 = P1
         self.P2 = P2
         self.P3 = P3

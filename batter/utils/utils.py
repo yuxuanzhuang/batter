@@ -1,6 +1,8 @@
 from loguru import logger
 import subprocess as sp
 import os
+import pickle
+from functools import wraps
 
 antechamber = 'antechamber'
 tleap = 'tleap'
@@ -155,4 +157,40 @@ def log_info(func):
         logger.debug(f"Current working directory: {os.getcwd()}")
         logger.debug(f"Running function: {func.__name__}")
         return func(*args, **kwargs)
+    return wrapper
+
+def save_state(method):
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        result = method(self, *args, **kwargs)
+        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+            pickle.dump(self, f)
+        return result
+    return wrapper
+
+def fail_report_wrapper(func):
+    """
+    Function to report failure of a method
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f'Error in {func}: {e}')
+            logger.error(f'all args: {args}; kwargs: {kwargs}')
+            raise
+    return wrapper
+
+
+def safe_directory(func):
+    """Decorator to ensure function returns to the original directory if an error occurs."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        original_dir = os.getcwd()  # Save the current directory
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            os.chdir(original_dir)  # Return to original directory on failure
+            raise e  # Re-raise the exception
     return wrapper
