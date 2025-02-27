@@ -52,6 +52,7 @@ from batter.bat_lib import analysis
 from batter.results import FEResult
 from batter.ligand_process import LigandFactory
 from batter.utils.slurm_job import SLURMJob
+from batter.analysis.convergence import ConvergenceValidator
 
 from MDAnalysis.analysis import rms, align
 
@@ -1192,12 +1193,29 @@ class System:
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
                         self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
                         continue
+                os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
                 fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
                                 weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
+
                 # if failed; it will return nan
                 if np.isnan(fe_value):
                     logger.warning(f'FE calculation failed for {pose}')
                     continue
+                
+                # validate
+                for i, comp in enumerate(components):
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    windows = attach_rest if comp_folder == 'rest' else lambdas
+                    Upot = np.load(f"{folder_comp}/data/Upot_{comp}_all.npy")
+                    validator = ConvergenceValidator(
+                        Upot=Upot,
+                        lambdas=windows,
+                        temperature=temperature,
+                    )
+                    validator.plot_convergence(save_path=f"{self.fe_folder}/{pose}/Results/convergence_{pose}_{comp}.png",
+                                               title=f'Convergence of {pose} {comp}')
+
                 self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
         for i, (pose, fe) in enumerate(self.fe_results.items()):
