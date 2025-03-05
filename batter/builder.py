@@ -959,6 +959,11 @@ class EquilibrationBuilder(SystemBuilder):
         self.P1 = P1
         self.P2 = P2
         self.P3 = P3
+        protein_anchor_file = 'protein_anchors.txt'
+        with open(protein_anchor_file, 'w') as f:
+            f.write(f'{P1}\n')
+            f.write(f'{P2}\n')
+            f.write(f'{P3}\n')
 
         # Replace names in initial files and VMD scripts
         # Here we convert all four letter residue names to three letter residue names

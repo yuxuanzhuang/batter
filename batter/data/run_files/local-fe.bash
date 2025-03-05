@@ -80,17 +80,25 @@ fi
 if [[ $overwrite -eq 0 && -f md02.rst7 ]]; then
     echo "Skipping md01 steps."
 else
-    # Initial MD production run
     pmemd.cuda -O -i mdin-01 -p $PRMTOP -c md00.rst7 -o md-01.out -r md01.rst7 -x md01.nc -ref eqnpt04.rst7 > "$log_file" 2>&1
     check_sim_failure "MD stage 1"
 fi
-
-if [[ $overwrite -eq 0 && -f output.pdb ]]; then
+if [[ $overwrite -eq 0 && -f md03.rst7 ]]; then
     echo "Skipping md02 steps."
 else
-    # Initial MD production run
     pmemd.cuda -O -i mdin-02 -p $PRMTOP -c md01.rst7 -o md-02.out -r md02.rst7 -x md02.nc -ref eqnpt04.rst7 > "$log_file" 2>&1
     check_sim_failure "MD stage 2"
 fi
-
-cpptraj -p $PRMTOP -y md02.rst7 -x output.pdb > "$log_file" 2>&1
+if [[ $overwrite -eq 0 && -f md04.rst7 ]]; then
+    echo "Skipping md03 steps."
+else
+    pmemd.cuda -O -i mdin-03 -p $PRMTOP -c md02.rst7 -o md-03.out -r md03.rst7 -x md03.nc -ref eqnpt04.rst7 > "$log_file" 2>&1
+    check_sim_failure "MD stage 3"
+fi
+if [[ $overwrite -eq 0 && -f output.pdb ]]; then
+    echo "Skipping md04 steps."
+else
+    pmemd.cuda -O -i mdin-04 -p $PRMTOP -c md03.rst7 -o md-04.out -r md04.rst7 -x md04.nc -ref eqnpt04.rst7 > "$log_file" 2>&1
+    check_sim_failure "MD stage 4"
+fi
+cpptraj -p $PRMTOP -y md04.rst7 -x output.pdb > "$log_file" 2>&1

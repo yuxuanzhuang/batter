@@ -56,7 +56,7 @@ class ConvergenceValidator:
             plt.suptitle(title, y=1.05)
         if save_path:
             fig.savefig(save_path)
-            fig.close()
+            plt.close(fig)
         else:
             plt.show()
 

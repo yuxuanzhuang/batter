@@ -11,6 +11,10 @@ import numpy as np
 import MDAnalysis as mda
 from loguru import logger
 import matplotlib.pyplot as plt
+from MDAnalysis.analysis.distances import distance_array
+from MDAnalysis.core.groups import AtomGroup
+import os
+
 #import lipyphilic as lpp
 
 from MDAnalysis.analysis.results import Results
@@ -62,7 +66,7 @@ class SimValidator:
         possible_resnames = [resname for resname in possible_resnames if resname.islower()]
         if len(possible_resnames) == 1:
             self.ligand = possible_resnames[0]
-            logger.info(f'Guessed ligand resname: {self.ligand}')
+            logger.debug(f'Guessed ligand resname: {self.ligand}')
         elif len(possible_resnames) == 0:
             self.ligand = 'XXX'
             logger.warning('No ligand is found. If you know the ligand resname, '
@@ -76,9 +80,11 @@ class SimValidator:
         self._rmsd()
         self._rmsf()
         # self._membrane()
+        self._ligand_bs()
+        self._ligand_dihedral()
     
     def _box(self):
-        logger.info('Calculating box size')
+        logger.debug('Calculating box size')
         results = []
         for ts in self.universe.trajectory:
             box = ts.dimensions[:3]
@@ -86,7 +92,7 @@ class SimValidator:
         self.results['box'] = results
 
     def _rmsd(self):
-        logger.info('Calculating RMSD')
+        logger.debug('Calculating RMSD')
         from MDAnalysis.analysis.rms import RMSD
         rms = RMSD(self.universe,
                    self.universe,
@@ -96,7 +102,7 @@ class SimValidator:
         self.results['ligand_rmsd'] = rms.results.rmsd.T[3]
     
     def _rmsf(self):
-        logger.info('Calculating RMSF')
+        logger.debug('Calculating RMSF')
         from MDAnalysis.analysis import rms, align
         u = self.universe
         average = align.AverageStructure(
@@ -116,9 +122,65 @@ class SimValidator:
 
         self.results['ligand_rmsf'] = R.results.rmsf
 
+    def _ligand_bs(self):
+        logger.debug('Calculating ligand binding site')
+        # Get the ligand atom group
+        ligand_ag = self.universe.select_atoms(f'resname {self.ligand}')
+        # Get the protein atom group
+        bs_ag = self.universe.select_atoms(f"protein and byres around 5 resname {self.ligand}")
+        
+        # Calculate the distance between the ligand and the protein
+        distances = []
+        for ts in self.universe.trajectory:
+            dist = distance_array(
+                ligand_ag.center_of_mass(),
+                bs_ag.center_of_mass(),
+                box=self.universe.dimensions)[0]
+            distances.append(dist)
+        
+        distances = np.array(distances)
+        self.results['ligand_bs'] = distances
+    
+    def _ligand_dihedral(self):
+        logger.debug('Calculating ligand dihedral')
+        dihed_ligands_file = 'assign.in'
+        if not os.path.exists(dihed_ligands_file):
+            raise FileNotFoundError(f'{dihed_ligands_file} not found')
+        
+        
+        with open(dihed_ligands_file, 'r') as f:
+            lines = f.readlines()
+            dihed_lines = [lines[i] for i in range(len(lines)) if lines[i].startswith('dihedral')]
+
+        # The first few are for protein dihedrals
+        dihed_lines = dihed_lines[3:]
+        def selection_string(amber_sel):
+            resid = amber_sel.split('@')[0].split(':')[1]
+            resname = amber_sel.split('@')[1]
+            return f'resid {resid} and name {resname}'
+
+        ag_lists = []
+        for line in dihed_lines:
+            atoms_str = line.split()[2:6]
+            atoms_str = [selection_string(a) for a in atoms_str]
+            ag_group = AtomGroup([
+                self.universe.select_atoms(a).atoms[0] for a in atoms_str
+            ])
+            ag_lists.append(ag_group)
+        
+        diheds = []
+        for ts in self.universe.trajectory:
+            dihed = []
+            for ag in ag_lists:
+                dihed.append(ag.dihedral.value())
+            diheds.append(dihed)
+        diheds = np.array(diheds)
+
+        self.results['ligand_dihedrals'] = diheds
+
     def _membrane(self):
         raise NotImplementedError('Membrane properties are not implemented yet')
-        logger.info('Calculating membrane properties')
+        logger.debug('Calculating membrane properties')
         # Find which leaflet each lipid is in at each frame
         leaflets = lpp.AssignLeaflets(
             universe=self.universe,
@@ -127,7 +189,7 @@ class SimValidator:
 
         leaflets.run()
         
-        logger.info('Calculating leaflet areas')
+        logger.debug('Calculating leaflet areas')
         areas = lpp.analysis.AreaPerLipid(
             universe=self.universe,
             lipid_sel="resname OL PA PC",
@@ -137,45 +199,97 @@ class SimValidator:
         areas.run()
         self.results['leaflet_areas'] = areas.areas
 
-    def plot_box(self):
-        logger.info('Plotting box size')
+    def plot_box(self, savefig=True):
+        logger.debug('Plotting box size')
         box_results = np.array(self.results['box'])
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(box_results[:, 0], label='x')
         ax.plot(box_results[:, 1], label='y')
         ax.plot(box_results[:, 2], label='z')
         ax.set_xlabel('Frame')
-        ax.set_ylabel('Box size (nm)')
+        ax.set_ylabel('Box size (Å)')
         ax.legend()
-        plt.show()
+        if savefig:
+            plt.savefig('box_size.png')
     
-    def plot_rmsd(self):
-        logger.info('Plotting RMSD')
+    def plot_ligand_bs(self, savefig=True):
+        logger.debug('Plotting RMSD')
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        ax.plot(self.results['ligand_bs'], label='Ligand to binding site distance')
+        ax.set_xlabel('Frame')
+        ax.set_ylabel('RMSD (Å)')
+        ax.legend()
+        if savefig:
+            plt.savefig('ligand_bs.png')
+        
+    def plot_rmsd(self, savefig=True):
+        logger.debug('Plotting RMSD')
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(self.results['protein_rmsd'], label='Protein')
         ax.plot(self.results['ligand_rmsd'], label='Ligand')
         ax.set_xlabel('Frame')
-        ax.set_ylabel('RMSD (nm)')
+        ax.set_ylabel('RMSD (Å)')
         ax.legend()
-        plt.show()
+        if savefig:
+            plt.savefig('rmsd.png')
 
-    def plot_rmsf(self):
-        logger.info('Plotting RMSF')
+    def plot_rmsf(self, savefig=True):
+        logger.debug('Plotting RMSF')
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(self.results['ligand_rmsf'], label='Ligand')
         ax.set_xlabel('Residue')
-        ax.set_ylabel('RMSF (nm)')
-        plt.show()
+        ax.set_ylabel('RMSF (Å)')
+        if savefig:
+            plt.savefig('rmsf.png')
     
     def plot_leaflet_areas(self):
         raise NotImplementedError('Membrane properties are not implemented yet')
-        logger.info('Plotting leaflet areas')
+        logger.debug('Plotting leaflet areas')
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(self.results['leaflet_areas'])
         ax.set_xlabel('Frame')
         ax.set_ylabel('Area per lipid (nm^2)')
         plt.show()
     
+    # get the median value of the dihedral
+    def find_representative_snapshot(self):
+        """
+        Find the representative snapshot based on the median dihedral values.
+        """
+        # convert to sin and cos values
+        dihed = self.results['ligand_dihedrals']
+        dihed_rad = np.deg2rad(dihed)
+        sin_dihed = np.sin(dihed_rad)
+        cos_dihed = np.cos(dihed_rad)
+
+        n_dihed = dihed.shape[1]
+
+        # Calculate the median dihedral values
+        feat_dihed = np.concatenate([sin_dihed, cos_dihed], axis=1)
+
+        median_dihed = np.median(feat_dihed, axis=0)
+        
+        # Calculate the absolute difference between each snapshot's dihedral and the median
+        abs_diff = np.abs(feat_dihed - median_dihed)
+        
+        # Find the index of the snapshot with the smallest absolute difference
+        representative_index = np.argmin(np.sum(abs_diff, axis=1))
+        
+        # plot 
+        fig, ax = plt.subplots(1, n_dihed, figsize=(20, 5), sharex=True, sharey=True,
+                                gridspec_kw={'hspace': 0, 'wspace': 0})
+        for i in range(n_dihed):
+            ax[i].hist(dihed[:, i], bins=100, density=True, alpha=0.5, range=(-180, 180))
+            ax[i].set_title(f"{i}")
+            ax[i].vlines(dihed[representative_index, i], ymin=0, ymax=0.05,
+                        color='r', linestyle='--', label='Representative')
+        plt.tight_layout()
+        plt.savefig('dihed.png')
+        plt.show()
+        plt.close()
+
+        return representative_index
+
 
 class MultiligandSimValidator:
     """
@@ -221,8 +335,8 @@ class MultiligandSimValidator:
             ligand_ag = self._guess_ligand()
 
         self.ligands = [ag for ag in ligand_ag.residues]
-        logger.info(f'Found {len(self.ligands)} ligands')
-        logger.info(f'self.ligands: {self.ligands}')
+        logger.debug(f'Found {len(self.ligands)} ligands')
+        logger.debug(f'self.ligands: {self.ligands}')
         self.results = Results()
         self._validate()
 
@@ -233,7 +347,7 @@ class MultiligandSimValidator:
         possible_resnames = [resname for resname in possible_resnames if resname.islower()]
         if len(possible_resnames) == 1:
             ligand_name = possible_resnames[0]
-            logger.info(f'Guessed ligand resname: {ligand_name}')
+            logger.debug(f'Guessed ligand resname: {ligand_name}')
             ligand_ag = [ag for ag in ligand_ag.residues]
         elif len(possible_resnames) == 0:
             ligand_name = 'XXX'
@@ -253,7 +367,7 @@ class MultiligandSimValidator:
         # self._membrane()
     
     def _box(self):
-        logger.info('Calculating box size')
+        logger.debug('Calculating box size')
         results = []
         for ts in self.universe.trajectory:
             box = ts.dimensions[:3]
@@ -261,7 +375,7 @@ class MultiligandSimValidator:
         self.results['box'] = results
 
     def _rmsd(self):
-        logger.info('Calculating RMSD')
+        logger.debug('Calculating RMSD')
         from MDAnalysis.analysis.rms import RMSD
         ligand_indices = [ag.indices for ag in self.ligands]
         rms = RMSD(self.universe,
@@ -273,7 +387,7 @@ class MultiligandSimValidator:
             self.results[f'ligand_{i}_rmsd'] = rms.results.rmsd.T[3 + i]
     
     def _rmsf(self):
-        logger.info('Calculating RMSF')
+        logger.debug('Calculating RMSF')
         from MDAnalysis.analysis import rms, align
         u = self.universe
         average = align.AverageStructure(
@@ -295,7 +409,7 @@ class MultiligandSimValidator:
 
     def _membrane(self):
         raise NotImplementedError('Membrane properties are not implemented yet')
-        logger.info('Calculating membrane properties')
+        logger.debug('Calculating membrane properties')
         # Find which leaflet each lipid is in at each frame
         leaflets = lpp.AssignLeaflets(
             universe=self.universe,
@@ -304,7 +418,7 @@ class MultiligandSimValidator:
 
         leaflets.run()
         
-        logger.info('Calculating leaflet areas')
+        logger.debug('Calculating leaflet areas')
         areas = lpp.analysis.AreaPerLipid(
             universe=self.universe,
             lipid_sel="resname OL PA PC",
@@ -315,40 +429,40 @@ class MultiligandSimValidator:
         self.results['leaflet_areas'] = areas.areas
 
     def plot_box(self):
-        logger.info('Plotting box size')
+        logger.debug('Plotting box size')
         box_results = np.array(self.results['box'])
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(box_results[:, 0], label='x')
         ax.plot(box_results[:, 1], label='y')
         ax.plot(box_results[:, 2], label='z')
         ax.set_xlabel('Frame')
-        ax.set_ylabel('Box size (nm)')
+        ax.set_ylabel('Box size (Å)')
         ax.legend()
         plt.show()
     
     def plot_rmsd(self):
-        logger.info('Plotting RMSD')
+        logger.debug('Plotting RMSD')
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(self.results['protein_rmsd'], label='Protein')
         for i, ligand in enumerate(self.ligands):
             ax.plot(self.results[f'ligand_{i}_rmsd'], label=f'Ligand {i}')
         ax.plot(self.results['ligand_rmsd'], label='Ligand')
         ax.set_xlabel('Frame')
-        ax.set_ylabel('RMSD (nm)')
+        ax.set_ylabel('RMSD (Å)')
         ax.legend()
         plt.show()
 
     def plot_rmsf(self):
-        logger.info('Plotting RMSF')
+        logger.debug('Plotting RMSF')
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(self.results['ligand_rmsf'], label='Ligand')
         ax.set_xlabel('Residue')
-        ax.set_ylabel('RMSF (nm)')
+        ax.set_ylabel('RMSF (Å)')
         plt.show()
     
     def plot_leaflet_areas(self):
         raise NotImplementedError('Membrane properties are not implemented yet')
-        logger.info('Plotting leaflet areas')
+        logger.debug('Plotting leaflet areas')
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
         ax.plot(self.results['leaflet_areas'])
         ax.set_xlabel('Frame')

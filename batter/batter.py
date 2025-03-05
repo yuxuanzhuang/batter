@@ -53,6 +53,7 @@ from batter.results import FEResult
 from batter.ligand_process import LigandFactory
 from batter.utils.slurm_job import SLURMJob
 from batter.analysis.convergence import ConvergenceValidator
+from batter.analysis.sim_validation import SimValidator
 
 from MDAnalysis.analysis import rms, align
 
@@ -669,9 +670,11 @@ class System:
                 return
             os.makedirs(f"{self.fe_folder}", exist_ok=True)
 
+            
             with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
 
+            self._check_equilbration_binding()
             self._prepare_fe_system()
             logger.info('FE System prepared')
             self._fe_prepared = True
@@ -1289,6 +1292,38 @@ class System:
         return (r_vect[0][0], r_vect[0][1], r_vect[0][2],
                 p1_formatted, p2_formatted, p3_formatted)
               
+    def _check_equilbration_binding(self):
+        """
+        Check if the ligand is bound after equilibration
+        """
+        bound_poses = []
+        for pose in self.sim_config.poses_def:
+            if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
+                raise FileNotFoundError(f"Equilibration not finished yet")
+            if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
+                raise FileNotFoundError(f"Equilibration failed")
+            with self._change_dir(f"{self.equil_folder}/{pose}"):
+                pdb = "full.pdb"
+                trajs = ["md-01.nc", "md-02.nc", "md-03.nc"]
+                universe = mda.Universe(pdb, trajs)
+                sim_val = SimValidator(universe)
+                if sim_val.results['ligand_bs'][-1] > 5:
+                    logger.warning(f"Ligand is not bound for pose {pose}")
+                else:
+                    bound_poses.append(pose)
+                    rep_snapshot = sim_val.find_representative_snapshot()
+                    logger.info(f"Representative snapshot: {rep_snapshot}")
+                    cpptraj_command = f"""cpptraj -p full.prmtop <<EOF
+trajin md-01.nc
+trajin md-02.nc
+trajin md-03.nc
+trajout representative.pdb pdb onlyframes {rep_snapshot+1}
+trajout md03.rst7 restart onlyframes {rep_snapshot+1}
+EOF"""
+                    run_with_log(cpptraj_command,
+                                working_dir=f"{self.equil_folder}/{pose}")
+        self.sim_config.poses_def = bound_poses
+        logger.info(f"Bound poses: {bound_poses} will be used for the production stage")
 
     @safe_directory
     @save_state
@@ -1298,6 +1333,7 @@ class System:
                      avg_struc: str = None,
                      rmsf_file: str = None,
                      only_equil: bool = False,
+                     only_fe_preparation: bool = False,
                      partition: str = 'owners',
                      anchor_atoms: List[str] = None,
                      ligand_anchor_atom: str = None,
@@ -1323,6 +1359,10 @@ class System:
             which means no RMSF restraints are added.
         only_equil : bool, optional
             Whether to run only the equilibration stage.
+            Default is False.
+        only_fe_preparation : bool, optional
+            Whether to prepare the files for the production stage
+            without running the production stage.
             Default is False.
         partition : str, optional
             The partition to submit the job.
@@ -1418,8 +1458,10 @@ class System:
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(30*60)
+
         else:
             logger.info('Equilibration is already finished')
+        
         if only_equil:
             logger.info('only_equil is set to True. '
                         'Skipping the free energy calculation.')
@@ -1442,6 +1484,10 @@ class System:
                     avg_struc=avg_struc,
                     rmsf_file=rmsf_file
                 )
+            if only_fe_preparation:
+                logger.info('only_fe_preparation is set to True. '
+                            'Skipping the free energy calculation.')
+                return
             logger.info('Submitting the free energy calculation')
             self.submit(
                 stage='fe',
