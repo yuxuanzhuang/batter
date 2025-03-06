@@ -27,6 +27,14 @@ class FEResult:
         """
         with open(self.result_file, 'r') as f:
             result_lines = f.readlines()
+        if 'UNBOUND' in result_lines[0]:
+            self._results = {}
+            self._results['fe'] = (np.nan, np.nan)
+            self._results['attach'] = (np.nan, np.nan)
+            self._results['elec'] = (np.nan, np.nan)
+            self._results['lj'] = (np.nan, np.nan)
+            self._results['release'] = (np.nan, np.nan)
+            return
         
         results = {}
         for line in result_lines:
