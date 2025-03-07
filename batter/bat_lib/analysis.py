@@ -657,13 +657,29 @@ def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
         data = []
         os.chdir('%s%02d' % (comp, int(win)))
         potl = open('energies.dat', "w")
+        # Find md-*.out files
         md_out_files = glob.glob('md-*.out')
-        md_out_files = [f for f in md_out_files if re.match(r'md-\d+.out', f)]
-
+        md_out_files = [f for f in md_out_files if re.fullmatch(r'md-\d+\.out', f)]
         sorted_md_out_files = sorted(md_out_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
-        for md_out_file in sorted_md_out_files[1:]:
+
+        # Exclude first file only if there are multiple files
+        if len(sorted_md_out_files) > 1:
+            sorted_md_out_files = sorted_md_out_files[1:]
+
+        # Find mdin-*.out files (Frontier fix)
+        md_out_files2 = glob.glob('mdin-*.out')
+        md_out_files2 = [f for f in md_out_files2 if re.fullmatch(r'mdin-\d+\.out', f)]
+        sorted_md_out_files_2 = sorted(md_out_files2, key=lambda x: int(x.split('-')[1].split('.')[0]))
+
+        # Exclude first and last file only if there are enough files
+        if len(sorted_md_out_files_2) > 2:
+            sorted_md_out_files_2 = sorted_md_out_files_2[1:-1]
+
+        # Merge both lists
+        sorted_md_out_files = sorted_md_out_files + sorted_md_out_files_2
+        n = 0
+        for md_out_file in sorted_md_out_files[:]:
             with open(md_out_file, "r") as fin:
-                n = 0
                 for line in fin:
                     cols = line.split()
                     if 'MBAR Energy analysis' in line:
