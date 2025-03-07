@@ -579,10 +579,12 @@ def generate_results_rest(comp, win, blocks, working_dir):
     # temp fix for frontier
     # Find all files matching the pattern 'mdin-xx.nc' in the folder
     mdin_files = glob.glob('mdin-*.nc')
-    mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
+    mdin_files = mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))[1:]
     # Find all files matching the pattern 'mdin-xx.nc' in the folder
     mdin_files2 = glob.glob('md*.nc')
-    mdin_files2.sort(key=lambda x: int(x.split('.')[0].split('md')[1]))
+    
+    mdin_files2 = [f for f in mdin_files2 if f not in mdin_files]
+    mdin_files2 = mdin_files2.sort(key=lambda x: int(x.split('.')[0].split('md')[1]))[1:-1]
     
     mdin_files = mdin_files + mdin_files2
     # Sort them numerically by the number in the filename
@@ -597,7 +599,7 @@ def generate_results_rest(comp, win, blocks, working_dir):
         # Write lines up to and including the target line
         f.writelines(lines[:line_index + 1])
         # Append the sorted mdin files
-        for mdin_file in mdin_files[1:]:
+        for mdin_file in mdin_files[:]:
             f.write(f'trajin {mdin_file}\n')
         # Write the remaining lines
         f.writelines(lines[line_index + 1:])
