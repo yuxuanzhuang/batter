@@ -244,7 +244,10 @@ class System:
         self.system_name = system_name
         self._protein_input = self._convert_2_relative_path(protein_input)
         self._system_topology = self._convert_2_relative_path(system_topology)
-        self._system_coordinate = self._convert_2_relative_path(system_coordinate)
+        if system_coordinate is not None:
+            self._system_coordinate = self._convert_2_relative_path(system_coordinate)
+        else:
+            self._system_coordinate = None
         self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
         if not isinstance(self.ligand_paths, list):
             raise ValueError(f"Invalid ligand_paths: {self.ligand_paths}, "
@@ -267,21 +270,23 @@ class System:
         
         self._process_ligands()
 
-        if system_coordinate is None and not os.path.exists(system_coordinate):
+        if system_coordinate is not None and not os.path.exists(system_coordinate):
             raise FileNotFoundError(f"System coordinate file not found: {system_coordinate}")
         
-        self.u_sys = mda.Universe(self.system_topology, format='XPDB')
+        u_sys = mda.Universe(self.system_topology, format='XPDB')
         if system_coordinate is not None:
             # read last line of inpcrd file to get dimensions
             with open(system_coordinate) as f:
                 lines = f.readlines()
                 box = np.array([float(x) for x in lines[-1].split()])
             self.system_dimensions = box
-            self.u_sys.load_new(system_coordinate, format='INPCRD')
-        if not self.u_sys.atoms.dimensions and self.system_coordinate is None:
+            u_sys.load_new(system_coordinate, format='INPCRD')
+        if (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self.system_coordinate is None:
             raise ValueError(f"No dimension of the box was found in the system_topology or system_coordinate")
 
         os.makedirs(f"{self.poses_folder}", exist_ok=True)
+        u_sys.atoms.write(f"{self.poses_folder}/system_aligned.pdb")
+        self._system_aligned_pdb = f"{self.poses_folder}/system_aligned.pdb"
         os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
 
         if self.ligand_ff not in ['gaff', 'gaff2']:
@@ -375,7 +380,7 @@ class System:
         # 
         u_prot = mda.Universe(self.protein_input)
 
-        u_sys = self.u_sys
+        u_sys = mda.Universe(self.system_topology, format='XPDB')
         cog_prot = u_sys.select_atoms('protein and name CA C N O').center_of_geometry()
         u_sys.atoms.positions -= cog_prot
         
@@ -384,7 +389,8 @@ class System:
         ref = u_sys.select_atoms(self.protein_align).select_atoms('name CA and not resname NMA ACE')
 
         if mobile.n_atoms != ref.n_atoms:
-            raise ValueError(f"Number of atoms in the alignment selection is different: protein_input: {mobile.n_atoms} and system_input {ref.n_atoms}"
+            raise ValueError(f"Number of atoms in the alignment selection is different: protein_input: "
+            f"{mobile.n_atoms} and system_input {ref.n_atoms} "
             f"The selection string is {self.protein_align} and name CA and not resname NMA ACE")
         mobile_com = mobile.center(weights=None)
         ref_com = ref.center(weights=None)
@@ -400,9 +406,10 @@ class System:
 
         cog_prot = u_prot.select_atoms('protein and name CA C N O').center_of_geometry()
         u_prot.atoms.positions -= cog_prot
+        u_prot.atoms.write(f"{self.poses_folder}/protein_aligned.pdb")
+        self._protein_aligned_pdb = f"{self.poses_folder}/protein_aligned.pdb"
         self.translation = cog_prot
 
-        self.u_prot = u_prot
         # store these for ligand alignment
         self.mobile_com = mobile_com
         self.ref_com = ref_com
@@ -418,8 +425,8 @@ class System:
         properly positioned.
         """
         logger.debug('Processing the system')
-        u_prot = self.u_prot
-        u_sys = self.u_sys
+        u_prot = mda.Universe(self._protein_aligned_pdb)
+        u_sys = mda.Universe(self._system_aligned_pdb, format='XPDB')
         try:
             u_sys.atoms.chainIDs
         except AttributeError:
@@ -867,6 +874,9 @@ class System:
 
         for pose in self.sim_config.poses_def:
             logger.info(f'Preparing pose: {pose}')
+            if os.path.exists(f"{self.equil_folder}/{pose}") and not self.overwrite:
+                logger.info(f'Pose {pose} already exists; add overwrite=True to re-build the pose')
+                continue
             equil_builder = self.builders_factory.get_builder(
                 stage='equil',
                 system=self,

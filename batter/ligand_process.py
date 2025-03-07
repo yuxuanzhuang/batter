@@ -117,10 +117,17 @@ class Ligand(ABC):
         self._ligand_sdf_path = sdf_file
 
     def _calculate_partial_charge(self):
+        """
+        This function calculates the partial charges of the ligand
+        using the openff toolkit with gasteiger method.
+        It is only for fast estimation of the ligand charge.
+        and antechamber will use bcc method to calculate the partial charges.
+        """
         self._write_sdf()
         molecule = Molecule(self._ligand_sdf_path)
         molecule.assign_partial_charges(
-            partial_charge_method=self.charge,
+            #partial_charge_method=self.charge,
+            partial_charge_method='gasteiger',
         )
         ligand_charge = np.round(np.sum([charge._magnitude
             for charge in molecule.partial_charges]))
