@@ -1172,7 +1172,8 @@ class System:
     def analysis(
         self,
         input_file: Union[str, Path, SimulationConfig]=None,
-        load=True
+        load=True,
+        check_finished: bool = True,
         ):
         """
         Analyze the simulation results.
@@ -1190,10 +1191,11 @@ class System:
         if input_file is not None:
             self._get_sim_config(input_file)
         
-        if self._check_fe():
-            logger.info('FE simulation is not finished yet')
-            self.check_jobs()
-            return
+        if check_finished:
+            if self._check_fe():
+                logger.info('FE simulation is not finished yet')
+                self.check_jobs()
+                return
             
             
         blocks = self.sim_config.blocks
