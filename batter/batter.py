@@ -728,7 +728,7 @@ class System:
 
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
-                    logger.debug(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
+                    logger.info(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
                     self._slurm_jobs.pop(f'{pose}', None)
                     continue
                 if os.path.exists(f"{self.equil_folder}/{pose}/FAILED") and not overwrite:
@@ -1329,6 +1329,8 @@ class System:
                 trajs = ["md-01.nc", "md-02.nc", "md-03.nc"]
                 universe = mda.Universe(pdb, trajs)
                 sim_val = SimValidator(universe)
+                sim_val.plot_ligand_bs()
+                sim_val.plot_rmsd()
                 if sim_val.results['ligand_bs'][-1] > 5:
                     logger.warning(f"Ligand is not bound for pose {pose}")
                     # write "UNBOUND" file
@@ -1790,14 +1792,24 @@ EOF"""
             return all_replicates
 
         def write_sbatch_file(pose, components):
+            file_temp = f'{frontier_files}/fep_run.sbatch'
+            lines_temp = open(file_temp).readlines()
+            sbatch_all_file = f'fe/fep_{pose}_eq_all.sbatch'
+            lines_all = []
+            for line in lines_temp:
+                lines_all.append(line)
             for component in components:
+                lines = []
+                for line in lines_temp:
+                    lines.append(line)
                 folder = os.getcwd()
                 folder = '_'.join(folder.split(os.sep)[-4:])
                 # write the sbatch file for equilibration
-                file_temp = f'{frontier_files}/fep_run.sbatch'
-                lines = open(file_temp).readlines()
+
                 lines.append(f'\n\n\n')
                 lines.append(f'# {pose} {component}\n')
+                lines_all.append(f'\n\n\n')
+                lines_all.append(f'# {pose} {component}\n')
 
                 sbatch_file = f'fe/fep_{component}_{pose}_eq.sbatch'
                 groupfile_names = [
@@ -1817,15 +1829,27 @@ EOF"""
                         lines.append(
                             f'srun -N {n_nodes} -n {n_sims * 8} pmemd.MPI -ng {n_sims} -groupfile {g_name}\n'
                         )
+                        lines_all.append(
+                            f'srun -N {n_nodes} -n {n_sims * 8} pmemd.MPI -ng {n_sims} -groupfile {g_name}\n'
+                        )
                     else:
                         lines.append(
+                            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
+                        )
+                        lines_all.append(
                             f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
                         )
                 lines = [line
                         .replace('NUM_NODES', str(n_nodes))
                         .replace('FEP_SIM_XXX', f'{folder}_{component}_{pose}') for line in lines]
+                lines_all = [line
+                        .replace('NUM_NODES', str(n_nodes))
+                        .replace('FEP_SIM_XXX', f'{folder}_{component}_{pose}') for line in lines_all]
                 with open(sbatch_file, 'w') as f:
                     f.writelines(lines)
+            with open(sbatch_all_file, 'w') as f:
+                f.writelines(lines_all)
+
                 
         def calculate_performance(n_atoms, comp):
             # Very rough estimate of the performance of the simulations
@@ -1870,22 +1894,46 @@ EOF"""
                 f.writelines(temp_lines)
                 f.writelines(
                 [
-                    '# Get the latest mdin-xx.rst7 file in the current directory\n',
+                    '# Make sure it\'s extending\n',
                     'latest_file=$(ls pose0/sdr/e00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)\n\n',
                     '# Check if any mdin-xx.rst7 files exist\n',
                     'if [[ -z "$latest_file" ]]; then\n',
-                    '  echo "No old production files found in the current directory."\n',
-                    '  echo "Run sbatch fep_md.sbatch."\n',
-                    '  exit 1\n',
+                    'echo "No old production files found in the current directory."\n',
+                    'echo "Run sbatch fep_md.sbatch."\n',
+                    'exit 1\n',
                     'fi\n\n',
-                    '# Extract the latest number (xx) and calculate the next number\n',
-                    'latest_num=$(echo "$latest_file" | grep -oP \'(?<=-)\d{2}(?=\\.rst7)\')\n',
-                    'next_num=$(printf "%02d" $((10#$latest_num + 1)))\n\n',
-                    '# Replace REPNUM in the groupfile with the current number\n',
-                    '# sed "s/CURRNUM/$latest_num/g" mdin_extend.groupfile > temp_mdin.groupfile\n',
-                    '# Replace NEXTNUM in the groupfile with the next number\n',
-                    '# sed "s/NEXTNUM/$next_num/g" temp_mdin.groupfile > current_mdin.groupfile\n\n',
-                    '# Run the production simulation\n',
+                    # 'poses=(pose0 pose1 pose2 pose3 pose4)
+                    f'poses=({" ".join(poses_def)})\n',
+                    # groups=(m n e v)
+                    f'groups=({" ".join(components)})\n',
+                    'for pose in "${poses[@]}"; do\n',
+                    '  for group in "${groups[@]}"; do\n',
+                    '    latest_file=$(ls $pose/*/${group}00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)\n',
+                    '    echo "Last file for $pose/$group: $latest_file"\n',
+                    '    latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{2}(?=\.rst7)")\n',
+                    '    next_num=$(printf "%02d" $((10#$latest_num + 1)))\n',
+                    '    echo "Last file for $pose/$group: $latest_file"\n',
+                    '    echo "Next number: $next_num"\n',
+                    '    sed "s/CURRNUM/$latest_num/g" ${pose}/groupfiles/${group}_mdin.in.extend.groupfile > ${pose}/groupfiles/${group}_temp_mdin.groupfile\n',
+                    '    sed "s/NEXTNUM/$next_num/g" ${pose}/groupfiles/${group}_temp_mdin.groupfile > ${pose}/groupfiles/${group}_current_mdin.groupfile\n',
+                            
+                    '    case "$group" in\n',
+                    '        m|n) \n',
+                    '        srun -N 2 -n 16 pmemd.hip_DPFP.MPI -ng 16 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile &\n',
+                    '        echo "srun -N 2 -n 16 pmemd.hip_DPFP.MPI -ng 16 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile"\n',
+                    '        ;;\n',
+                    '        e|v|x)\n',
+                    '        srun -N 3 -n 24 pmemd.hip_DPFP.MPI -ng 24 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile &\n',
+                    '        echo "srun -N 3 -n 24 pmemd.hip_DPFP.MPI -ng 24 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile"\n',
+                    '        ;;\n',
+                    '        *)\n',
+                    '        echo "Invalid group"\n',
+                    '        ;;\n',
+                    '    esac\n',
+                    '    sleep 0.5\n',
+                    '    done\n',
+                    'done\n',
+                    'wait\n\n',
                 ]
                 )
 
@@ -1905,22 +1953,22 @@ EOF"""
                         f'sleep 0.5\n'
                             ]
                         )
-                    with open(sbatch_extend_file, 'a') as f:
-                        f.writelines(
-                            [ 
-                            f'sed "s/CURRNUM/$latest_num/g" {pose}/groupfiles/{comp}_mdin.in.extend.groupfile > {pose}/groupfiles/{comp}_temp_mdin.groupfile\n',
-                            f'sed "s/NEXTNUM/$next_num/g" {pose}/groupfiles/{comp}_temp_mdin.groupfile > {pose}/groupfiles/{comp}_current_mdin.groupfile\n',
-                            f'# {pose} {comp}\n',
-                            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile &\n',
-                            f'sleep 0.5\n\n'
-                            ]
-                        )
+                    #with open(sbatch_extend_file, 'a') as f:
+                    #    f.writelines(
+                    #        [ 
+                    #        f'sed "s/CURRNUM/$latest_num/g" {pose}/groupfiles/{comp}_mdin.in.extend.groupfile > {pose}/groupfiles/{comp}_temp_mdin.groupfile\n',
+                    #        f'sed "s/NEXTNUM/$next_num/g" {pose}/groupfiles/{comp}_temp_mdin.groupfile > {pose}/groupfiles/{comp}_current_mdin.groupfile\n',
+                    #        f'# {pose} {comp}\n',
+                    #        f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile &\n',
+                    #        f'sleep 0.5\n\n'
+                    #        ]
+                    #    )
             # append wait
             with open(sbatch_file, 'a') as f:
                 f.write('wait\n')
 
-            with open(sbatch_extend_file, 'a') as f:
-                f.write('wait\n')
+            #with open(sbatch_extend_file, 'a') as f:
+            #    f.write('wait\n')
 
         all_replicates = []
 

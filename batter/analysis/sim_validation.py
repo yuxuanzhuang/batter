@@ -81,7 +81,7 @@ class SimValidator:
         self._rmsf()
         # self._membrane()
         self._ligand_bs()
-        self._ligand_dihedral()
+        
     
     def _box(self):
         logger.debug('Calculating box size')
@@ -211,6 +211,9 @@ class SimValidator:
         ax.legend()
         if savefig:
             plt.savefig('box_size.png')
+        else:
+            plt.show()
+        plt.close(fig)
     
     def plot_ligand_bs(self, savefig=True):
         logger.debug('Plotting RMSD')
@@ -221,7 +224,10 @@ class SimValidator:
         ax.legend()
         if savefig:
             plt.savefig('ligand_bs.png')
-        
+        else:
+            plt.show()
+        plt.close(fig)
+
     def plot_rmsd(self, savefig=True):
         logger.debug('Plotting RMSD')
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
@@ -232,6 +238,9 @@ class SimValidator:
         ax.legend()
         if savefig:
             plt.savefig('rmsd.png')
+        else:
+            plt.show()
+        plt.close(fig)
 
     def plot_rmsf(self, savefig=True):
         logger.debug('Plotting RMSF')
@@ -241,6 +250,9 @@ class SimValidator:
         ax.set_ylabel('RMSF (Å)')
         if savefig:
             plt.savefig('rmsf.png')
+        else:
+            plt.show()
+        plt.close(fig)
     
     def plot_leaflet_areas(self):
         raise NotImplementedError('Membrane properties are not implemented yet')
@@ -250,6 +262,7 @@ class SimValidator:
         ax.set_xlabel('Frame')
         ax.set_ylabel('Area per lipid (nm^2)')
         plt.show()
+        plt.close(fig)
     
     # get the median value of the dihedral
     def find_representative_snapshot(self):
@@ -257,6 +270,7 @@ class SimValidator:
         Find the representative snapshot based on the median dihedral values.
         """
         # convert to sin and cos values
+        self._ligand_dihedral()
         dihed = self.results['ligand_dihedrals']
         dihed_rad = np.deg2rad(dihed)
         sin_dihed = np.sin(dihed_rad)
@@ -286,7 +300,7 @@ class SimValidator:
         plt.tight_layout()
         plt.savefig('dihed.png')
         plt.show()
-        plt.close()
+        plt.close(fig)
 
         return representative_index
 
