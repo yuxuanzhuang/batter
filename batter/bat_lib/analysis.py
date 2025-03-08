@@ -577,15 +577,20 @@ def generate_results_rest(comp, win, blocks, working_dir):
     data = []
     os.chdir('%s%02d' % (comp, int(win)))
     # temp fix for frontier
-    
+
     # Find all files matching the pattern 'mdin-xx.nc' in the folder
     mdin_files = glob.glob('mdin-*.nc')
-    mdin_files = sorted(mdin_files, key=lambda x: int(x.split('-')[1].split('.')[0]))[1:]
+    mdin_files = sorted(mdin_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
     
-    # Find all files matching the pattern 'mdin-xx.nc' in the folder
+    # Find all files matching the pattern 'mdxx.nc' in the folder
     mdin_files2 = glob.glob('md*.nc')
     mdin_files2 = [f for f in mdin_files2 if f not in mdin_files]
-    mdin_files2 = sorted(mdin_files2, key=lambda x: int(x.split('.')[0].split('md')[1]))[1:-1]    
+    mdin_files2 = sorted(mdin_files2, key=lambda x: int(x.split('.')[0].split('md')[1]))
+    
+    if len(mdin_files) > 2:
+        mdin_files = mdin_files[1:-1]
+    if len(mdin_files2) > 1:
+        mdin_files2 = mdin_files2[1:]
 
     mdin_files = mdin_files + mdin_files2
     # Sort them numerically by the number in the filename
