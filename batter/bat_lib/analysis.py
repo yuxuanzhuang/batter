@@ -571,7 +571,7 @@ def generate_analytical_rest(comp, rest, temperature):
 
 
 @fail_report_wrapper
-def generate_results_rest(comp, win, blocks, working_dir):
+def generate_results_rest(comp, win, blocks, working_dir, sim_range):
     os.chdir(working_dir)
     os.chdir('rest')
     data = []
@@ -586,11 +586,25 @@ def generate_results_rest(comp, win, blocks, working_dir):
     mdin_files2 = glob.glob('md*.nc')
     mdin_files2 = [f for f in mdin_files2 if f not in mdin_files]
     mdin_files2 = sorted(mdin_files2, key=lambda x: int(x.split('.')[0].split('md')[1]))
-    
-    if len(mdin_files) > 2:
-        mdin_files = mdin_files[1:-1]
-    if len(mdin_files2) > 1:
-        mdin_files2 = mdin_files2[1:]
+
+    start, end = sim_range
+    if start is None:
+        start = 0
+    if end is None:
+        end = len(mdin_files)
+    try:
+        mdin_files = mdin_files[start:end]
+    except IndexError:
+        logger.warning('The number of blocks is greater than the number of mdin files, using all files')
+    start, end = sim_range
+    if start is None:
+        start = 0
+    if end is None:
+        end = len(mdin_files2)
+    try:
+        mdin_files2 = mdin_files2[start:end]
+    except IndexError:
+        logger.warning('The number of blocks is greater than the number of mdin files, using all files')
 
     mdin_files = mdin_files + mdin_files2
     # Sort them numerically by the number in the filename
@@ -627,7 +641,7 @@ def generate_results_rest(comp, win, blocks, working_dir):
     os.chdir('../../')
 
 @fail_report_wrapper
-def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
+def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir, sim_range):
     os.chdir(working_dir)
     logger.debug(os.getcwd())
     if dec_method == 'dd':
@@ -670,19 +684,30 @@ def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
         md_out_files = [f for f in md_out_files if re.fullmatch(r'md-\d+\.out', f)]
         sorted_md_out_files = sorted(md_out_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
 
-        # Exclude first file only if there are multiple files
-        if len(sorted_md_out_files) > 1:
-            sorted_md_out_files = sorted_md_out_files[1:]
-
         # Find mdin-*.out files (Frontier fix)
         md_out_files2 = glob.glob('mdin-*.out')
         md_out_files2 = [f for f in md_out_files2 if re.fullmatch(r'mdin-\d+\.out', f)]
         sorted_md_out_files_2 = sorted(md_out_files2, key=lambda x: int(x.split('-')[1].split('.')[0]))
 
-        # Exclude first and last file only if there are enough files
-        if len(sorted_md_out_files_2) > 2:
-            sorted_md_out_files_2 = sorted_md_out_files_2[1:-1]
+        start, end = sim_range
+        if start is None:
+            start = 0
+        if end is None:
+            end = len(sorted_md_out_files)
+        try:
+            sorted_md_out_files = sorted_md_out_files[start:end]
+        except IndexError:
+            logger.warning('The number of blocks is greater than the number of mdin files, using all files')
 
+        start, end = sim_range
+        if start is None:
+            start = 0
+        if end is None:
+            end = len(sorted_md_out_files_2)
+        try:
+            sorted_md_out_files_2 = sorted_md_out_files_2[start:end]
+        except IndexError:
+            logger.warning('The number of blocks is greater than the number of mdin files, using all files')
         # Merge both lists
         sorted_md_out_files = sorted_md_out_files + sorted_md_out_files_2
         n = 0
@@ -717,7 +742,8 @@ def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
     os.chdir('../..')
 
 @fail_report_wrapper
-def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt):
+def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt,
+              sim_range=None):
     logger.debug('Calculating free energies')
     logger.debug('----------------------------------------------')
     logger.debug('Blocks: %s' % blocks)
@@ -743,6 +769,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         else:
             total_time = total_time + (dic_steps1[i]+dic_steps2[i])*len(lambdas)*float(dt)/1000
     logger.debug(f'Total simulation time: {total_time:.1f} ns')
+    if not sim_range:
+        sim_range = (None, None)
 
     # Set initial values to zero
     fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
@@ -800,7 +828,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 # Each worker might not inherit the correct working directory
                 # Forcing it to the correct one
                 working_dir = os.getcwd()
-                Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win, blocks, working_dir) for win in range(len(attach_rest)))
+                Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win, blocks, working_dir, sim_range) for win in range(len(attach_rest)))
             
         elif comp in components_dict['dd']:
             if True:
@@ -808,7 +836,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 # Each worker might not inherit the correct working directory
                 # Forcing it to the correct one
                 working_dir = os.getcwd()
-                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_method, dec_int, comp, win, blocks, working_dir) for win in range(len(lambdas)))
+                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_method, dec_int, comp, win, blocks, working_dir, sim_range) for win in range(len(lambdas)))
         logger.debug('MBAR energies done')
 
     os.chdir('../../')

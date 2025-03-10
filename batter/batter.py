@@ -1174,6 +1174,7 @@ class System:
         input_file: Union[str, Path, SimulationConfig]=None,
         load=True,
         check_finished: bool = True,
+        sim_range: Tuple[int, int] = None,
         ):
         """
         Analyze the simulation results.
@@ -1187,6 +1188,14 @@ class System:
         load : bool, optional
             Whether to load the system fe results from before
             Default is True.
+        check_finished : bool, optional
+            Whether to check if the FINISHED file exists in FE simulation.
+            Default is True.
+        sim_range : Tuple[int, int], optional
+            The range of simulations to analyze.
+            For simulations run on Frontier, due to the time constraints,
+            the simulations are run into multiple parts.
+            Default is None, which will analyze all the simulations.
         """
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -1197,6 +1206,8 @@ class System:
                 self.check_jobs()
                 return
             
+        if not sim_range:
+            sim_range = (None, None)
             
         blocks = self.sim_config.blocks
         components = self.sim_config.components
@@ -1221,8 +1232,11 @@ class System:
                 if os.path.exists(f'{self.fe_folder}/{pose}/Results'):
                     shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
                 os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
-                fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
-                                weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt)
+                try:
+                    fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
+                                    weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range)
+                except:
+                    fe_value = np.nan
 
                 # if failed; it will return nan
                 if np.isnan(fe_value):
@@ -1240,8 +1254,12 @@ class System:
                         lambdas=windows,
                         temperature=temperature,
                     )
-                    validator.plot_convergence(save_path=f"{self.fe_folder}/{pose}/Results/convergence_{pose}_{comp}.png",
+                    try:
+                        validator.plot_convergence(save_path=f"{self.fe_folder}/{pose}/Results/convergence_{pose}_{comp}.png",
                                                title=f'Convergence of {pose} {comp}')
+                    except:
+                        logger.warning(f'Convergence failed for {pose} {comp}')
+                        continue
 
                 self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
