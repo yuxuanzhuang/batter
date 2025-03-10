@@ -771,6 +771,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     logger.debug(f'Total simulation time: {total_time:.1f} ns')
     if not sim_range:
         sim_range = (None, None)
+    logger.info(f'Simulation range: {sim_range}')
 
     # Set initial values to zero
     fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
