@@ -533,9 +533,9 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
-    cit = 'on'
-    resfile.write('Total simulation time (based on input file): %6.1f nanoseconds\n\n' % total_time)
+    cit = 'off'
     if cit == 'on':
+        resfile.write('Total simulation time (based on input file): %6.1f nanoseconds\n\n' % total_time)
         resfile.write('Please cite:\n\n')
         resfile.write('G. Heinzelmann, D. J. Huggins and M. K. Gilson (2024). “BAT2: an Open-Source Tool for Flexible, Automated, and Low Cost Absolute Binding Free Energy Calculations”. Journal of Chemical Theory and Computation, 20, 6518.\n\n')
         resfile.write('G. Heinzelmann and M. K. Gilson (2021). “Automation of absolute protein-ligand binding free energy calculations for docking refinement and compound evaluation”. Scientific Reports, 11, 1116.\n\n')
