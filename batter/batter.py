@@ -922,7 +922,15 @@ class System:
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
                 n_sims = len(lambdas_comp)
                 logger.debug(f'Number of simulations: {n_sims}')
+                cv_paths = []
+                for i, _ in enumerate(lambdas_comp):
+                    cv_path = f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}{i:02d}/cv.in"
+                    cv_paths.append(cv_path)
+                if all(os.path.exists(cv_paths[i]) for i, _ in enumerate(lambdas_comp)) and not self.overwrite:
+                    logger.info(f"Component {component} for pose {pose} already exists; add overwrite=True to re-build the component")
+                    continue
                 for i, lambdas in enumerate(lambdas_comp):
+                        
                     logger.debug(f'Preparing simulation: {lambdas}')
                     pbar.set_description(f"Preparing pose={pose}, comp={component}, win={lambdas}")
                     fe_builder = self.builders_factory.get_builder(
@@ -1130,6 +1138,8 @@ class System:
 
         elif stage == 'fe':
             for pose in self.sim_config.poses_def:
+                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                    continue
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
@@ -1344,6 +1354,13 @@ class System:
                 raise FileNotFoundError(f"Equilibration not finished yet")
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
                 raise FileNotFoundError(f"Equilibration failed")
+            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                logger.warning(f"Pose {pose} is UNBOUND in equilibration")
+                continue
+            if os.path.exists(f"{self.equil_folder}/{pose}/representative.pdb"):
+                bound_poses.append(pose)
+                logger.info(f"Representative snapshot not found for pose {pose}")
+                continue
             with self._change_dir(f"{self.equil_folder}/{pose}"):
                 pdb = "full.pdb"
                 trajs = ["md-01.nc", "md-02.nc", "md-03.nc"]
@@ -1355,7 +1372,7 @@ class System:
                     logger.warning(f"Ligand is not bound for pose {pose}")
                     # write "UNBOUND" file
                     with open(f"{self.equil_folder}/{pose}/UNBOUND", 'w') as f:
-                        f.write(f"UNBOUND with ligand_bs = {sim_val.results['ligand_bs'][-1]:.2f}")
+                        f.write(f"UNBOUND with ligand_bs = {sim_val.results['ligand_bs'][-1]}")
                 else:
                     bound_poses.append(pose)
                     rep_snapshot = sim_val.find_representative_snapshot()
@@ -1608,6 +1625,9 @@ EOF"""
         sim_finished = {}
         sim_failed = {}
         for pose in self.sim_config.poses_def:
+            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                sim_finished[pose] = True
+                continue
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
                 windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas

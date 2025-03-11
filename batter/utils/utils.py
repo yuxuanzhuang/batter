@@ -10,6 +10,10 @@ cpptraj = 'cpptraj'
 parmchk2 = 'parmchk2'
 charmmlipid2amber = 'charmmlipid2amber.py'
 
+import importlib.resources as pkg_resources
+
+usalign = str(pkg_resources.files("batter") / "utils" / "USalign")
+
 obabel = '/home/groups/rondror/software/openbabel/bin/obabel'
 if not os.path.exists(obabel):
     obabel = 'obabel'
