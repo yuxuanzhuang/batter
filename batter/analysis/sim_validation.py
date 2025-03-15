@@ -8,6 +8,7 @@ This scripts is used to run a simple simulation validation on
 Maybe in the future: the membrane properties
 """
 import numpy as np
+import scipy.stats
 import MDAnalysis as mda
 from loguru import logger
 import matplotlib.pyplot as plt
@@ -264,10 +265,10 @@ class SimValidator:
         plt.show()
         plt.close(fig)
     
-    # get the median value of the dihedral
+    # get the mode value of the dihedral
     def find_representative_snapshot(self):
         """
-        Find the representative snapshot based on the median dihedral values.
+        Find the representative snapshot based on the mode dihedral values.
         """
         # convert to sin and cos values
         self._ligand_dihedral()
@@ -278,13 +279,13 @@ class SimValidator:
 
         n_dihed = dihed.shape[1]
 
-        # Calculate the median dihedral values
+        # Calculate the mode dihedral values
         feat_dihed = np.concatenate([sin_dihed, cos_dihed], axis=1)
 
-        median_dihed = np.median(feat_dihed, axis=0)
+        mode_dihed = scipy.stats.mode(feat_dihed, axis=0, keepdims=True)
         
-        # Calculate the absolute difference between each snapshot's dihedral and the median
-        abs_diff = np.abs(feat_dihed - median_dihed)
+        # Calculate the absolute difference between each snapshot's dihedral and the mode
+        abs_diff = np.abs(feat_dihed - mode_dihed)
         
         # Find the index of the snapshot with the smallest absolute difference
         representative_index = np.argmin(np.sum(abs_diff, axis=1))
