@@ -1251,6 +1251,10 @@ class System:
                 # if failed; it will return nan
                 if np.isnan(fe_value):
                     logger.warning(f'FE calculation failed for {pose}')
+                    with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+                        f.write("UNBOUND\n")
+                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+
                     continue
                 
                 # validate
@@ -1790,6 +1794,8 @@ EOF"""
                                     if 'disang' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
                                         line = f"DISANG={sim_folder_name}/{file_name}\n"
+                                    if 'nstlim = 10000' in line:
+                                        line = '  nstlim = 50000,\n'
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
                                             inpcrd_file = f'fe/{sim_folder_name}/full.inpcrd'
@@ -2015,6 +2021,8 @@ EOF"""
         with self._change_dir(self.output_dir):
 
             for pose in poses_def:
+                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                    continue
                 all_replicates.append(write_2_pose(pose, components))
                 write_sbatch_file(pose, components)
                 logger.debug(f'Generated groupfiles for {pose}')
