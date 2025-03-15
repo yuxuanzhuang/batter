@@ -122,7 +122,7 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
                     K = K+1
                     filename = './'+comp+'%02.0f/output.dat' % K
                 if K != ti_points:
-                    print('Error: Missing simulation data for TI-GQ for the ' +
+                    logger.error('Error: Missing simulation data for TI-GQ for the ' +
                           comp+' component of the '+pose+' calculation')
                     sys.exit(1)
                 deltagop = 0
@@ -186,7 +186,6 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
                 os.chdir('rest')
                 with open('./'+comp+'-comp/output.dat', "r") as f_in:
                     lines = (line.rstrip() for line in f_in)
-                    print(lines)
                     lines = list(line for line in lines if 'Relative' in line and 'block' in line)
                     splitdata = lines[k].split()
                     if comp == 'c':
@@ -534,9 +533,9 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
             resfile.write('%-20s %8.2f;    %3.2f\n' % ('Relative free energy;', merged_exc, sd_merg_exc))
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
-    cit = 'on'
-    resfile.write('Total simulation time (based on input file): %6.1f nanoseconds\n\n' % total_time)
+    cit = 'off'
     if cit == 'on':
+        resfile.write('Total simulation time (based on input file): %6.1f nanoseconds\n\n' % total_time)
         resfile.write('Please cite:\n\n')
         resfile.write('G. Heinzelmann, D. J. Huggins and M. K. Gilson (2024). “BAT2: an Open-Source Tool for Flexible, Automated, and Low Cost Absolute Binding Free Energy Calculations”. Journal of Chemical Theory and Computation, 20, 6518.\n\n')
         resfile.write('G. Heinzelmann and M. K. Gilson (2021). “Automation of absolute protein-ligand binding free energy calculations for docking refinement and compound evaluation”. Scientific Reports, 11, 1116.\n\n')
@@ -572,19 +571,41 @@ def generate_analytical_rest(comp, rest, temperature):
 
 
 @fail_report_wrapper
-def generate_results_rest(comp, win, blocks, working_dir):
+def generate_results_rest(comp, win, blocks, working_dir, sim_range):
     os.chdir(working_dir)
     os.chdir('rest')
     data = []
     os.chdir('%s%02d' % (comp, int(win)))
     # temp fix for frontier
+
     # Find all files matching the pattern 'mdin-xx.nc' in the folder
     mdin_files = glob.glob('mdin-*.nc')
-    mdin_files.sort(key=lambda x: int(x.split('-')[1].split('.')[0]))
-    # Find all files matching the pattern 'mdin-xx.nc' in the folder
-    mdin_files2 = glob.glob('md*.nc')
-    mdin_files2.sort(key=lambda x: int(x.split('.')[0].split('md')[1]))
+    mdin_files = sorted(mdin_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
     
+    # Find all files matching the pattern 'mdxx.nc' in the folder
+    mdin_files2 = glob.glob('md*.nc')
+    mdin_files2 = [f for f in mdin_files2 if f not in mdin_files]
+    mdin_files2 = sorted(mdin_files2, key=lambda x: int(x.split('.')[0].split('md')[1]))
+
+    start, end = sim_range
+    if start is None:
+        start = 0
+    if end is None:
+        end = len(mdin_files)
+    try:
+        mdin_files = mdin_files[start:end]
+    except IndexError:
+        logger.warning('The number of blocks is greater than the number of mdin files, using all files')
+    start, end = sim_range
+    if start is None:
+        start = 0
+    if end is None:
+        end = len(mdin_files2)
+    try:
+        mdin_files2 = mdin_files2[start:end]
+    except IndexError:
+        logger.warning('The number of blocks is greater than the number of mdin files, using all files')
+
     mdin_files = mdin_files + mdin_files2
     # Sort them numerically by the number in the filename
     # Read the 'restraints.in' file
@@ -620,7 +641,7 @@ def generate_results_rest(comp, win, blocks, working_dir):
     os.chdir('../../')
 
 @fail_report_wrapper
-def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
+def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir, sim_range):
     os.chdir(working_dir)
     logger.debug(os.getcwd())
     if dec_method == 'dd':
@@ -658,13 +679,40 @@ def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
         data = []
         os.chdir('%s%02d' % (comp, int(win)))
         potl = open('energies.dat', "w")
+        # Find md-*.out files
         md_out_files = glob.glob('md-*.out')
-        md_out_files = [f for f in md_out_files if re.match(r'md-\d+.out', f)]
-
+        md_out_files = [f for f in md_out_files if re.fullmatch(r'md-\d+\.out', f)]
         sorted_md_out_files = sorted(md_out_files, key=lambda x: int(x.split('-')[1].split('.')[0]))
+
+        # Find mdin-*.out files (Frontier fix)
+        md_out_files2 = glob.glob('mdin-*.out')
+        md_out_files2 = [f for f in md_out_files2 if re.fullmatch(r'mdin-\d+\.out', f)]
+        sorted_md_out_files_2 = sorted(md_out_files2, key=lambda x: int(x.split('-')[1].split('.')[0]))
+
+        start, end = sim_range
+        if start is None:
+            start = 0
+        if end is None:
+            end = len(sorted_md_out_files)
+        try:
+            sorted_md_out_files = sorted_md_out_files[start:end]
+        except IndexError:
+            logger.warning('The number of blocks is greater than the number of mdin files, using all files')
+
+        start, end = sim_range
+        if start is None:
+            start = 0
+        if end is None:
+            end = len(sorted_md_out_files_2)
+        try:
+            sorted_md_out_files_2 = sorted_md_out_files_2[start:end]
+        except IndexError:
+            logger.warning('The number of blocks is greater than the number of mdin files, using all files')
+        # Merge both lists
+        sorted_md_out_files = sorted_md_out_files + sorted_md_out_files_2
+        n = 0
         for md_out_file in sorted_md_out_files[:]:
             with open(md_out_file, "r") as fin:
-                n = 0
                 for line in fin:
                     cols = line.split()
                     if 'MBAR Energy analysis' in line:
@@ -694,7 +742,8 @@ def generate_results_dd(dec_method, dec_int, comp, win, blocks, working_dir):
     os.chdir('../..')
 
 @fail_report_wrapper
-def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt):
+def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt,
+              sim_range=None):
     logger.debug('Calculating free energies')
     logger.debug('----------------------------------------------')
     logger.debug('Blocks: %s' % blocks)
@@ -720,6 +769,9 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         else:
             total_time = total_time + (dic_steps1[i]+dic_steps2[i])*len(lambdas)*float(dt)/1000
     logger.debug(f'Total simulation time: {total_time:.1f} ns')
+    if not sim_range:
+        sim_range = (None, None)
+    logger.info(f'Simulation range: {sim_range}')
 
     # Set initial values to zero
     fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
@@ -777,7 +829,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 # Each worker might not inherit the correct working directory
                 # Forcing it to the correct one
                 working_dir = os.getcwd()
-                Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win, blocks, working_dir) for win in range(len(attach_rest)))
+                Parallel(n_jobs=6)(delayed(generate_results_rest)(comp, win, blocks, working_dir, sim_range) for win in range(len(attach_rest)))
             
         elif comp in components_dict['dd']:
             if True:
@@ -785,7 +837,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 # Each worker might not inherit the correct working directory
                 # Forcing it to the correct one
                 working_dir = os.getcwd()
-                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_method, dec_int, comp, win, blocks, working_dir) for win in range(len(lambdas)))
+                Parallel(n_jobs=6)(delayed(generate_results_dd)(dec_method, dec_int, comp, win, blocks, working_dir, sim_range) for win in range(len(lambdas)))
         logger.debug('MBAR energies done')
 
     os.chdir('../../')
@@ -1424,7 +1476,7 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
             if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D" or cols[-1] == "#Lig_TR" or cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"):
                 R += 1
 
-    print("K= %5.0f  R= %5.0f" % (K, R))
+    logger.debug("K= %5.0f  R= %5.0f" % (K, R))
 
     # Calculate Statistical Inefficiency (g)
     def calcg(data):
@@ -1593,7 +1645,7 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
             g[k] = 1.00
             Neff[k] = N[k]
 
-        print("Processed Window %5.0f.  N= %12.0f.  g= %10.3f   Neff= %12.0f" % (k, N[k], g[k], Neff[k]))
+        logger.debug("Processed Window %5.0f.  N= %12.0f.  g= %10.3f   Neff= %12.0f" % (k, N[k], g[k], Neff[k]))
 
     Upot = np.zeros([K, K, np.max(Neff)], np.float64)
 
@@ -1614,9 +1666,10 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
                     Upot[k, l, 0:Neff[k]] = np.sum(beta*rfc[l, 0:R]*((val[0:Neff[k], k, 0:R]-req[l, 0:R])**2), axis=1)
                 else:  # Umbrella/Translation
                     Upot[k, l, 0:Neff[k]] = (beta*rfc[l, 0]*((val[0:Neff[k], k, 0]-req[l, 0])**2))
-
+            
     val = []
-    np.savetxt(f'./data/Upot_{comp}.dat', Upot.reshape(K*K, np.max(Neff)), fmt='%12.7f')
+    #np.savetxt(f'./data/Upot_{comp}_{mode}.dat', Upot.reshape(K*K, np.max(Neff)), fmt='%12.7f')
+    np.save(f'./data/Upot_{comp}_{mode}.npy', Upot)
     mbar = MBAR(Upot, Neff)
 
     logger.debug("Calculate Free Energy Differences Between States")
@@ -1756,7 +1809,7 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
         os.makedirs('data')
 
     # Define log file
-    sys.stdout = open('./data/'+dec_int+'-'+comp+'-'+mode+'.dat', 'w')
+    f = open('./data/'+dec_int+'-'+comp+'-'+mode+'.dat', 'w')
 
     # Determine Number of windows
     K = 0
@@ -1781,12 +1834,12 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
             dvdl.append(float(sum(data)/len(data)))
 
         for i in range(0, len(dvdl)):
-            print('%-10s%6.5f,  %-8s%9.5f' % ('lambda =', float(lambdas[i]), 'dvdl =', float(dvdl[i])))
+            f.write(f'{"lambda =":<10}{float(lambdas[i]):6.5f},  {"dvdl =":<8}{float(dvdl[i]):9.5f}\n')
 
         for i in range(K):
             deltag = deltag + dvdl[i]*weights[i]
 
-        print('\n%-8s %9.5f' % ('deltaG  ', float(deltag)))
+        f.write(f'\n{"deltaG":<8} {float(deltag):9.5f}\n')
     elif dec_int == 'mbar':
 
         # Allocate storage for simulation data
@@ -1872,7 +1925,7 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
                 g[k] = 1.00
                 Neff[k] = N[k]
 
-            print("Processed Window %5.0f.  N= %12.0f.  g= %10.3f   Neff= %12.0f" % (k, N[k], g[k], Neff[k]))
+            f.write(f"Processed Window {k:5.0f}.  N= {N[k]:12.0f}.  g= {g[k]:10.3f}   Neff= {Neff[k]:12.0f}\n")
 
         # Calculate decoupling energy
         Upot = np.zeros([K, K, np.max(Neff)], np.float64)
@@ -1880,21 +1933,24 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
             for l in range(K):
                 Upot[k, l, 0:Neff[k]] = beta*(val[0:Neff[k], k, l])
 
+        #np.savetxt(f'./data/Upot_{comp}_{mode}.dat', Upot.reshape(K*K, np.max(Neff)), fmt='%12.7f')
+        np.save(f'./data/Upot_{comp}_{mode}.npy', Upot)
         val = []
 
-        print("\nRunning MBAR... ")
+        f.write("\nRunning MBAR... \n")
         mbar = MBAR(Upot, Neff)
 
-        print("Calculate Free Energy Differences Between States")
+        f.write("Calculate Free Energy Differences Between States\n")
         [Deltaf, dDeltaf] = mbar.getFreeEnergyDifferences()
 
         min = np.argmin(Deltaf[0])
 
         # Write to file
-        print("\nFree Energy Differences (in units of kcal/mol)")
-        print("%9s %8s %8s" % ('lambda', 'f', 'df'))
+        f.write("\nFree Energy Differences (in units of kcal/mol)\n")
+        f.write(f'{"lambda":>9} {"f":>8} {"df":>8}\n')
         for k in range(K):
-            print("%10.5f %10.5f %10.5f" % (lambdas[k], Deltaf[0, k]/beta, dDeltaf[0, k]/beta))
-        print("\n\n")
+            f.write(f"{lambdas[k]:10.5f} {Deltaf[0, k]/beta:10.5f} {dDeltaf[0, k]/beta:10.5f}\n")
+        f.write("\n\n")
+    f.close()
 
     os.chdir('../../../')

@@ -106,8 +106,8 @@ class Ligand(ABC):
 
     def _write_sdf(self):
         # Assign stereochemistry explicitly
-        #Chem.AssignAtomChiralTagsFromStructure(self._ligand_object)
-        #Chem.AssignStereochemistry(self._ligand_object, cleanIt=True, force=True)
+        # Chem.AssignAtomChiralTagsFromStructure(self._ligand_object)
+        # Chem.AssignStereochemistry(self._ligand_object, cleaanIt=True, force=True)
         for i, a in enumerate(self._ligand_object.GetAtoms()):
             a.SetAtomMapNum(i)
         sdf_file = os.path.join(self.output_dir, f'{self.name}.sdf')
@@ -117,10 +117,17 @@ class Ligand(ABC):
         self._ligand_sdf_path = sdf_file
 
     def _calculate_partial_charge(self):
+        """
+        This function calculates the partial charges of the ligand
+        using the openff toolkit with gasteiger method.
+        It is only for fast estimation of the ligand charge.
+        and antechamber will use bcc method to calculate the partial charges.
+        """
         self._write_sdf()
         molecule = Molecule(self._ligand_sdf_path)
         molecule.assign_partial_charges(
-            partial_charge_method=self.charge,
+            #partial_charge_method=self.charge,
+            partial_charge_method='gasteiger',
         )
         ligand_charge = np.round(np.sum([charge._magnitude
             for charge in molecule.partial_charges]))
@@ -182,6 +189,24 @@ class PDB_Ligand(Ligand):
         if self._name is not None:
             return
         self._name = self._ligand_u.atoms.resnames[0]
+
+    def _calculate_partial_charge(self):
+        """
+        This function calculates the partial charges of the ligand
+        using the openff toolkit with gasteiger method.
+        It is only for fast estimation of the ligand charge.
+        and antechamber will use bcc method to calculate the partial charges.
+        """
+        from MDAnalysis.guesser.default_guesser import DefaultGuesser
+
+        u = self._ligand_u
+        u.guess_TopologyAttrs(to_guess=['elements'])
+        u.add_TopologyAttr('charges')
+        u.atoms.charges = DefaultGuesser(u).guess_gasteiger_charges(u.atoms)
+        ligand_charge = np.round(np.sum(u.atoms.charges))
+        self.ligand_charge = ligand_charge
+        logger.info(f'The net charge of the ligand {self.name} in {self.ligand_file} is {ligand_charge}')
+        self._write_sdf()
 
 
 class SDF_Ligand(Ligand):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -A BIP235
+#SBATCH -A BIP152
 #SBATCH -J FEP_SIM_XXX
 #SBATCH -o %x.out
 #SBATCH -t 00:30:00

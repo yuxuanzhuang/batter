@@ -52,7 +52,13 @@ else
         # Exclude the node where the job failed.
         # wait for 2 min
         sleep 120
-        scontrol requeue $SLURM_JOB_ID --exclude=$(scontrol show job $SLURM_JOB_ID | grep NodeList | awk -F= '{print $2}')
+        bad_node=$(scontrol show job $SLURM_JOB_ID | grep NodeList | awk -F= '{print $2}')
+        echo "Bad node: $bad_node"
+        if [ -z "$bad_node" ]; then
+            scontrol requeue $SLURM_JOB_ID
+        else
+            scontrol requeue $SLURM_JOB_ID --exclude=$bad_node
+        fi
         exit 0
     else
         echo "FAILED" > FAILED

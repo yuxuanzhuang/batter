@@ -27,6 +27,8 @@ dependencies = [
     "click",
     "rdkit",
     "pandas",
+    'jax',
+    
 ]
 
 [project.scripts]

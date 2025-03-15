@@ -862,8 +862,8 @@ class EquilibrationBuilder(SystemBuilder):
                         fout.write(line.replace('SHLL', '%4.2f' % solv_shell)
                                    .replace('OTHRS', str(other_mol_vmd))
                                    .replace('LIPIDS', str(lipid_mol_vmd))
-                                   .replace('MMM', mol))
-        run_with_log('vmd -dispdev text -e split.tcl')
+                                   .replace('MMM', f"\'{mol}\'"))
+        run_with_log('vmd -dispdev text -e split.tcl', error_match='syntax error')
 
         # Remove possible remaining molecules
         if not other_mol:
@@ -954,11 +954,16 @@ class EquilibrationBuilder(SystemBuilder):
         P3 = f':{p3_resid}@{h3_atom}'
 
         logger.info(f'Receptor anchors: P1: {P1}; P2: {P2}; P3: {P3}')
-        logger.info(f'Note this is not the same residue number as in the receptor file'
+        logger.info(f'Note this is not the same residue number from the receptor file '
                     'because the residues were renumbered from 1.')
         self.P1 = P1
         self.P2 = P2
         self.P3 = P3
+        protein_anchor_file = 'protein_anchors.txt'
+        with open(protein_anchor_file, 'w') as f:
+            f.write(f'{P1}\n')
+            f.write(f'{P2}\n')
+            f.write(f'{P3}\n')
 
         # Replace names in initial files and VMD scripts
         # Here we convert all four letter residue names to three letter residue names
@@ -990,7 +995,7 @@ class EquilibrationBuilder(SystemBuilder):
                 other_mol_vmd = " ".join(other_mol)
                 lipid_mol_vmd = " ".join(lipid_mol)
                 for line in fin:
-                    fout.write(line.replace('MMM', mol).replace('mmm', mol.lower())
+                    fout.write(line.replace('MMM', f"\'{mol}\'").replace('mmm', mol.lower())
                                .replace('NN', h1_atom)
                                .replace('P1A', p1_vmd)
                                .replace('FIRST', '1')
@@ -1630,7 +1635,7 @@ class FreeEnergyBuilder(SystemBuilder):
                     .replace('OTHRS', str(other_mol_vmd))
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
-                    .replace('MMM', mol))
+                    .replace('MMM', f"\'{mol}\'"))
         run_with_log('vmd -dispdev text -e split.tcl')
 
         # Remove possible remaining molecules
@@ -1675,8 +1680,7 @@ class FreeEnergyBuilder(SystemBuilder):
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
                 for line in fin:
-                    fout.write(line
-                        .replace('MMM', mol)
+                    fout.write(line.replace('MMM', f"\'{mol}\'")
                         .replace('mmm', mol.lower())
                         .replace('NN', p1_atom)
                         .replace('P1A', p1_vmd)
@@ -3821,7 +3825,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     .replace('OTHRS', str(other_mol_vmd))
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', molr.lower())
-                    .replace('MMM', molr.lower()))
+                    .replace('MMM', f"\'{molr.lower()}\'"))
         run_with_log('vmd -dispdev text -e split.tcl')
 
         # Remove possible remaining molecules
@@ -3866,8 +3870,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
                 for line in fin:
-                    fout.write(line
-                    .replace('MMM', molr)
+                    fout.write(line.replace('MMM', f"\'{molr}\'")
                     .replace('mmm', molr.lower())
                     .replace('NN', p1_atom)
                     .replace('P1A', p1_vmd)
