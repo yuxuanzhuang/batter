@@ -31,7 +31,7 @@ check_sim_failure() {
         cat $log_file
         exit 1
     else
-        echo "$stage complete."
+        echo "$stage complete at $(date)"
     fi
 }
 

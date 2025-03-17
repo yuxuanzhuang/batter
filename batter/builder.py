@@ -624,6 +624,10 @@ class SystemBuilder(ABC):
         final_system_prot = final_system.select_atoms('protein')
         final_system_dum = final_system.select_atoms('resname DUM')
         final_system_others = final_system - final_system_prot - final_system_dum
+        # filter out the water that is not around protein for ionization
+        water_outside_prot = final_system.select_atoms(
+            f'byres (resname WAT and not (around 6 protein))')
+        final_system_others = final_system_others - water_outside_prot
 
         for residue in u.select_atoms('protein').residues:
             resid_str = residue.resid
@@ -685,6 +689,27 @@ class SystemBuilder(ABC):
 
         with open('solvate_pre_others.pdb', 'w') as f:
             f.writelines(non_prot_lines)
+        
+        outside_wat_lines = []
+
+        prev_resid = water_outside_prot.residues.resids[0]
+        for residue in water_outside_prot.residues:
+            if residue.resid != prev_resid:
+                outside_wat_lines.append('TER\n')
+            # create a temp pdb file in /tmp/
+            # write the residue to the temp file
+            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+
+            residue.atoms.write(temp_pdb.name)
+            temp_pdb.close()
+            # store atom lines into outside_wat_lines
+            with open(temp_pdb.name, 'r') as f:
+                # store lines start with ATOM
+                outside_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+            prev_resid = residue.resid
+
+        with open('solvate_pre_outside_wat.pdb', 'w') as f:
+            f.writelines(outside_wat_lines)
 
         box_final = final_system_prot.dimensions
         
@@ -711,18 +736,21 @@ class SystemBuilder(ABC):
         tleap_solvate.write('dum = loadpdb solvate_pre_dum.pdb\n\n')
         tleap_solvate.write('prot = loadpdb solvate_pre_prot.pdb\n\n')
         tleap_solvate.write('others = loadpdb solvate_pre_others.pdb\n\n')
-        tleap_solvate.write('model = combine {dum prot others}\n\n')
+        tleap_solvate.write('outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n')
 
         if (neut == 'no'):
             tleap_solvate.write('# Add ions for neutralization/ionization\n')
-            tleap_solvate.write('addionsrand model %s %d\n' % (ion_def[0], num_cat))
-            tleap_solvate.write('addionsrand model %s %d\n' % (ion_def[1], num_ani))
+            tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[0], num_cat))
+            tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[1], num_ani))
         elif (neut == 'yes'):
             tleap_solvate.write('# Add ions for neutralization/ionization\n')
             if neu_cat != 0:
-                tleap_solvate.write('addionsrand model %s %d\n' % (ion_def[0], neu_cat))
+                tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[0], neu_cat))
             if neu_ani != 0:
-                tleap_solvate.write('addionsrand model %s %d\n' % (ion_def[1], neu_ani))
+                tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[1], neu_ani))
+
+        tleap_solvate.write('model = combine {dum prot others outside_wat}\n\n')
+
         tleap_solvate.write('\n')
         tleap_solvate.write('set model box {%.2f %.2f %.2f}\n' % (box_final[0], box_final[1], box_final[2]))
         tleap_solvate.write('desc model\n')
@@ -1569,7 +1597,7 @@ class FreeEnergyBuilder(SystemBuilder):
         shutil.copy(f'../../equil/{pose}/build_files/{self.pose}.pdb', './')
         # Get last state from equilibrium simulations
         shutil.copy(f'../../equil/{pose}/md{fwin:02d}.rst7', './')
-        shutil.copy(f'../../equil/{pose}/full.pdb', './aligned-nc.pdb')
+        shutil.copy(f'../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
         shutil.copy(f'../../equil/{pose}/build_amber_renum.txt', './')
         for file in glob.glob(f'../../equil/{pose}/full*.prmtop'):
             shutil.copy(file, './')

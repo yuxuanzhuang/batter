@@ -12,6 +12,8 @@
 #SBATCH -d singleton
 
 scontrol show job $SLURM_JOB_ID
+# start time
+echo "Job started at $(date)"
 
 OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
 
@@ -69,4 +71,5 @@ fi
 
 # write FINISHED to a file
 echo "FINISHED" > FINISHED
+echo "Job completed at $(date)"
 exit 0

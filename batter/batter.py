@@ -160,6 +160,8 @@ class System:
                     protein_input: str,
                     system_topology: str,
                     ligand_paths: List[str],
+                    anchor_atoms: List[str],
+                    ligand_anchor_atom: str = None,
                     receptor_segment: str = None,
                     system_coordinate: str = None,
                     protein_align: str = 'name CA and resid 60 to 250',
@@ -196,6 +198,18 @@ class System:
             List of ligand files. It can be either PDB or mol2 format.
             It will be stored in the `all-poses` folder as `pose0.pdb`,
             `pose1.pdb`, etc.
+        anchor_atoms : List[str], optional
+            The list of three protein anchor atoms (selection strings)
+            used to restrain ligand.
+            It will also be used to set l1x, l1y, l1z values that defines
+            the binding pocket.
+        ligand_anchor_atom : str, optional
+            The ligand anchor atom (selection string) used as a potential
+            ligand anchor atom.
+            Default is None and will use the atom that is closest to the
+            center of mass of the ligand.
+            Note only the first ligand in the ligand_paths will be used
+            to create the binding pocket.
         receptor_segment : str
             The segment of the receptor in the system_topology.
             It will be used to set the protein anchor for the ligand.
@@ -285,8 +299,8 @@ class System:
             raise ValueError(f"No dimension of the box was found in the system_topology or system_coordinate")
 
         os.makedirs(f"{self.poses_folder}", exist_ok=True)
-        u_sys.atoms.write(f"{self.poses_folder}/system_aligned.pdb")
-        self._system_aligned_pdb = f"{self.poses_folder}/system_aligned.pdb"
+        u_sys.atoms.write(f"{self.poses_folder}/system_input.pdb")
+        self._system_input_pdb = f"{self.poses_folder}/system_input.pdb"
         os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
 
         if self.ligand_ff not in ['gaff', 'gaff2']:
@@ -337,6 +351,26 @@ class System:
                 ligand.prepare_ligand_parameters_sdf()
             
         self._prepare_ligand_poses()
+
+        # always get the anchor atoms from the first pose
+        u_prot = mda.Universe(f'{self.output_dir}/all-poses/reference.pdb')
+        u_lig = mda.Universe(f'{self.output_dir}/all-poses/pose0.pdb')
+        l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
+                    u_prot,
+                    u_lig,
+                    anchor_atoms,
+                    ligand_anchor_atom)
+
+        self.anchor_atoms = anchor_atoms
+        self.ligand_anchor_atom = ligand_anchor_atom
+
+        self.l1_x = l1_x
+        self.l1_y = l1_y
+        self.l1_z = l1_z
+
+        self.p1 = p1
+        self.p2 = p2
+        self.p3 = p3
         
         logger.info('System loaded and prepared')
 
@@ -380,7 +414,7 @@ class System:
         # 
         u_prot = mda.Universe(self.protein_input)
 
-        u_sys = mda.Universe(self.system_topology, format='XPDB')
+        u_sys = mda.Universe(self._system_input_pdb, format='XPDB')
         cog_prot = u_sys.select_atoms('protein and name CA C N O').center_of_geometry()
         u_sys.atoms.positions -= cog_prot
         
@@ -408,6 +442,9 @@ class System:
         u_prot.atoms.positions -= cog_prot
         u_prot.atoms.write(f"{self.poses_folder}/protein_aligned.pdb")
         self._protein_aligned_pdb = f"{self.poses_folder}/protein_aligned.pdb"
+        u_sys.atoms.write(f"{self.poses_folder}/system_aligned.pdb")
+        self._system_aligned_pdb = f"{self.poses_folder}/system_aligned.pdb"
+        
         self.translation = cog_prot
 
         # store these for ligand alignment
@@ -597,6 +634,16 @@ class System:
         if sim_config.fe_type == 'relative' and not isinstance(self, RBFESystem):
             raise ValueError(f"Invalid fe_type: {sim_config.fe_type}, "
                  "should be 'relative' for RBFE system")
+        
+        # overwride l1_x, l1_y, l1_z
+        sim_config.l1_x = self.l1_x
+        sim_config.l1_y = self.l1_y
+        sim_config.l1_z = self.l1_z
+
+        # override the p1, p2, p3
+        sim_config.p1 = self.p1
+        sim_config.p2 = self.p2
+        sim_config.p3 = self.p3
                  
         self.sim_config = sim_config
 
@@ -654,6 +701,7 @@ class System:
             self._eq_prepared = True
         
         if stage == 'fe':
+            self._fe_prepared = False
             if not os.path.exists(f"{self.equil_folder}"):
                 raise FileNotFoundError(f"Equilibration not generated yet. Run prepare('equil') first.")
         
@@ -913,6 +961,15 @@ class System:
                 pbar.update(1)
                 continue
             logger.debug(f'Preparing pose: {pose}')
+            
+            # load anchor_list
+            with open(f"{self.equil_folder}/{pose}/anchor_list.txt", 'r') as f:
+                anchor_list = f.readlines()
+                l1x, l1y, l1z = [float(x) for x in anchor_list[0].split()]
+                self.sim_config.l1_x = l1x
+                self.sim_config.l1_y = l1y
+                self.sim_config.l1_z = l1z
+
             # copy ff folder
             shutil.copytree(self.ligandff_folder,
                             f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
@@ -1323,10 +1380,10 @@ class System:
         P1_atom = u_merge.select_atoms(anchor_atoms[0])
         P2_atom = u_merge.select_atoms(anchor_atoms[1])
         P3_atom = u_merge.select_atoms(anchor_atoms[2])
-        if P1_atom.n_atoms != 1 or P2_atom.n_atoms != 1 or P3_atom.n_atoms != 1:
-            raise ValueError('Error: more than one atom selected in the anchor atoms')
         if P1_atom.n_atoms == 0 or P2_atom.n_atoms == 0 or P3_atom.n_atoms == 0:
             raise ValueError('Error: anchor atom not found')
+        if P1_atom.n_atoms != 1 or P2_atom.n_atoms != 1 or P3_atom.n_atoms != 1:
+            raise ValueError('Error: more than one atom selected in the anchor atoms')
         
         if ligand_anchor_atom is not None:
             lig_atom = u_merge.select_atoms(ligand_anchor_atom)
@@ -1353,7 +1410,7 @@ class System:
         Check if the ligand is bound after equilibration
         """
         bound_poses = []
-        for pose in self.sim_config.poses_def:
+        for pose_i, pose in enumerate(self.sim_config.poses_def):
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 raise FileNotFoundError(f"Equilibration not finished yet")
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
@@ -1362,8 +1419,8 @@ class System:
                 logger.warning(f"Pose {pose} is UNBOUND in equilibration")
                 continue
             if os.path.exists(f"{self.equil_folder}/{pose}/representative.pdb"):
-                bound_poses.append(pose)
-                logger.info(f"Representative snapshot not found for pose {pose}")
+                bound_poses.append([pose_i, pose])
+                logger.info(f"Representative snapshot found for pose {pose}")
                 continue
             with self._change_dir(f"{self.equil_folder}/{pose}"):
                 pdb = "full.pdb"
@@ -1378,7 +1435,7 @@ class System:
                     with open(f"{self.equil_folder}/{pose}/UNBOUND", 'w') as f:
                         f.write(f"UNBOUND with ligand_bs = {sim_val.results['ligand_bs'][-1]}")
                 else:
-                    bound_poses.append(pose)
+                    bound_poses.append([pose_i, pose])
                     rep_snapshot = sim_val.find_representative_snapshot()
                     logger.info(f"Representative snapshot: {rep_snapshot}")
                     cpptraj_command = f"""cpptraj -p full.prmtop <<EOF
@@ -1392,6 +1449,34 @@ EOF"""
                                 working_dir=f"{self.equil_folder}/{pose}")
         logger.info(f"Bound poses: {bound_poses} will be used for the production stage")
 
+        # get new l1x, l1y, l1z distances
+        for pose_i, pose in bound_poses:
+            u_sys = mda.Universe(f'{self.equil_folder}/{pose}/representative.pdb')
+            u_lig = u_sys.select_atoms(f'resname {self.mols[pose_i]}')
+
+            anchor_file = f'{self.equil_folder}/{pose}/build_files/protein_anchors.txt'
+            with open(anchor_file, 'r') as f:
+                anchor_atoms_lines = f.readlines()
+            # convert amber selection to mda selection
+            # amber: :84@CA
+            # mda :resid 84 and name CA
+            anchor_atoms = []
+            for line in anchor_atoms_lines:
+                resid = line.split(':')[1].split('@')[0]
+                atom_name = line.split('@')[1].strip()
+                anchor_atoms.append(f'resid {resid} and name {atom_name}')
+
+            ligand_anchor_atom = self.ligand_anchor_atom
+
+            logger.info(f'Finding anchor atoms for pose {pose}')
+            l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
+                        u_sys,
+                        u_lig,
+                        anchor_atoms,
+                        ligand_anchor_atom)
+            with open(f'{self.equil_folder}/{pose}/anchor_list.txt', 'w') as f:
+                f.write(f'{l1_x} {l1_y} {l1_z}')
+
     @safe_directory
     @save_state
     def run_pipeline(self,
@@ -1402,8 +1487,6 @@ EOF"""
                      only_equil: bool = False,
                      only_fe_preparation: bool = False,
                      partition: str = 'owners',
-                     anchor_atoms: List[str] = None,
-                     ligand_anchor_atom: str = None,
                      max_num_jobs: int = 500,
                      verbose: bool = False
                      ):
@@ -1434,19 +1517,6 @@ EOF"""
         partition : str, optional
             The partition to submit the job.
             Default is 'rondror'.
-        anchor_atoms : List[str], optional
-            The list of three protein anchor atoms (selection strings)
-            used to restrain ligand.
-            It will also be used to set l1x, l1y, l1z values that defines
-            the binding pocket.
-            Default is None and will use the atoms listed in the input file.
-        ligand_anchor_atom : str, optional
-            The ligand anchor atom (selection string) used as a potential
-            ligand anchor atom.
-            Default is None and will use the atom that is closed to the 
-            center of mass of the ligand.
-            Note only the first ligand in the ligand_paths will be used
-            to create the binding pocket.
         max_num_jobs : int, optional
             The maximum number of jobs to submit at a time.
             Default is 500.
@@ -1476,23 +1546,6 @@ EOF"""
                            f"does not match the number of ligands: {len(self.ligand_paths)}")
             logger.warning(f"Using the ligand paths for the poses")
         self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
-        
-        if anchor_atoms is not None:
-            u_prot = mda.Universe(f'{self.output_dir}/all-poses/reference.pdb')
-            u_lig = mda.Universe(f'{self.output_dir}/all-poses/pose0.pdb')
-            l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
-                        u_prot,
-                        u_lig,
-                        anchor_atoms,
-                        ligand_anchor_atom)
-        
-            self.sim_config.l1_x = l1_x
-            self.sim_config.l1_y = l1_y
-            self.sim_config.l1_z = l1_z
-
-            self.sim_config.p1 = p1
-            self.sim_config.p2 = p2
-            self.sim_config.p3 = p3
 
         if self._check_equilibration():
             #1 prepare the system
