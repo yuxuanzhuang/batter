@@ -12,9 +12,13 @@ from loguru import logger
 
 
 from alchemlyb.estimators import MBAR
-from alchemlyb.visualisation import plot_convergence
-from alchemlyb.convergence import forward_backward_convergence
-from alchemlyb.visualisation import plot_mbar_overlap_matrix
+from alchemlyb.convergence import forward_backward_convergence, block_average
+from alchemlyb.visualisation import (
+                plot_convergence,
+                plot_mbar_overlap_matrix,
+                plot_block_average
+            )
+
 import matplotlib.pyplot as plt
 
 
@@ -47,11 +51,20 @@ class ConvergenceValidator:
 
 
     def plot_convergence(self, save_path=None, title=None):
-        fig, axes = plt.subplots(1, 2, figsize=(15, 10))
-        self.plot_time_convergence(ax=axes[0], units='kcal/mol')
-        self.plot_overlap_matrix(ax=axes[1])
-        axes[0].set_title('Time Convergence', fontsize=10)
-        axes[1].set_title('Overlap Matrix', fontsize=10)
+        fig, axes = plt.subplot_mosaic(
+            [["A", "A", "B"], ["C", "C", "C"]], figsize=(15, 10)
+        )
+        self.plot_time_convergence(ax=axes['A'],
+                                   units='kcal/mol',
+                                   final_error=0.6)
+        self.plot_overlap_matrix(ax=axes['B'])
+        self.plot_block_convergence(ax=axes['C'],
+                                    units='kcal/mol',
+                                    final_error=0.6)
+        axes['A'].set_title('Time Convergence', fontsize=10)
+        axes['B'].set_title('Overlap Matrix', fontsize=10)
+        axes['C'].set_title('Block Convergence', fontsize=10)
+
         if title:
             plt.suptitle(title, y=1.05)
         if save_path:
@@ -59,13 +72,13 @@ class ConvergenceValidator:
             plt.close(fig)
         else:
             plt.show()
-
+    
 
     def _generate_df(self):
         lambdas = self.lambdas
         u_df = pd.DataFrame(columns=['time', 'fep-lambda'] + list(lambdas))
         u_df.attrs['temperature'] = self.temperature
-        u_df.attrs['energy_unit'] = 'kcal/mol'
+        u_df.attrs['energy_unit'] = 'kT'
 
         data_frames = []
 
@@ -89,7 +102,7 @@ class ConvergenceValidator:
         # split u_def based on fep-lambda
         for fep, group in u_df.groupby('fep-lambda'):
             group.attrs['temperature'] = self.temperature
-            group.attrs['energy_unit'] = 'kcal/mol'
+            group.attrs['energy_unit'] = 'kT'
             data_list.append(group)
         self._data_list = data_list
 
@@ -111,7 +124,7 @@ class ConvergenceValidator:
 
 
     def plot_time_convergence(self, ax=None, **kwargs):
-        df = forward_backward_convergence(self.data_list, 'mbar')
+        df = forward_backward_convergence(self.data_list, 'MBAR')
         _ = plot_convergence(df, ax=ax, **kwargs)
     
     
@@ -119,3 +132,8 @@ class ConvergenceValidator:
         mbar = MBAR()
         mbar.fit(self.u_df)
         _ = plot_mbar_overlap_matrix(mbar.overlap_matrix, ax=ax, **kwargs)
+
+
+    def plot_block_convergence(self, ax=None, **kwargs):
+        df = block_average(self.data_list, 'MBAR')
+        _ = plot_block_average(df, ax=ax, **kwargs)
