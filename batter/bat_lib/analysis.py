@@ -615,6 +615,8 @@ def generate_results_rest(comp, win, blocks, working_dir, sim_range):
     lines = [line for line in lines if 'trajin' not in line]
     # get the line index of parm
     line_index = lines.index([line for line in lines if 'parm' in line][0])
+    # replace 'vac.prmtop' with 'full.prmtop'
+    lines[line_index] = lines[line_index].replace('vac.prmtop', 'full.prmtop')
     with open('restraints.in', 'w') as f:
         # Write lines up to and including the target line
         f.writelines(lines[:line_index + 1])
@@ -1407,7 +1409,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             fe_std = sd_merg_exc
     resfile.write('\n----------------------------------------------\n\n')
     resfile.write('Energies in kcal/mol\n\n')
-    cit = 'on'
+    cit = 'off'
     resfile.write('Total simulation time (based on input file): %6.1f nanoseconds\n\n' % total_time)
     if cit == 'on':
         resfile.write('Please cite:\n\n')
@@ -1441,7 +1443,9 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
         os.makedirs('data')
 
     # Define log file
-    sys.stdout = open('./data/mbar-'+comp+'-'+mode+'.log', 'w')
+    #sys.stdout = open('./data/mbar-'+comp+'-'+mode+'.log', 'w')
+    f = open('./data/mbar-'+comp+'-'+mode+'.dat', 'w')
+
 
     # Determine Number of windows
     K = 0
@@ -1476,7 +1480,7 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
             if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D" or cols[-1] == "#Lig_TR" or cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"):
                 R += 1
 
-    logger.debug("K= %5.0f  R= %5.0f" % (K, R))
+    f.write("K= %5.0f  R= %5.0f\n" % (K, R))
 
     # Calculate Statistical Inefficiency (g)
     def calcg(data):
@@ -1645,7 +1649,7 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
             g[k] = 1.00
             Neff[k] = N[k]
 
-        logger.debug("Processed Window %5.0f.  N= %12.0f.  g= %10.3f   Neff= %12.0f" % (k, N[k], g[k], Neff[k]))
+        f.write("Processed Window %5.0f.  N= %12.0f.  g= %10.3f   Neff= %12.0f" % (k, N[k], g[k], Neff[k]))
 
     Upot = np.zeros([K, K, np.max(Neff)], np.float64)
 
@@ -1672,28 +1676,23 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
     np.save(f'./data/Upot_{comp}_{mode}.npy', Upot)
     mbar = MBAR(Upot, Neff)
 
-    logger.debug("Calculate Free Energy Differences Between States")
+    f.write("Calculate Free Energy Differences Between States")
     [Deltaf, dDeltaf] = mbar.getFreeEnergyDifferences()
 
     min = np.argmin(Deltaf[0])
 
     # Write to file
-    logger.debug("Free Energy Differences (in units of kcal/mol)")
-    logger.debug("%9s %8s %8s %12s %12s" % ('bin', 'f', 'df', 'deq', 'dfc'))
-    datfile = open('./data/mbar-'+comp+'-'+mode+'.dat', 'w')
+    f.write("Free Energy Differences (in units of kcal/mol)")
+    f.write("%9s %8s %8s %12s %12s" % ('bin', 'f', 'df', 'deq', 'dfc'))
     for k in range(K):
         if comp != 'u':  # Attach/release
-            logger.debug("%10.5f %10.5f %10.5f %12.7f %12.7f" %
+            f.write("%10.5f %10.5f %10.5f %12.7f %12.7f" %
                   (rfc[k, 0]/rfc[-1, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
-            datfile.write("%10.5f %10.5f %10.5f %12.7f %12.7f\n" %
-                          (rfc[k, 0]/rfc[-1, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
         else:  # Umbrella/Translation
-            logger.debug("%10.5f %10.5f %10.5f %12.7f %12.7f" %
+            f.write("%10.5f %10.5f %10.5f %12.7f %12.7f" %
                   (req[k, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
-            datfile.write("%10.5f %10.5f %10.5f %12.7f %12.7f\n" %
-                          (req[k, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
-    datfile.close()
-    logger.debug("\n\n")
+    f.close()
+    f.write("\n\n")
 
     os.chdir('../../../')
 
@@ -1795,9 +1794,9 @@ def fe_int_op(r1_0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature):
 
 def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, temperature):
 
-    kB = 1.381e-23 * 6.022e23 / (4.184 * 1000.0)  # Boltzmann constant in kJ/mol/K
+    kB = 1.381e-23 * 6.022e23 / (4.184 * 1000.0)  # Boltzmann constant in kcal/mol/K
     beta = 1/(kB * temperature)  # beta
-    N_max = 20000  # Max frames for any simulation window, you should check this if you did some long runs
+    N_max = 30000  # Max frames for any simulation window, you should check this if you did some long runs
 
     os.chdir('fe')
     os.chdir(pose)
@@ -1913,6 +1912,7 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
             N[k] = n
 
             # Calculate reduced potential
+            # reduce reference energy
             u[0:N[k]] = beta*(val[0:N[k], k, k])
 
             # Subsample or not
@@ -1931,6 +1931,7 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
         Upot = np.zeros([K, K, np.max(Neff)], np.float64)
         for k in range(K):
             for l in range(K):
+                #Upot[k, l, 0:Neff[k]] = beta*(val[0:Neff[k], k, l] - val[0:Neff[k], k, k])
                 Upot[k, l, 0:Neff[k]] = beta*(val[0:Neff[k], k, l])
 
         #np.savetxt(f'./data/Upot_{comp}_{mode}.dat', Upot.reshape(K*K, np.max(Neff)), fmt='%12.7f')
