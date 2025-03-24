@@ -2209,6 +2209,7 @@ EOF"""
                                             'gti_lam_sch = 1,\n'
                                             'gti_ele_sc = 1,\n'
                                             'gti_vdw_sc = 1,\n'
+                                            'gti_add_sc = 5,\n'
                                         )
                                     if 'cv_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
@@ -2237,6 +2238,8 @@ EOF"""
                                     if 'ntp' in line:
                                         # nvt simulation
                                         line = '  ntp = 0,\n'
+                                    if 'gti_add_sc' in line:
+                                        line = '\n'
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
                                             inpcrd_file = f'fe/{sim_folder_name}/full.inpcrd'
