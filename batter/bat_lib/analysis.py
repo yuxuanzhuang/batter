@@ -781,8 +781,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     sd_a = sd_bd = sd_t = sd_m = sd_n = sd_v = sd_e = sd_c = sd_r = sd_l = sd_f = sd_w = sd_vs = sd_es = sd_x = 0
 
     # Acquire simulation data
-    os.chdir('fe')
-    os.chdir(pose)
+    #os.chdir('fe')
+    #os.chdir(pose)
     components_dict = {
         'rest': ['a', 'l', 't', 'c', 'r', 'm', 'n'],
         'dd': ['e', 'v', 'f', 'w', 'x'],
@@ -1480,7 +1480,7 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
             if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D" or cols[-1] == "#Lig_TR" or cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"):
                 R += 1
 
-    f.write("K= %5.0f  R= %5.0f\n" % (K, R))
+    f.write(f"K= {K:5.0f}  R= {R:5.0f}\n")
 
     # Calculate Statistical Inefficiency (g)
     def calcg(data):
@@ -1589,7 +1589,8 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
                         sys.exit("not sure about restraint type!")
                     r += 1
             elif (comp == 'm' or comp == 'n'):
-                if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D" or cols[-1] == "#Lig_TR" or cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"):
+                if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D" or cols[-1] == "#Lig_TR" or cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"
+                                       ):
                     natms = len(cols[2].split(','))-1
                     req[k, r] = float(cols[6].replace(",", ""))
                     if natms == 2:
@@ -1649,7 +1650,7 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
             g[k] = 1.00
             Neff[k] = N[k]
 
-        f.write("Processed Window %5.0f.  N= %12.0f.  g= %10.3f   Neff= %12.0f" % (k, N[k], g[k], Neff[k]))
+        f.write(f"Processed Window {k:5.0f}.  N= {N[k]:12.0f}.  g= {g[k]:10.3f}   Neff= {Neff[k]:12.0f}\n")
 
     Upot = np.zeros([K, K, np.max(Neff)], np.float64)
 
@@ -1676,23 +1677,25 @@ def fe_mbar(comp, pose, mode, rest_file, temperature):
     np.save(f'./data/Upot_{comp}_{mode}.npy', Upot)
     mbar = MBAR(Upot, Neff)
 
-    f.write("Calculate Free Energy Differences Between States")
+    f.write("Calculate Free Energy Differences Between States\n")
     [Deltaf, dDeltaf] = mbar.getFreeEnergyDifferences()
 
     min = np.argmin(Deltaf[0])
 
     # Write to file
-    f.write("Free Energy Differences (in units of kcal/mol)")
-    f.write("%9s %8s %8s %12s %12s" % ('bin', 'f', 'df', 'deq', 'dfc'))
+    f.write("Free Energy Differences (in units of kcal/mol)\n")
+    f.write(f"{'bin':>9} {'f':>8} {'df':>8} {'deq':>12} {'dfc':>12}")
     for k in range(K):
         if comp != 'u':  # Attach/release
-            f.write("%10.5f %10.5f %10.5f %12.7f %12.7f" %
-                  (rfc[k, 0]/rfc[-1, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
+            f.write(
+                f"{rfc[k, 0]/rfc[-1, 0]:10.5f} {Deltaf[0, k]/beta:10.5f} {dDeltaf[0, k]/beta:10.5f} {req[k, 0]:12.7f} {rfc[k, 0]:12.7f}\n"
+        )
         else:  # Umbrella/Translation
-            f.write("%10.5f %10.5f %10.5f %12.7f %12.7f" %
-                  (req[k, 0], Deltaf[0, k]/beta, dDeltaf[0, k]/beta, req[k, 0], rfc[k, 0]))
-    f.close()
+            f.write(
+            f"{req[k, 0]:10.5f} {Deltaf[0, k]/beta:10.5f} {dDeltaf[0, k]/beta:10.5f} {req[k, 0]:12.7f} {rfc[k, 0]:12.7f}\n"
+        )
     f.write("\n\n")
+    f.close()
 
     os.chdir('../../../')
 
@@ -1796,7 +1799,7 @@ def fe_dd(comp, pose, mode, lambdas, weights, dec_int, dec_method, rest_file, te
 
     kB = 1.381e-23 * 6.022e23 / (4.184 * 1000.0)  # Boltzmann constant in kcal/mol/K
     beta = 1/(kB * temperature)  # beta
-    N_max = 30000  # Max frames for any simulation window, you should check this if you did some long runs
+    N_max = 100000  # Max frames for any simulation window, you should check this if you did some long runs
 
     os.chdir('fe')
     os.chdir(pose)
