@@ -1355,18 +1355,23 @@ class System:
 
         with self._change_dir(self.output_dir):
             for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
+                os.chdir(f'{self.fe_folder}/{pose}')
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
-                        self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                        continue
+                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                    logger.info(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
+                    continue
                 # remove the existing Results folder
                 if os.path.exists(f'{self.fe_folder}/{pose}/Results'):
                     shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
                 os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
-                try:
-                    fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
-                                    weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range)
-                except:
-                    fe_value = np.nan
+                if False:
+                    try:
+                        fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
+                                        weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range)
+                    except:
+                        fe_value = np.nan
+                fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
+                                        weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
 
                 # if failed; it will return nan
                 if np.isnan(fe_value):
@@ -2161,7 +2166,9 @@ EOF"""
 
     @safe_directory
     @save_state
-    def generate_frontier_files_nvt(self, version=24):
+    def generate_frontier_files_nvt(self,
+                                    remd=False,
+                                    version=24):
         """
         Generate the frontier files for the system
         to run them in a bundle.
@@ -2174,7 +2181,11 @@ EOF"""
         dec_int = self.sim_config.dec_int
         dec_method = self.sim_config.dec_method
         rest = self.sim_config.rest
-
+        # if remd:
+        len_lambdas = len(lambdas)
+        # even spacing from 0 to 1
+        revised_lambdas = np.linspace(0, 1, len_lambdas)
+        lambdas = revised_lambdas
 
         dec_method_folder_dict = {
             'dd': 'dd',
@@ -2256,24 +2267,45 @@ EOF"""
                                 for line in input_lines:
                                     if 'imin' in line:
                                         # add MC-MD water exchange
-                                        #if stage == 'mdin.in' or stage == 'mdin.in.extend':
-                                        #    if component in ['e', 'v',]:
-                                        #        outfile.write(
-                                                #    '  mcwat = 1,\n'
-                                                #    '  nmd = 1000,\n'
-                                                #    '  nmc = 1000,\n'
-                                                #    '  mcwatmask = ":1",\n'
-                                                #    '  mcligshift = 20,\n'
-                                                #    '  mcresstr = "WAT",\n'
-                                        #            '  numexchg = 1000,\n'
-                                        #            
-                                        #        )
-                                        outfile.write(
-                                            'gti_lam_sch = 1,\n'
-                                            'gti_ele_sc = 1,\n'
-                                            'gti_vdw_sc = 1,\n'
-                                            'gti_add_sc = 5,\n'
-                                        )
+                                        if stage == 'mdin.in' or stage == 'mdin.in.extend':
+                                            #if component in ['e', 'v',]:
+                                            # do not use MC-MD water exchange
+                                            if component in ['non']:
+                                                outfile.write(
+                                                    '  mcwat = 1,\n'
+                                                    '  nmd = 1000,\n'
+                                                    '  nmc = 1000,\n'
+                                                    '  mcwatmask = ":1",\n'
+                                                    '  mcligshift = 20,\n'
+                                                    '  mcresstr = "WAT",\n'
+                                                    #'  numexchg = 1000,\n'
+                                                )
+                                        if component in ['x', 'e', 'v', 'w', 'f']:
+                                            outfile.write(
+                                                #'scalpha = 0.5,\n'
+                                                #'scbeta = 1.0,\n'
+                                                #'gti_cut         = 1,\n'
+                                                #'gti_output      = 1,\n'
+                                                'gti_add_sc      = 5,\n'
+                                                #'gti_scale_beta  = 1,\n'
+                                                #'gti_cut_sc_on   = 8,\n'
+                                                #'gti_cut_sc_off  = 10,\n'
+                                                #'gti_lam_sch     = 1,\n'
+                                                #'gti_ele_sc      = 1,\n'
+                                                #'gti_vdw_sc      = 1,\n'
+                                                #'gti_cut_sc      = 2,\n'
+                                                #'gti_ele_exp     = 2,\n'
+                                                #'gti_vdw_exp     = 2,\n'
+                                                f'clambda         = {lambdas[i]:.2f},\n'
+                                                f'mbar_lambda     = {", ".join([f"{l:.2f}" for l in lambdas])},\n'
+                                            )
+                                            if remd and stage != 'mini.in':
+                                                outfile.write(
+                                                    '  numexchg = 3000,\n'
+                                                )
+                                                outfile.write(
+                                                    'bar_intervall = 100,\n'
+                                                )
                                     if 'cv_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
                                         line = f"cv_file = '{sim_folder_name}/{file_name}'\n"
@@ -2287,6 +2319,14 @@ EOF"""
                                     # if 'nstlim = 50000' in line:
                                     #    line = '  nstlim = 5,\n'
                                     # do not only write the ntwprt atoms
+                                    if 'irest' in line:
+                                        #if remd and component in ['x', 'e', 'v', 'w', 'f']:
+                                        if stage == 'mdin.in':
+                                            line = '  irest = 0,\n'
+                                    if 'ntx' in line:
+                                        #if remd:
+                                        if stage == 'mdin.in':
+                                            line = '  ntx = 1,\n'
                                     if 'ntwprt' in line:
                                         line = '\n'
                                     if 'restraintmask' in line:
@@ -2296,13 +2336,34 @@ EOF"""
                                         # alter
                                         # replace :1-2
                                         restraint_mask = restraint_mask.replace(':1-2', ':2')
-                                        restraint_mask = restraint_mask.replace(':1', '@CA')
-                                        line = f"restraintmask = '@CA | {restraint_mask}' \n"
+                                        # placeholder that does not exist in the system
+                                        restraint_mask = restraint_mask.replace(':1', '@ZYX')
+                                        if stage == 'mdin.in.extend':
+                                            line = f"restraintmask = '{restraint_mask}'\n"
+                                        else:
+                                            line = f"restraintmask = '@CA | {restraint_mask}' \n"
                                     if 'ntp' in line:
                                         # nvt simulation
                                         line = '  ntp = 0,\n'
                                     if 'gti_add_sc' in line:
                                         line = '\n'
+                                    if 'mbar_lambda' in line:
+                                        line = '\n'
+                                    if 'dt' in line:
+                                        if stage == 'mdin.in':
+                                            line = '  dt = 0.001,\n'
+                                    if 'clambda' in line:
+                                        final_line = []
+                                        para_line = line.split(',')
+                                        for i in range(len(para_line)):
+                                            if 'clambda' in para_line[i]:
+                                                continue
+                                            if 'scalpha' in para_line[i]:
+                                                continue
+                                            if 'scbeta' in para_line[i]:
+                                                continue
+                                            final_line.append(para_line[i])
+                                        line = ',\n'.join(final_line)
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
                                             inpcrd_file = f'fe/{sim_folder_name}/full.inpcrd'
@@ -2311,20 +2372,22 @@ EOF"""
                                                 lines = infile.readlines()
                                                 n_atoms = int(lines[1])
                                             performance = calculate_performance(n_atoms, component)
-                                            n_steps = int(20 / 60 / 24 * performance * 1000 * 1000 / 4)
+                                            n_steps = int(50 / 60 / 24 * performance * 1000 * 1000 / 4)
                                             n_steps = int(n_steps // 100000 * 100000)
                                             line = f'  nstlim = {n_steps},\n'
+                                            if remd and component in ['x', 'e', 'v', 'w', 'f'] and stage != 'mini.in':
+                                                line = f'  nstlim = 100,\n'
                                     outfile.write(line)
                             f.write(f'# {component} {i} {stage}\n')
                             if stage == 'mdin.in':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/eqnpt.in_04.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mini.in.rst7 '
                                         f'-o {sim_folder_name}/mdin-00.out -r {sim_folder_name}/mdin-00.rst7 -x {sim_folder_name}/mdin-00.nc '
-                                        f'-ref {sim_folder_name}/eqnpt.in_04.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
+                                        f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
                                         f'-e {sim_folder_name}/mdin-00.mden\n')
                             elif stage == 'mdin.in.extend':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mdin-CURRNUM.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mdin-CURRNUM.rst7 '
                                         f'-o {sim_folder_name}/mdin-NEXTNUM.out -r {sim_folder_name}/mdin-NEXTNUM.rst7 -x {sim_folder_name}/mdin-NEXTNUM.nc '
-                                        f'-ref {sim_folder_name}/mdin-CURRNUM.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
+                                        f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
                                         f'-e {sim_folder_name}/mdin-NEXTNUM.mden\n')
                             else:
                                 f.write(
@@ -2381,12 +2444,20 @@ EOF"""
                             f'srun -N {n_nodes} -n {n_sims * 8} pmemd.MPI -ng {n_sims} -groupfile {g_name}\n'
                         )
                     else:
-                        lines.append(
-                            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
-                        )
-                        lines_all.append(
-                            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
-                        )
+                        if component in ['x', 'e', 'v', 'w', 'f'] and remd:
+                            lines.append(
+                                f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -rem 3 -groupfile {g_name}\n'
+                            )
+                            lines_all.append(
+                                f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -rem 3 -groupfile {g_name}\n'
+                            )
+                        else:
+                            lines.append(
+                                f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
+                            )
+                            lines_all.append(
+                                f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
+                            )
                 lines = [line
                         .replace('NUM_NODES', str(n_nodes))
                         .replace('FEP_SIM_XXX', f'{folder}_{component}_{pose}') for line in lines]
@@ -2534,6 +2605,33 @@ EOF"""
             env_amber_file = f'{frontier_files}/env.amber.{version}'
             shutil.copy(env_amber_file, 'fe/env.amber')
             logger.info('Generated groupfiles for all poses')
+    
+    def check_sim_stage(self):
+        stage_sims = {}
+        for pose in self.sim_config.poses_def:
+            stage_sims[pose] = {}
+            for comp in self.sim_config.components:
+                if comp in ['m', 'n']:
+                    sim_type = 'rest'
+                elif comp in ['e', 'v', 'x']:
+                    sim_type = 'sdr'
+                folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}00'
+                mdin_files = glob.glob(f'{folder}/mdin-*.rst7')
+                # make sure the size is not empty
+                mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
+                mdin_files.sort(key=lambda x: int(x.split('-')[-1].split('.')[0]))
+                if len(mdin_files) > 0:
+                    stage_sims[pose][comp] = int(mdin_files[-1].split('-')[-1].split('.')[0])
+                else:
+                    stage_sims[pose][comp] = -1
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        import pandas as pd
+
+        stage_sims_df = pd.DataFrame(stage_sims)
+        fig, ax = plt.subplots(figsize=(1* len(self.sim_config.poses_def), 5))
+        sns.heatmap(stage_sims_df, ax=ax, annot=True, cmap='viridis')
+        plt.show()
 
 
     @property
