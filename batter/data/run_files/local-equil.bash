@@ -5,6 +5,7 @@ PRMTOP="full.hmr.prmtop"
 INPCRD="full.inpcrd"
 log_file="run.log"
 overwrite=${OVERWRITE:-0}
+only_eq=${ONLY_EQ:-0}
 
 if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
@@ -62,6 +63,10 @@ else
         pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev > "$log_file" 2>&1
         check_sim_failure "Equilibration stage $step"
     done
+fi
+if [[ $only_eq -eq 1 ]]; then
+    echo "Only equilibration requested."
+    exit 0
 fi
 
 if [[ $overwrite -eq 0 && -f md01.rst7 ]]; then

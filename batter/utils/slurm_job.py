@@ -15,13 +15,16 @@ class SLURMJob:
         self.partition = partition
         self.jobid = None
 
-    def submit(self, overwrite=False,
-               requeue=False):
+    def submit(self,
+               overwrite=False,
+               requeue=False,
+               other_env=None):
         """
         Submit the job to the SLURM queue.
         It will be tried three times in case of failure.
         """
         self.overwrite = overwrite
+        self.other_env = other_env
         if requeue:
             for _ in range(3):
                 try:
@@ -47,6 +50,8 @@ class SLURMJob:
         # Prepare the environment: copy current environment and update OVERWRITE variable.
         env = os.environ.copy()
         env["OVERWRITE"] = "1" if self.overwrite else "0"
+        if self.other_env:
+            env.update(self.other_env)
 
         cmd = ["sbatch"]
         if self.partition:

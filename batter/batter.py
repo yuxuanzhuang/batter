@@ -749,7 +749,7 @@ class System:
         Parameters
         ----------
         stage : str
-            The stage of the simulation. Options are 'equil' and 'fe'.
+            The stage of the simulation. Options are 'equil', 'fe', and 'fe_equil'.
         cluster : str
             The cluster to submit the simulation.
             Options are 'slurm' and 'frontier'.
@@ -873,6 +873,69 @@ class System:
                         )
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
+        elif stage == 'fe_equil':
+            logger.info('Submit NPT equilibration part of free energy stage')
+            for pose in self.sim_config.poses_def:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    # only run for window 0
+                    j = 0
+                    if n_jobs_submitted >= self._max_num_jobs:
+                        time.sleep(120)
+                        n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
+                    folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
+                    if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
+                        self._slurm_jobs.pop(f'{pose}/{comp_folder}/{comp}{j:02d}', None)
+                        logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
+                        continue
+                    if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
+                        self._slurm_jobs.pop(f'{pose}/{comp_folder}/{comp}{j:02d}', None)
+                        logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
+                        continue
+                    if os.path.exists(f"{folder_2_check}/eqnpt04.rst7") and not overwrite:
+                        logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
+                        continue
+                    if f'{pose}/{comp_folder}/{comp}{j:02d}' in self._slurm_jobs:
+                        slurm_job = self._slurm_jobs[f'{pose}/{comp_folder}/{comp}{j:02d}']
+                        if not slurm_job.is_still_running():
+                            slurm_job.submit(other_env={
+                                'ONLY_EQ': '1'
+                            }
+                            )
+                            n_jobs_submitted += 1
+                            continue
+                        elif overwrite:
+                            slurm_job.cancel()
+                            slurm_job.submit(overwrite=True,
+                                other_env={
+                                    'ONLY_EQ': '1'
+                                }
+                            )
+                            n_jobs_submitted += 1
+                            continue
+                        else:
+                            logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
+                            continue
+
+                    if overwrite:
+                        # remove FINISHED and FAILED
+                        os.remove(f"{folder_2_check}/FINISHED", ignore_errors=True)
+                        os.remove(f"{folder_2_check}/FAILED", ignore_errors=True)
+
+                    slurm_job = SLURMJob(
+                                    filename=f'{folder_2_check}/SLURMM-run',
+                                    partition=partition)
+                    slurm_job.submit(overwrite=overwrite, other_env={
+                        'ONLY_EQ': '1'
+                    })
+                    n_jobs_submitted += 1
+                    logger.info(f'FE equil job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
+                    self._slurm_jobs.update(
+                        {f'{pose}/{comp_folder}/{comp}{j:02d}': slurm_job}
+                    )
+
+            logger.info('Free energy systems have been submitted for all poses listed in the input file.')        
         else:
             raise ValueError(f"Invalid stage: {stage}")
 
