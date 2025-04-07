@@ -4117,6 +4117,28 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                     'PARTITIONNAME', self.system.partition))
 
 
+class UnoSDRBuilder(EquilibrationBuilder):
+    """
+    single-step SDR builder with both elec and vdw decoupling-recoupling.
+    """
+    stage = 'fe'
+    comp = 'o'
+    comp_folder = '.'
+    sdr_dist = 0
+    dec_method = ''
+
+    def __init__(self, system, pose, sim_config, working_dir):
+        super().__init__(system, pose, sim_config, working_dir)
+        self.build_file_path = os.path.join(self.working_dir, 'equil')
+        self._build_files()
+
+    def _build_files(self):
+        """
+        Build files for equilibration stage
+        """
+        pass
+
+
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):
     """
     Builder for restrain free energy calculations system
