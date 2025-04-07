@@ -1618,12 +1618,14 @@ def ReadDataFiles(dname,T,fstart,fstop):
     #Upot = np.load(f"{work_dir}/sdr/data/Upot_{comp}_all.npy")
     df_list = []
     for win_i, folder in enumerate(folders):
-        mdin_out_files = glob.glob(f'{folder}/mdin-*.out')
+        mdin_out_files = glob.glob(f'{folder}/mdin*.out')
         mdin_out_files.sort()
+        fstart = np.max([0, fstart])
+        fstop = np.min([len(mdin_out_files), fstop])
         df = pd.concat([extract_u_nk(mdin_f,
                                     T=T,
                                     reduced=False
-                                    ) for mdin_f in mdin_out_files[:1]])
+                                    ) for mdin_f in mdin_out_files[fstart:fstop]])
         df.to_csv(f'{folder}/potential_energy.csv', index=False)  # Save for debugging
         df_list.append(df)
 
@@ -1645,7 +1647,7 @@ def ReadDataFiles(dname,T,fstart,fstop):
             kT = T * 1.98720425864083e-3
             temp_enemat[:, i] = df[lam].values * kT
         enemat.append(temp_enemat)
-    np.save(f'{dname}potential_energy_matrix.npy', enemat)  # Save for debugging
+    #np.save(f'{dname}potential_energy_matrix.npy', enemat)  # Save for debugging
     
     return PotEneData_MBAR(lams,enemat,T)
  

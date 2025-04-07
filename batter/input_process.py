@@ -303,6 +303,9 @@ class SimulationConfig(BaseModel):
             case 'relative':
                 self.components = ['x', 'e', 'n', 'm']
                 self.dec_method = 'exchange'
+            case 'x_express':
+                self.components = ['m', 'n', 'o']
+                self.dec_method = 'sdr'
 
         if (self.dec_method == 'sdr' or self.dec_method == 'exchange') and self.sdr_dist == 0:
             logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
