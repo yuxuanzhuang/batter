@@ -2184,7 +2184,11 @@ EOF"""
         # if remd:
         len_lambdas = len(lambdas)
         # even spacing from 0 to 1
-        revised_lambdas = np.linspace(0, 1, len_lambdas)
+        #revised_lambdas = np.linspace(0, 1, len_lambdas)
+        revised_lambdas = np.asarray([
+            0.00000000,0.02756000,0.05417000,0.08003000,0.10729000,0.13769000,0.17041000,0.21174000,0.25756000,0.30552000,0.36274000,0.42362000,0.48726000,0.55589000,0.62235000,0.68323000,0.74207000,0.79496000,0.82904000,0.86500000,0.90368000,0.94077000,0.97151000,1.00000000
+        ])
+
         lambdas = revised_lambdas
 
         dec_method_folder_dict = {
@@ -2252,9 +2256,10 @@ EOF"""
                     with open(groupfile_name, 'w') as f:
                         for i in range(n_sims):
                             #stage_previous_temp = stage_previous.replace('00', f'{i:02d}')
+                            win00_sim_folder_name = f'{sim_folder_temp}00'
                             sim_folder_name = f'{sim_folder_temp}{i:02d}'
-                            prmtop = f'{sim_folder_name}/full.hmr.prmtop'
-                            inpcrd = f'{sim_folder_name}/full.inpcrd'
+                            prmtop = f'{win00_sim_folder_name}/full.hmr.prmtop'
+                            inpcrd = f'{win00_sim_folder_name}/full.inpcrd'
                             mdinput = f'{sim_folder_name}/{stage.split("_")[0]}'
                             # Read and modify the MD input file to update the relative path
                             if stage in ['mdin.in', 'mdin.in.extend']:
@@ -2284,18 +2289,19 @@ EOF"""
                                             outfile.write(
                                                 #'scalpha = 0.5,\n'
                                                 #'scbeta = 1.0,\n'
-                                                #'gti_cut         = 1,\n'
-                                                #'gti_output      = 1,\n'
-                                                'gti_add_sc      = 5,\n'
-                                                #'gti_scale_beta  = 1,\n'
-                                                #'gti_cut_sc_on   = 8,\n'
-                                                #'gti_cut_sc_off  = 10,\n'
+                                                'gti_cut         = 1,\n'
+                                                'gti_output      = 1,\n'
+                                                'gti_add_sc      = 25,\n'
+                                                'gti_chg_keep   = 1,\n'
+                                                'gti_scale_beta  = 1,\n'
+                                                'gti_cut_sc_on   = 7,\n'
+                                                'gti_cut_sc_off  = 9,\n'
                                                 #'gti_lam_sch     = 1,\n'
                                                 #'gti_ele_sc      = 1,\n'
                                                 #'gti_vdw_sc      = 1,\n'
                                                 #'gti_cut_sc      = 2,\n'
-                                                #'gti_ele_exp     = 2,\n'
-                                                #'gti_vdw_exp     = 2,\n'
+                                                'gti_ele_exp     = 2,\n'
+                                                'gti_vdw_exp     = 2,\n'
                                                 f'clambda         = {lambdas[i]:.2f},\n'
                                                 f'mbar_lambda     = {", ".join([f"{l:.2f}" for l in lambdas])},\n'
                                             )
@@ -2347,6 +2353,8 @@ EOF"""
                                         line = '  ntp = 0,\n'
                                     if 'gti_add_sc' in line:
                                         line = '\n'
+                                    if 'gti_chg_keep' in line:
+                                        line = '\n'
                                     if 'mbar_lambda' in line:
                                         line = '\n'
                                     if 'dt' in line:
@@ -2366,7 +2374,7 @@ EOF"""
                                         line = ',\n'.join(final_line)
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
-                                            inpcrd_file = f'fe/{sim_folder_name}/full.inpcrd'
+                                            inpcrd_file = f'fe/{win00_sim_folder_name}/full.inpcrd'
                                             # read the second line of the inpcrd file
                                             with open(inpcrd_file, 'r') as infile:
                                                 lines = infile.readlines()
@@ -2380,12 +2388,12 @@ EOF"""
                                     outfile.write(line)
                             f.write(f'# {component} {i} {stage}\n')
                             if stage == 'mdin.in':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mini.in.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
                                         f'-o {sim_folder_name}/mdin-00.out -r {sim_folder_name}/mdin-00.rst7 -x {sim_folder_name}/mdin-00.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
                                         f'-e {sim_folder_name}/mdin-00.mden\n')
                             elif stage == 'mdin.in.extend':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mdin-CURRNUM.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_frontier -p {prmtop} -c {sim_folder_name}/mdin-CURRNUM.rst7 '
                                         f'-o {sim_folder_name}/mdin-NEXTNUM.out -r {sim_folder_name}/mdin-NEXTNUM.rst7 -x {sim_folder_name}/mdin-NEXTNUM.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
                                         f'-e {sim_folder_name}/mdin-NEXTNUM.mden\n')

@@ -616,8 +616,11 @@ def generate_results_rest(comp, win, blocks, working_dir, sim_range):
     # get the line index of parm
     line_index = lines.index([line for line in lines if 'parm' in line][0])
     # replace 'vac.prmtop' with 'full.prmtop'
-    lines[line_index] = lines[line_index].replace('vac.prmtop', 'full.prmtop')
-    with open('restraints.in', 'w') as f:
+    lines[line_index] = lines[line_index].replace('vac.prmtop',
+                                                  f'../{comp}00/full.prmtop')
+    lines[line_index] = lines[line_index].replace('full.prmtop',
+                                                  f'../{comp}00/full.prmtop')
+    with open('restraints_curr.in', 'w') as f:
         # Write lines up to and including the target line
         f.writelines(lines[:line_index + 1])
         # Append the sorted mdin files
@@ -627,7 +630,7 @@ def generate_results_rest(comp, win, blocks, working_dir, sim_range):
         f.writelines(lines[line_index + 1:])
     # Run cpptraj with logging
     logger.debug('Running cpptraj')
-    run_with_log(f"{cpptraj} -i restraints.in > restraints.log 2>&1")
+    run_with_log(f"{cpptraj} -i restraints_curr.in > restraints.log 2>&1")
     logger.debug('cpptraj finished')
 
     # Separate in blocks
