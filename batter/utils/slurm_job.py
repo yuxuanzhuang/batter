@@ -5,7 +5,7 @@ from loguru import logger
 import time
 
 class SLURMJob:
-    def __init__(self, filename, partition=None):
+    def __init__(self, filename, partition=None, jobname=None):
         if not os.path.exists(filename):
             raise FileNotFoundError(f"{filename} does not exist")
 
@@ -13,6 +13,7 @@ class SLURMJob:
         self.path = os.path.dirname(filename)
         self.file_basename = os.path.basename(filename)
         self.partition = partition
+        self.jobname = jobname
         self.jobid = None
 
     def submit(self,
@@ -56,6 +57,8 @@ class SLURMJob:
         cmd = ["sbatch"]
         if self.partition:
             cmd.append(f"--partition={self.partition}")
+        if self.jobname:
+            cmd.append(f"--job-name={self.jobname}")
         cmd.append(self.file_basename)
 
         result = subprocess.run(

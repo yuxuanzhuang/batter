@@ -808,7 +808,8 @@ class System:
 
                 slurm_job = SLURMJob(
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
-                                partition=partition)
+                                partition=partition,
+                                jobname=f'{self.equil_folder}/{pose}_equil')
                 slurm_job.submit(overwrite=overwrite)
                 n_jobs_submitted += 1
                 logger.info(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
@@ -925,7 +926,8 @@ class System:
 
                     slurm_job = SLURMJob(
                                     filename=f'{folder_2_check}/SLURMM-run',
-                                    partition=partition)
+                                    partition=partition,
+                                    jobname=f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}_equil')
                     slurm_job.submit(overwrite=overwrite, other_env={
                         'ONLY_EQ': '1'
                     })
@@ -2201,6 +2203,7 @@ EOF"""
             'e': dec_method_folder_dict[dec_method],
             'w': dec_method_folder_dict[dec_method],
             'f': dec_method_folder_dict[dec_method],
+            'o': dec_method_folder_dict[dec_method], 
             'x': 'exchange_files',
             'a': 'rest',
             'l': 'rest',
@@ -2244,7 +2247,7 @@ EOF"""
             for component in components:
                 folder_name = component_2_folder_dict[component]
                 sim_folder_temp = f'{pose}/{folder_name}/{component}'
-                if component in ['x', 'e', 'v', 'w', 'f']:
+                if component in ['x', 'e', 'v', 'w', 'f', 'o']:
                     n_sims = len(lambdas)
                 else:
                     n_sims = len(attach_rest)

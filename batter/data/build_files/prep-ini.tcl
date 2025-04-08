@@ -11,6 +11,7 @@ set dmax DMAX
 set dmin DMIN
 set mat {}
 set sdr_dist SDRD
+set lig_site LIGSITE
 
 set pr [atomselect 0 "(not resname MMM) and (resid FIRST to LAST and name CA C N O)"]
 set all [atomselect 0 "(resid FIRST to LAST and not water and not resname MMM and noh) or (resname MMM) or (resname OTHRS WAT) or (resname LIPIDS)"]
@@ -281,12 +282,21 @@ puts -nonewline $fileId $data
 close $fileId
 
 mol load pdb dum.pdb
+mol load pdb dum.pdb
 
 set a [atomselect 1 "(not resname MMM) and (resid FIRST to LAST and name CA C N O)"]
 set b [atomselect 1 "resname MMM and noh"]
 set c [atomselect 2 all]
 $c moveby [vecsub [measure center $a weight mass] [measure center $c weight mass]]
 $c writepdb dum1.pdb
+
+if {[expr $lig_site != 0]} {
+set d [atomselect 3 all]
+set e [atomselect 1 "name CA and same residue as ((resid FIRST to LAST) and within 6 of resname MMM)"]
+$d moveby [vecsub [measure center $e weight mass] [measure center $d weight mass]]
+$d writepdb dum3.pdb
+}
+
 if {[expr $sdr_dist != 0]} {
 set dlis [list 0 0 [expr $sdr_dist]]
 $b moveby $dlis

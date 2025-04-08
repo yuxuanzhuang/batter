@@ -3781,6 +3781,124 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 'SYSTEMNAME', self.system.system_name).replace(
                                     'PARTITIONNAME', self.system.partition))
 
+        if (comp == 'o'):
+            # Create simulation files for elec+vdw decoupling
+            if (dec_method == 'sdr'):
+                # Simulation files for simultaneous decoupling
+                with open('./vac.pdb') as myfile:
+                    data = myfile.readlines()
+                    mk2 = int(last_lig)
+                    mk1 = int(mk2 - 1)
+                for i in range(0, num_sim+1):
+                    with open('../amber_files/mdin-uno', "rt") as fin:
+                        with open("./mdin-%02d" % int(i), "wt") as fout:
+                            if i == 1 or i == 0:
+                                for line in fin:
+                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
+                                        round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                            else:
+                                for line in fin:
+                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                    mdin = open("./mdin-%02d" % int(i), 'a')
+                    mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                    mdin.write('  mbar_lambda = ')
+                    for i in range(0, len(lambdas)):
+                        mdin.write(' %6.5f,' % (lambdas[i]))
+                    mdin.write('\n')
+                    mdin.write('  infe = 1,\n')
+                    mdin.write(' /\n')
+                    mdin.write(' &pmd \n')
+                    mdin.write(' output_file = \'cmass.txt\' \n')
+                    mdin.write(' output_freq = %02d \n' % int(ntwx))
+                    mdin.write(' cv_file = \'cv.in\' \n')
+                    mdin.write(' /\n')
+                    mdin.write(' &wt type = \'END\' , /\n')
+                    mdin.write('DISANG=disang.rest\n')
+                    mdin.write('LISTOUT=POUT\n')
+
+                with open("../amber_files/eqnpt0-uno.in", "rt") as fin:
+                    with open("./eqnpt0.in", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
+                with open("../amber_files/eqnpt-uno.in", "rt") as fin:
+                    with open("./eqnpt.in", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
+                with open("../amber_files/mini-uno", "rt") as fin:
+                    with open("./mini.in", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                            '_lig_name_', mol))
+
+            # Simulation files for double decoupling
+            elif (dec_method == 'dd'):
+                raise ValueError("Double decoupling not implemented for elec+vdw decoupling")
+                with open('./vac.pdb') as myfile:
+                    data = myfile.readlines()
+                    mk1 = int(last_lig)
+                for i in range(0, num_sim+1):
+                    with open('../amber_files/mdin-lj-dd', "rt") as fin:
+                        with open("./mdin-%02d" % int(i), "wt") as fout:
+                            if i == 1 or i == 0:
+                                for line in fin:
+                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                        '_num-steps_', str(round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                            else:
+                                for line in fin:
+                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                    mdin = open("./mdin-%02d" % int(i), 'a')
+                    mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                    mdin.write('  mbar_lambda = ')
+                    for i in range(0, len(lambdas)):
+                        mdin.write(' %6.5f,' % (lambdas[i]))
+                    mdin.write('\n')
+                    mdin.write('  infe = 1,\n')
+                    mdin.write(' /\n')
+                    mdin.write(' &pmd \n')
+                    mdin.write(' output_file = \'cmass.txt\' \n')
+                    mdin.write(' output_freq = %02d \n' % int(ntwx))
+                    mdin.write(' cv_file = \'cv.in\' \n')
+                    mdin.write(' /\n')
+                    mdin.write(' &wt type = \'END\' , /\n')
+                    mdin.write('DISANG=disang.rest\n')
+                    mdin.write('LISTOUT=POUT\n')
+
+                with open("../amber_files/eqnpt-lj-dd.in", "rt") as fin:
+                    with open("./eqnpt.in", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
+                with open("../amber_files/heat-lj-dd.in", "rt") as fin:
+                    with open("./heat.in", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                            '_lig_name_', mol))
+
+            # Create running scripts for local and server
+            with open('../run_files/local-dd.bash', "rt") as fin:
+                with open("./run-local.bash", "wt") as fout:
+                    for line in fin:
+                        fout.write(line)
+            with open('../run_files/PBS-Am', "rt") as fin:
+                with open("./PBS-run", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+            with open('../run_files/SLURMM-Am', "rt") as fin:
+                with open("./SLURMM-run", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                                'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition))
+
 
 class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
     @log_info
@@ -4117,32 +4235,677 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                     'PARTITIONNAME', self.system.partition))
 
 
-class UnoSDRBuilder(EquilibrationBuilder):
-    """
-    single-step SDR builder with both elec and vdw decoupling-recoupling.
-    """
-    stage = 'fe'
-    comp = 'o'
-    comp_folder = '.'
-    sdr_dist = 0
-    dec_method = ''
-
-    def __init__(self, system, pose, sim_config, working_dir):
-        super().__init__(system, pose, sim_config, working_dir)
-        self.build_file_path = os.path.join(self.working_dir, 'equil')
-        self._build_files()
-
-    def _build_files(self):
-        """
-        Build files for equilibration stage
-        """
-        pass
-
-
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):
     """
     Builder for restrain free energy calculations system
     """
+
+class UNOFreeEnergyBuilder(FreeEnergyBuilder):
+    """
+    Builder for vdw + elec single decoupling free energy calculations system
+    + flat-bottom COM restraints
+    """
+    @log_info
+    def _build_complex(self):
+        """
+        Copying files from equilibration
+        """
+        pose = self.pose
+        lipid_mol = self.lipid_mol
+        other_mol = self.other_mol
+        
+        # sim config values
+        solv_shell = self.sim_config.solv_shell
+        l1_x = self.sim_config.l1_x
+        l1_y = self.sim_config.l1_y
+        l1_z = self.sim_config.l1_z
+        l1_range = self.sim_config.l1_range
+        max_adis = self.sim_config.max_adis
+        min_adis = self.sim_config.min_adis
+        sdr_dist = self.sim_config.sdr_dist
+        fwin = len(self.sim_config.release_eq) - 1
+
+        if os.path.exists(self.build_file_path):
+            shutil.rmtree(self.build_file_path, ignore_errors=True)
+        
+        shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
+
+        # copy dum param to ff
+        shutil.copy(f'dum.mol2', f'../ff/dum.mol2')
+        shutil.copy(f'dum.frcmod', f'../ff/dum.frcmod')
+
+        shutil.copy(f'../../equil/{pose}/build_files/{self.pose}.pdb', './')
+        # Get last state from equilibrium simulations
+        shutil.copy(f'../../equil/{pose}/md{fwin:02d}.rst7', './')
+        shutil.copy(f'../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
+        shutil.copy(f'../../equil/{pose}/build_amber_renum.txt', './')
+        for file in glob.glob(f'../../equil/{pose}/full*.prmtop'):
+            shutil.copy(file, './')
+        for file in glob.glob(f'../../equil/{pose}/vac*'):
+            shutil.copy(file, './')
+        
+        mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
+        self.mol = mol
+
+        run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
+        renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
+                header=None, names=['old_resname',
+                                    'old_chain',
+                                    'old_resid',
+                                    'new_resname', 'new_resid'])
+        u = mda.Universe('rec_file.pdb')
+
+        for residue in u.select_atoms('protein').residues:
+            resid_str = residue.resid
+            residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
+
+        if lipid_mol:
+            # fix lipid resids
+            revised_resids = []
+            resid_counter = 1
+            prev_resid = 0
+            for i, row in renum_data.iterrows():
+                if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
+                    revised_resids.append(resid_counter)
+                    resid_counter += 1
+                else:
+                    revised_resids.append(resid_counter - 1)
+                prev_resid = row['old_resid']
+            
+            renum_data['revised_resid'] = revised_resids
+            revised_resids = np.array(revised_resids)
+            total_residues = u.atoms.residues.n_residues
+            final_resids = np.zeros(total_residues, dtype=int)
+            final_resids[:len(revised_resids)] = revised_resids
+            next_resnum = revised_resids[-1] + 1
+            final_resids[len(revised_resids):] = np.arange(next_resnum, total_residues - len(revised_resids) + next_resnum)
+            u.atoms.residues.resids = final_resids
+
+        u.atoms.write('rec_file.pdb')
+
+        # Used for retrieving the box size
+        shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+
+        # Split initial receptor file
+        with open("split-ini.tcl", "rt") as fin:
+            with open("split.tcl", "wt") as fout:
+                if other_mol:
+                    other_mol_vmd = " ".join(other_mol)
+                else:
+                    other_mol_vmd = 'XXX'
+                if lipid_mol:
+                    lipid_mol_vmd = " ".join(lipid_mol)
+                else:
+                    lipid_mol_vmd = 'XXX'
+                for line in fin:
+                    fout.write(line
+                    .replace('SHLL', '%4.2f' % solv_shell)
+                    .replace('OTHRS', str(other_mol_vmd))
+                    .replace('LIPIDS', str(lipid_mol_vmd))
+                    .replace('mmm', mol.lower())
+                    .replace('MMM', f"\'{mol}\'"))
+        run_with_log('vmd -dispdev text -e split.tcl')
+
+        # Remove possible remaining molecules
+        if not other_mol:
+            open('others.pdb', 'w').close()
+        if not lipid_mol:
+            open('lipids.pdb', 'w').close()
+
+        # Create raw complex and clean it
+        filenames = ['dummy.pdb',
+                     'protein.pdb',
+                    f'{mol.lower()}.pdb',
+                     'others.pdb',
+                     'lipids.pdb',
+                     'crystalwat.pdb']
+        with open('./complex-merge.pdb', 'w') as outfile:
+            for fname in filenames:
+                with open(fname) as infile:
+                    for line in infile:
+                        outfile.write(line)
+        with open('complex-merge.pdb') as oldfile, open('complex.pdb', 'w') as newfile:
+            for line in oldfile:
+                if not 'CRYST1' in line and not 'CONECT' in line and not 'END' in line:
+                    newfile.write(line)
+
+        # Read protein anchors and size from equilibrium
+        with open(f'../../equil/{pose}/equil-{mol.lower()}.pdb', 'r') as f:
+            data = f.readline().split()
+            P1 = data[2].strip()
+            P2 = data[3].strip()
+            P3 = data[4].strip()
+            first_res = data[8].strip()
+            recep_last = data[9].strip()
+
+        # Get protein first anchor residue number and protein last residue number from equil simulations
+        p1_resid = P1.split('@')[0][1:]
+        p1_atom = P1.split('@')[1]
+        rec_res = int(recep_last)+1
+        p1_vmd = p1_resid
+
+        # Replace names in initial files and VMD scripts
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('MMM', f"\'{mol}\'")
+                        .replace('mmm', mol.lower())
+                        .replace('NN', p1_atom)
+                        .replace('P1A', p1_vmd)
+                        .replace('FIRST', '2')
+                        .replace('LAST', str(rec_res))
+                        .replace('STAGE', 'fe')
+                        .replace('XDIS', '%4.2f' % l1_x)
+                        .replace('YDIS', '%4.2f' % l1_y)
+                        .replace('ZDIS', '%4.2f' % l1_z)
+                        .replace('RANG', '%4.2f' % l1_range)
+                        .replace('DMAX', '%4.2f' % max_adis)
+                        .replace('DMIN', '%4.2f' % min_adis)
+                        .replace('SDRD', '%4.2f' % sdr_dist)
+                        .replace('LIGSITE', '1')
+                        .replace('OTHRS', str(other_mol_vmd))
+                        .replace('LIPIDS', str(lipid_mol_vmd))
+                        )
+
+        # Align to reference (equilibrium) structure using VMD's measure fit
+        run_with_log('vmd -dispdev text -e measure-fit.tcl')
+
+        # Put in AMBER format and find ligand anchor atoms
+        with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
+            for line in oldfile:
+                splitdata = line.split()
+                if len(splitdata) > 3:
+                    newfile.write(line)
+        run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
+
+        # fix lipid resids
+        if lipid_mol:
+            u = mda.Universe('aligned_amber.pdb')
+            renum_txt = 'aligned_amber_renum.txt'
+            
+            renum_data = pd.read_csv(
+                    renum_txt,
+                    sep='\s+',
+                    header=None,
+                    names=['old_resname', 'old_resid',
+                        'new_resname', 'new_resid'])
+
+            revised_resids = []
+            resid_counter = 1
+            prev_resid = 0
+            for i, row in renum_data.iterrows():
+                if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
+                    revised_resids.append(resid_counter)
+                    resid_counter += 1
+                else:
+                    revised_resids.append(resid_counter - 1)
+                prev_resid = row['old_resid']
+            # set correct residue number
+            revised_resids = np.array(revised_resids)
+            u.atoms.residues.resids = final_resids[:len(revised_resids)]
+
+            u.atoms.write('aligned_amber.pdb')
+        
+        run_with_log('vmd -dispdev text -e prep.tcl', error_match='anchor not found')
+
+        # Check size of anchor file
+        anchor_file = 'anchors.txt'
+        if os.stat(anchor_file).st_size == 0:
+            return 'anch1'
+        f = open(anchor_file, 'r')
+        for line in f:
+            splitdata = line.split()
+            if len(splitdata) < 3:
+                os.rename('./anchors.txt', 'anchors-'+pose+'.txt')
+                return 'anch2'
+        os.rename('./anchors.txt', 'anchors-'+pose+'.txt')
+
+        # Read ligand anchors obtained from VMD
+        lig_resid = str(int(recep_last) + 2)
+        anchor_file = 'anchors-'+pose+'.txt'
+        f = open(anchor_file, 'r')
+        for line in f:
+            splitdata = line.split()
+            L1 = ":"+lig_resid+"@"+splitdata[0]
+            L2 = ":"+lig_resid+"@"+splitdata[1]
+            L3 = ":"+lig_resid+"@"+splitdata[2]
+
+        # Write anchors and last protein residue to original pdb file
+        with open('fe-%s.pdb' % mol.lower(), 'r') as fin:
+            data = fin.read().splitlines(True)
+        with open('fe-%s.pdb' % mol.lower(), 'w') as fout:
+            fout.write('%-8s  %6s  %6s  %6s  %6s  %6s  %6s  %6s  %4s\n' %
+                       ('REMARK A', P1, P2, P3, L1, L2, L3, first_res, recep_last))
+            fout.writelines(data[1:])
+        return True
+
+    @log_info
+    def _create_simulation_dir(self):
+        dum_coords = []
+        recep_coords = []
+        lig_coords = []
+        oth_coords = []
+        dum_atomlist = []
+        lig_atomlist = []
+        recep_atomlist = []
+        oth_atomlist = []
+        dum_rsnmlist = []
+        recep_rsnmlist = []
+        lig_rsnmlist = []
+        oth_rsnmlist = []
+        dum_rsidlist = []
+        recep_rsidlist = []
+        lig_rsidlist = []
+        oth_rsidlist = []
+        dum_chainlist = []
+        recep_chainlist = []
+        lig_chainlist = []
+        oth_chainlist = []
+        dum_atom = 0
+        lig_atom = 0
+        recep_atom = 0
+        oth_atom = 0
+        total_atom = 0
+        resid_lig = 0
+        mol = self.mol
+        molr = self.molr
+        poser = self.poser
+        resname_lig = mol
+        other_mol = self.other_mol
+        lipid_mol = self.lipid_mol
+        comp = self.comp
+        sdr_dist = self.sim_config.sdr_dist
+
+        dec_method = self.dec_method
+
+        if os.path.exists('amber_files') or os.path.islink('amber_files'):
+            os.remove('amber_files')
+
+        os.symlink(f'../{self.amber_files_path}', 'amber_files')
+
+        for file in glob.glob(f'../../{self.build_file_path}/vac_ligand*'):
+            shutil.copy(file, './')
+        shutil.copy(f'../../{self.build_file_path}/{mol.lower()}.pdb', './')
+        shutil.copy(f'../../{self.build_file_path}/fe-{mol.lower()}.pdb', './build-ini.pdb')
+        shutil.copy(f'../../{self.build_file_path}/fe-{mol.lower()}.pdb', './')
+        shutil.copy(f'../../{self.build_file_path}/anchors-{self.pose}.txt', './')
+        shutil.copy(f'../../{self.build_file_path}/equil-reference.pdb', './')
+
+        for file in glob.glob('../../../ff/*.mol2'):
+            shutil.copy(file, './')
+        for file in glob.glob('../../../ff/*.frcmod'):
+            shutil.copy(file, './')
+        for file in glob.glob('../../../ff/{mol.lower()}.*'):
+            shutil.copy(file, './')
+        for file in glob.glob('../../../ff/dum.*'):
+            shutil.copy(file, './')
+
+        # Get TER statements
+        ter_atom = []
+        with open(f'../../{self.build_file_path}/rec_file.pdb') as oldfile, open('rec_file-clean.pdb', 'w') as newfile:
+            for line in oldfile:
+                if not 'WAT' in line:
+                    newfile.write(line)
+        run_with_log('pdb4amber -i rec_file-clean.pdb -o rec_amber.pdb -y')
+        with open('./rec_amber.pdb') as f_in:
+            lines = (line.rstrip() for line in f_in)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+        for i in range(0, len(lines)):
+            if (lines[i][0:6].strip() == 'TER'):
+                ter_atom.append(int(lines[i][6:11].strip()))
+                
+        for i in range(1, 4):
+            shutil.copy(f'../../{self.build_file_path}/dum'+str(i)+'.pdb', './')
+            with open('dum'+str(i)+'.pdb') as dum_in:
+                lines = (line.rstrip() for line in dum_in)
+                lines = list(line for line in lines if line)
+                dum_coords.append((float(lines[1][30:38].strip()), float(
+                    lines[1][38:46].strip()), float(lines[1][46:54].strip())))
+                dum_atomlist.append(lines[1][12:16].strip())
+                dum_rsnmlist.append(lines[1][17:20].strip())
+                dum_rsidlist.append(float(lines[1][22:26].strip()))
+                dum_chainlist.append(lines[1][21].strip())
+                dum_atom += 1
+                total_atom += 1
+
+
+        # Read coordinates from aligned system
+        with open('build-ini.pdb') as f_in:
+            lines = (line.rstrip() for line in f_in)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+
+        # Count atoms of the system
+        for i in range(0, len(lines)):
+            if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                molecule = lines[i][17:21].strip() 
+                if (molecule != mol) and (molecule != 'DUM') and (molecule != 'WAT') and (molecule not in other_mol) and (molecule not in lipid_mol):
+                    recep_coords.append((float(lines[i][30:38].strip()), float(
+                        lines[i][38:46].strip()), float(lines[i][46:54].strip())))
+                    recep_atomlist.append(lines[i][12:16].strip())
+                    recep_rsnmlist.append(molecule)
+                    recep_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    recep_chainlist.append(lines[i][21].strip())
+                    recep_last = int(lines[i][22:26].strip())
+                    recep_atom += 1
+                    total_atom += 1
+                elif molecule == mol:
+                    lig_coords.append((float(lines[i][30:38].strip()), float(
+                        lines[i][38:46].strip()), float(lines[i][46:54].strip())))
+                    lig_atomlist.append(lines[i][12:16].strip())
+                    lig_rsnmlist.append(molecule)
+                    lig_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    lig_chainlist.append(lines[i][21].strip())
+                    lig_atom += 1
+                    total_atom += 1
+                elif (molecule == 'WAT') or (molecule in other_mol):
+                    oth_coords.append((float(lines[i][30:38].strip()), float(
+                        lines[i][38:46].strip()), float(lines[i][46:54].strip())))
+                    oth_atomlist.append(lines[i][12:16].strip())
+                    oth_rsnmlist.append(molecule)
+                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    oth_chainlist.append(lines[i][21].strip())
+                    oth_atom += 1
+                    total_atom += 1
+                elif molecule in lipid_mol:
+                    oth_coords.append((float(lines[i][30:38].strip()), float(
+                        lines[i][38:46].strip()), float(lines[i][46:54].strip())))
+                    oth_atomlist.append(lines[i][12:16].strip())
+                    oth_rsnmlist.append(molecule)
+                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    oth_chainlist.append(lines[i][21].strip())
+                    oth_atom += 1
+                    total_atom += 1
+
+        coords = dum_coords + recep_coords + lig_coords + oth_coords
+        atom_namelist = dum_atomlist + recep_atomlist + lig_atomlist + oth_atomlist
+        resid_list = dum_rsidlist + recep_rsidlist + lig_rsidlist + oth_rsidlist
+        resid_list = [resid if resid < 10000 else (resid % 9999) + 1 for resid in resid_list]
+
+        resname_list = dum_rsnmlist + recep_rsnmlist + lig_rsnmlist + oth_rsnmlist
+        chain_list = dum_chainlist + recep_chainlist + lig_chainlist + oth_chainlist
+        lig_resid = recep_last + dum_atom
+        oth_tmp = 'None'
+
+        # Write the new pdb file
+
+        build_file = open('build.pdb', 'w')
+
+        # Positions for the dummy atoms
+        for i in range(0, dum_atom):
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                             ('ATOM', i+1, atom_namelist[i], resname_list[i], chain_list[i], resid_list[i]))
+            build_file.write('%8.3f%8.3f%8.3f' % (float(coords[i][0]), float(coords[i][1]), float(coords[i][2])))
+            build_file.write('%6.2f%6.2f\n' % (0, 0))
+            build_file.write('TER\n')
+
+        chain_tmp = 'None'
+        # Positions of the receptor atoms
+        for i in range(dum_atom, dum_atom + recep_atom):
+            if chain_list[i] != chain_tmp:
+                if resname_list[i] not in other_mol and resname_list[i] != 'WAT':
+                    build_file.write('TER\n')
+            chain_tmp = chain_list[i]
+
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                             ('ATOM', i+1, atom_namelist[i], resname_list[i], chain_list[i], resid_list[i]))
+            build_file.write('%8.3f%8.3f%8.3f' % (float(coords[i][0]), float(coords[i][1]), float(coords[i][2])))
+
+            build_file.write('%6.2f%6.2f\n' % (0, 0))
+            j = i + 2 - dum_atom
+            if j in ter_atom:
+                build_file.write('TER\n')
+
+        # Positions of the ligand atoms
+        for i in range(dum_atom + recep_atom, dum_atom + recep_atom + lig_atom):
+
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                ('ATOM', i+1, atom_namelist[i], mol, chain_list[i], float(lig_resid)))
+            build_file.write('%8.3f%8.3f%8.3f' % (float(coords[i][0]), float(coords[i][1]), float(coords[i][2])))
+            build_file.write('%6.2f%6.2f\n' % (0, 0))
+
+        build_file.write('TER\n')
+
+
+        for i in range(0, lig_atom):
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                                ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid + 1)))
+            build_file.write('%8.3f%8.3f%8.3f' % (float(lig_coords[i][0]), float(
+                lig_coords[i][1]), float(lig_coords[i][2]+sdr_dist)))
+
+            build_file.write('%6.2f%6.2f\n' % (0, 0))
+        build_file.write('TER\n')
+
+
+        # Positions of the other atoms
+        for i in range(0, oth_atom):
+            if oth_rsidlist[i] != oth_tmp:
+                build_file.write('TER\n')
+            oth_tmp = oth_rsidlist[i]
+            oth_tmp = oth_tmp if oth_tmp < 10000 else (oth_tmp % 9999) + 1
+            build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
+                             ('ATOM', i+1, oth_atomlist[i], oth_rsnmlist[i], oth_chainlist[i], oth_tmp))
+            build_file.write('%8.3f%8.3f%8.3f' %
+                             (float(oth_coords[i][0]), float(oth_coords[i][1]), float(oth_coords[i][2])))
+
+            build_file.write('%6.2f%6.2f\n' % (0, 0))
+
+        build_file.write('TER\n')
+        build_file.write('END\n')
+        build_file.close()
+
+        # Write dry build file
+
+        with open('build.pdb') as f_in:
+            lines = (line.rstrip() for line in f_in)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+        with open('./build-dry.pdb', 'w') as outfile:
+            for i in range(0, len(lines)):
+                if lines[i][17:20].strip() == 'WAT':
+                    break
+                outfile.write(lines[i]+'\n')
+
+        outfile.close()
+        
+    @log_info
+    def _restraints(self):
+        # TODO: Refactor this method
+        # This is just a hack to avoid the restraints for lambda windows
+        # when win is not 0
+        if self.win != 0 and COMPONENTS_LAMBDA_DICT[self.comp] == 'lambdas':
+            return
+        pose = self.pose
+        rest = self.sim_config.rest
+        lcom = rest[6]
+
+        bb_start = self.sim_config.bb_start
+        bb_end = self.sim_config.bb_end
+        stage = self.stage
+        mol = self.mol
+        molr = self.molr
+        comp = self.comp
+        bb_equil = self.sim_config.bb_equil
+        sdr_dist = self.sim_config.sdr_dist
+        dec_method = self.sim_config.dec_method
+        other_mol = self.other_mol
+        lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        weight = lambdas_comp[self.win]
+
+        pdb_file = 'vac.pdb'
+        u = mda.Universe(pdb_file)
+        ligand_residues = u.select_atoms(f'resname {mol}').residues
+        bsite_ag = u.select_atoms(f'name CA and byres protein and around 6 resname {mol}')
+
+        # COM restraints
+        cv_file = open('cv.in', 'w')
+        cv_file.write('cv_file \n')
+        # ignore protein COM restraints
+        #cv_file.write('&colvar \n')
+        #cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+        #cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
+        #for i in range(0, len(hvy_h)):
+        #    cv_file.write(hvy_h[i])
+        #    cv_file.write(',')
+        #cv_file.write('\n')
+        #cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+        #            (float(0.0), float(0.0), float(0.0), float(999.0)))
+        #cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
+        #cv_file.write('/ \n')
+
+        # Ligand solvent COM restraints
+        lig_solv = ligand_residues[1].atoms
+        index_amber = lig_solv.indices + 1
+        cv_file.write('&colvar \n')
+        cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+        cv_file.write(' cv_ni = %s, cv_i = 2,0,' % str(len(index_amber)+2))
+        for i in range(0, len(index_amber)):
+            cv_file.write(str(index_amber[i]))
+            cv_file.write(',')
+        cv_file.write('\n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
+        cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
+        cv_file.write('/ \n')
+
+        # Ligand binding site COM restraints
+        lig_bs = ligand_residues[0].atoms
+        index_amber = lig_bs.indices + 1
+        cv_file.write('&colvar \n')
+        cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+        cv_file.write(' cv_ni = %s, cv_i = 3,0,' % str(len(index_amber)+2))
+        for i in range(0, len(index_amber)):
+            cv_file.write(str(index_amber[i]))
+            cv_file.write(',')
+        cv_file.write('\n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
+        cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
+        cv_file.write('/ \n')
+
+        index_amber = bsite_ag.indices + 1
+        cv_file.write('&colvar \n')
+        cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+        cv_file.write(' cv_ni = %s, cv_i = 3,0,' % str(len(index_amber)+2))
+        for i in range(0, len(index_amber)):
+            cv_file.write(str(index_amber[i]))
+            cv_file.write(',')
+        cv_file.write('\n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
+        cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
+        cv_file.write('/ \n')
+        cv_file.close()
+
+    @log_info
+    def _sim_files(self):
+        amber_file_path = 'amber_files'
+        
+        dec_method = self.dec_method
+        hmr = self.sim_config.hmr
+        temperature = self.sim_config.temperature
+        mol = self.mol
+        num_sim = len(self.sim_config.release_eq)
+        pose = self.pose
+        comp = self.comp
+        win = self.win
+        stage = self.stage
+        steps1 = self.sim_config.dic_steps1[comp]
+        steps2 = self.sim_config.dic_steps2[comp]
+        rng = self.sim_config.rng
+        lipid_mol = self.lipid_mol
+        ntwx = self.sim_config.ntwx
+        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        weight = lambdas[self.win]
+
+        # Read 'disang.rest' and extract L1, L2, L3
+        #with open('disang.rest', 'r') as f:
+        #    data = f.readline().split()
+        #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
+
+        # Read 'vac.pdb' once
+        with open('./vac.pdb') as f:
+            lines = f.readlines()
+
+        # Get number of atoms in vacuum (third-to-last line)
+        vac_atoms = lines[-3][6:11].strip()
+
+        # Get the last ligand residue number
+        last_lig = None
+        for line in lines:
+            if line[17:20].strip().lower() == mol.lower():  # Compare residue name
+                last_lig = line[22:26].strip()  # Extract residue number
+
+        if last_lig is None:
+            raise ValueError(f"No ligand residue matching '{mol}' found in vac.pdb")
+
+        # Create simulation files for elec+vdw decoupling
+        if (dec_method == 'sdr'):
+            # Simulation files for simultaneous decoupling
+            with open('./vac.pdb') as myfile:
+                data = myfile.readlines()
+                mk2 = int(last_lig)
+                mk1 = int(mk2 - 1)
+            for i in range(0, num_sim+1):
+                with open('../amber_files/mdin-uno', "rt") as fin:
+                    with open("./mdin-%02d" % int(i), "wt") as fout:
+                        if i == 1 or i == 0:
+                            for line in fin:
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
+                                    round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                        else:
+                            for line in fin:
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                    '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                mdin = open("./mdin-%02d" % int(i), 'a')
+                mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                mdin.write('  mbar_lambda = ')
+                for i in range(0, len(lambdas)):
+                    mdin.write(' %6.5f,' % (lambdas[i]))
+                mdin.write('\n')
+                mdin.write('  infe = 1,\n')
+                mdin.write(' /\n')
+                mdin.write(' &pmd \n')
+                mdin.write(' output_file = \'cmass.txt\' \n')
+                mdin.write(' output_freq = %02d \n' % int(ntwx))
+                mdin.write(' cv_file = \'cv.in\' \n')
+                mdin.write(' /\n')
+                mdin.write(' &wt type = \'END\' , /\n')
+                #mdin.write('DISANG=disang.rest\n')
+                #mdin.write('LISTOUT=POUT\n')
+
+            with open("../amber_files/eqnpt0-uno.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+            with open("../amber_files/eqnpt-uno.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+            with open("../amber_files/mini-uno", "rt") as fin:
+                with open("./mini.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+
+        # Create running scripts for local and server
+        with open('../run_files/local-dd.bash', "rt") as fin:
+            with open("./run-local.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
+        with open('../run_files/PBS-Am', "rt") as fin:
+            with open("./PBS-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+        with open('../run_files/SLURMM-Am', "rt") as fin:
+            with open("./SLURMM-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                            'SYSTEMNAME', self.system.system_name).replace(
+                                'PARTITIONNAME', self.system.partition))
+
+
+
 
 class BuilderFactory:
     @staticmethod
@@ -4189,6 +4952,17 @@ class BuilderFactory:
             )
             case 'x':
                 return EXFreeEnergyBuilder(
+                    system=system,
+                    pose=pose,
+                    sim_config=sim_config,
+                    working_dir=working_dir,
+                    win=win,
+                    component=component,
+                    molr=molr,
+                    poser=poser,
+                )
+            case 'o':
+                return UNOFreeEnergyBuilder(
                     system=system,
                     pose=pose,
                     sim_config=sim_config,
