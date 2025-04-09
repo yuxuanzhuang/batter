@@ -294,6 +294,7 @@ if {[expr $lig_site != 0]} {
 set d [atomselect 3 all]
 set e [atomselect 1 "name CA and same residue as ((resid FIRST to LAST) and within 6 of resname MMM)"]
 $d moveby [vecsub [measure center $e weight mass] [measure center $d weight mass]]
+$d set resid 3
 $d writepdb dum3.pdb
 }
 
@@ -306,5 +307,6 @@ $c writepdb dum2.pdb
 set dlis2 [list 0 0 [expr -1*$sdr_dist]]
 $b moveby $dlis2
 }
+
 
 exit

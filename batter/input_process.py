@@ -14,8 +14,9 @@ from batter.data import charmmlipid2amber
 
 FEP_COMPONENTS = ['a', 'l', 't',
                   'm', 'n', 'c',
-                  'r', 'e', 'v',
-                  'f', 'w', 'x', 'o']
+                  'r', 'e', 'v', 
+                  'f', 'w', 'x',
+                  'o', 's']
 
 
 class SimulationConfig(BaseModel):
@@ -309,6 +310,9 @@ class SimulationConfig(BaseModel):
             case 'uno':
                 self.components = ['o']
                 self.dec_method = 'sdr'
+            case 'self':
+                self.components = ['s']
+                self.dec_method = 'sdr'
 
         if (self.dec_method == 'sdr' or self.dec_method == 'exchange') and self.sdr_dist == 0:
             logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
@@ -339,6 +343,7 @@ class SimulationConfig(BaseModel):
                        "express", "relative",
                        "x_express",
                        "uno",
+                       "self",
                        "custom"}
         if value not in valid_types:
             raise ValueError(f"Invalid fe_type: {value}. Must be one of {valid_types}.")

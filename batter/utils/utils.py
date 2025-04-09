@@ -20,7 +20,9 @@ if not os.path.exists(obabel):
     
 vmd = '/home/groups/rondror/software/vmd-1.9.4/bin/vmd'
 if not os.path.exists(vmd):
-    vmd = 'vmd'
+    vmd = '/lustre/orion/proj-shared/bip152/vmd/vmd_LINUXAMD64'
+    if not os.path.exists(vmd):
+        vmd = 'vmd'
 
 COMPONENTS_LAMBDA_DICT = {
     'v': 'lambdas',
@@ -29,6 +31,7 @@ COMPONENTS_LAMBDA_DICT = {
     'f': 'lambdas',
     'x': 'lambdas',
     'o': 'lambdas',
+    's': 'lambdas',
     'a': 'attach_rest',
     'l': 'attach_rest',
     't': 'attach_rest',
@@ -45,6 +48,7 @@ COMPONENTS_FOLDER_DICT = {
     'f': 'sdr',
     'x': 'sdr',
     'o': 'sdr',
+    's': 'sdr',
     'a': 'rest',
     'l': 'rest',
     't': 'rest',
@@ -56,7 +60,7 @@ COMPONENTS_FOLDER_DICT = {
 
 COMPONENTS_DICT = {
         'rest': ['a', 'l', 't', 'c', 'r', 'm', 'n'],
-        'dd': ['e', 'v', 'f', 'w', 'x', 'o'],
+        'dd': ['e', 'v', 'f', 'w', 'x', 'o', 's'],
     }
 
 

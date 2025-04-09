@@ -65,6 +65,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 from batter.utils import (
     COMPONENTS_LAMBDA_DICT,
     COMPONENTS_FOLDER_DICT,
+    COMPONENTS_DICT
 )
 
 DEC_FOLDER_DICT = {
@@ -73,9 +74,7 @@ DEC_FOLDER_DICT = {
     'exchange': 'sdr',
 }
 
-AVAILABLE_COMPONENTS = ['v', 'e', 'w', 'f',
-                       'x', 'a', 'l', 't',
-                       'r', 'c', 'm', 'n']
+AVAILABLE_COMPONENTS = COMPONENTS_DICT['dd'] + COMPONENTS_DICT['rest']
 
 
 class System:
@@ -1815,359 +1814,6 @@ EOF"""
     
     @safe_directory
     @save_state
-    def generate_frontier_files(self, version=24):
-        """
-        Generate the frontier files for the system
-        to run them in a bundle.
-        """
-        poses_def = self.sim_config.poses_def
-        components = self.sim_config.components
-        attach_rest = self.sim_config.attach_rest
-        lambdas = self.sim_config.lambdas
-        weights = self.sim_config.weights
-        dec_int = self.sim_config.dec_int
-        dec_method = self.sim_config.dec_method
-        rest = self.sim_config.rest
-
-
-        dec_method_folder_dict = {
-            'dd': 'dd',
-            'sdr': 'sdr',
-            'exchange': 'sdr',
-        }
-        component_2_folder_dict = {
-            'v': dec_method_folder_dict[dec_method],
-            'e': dec_method_folder_dict[dec_method],
-            'w': dec_method_folder_dict[dec_method],
-            'f': dec_method_folder_dict[dec_method],
-            'x': 'exchange_files',
-            'a': 'rest',
-            'l': 'rest',
-            't': 'rest',
-            'r': 'rest',
-            'c': 'rest',
-            'm': 'rest',
-            'n': 'rest',
-        }
-        sim_stages = {
-            'rest': [
-                'mini.in',
-            #    'therm1.in', 'therm2.in',
-                'eqnpt0.in',
-                'eqnpt.in_00',
-                'eqnpt.in_01', 'eqnpt.in_02',
-                'eqnpt.in_03', 'eqnpt.in_04',
-                'mdin.in', 'mdin.in.extend'
-            ],
-            'sdr': [
-                'mini.in',
-            #    'heat.in_00',
-                'eqnpt0.in',
-                'eqnpt.in_00',
-                'eqnpt.in_01', 'eqnpt.in_02',
-                'eqnpt.in_03', 'eqnpt.in_04',
-                'mdin.in', 'mdin.in.extend'
-            ],
-        }
-        # write a groupfile for each component
-
-        def write_2_pose(pose, components):
-            """
-            Write a groupfile for each component in the pose
-            """
-            all_replicates = {comp: [] for comp in components}
-
-            pose_name = f'fe/{pose}/'
-            os.makedirs(pose_name, exist_ok=True)
-            os.makedirs(f'{pose_name}/groupfiles', exist_ok=True)
-            for component in components:
-                folder_name = component_2_folder_dict[component]
-                sim_folder_temp = f'{pose}/{folder_name}/{component}'
-                if component in ['x', 'e', 'v', 'w', 'f']:
-                    n_sims = len(lambdas)
-                else:
-                    n_sims = len(attach_rest)
-
-                stage_previous = f'{sim_folder_temp}REPXXX/full.inpcrd'
-
-                for stage in sim_stages[component_2_folder_dict[component]]:
-                    groupfile_name = f'{pose_name}/groupfiles/{component}_{stage}.groupfile'
-                    with open(groupfile_name, 'w') as f:
-                        for i in range(n_sims):
-                            #stage_previous_temp = stage_previous.replace('00', f'{i:02d}')
-                            sim_folder_name = f'{sim_folder_temp}{i:02d}'
-                            prmtop = f'{sim_folder_name}/full.hmr.prmtop'
-                            inpcrd = f'{sim_folder_name}/full.inpcrd'
-                            mdinput = f'{sim_folder_name}/{stage.split("_")[0]}'
-                            # Read and modify the MD input file to update the relative path
-                            if stage in ['mdin.in', 'mdin.in.extend']:
-                                mdinput = mdinput.replace(stage, 'mdin-02')
-                            with open(f'fe/{mdinput}', 'r') as infile:
-                                input_lines = infile.readlines()
-
-                            new_mdinput = f'fe/{sim_folder_name}/{stage.split("_")[0]}_frontier'
-                            with open(new_mdinput, 'w') as outfile:
-                                for line in input_lines:
-                                    if 'cv_file' in line:
-                                        file_name = line.split('=')[1].strip().replace("'", "")
-                                        line = f"cv_file = '{sim_folder_name}/{file_name}'\n"
-                                    if 'output_file' in line:
-                                        file_name = line.split('=')[1].strip().replace("'", "")
-                                        line = f"output_file = '{sim_folder_name}/{file_name}'\n"
-                                    if 'disang' in line:
-                                        file_name = line.split('=')[1].strip().replace("'", "")
-                                        line = f"DISANG={sim_folder_name}/{file_name}\n"
-                                    # update the number of steps
-                                    if 'nstlim = 10000' in line:
-                                        line = '  nstlim = 50000,\n'
-                                    # do not only write the ntwprt atoms
-                                    if 'ntwprt' in line:
-                                        line = '\n'
-                                    if 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        # replace :1-2
-                                        restraint_mask = restraint_mask.replace(':1-2', ':2')
-                                        restraint_mask = restraint_mask.replace(':1', '@CA')
-                                        line = f"restraintmask = '@CA | {restraint_mask}' \n"
-                                    if stage == 'mdin.in' or stage == 'mdin.in.extend':
-                                        if 'nstlim' in line:
-                                            inpcrd_file = f'fe/{sim_folder_name}/full.inpcrd'
-                                            # read the second line of the inpcrd file
-                                            with open(inpcrd_file, 'r') as infile:
-                                                lines = infile.readlines()
-                                                n_atoms = int(lines[1])
-                                            performance = calculate_performance(n_atoms, component)
-                                            n_steps = int(20 / 60 / 24 * performance * 1000 * 1000 / 4)
-                                            n_steps = int(n_steps // 100000 * 100000)
-                                            line = f'  nstlim = {n_steps},\n'
-                                        if 'ntp = ' in line:
-                                            line = '  ntp = 1,\n'
-                                        if 'csurften' in line:
-                                            line = '\n'
-                                    outfile.write(line)
-
-                            f.write(f'# {component} {i} {stage}\n')
-                            if stage == 'mdin.in':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/eqnpt.in_04.rst7 '
-                                        f'-o {sim_folder_name}/mdin-00.out -r {sim_folder_name}/mdin-00.rst7 -x {sim_folder_name}/mdin-00.nc '
-                                        f'-ref {sim_folder_name}/eqnpt.in_04.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
-                                        f'-e {sim_folder_name}/mdin-00.mden\n')
-                            elif stage == 'mdin.in.extend':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {sim_folder_name}/full.hmr.prmtop -c {sim_folder_name}/mdin-CURRNUM.rst7 '
-                                        f'-o {sim_folder_name}/mdin-NEXTNUM.out -r {sim_folder_name}/mdin-NEXTNUM.rst7 -x {sim_folder_name}/mdin-NEXTNUM.nc '
-                                        f'-ref {sim_folder_name}/mdin-CURRNUM.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
-                                        f'-e {sim_folder_name}/mdin-NEXTNUM.mden\n')
-                            else:
-                                f.write(
-                                    f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
-                                    f'-o {sim_folder_name}/{stage}.out -r {sim_folder_name}/{stage}.rst7 -x {sim_folder_name}/{stage}.nc '
-                                    f'-ref {stage_previous.replace("REPXXX", f"{i:02d}")} -inf {sim_folder_name}/{stage}.mdinfo -l {sim_folder_name}/{stage}.log '
-                                    f'-e {sim_folder_name}/{stage}.mden\n'
-                                )
-                            if stage == 'mdin.in':
-                                all_replicates[component].append(f'{sim_folder_name}')
-                        stage_previous = f'{sim_folder_temp}REPXXX/{stage}.rst7'
-            logger.debug(f'all_replicates: {all_replicates}')
-            return all_replicates
-
-        def write_sbatch_file(pose, components):
-            file_temp = f'{frontier_files}/fep_run.sbatch'
-            lines_temp = open(file_temp).readlines()
-            sbatch_all_file = f'fe/fep_{pose}_eq_all.sbatch'
-            lines_all = []
-            for line in lines_temp:
-                lines_all.append(line)
-            for component in components:
-                lines = []
-                for line in lines_temp:
-                    lines.append(line)
-                folder = os.getcwd()
-                folder = '_'.join(folder.split(os.sep)[-4:])
-                # write the sbatch file for equilibration
-
-                lines.append(f'\n\n\n')
-                lines.append(f'# {pose} {component}\n')
-                lines_all.append(f'\n\n\n')
-                lines_all.append(f'# {pose} {component}\n')
-
-                sbatch_file = f'fe/fep_{component}_{pose}_eq.sbatch'
-                groupfile_names = [
-                    f'{pose}/groupfiles/{component}_{stage}.groupfile' for stage in sim_stages[component_2_folder_dict[component]]
-                ]
-                logger.debug(f'groupfile_names: {groupfile_names}')
-                for g_name in groupfile_names:
-                    if 'mdin.in' in g_name:
-                        continue
-                    if component in ['x', 'e', 'v', 'w', 'f']:
-                        n_sims = len(lambdas)
-                    else:
-                        n_sims = len(attach_rest)
-                    n_nodes = int(np.ceil(n_sims / 8))
-                    if 'mini' in g_name:
-                        # run with pmemd.mpi for minimization
-                        lines.append(
-                            f'srun -N {n_nodes} -n {n_sims * 8} pmemd.MPI -ng {n_sims} -groupfile {g_name}\n'
-                        )
-                        lines_all.append(
-                            f'srun -N {n_nodes} -n {n_sims * 8} pmemd.MPI -ng {n_sims} -groupfile {g_name}\n'
-                        )
-                    else:
-                        lines.append(
-                            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
-                        )
-                        lines_all.append(
-                            f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {g_name}\n'
-                        )
-                lines = [line
-                        .replace('NUM_NODES', str(n_nodes))
-                        .replace('FEP_SIM_XXX', f'{folder}_{component}_{pose}') for line in lines]
-                lines_all = [line
-                        .replace('NUM_NODES', str(n_nodes))
-                        .replace('FEP_SIM_XXX', f'{folder}_{component}_{pose}') for line in lines_all]
-                with open(sbatch_file, 'w') as f:
-                    f.writelines(lines)
-            with open(sbatch_all_file, 'w') as f:
-                f.writelines(lines_all)
-
-                
-        def calculate_performance(n_atoms, comp):
-            # Very rough estimate of the performance of the simulations
-            # for 200000-atom systems: rest: 100 ns/day, sdr: 50 ns/day
-            # for 70000-atom systems: rest: 200 ns/day, sdr: 100 ns/day
-            # run 30 mins for each simulation
-            if comp not in ['e', 'v', 'w', 'f', 'x']:
-                if n_atoms < 80000:
-                    return 150
-                else:
-                    return 80
-            else:
-                if n_atoms < 80000:
-                    return 80
-                else:
-                    return 40
-
-        def write_production_sbatch(all_replicates):
-            sbatch_file = f'fe/fep_md.sbatch'
-            sbatch_extend_file = f'fe/fep_md_extend.sbatch'
-
-            file_temp = f'{frontier_files}/fep_run.sbatch'
-            temp_lines = open(file_temp).readlines()
-            temp_lines.append(f'\n\n\n')
-                    # run the production
-            folder = os.getcwd()
-            folder = '_'.join(folder.split(os.sep)[-4:]) 
-            n_sims = 0
-            for replicates_pose in all_replicates:
-                for comp, rep in replicates_pose.items():
-                    n_sims += len(rep)
-            n_nodes = int(np.ceil(n_sims / 8))
-            temp_lines = [
-                line.replace('NUM_NODES', str(n_nodes))
-                    .replace('FEP_SIM_XXX', f'fep_md_{folder}')
-                for line in temp_lines]
-
-            with open(sbatch_file, 'w') as f:
-                f.writelines(temp_lines)
-
-            with open(sbatch_extend_file, 'w') as f:
-                f.writelines(temp_lines)
-                f.writelines(
-                [
-                    '# Make sure it\'s extending\n',
-                    'latest_file=$(ls pose0/sdr/e00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)\n\n',
-                    '# Check if any mdin-xx.rst7 files exist\n',
-                    'if [[ -z "$latest_file" ]]; then\n',
-                    'echo "No old production files found in the current directory."\n',
-                    'echo "Run sbatch fep_md.sbatch."\n',
-                    'exit 1\n',
-                    'fi\n\n',
-                    # 'poses=(pose0 pose1 pose2 pose3 pose4)
-                    f'poses=({" ".join(poses_def)})\n',
-                    # groups=(m n e v)
-                    f'groups=({" ".join(components)})\n',
-                    'for pose in "${poses[@]}"; do\n',
-                    '  for group in "${groups[@]}"; do\n',
-                    '    latest_file=$(ls $pose/*/${group}00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)\n',
-                    '    echo "Last file for $pose/$group: $latest_file"\n',
-                    '    latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{2}(?=\.rst7)")\n',
-                    '    next_num=$(printf "%02d" $((10#$latest_num + 1)))\n',
-                    '    echo "Last file for $pose/$group: $latest_file"\n',
-                    '    echo "Next number: $next_num"\n',
-                    '    sed "s/CURRNUM/$latest_num/g" ${pose}/groupfiles/${group}_mdin.in.extend.groupfile > ${pose}/groupfiles/${group}_temp_mdin.groupfile\n',
-                    '    sed "s/NEXTNUM/$next_num/g" ${pose}/groupfiles/${group}_temp_mdin.groupfile > ${pose}/groupfiles/${group}_current_mdin.groupfile\n',
-                            
-                    '    case "$group" in\n',
-                    '        m|n) \n',
-                    '        srun -N 2 -n 16 pmemd.hip_DPFP.MPI -ng 16 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile &\n',
-                    '        echo "srun -N 2 -n 16 pmemd.hip_DPFP.MPI -ng 16 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile"\n',
-                    '        ;;\n',
-                    '        e|v|x)\n',
-                    '        srun -N 3 -n 24 pmemd.hip_DPFP.MPI -ng 24 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile &\n',
-                    '        echo "srun -N 3 -n 24 pmemd.hip_DPFP.MPI -ng 24 -groupfile ${pose}/groupfiles/${group}_current_mdin.groupfile"\n',
-                    '        ;;\n',
-                    '        *)\n',
-                    '        echo "Invalid group"\n',
-                    '        ;;\n',
-                    '    esac\n',
-                    '    sleep 0.5\n',
-                    '    done\n',
-                    'done\n',
-                    'wait\n\n',
-                ]
-                )
-
-            for replicates_pose in all_replicates:
-                for comp, rep in replicates_pose.items():
-                    pose = rep[0].split('/')[0]
-                    groupfile_name_prod = f'{pose}/groupfiles/{comp}_mdin.in.groupfile'
-                    groupfile_name_prod_extend = f'{pose}/groupfiles/{comp}_mdin.in.extend.groupfile'
-
-                    n_nodes = int(np.ceil(len(rep) / 8))
-                    n_sims = len(rep)
-                    with open(sbatch_file, 'a') as f:
-                        f.writelines(
-                            [
-                        f'# {pose} {comp}\n',
-                        f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {groupfile_name_prod} &\n',
-                        f'sleep 0.5\n'
-                            ]
-                        )
-                    #with open(sbatch_extend_file, 'a') as f:
-                    #    f.writelines(
-                    #        [ 
-                    #        f'sed "s/CURRNUM/$latest_num/g" {pose}/groupfiles/{comp}_mdin.in.extend.groupfile > {pose}/groupfiles/{comp}_temp_mdin.groupfile\n',
-                    #        f'sed "s/NEXTNUM/$next_num/g" {pose}/groupfiles/{comp}_temp_mdin.groupfile > {pose}/groupfiles/{comp}_current_mdin.groupfile\n',
-                    #        f'# {pose} {comp}\n',
-                    #        f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile &\n',
-                    #        f'sleep 0.5\n\n'
-                    #        ]
-                    #    )
-            # append wait
-            with open(sbatch_file, 'a') as f:
-                f.write('wait\n')
-
-            #with open(sbatch_extend_file, 'a') as f:
-            #    f.write('wait\n')
-
-        all_replicates = []
-
-        with self._change_dir(self.output_dir):
-
-            for pose in poses_def:
-                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                    continue
-                all_replicates.append(write_2_pose(pose, components))
-                write_sbatch_file(pose, components)
-                logger.debug(f'Generated groupfiles for {pose}')
-            logger.debug(all_replicates)
-            write_production_sbatch(all_replicates)
-            # copy env.amber.24
-            env_amber_file = f'{frontier_files}/env.amber.{version}'
-            shutil.copy(env_amber_file, 'fe/env.amber')
-            logger.info('Generated groupfiles for all poses')
-
-    @safe_directory
-    @save_state
     def generate_frontier_files_nvt(self,
                                     remd=False,
                                     version=24):
@@ -2187,11 +1833,11 @@ EOF"""
         len_lambdas = len(lambdas)
         # even spacing from 0 to 1
         #revised_lambdas = np.linspace(0, 1, len_lambdas)
-        revised_lambdas = np.asarray([
-            0.00000000,0.02756000,0.05417000,0.08003000,0.10729000,0.13769000,0.17041000,0.21174000,0.25756000,0.30552000,0.36274000,0.42362000,0.48726000,0.55589000,0.62235000,0.68323000,0.74207000,0.79496000,0.82904000,0.86500000,0.90368000,0.94077000,0.97151000,1.00000000
-        ])
+        #revised_lambdas = np.asarray([
+        #    0.00000000,0.02756000,0.05417000,0.08003000,0.10729000,0.13769000,0.17041000,0.21174000,0.25756000,0.30552000,0.36274000,0.42362000,0.48726000,0.55589000,0.62235000,0.68323000,0.74207000,0.79496000,0.82904000,0.86500000,0.90368000,0.94077000,0.97151000,1.00000000
+        #])
 
-        lambdas = revised_lambdas
+        #lambdas = revised_lambdas
 
         dec_method_folder_dict = {
             'dd': 'dd',
@@ -2203,7 +1849,8 @@ EOF"""
             'e': dec_method_folder_dict[dec_method],
             'w': dec_method_folder_dict[dec_method],
             'f': dec_method_folder_dict[dec_method],
-            'o': dec_method_folder_dict[dec_method], 
+            'o': dec_method_folder_dict[dec_method],
+            's': dec_method_folder_dict[dec_method],
             'x': 'exchange_files',
             'a': 'rest',
             'l': 'rest',
@@ -2247,7 +1894,7 @@ EOF"""
             for component in components:
                 folder_name = component_2_folder_dict[component]
                 sim_folder_temp = f'{pose}/{folder_name}/{component}'
-                if component in ['x', 'e', 'v', 'w', 'f', 'o']:
+                if component in COMPONENTS_DICT['dd']:
                     n_sims = len(lambdas)
                 else:
                     n_sims = len(attach_rest)
@@ -2288,7 +1935,7 @@ EOF"""
                                                     '  mcresstr = "WAT",\n'
                                                     #'  numexchg = 1000,\n'
                                                 )
-                                        if component in ['x', 'e', 'v', 'w', 'f']:
+                                        if component in COMPONENTS_DICT['dd']:
                                             outfile.write(
                                                 #'scalpha = 0.5,\n'
                                                 #'scbeta = 1.0,\n'
@@ -2363,6 +2010,8 @@ EOF"""
                                     if 'dt' in line:
                                         if stage == 'mdin.in':
                                             line = '  dt = 0.001,\n'
+                                    if 'maxcyc' in line:
+                                        line = '  maxcyc = 10000,\n'
                                     if 'clambda' in line:
                                         final_line = []
                                         para_line = line.split(',')
@@ -2386,7 +2035,7 @@ EOF"""
                                             n_steps = int(50 / 60 / 24 * performance * 1000 * 1000 / 4)
                                             n_steps = int(n_steps // 100000 * 100000)
                                             line = f'  nstlim = {n_steps},\n'
-                                            if remd and component in ['x', 'e', 'v', 'w', 'f'] and stage != 'mini.in':
+                                            if remd and component in COMPONENTS_DICT['dd'] and stage != 'mini.in':
                                                 line = f'  nstlim = 100,\n'
                                     outfile.write(line)
                             f.write(f'# {component} {i} {stage}\n')
@@ -2441,7 +2090,7 @@ EOF"""
                 for g_name in groupfile_names:
                     if 'mdin.in' in g_name:
                         continue
-                    if component in ['x', 'e', 'v', 'w', 'f']:
+                    if component in COMPONENTS_DICT['dd']:
                         n_sims = len(lambdas)
                     else:
                         n_sims = len(attach_rest)
@@ -2455,7 +2104,7 @@ EOF"""
                             f'srun -N {n_nodes} -n {n_sims * 8} pmemd.MPI -ng {n_sims} -groupfile {g_name}\n'
                         )
                     else:
-                        if component in ['x', 'e', 'v', 'w', 'f'] and remd:
+                        if component in COMPONENTS_DICT['dd'] and remd:
                             lines.append(
                                 f'srun -N {n_nodes} -n {n_sims} pmemd.hip_DPFP.MPI -ng {n_sims} -rem 3 -groupfile {g_name}\n'
                             )
@@ -2486,7 +2135,7 @@ EOF"""
             # for 200000-atom systems: rest: 100 ns/day, sdr: 50 ns/day
             # for 70000-atom systems: rest: 200 ns/day, sdr: 100 ns/day
             # run 30 mins for each simulation
-            if comp not in ['e', 'v', 'w', 'f', 'x']:
+            if comp not in COMPONENTS_DICT['dd']:
                 if n_atoms < 80000:
                     return 150
                 else:
@@ -2624,7 +2273,7 @@ EOF"""
             for comp in self.sim_config.components:
                 if comp in ['m', 'n']:
                     sim_type = 'rest'
-                elif comp in ['e', 'v', 'x']:
+                elif comp in COMPONENTS_DICT['dd']:
                     sim_type = 'sdr'
                 folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}00'
                 mdin_files = glob.glob(f'{folder}/mdin-*.rst7')
