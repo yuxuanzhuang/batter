@@ -1622,6 +1622,8 @@ def ReadDataFiles(dname,T,fstart,fstop):
         mdin_out_files.sort()
         fstart = np.max([0, fstart])
         fstop = np.min([len(mdin_out_files), fstop])
+        print(f'Reading {len(mdin_out_files)} mdin files from {folder} for window {win_i+1}/{nlams}')
+        print(f"Reading {fstart} to {fstop} mdin files")
         df = pd.concat([extract_u_nk(mdin_f,
                                     T=T,
                                     reduced=False
@@ -1833,8 +1835,8 @@ def SimpleScheduleOpt( nlam,
         print("  verbose:     %s"%(str(verbose)))
         print("")
     
-    fstart = max(0,fstart)
-    fstop  = min(1,max(fstart,fstop))
+    fstart = int(max(0,fstart))
+    fstop  = int(max(1,max(fstart,fstop)))
     pedata = ReadDataFiles(directory,temp,fstart,fstop)
 
     method = None
@@ -1933,7 +1935,7 @@ def SimpleScheduleRead( read,
 
 
     fstart = max(0,fstart)
-    fstop  = min(1,max(fstart,fstop))
+    fstop  = max(1,max(fstart,fstop))
     pedata = ReadDataFiles(directory,temp,
                            fstart,fstop)
 

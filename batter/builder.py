@@ -4766,7 +4766,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
             cv_file.write(str(index_amber[i]))
             cv_file.write(',')
         cv_file.write('\n')
-        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 0.000, 999.0 \n')
         cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
         cv_file.write('/ \n')
 
@@ -4780,8 +4780,8 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
             cv_file.write(str(index_amber[i]))
             cv_file.write(',')
         cv_file.write('\n')
-        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
-        cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 0.000, 999.0 \n')
+        cv_file.write(' anchor_strength = 50, 50, \n')
         cv_file.write('/ \n')
 
         index_amber = bsite_ag.indices + 1
@@ -4792,7 +4792,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
             cv_file.write(str(index_amber[i]))
             cv_file.write(',')
         cv_file.write('\n')
-        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 3.000, 999.0 \n')
         cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
         cv_file.write('/ \n')
         cv_file.close()
@@ -5431,44 +5431,45 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         #cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
         #cv_file.write('/ \n')
 
-        # Ligand solvent COM restraints
+        # Ligand COM restraints
         lig_solv = ligand_residues[1].atoms
         index_amber = lig_solv.indices + 1
         cv_file.write('&colvar \n')
         cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-        cv_file.write(' cv_ni = %s, cv_i = 3,0,' % str(len(index_amber)+2))
+        cv_file.write(' cv_ni = %s, cv_i = 2,0,' % str(len(index_amber)+2))
         for i in range(0, len(index_amber)):
             cv_file.write(str(index_amber[i]))
             cv_file.write(',')
         cv_file.write('\n')
-        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 3.000, 999.0 \n')
         cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
         cv_file.write('/ \n')
 
-        # Ligand binding site COM restraints
+        # Ligand COM restraints 2
         lig_bs = ligand_residues[0].atoms
         index_amber = lig_bs.indices + 1
         cv_file.write('&colvar \n')
         cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-        cv_file.write(' cv_ni = %s, cv_i = 3,0,' % str(len(index_amber)+2))
+        cv_file.write(' cv_ni = %s, cv_i = 2,0,' % str(len(index_amber)+2))
         for i in range(0, len(index_amber)):
             cv_file.write(str(index_amber[i]))
             cv_file.write(',')
         cv_file.write('\n')
-        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 3.000, 999.0 \n')
         cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
         cv_file.write('/ \n')
 
+        # Ligand binding site COM restraints
         index_amber = bsite_ag.indices + 1
         cv_file.write('&colvar \n')
         cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-        cv_file.write(' cv_ni = %s, cv_i = 3,0,' % str(len(index_amber)+2))
+        cv_file.write(' cv_ni = %s, cv_i = 2,0,' % str(len(index_amber)+2))
         for i in range(0, len(index_amber)):
             cv_file.write(str(index_amber[i]))
             cv_file.write(',')
         cv_file.write('\n')
-        cv_file.write(' anchor_position = 0.000, 0.000, 2.000, 999.0 \n')
-        cv_file.write(f' anchor_strength = {lcom:10.4f}, {lcom:10.4f}, \n')
+        cv_file.write(' anchor_position = 0.000, 0.000, 0.000, 999.0 \n')
+        cv_file.write(' anchor_strength = 50, 50, \n')
         cv_file.write('/ \n')
         cv_file.close()
 

@@ -1955,6 +1955,8 @@ EOF"""
                                                 f'clambda         = {lambdas[i]:.2f},\n'
                                                 f'mbar_lambda     = {", ".join([f"{l:.2f}" for l in lambdas])},\n'
                                             )
+                                            if stage == 'mini.in':
+                                                outfile.write('ntwr = 50,\n')
                                             if remd and stage != 'mini.in':
                                                 outfile.write(
                                                     '  numexchg = 3000,\n'
@@ -1992,8 +1994,10 @@ EOF"""
                                         # alter
                                         # replace :1-2
                                         restraint_mask = restraint_mask.replace(':1-2', ':2')
+                                        restraint_mask = restraint_mask.replace(':2,3,', ':2')
                                         # placeholder that does not exist in the system
                                         restraint_mask = restraint_mask.replace(':1', '@ZYX')
+                                        restraint_mask = restraint_mask.replace(':3', '@ZYX')
                                         if stage == 'mdin.in.extend':
                                             line = f"restraintmask = '{restraint_mask}'\n"
                                         else:
