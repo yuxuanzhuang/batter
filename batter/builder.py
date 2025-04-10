@@ -366,6 +366,17 @@ class SystemBuilder(ABC):
                 neu_cat = abs(charge_neut)
             if charge_neut < 0:
                 neu_ani = abs(charge_neut)
+        
+        # only one charged ligand present
+        if comp == 's' or comp == 'o':
+            charge_neut = neu_cat - neu_ani - 1*lig_cat + 1*lig_ani
+            neu_cat = 0
+            neu_ani = 0
+            if charge_neut > 0:
+                neu_cat = abs(charge_neut)
+            if charge_neut < 0:
+                neu_ani = abs(charge_neut)
+
         if comp == 'e' and dec_method == 'sdr':
             charge_neut = neu_cat - neu_ani - 3*lig_cat + 3*lig_ani
             neu_cat = 0
