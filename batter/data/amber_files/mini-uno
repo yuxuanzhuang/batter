@@ -8,6 +8,7 @@ Minimizing.
   ntxo = 1,
   ntpr = 50,
   maxcyc = 2000,
+  ntwr = 50,
   ncyc = 500,
   irest = 0,
   ntmin = 2,
