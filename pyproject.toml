@@ -28,7 +28,8 @@ dependencies = [
     "rdkit",
     "pandas",
     'jax',
-    
+    'alchemlyb',
+    'openfe',
 ]
 
 [project.scripts]

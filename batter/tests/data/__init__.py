@@ -22,3 +22,8 @@ SDR_AMBER_MBAR_LIPID = (example_input_files / 'input-sdr-am-mbar-lipid.in')
 
 # System files
 MOR_MP_INPUT = (_base_ref / '7T2G_mp')
+
+# Ligand_files
+LIGAND_FILES = (_base_ref / 'ligand_data')
+KW6356 = (LIGAND_FILES / 'KW6356.sdf')
+KW6356_H = (LIGAND_FILES / 'KW6356_h.sdf')

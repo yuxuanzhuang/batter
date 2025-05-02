@@ -9,6 +9,7 @@ import random
 import string
 import tempfile
 import shutil
+from openfe import SmallMoleculeComponent
 
 
 from batter.utils import (
@@ -23,8 +24,10 @@ from batter.utils import (
     obabel,
     vmd)
 
+
 def random_three_letter_name():
     return ''.join(random.choices(string.ascii_lowercase, k=3))
+
 
 def _convert_mol_name_to_unique(mol_name, ind, mol_names):
     """
@@ -54,12 +57,23 @@ def _convert_mol_name_to_unique(mol_name, ind, mol_names):
 
     return mol_name
 
-class Ligand(ABC):
+class LigandProcessing(ABC):
     """
     Base class for ligand processing.
     It will read the ligand file, calculate the
     partial charges, and generate the ligand
     topology in AMBER format.
+
+    Properties
+    ----------
+    ligand_file : str
+        The ligand file path.
+    openff_molecule : openff.toolkit.Molecule
+        The openff molecule object.
+    ligand_sdf_path : str
+        The ligand sdf file path.
+    ligand_charge : float
+        The ligand charge.
     """
     def __init__(self,
                 ligand_file,
@@ -69,15 +83,32 @@ class Ligand(ABC):
                 charge='am1bcc',
                 retain_lig_prot=True,
                 ligand_ff='gaff2',
+                database=None,
                 ):
+
+        if database is not None:
+            self.database = database
+            self.search_for_ligand()
+
         self.ligand_file = ligand_file
         self.index = index
+        os.makedirs(output_dir, exist_ok=True)
         self.output_dir = os.path.abspath(output_dir)
         self._name = ligand_name.lower() if ligand_name is not None else None
         self.charge = charge
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ff = ligand_ff
-        self._load_ligand()
+        ligand_rdkit = self._load_ligand()
+        
+        if ligand_name is None:
+            ligand = SmallMoleculeComponent(ligand_rdkit)
+        else:
+            ligand = SmallMoleculeComponent(ligand_rdkit, name=ligand_name)
+
+        self.ligand_object = ligand
+        self.openff_molecule = ligand.to_openff()
+        self._calculate_partial_charge()
+        self.openff_molecule.to_file(self.ligand_sdf_path, file_format='sdf')
 
     def generate_unique_name(self, exist_mol_names=[]):
         self._get_mol_name()
@@ -89,13 +120,14 @@ class Ligand(ABC):
     
     @abstractmethod
     def _load_ligand(self):
-        pass
+        raise NotImplementedError("Subclasses must implement _load_ligand method")
+    
 
     def _get_mol_name(self):
         if self._name is not None:
             return
-        if self._ligand_object.HasProp('_Name'):
-            mol_name = self._ligand_object.GetProp('_Name')
+        if self.ligand_object.name is not None:
+            mol_name = self.ligand_object.name
         else:
             mol_name = os.path.basename(self.ligand_file).split('.')[0].lower()
         self._name = mol_name
@@ -104,17 +136,9 @@ class Ligand(ABC):
     def name(self):
         return self._name
 
-    def _write_sdf(self):
-        # Assign stereochemistry explicitly
-        # Chem.AssignAtomChiralTagsFromStructure(self._ligand_object)
-        # Chem.AssignStereochemistry(self._ligand_object, cleaanIt=True, force=True)
-        for i, a in enumerate(self._ligand_object.GetAtoms()):
-            a.SetAtomMapNum(i)
-        sdf_file = os.path.join(self.output_dir, f'{self.name}.sdf')
-        w = Chem.SDWriter(sdf_file)
-        w.write(self._ligand_object)
-        w.close()
-        self._ligand_sdf_path = sdf_file
+    @property
+    def ligand_sdf_path(self):
+        return os.path.join(self.output_dir, f'{self.name}.sdf')
 
     def _calculate_partial_charge(self):
         """
@@ -123,8 +147,7 @@ class Ligand(ABC):
         It is only for fast estimation of the ligand charge.
         and antechamber will use bcc method to calculate the partial charges.
         """
-        self._write_sdf()
-        molecule = Molecule(self._ligand_sdf_path)
+        molecule = self.openff_molecule
         molecule.assign_partial_charges(
             #partial_charge_method=self.charge,
             partial_charge_method='gasteiger',
@@ -133,13 +156,11 @@ class Ligand(ABC):
             for charge in molecule.partial_charges]))
         self.ligand_charge = ligand_charge
         logger.info(f'The net charge of the ligand {self.name} in {self.ligand_file} is {ligand_charge}')
-        molecule.to_file(self._ligand_sdf_path, file_format='sdf')
 
-    def prepare_ligand_parameters_sdf(self):
-        self._calculate_partial_charge()
+    def prepare_ligand_parameters(self):
         mol = self.name
         logger.debug(f'Preparing ligand {mol} parameters')
-        abspath_sdf = os.path.abspath(self._ligand_sdf_path)
+        abspath_sdf = os.path.abspath(self.ligand_sdf_path)
         antechamber_command = f'{antechamber} -i {abspath_sdf} -fi sdf -o {self.output_dir}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol} -dr no'
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -154,7 +175,7 @@ class Ligand(ABC):
         
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(
-                f'{antechamber} -i {self._ligand_sdf_path} -fi sdf -o {self.output_dir}/{mol}_ante.pdb -fo pdb -rn {mol} -dr no', working_dir=tmpdir)
+                f'{antechamber} -i {self.ligand_sdf_path} -fi sdf -o {self.output_dir}/{mol}_ante.pdb -fo pdb -rn {mol} -dr no', working_dir=tmpdir)
 
         # copy _ante.pdb to .pdb
         shutil.copy(f"{self.output_dir}/{mol}_ante.pdb", f"{self.output_dir}/{mol}.pdb")
@@ -174,65 +195,67 @@ class Ligand(ABC):
             f.write(tleap_script)
         run_with_log(f"{tleap} -f tleap.in",
                         working_dir=self.output_dir)
+        
+        logger.info(f'Ligand {mol} parameters prepared: {self.output_dir}/{mol}.lib')
 
+    def search_for_ligand(self):
+        """
+        Search for the ligand in the database.
+        """
+        database = self.database
+        raise NotImplementedError("Not implemented yet")
 
-class PDB_Ligand(Ligand):
+class PDB_LigandProcessing(LigandProcessing):
     def _load_ligand(self):
         ligand = mda.Universe(self.ligand_file)
         self._ligand_u = ligand
-        self._ligand_object = ligand.atoms.convert_to("RDKIT")
-        if self._ligand_object is None:
+        ligand_rdkit = ligand.atoms.convert_to("RDKIT")
+
+        if ligand_rdkit is None:
             raise ValueError(f"Failed to load ligand from {self.ligand_file}"
                                 " with RDKit. Check if the ligand is correct")
+        if not self.retain_lig_prot:
+            # remove
+            ligand_rdkit = Chem.RemoveHs(ligand_rdkit)
+            ligand_rdkit = Chem.AddHs(ligand_rdkit, addCoords=True)
+        return ligand_rdkit
 
     def _get_mol_name(self):
         if self._name is not None:
             return
         self._name = self._ligand_u.atoms.resnames[0]
 
-    def _calculate_partial_charge(self):
-        """
-        This function calculates the partial charges of the ligand
-        using the openff toolkit with gasteiger method.
-        It is only for fast estimation of the ligand charge.
-        and antechamber will use bcc method to calculate the partial charges.
-        """
-        from MDAnalysis.guesser.default_guesser import DefaultGuesser
 
-        u = self._ligand_u
-        u.guess_TopologyAttrs(to_guess=['elements'])
-        u.add_TopologyAttr('charges')
-        u.atoms.charges = DefaultGuesser(u).guess_gasteiger_charges(u.atoms)
-        ligand_charge = np.round(np.sum(u.atoms.charges))
-        self.ligand_charge = ligand_charge
-        logger.info(f'The net charge of the ligand {self.name} in {self.ligand_file} is {ligand_charge}')
-        self._write_sdf()
-
-
-class SDF_Ligand(Ligand):
+class SDF_LigandProcessing(LigandProcessing):
     def _load_ligand(self):
-        ligand = Chem.MolFromMolFile(
-                self.ligand_file,
-                removeHs=not self.retain_lig_prot)
+        ligand_rdkit = Chem.SDMolSupplier(
+            self.ligand_file,
+            removeHs=not self.retain_lig_prot)[0]
         if not self.retain_lig_prot:
-            ligand = Chem.AddHs(ligand)
-        if ligand is None:
+            ligand_rdkit = Chem.RemoveHs(ligand_rdkit)
+            ligand_rdkit = Chem.AddHs(ligand_rdkit, addCoords=True)
+        else:
+            if ligand_rdkit.GetNumAtoms() == ligand_rdkit.GetNumHeavyAtoms():
+                logger.warning(f"Probabaly no explicit hydrogens in {self.ligand_file}."
+                                " But `retain_lig_prot` is set to True. "
+                                "This may cause issues in the ligand parameterization.")
+        if ligand_rdkit is None:
             raise ValueError(f"Failed to load ligand from {self.ligand_file}"
                                 " with RDKit. Check if the ligand is correct")
-        self._ligand_object = ligand
+        return ligand_rdkit
 
-
-class MOL2_Ligand(Ligand):
+class MOL2_LigandProcessing(LigandProcessing):
     def _load_ligand(self):
-        ligand = Chem.MolFromMol2File(
+        ligand_rdkit = Chem.MolFromMol2File(
             self.ligand_file,
             removeHs=not self.retain_lig_prot)
         if not self.retain_lig_prot:
-            ligand = Chem.AddHs(ligand)
-        if ligand is None:
+            ligand_rdkit = Chem.RemoveHs(ligand_rdkit)
+            ligand_rdkit = Chem.AddHs(ligand_rdkit)
+        if ligand_rdkit is None:
             raise ValueError(f"Failed to load ligand from {self.ligand_file}"
                                 " with RDKit. Check if the ligand is correct")
-        self._ligand_object = ligand
+        return ligand_rdkit
 
 
 class LigandFactory:
@@ -244,6 +267,7 @@ class LigandFactory:
                       charge='am1bcc',
                       retain_lig_prot=True,
                       ligand_ff='gaff2',
+                      database=None,
                     ):
         """
         Create a ligand object based on the ligand file format.
@@ -272,9 +296,13 @@ class LigandFactory:
             Default is True.
         ligand_ff : str, optional
             The ligand force field. Default is ``"gaff2"``.
+        database : str, optional
+            The ligand database. Default is None.
+            If provided, the ligand will be searched in the database.
         """
         if ligand_file.lower().endswith('.pdb'):
-            return PDB_Ligand(
+            raise ValueError("PDB file format is not supported. Please use SDF or MOL2 format.")
+            return PDB_LigandProcessing(
                 ligand_file=ligand_file,
                 index=index,
                 output_dir=output_dir,
@@ -282,9 +310,10 @@ class LigandFactory:
                 charge=charge,
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
+                database=database,
             )
         elif ligand_file.lower().endswith('.sdf'):
-            return SDF_Ligand(
+            return SDF_LigandProcessing(
                 ligand_file=ligand_file,
                 index=index,
                 output_dir=output_dir,
@@ -292,9 +321,10 @@ class LigandFactory:
                 charge=charge,
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
+                database=database,
             )
         elif ligand_file.lower().endswith('.mol2'):
-            return MOL2_Ligand(
+            return MOL2_LigandProcessing(
                 ligand_file=ligand_file,
                 index=index,
                 output_dir=output_dir,
@@ -302,6 +332,7 @@ class LigandFactory:
                 charge=charge,
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
+                database=database,
             )
         else:
             raise ValueError(f"Unsupported ligand file format: {ligand_file}")

@@ -102,7 +102,8 @@ class System:
             The folder containing the system files.
         """
         self.output_dir = os.path.abspath(folder) + '/'
-        logger.add(f"{self.output_dir}/batter.log", level='INFO')
+        #logger.add(f"{self.output_dir}/batter.log", level='INFO')
+        logger.add(f"{self.output_dir}/batter.log", level='DEBUG')
 
         self._slurm_jobs = {}
         self._sim_finished = {}
@@ -158,7 +159,7 @@ class System:
                     system_name: str,
                     protein_input: str,
                     system_topology: str,
-                    ligand_paths: List[str],
+                    ligand_paths: Union[List[str], dict[str, str]],
                     anchor_atoms: List[str],
                     ligand_anchor_atom: str = None,
                     receptor_segment: str = None,
@@ -193,10 +194,12 @@ class System:
             it can be a snapshot of the equilibrated system.
             If it is not provided, the coordinates from the system_topology
             will be used if available.
-        ligand_paths : List[str]
-            List of ligand files. It can be either PDB or mol2 format.
+        ligand_paths : List[str] or Dict[str, str]
+            List of ligand files. It can be either PDB, mol2, or sdf format.
             It will be stored in the `all-poses` folder as `pose0.pdb`,
             `pose1.pdb`, etc.
+            If it's a dictionary, the keys will be used as the ligand names
+            and the values will be the ligand files.
         anchor_atoms : List[str], optional
             The list of three protein anchor atoms (selection strings)
             used to restrain ligand.
@@ -261,10 +264,11 @@ class System:
             self._system_coordinate = self._convert_2_relative_path(system_coordinate)
         else:
             self._system_coordinate = None
-        self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
-        if not isinstance(self.ligand_paths, list):
-            raise ValueError(f"Invalid ligand_paths: {self.ligand_paths}, "
-                              "ligand_paths should be a list of ligand files")
+        if isinstance(ligand_paths, list):
+            self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
+        elif isinstance(ligand_paths, dict):
+            self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths.values()]
+            self._ligand_names = list(ligand_paths.keys())
         self.receptor_segment = receptor_segment
         self.protein_align = protein_align
         self.retain_lig_prot = retain_lig_prot
@@ -325,21 +329,23 @@ class System:
 
         if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
             self._process_system()
-            # Process ligand and prepare the parameters
         
         self.unique_mol_names = []
         for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
+            logger.debug(f'Processing ligand {ind}: {ligand_path}')
             try:
-                ligand_name = self.mols[ind-1]
+                ligand_name = self._ligand_names[ind-1]
             except:
-                ligand_name = None
+                try:
+                    ligand_name = self.mols[ind-1]
+                except:
+                    ligand_name = None
             self._ligand_path = ligand_path
             ligand_factory = LigandFactory()
             ligand = ligand_factory.create_ligand(
                     ligand_file=ligand_path,
                     index=ind,
                     output_dir=self.ligandff_folder,
-                    # TODO: use dictionary for ligand_paths
                     ligand_name=ligand_name,
                     retain_lig_prot=self.retain_lig_prot,
                     ligand_ff=self.ligand_ff) 
@@ -347,7 +353,7 @@ class System:
             self.mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
-                ligand.prepare_ligand_parameters_sdf()
+                ligand.prepare_ligand_parameters()
             
         self._prepare_ligand_poses()
 
@@ -2197,7 +2203,7 @@ EOF"""
                     '  for group in "${groups[@]}"; do\n',
                     '    latest_file=$(ls $pose/*/${group}00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)\n',
                     '    echo "Last file for $pose/$group: $latest_file"\n',
-                    '    latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{2}(?=\.rst7)")\n',
+                    '    latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{2}(?=\\.rst7)")\n',
                     '    next_num=$(printf "%02d" $((10#$latest_num + 1)))\n',
                     '    echo "Last file for $pose/$group: $latest_file"\n',
                     '    echo "Next number: $next_num"\n',
