@@ -1674,6 +1674,9 @@ EOF"""
                     rmsf_file=rmsf_file
                 )
             if only_fe_preparation:
+                self.submit(
+                    stage='fe_equil'
+                )
                 logger.info('only_fe_preparation is set to True. '
                             'Skipping the free energy calculation.')
                 return
@@ -2299,68 +2302,73 @@ EOF"""
         plt.show()
 
 
-    def copy_2_new_folder(self, folder_name):
+    def copy_2_new_folder(self, folder_name, only_equil=True):
         """
         Copy the system to a new folder
         """
         if os.path.exists(folder_name):
             raise ValueError(f"Folder {folder_name} already exists")
         os.makedirs(folder_name, exist_ok=True)
-        os.chdir(folder_name)
 
-        all_pose_folder = os.path.relpath(self.poses_folder, os.getcwd())
-        os.system(f'ln -s {all_pose_folder} .')
+        with self._change_dir(folder_name):
+            os.system(f'cp {self.output_dir}/system.pkl .')
+            
+            all_pose_folder = os.path.relpath(self.poses_folder, os.getcwd())
+            os.system(f'ln -s {all_pose_folder} .')
 
-        ligandff_folder = os.path.relpath(self.ligandff_folder, os.getcwd())
-        os.system(f'ln -s {ligandff_folder} .')
+            ligandff_folder = os.path.relpath(self.ligandff_folder, os.getcwd())
+            os.system(f'ln -s {ligandff_folder} .')
 
-        equil_folder = os.path.relpath(self.equil_folder, os.getcwd())
-        os.system(f'ln -s {equil_folder} .')
+            equil_folder = os.path.relpath(self.equil_folder, os.getcwd())
+            os.system(f'ln -s {equil_folder} .')
 
-        # for fe, only copy necessary files
-        os.makedirs('fe', exist_ok=True)
-        # for fe, only copy necessary files
-        folder_names = ['build_files', 'ff', 'groupfiles']
-        for pose in self.sim_config.poses_def:
-            os.makedirs(f'fe/{pose}', exist_ok=True)
-            for folder_name in folder_names:
-                if os.path.exists(f'{self.fe_folder}/{pose}/{folder_name}'):
-                    os.system(f'ln -s {self.fe_folder}/{pose}/{folder_name} fe/{pose}/')
+            if only_equil:
+                logger.info(f'Copied equilibration files to {folder_name}')
+                return
+            # for fe, only copy necessary files
+            os.makedirs('fe', exist_ok=True)
+            # for fe, only copy necessary files
+            folder_names = ['build_files', 'ff', 'groupfiles']
+            for pose in self.sim_config.poses_def:
+                os.makedirs(f'fe/{pose}', exist_ok=True)
+                for folder_name in folder_names:
+                    if os.path.exists(f'{self.fe_folder}/{pose}/{folder_name}'):
+                        os.system(f'ln -s {self.fe_folder}/{pose}/{folder_name} fe/{pose}/')
 
-        sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
-                'equilibrated.rst7',
-                'mini.in', 'mdin-00', 'SLURMM-run', 'run-local.bash',
-                'cv.in', 'disang.rest', 'restraints.in']
+            sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
+                    'equilibrated.rst7',
+                    'mini.in', 'mdin-00', 'SLURMM-run', 'run-local.bash',
+                    'cv.in', 'disang.rest', 'restraints.in']
 
-        for pose in tqdm(self.sim_config.poses_def, desc='Copying files'):
-            for comp in self.sim_config.components:
-                comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                win_folder = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}'
-                os.makedirs(f'fe/{pose}/{comp_folder}', exist_ok=True)
-                windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
-                for i, window in enumerate(windows):
-                    folder_name = f'{win_folder}{i:02d}'
-                    new_folder = f'fe/{pose}/{comp_folder}/{comp}{i:02d}'
-                    os.makedirs(new_folder, exist_ok=True)
-                    # list all files in the folder
-                    files = os.listdir(folder_name)
-                    for file in files:
-                        if file in sim_files:
-                            shutil.copy(f'{folder_name}/{file}', new_folder)
-                        # ignore rst7 files
-                        elif file.endswith('.rst7'):
-                            continue
-                        elif file.endswith('.nc'):
-                            continue
-                        elif file.endswith('.log'):
-                            continue
-                        elif file.endswith('.out'):
-                            continue
-                        elif file == 'amber_files':
-                            continue
-                        else:
-                            shutil.copy(f'{folder_name}/{file}', new_folder)
-        logger.info(f'Copied system to {folder_name}')
+            for pose in tqdm(self.sim_config.poses_def, desc='Copying files'):
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    win_folder = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}'
+                    os.makedirs(f'fe/{pose}/{comp_folder}', exist_ok=True)
+                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                    for i, window in enumerate(windows):
+                        folder_name = f'{win_folder}{i:02d}'
+                        new_folder = f'fe/{pose}/{comp_folder}/{comp}{i:02d}'
+                        os.makedirs(new_folder, exist_ok=True)
+                        # list all files in the folder
+                        files = os.listdir(folder_name)
+                        for file in files:
+                            if file in sim_files:
+                                shutil.copy(f'{folder_name}/{file}', new_folder)
+                            # ignore rst7 files
+                            elif file.endswith('.rst7'):
+                                continue
+                            elif file.endswith('.nc'):
+                                continue
+                            elif file.endswith('.log'):
+                                continue
+                            elif file.endswith('.out'):
+                                continue
+                            elif file == 'amber_files':
+                                continue
+                            else:
+                                shutil.copy(f'{folder_name}/{file}', new_folder)
+            logger.info(f'Copied system to {folder_name}')
 
     @property
     def poses_folder(self):
