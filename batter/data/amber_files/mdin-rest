@@ -28,9 +28,9 @@ Production runs
   dt = _step_,
   nmropt = 1,
   pencut = -1,
-  ntr = 1,
+  ntr = 0,
   restraint_wt = 50.0,
-  restraintmask = ':1',
+  restraintmask = '',
   infe = 1,
  /
  &pmd

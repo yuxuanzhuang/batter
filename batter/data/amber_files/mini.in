@@ -18,7 +18,7 @@ Minimizing.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = ':1',
+  restraintmask = '(@CA,C,N,O,P31 | :_lig_name_ | :1) & !@H=',
   infe = 1,
  /
  &pmd

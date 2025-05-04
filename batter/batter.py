@@ -250,7 +250,7 @@ class System:
             logger.debug('Verbose mode is on')
             logger.debug('Creating a new system')
 
-        self.verbose = True
+        self.verbose = verbose
         frame = inspect.currentframe()
         args, _, _, values = inspect.getargvalues(frame)
         
@@ -870,7 +870,8 @@ class System:
 
                         slurm_job = SLURMJob(
                                         filename=f'{folder_2_check}/SLURMM-run',
-                                        partition=partition)
+                                        partition=partition,
+                                        jobname=f'{folder_2_check}_fe')
                         slurm_job.submit(overwrite=overwrite)
                         n_jobs_submitted += 1
                         logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
@@ -885,8 +886,8 @@ class System:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    # only run for window 0
-                    j = 0
+                    # only run for window -1 (eq)
+                    j = -1
                     if n_jobs_submitted >= self._max_num_jobs:
                         time.sleep(120)
                         n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
@@ -1009,7 +1010,6 @@ class System:
         """
         Prepare the free energy system.
         """
-        # raise NotImplementedError("Free energy system preparation is not implemented yet")
         sim_config = self.sim_config
 
         logger.info('Prepare for free energy stage')
@@ -1043,7 +1043,6 @@ class System:
             # copy ff folder
             shutil.copytree(self.ligandff_folder,
                             f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
-
             for component in sim_config.components:
                 logger.debug(f'Preparing component: {component}')
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
@@ -1056,10 +1055,27 @@ class System:
                 if all(os.path.exists(cv_paths[i]) for i, _ in enumerate(lambdas_comp)) and not self.overwrite:
                     logger.info(f"Component {component} for pose {pose} already exists; add overwrite=True to re-build the component")
                     continue
+
+                # first build production EQ
+
+                pbar.set_description(f"Preparing pose={pose}, comp={component}")
+                fe_eq_builder = self.builders_factory.get_builder(
+                    stage='fe',
+                    win=-1,
+                    component=component,
+                    system=self,
+                    pose=pose,
+                    sim_config=sim_config,
+                    working_dir=f'{self.fe_folder}',
+                    molr=molr,
+                    poser=poser
+                ).build()
+
                 for i, lambdas in enumerate(lambdas_comp):
-                        
+                    
                     logger.debug(f'Preparing simulation: {lambdas}')
                     pbar.set_description(f"Preparing pose={pose}, comp={component}, win={lambdas}")
+                    
                     fe_builder = self.builders_factory.get_builder(
                         stage='fe',
                         win=i,
@@ -1504,7 +1520,7 @@ class System:
                 sim_val = SimValidator(universe)
                 sim_val.plot_ligand_bs()
                 sim_val.plot_rmsd()
-                if sim_val.results['ligand_bs'][-1] > 5:
+                if sim_val.results['ligand_bs'][-1] > 8:
                     logger.warning(f"Ligand is not bound for pose {pose}")
                     # write "UNBOUND" file
                     with open(f"{self.equil_folder}/{pose}/UNBOUND", 'w') as f:
@@ -1662,10 +1678,9 @@ EOF"""
                         'Skipping the free energy calculation.')
             return
 
-        #4, submit the free energy calculation
-        logger.info('Running free energy calculation')
-
-        if self._check_fe():
+        #4.0, submit the free energy equilibration
+        logger.info('Running free energy equilibration')
+        if self._check_fe_equil():
             #3 prepare the free energy calculation
             self.prepare(
                 stage='fe',
@@ -1679,13 +1694,49 @@ EOF"""
                     avg_struc=avg_struc,
                     rmsf_file=rmsf_file
                 )
-            if only_fe_preparation:
-                self.submit(
+
+            self.submit(
                     stage='fe_equil'
                 )
-                logger.info('only_fe_preparation is set to True. '
-                            'Skipping the free energy calculation.')
-                return
+
+            # Check the free energy eq calculation to finish
+            logger.info('Checking the free energy eq calculation')
+            while self._check_fe_equil():
+                # get finishd jobs
+                n_finished = len([k for k, v in self._sim_finished.items() if v])
+                logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                not_finished = [k for k, v in self._sim_finished.items() if not v]
+                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                for job in not_finished_slurm_jobs:
+                    self._continue_job(self._slurm_jobs[job])
+                time.sleep(10*60)
+
+            # copy last equilibration snapshot to the free energy folder
+            for pose in self.sim_config.poses_def:
+                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                    continue
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    eq_rst7 = f'{folder_comp}/{comp}-1/eqnpt04.rst7'
+                    
+                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                    for j in range(0, len(windows)):
+                        if os.path.exists(f'{folder_comp}/{comp}{j:02d}/equilibrated.rst7'):
+                            continue
+                        os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/full.inpcrd')
+        else:
+            logger.info('Free energy equilibration is already finished')
+
+        if only_fe_preparation:
+            logger.info('only_fe_preparation is set to True. '
+                        'Skipping the free energy calculation.')
+            return
+
+        #4, submit the free energy calculation
+        logger.info('Running free energy calculation')
+
+        if self._check_fe():
             logger.info('Submitting the free energy calculation')
             self.submit(
                 stage='fe',
@@ -1753,9 +1804,46 @@ EOF"""
             return True
 
     @save_state
+    def _check_fe_equil(self):
+        """
+        Check if the eq stage of free energy calculation is finished.
+        """
+        sim_finished = {}
+        sim_failed = {}
+        for pose in self.sim_config.poses_def:
+            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                sim_finished[pose] = True
+                continue
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+
+                win = -1
+                folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{win:02d}'
+                if not os.path.exists(f"{folder_2_check}/FINISHED"):
+                    sim_finished[f'{pose}/{comp_folder}/{comp}{win:02d}'] = False
+                else:
+                    sim_finished[f'{pose}/{comp_folder}/{comp}{win:02d}'] = True
+                if os.path.exists(f"{folder_2_check}/FAILED"):
+                    sim_failed[f'{pose}/{comp_folder}/{comp}{win:02d}'] = True
+
+        self._sim_finished = sim_finished
+        self._sim_failed = sim_failed
+        # if all are finished, return False
+        if any(self._sim_failed.values()):
+            logger.error(f'Free energy EQ calculation failed: {self._sim_failed}')
+            return True
+        if all(self._sim_finished.values()):
+            logger.debug('Free energy EQ calculation is finished')
+            return False
+        else:
+            not_finished = [k for k, v in self._sim_finished.items() if not v]
+            logger.debug(f'Not finished: {not_finished}')
+            return True
+
+    @save_state
     def _check_fe(self):
         """
-        Check if the free energy calculation is finished by 
+        Check if the free energy calculation is finished.
         """
         sim_finished = {}
         sim_failed = {}

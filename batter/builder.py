@@ -11,6 +11,7 @@ import MDAnalysis as mda
 from contextlib import contextmanager
 import tempfile
 import warnings
+from typing import Union
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.data import build_files as build_files_orig
@@ -82,7 +83,7 @@ class SystemBuilder(ABC):
     
         with self._change_dir(self.working_dir):
             logger.debug(f'Building {self.pose}...')
-            if self.win == 0:
+            if self.win == -1:
                 os.makedirs('build_files', exist_ok=True)
                 with self._change_dir('build_files'):
                     logger.debug(f'Creating build_files in  {os.getcwd()}')
@@ -104,16 +105,16 @@ class SystemBuilder(ABC):
                 self.mol = mol
                 os.makedirs(self.comp_folder, exist_ok=True)
                 with self._change_dir(self.comp_folder):
-                    if self.win == 0:
+                    if self.win == -1:
                         self._create_amber_files()
                         self._create_run_files()   
                     os.makedirs(self.window_folder, exist_ok=True)
                     with self._change_dir(self.window_folder):
-                        if self.win == 0:
+                        if self.win == -1:
                             self._create_simulation_dir()
                         else:
                             self._copy_simulation_dir()
-                        if self.win == 0:
+                        if self.win == -1:
                             self._create_box()
                         self._restraints()
                         self._sim_files()
@@ -213,7 +214,7 @@ class SystemBuilder(ABC):
         Copy the simulation directory from the first window.
         In reality, only symlink necessary files to reduce the disk usage.
         """
-        source_dir = f'../{self.comp}00'
+        source_dir = f'../{self.comp}-1'
         files_to_symlink = ['full.prmtop', 'full.inpcrd', 'full.pdb',
                             'vac.pdb', 'vac_ligand.pdb',
                             'vac.prmtop', 'vac_ligand.prmtop',
@@ -826,7 +827,7 @@ class SystemBuilder(ABC):
 
 class EquilibrationBuilder(SystemBuilder):
     stage = 'equil'
-    win = 0
+    win = -1
     window_folder = '.'
     comp = 'q'
     comp_folder = '.'
@@ -1519,7 +1520,7 @@ class EquilibrationBuilder(SystemBuilder):
 class FreeEnergyBuilder(SystemBuilder):
     stage = 'fe'
     def __init__(self,
-                 win: int,
+                 win: Union[int, str],
                  component: str,
                  system: "batter.System",
                  pose: str,
@@ -2224,7 +2225,7 @@ class FreeEnergyBuilder(SystemBuilder):
         # TODO: Refactor this method
         # This is just a hack to avoid the restraints for lambda windows
         # when win is not 0
-        if self.win != 0 and COMPONENTS_LAMBDA_DICT[self.comp] == 'lambdas':
+        if self.win != -1 and COMPONENTS_LAMBDA_DICT[self.comp] == 'lambdas':
             return
         pose = self.pose
         rest = self.sim_config.rest

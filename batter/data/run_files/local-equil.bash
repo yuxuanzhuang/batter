@@ -36,7 +36,11 @@ if [[ $overwrite -eq 0 && -f eqnpt_pre.rst7 ]]; then
     echo "Skipping EM steps." 
 else
     # Minimization
-    pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
+    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD -nt $SLURM_JOB_CPUS_PER_NODE > "$log_file" 2>&1
+    else
+        pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
+    fi
     check_sim_failure "Minimization"
 fi
 
