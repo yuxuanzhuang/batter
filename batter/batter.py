@@ -41,6 +41,7 @@ from rdkit import Chem
 
 import time
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 from typing import List, Tuple
 import loguru
@@ -61,6 +62,7 @@ from MDAnalysis.analysis import rms, align
 from batter.builder import BuilderFactory
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=ResourceWarning)
 
 from batter.utils import (
     COMPONENTS_LAMBDA_DICT,
@@ -112,7 +114,6 @@ class System:
         self._fe_prepared = False
         self._fe_results = {}
         self.mols = []
-        self._max_num_jobs = 2000
 
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
@@ -659,6 +660,7 @@ class System:
             input_file: Union[str, Path, SimulationConfig],
             overwrite: bool = False,
             partition: str = 'rondror',
+            n_workers: int = 6,
             ):
         """
         Prepare the system for the FEP simulation.
@@ -673,12 +675,14 @@ class System:
             Whether to overwrite the existing files. Default is False.
         partition : str, optional
             The partition to submit the job. Default is 'rondror'.
+        n_workers : int, optional
+            The number of workers to use for the simulation. Default is 6.
         """
         logger.debug('Preparing the system')
         self.overwrite = overwrite
         self.builders_factory = BuilderFactory()
         self.partition = partition
-
+        self.n_workers = n_workers
         self._get_sim_config(input_file)
         sim_config = self.sim_config
         
@@ -693,7 +697,7 @@ class System:
                 logger.debug(f'Overwriting {self.equil_folder}')
                 shutil.rmtree(self.equil_folder, ignore_errors=True)
                 self._eq_prepared = False
-            elif self._eq_prepared:
+            elif self._eq_prepared and os.path.exists(f"{self.equil_folder}"):
                 logger.info(f'Equilibration already prepared')
                 return
             # save the input file to the equil directory
@@ -706,7 +710,6 @@ class System:
             self._eq_prepared = True
         
         if stage == 'fe':
-            self._fe_prepared = False
             if not os.path.exists(f"{self.equil_folder}"):
                 raise FileNotFoundError(f"Equilibration not generated yet. Run prepare('equil') first.")
         
@@ -726,7 +729,7 @@ class System:
                 logger.debug(f'Overwriting {self.fe_folder}')
                 shutil.rmtree(self.fe_folder, ignore_errors=True)
                 self._fe_prepared = False
-            elif self._fe_prepared:
+            elif self._fe_prepared and os.path.exists(f"{self.fe_folder}"):
                 logger.info(f'Free energy already prepared')
                 return
             os.makedirs(f"{self.fe_folder}", exist_ok=True)
@@ -775,7 +778,7 @@ class System:
             logger.info('Submit equilibration stage')
             for pose in self.sim_config.poses_def:
                 # check n_jobs_submitted is less than the max_jobs
-                while n_jobs_submitted >= self._max_num_jobs:
+                while n_jobs_submitted >= self.max_num_jobs:
                     time.sleep(120)
                     n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
 
@@ -814,13 +817,16 @@ class System:
                 slurm_job = SLURMJob(
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
                                 partition=partition,
-                                jobname=f'{self.equil_folder}/{pose}_equil')
+                                jobname=f'fep_{self.equil_folder}/{pose}_equil')
                 slurm_job.submit(overwrite=overwrite)
                 n_jobs_submitted += 1
                 logger.info(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
                     {f'{self.equil_folder}/{pose}': slurm_job}
                 )
+                # make sure the system is saved every time when a job is submitted
+                with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+                    pickle.dump(self, f)
 
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
 
@@ -836,7 +842,7 @@ class System:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
                     for j in range(len(windows)):
-                        if n_jobs_submitted >= self._max_num_jobs:
+                        if n_jobs_submitted >= self.max_num_jobs:
                             time.sleep(120)
                             n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
@@ -871,13 +877,15 @@ class System:
                         slurm_job = SLURMJob(
                                         filename=f'{folder_2_check}/SLURMM-run',
                                         partition=partition,
-                                        jobname=f'{folder_2_check}_fe')
+                                        jobname=f'fep_{folder_2_check}_fe')
                         slurm_job.submit(overwrite=overwrite)
                         n_jobs_submitted += 1
                         logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                         self._slurm_jobs.update(
                             {f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}': slurm_job}
                         )
+                        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+                            pickle.dump(self, f)
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
         elif stage == 'fe_equil':
@@ -888,7 +896,7 @@ class System:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     # only run for window -1 (eq)
                     j = -1
-                    if n_jobs_submitted >= self._max_num_jobs:
+                    if n_jobs_submitted >= self.max_num_jobs:
                         time.sleep(120)
                         n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
@@ -933,7 +941,7 @@ class System:
                     slurm_job = SLURMJob(
                                     filename=f'{folder_2_check}/SLURMM-run',
                                     partition=partition,
-                                    jobname=f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}_equil')
+                                    jobname=f'fep_{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}_equil')
                     slurm_job.submit(overwrite=overwrite, other_env={
                         'ONLY_EQ': '1'
                     })
@@ -942,6 +950,8 @@ class System:
                     self._slurm_jobs.update(
                         {f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}': slurm_job}
                     )
+                    with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+                        pickle.dump(self, f)
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')        
         else:
@@ -991,8 +1001,9 @@ class System:
             shutil.copytree(self.ligandff_folder,
                         f"{self.equil_folder}/ff")
 
+        builders = []
         for pose in self.sim_config.poses_def:
-            logger.info(f'Preparing pose: {pose}')
+            #logger.info(f'Preparing pose: {pose}')
             if os.path.exists(f"{self.equil_folder}/{pose}") and not self.overwrite:
                 logger.info(f'Pose {pose} already exists; add overwrite=True to re-build the pose')
                 continue
@@ -1002,8 +1013,15 @@ class System:
                 pose=pose,
                 sim_config=sim_config,
                 working_dir=f'{self.equil_folder}'
-            ).build()
-    
+            )
+            builders.append(equil_builder)
+
+        # run builders.build in parallel
+        logger.info(f'Building equilibration systems for {len(builders)} poses')
+        Parallel(n_jobs=self.n_workers, backend='loky')(
+            delayed(builder.build)() for builder in builders
+        )
+        
         logger.info('Equilibration systems have been created for all poses listed in the input file.')
 
     def _prepare_fe_system(self):
@@ -1043,6 +1061,10 @@ class System:
             # copy ff folder
             shutil.copytree(self.ligandff_folder,
                             f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
+            
+            builders = []
+            pbar.set_description(f"Preparing FE EQ of pose={pose}")
+
             for component in sim_config.components:
                 logger.debug(f'Preparing component: {component}')
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
@@ -1058,7 +1080,6 @@ class System:
 
                 # first build production EQ
 
-                pbar.set_description(f"Preparing pose={pose}, comp={component}")
                 fe_eq_builder = self.builders_factory.get_builder(
                     stage='fe',
                     win=-1,
@@ -1069,13 +1090,24 @@ class System:
                     working_dir=f'{self.fe_folder}',
                     molr=molr,
                     poser=poser
-                ).build()
+                )
+                builders.append(fe_eq_builder)
+            Parallel(n_jobs=self.n_workers, backend='loky')(
+                    delayed(builder.build)() for builder in builders
+            )
+
+            builders = []
+            pbar.set_description(f"Preparing windows of pose={pose}")
+            for component in sim_config.components:
+                lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
+                cv_paths = []
+                for i, _ in enumerate(lambdas_comp):
+                    cv_path = f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}{i:02d}/cv.in"
+                    cv_paths.append(cv_path)
+                if all(os.path.exists(cv_paths[i]) for i, _ in enumerate(lambdas_comp)) and not self.overwrite:
+                    continue
 
                 for i, lambdas in enumerate(lambdas_comp):
-                    
-                    logger.debug(f'Preparing simulation: {lambdas}')
-                    pbar.set_description(f"Preparing pose={pose}, comp={component}, win={lambdas}")
-                    
                     fe_builder = self.builders_factory.get_builder(
                         stage='fe',
                         win=i,
@@ -1086,7 +1118,11 @@ class System:
                         working_dir=f'{self.fe_folder}',
                         molr=molr,
                         poser=poser
-                    ).build()
+                    )
+                    builders.append(fe_builder)
+            Parallel(n_jobs=self.n_workers, backend='loky')(
+                    delayed(builder.build)() for builder in builders
+            )
             pbar.update(1)
 
     def add_rmsf_restraints(self,
@@ -1578,7 +1614,7 @@ EOF"""
                      only_equil: bool = False,
                      only_fe_preparation: bool = False,
                      partition: str = 'owners',
-                     max_num_jobs: int = 500,
+                     max_num_jobs: int = 2000,
                      verbose: bool = False
                      ):
         """
@@ -1668,7 +1704,7 @@ EOF"""
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
-                time.sleep(30*60)
+                time.sleep(10*60)
 
         else:
             logger.info('Equilibration is already finished')
@@ -1709,25 +1745,25 @@ EOF"""
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
-                time.sleep(10*60)
+                time.sleep(5*60)
 
-            # copy last equilibration snapshot to the free energy folder
-            for pose in self.sim_config.poses_def:
-                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                    continue
-                for comp in self.sim_config.components:
-                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    eq_rst7 = f'{folder_comp}/{comp}-1/eqnpt04.rst7'
-                    
-                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
-                    for j in range(0, len(windows)):
-                        if os.path.exists(f'{folder_comp}/{comp}{j:02d}/equilibrated.rst7'):
-                            continue
-                        os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/full.inpcrd')
         else:
             logger.info('Free energy equilibration is already finished')
 
+        # copy last equilibration snapshot to the free energy folder
+        for pose in self.sim_config.poses_def:
+            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                continue
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                eq_rst7 = f'{folder_comp}/{comp}-1/eqnpt04.rst7'
+                
+                windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                for j in range(0, len(windows)):
+                    if os.path.exists(f'{folder_comp}/{comp}{j:02d}/equilibrated.rst7'):
+                        continue
+                    os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/equilibrated.rst7')
         if only_fe_preparation:
             logger.info('only_fe_preparation is set to True. '
                         'Skipping the free energy calculation.')
@@ -1751,7 +1787,7 @@ EOF"""
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
-                time.sleep(30*60)
+                time.sleep(10*60)
         else:
             logger.info('Free energy calculation is already finished')
 
@@ -1819,7 +1855,7 @@ EOF"""
 
                 win = -1
                 folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{win:02d}'
-                if not os.path.exists(f"{folder_2_check}/FINISHED"):
+                if not os.path.exists(f"{folder_2_check}/EQ_FINISHED"):
                     sim_finished[f'{pose}/{comp_folder}/{comp}{win:02d}'] = False
                 else:
                     sim_finished[f'{pose}/{comp_folder}/{comp}{win:02d}'] = True
@@ -2505,6 +2541,13 @@ EOF"""
     @property
     def slurm_jobs(self):
         return self._slurm_jobs
+    
+    @property
+    def max_num_jobs(self):
+        try:
+            return self._max_num_jobs
+        except AttributeError:
+            return 2000
 
 
 class ABFESystem(System):

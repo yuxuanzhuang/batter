@@ -36,7 +36,7 @@ class SLURMJob:
                     time.sleep(30)
             else:
                 raise RuntimeError("Failed to requeue job after 3 attempts.")
-        for _ in range(3):
+        for _ in range(5):
             try:
                 self._submit()
                 break

@@ -75,6 +75,8 @@ fi
 # write FINISHED to a file
 if [ $ONLY_EQ -eq 1 ]; then
     echo "ONLY_EQ is set to 1. Simulation is complete."
+    echo "EQ_FINISHED" > EQ_FINISHED
+    echo "Job completed at $(date)"
     exit 0
 fi
 echo "FINISHED" > FINISHED

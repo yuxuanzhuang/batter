@@ -1,12 +1,7 @@
 myname=$(whoami)
 
 # Fetch all eq job IDs with names matching the pattern
-job_eq_ids=$(squeue -u "$myname" --format="%A %j" --noheader | grep -E "equil-pose[0-9]" | awk '{print $1}')
-# Fetch all fe job IDs with names matching the pattern
-job_fe_ids=$(squeue -u "$myname" --format="%A %j" --noheader | grep -E "pose[0-9]-[altmncrevfwx][0-9]{2}" | awk '{print $1}')
-job_fe_ids_2=$(squeue -u "$myname" --format="%A %j" --noheader | grep -E "pose[0-9]{2}-[altmncrevfwx][0-9]{2}" | awk '{print $1}')
-
-job_ids="$job_eq_ids $job_fe_ids $job_fe_ids_2"
+job_ids=$(squeue -u "$myname" --format="%A %j" --noheader | grep -E "fep" | awk '{print $1}')
 
 # Check if any jobs were found
 if [[ -z "$job_ids" ]]; then
