@@ -1461,6 +1461,8 @@ class System:
 
                 self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
+                # generate aligned pdbs
+                # TODO
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
@@ -2405,6 +2407,9 @@ EOF"""
             logger.info('Generated groupfiles for all poses')
     
     def check_sim_stage(self):
+        """
+        Check the status of running of all the simulations
+        """
         stage_sims = {}
         for pose in self.sim_config.poses_def:
             stage_sims[pose] = {}
@@ -2414,12 +2419,16 @@ EOF"""
                 elif comp in COMPONENTS_DICT['dd']:
                     sim_type = 'sdr'
                 folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}00'
-                mdin_files = glob.glob(f'{folder}/mdin-*.rst7')
+                mdin_files = glob.glob(f'{folder}/md*.rst7')
                 # make sure the size is not empty
                 mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
-                mdin_files.sort(key=lambda x: int(x.split('-')[-1].split('.')[0]))
+
+                # only base name
+                # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
+                sort_key = lambda x: int(os.path.splitext(os.path.basename(x))[0][-2:])
+                mdin_files.sort(key=sort_key)
                 if len(mdin_files) > 0:
-                    stage_sims[pose][comp] = int(mdin_files[-1].split('-')[-1].split('.')[0])
+                    stage_sims[pose][comp] = sort_key(mdin_files[-1])
                 else:
                     stage_sims[pose][comp] = -1
         import matplotlib.pyplot as plt

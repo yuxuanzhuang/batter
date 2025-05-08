@@ -37,7 +37,7 @@ def fe_openmm(components, temperature, pose, dec_method, rest, attach_rest, lamb
     if not os.path.exists('Results'):
         os.makedirs('Results')
     # Copy complex pdb structure
-    shutil.copy('./build_files/complex.pdb', './Results/')
+    #shutil.copy('./build_files/complex.pdb', './Results/')
     for i in range(0, len(components)):
         comp = components[i]
         if comp == 'a' or comp == 'l' or comp == 't' or comp == 'c' or comp == 'r' or comp == 'm' or comp == 'n':
@@ -571,7 +571,8 @@ def generate_analytical_rest(comp, rest, temperature):
 
 
 @fail_report_wrapper
-def generate_results_rest(comp, win, blocks, working_dir, sim_range):
+def generate_results_rest(comp, win, blocks, working_dir, sim_range,
+                          top='vac'):
     os.chdir(working_dir)
     os.chdir('rest')
     data = []
@@ -615,11 +616,11 @@ def generate_results_rest(comp, win, blocks, working_dir, sim_range):
     lines = [line for line in lines if 'trajin' not in line]
     # get the line index of parm
     line_index = lines.index([line for line in lines if 'parm' in line][0])
-    # replace 'vac.prmtop' with 'full.prmtop'
+    # replace 'vac.prmtop' with '{top}.prmtop'
     lines[line_index] = lines[line_index].replace('vac.prmtop',
-                                                  f'../{comp}00/full.prmtop')
+                                                  f'../{comp}00/{top}.prmtop')
     lines[line_index] = lines[line_index].replace('full.prmtop',
-                                                  f'../{comp}00/full.prmtop')
+                                                  f'../{comp}00/{top}.prmtop')
     with open('restraints_curr.in', 'w') as f:
         # Write lines up to and including the target line
         f.writelines(lines[:line_index + 1])
@@ -1125,7 +1126,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     # Create Results folder
     os.makedirs('Results', exist_ok=True)
     # Copy complex pdb structure
-    shutil.copy('./build_files/complex.pdb', './Results/')
+    #shutil.copy('.build_files/complex.pdb', './Results/')
 
     # Get MBAR free energy averages for the blocks
     for k in range(0, blocks):
