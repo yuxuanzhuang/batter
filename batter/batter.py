@@ -1045,11 +1045,6 @@ class System:
 
         molr = self.mols[0]
         poser = sim_config.poses_def[0]
-
-        pbar = tqdm_joblib(total=len(sim_config.poses_def) * len(sim_config.components),
-                    desc="Preparing FE EQ",
-                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
-
         builders = []
         for pose in sim_config.poses_def:
             # if "UNBOUND" found in equilibration, skip
@@ -1101,14 +1096,15 @@ class System:
                     poser=poser
                 )
                 builders.append(fe_eq_builder)
-        Parallel(n_jobs=self.n_workers, backend='loky')(
-                    delayed(builder.build)() for builder in builders
+        with tqdm_joblib(tqdm(
+            total=len(builders),
+            desc="Preparing equilibration",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
+            Parallel(n_jobs=self.n_workers, backend='loky')(
+                delayed(builder.build)() for builder in builders
         )
-
+        
         builders = []
-        pbar = tqdm_joblib(total=len(sim_config.poses_def) * len(sim_config.components),
-            desc="Preparing windows",
-            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
 
         for pose in self.sim_config.poses_def:
             for component in sim_config.components:
@@ -1133,9 +1129,13 @@ class System:
                         poser=poser
                     )
                     builders.append(fe_builder)
-        Parallel(n_jobs=self.n_workers, backend='loky')(
-            delayed(builder.build)() for builder in builders
-        )
+        with tqdm_joblib(tqdm(
+            total=len(builders),
+            desc="Preparing windows",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
+            Parallel(n_jobs=self.n_workers, backend='loky')(
+                delayed(builder.build)() for builder in builders
+            )
 
     def add_rmsf_restraints(self,
                             stage: str,
@@ -1645,14 +1645,12 @@ class System:
 
         # get ll_x,y,z distances
         r_vect = lig_atom.center_of_mass() - P1_atom.positions
-        logger.info(f'l1_x: {r_vect[0][0]:.2f}')
-        logger.info(f'l1_y: {r_vect[0][1]:.2f}')
-        logger.info(f'l1_z: {r_vect[0][2]:.2f}')
+        logger.debug(f'l1_x: {r_vect[0][0]:.2f}; l1_y: {r_vect[0][1]:.2f}; l1_z: {r_vect[0][2]:.2f}')
 
         p1_formatted = f':{P1_atom.resids[0]}@{P1_atom.names[0]}'
         p2_formatted = f':{P2_atom.resids[0]}@{P2_atom.names[0]}'
         p3_formatted = f':{P3_atom.resids[0]}@{P3_atom.names[0]}'
-        logger.info(f'Receptor anchor atoms: P1: {p1_formatted}, P2: {p2_formatted}, P3: {p3_formatted}')
+        logger.debug(f'Receptor anchor atoms: P1: {p1_formatted}, P2: {p2_formatted}, P3: {p3_formatted}')
         return (r_vect[0][0], r_vect[0][1], r_vect[0][2],
                 p1_formatted, p2_formatted, p3_formatted)
               
@@ -1671,7 +1669,7 @@ class System:
                 continue
             if os.path.exists(f"{self.equil_folder}/{pose}/representative.pdb"):
                 bound_poses.append([pose_i, pose])
-                logger.info(f"Representative snapshot found for pose {pose}")
+                logger.debug(f"Representative snapshot found for pose {pose}")
                 continue
             with self._change_dir(f"{self.equil_folder}/{pose}"):
                 pdb = "full.pdb"
@@ -1698,7 +1696,7 @@ trajout md03.rst7 restart onlyframes {rep_snapshot+1}
 EOF"""
                     run_with_log(cpptraj_command,
                                 working_dir=f"{self.equil_folder}/{pose}")
-        logger.info(f"Bound poses: {bound_poses} will be used for the production stage")
+        logger.debug(f"Bound poses: {bound_poses} will be used for the production stage")
 
         # get new l1x, l1y, l1z distances
         for pose_i, pose in bound_poses:
@@ -1719,7 +1717,7 @@ EOF"""
 
             ligand_anchor_atom = self.ligand_anchor_atom
 
-            logger.info(f'Finding anchor atoms for pose {pose}')
+            logger.debug(f'Finding anchor atoms for pose {pose}')
             l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
                         u_sys,
                         u_lig,
