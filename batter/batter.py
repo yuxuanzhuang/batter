@@ -52,6 +52,7 @@ from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
 from batter.results import FEResult, ComponentFEResult
 #from batter.ligand_process import LigandFactory
+from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob
 from batter.analysis.convergence import ConvergenceValidator, MBARValidator
 from batter.analysis.sim_validation import SimValidator
@@ -747,7 +748,6 @@ class System:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
 
             self._check_equilbration_binding()
-            os.sync()
             self._prepare_fe_system()
             logger.info('FE System prepared')
             self._fe_prepared = True
@@ -1046,8 +1046,9 @@ class System:
         molr = self.mols[0]
         poser = sim_config.poses_def[0]
 
-        pbar = tqdm(total=len(sim_config.poses_def))
-        pbar.set_description(f"Preparing FE EQ")
+        pbar = tqdm_joblib(total=len(sim_config.poses_def) * len(sim_config.components),
+                    desc="Preparing FE EQ",
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
 
         builders = []
         for pose in sim_config.poses_def:
@@ -1057,7 +1058,7 @@ class System:
                 os.makedirs(f"{self.fe_folder}/{pose}/Results", exist_ok=True)
                 with open(f"{self.fe_folder}/{pose}/Results/Results.dat", 'w') as f:
                     f.write("UNBOUND\n")
-                pbar.update(1)
+                pbar.update(len(sim_config.components))
                 continue
             logger.debug(f'Preparing pose: {pose}')
             
@@ -1104,9 +1105,11 @@ class System:
                     delayed(builder.build)() for builder in builders
         )
 
-        os.sync()
         builders = []
-        pbar.set_description(f"Preparing windows")
+        pbar = tqdm_joblib(total=len(sim_config.poses_def) * len(sim_config.components),
+            desc="Preparing windows",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")
+
         for pose in self.sim_config.poses_def:
             for component in sim_config.components:
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
@@ -1133,7 +1136,6 @@ class System:
         Parallel(n_jobs=self.n_workers, backend='loky')(
             delayed(builder.build)() for builder in builders
         )
-        #pbar.update(1)
 
     def add_rmsf_restraints(self,
                             stage: str,
