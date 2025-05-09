@@ -662,6 +662,7 @@ class System:
             overwrite: bool = False,
             partition: str = 'rondror',
             n_workers: int = 6,
+            win_info_dict: dict = None,
             ):
         """
         Prepare the system for the FEP simulation.
@@ -678,6 +679,12 @@ class System:
             The partition to submit the job. Default is 'rondror'.
         n_workers : int, optional
             The number of workers to use for the simulation. Default is 6.
+        win_info_dict : dict, optional
+            The lambda / restraint values for components.
+            It should be in a format of e.g. for `e` component:
+            {
+                'e': [0, 0.5, 1.0],
+            }
         """
         logger.debug('Preparing the system')
         self.overwrite = overwrite
@@ -740,6 +747,7 @@ class System:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
 
             self._check_equilbration_binding()
+            os.sync()
             self._prepare_fe_system()
             logger.info('FE System prepared')
             self._fe_prepared = True
@@ -1036,11 +1044,13 @@ class System:
         # are used for exchange FE simulations.
 
         molr = self.mols[0]
-        poser = self.sim_config.poses_def[0]
+        poser = sim_config.poses_def[0]
 
+        pbar = tqdm(total=len(sim_config.poses_def))
+        pbar.set_description(f"Preparing FE EQ")
 
-        pbar = tqdm(total=len(self.sim_config.poses_def))
-        for pose in self.sim_config.poses_def:
+        builders = []
+        for pose in sim_config.poses_def:
             # if "UNBOUND" found in equilibration, skip
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 logger.info(f"Pose {pose} is UNBOUND in equilibration; skipping FE")
@@ -1055,17 +1065,14 @@ class System:
             with open(f"{self.equil_folder}/{pose}/anchor_list.txt", 'r') as f:
                 anchor_list = f.readlines()
                 l1x, l1y, l1z = [float(x) for x in anchor_list[0].split()]
-                self.sim_config.l1_x = l1x
-                self.sim_config.l1_y = l1y
-                self.sim_config.l1_z = l1z
+                sim_config.l1_x = l1x
+                sim_config.l1_y = l1y
+                sim_config.l1_z = l1z
 
             # copy ff folder
             shutil.copytree(self.ligandff_folder,
                             f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
             
-            builders = []
-            pbar.set_description(f"Preparing FE EQ of pose={pose}")
-
             for component in sim_config.components:
                 logger.debug(f'Preparing component: {component}')
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
@@ -1093,12 +1100,14 @@ class System:
                     poser=poser
                 )
                 builders.append(fe_eq_builder)
-            Parallel(n_jobs=self.n_workers, backend='loky')(
+        Parallel(n_jobs=self.n_workers, backend='loky')(
                     delayed(builder.build)() for builder in builders
-            )
+        )
 
-            builders = []
-            pbar.set_description(f"Preparing windows of pose={pose}")
+        os.sync()
+        builders = []
+        pbar.set_description(f"Preparing windows")
+        for pose in self.sim_config.poses_def:
             for component in sim_config.components:
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
                 cv_paths = []
@@ -1121,10 +1130,10 @@ class System:
                         poser=poser
                     )
                     builders.append(fe_builder)
-            Parallel(n_jobs=self.n_workers, backend='loky')(
-                    delayed(builder.build)() for builder in builders
-            )
-            pbar.update(1)
+        Parallel(n_jobs=self.n_workers, backend='loky')(
+            delayed(builder.build)() for builder in builders
+        )
+        #pbar.update(1)
 
     def add_rmsf_restraints(self,
                             stage: str,
@@ -1257,10 +1266,12 @@ class System:
                 # if .bak exists, to avoid multiple appending
                 # first copy the original cv file to the backup
                 if os.path.exists(cv_file + '.bak'):
-                    shutil.copy(cv_file + '.bak', cv_file)
+                    #shutil.copy(cv_file + '.bak', cv_file)
+                    os.system(f"cp {cv_file} {cv_file}.bak")
                 else:
                     # copy original cv file for backup
-                    shutil.copy(cv_file, cv_file + '.bak')
+                    #shutil.copy(cv_file, cv_file + '.bak')
+                    os.system(f"cp {cv_file} {cv_file}.bak")
                 
                 with open(cv_file, 'r') as f:
                     lines = f.readlines()

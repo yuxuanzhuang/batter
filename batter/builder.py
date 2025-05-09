@@ -250,7 +250,8 @@ class SystemBuilder(ABC):
             for file_path in glob.glob(f'{source_dir}/{file_basename}'):
                 file_name = os.path.basename(file_path)
                 target_path = os.path.join('.', file_name)
-                shutil.copy(file_path, target_path)
+                #shutil.copy(file_path, target_path)
+                os.system(f'cp {file_path} {target_path}')
 
     @log_info
     def _create_box(self):
@@ -292,13 +293,17 @@ class SystemBuilder(ABC):
         for file in glob.glob('../../ff/*'):
             if file.endswith('.in') or file.endswith('.pdb'):
                 continue
-            shutil.copy(file, '.')
+            #shutil.copy(file, '.')
+            os.system(f'cp {file} .')
 
 
         # Copy tleap files that are used for restraint generation and analysis
-        shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap_vac.in')
-        shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap_vac_ligand.in')
-        shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap.in')
+        #shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap_vac.in')
+        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac.in')
+        #shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap_vac_ligand.in')
+        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac_ligand.in')
+        #shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap.in')
+        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap.in')
 
         # Append tleap file for vacuum
         with open('tleap_vac.in', 'a') as tleap_vac:
@@ -530,7 +535,8 @@ class SystemBuilder(ABC):
             logger.debug(f'Number of anions: {num_ani}')
 
         # First round just solvate the system
-        shutil.copy('tleap.in', 'tleap_solvate_pre.in')
+        #shutil.copy('tleap.in', 'tleap_solvate_pre.in')
+        os.system(f'cp tleap.in tleap_solvate_pre.in')
         tleap_solvate = open('tleap_solvate_pre.in', 'a')
         tleap_solvate.write('# Load the necessary parameters\n')
         for i in range(0, len(other_mol)):
@@ -740,7 +746,8 @@ class SystemBuilder(ABC):
         
         logger.debug(f'Final box dimensions: {box_final[:3]}')
         # Write the final tleap file with the correct system size and removed water molecules
-        shutil.copy('tleap.in', 'tleap_solvate.in')
+        #shutil.copy('tleap.in', 'tleap_solvate.in')
+        os.system(f'cp tleap.in tleap_solvate.in')
         tleap_solvate = open('tleap_solvate.in', 'a')
         tleap_solvate.write('# Load the necessary parameters\n')
         for i in range(0, len(other_mol)):
@@ -801,7 +808,8 @@ class SystemBuilder(ABC):
         f.close()
 
         # Apply hydrogen mass repartitioning
-        shutil.copy(f'{self.amber_files_folder}/parmed-hmr.in', './')
+        #shutil.copy(f'{self.amber_files_folder}/parmed-hmr.in', './')
+        os.system(f'cp {self.amber_files_folder}/parmed-hmr.in ./')
         run_with_log('parmed -O -n -i parmed-hmr.in > parmed-hmr.log')
 
     @abstractmethod
@@ -874,20 +882,27 @@ class EquilibrationBuilder(SystemBuilder):
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
-        shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
-        shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
-        shutil.copy(f'dum.mol2', f'../../../ff/dum.mol2')
-        shutil.copy(f'dum.frcmod', f'../../../ff/dum.frcmod')
+        #shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
+        os.system(f'cp dum.mol2 ../../ff/dum.mol2')
+        #shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
+        os.system(f'cp dum.frcmod ../../ff/dum.frcmod')
+        #shutil.copy(f'dum.mol2', f'../../../ff/dum.mol2')
+        os.system(f'cp dum.mol2 ../../../ff/dum.mol2')
+        #shutil.copy(f'dum.frcmod', f'../../../ff/dum.frcmod')
+        os.system(f'cp dum.frcmod ../../../ff/dum.frcmod')
 
         all_pose_folder = self.system.poses_folder
         system_name = self.system.system_name
 
-        shutil.copy(f'{all_pose_folder}/reference.pdb',
-                    f'reference.pdb')
-        shutil.copy(f'{all_pose_folder}/{system_name}_docked.pdb',
-                    f'rec_file.pdb')
-        shutil.copy(f'{all_pose_folder}/{self.pose}.pdb',
-                    f'.')
+        #shutil.copy(f'{all_pose_folder}/reference.pdb',
+        #            f'reference.pdb')
+        os.system(f'cp {all_pose_folder}/reference.pdb reference.pdb')
+        #shutil.copy(f'{all_pose_folder}/{system_name}_docked.pdb',
+        #            f'rec_file.pdb')
+        os.system(f'cp {all_pose_folder}/{system_name}_docked.pdb rec_file.pdb')
+        #shutil.copy(f'{all_pose_folder}/{self.pose}.pdb',
+        #            f'.')
+        os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
 
         other_mol = self.sim_config.other_mol
         lipid_mol = self.sim_config.lipid_mol
@@ -902,7 +917,8 @@ class EquilibrationBuilder(SystemBuilder):
                              f'cannot be in the other_mol list: '
                              f'{other_mol}')
         # rename pose atom name
-        shutil.copy(f'../../ff/{mol.lower()}.mol2', '.')
+        #shutil.copy(f'../../ff/{mol.lower()}.mol2', '.')
+        os.system(f'cp ../../ff/{mol.lower()}.mol2 .')
 
         ante_mol = mda.Universe(f'{mol.lower()}.mol2')
         mol_u.atoms.names = ante_mol.atoms.names
@@ -938,7 +954,8 @@ class EquilibrationBuilder(SystemBuilder):
         if not lipid_mol:
             open('lipids.pdb', 'w').close()
 
-        shutil.copy('./protein.pdb', './protein_vmd.pdb')
+        #shutil.copy('./protein.pdb', './protein_vmd.pdb')
+        os.system(f'cp protein.pdb protein_vmd.pdb')
         run_with_log('pdb4amber -i protein_vmd.pdb -o protein.pdb -y')
         renum_txt = 'protein_renum.txt'
 
@@ -1241,16 +1258,21 @@ class EquilibrationBuilder(SystemBuilder):
         P3 = self.P3
 
         # Copy a few files
-        shutil.copy(f'{self.build_file_folder}/equil-{mol.lower()}.pdb', './')
+        #shutil.copy(f'{self.build_file_folder}/equil-{mol.lower()}.pdb', './')
+        os.system(f'cp {self.build_file_folder}/equil-{mol.lower()}.pdb ./')
 
         # Use equil-reference.pdb to retrieve the box size
-        shutil.copy(f'{self.build_file_folder}/equil-{mol.lower()}.pdb', './equil-reference.pdb')
-        shutil.copy(f'{self.build_file_folder}/{mol.lower()}-noh.pdb', f'./{mol.lower()}.pdb')
-        shutil.copy(f'{self.build_file_folder}/anchors-{pose}.txt', './anchors.txt')
+        #shutil.copy(f'{self.build_file_folder}/equil-{mol.lower()}.pdb', './equil-reference.pdb')
+        os.system(f'cp {self.build_file_folder}/equil-{mol.lower()}.pdb ./equil-reference.pdb')
+        #shutil.copy(f'{self.build_file_folder}/{mol.lower()}-noh.pdb', f'./{mol.lower()}.pdb')
+        os.system(f'cp {self.build_file_folder}/{mol.lower()}-noh.pdb ./')
+        #shutil.copy(f'{self.build_file_folder}/anchors-{pose}.txt', './anchors.txt')
+        os.system(f'cp {self.build_file_folder}/anchors-{pose}.txt ./anchors.txt')
 
         # Read coordinates for dummy atoms
         for i in range(1, 2):
-            shutil.copy(f'{self.build_file_folder}/dum{i}.pdb', './')
+            #shutil.copy(f'{self.build_file_folder}/dum{i}.pdb', './')
+            os.system(f'cp {self.build_file_folder}/dum{i}.pdb ./')
             with open('dum'+str(i)+'.pdb') as dum_in:
                 lines = (line.rstrip() for line in dum_in)
                 lines = list(line for line in lines if line)
@@ -1437,8 +1459,10 @@ class EquilibrationBuilder(SystemBuilder):
             logger.debug('%s' % str(weight))
             setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                              molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
-            shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
-        shutil.copy('./'+pose+'/disang%02d.rest' % int(0), './'+pose+'/disang.rest')
+            #shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
+            os.system(f'cp ./{pose}/disang.rest ./{pose}/disang%02d.rest' % int(i))
+        #shutil.copy('./'+pose+'/disang%02d.rest' % int(0), './'+pose+'/disang.rest')
+        os.system(f'cp ./{pose}/disang%02d.rest ./{pose}/disang.rest' % int(0))
         os.chdir(pose)
 
     @log_info
@@ -1621,18 +1645,26 @@ class FreeEnergyBuilder(SystemBuilder):
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
-        shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
-        shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
+        #shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
+        os.system(f'cp dum.mol2 ../../ff/dum.mol2')
+        #shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
+        os.system(f'cp dum.frcmod ../../ff/dum.frcmod')
 
-        shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
+        #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
+        os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
         # Get last state from equilibrium simulations
-        shutil.copy(f'../../../../equil/{pose}/md{fwin:02d}.rst7', './')
-        shutil.copy(f'../../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
-        shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
+        #shutil.copy(f'../../../../equil/{pose}/md{fwin:02d}.rst7', './')
+        os.system(f'cp ../../../../equil/{pose}/md{fwin:02d}.rst7 ./')
+        #shutil.copy(f'../../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
+        os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
+        #shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
+        os.system(f'cp ../../../../equil/{pose}/build_amber_renum.txt ./')
         for file in glob.glob(f'../../../../equil/{pose}/full*.prmtop'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./full.prmtop')
         for file in glob.glob(f'../../../../equil/{pose}/vac*'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
@@ -1674,7 +1706,8 @@ class FreeEnergyBuilder(SystemBuilder):
         u.atoms.write('rec_file.pdb')
 
         # Used for retrieving the box size
-        shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        #shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        os.system('cp rec_file.pdb equil-reference.pdb')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
@@ -1901,21 +1934,31 @@ class FreeEnergyBuilder(SystemBuilder):
         os.symlink(f'../{self.amber_files_folder}', self.amber_files_folder)
 
         for file in glob.glob(f'../{self.build_file_folder}/vac_ligand*'):
-            shutil.copy(file, './')
-        shutil.copy(f'../{self.build_file_folder}/{mol.lower()}.pdb', './')
-        shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
-        shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
-        shutil.copy(f'../{self.build_file_folder}/anchors-{self.pose}.txt', './')
-        shutil.copy(f'../{self.build_file_folder}/equil-reference.pdb', './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
+        #shutil.copy(f'../{self.build_file_folder}/{mol.lower()}.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
+        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
+        os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
+        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
+        #shutil.copy(f'../{self.build_file_folder}/anchors-{self.pose}.txt', './')
+        os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
+        #shutil.copy(f'../{self.build_file_folder}/equil-reference.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
 
         for file in glob.glob('../../../ff/*.mol2'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/*.frcmod'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/{mol.lower()}.*'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/dum.*'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
 
         # Get TER statements
         ter_atom = []
@@ -1934,7 +1977,8 @@ class FreeEnergyBuilder(SystemBuilder):
         # Read coordinates for dummy atoms
         if dec_method == 'sdr' or dec_method == 'exchange':
             for i in range(1, 3):
-                shutil.copy(f'../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+                #shutil.copy(f'../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+                os.system(f'cp ../{self.build_file_folder}/dum'+str(i)+'.pdb ./')
                 with open('dum'+str(i)+'.pdb') as dum_in:
                     lines = (line.rstrip() for line in dum_in)
                     lines = list(line for line in lines if line)
@@ -1948,7 +1992,8 @@ class FreeEnergyBuilder(SystemBuilder):
                     total_atom += 1
         else:
             for i in range(1, 2):
-                shutil.copy(f'../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+                #shutil.copy(f'../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+                os.system(f'cp ../{self.build_file_folder}/dum'+str(i)+'.pdb ./')
                 with open('dum'+str(i)+'.pdb') as dum_in:
                     lines = (line.rstrip() for line in dum_in)
                     lines = list(line for line in lines if line)
@@ -2020,12 +2065,18 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # Get coordinates from reference ligand
         if comp == 'x':
-            shutil.copy('../exchange_files/%s.pdb' % molr.lower(), './')
-            shutil.copy('../exchange_files/anchors-'+poser+'.txt', './')
-            shutil.copy('../exchange_files/vac_ligand.pdb', './vac_reference.pdb')
-            shutil.copy('../exchange_files/vac_ligand.prmtop', './vac_reference.prmtop')
-            shutil.copy('../exchange_files/vac_ligand.inpcrd', './vac_reference.inpcrd')
-            shutil.copy('../exchange_files/fe-%s.pdb' % molr.lower(), './build-ref.pdb')
+            #shutil.copy('../exchange_files/%s.pdb' % molr.lower(), './')
+            os.system(f'cp ../exchange_files/{molr.lower()}.pdb ./')
+            #shutil.copy('../exchange_files/anchors-'+poser+'.txt', './')
+            os.system(f'cp ../exchange_files/anchors-{poser}.txt ./')
+            #shutil.copy('../exchange_files/vac_ligand.pdb', './vac_reference.pdb')
+            os.system(f'cp ../exchange_files/vac_ligand.pdb ./vac_reference.pdb')
+            #shutil.copy('../exchange_files/vac_ligand.prmtop', './vac_reference.prmtop')
+            os.system(f'cp ../exchange_files/vac_ligand.prmtop ./vac_reference.prmtop')
+            #shutil.copy('../exchange_files/vac_ligand.inpcrd', './vac_reference.inpcrd')
+            os.system(f'cp ../exchange_files/vac_ligand.inpcrd ./vac_reference.inpcrd')
+            #shutil.copy('../exchange_files/fe-%s.pdb' % molr.lower(), './build-ref.pdb')
+            os.system(f'cp ../exchange_files/fe-{molr.lower()}.pdb ./build-ref.pdb')
 
             ref_lig_coords = []
             ref_lig_atomlist = []
@@ -2218,7 +2269,8 @@ class FreeEnergyBuilder(SystemBuilder):
                 build_file.write('TER\n')
             build_file.write('END\n')
             build_file.close()
-            shutil.copy('./build.pdb', './%s.pdb' % mol.lower())
+            #shutil.copy('./build.pdb', './%s.pdb' % mol.lower())
+            os.system(f'cp ./build.pdb ./{mol.lower()}.pdb')
             tleap_vac = open('tleap_vac.in', 'w')
             tleap_vac.write('source leaprc.'+ligand_ff+'\n\n')
             tleap_vac.write('# Load the ligand parameters\n')
@@ -2581,9 +2633,11 @@ class FreeEnergyBuilder(SystemBuilder):
         # If chosen, apply initial reference for the protein backbone restraints
         if (stage == 'fe' and comp != 'c' and comp != 'w' and comp != 'f'):
             if (bb_equil == 'yes'):
-                shutil.copy('../../../../equil/'+pose+'/assign.dat', './assign-eq.dat')
+                #shutil.copy('../../../../equil/'+pose+'/assign.dat', './assign-eq.dat')
+                os.system(f'cp ../../../../equil/{pose}/assign.dat ./assign-eq.dat')
             else:
-                shutil.copy('./assign.dat', './assign-eq.dat')
+                #shutil.copy('./assign.dat', './assign-eq.dat')
+                os.system(f'cp ./assign.dat ./assign-eq.dat')
             with open('./assign-eq.dat') as fin:
                 lines = (line.rstrip() for line in fin)
                 lines = list(line for line in lines if line)  # Non-blank lines in a list
@@ -3125,8 +3179,10 @@ class FreeEnergyBuilder(SystemBuilder):
 
             # Get initial restraint values for references
 
-            shutil.copy('../../exchange_files/rec_file.pdb', './')
-            shutil.copy('../../exchange_files/full.hmr.prmtop', './full-ref.hmr.prmtop')
+            #shutil.copy('../../exchange_files/rec_file.pdb', './')
+            os.system('cp ../../exchange_files/rec_file.pdb ./')
+            #shutil.copy('../../exchange_files/full.hmr.prmtop', './full-ref.hmr.prmtop')
+            os.system('cp ../../exchange_files/full.hmr.prmtop ./full-ref.hmr.prmtop')
             assign_file = open('assign2.in', 'w')
             assign_file.write('%s  %s  %s  %s  %s  %s  %s\n' % ('# Anchor atoms', P1, P2, P3, L1, L2, L3))
             assign_file.write('parm full-ref.hmr.prmtop\n')
@@ -3969,17 +4025,22 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
 
         # Build reference ligand from last state of equilibrium simulations
         
-        shutil.copy('../../../../equil/'+poser+'/md%02d.rst7' % fwin, './')
-        shutil.copy('../../../../equil/'+pose+'/full.pdb', './aligned-nc.pdb')
+        #shutil.copy('../../../../equil/'+poser+'/md%02d.rst7' % fwin, './')
+        os.system('cp ../../../../equil/%s/md%02d.rst7 ./' % (poser, fwin))
+        #shutil.copy('../../../../equil/'+pose+'/full.pdb', './aligned-nc.pdb')
+        os.system('cp ../../../../equil/%s/full.pdb ./' % poser)
         for file in glob.glob('../../../../equil/%s/full*.prmtop' % poser.lower()):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../../equil/%s/vac*' % poser.lower()):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         run_with_log(cpptraj + ' -p full.prmtop -y md%02d.rst7 -x rec_file.pdb' % fwin)
 
         # restore resid index
         
-        shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        #shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        os.system('cp rec_file.pdb equil-reference.pdb')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
@@ -4134,13 +4195,19 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         if not os.path.exists('../ff'):
             os.makedirs('../ff')
         for file in glob.glob('../../../../equil/ff/*.mol2'):
-            shutil.copy(file, '../ff/')
+            #shutil.copy(file, '../ff/')
+            os.system(f'cp {file} ../ff/')
         for file in glob.glob('../../../../equil/ff/*.frcmod'):
-            shutil.copy(file, '../ff/')
-        shutil.copy('../../../../equil/ff/%s.mol2' % (molr.lower()), '../ff/')
-        shutil.copy('../../../../equil/ff/%s.frcmod' % (molr.lower()), '../ff/')
-        shutil.copy('../../../../equil/ff/dum.mol2', '../ff/')
-        shutil.copy('../../../../equil/ff/dum.frcmod', '../ff/')
+            #shutil.copy(file, '../ff/')
+            os.system(f'cp {file} ../ff/')
+        #shutil.copy('../../../../equil/ff/%s.mol2' % (molr.lower()), '../ff/')
+        os.system(f'cp ../../../../equil/ff/{molr.lower()}.mol2 ../ff/')
+        #shutil.copy('../../../../equil/ff/%s.frcmod' % (molr.lower()), '../ff/')
+        os.system(f'cp ../../../../equil/ff/{molr.lower()}.frcmod ../ff/')
+        #shutil.copy('../../../../equil/ff/dum.mol2', '../ff/')
+        os.system('cp ../../../../equil/ff/dum.mol2 ../ff/')
+        #shutil.copy('../../../../equil/ff/dum.frcmod', '../ff/')
+        os.system('cp ../../../../equil/ff/dum.frcmod ../ff/')
     
     @log_info
     def _sim_files(self):
@@ -4296,18 +4363,26 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
-        shutil.copy(f'dum.mol2', f'../ff/dum.mol2')
-        shutil.copy(f'dum.frcmod', f'../ff/dum.frcmod')
+        #shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
+        os.system(f'cp dum.mol2 ../../ff/dum.mol2')
+        #shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
+        os.system(f'cp dum.frcmod ../../ff/dum.frcmod')
 
-        shutil.copy(f'../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb', './')
+        #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
+        os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
         # Get last state from equilibrium simulations
-        shutil.copy(f'../../../equil/{pose}/md{fwin:02d}.rst7', './')
-        shutil.copy(f'../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
-        shutil.copy(f'../../../equil/{pose}/build_amber_renum.txt', './')
-        for file in glob.glob(f'../../../equil/{pose}/full*.prmtop'):
-            shutil.copy(file, './')
-        for file in glob.glob(f'../../../equil/{pose}/vac*'):
-            shutil.copy(file, './')
+        #shutil.copy(f'../../../../equil/{pose}/md{fwin:02d}.rst7', './')
+        os.system(f'cp ../../../../equil/{pose}/md{fwin:02d}.rst7 ./')
+        #shutil.copy(f'../../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
+        os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
+        #shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
+        os.system(f'cp ../../../../equil/{pose}/build_amber_renum.txt ./')
+        for file in glob.glob(f'../../../../equil/{pose}/full*.prmtop'):
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
+        for file in glob.glob(f'../../../../equil/{pose}/vac*'):
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
@@ -4349,7 +4424,8 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         u.atoms.write('rec_file.pdb')
 
         # Used for retrieving the box size
-        shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        #shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        os.system('cp rec_file.pdb equil-reference.pdb')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
@@ -4395,7 +4471,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
                     newfile.write(line)
 
         # Read protein anchors and size from equilibrium
-        with open(f'../../equil/{pose}/equil-{mol.lower()}.pdb', 'r') as f:
+        with open(f'../../../../equil/{pose}/equil-{mol.lower()}.pdb', 'r') as f:
             data = f.readline().split()
             P1 = data[2].strip()
             P2 = data[3].strip()
@@ -4548,26 +4624,36 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
 
         os.symlink(f'../{self.amber_files_folder}', self.amber_files_folder)
 
-        for file in glob.glob(f'../../{self.build_file_folder}/vac_ligand*'):
-            shutil.copy(file, './')
-        shutil.copy(f'../../{self.build_file_folder}/{mol.lower()}.pdb', './')
-        shutil.copy(f'../../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
-        shutil.copy(f'../../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
-        shutil.copy(f'../../{self.build_file_folder}/anchors-{self.pose}.txt', './')
-        shutil.copy(f'../../{self.build_file_folder}/equil-reference.pdb', './')
+        for file in glob.glob(f'../{self.build_file_folder}/vac_ligand*'):
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
+        #shutil.copy(f'../{self.build_file_folder}/{mol.lower()}.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
+        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
+        os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
+        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
+        #shutil.copy(f'../{self.build_file_folder}/anchors-{self.pose}.txt', './')
+        os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
+        #shutil.copy(f'../{self.build_file_folder}/equil-reference.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
 
         for file in glob.glob('../../../ff/*.mol2'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/*.frcmod'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/{mol.lower()}.*'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/dum.*'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
 
         # Get TER statements
         ter_atom = []
-        with open(f'../../{self.build_file_folder}/rec_file.pdb') as oldfile, open('rec_file-clean.pdb', 'w') as newfile:
+        with open(f'../{self.build_file_folder}/rec_file.pdb') as oldfile, open('rec_file-clean.pdb', 'w') as newfile:
             for line in oldfile:
                 if not 'WAT' in line:
                     newfile.write(line)
@@ -4580,7 +4666,8 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
                 ter_atom.append(int(lines[i][6:11].strip()))
                 
         for i in range(1, 4):
-            shutil.copy(f'../../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+            #shutil.copy(f'../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+            os.system(f'cp ../{self.build_file_folder}/dum'+str(i)+'.pdb ./')
             with open('dum'+str(i)+'.pdb') as dum_in:
                 lines = (line.rstrip() for line in dum_in)
                 lines = list(line for line in lines if line)
@@ -4959,14 +5046,20 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
-        shutil.copy(f'dum.mol2', f'../ff/dum.mol2')
-        shutil.copy(f'dum.frcmod', f'../ff/dum.frcmod')
+        #shutil.copy(f'dum.mol2', f'../ff/dum.mol2')
+        os.system(f'cp dum.mol2 ../ff/dum.mol2')
+        #shutil.copy(f'dum.frcmod', f'../ff/dum.frcmod')
+        os.system(f'cp dum.frcmod ../ff/dum.frcmod')
 
-        shutil.copy(f'../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb', './')
+        #shutil.copy(f'../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb', './')
+        os.system(f'cp ../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb ./')
         # Get last state from equilibrium simulations
-        shutil.copy(f'../../../equil/{pose}/md{fwin:02d}.rst7', './')
-        shutil.copy(f'../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
-        shutil.copy(f'../../../equil/{pose}/build_amber_renum.txt', './')
+        #shutil.copy(f'../../../equil/{pose}/md{fwin:02d}.rst7', './')
+        os.system(f'cp ../../../equil/{pose}/md{fwin:02d}.rst7 ./')
+        #shutil.copy(f'../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
+        os.system(f'cp ../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
+        #shutil.copy(f'../../../equil/{pose}/build_amber_renum.txt', './')
+        os.system(f'cp ../../../equil/{pose}/build_amber_renum.txt ./')
         # Lustre has a problem with copy
         # https://confluence.ecmwf.int/display/UDOC/HPC2020%3A+Python+known+issues
         for file in glob.glob(f'../../../equil/{pose}/full*.prmtop'):
@@ -5021,7 +5114,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         u.atoms.write('rec_file.pdb')
 
         # Used for retrieving the box size
-        shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        #shutil.copy('rec_file.pdb', 'equil-reference.pdb')
+        os.system(f'cp rec_file.pdb equil-reference.pdb')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
@@ -5220,26 +5314,36 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
 
         os.symlink(f'../{self.amber_files_folder}', self.amber_files_folder)
 
-        for file in glob.glob(f'../../{self.build_file_folder}/vac_ligand*'):
-            shutil.copy(file, './')
-        shutil.copy(f'../../{self.build_file_folder}/{mol.lower()}.pdb', './')
-        shutil.copy(f'../../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
-        shutil.copy(f'../../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
-        shutil.copy(f'../../{self.build_file_folder}/anchors-{self.pose}.txt', './')
-        shutil.copy(f'../../{self.build_file_folder}/equil-reference.pdb', './')
+        for file in glob.glob(f'../{self.build_file_folder}/vac_ligand*'):
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
+        #shutil.copy(f'../{self.build_file_folder}/{mol.lower()}.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
+        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
+        os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
+        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
+        #shutil.copy(f'../{self.build_file_folder}/anchors-{self.pose}.txt', './')
+        os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
+        #shutil.copy(f'../{self.build_file_folder}/equil-reference.pdb', './')
+        os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
 
         for file in glob.glob('../../../ff/*.mol2'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/*.frcmod'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/{mol.lower()}.*'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/dum.*'):
-            shutil.copy(file, './')
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
 
         # Get TER statements
         ter_atom = []
-        with open(f'../../{self.build_file_folder}/rec_file.pdb') as oldfile, open('rec_file-clean.pdb', 'w') as newfile:
+        with open(f'../{self.build_file_folder}/rec_file.pdb') as oldfile, open('rec_file-clean.pdb', 'w') as newfile:
             for line in oldfile:
                 if not 'WAT' in line:
                     newfile.write(line)
@@ -5254,7 +5358,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         # dum1: protein COM
         # dum3: ligand BS COM
         for i in [1, 3]:
-            shutil.copy(f'../../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+            #shutil.copy(f'../{self.build_file_folder}/dum'+str(i)+'.pdb', './')
+            os.system(f'cp ../{self.build_file_folder}/dum{i}.pdb ./')
             with open('dum'+str(i)+'.pdb') as dum_in:
                 lines = (line.rstrip() for line in dum_in)
                 lines = list(line for line in lines if line)
