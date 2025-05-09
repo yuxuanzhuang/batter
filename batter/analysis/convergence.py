@@ -21,8 +21,127 @@ from alchemlyb.visualisation import (
 
 import matplotlib.pyplot as plt
 
+class MBARValidator:
+    """
+    Use raw input of df_list to validate the convergence of the free energy calculations using `alchemlyb`
+    """
+    def __init__(self,
+                df_list: list,
+                temperature: float = 310.0,
+                energy_unit: str = 'kcal/mol',
+                log_level: str = 'WARNING'
+                ):
+        logger.remove()
+        logger.add(sys.stderr, level=log_level)
+        self._data_list = df_list
+        self.temperature = temperature
+        self.energy_unit = energy_unit
 
-class ConvergenceValidator:
+        #u_df_list = []
+        for df in df_list:
+            df.attrs['temperature'] = self.temperature
+            df.attrs['energy_unit'] = self.energy_unit
+            #df.set_index(['time', 'lambdas'], inplace=True)
+           # u_df_list.append(df)
+        
+        self._data_list = df_list
+        self._u_df = pd.concat(df_list)
+
+
+    def analysis(self):
+        """
+        Perform the analysis of the free energy calculations.
+        """
+        # Perform the analysis
+        mbar = MBAR()
+        mbar.fit(self.u_df)
+        self._mbar = mbar
+    
+    @property
+    def mbar(self):
+        """
+        The MBAR object containing the results of the analysis.
+        """
+        if not hasattr(self, '_mbar'):
+            raise ValueError("The analysis method must be called before accessing the mbar property.")
+        return self._mbar
+
+
+    @property
+    def u_df(self):
+        """
+        The dataframe containing the free energy profiles.
+        See https://alchemlyb.readthedocs.io/en/latest/parsing.html for more details.
+        """
+        return self._u_df
+
+    @property
+    def data_list(self):
+        """
+        The list of dataframes containing the free energy profiles for each lambda.
+        See https://alchemlyb.readthedocs.io/en/latest/parsing.html for more details.
+        """
+        return self._data_list
+
+
+    def plot_time_convergence(self, ax=None, **kwargs):
+        df = forward_backward_convergence(self.data_list, 'MBAR')
+        _ = plot_convergence(df, ax=ax, **kwargs)
+    
+    
+    def plot_overlap_matrix(self, ax=None, **kwargs):
+        _ = plot_mbar_overlap_matrix(self.mbar.overlap_matrix, ax=ax, **kwargs)
+
+
+    def plot_block_convergence(self, ax=None, **kwargs):
+        df = block_average(self.data_list, 'MBAR')
+        _ = plot_block_average(df, ax=ax, **kwargs)
+
+    def plot_convergence(self, save_path=None, title=None):
+        fig, axes = plt.subplot_mosaic(
+            [["A", "A", "B"], ["C", "C", "C"]], figsize=(15, 10)
+        )
+        self.plot_time_convergence(ax=axes['A'],
+                                   units='kcal/mol',
+                                   final_error=0.6)
+        self.plot_overlap_matrix(ax=axes['B'])
+        self.plot_block_convergence(ax=axes['C'],
+                                    units='kcal/mol',
+                                    final_error=0.6)
+        axes['A'].set_title('Time Convergence', fontsize=10)
+        axes['B'].set_title('Overlap Matrix', fontsize=10)
+        axes['C'].set_title('Block Convergence', fontsize=10)
+
+        if title:
+            plt.suptitle(title, y=1.05)
+        if save_path:
+            fig.savefig(save_path)
+            plt.close(fig)
+        else:
+            plt.show()
+
+    def write_results(self, save_path=None):
+        """
+        Write the results to a file.
+        """
+        if save_path:
+            with open(save_path, 'w') as f:
+                f.write(f"Temperature: {self.temperature} K\n")
+                f.write(f"Energy unit: {self.energy_unit}\n")
+                f.write(f"Number of dataframes: {len(self.data_list)}\n")
+                for i, df in enumerate(self.data_list):
+                    f.write(f"\nDataframe {i}:\n")
+                    f.write(df.to_string())
+        else:
+            print(f"Temperature: {self.temperature} K")
+            print(f"Energy unit: {self.energy_unit}")
+            print(f"Number of dataframes: {len(self.data_list)}")
+            for i, df in enumerate(self.data_list):
+                print(f"\nDataframe {i}:\n")
+                print(df)
+
+
+class ConvergenceValidator(MBARValidator):
     """
     Class to validate the convergence of the free energy calculations using `alchemlyb` including
     - Time Convergence (forward and backward convergence)
@@ -48,32 +167,7 @@ class ConvergenceValidator:
             raise ValueError("The first two dimensions of Upot must match the length of lambdas")
         
         self._generate_df()
-
-
-    def plot_convergence(self, save_path=None, title=None):
-        fig, axes = plt.subplot_mosaic(
-            [["A", "A", "B"], ["C", "C", "C"]], figsize=(15, 10)
-        )
-        self.plot_time_convergence(ax=axes['A'],
-                                   units='kcal/mol',
-                                   final_error=0.6)
-        self.plot_overlap_matrix(ax=axes['B'])
-        self.plot_block_convergence(ax=axes['C'],
-                                    units='kcal/mol',
-                                    final_error=0.6)
-        axes['A'].set_title('Time Convergence', fontsize=10)
-        axes['B'].set_title('Overlap Matrix', fontsize=10)
-        axes['C'].set_title('Block Convergence', fontsize=10)
-
-        if title:
-            plt.suptitle(title, y=1.05)
-        if save_path:
-            fig.savefig(save_path)
-            plt.close(fig)
-        else:
-            plt.show()
     
-
     def _generate_df(self):
         lambdas = self.lambdas
         u_df = pd.DataFrame(columns=['time', 'fep-lambda'] + list(lambdas))
@@ -105,35 +199,3 @@ class ConvergenceValidator:
             group.attrs['energy_unit'] = 'kT'
             data_list.append(group)
         self._data_list = data_list
-
-    @property
-    def u_df(self):
-        """
-        The dataframe containing the free energy profiles.
-        See https://alchemlyb.readthedocs.io/en/latest/parsing.html for more details.
-        """
-        return self._u_df
-
-    @property
-    def data_list(self):
-        """
-        The list of dataframes containing the free energy profiles for each lambda.
-        See https://alchemlyb.readthedocs.io/en/latest/parsing.html for more details.
-        """
-        return self._data_list
-
-
-    def plot_time_convergence(self, ax=None, **kwargs):
-        df = forward_backward_convergence(self.data_list, 'MBAR')
-        _ = plot_convergence(df, ax=ax, **kwargs)
-    
-    
-    def plot_overlap_matrix(self, ax=None, **kwargs):
-        mbar = MBAR()
-        mbar.fit(self.u_df)
-        _ = plot_mbar_overlap_matrix(mbar.overlap_matrix, ax=ax, **kwargs)
-
-
-    def plot_block_convergence(self, ax=None, **kwargs):
-        df = block_average(self.data_list, 'MBAR')
-        _ = plot_block_average(df, ax=ax, **kwargs)

@@ -50,10 +50,10 @@ logger.add(sys.stdout, level='INFO')
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
-from batter.results import FEResult
-from batter.ligand_process import LigandFactory
+from batter.results import FEResult, ComponentFEResult
+#from batter.ligand_process import LigandFactory
 from batter.utils.slurm_job import SLURMJob
-from batter.analysis.convergence import ConvergenceValidator
+from batter.analysis.convergence import ConvergenceValidator, MBARValidator
 from batter.analysis.sim_validation import SimValidator
 from batter.data import frontier_files
 
@@ -332,6 +332,7 @@ class System:
             self._process_system()
         
         self.unique_mol_names = []
+        from batter.ligand_process import LigandFactory
         for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
             logger.debug(f'Processing ligand {ind}: {ligand_path}')
             try:
@@ -1358,6 +1359,114 @@ class System:
 
     @safe_directory
     @save_state
+    def analysis_new(
+        self,
+        input_file: Union[str, Path, SimulationConfig]=None,
+        load=True,
+        check_finished: bool = True,
+        sim_range: Tuple[int, int] = None,
+        ):
+        """
+        New analysis rountine with alchemlyb
+        """
+        from alchemlyb.parsing.amber import extract_u_nk
+        from alchemlyb.convergence import forward_backward_convergence, block_average
+        from alchemlyb.visualisation import plot_block_average
+        from alchemlyb.visualisation import plot_convergence
+        if input_file is not None:
+            self._get_sim_config(input_file)
+        
+        if check_finished:
+            if self._check_fe():
+                logger.info('FE simulation is not finished yet')
+                self.check_jobs()
+                return
+            
+        if not sim_range:
+            sim_range = (None, None)
+            
+        blocks = self.sim_config.blocks
+        components = self.sim_config.components
+        temperature = self.sim_config.temperature
+        attach_rest = self.sim_config.attach_rest
+        lambdas = self.sim_config.lambdas
+        weights = self.sim_config.weights
+        dec_int = self.sim_config.dec_int
+        dec_method = self.sim_config.dec_method
+        rest = self.sim_config.rest
+        dic_steps1 = self.sim_config.dic_steps1
+        dic_steps2 = self.sim_config.dic_steps2
+        dt = self.sim_config.dt
+        poses_def = self.sim_config.poses_def
+
+        with self._change_dir(self.output_dir):
+            for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
+                os.chdir(f'{self.fe_folder}/{pose}')
+                if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
+                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                    logger.info(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
+                    continue
+                # remove the existing Results folder
+                if os.path.exists(f'{self.fe_folder}/{pose}/Results'):
+                    shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
+                os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
+
+                #fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
+                #                        weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
+
+                # assume it's FEP
+                comp = components[0]
+                windows = lambdas
+                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                    fe_value = np.nan
+                if os.path.exists(f"{self.fe_folder}/{pose}/df_list.pkl"):
+                    df_list = pd.read_pickle(f"{self.fe_folder}/{pose}/df_list.pkl")
+                else:
+                    df_list = []
+                    for win_i, lam in enumerate(windows):
+                        df = pd.concat([extract_u_nk(
+                            f'{self.fe_folder}/{pose}/sdr/{comp}{win_i:02d}/mdin-{i:02d}.out',                                T=310,
+                                                    reduced=False) for i in sim_range])
+                        df_list.append(df)
+                    # dump
+                    with open(f'{self.fe_folder}/{pose}/df_list.pkl', 'wb') as f:
+                        pd.to_pickle(df_list, f)
+
+                mbar_v = MBARValidator(
+                    df_list,
+                    temperature=temperature,
+                    energy_unit='kcal/mol',
+                )
+                mbar_v.analysis()
+                fe_value = - mbar_v.mbar.delta_f_.iloc[0, -1]
+                fe_std = 0
+                with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+                    f.write(f"{fe_value:.2f} ± {fe_std:.2f}\n")
+
+                # if failed; it will return nan
+                if np.isnan(fe_value):
+                    logger.warning(f'FE calculation failed for {pose}')
+                    with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+                        f.write("UNBOUND\n")
+                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+
+                    continue
+            
+                self.fe_results[pose] = ComponentFEResult(
+                    fe_value=fe_value,
+                    fe_std=fe_std,
+                )
+                
+                os.chdir('../../')
+                # generate aligned pdbs
+                # TODO
+        for i, (pose, fe) in enumerate(self.fe_results.items()):
+            mol_name = self.mols[i]
+            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
+        
+
+    @safe_directory
+    @save_state
     def analysis(
         self,
         input_file: Union[str, Path, SimulationConfig]=None,
@@ -2087,8 +2196,8 @@ EOF"""
                                                 #'gti_cut_sc      = 2,\n'
                                                 'gti_ele_exp     = 2,\n'
                                                 'gti_vdw_exp     = 2,\n'
-                                                f'clambda         = {lambdas[i]:.2f},\n'
-                                                f'mbar_lambda     = {", ".join([f"{l:.2f}" for l in lambdas])},\n'
+                                                f'clambda         = {lambdas[i]:.5f},\n'
+                                                f'mbar_lambda     = {", ".join([f"{l:.5f}" for l in lambdas])},\n'
                                             )
                                             if stage == 'mini.in':
                                                 outfile.write('ntwr = 50,\n')
@@ -2134,8 +2243,8 @@ EOF"""
                                         restraint_mask = restraint_mask.replace(':1', '@ZYX')
                                         restraint_mask = restraint_mask.replace(':3', '@ZYX')
                                         if stage == 'mdin.in.extend':
-                                            #line = f"restraintmask = '{restraint_mask}'\n"
-                                            line = f"restraintmask = '@CA | {restraint_mask}' \n"
+                                            line = f"restraintmask = '{restraint_mask}'\n"
+                                            #line = f"restraintmask = '@CA | {restraint_mask}' \n"
                                         else:
                                             line = f"restraintmask = '@CA | {restraint_mask}' \n"
                                     if 'ntp' in line:
@@ -2155,14 +2264,14 @@ EOF"""
                                     if 'clambda' in line:
                                         final_line = []
                                         para_line = line.split(',')
-                                        for i in range(len(para_line)):
-                                            if 'clambda' in para_line[i]:
+                                        for p_i in range(len(para_line)):
+                                            if 'clambda' in para_line[p_i]:
                                                 continue
-                                            if 'scalpha' in para_line[i]:
+                                            if 'scalpha' in para_line[p_i]:
                                                 continue
-                                            if 'scbeta' in para_line[i]:
+                                            if 'scbeta' in para_line[p_i]:
                                                 continue
-                                            final_line.append(para_line[i])
+                                            final_line.append(para_line[p_i])
                                         line = ',\n'.join(final_line)
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
@@ -2451,7 +2560,7 @@ EOF"""
 
         with self._change_dir(folder_name):
             os.system(f'cp {self.output_dir}/system.pkl .')
-            
+        
             all_pose_folder = os.path.relpath(self.poses_folder, os.getcwd())
             os.system(f'ln -s {all_pose_folder} .')
 

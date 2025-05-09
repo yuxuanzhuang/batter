@@ -151,6 +151,6 @@ def remd_analysis(replica_trajectory, ARs):
 
 def get_remd_info(inputfile):
     reptraj, nstate, nexch, nsucc, ARs = read_rem_log(inputfile)
-    np.set_printoptions(precision=5, linewidth=150,
-                        formatter={'int': '{:2d}'.format})
+    #np.set_printoptions(precision=5, linewidth=150,
+    #                    formatter={'int': '{:2d}'.format})
     return remd_analysis(reptraj, ARs)
