@@ -1915,7 +1915,7 @@ EOF"""
 
         #5 analyze the results
         logger.info('Analyzing the results')
-        self.analysis()
+        self.analysis(load=False)
 
         logger.info('Pipeline finished')
         logger.info(f'The results are in the {self.output_dir}')
@@ -2561,10 +2561,17 @@ EOF"""
         plt.show()
 
 
-    def copy_2_new_folder(self, folder_name, only_equil=True):
+    def copy_2_new_folder(self,
+                          folder_name,
+                          only_equil=True,
+                          symlink=True,):
         """
         Copy the system to a new folder
         """
+        if symlink:
+            cp_cmd = 'ln -s'
+        else:
+            cp_cmd = 'cp -r'
         if os.path.exists(folder_name):
             raise ValueError(f"Folder {folder_name} already exists")
         os.makedirs(folder_name, exist_ok=True)
@@ -2573,13 +2580,13 @@ EOF"""
             os.system(f'cp {self.output_dir}/system.pkl .')
         
             all_pose_folder = os.path.relpath(self.poses_folder, os.getcwd())
-            os.system(f'ln -s {all_pose_folder} .')
+            os.system(f'{cp_cmd} {all_pose_folder} .')
 
             ligandff_folder = os.path.relpath(self.ligandff_folder, os.getcwd())
-            os.system(f'ln -s {ligandff_folder} .')
+            os.system(f'{cp_cmd} {ligandff_folder} .')
 
             equil_folder = os.path.relpath(self.equil_folder, os.getcwd())
-            os.system(f'ln -s {equil_folder} .')
+            os.system(f'{cp_cmd} {equil_folder} .')
 
             if only_equil:
                 logger.info(f'Copied equilibration files to {folder_name}')

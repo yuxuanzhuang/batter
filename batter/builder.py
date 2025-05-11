@@ -1265,7 +1265,7 @@ class EquilibrationBuilder(SystemBuilder):
         #shutil.copy(f'{self.build_file_folder}/equil-{mol.lower()}.pdb', './equil-reference.pdb')
         os.system(f'cp {self.build_file_folder}/equil-{mol.lower()}.pdb ./equil-reference.pdb')
         #shutil.copy(f'{self.build_file_folder}/{mol.lower()}-noh.pdb', f'./{mol.lower()}.pdb')
-        os.system(f'cp {self.build_file_folder}/{mol.lower()}-noh.pdb ./')
+        os.system(f'cp {self.build_file_folder}/{mol.lower()}-noh.pdb ./{mol.lower()}.pdb')
         #shutil.copy(f'{self.build_file_folder}/anchors-{pose}.txt', './anchors.txt')
         os.system(f'cp {self.build_file_folder}/anchors-{pose}.txt ./anchors.txt')
 
@@ -1460,9 +1460,9 @@ class EquilibrationBuilder(SystemBuilder):
             setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                              molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
             #shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
-            os.system(f'cp ./{pose}/disang.rest ./{pose}/disang%02d.rest' % int(i))
+            os.system(f'cp ./{pose}/disang.rest ./{pose}/disang{i:02d}.rest')
         #shutil.copy('./'+pose+'/disang%02d.rest' % int(0), './'+pose+'/disang.rest')
-        os.system(f'cp ./{pose}/disang%02d.rest ./{pose}/disang.rest' % int(0))
+        os.system(f'cp ./{pose}/disang00.rest ./{pose}/disang.rest')
         os.chdir(pose)
 
     @log_info
@@ -1661,7 +1661,7 @@ class FreeEnergyBuilder(SystemBuilder):
         os.system(f'cp ../../../../equil/{pose}/build_amber_renum.txt ./')
         for file in glob.glob(f'../../../../equil/{pose}/full*.prmtop'):
             #shutil.copy(file, './')
-            os.system(f'cp {file} ./full.prmtop')
+            os.system(f'cp {file} ./')
         for file in glob.glob(f'../../../../equil/{pose}/vac*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
@@ -3481,8 +3481,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas[self.win]
+        lambdas = self.system.win
+        weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
         with open('disang.rest', 'r') as f:
@@ -4228,7 +4228,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         lipid_mol = self.lipid_mol
         
         lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas[self.win]
+        weight = lambdas[self.win if self.win != -1 else 0]
         ntwx = self.sim_config.ntwx
 
         with open('disang.rest', 'r') as f:
@@ -4922,7 +4922,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
         lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas[self.win]
+        weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
         #with open('disang.rest', 'r') as f:
@@ -5615,7 +5615,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
         lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas[self.win]
+        weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
         #with open('disang.rest', 'r') as f:

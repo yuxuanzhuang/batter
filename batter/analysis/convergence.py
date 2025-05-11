@@ -119,6 +119,7 @@ class MBARValidator:
             plt.close(fig)
         else:
             plt.show()
+            plt.close(fig)
 
     def write_results(self, save_path=None):
         """
