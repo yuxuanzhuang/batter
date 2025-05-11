@@ -17,6 +17,7 @@ from batter.bat_lib import build, setup, analysis, scripts
 from batter.data import run_files, openmm_files
 from batter.utils.error_report import error_report
 from batter.utils.align import aligning
+from batter.run_in_batch import run_in_batch
 
 import MDAnalysis as mda
 # ignore UserWarning from MDAnalysis
@@ -39,6 +40,7 @@ def main(args=None):
 main.add_command(batpy.batpy)
 main.add_command(error_report)
 main.add_command(aligning)
+main.add_command(run_in_batch)
 
 if __name__ == "__main__":
     main()  # pragma: no cover

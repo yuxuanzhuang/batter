@@ -15,6 +15,7 @@ from batter.utils import (
     vmd)
 
 import inspect
+from collections.abc import MutableMapping
 import numpy as np
 import os
 import sys
@@ -691,9 +692,15 @@ class System:
         self.overwrite = overwrite
         self.builders_factory = BuilderFactory()
         self.partition = partition
-        self.n_workers = n_workers
+        self._n_workers = n_workers
         self._get_sim_config(input_file)
         sim_config = self.sim_config
+        self._component_windows_dict = ComponentWindowsDict(self)
+        if win_info_dict is not None:
+            for key, value in win_info_dict.items():
+                if key not in self._component_windows_dict:
+                    raise ValueError(f"Invalid component: {key}. Available components are: {self._component_windows_dict.keys()}")
+                self._component_windows_dict[key] = value
         
         if len(self.sim_config.poses_def) != len(self.ligand_paths):
             logger.warning(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
@@ -849,7 +856,7 @@ class System:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                    windows = self.component_windows_dict[comp]
                     for j in range(len(windows)):
                         if n_jobs_submitted >= self.max_num_jobs:
                             time.sleep(120)
@@ -1033,18 +1040,13 @@ class System:
         
         logger.info('Equilibration systems have been created for all poses listed in the input file.')
 
-    def _prepare_fe_system(self):
-        """
-        Prepare the free energy system.
-        """
-        sim_config = self.sim_config
+    def _prepare_fe_equil_system(self):
 
-        logger.info('Prepare for free energy stage')
         # molr (molecule reference) and poser (pose reference)
         # are used for exchange FE simulations.
-
+        sim_config = self.sim_config
         molr = self.mols[0]
-        poser = sim_config.poses_def[0]
+        poser = self.sim_config.poses_def[0]
         builders = []
         for pose in sim_config.poses_def:
             # if "UNBOUND" found in equilibration, skip
@@ -1103,16 +1105,28 @@ class System:
             Parallel(n_jobs=self.n_workers, backend='loky')(
                 delayed(builder.build)() for builder in builders
         )
-        
+            
+    def _prepare_fe_windows(self, regenerate: bool = False):
+        sim_config = self.sim_config
+        molr = self.mols[0]
+        poser = self.sim_config.poses_def[0]
+
         builders = []
 
         for pose in self.sim_config.poses_def:
             for component in sim_config.components:
-                lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
+                if regenerate:
+                    # delete existing windows
+                    windows = glob.glob(f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}[0-9][0-9]")
+                    for window in windows:
+                        shutil.rmtree(window, ignore_errors=True)
+                lambdas_comp = self.component_windows_dict[component]
                 cv_paths = []
                 for i, _ in enumerate(lambdas_comp):
                     cv_path = f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}{i:02d}/cv.in"
                     cv_paths.append(cv_path)
+                # check if the cv.in file exists
+                # it should be created in the last step
                 if all(os.path.exists(cv_paths[i]) for i, _ in enumerate(lambdas_comp)) and not self.overwrite:
                     continue
 
@@ -1129,6 +1143,7 @@ class System:
                         poser=poser
                     )
                     builders.append(fe_builder)
+
         with tqdm_joblib(tqdm(
             total=len(builders),
             desc="Preparing windows",
@@ -1136,6 +1151,19 @@ class System:
             Parallel(n_jobs=self.n_workers, backend='loky')(
                 delayed(builder.build)() for builder in builders
             )
+
+    def _prepare_fe_system(self):
+        """
+        Prepare the free energy system.
+        """
+        logger.info('Prepare for free energy stage')
+        logger.info(f'Prepare FE equilibration')
+        self._prepare_fe_equil_system()
+
+        logger.info(f'Prepare FE windows')
+        self._prepare_fe_windows()
+        logger.info('Free energy systems have been created for all poses listed in the input file.')
+
 
     def add_rmsf_restraints(self,
                             stage: str,
@@ -1339,7 +1367,7 @@ class System:
                     u_ref = mda.Universe(
                             f"{folder_comp}/{comp}00/full.pdb",
                             f"{folder_comp}/{comp}00/full.inpcrd")
-                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                    windows = self.component_windows_dict[comp]
                     cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
                         for j in range(0, len(windows))]
                     
@@ -1551,7 +1579,9 @@ class System:
                                         weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range)
                     except:
                         fe_value = np.nan
-                fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
+                fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose,
+                                                      attach_rest,
+                                                      lambdas,
                                         weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
 
                 # if failed; it will return nan
@@ -1567,7 +1597,7 @@ class System:
                 for i, comp in enumerate(components):
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    windows = attach_rest if comp_folder == 'rest' else lambdas
+                    windows = self.component_windows_dict[comp]
                     Upot = np.load(f"{folder_comp}/data/Upot_{comp}_all.npy")
                     validator = ConvergenceValidator(
                         Upot=Upot,
@@ -1881,7 +1911,7 @@ EOF"""
                 folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                 eq_rst7 = f'{folder_comp}/{comp}-1/eqnpt04.rst7'
                 
-                windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                windows = self.component_windows_dict[comp]
                 for j in range(0, len(windows)):
                     if os.path.exists(f'{folder_comp}/{comp}{j:02d}/equilibrated.rst7'):
                         continue
@@ -2011,7 +2041,7 @@ EOF"""
                 continue
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                windows = self.component_windows_dict[comp]
                 for j in range(0, len(windows)):
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                     if not os.path.exists(f"{folder_2_check}/FINISHED"):
@@ -2079,20 +2109,10 @@ EOF"""
         poses_def = self.sim_config.poses_def
         components = self.sim_config.components
         attach_rest = self.sim_config.attach_rest
-        lambdas = self.sim_config.lambdas
         weights = self.sim_config.weights
         dec_int = self.sim_config.dec_int
         dec_method = self.sim_config.dec_method
         rest = self.sim_config.rest
-        # if remd:
-        len_lambdas = len(lambdas)
-        # even spacing from 0 to 1
-        #revised_lambdas = np.linspace(0, 1, len_lambdas)
-        #revised_lambdas = np.asarray([
-        #    0.00000000,0.02756000,0.05417000,0.08003000,0.10729000,0.13769000,0.17041000,0.21174000,0.25756000,0.30552000,0.36274000,0.42362000,0.48726000,0.55589000,0.62235000,0.68323000,0.74207000,0.79496000,0.82904000,0.86500000,0.90368000,0.94077000,0.97151000,1.00000000
-        #])
-
-        #lambdas = revised_lambdas
 
         dec_method_folder_dict = {
             'dd': 'dd',
@@ -2119,19 +2139,19 @@ EOF"""
             'rest': [
                 'mini.in',
             #    'therm1.in', 'therm2.in',
-                'eqnpt0.in',
-                'eqnpt.in_00',
-                'eqnpt.in_01', 'eqnpt.in_02',
-                'eqnpt.in_03', 'eqnpt.in_04',
+            #    'eqnpt0.in',
+            #    'eqnpt.in_00',
+            #    'eqnpt.in_01', 'eqnpt.in_02',
+            #    'eqnpt.in_03', 'eqnpt.in_04',
                 'mdin.in', 'mdin.in.extend'
             ],
             'sdr': [
                 'mini.in',
             #    'heat.in_00',
-                'eqnpt0.in',
-                'eqnpt.in_00',
-                'eqnpt.in_01', 'eqnpt.in_02',
-                'eqnpt.in_03', 'eqnpt.in_04',
+            #    'eqnpt0.in',
+            #    'eqnpt.in_00',
+            #    'eqnpt.in_01', 'eqnpt.in_02',
+            #    'eqnpt.in_03', 'eqnpt.in_04',
                 'mdin.in', 'mdin.in.extend'
             ],
         }
@@ -2147,12 +2167,10 @@ EOF"""
             os.makedirs(pose_name, exist_ok=True)
             os.makedirs(f'{pose_name}/groupfiles', exist_ok=True)
             for component in components:
+                lambdas = self.component_windows_dict[component]
                 folder_name = component_2_folder_dict[component]
                 sim_folder_temp = f'{pose}/{folder_name}/{component}'
-                if component in COMPONENTS_DICT['dd']:
-                    n_sims = len(lambdas)
-                else:
-                    n_sims = len(attach_rest)
+                n_sims = len(self.component_windows_dict[component])
 
                 stage_previous = f'{sim_folder_temp}REPXXX/equilibrated.rst7'
 
@@ -2161,14 +2179,14 @@ EOF"""
                     with open(groupfile_name, 'w') as f:
                         for i in range(n_sims):
                             #stage_previous_temp = stage_previous.replace('00', f'{i:02d}')
-                            win00_sim_folder_name = f'{sim_folder_temp}00'
+                            win_eq_sim_folder_name = f'{sim_folder_temp}-1'
                             sim_folder_name = f'{sim_folder_temp}{i:02d}'
-                            prmtop = f'{win00_sim_folder_name}/full.hmr.prmtop'
-                            inpcrd = f'{win00_sim_folder_name}/full.inpcrd'
+                            prmtop = f'{win_eq_sim_folder_name}/full.hmr.prmtop'
+                            inpcrd = f'{win_eq_sim_folder_name}/full.inpcrd'
                             mdinput = f'{sim_folder_name}/{stage.split("_")[0]}'
                             # Read and modify the MD input file to update the relative path
                             if stage in ['mdin.in', 'mdin.in.extend']:
-                                mdinput = mdinput.replace(stage, 'mdin-02')
+                                mdinput = mdinput.replace(stage, 'mdin-00')
                             with open(f'fe/{mdinput}', 'r') as infile:
                                 input_lines = infile.readlines()
 
@@ -2194,19 +2212,12 @@ EOF"""
                                             outfile.write(
                                                 #'scalpha = 0.5,\n'
                                                 #'scbeta = 1.0,\n'
-                                                'gti_cut         = 1,\n'
-                                                'gti_output      = 1,\n'
                                                 'gti_add_sc      = 25,\n'
                                                 'gti_chg_keep   = 1,\n'
-                                                'gti_scale_beta  = 1,\n'
-                                                'gti_cut_sc_on   = 7,\n'
-                                                'gti_cut_sc_off  = 9,\n'
                                                 #'gti_lam_sch     = 1,\n'
                                                 #'gti_ele_sc      = 1,\n'
                                                 #'gti_vdw_sc      = 1,\n'
                                                 #'gti_cut_sc      = 2,\n'
-                                                'gti_ele_exp     = 2,\n'
-                                                'gti_vdw_exp     = 2,\n'
                                                 f'clambda         = {lambdas[i]:.5f},\n'
                                                 f'mbar_lambda     = {", ".join([f"{l:.5f}" for l in lambdas])},\n'
                                             )
@@ -2286,7 +2297,7 @@ EOF"""
                                         line = ',\n'.join(final_line)
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
-                                            inpcrd_file = f'fe/{win00_sim_folder_name}/full.inpcrd'
+                                            inpcrd_file = f'fe/{win_eq_sim_folder_name}/full.inpcrd'
                                             # read the second line of the inpcrd file
                                             with open(inpcrd_file, 'r') as infile:
                                                 lines = infile.readlines()
@@ -2350,10 +2361,7 @@ EOF"""
                 for g_name in groupfile_names:
                     if 'mdin.in' in g_name:
                         continue
-                    if component in COMPONENTS_DICT['dd']:
-                        n_sims = len(lambdas)
-                    else:
-                        n_sims = len(attach_rest)
+                    n_sims = len(self.component_windows_dict[component])
                     n_nodes = int(np.ceil(n_sims / 8))
                     if 'mini' in g_name:
                         # run with pmemd.mpi for minimization
@@ -2573,10 +2581,10 @@ EOF"""
             os.system(f'cp {self.output_dir}/system.pkl .')
         
             all_pose_folder = os.path.relpath(self.poses_folder, os.getcwd())
-            os.system(f'ln -s {all_pose_folder} .')
+            os.system(f'cp -r {all_pose_folder} .')
 
             ligandff_folder = os.path.relpath(self.ligandff_folder, os.getcwd())
-            os.system(f'ln -s {ligandff_folder} .')
+            os.system(f'cp -r {ligandff_folder} .')
 
             equil_folder = os.path.relpath(self.equil_folder, os.getcwd())
             os.system(f'ln -s {equil_folder} .')
@@ -2584,15 +2592,16 @@ EOF"""
             if only_equil:
                 logger.info(f'Copied equilibration files to {folder_name}')
                 return
+            
             # for fe, only copy necessary files
             os.makedirs('fe', exist_ok=True)
             # for fe, only copy necessary files
-            folder_names = ['build_files', 'ff', 'groupfiles']
+            folder_names = ['ff', 'groupfiles']
             for pose in self.sim_config.poses_def:
                 os.makedirs(f'fe/{pose}', exist_ok=True)
                 for folder_name in folder_names:
                     if os.path.exists(f'{self.fe_folder}/{pose}/{folder_name}'):
-                        os.system(f'ln -s {self.fe_folder}/{pose}/{folder_name} fe/{pose}/')
+                        os.system(f'cp -r {self.fe_folder}/{pose}/{folder_name} fe/{pose}/')
 
             sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
                     'equilibrated.rst7',
@@ -2602,9 +2611,25 @@ EOF"""
             for pose in tqdm(self.sim_config.poses_def, desc='Copying files'):
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
+
                     win_folder = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}'
                     os.makedirs(f'fe/{pose}/{comp_folder}', exist_ok=True)
-                    windows = self.sim_config.attach_rest if comp_folder == 'rest' else self.sim_config.lambdas
+                    
+                    os.system(f'cp -r {self.fe_folder}/{pose}/{comp_folder}/{comp}_build_files fe/{pose}/{comp_folder}/')
+                    os.system(f'cp -r {self.fe_folder}/{pose}/{comp_folder}/{comp}_amber_files fe/{pose}/{comp_folder}/')
+                    os.system(f'cp -r {self.fe_folder}/{pose}/{comp_folder}/{comp}_run_files fe/{pose}/{comp_folder}/')
+                    windows = self.component_windows_dict[comp]
+                    folder_name = f'{win_folder}-1'
+                    new_folder = f'fe/{pose}/{comp_folder}/{comp}-1'
+                    if os.path.exists(folder_name):
+                        os.makedirs(new_folder, exist_ok=True)
+                        files = os.listdir(folder_name)
+                        for file in files:
+                            os.system(f'cp {folder_name}/{file} {new_folder}')
+                    else:
+                        logger.warning(f'Folder {folder_name} does not exist.')
+
+
                     for i, window in enumerate(windows):
                         folder_name = f'{win_folder}{i:02d}'
                         new_folder = f'fe/{pose}/{comp_folder}/{comp}{i:02d}'
@@ -2613,7 +2638,7 @@ EOF"""
                         files = os.listdir(folder_name)
                         for file in files:
                             if file in sim_files:
-                                shutil.copy(f'{folder_name}/{file}', new_folder)
+                                os.system(f'cp {folder_name}/{file} {new_folder}')
                             # ignore rst7 files
                             elif file.endswith('.rst7'):
                                 continue
@@ -2626,9 +2651,61 @@ EOF"""
                             elif file == 'amber_files':
                                 continue
                             else:
-                                shutil.copy(f'{folder_name}/{file}', new_folder)
+                                #os.system(f'cp {folder_name}/{file} {new_folder}')
+                                continue
             logger.info(f'Copied system to {folder_name}')
 
+    def load_window_json(self, window_json):
+        """
+        Load the window json file and regenerate all the windows
+        
+        window_json : str
+            The path to the window json file.
+
+            The json file should includes lambda / restraint
+            values for components.
+            e.g. it can be in a format of `e` component:
+            {
+                'e': [0, 0.5, 1.0],
+            }
+        """
+        win_json = json.load(open(window_json, 'r'))
+        for comp, windows in win_json.items():
+            self.component_windows_dict[comp] = windows
+        self._prepare_fe_windows(
+            regenerate=True,
+        )
+
+        # create equilibrated.rst7
+        for pose in self.sim_config.poses_def:
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                eq_file = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}-1/eqnpt04.rst7'
+                for i, win in enumerate(self.component_windows_dict[comp]):
+                    win_folder = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{i:02d}'
+                    os.system(f'cp {eq_file} {win_folder}/equilibrated.rst7')
+                                    
+
+    @property
+    def component_windows_dict(self):
+        """
+        Get the component windows dictionary
+        """
+        if not hasattr(self, '_component_windows_dict'):
+            self._component_windows_dict = ComponentWindowsDict(self)
+
+        return self._component_windows_dict
+
+
+    @property
+    def n_workers(self):
+        """
+        Get the number of workers
+        """
+        if not hasattr(self, '_n_workers'):
+            self._n_workers = 8
+        return self._n_workers
+    
     @property
     def poses_folder(self):
         return f"{self.output_dir}/all-poses"
@@ -2727,3 +2804,32 @@ class RBFESystem(System):
                              "for the relative binding free energy calculation")
         logger.info(f'Reference ligand: {self.unique_ligand_paths[0]}')
 
+
+
+class ComponentWindowsDict(MutableMapping):
+    def __init__(self, system):
+        self._data = {}
+        self.system = system
+
+    def __getitem__(self, key):
+        if key in COMPONENTS_DICT['dd']:
+            return self._data.get(key, self.system.sim_config.lambdas)
+        elif key in COMPONENTS_DICT['rest']:
+            return self._data.get(key, self.system.sim_config.attach_rest)
+        else:
+            raise ValueError(f"Component {key} not in the system")
+    
+    def __setitem__(self, key, value):
+        if key in AVAILABLE_COMPONENTS:
+            self._data[key] = value
+        else:
+            raise ValueError(f"Component {key} not in the system")
+    
+    def __delitem__(self, key):
+        del self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)

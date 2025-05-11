@@ -3481,7 +3481,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -4227,7 +4227,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win]
         ntwx = self.sim_config.ntwx
 
@@ -4921,7 +4921,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -5614,7 +5614,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win]
 
         # Read 'disang.rest' and extract L1, L2, L3
