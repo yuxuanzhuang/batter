@@ -32,6 +32,12 @@ Runs equilibrium stage
   restraint_wt = 50.0,
   restraintmask = '',
   infe = 1,
+  mcwat = 1,
+  nmd = 1000,
+  nmc = 1000,
+  mcwatmask = ":_lig_name_",
+  mcligshift = 30,
+  mcresstr = "WAT",
  /
  &pmd
  output_file = 'cmass.txt'

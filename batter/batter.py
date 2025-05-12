@@ -663,7 +663,7 @@ class System:
             input_file: Union[str, Path, SimulationConfig],
             overwrite: bool = False,
             partition: str = 'rondror',
-            n_workers: int = 6,
+            n_workers: int = 12,
             win_info_dict: dict = None,
             ):
         """
@@ -1096,16 +1096,10 @@ class System:
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
                 n_sims = len(lambdas_comp)
                 logger.debug(f'Number of simulations: {n_sims}')
-                cv_paths = []
-                for i, _ in enumerate(lambdas_comp):
-                    cv_path = f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}{i:02d}/cv.in"
-                    cv_paths.append(cv_path)
-                if all(os.path.exists(cv_paths[i]) for i, _ in enumerate(lambdas_comp)) and not self.overwrite:
+                cv_path = f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}-1/cv.in"
+                if os.path.exists(cv_path) and not self.overwrite:
                     logger.info(f"Component {component} for pose {pose} already exists; add overwrite=True to re-build the component")
                     continue
-
-                # first build production EQ
-
                 fe_eq_builder = self.builders_factory.get_builder(
                     stage='fe',
                     win=-1,
@@ -2733,7 +2727,7 @@ EOF"""
         Get the number of workers
         """
         if not hasattr(self, '_n_workers'):
-            self._n_workers = 8
+            self._n_workers = 12
         return self._n_workers
     
     @property

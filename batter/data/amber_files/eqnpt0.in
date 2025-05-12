@@ -31,6 +31,12 @@ Equilibrate, NPT.
   restraint_wt = 50.0,
   restraintmask = '(@CA,C,N,O,P31 | :_lig_name_) & !@H=',
   infe = 0,
+  mcwat = 1,
+  nmd = 100,
+  nmc = 1000,
+  mcwatmask = ":_lig_name_",
+  mcligshift = 30,
+  mcresstr = "WAT",
  /
  &pmd
  output_file = 'cmass.txt'
