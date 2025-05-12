@@ -71,7 +71,6 @@ def run_in_batch(
             system.generate_frontier_files_nvt(remd=remd)
         run_lines.append(f'# {folder}')
         run_lines.append(f'cd {system.fe_folder}')
-        run_lines.append(f'source env.amber > /dev/null 2>&1')
         for pose in system.sim_config.poses_def:
             for comp in system.sim_config.components:
                 # check the status of the component
@@ -214,9 +213,12 @@ def run_in_batch(
         '#SBATCH -S 0',
         '#SBATCH --open-mode=append',
         '#SBATCH --dependency=singleton',
+        '#SBATCH --export=ALL',
         'source ~/env.amber > /dev/null 2>&1',
         'echo $AMBERHOME',
-        'if [ -z "${AMBERHOME}" ]; then echo "AMBERHOME is not set" && exit 0; fi'
+        'if [ -z "${AMBERHOME}" ]; then echo "AMBERHOME is not set" && exit 0; fi',
+        'export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7',
+        'echo "HIP_VISIBLE_DEVICES: $HIP_VISIBLE_DEVICES"',
     ]
 
     with open('run_in_batch.sbatch', 'w') as f:

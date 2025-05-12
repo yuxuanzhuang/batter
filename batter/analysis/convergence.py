@@ -46,16 +46,6 @@ class MBARValidator:
         
         self._data_list = df_list
         self._u_df = pd.concat(df_list)
-
-
-    def analysis(self):
-        """
-        Perform the analysis of the free energy calculations.
-        """
-        # Perform the analysis
-        mbar = MBAR()
-        mbar.fit(self.u_df)
-        self._mbar = mbar
     
     @property
     def mbar(self):
@@ -63,9 +53,10 @@ class MBARValidator:
         The MBAR object containing the results of the analysis.
         """
         if not hasattr(self, '_mbar'):
-            raise ValueError("The analysis method must be called before accessing the mbar property.")
+            mbar = MBAR()
+            mbar.fit(self.u_df)
+            self._mbar = mbar
         return self._mbar
-
 
     @property
     def u_df(self):
@@ -112,6 +103,7 @@ class MBARValidator:
         axes['B'].set_title('Overlap Matrix', fontsize=10)
         axes['C'].set_title('Block Convergence', fontsize=10)
 
+        plt.tight_layout()
         if title:
             plt.suptitle(title, y=1.05)
         if save_path:
