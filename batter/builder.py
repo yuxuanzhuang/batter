@@ -581,7 +581,7 @@ class SystemBuilder(ABC):
 
         run_with_log('pdb4amber -i build.pdb -o build_amber.pdb -y')
 
-        renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
+        renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                                  header=None, names=['old_resname',
                                                      'old_chain',
                                                      'old_resid',
@@ -961,7 +961,7 @@ class EquilibrationBuilder(SystemBuilder):
 
         renum_data = pd.read_csv(
             renum_txt,
-            sep='\s+',
+            sep=r'\s+',
             header=None,
             names=['old_resname', 'old_chain', 'old_resid',
                    'new_resname', 'new_resid'])
@@ -1144,7 +1144,7 @@ class EquilibrationBuilder(SystemBuilder):
 
             renum_data = pd.read_csv(
                 renum_txt,
-                sep='\s+',
+                sep=r'\s+',
                 header=None,
                 names=['old_resname', 'old_chain', 'old_resid',
                        'new_resname', 'new_resid'])
@@ -1533,7 +1533,7 @@ class EquilibrationBuilder(SystemBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps1)).replace('disang_file', 'disang%02d' % int(i)))
 
-        with open(f'../{self.run_files_folder}/local-{stage}.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/local-equil.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('RANGE', str(rng)))
@@ -1670,7 +1670,7 @@ class FreeEnergyBuilder(SystemBuilder):
         self.mol = mol
 
         run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
-        renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
+        renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
                                     'old_resid',
@@ -1807,7 +1807,7 @@ class FreeEnergyBuilder(SystemBuilder):
             
             renum_data = pd.read_csv(
                     renum_txt,
-                    sep='\s+',
+                    sep=r'\s+',
                     header=None,
                     names=['old_resname', 'old_resid',
                         'new_resname', 'new_resid'])
@@ -3414,38 +3414,51 @@ class FreeEnergyBuilder(SystemBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-rest', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(round(steps1/2))).replace('disang_file', 'disang'))
-                        else:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace('disang_file', 'disang'))
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
         elif (comp == 'r' or comp == 'c'):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-lig', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(round(steps1/2))).replace('disang_file', 'disang'))
-                        else:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace('disang_file', 'disang'))
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                        '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
+
         else:  # n
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-sim', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(round(steps1/2))).replace('disang_file', 'disang'))
-                        else:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace('disang_file', 'disang'))
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                            '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
 
         with open(f'../{self.run_files_folder}/local-lig.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
@@ -3481,8 +3494,9 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.win
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
+
 
         # Read 'disang.rest' and extract L1, L2, L3
         with open('disang.rest', 'r') as f:
@@ -3516,16 +3530,20 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-lj', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            if i == 1 or i == 0:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
-                                        round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                            else:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            for line in fin:
+                                if i == 0:
+                                    if 'ntx = 5' in line:
+                                        line = 'ntx = 1, \n'
+                                    elif 'irest' in line:
+                                        line = 'irest = 0, \n'
+                                    elif 'restraintmask' in line:
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                    '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
-                    mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                    mdin.write(f'  mbar_states = {len(lambdas)}\n')
                     mdin.write('  mbar_lambda = ')
                     for i in range(0, len(lambdas)):
                         mdin.write(' %6.5f,' % (lambdas[i]))
@@ -3574,14 +3592,18 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            if i == 1 or i == 0:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
-                            else:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            for line in fin:
+                                if i == 0:
+                                    if 'ntx = 5' in line:
+                                        line = 'ntx = 1, \n'
+                                    elif 'irest' in line:
+                                        line = 'irest = 0, \n'
+                                    elif 'restraintmask' in line:
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                    '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
                     mdin.write('  mbar_lambda = ')
@@ -3641,13 +3663,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-ch', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            if i == 1 or i == 0:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(round(steps1/2))).replace(
-                                        'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
-                            else:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace(
+                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            for line in fin:
+                                if i == 0:
+                                    if 'ntx = 5' in line:
+                                        line = 'ntx = 1, \n'
+                                    elif 'irest' in line:
+                                        line = 'irest = 0, \n'
+                                    elif 'restraintmask' in line:
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace(
                                         'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -3700,14 +3726,18 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-ch-dd', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            if i == 1 or i == 0:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
-                                        round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                            else:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            for line in fin:
+                                if i == 0:
+                                    if 'ntx = 5' in line:
+                                        line = 'ntx = 1, \n'
+                                    elif 'irest' in line:
+                                        line = 'irest = 0, \n'
+                                    elif 'restraintmask' in line:
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                    '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
                     mdin.write('  mbar_lambda = ')
@@ -3760,16 +3790,18 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-ch-dd', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                if not 'restraint' in line and not 'ntr = 1' in line and not 'ntwprt' in line and not 'infe' in line:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
-                                        round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                        else:
-                            for line in fin:
-                                if not 'restraint' in line and not 'ntr = 1' in line and not 'ntwprt' in line and not 'infe' in line:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
                 mdin.write('  mbar_lambda = ')
@@ -3815,16 +3847,18 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 mk1 = '1'
                 with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                if not 'restraint' in line and not 'ntr = 1' in line and not 'ntwprt' in line:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
-                        else:
-                            for line in fin:
-                                if not 'restraint' in line and not 'ntr = 1' in line and not 'ntwprt' in line:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
                 mdin.write('  mbar_lambda = ')
@@ -3876,14 +3910,18 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            if i == 1 or i == 0:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
-                                        round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                            else:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            for line in fin:
+                                if i == 0:
+                                    if 'ntx = 5' in line:
+                                        line = 'ntx = 1, \n'
+                                    elif 'irest' in line:
+                                        line = 'irest = 0, \n'
+                                    elif 'restraintmask' in line:
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                    '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
                     mdin.write('  mbar_lambda = ')
@@ -3929,14 +3967,18 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            if i == 1 or i == 0:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
-                            else:
-                                for line in fin:
-                                    fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                        '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            for line in fin:
+                                if i == 0:
+                                    if 'ntx = 5' in line:
+                                        line = 'ntx = 1, \n'
+                                    elif 'irest' in line:
+                                        line = 'irest = 0, \n'
+                                    elif 'restraintmask' in line:
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                        '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
                     mdin.write('  mbar_lambda = ')
@@ -4140,7 +4182,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
             
             renum_data = pd.read_csv(
                     renum_txt,
-                    sep='\s+',
+                    sep=r'\s+',
                     header=None,
                     names=['old_resname', 'old_resid',
                         'new_resname', 'new_resid'])
@@ -4226,8 +4268,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         steps2 = self.sim_config.dic_steps2[comp]
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
-        
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
         ntwx = self.sim_config.ntwx
 
@@ -4259,14 +4300,18 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         for i in range(0, num_sim+1):
             with open(f'../{self.amber_files_folder}/mdin-ex', "rt") as fin:
                 with open("./mdin-%02d" % int(i), "wt") as fout:
-                    if i == 1 or i == 0:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(round(steps1/2))).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
-                    else:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
+                    n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                    for line in fin:
+                        if i == 0:
+                            if 'ntx = 5' in line:
+                                line = 'ntx = 1, \n'
+                            elif 'irest' in line:
+                                line = 'irest = 0, \n'
+                            elif 'restraintmask' in line:
+                                restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                        fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
             mdin = open("./mdin-%02d" % int(i), 'a')
             mdin.write('  mbar_states = %02d\n' % len(lambdas))
             mdin.write('  mbar_lambda = ')
@@ -4388,7 +4433,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         self.mol = mol
 
         run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
-        renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
+        renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
                                     'old_resid',
@@ -4526,7 +4571,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
             
             renum_data = pd.read_csv(
                     renum_txt,
-                    sep='\s+',
+                    sep=r'\s+',
                     header=None,
                     names=['old_resname', 'old_resid',
                         'new_resname', 'new_resid'])
@@ -4921,7 +4966,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -4955,14 +5000,18 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
-                                    round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                        else:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                    '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
                 mdin.write('  mbar_lambda = ')
@@ -5078,7 +5127,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         self.mol = mol
 
         run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
-        renum_data = pd.read_csv('build_amber_renum.txt', sep='\s+',
+        renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
                                     'old_resid',
@@ -5216,7 +5265,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
             
             renum_data = pd.read_csv(
                     renum_txt,
-                    sep='\s+',
+                    sep=r'\s+',
                     header=None,
                     names=['old_resname', 'old_resid',
                         'new_resname', 'new_resid'])
@@ -5469,7 +5518,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
 
         build_file.write('TER\n')
 
-
         for i in range(0, lig_atom):
             build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
                                 ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid + 1)))
@@ -5478,7 +5526,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
 
             build_file.write('%6.2f%6.2f\n' % (0, 0))
         build_file.write('TER\n')
-
 
         # Positions of the other atoms
         for i in range(0, oth_atom):
@@ -5614,7 +5661,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
+        lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -5648,14 +5695,18 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        if i == 1 or i == 0:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(
-                                    round(steps1/2))).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                        else:
-                            for line in fin:
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                    '_num-steps_', str(steps2)).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
                 mdin.write('  mbar_lambda = ')

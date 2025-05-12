@@ -9,7 +9,7 @@ Production runs ligand only
   ntpr = _ntpr_,
   ntwr = _ntwr_,
   ntwe = _ntwe_,
-  ntxo = 1,
+  ntxo = 2,
   ntwx = _ntwx_,
   ntwprt = _num-atoms_,
   ioutfm = 1,

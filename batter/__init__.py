@@ -13,6 +13,6 @@ import sys
 
 logger.remove()
 
-logger_format = ('{level} | {message}')
+logger_format = ('{level} | <level>{message}</level> ')
 # format time to be human readable
 logger.add(sys.stderr, format=logger_format, level="INFO")
