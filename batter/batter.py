@@ -1531,6 +1531,7 @@ class System:
         load=True,
         check_finished: bool = True,
         sim_range: Tuple[int, int] = None,
+        convergence: bool = False,
         ):
         """
         Analyze the simulation results.
@@ -1552,6 +1553,8 @@ class System:
             For simulations run on Frontier, due to the time constraints,
             the simulations are run into multiple parts.
             Default is None, which will analyze all the simulations.
+        convergence : bool, optional
+            Whether to check the convergence of the free energy results.
         """
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -1569,7 +1572,7 @@ class System:
         components = self.sim_config.components
         temperature = self.sim_config.temperature
         attach_rest = self.sim_config.attach_rest
-        lambdas = self.sim_config.lambdas
+        lambdas = self.component_windows_dict['e']
         weights = self.sim_config.weights
         dec_int = self.sim_config.dec_int
         dec_method = self.sim_config.dec_method
@@ -1590,12 +1593,7 @@ class System:
                 if os.path.exists(f'{self.fe_folder}/{pose}/Results'):
                     shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
                 os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
-                if False:
-                    try:
-                        fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
-                                        weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range)
-                    except:
-                        fe_value = np.nan
+
                 fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose,
                                                       attach_rest,
                                                       lambdas,
@@ -1609,10 +1607,18 @@ class System:
                     self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
 
                     continue
+
+                self.fe_results[pose] = FEResult('Results/Results.dat')
+                os.chdir('../../')
+                # generate aligned pdbs
+                # TODO
                 
-                # validate
+        if convergence:
+            validators_all = []
+            poses_all = []
+            comps_all = []
+            for pose in poses_def:
                 for i, comp in enumerate(components):
-                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
                     Upot = np.load(f"{folder_comp}/data/Upot_{comp}_all.npy")
@@ -1621,17 +1627,19 @@ class System:
                         lambdas=windows,
                         temperature=temperature,
                     )
-                    try:
-                        validator.plot_convergence(save_path=f"{self.fe_folder}/{pose}/Results/convergence_{pose}_{comp}.png",
-                                               title=f'Convergence of {pose} {comp}')
-                    except:
-                        logger.warning(f'Convergence failed for {pose} {comp}')
-                        continue
+                    validators_all.append(validator)
+                    poses_all.append(pose)
+                    comps_all.append(comp)
+                
+            with tqdm_joblib(tqdm(validators_all, desc='Convergence analysis on FE results',
+                                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
+                Parallel(n_jobs=self.n_workers, backend='loky')(
+                    delayed(validator.plot_convergence)(
+                        save_path=f"{self.fe_folder}/{pose}/Results/convergence_{pose}_{comp}.png",
+                        title=f'Convergence of {pose} {comp}'
+                    ) for validator, pose, comp in zip(validators_all, poses_all, comps_all)
+                )
 
-                self.fe_results[pose] = FEResult('Results/Results.dat')
-                os.chdir('../../')
-                # generate aligned pdbs
-                # TODO
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
@@ -2205,8 +2213,10 @@ EOF"""
                             inpcrd = f'{win_eq_sim_folder_name}/full.inpcrd'
                             mdinput = f'{sim_folder_name}/{stage.split("_")[0]}'
                             # Read and modify the MD input file to update the relative path
-                            if stage in ['mdin.in', 'mdin.in.extend']:
+                            if stage == 'mdin.in':
                                 mdinput = mdinput.replace(stage, 'mdin-00')
+                            if stage == 'mdin.in.extend':
+                                mdinput = mdinput.replace(stage, 'mdin-01')
                             with open(f'fe/{mdinput}', 'r') as infile:
                                 input_lines = infile.readlines()
 
@@ -2233,7 +2243,6 @@ EOF"""
                                                 #'scalpha = 0.5,\n'
                                                 #'scbeta = 1.0,\n'
                                                 'gti_add_sc      = 25,\n'
-                                                'gti_chg_keep   = 1,\n'
                                                 #'gti_lam_sch     = 1,\n'
                                                 #'gti_ele_sc      = 1,\n'
                                                 #'gti_vdw_sc      = 1,\n'
@@ -2241,11 +2250,15 @@ EOF"""
                                                 f'clambda         = {lambdas[i]:.5f},\n'
                                                 f'mbar_lambda     = {", ".join([f"{l:.5f}" for l in lambdas])},\n'
                                             )
+                                            if component == 'e':
+                                                outfile.write('gti_chg_keep   = 1,\n')
+                                            elif component == 'v':
+                                                outfile.write('gti_chg_keep   = 0,\n')
                                             if stage == 'mini.in':
                                                 outfile.write('ntwr = 50,\n')
                                             if remd and stage != 'mini.in':
                                                 outfile.write(
-                                                    '  numexchg = 3000,\n'
+                                                    'numexchg = 3000,\n'
                                                 )
                                                 outfile.write(
                                                     'bar_intervall = 100,\n'
@@ -2289,8 +2302,10 @@ EOF"""
                                         if stage == 'mdin.in.extend':
                                             line = f"restraintmask = '{restraint_mask}'\n"
                                             #line = f"restraintmask = '@CA | {restraint_mask}' \n"
-                                        else:
+                                        elif stage == 'mdin.in':
                                             line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                        else:
+                                            line = f"restraintmask = '@CA | {restraint_mask}' \n"
                                     if 'ntp' in line:
                                         # nvt simulation
                                         line = '  ntp = 0,\n'
@@ -2635,7 +2650,7 @@ EOF"""
 
             sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
                     'equilibrated.rst7',
-                    'mini.in', 'mdin-00', 'SLURMM-run', 'run-local.bash',
+                    'mini.in', 'mdin-00', 'mdin-01', 'SLURMM-run', 'run-local.bash',
                     'cv.in', 'disang.rest', 'restraints.in']
 
             for pose in tqdm(self.sim_config.poses_def, desc='Copying files'):

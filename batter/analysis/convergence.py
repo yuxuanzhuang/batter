@@ -89,29 +89,32 @@ class MBARValidator:
         _ = plot_block_average(df, ax=ax, **kwargs)
 
     def plot_convergence(self, save_path=None, title=None):
-        fig, axes = plt.subplot_mosaic(
-            [["A", "A", "B"], ["C", "C", "C"]], figsize=(15, 10)
-        )
-        self.plot_time_convergence(ax=axes['A'],
-                                   units='kcal/mol',
-                                   final_error=0.6)
-        self.plot_overlap_matrix(ax=axes['B'])
-        self.plot_block_convergence(ax=axes['C'],
+        try:
+            fig, axes = plt.subplot_mosaic(
+                [["A", "A", "B"], ["C", "C", "C"]], figsize=(15, 10)
+            )
+            self.plot_time_convergence(ax=axes['A'],
                                     units='kcal/mol',
                                     final_error=0.6)
-        axes['A'].set_title('Time Convergence', fontsize=10)
-        axes['B'].set_title('Overlap Matrix', fontsize=10)
-        axes['C'].set_title('Block Convergence', fontsize=10)
+            self.plot_overlap_matrix(ax=axes['B'])
+            self.plot_block_convergence(ax=axes['C'],
+                                        units='kcal/mol',
+                                        final_error=0.6)
+            axes['A'].set_title('Time Convergence', fontsize=10)
+            axes['B'].set_title('Overlap Matrix', fontsize=10)
+            axes['C'].set_title('Block Convergence', fontsize=10)
 
-        plt.tight_layout()
-        if title:
-            plt.suptitle(title, y=1.05)
-        if save_path:
-            fig.savefig(save_path)
-            plt.close(fig)
-        else:
-            plt.show()
-            plt.close(fig)
+            plt.tight_layout()
+            if title:
+                plt.suptitle(title, y=1.05)
+            if save_path:
+                fig.savefig(save_path)
+                plt.close(fig)
+            else:
+                plt.show()
+                plt.close(fig)
+        except Exception as e:
+            logger.error(f"Error in plotting convergence: {e}")
 
     def write_results(self, save_path=None):
         """

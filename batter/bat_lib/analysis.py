@@ -572,7 +572,7 @@ def generate_analytical_rest(comp, rest, temperature):
 
 @fail_report_wrapper
 def generate_results_rest(comp, win, blocks, working_dir, sim_range,
-                          top='vac'):
+                          top='full'):
     os.chdir(working_dir)
     os.chdir('rest')
     data = []
@@ -618,9 +618,7 @@ def generate_results_rest(comp, win, blocks, working_dir, sim_range,
     line_index = lines.index([line for line in lines if 'parm' in line][0])
     # replace 'vac.prmtop' with '{top}.prmtop'
     lines[line_index] = lines[line_index].replace('vac.prmtop',
-                                                  f'../{comp}00/{top}.prmtop')
-    lines[line_index] = lines[line_index].replace('full.prmtop',
-                                                  f'../{comp}00/{top}.prmtop')
+                                                  f'../{comp}-1/{top}.prmtop')
     with open('restraints_curr.in', 'w') as f:
         # Write lines up to and including the target line
         f.writelines(lines[:line_index + 1])
