@@ -335,13 +335,15 @@ class System:
         
         self.unique_mol_names = []
         from batter.ligand_process import LigandFactory
+        mols = []
         for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
             logger.debug(f'Processing ligand {ind}: {ligand_path}')
+            # first if self.mols is not empty, then use it as the ligand name
             try:
-                ligand_name = self._ligand_names[ind-1]
+                ligand_name = self.mols[ind-1]
             except:
                 try:
-                    ligand_name = self.mols[ind-1]
+                    ligand_name = self._ligand_names[ind-1]
                 except:
                     ligand_name = None
             self._ligand_path = ligand_path
@@ -354,10 +356,11 @@ class System:
                     retain_lig_prot=self.retain_lig_prot,
                     ligand_ff=self.ligand_ff) 
             ligand.generate_unique_name(self.unique_mol_names)
-            self.mols.append(ligand.name)
+            mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
                 ligand.prepare_ligand_parameters()
+        self.mols = mols
             
         self._prepare_ligand_poses()
 
@@ -878,7 +881,7 @@ class System:
                             if not slurm_job.is_still_running():
                                 slurm_job.submit(
                                     other_env={
-                                        'INPCRD': 'equilbrated.rst7'
+                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
                                 )
                                 n_jobs_submitted += 1
@@ -887,7 +890,7 @@ class System:
                                 slurm_job.cancel()
                                 slurm_job.submit(overwrite=True,
                                     other_env={
-                                        'INPCRD': 'equilbrated.rst7'
+                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
                                 )
                                 n_jobs_submitted += 1
@@ -907,7 +910,7 @@ class System:
                                         jobname=f'fep_{folder_2_check}_fe')
                         slurm_job.submit(overwrite=overwrite,
                                     other_env={
-                                            'INPCRD': 'equilbrated.rst7'
+                                            'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                         }
                         )
                         n_jobs_submitted += 1
@@ -1929,7 +1932,10 @@ EOF"""
                 for j in range(0, len(windows)):
                     if os.path.exists(f'{folder_comp}/{comp}{j:02d}/equilibrated.rst7'):
                         continue
-                    os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/equilibrated.rst7')
+                    #os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/equilibrated.rst7')
+                    # get relative path of eq_rst7
+                    eq_rst7_rel = os.path.relpath(eq_rst7, start=f'{folder_comp}/{comp}{j:02d}')
+                    os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/equilibrated.rst7')
         if only_fe_preparation:
             logger.info('only_fe_preparation is set to True. '
                         'Skipping the free energy calculation.')

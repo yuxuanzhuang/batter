@@ -108,7 +108,6 @@ class LigandProcessing(ABC):
         self.ligand_object = ligand
         self.openff_molecule = ligand.to_openff()
         self._calculate_partial_charge()
-        self.openff_molecule.to_file(self.ligand_sdf_path, file_format='sdf')
 
     def generate_unique_name(self, exist_mol_names=[]):
         self._get_mol_name()
@@ -117,6 +116,7 @@ class LigandProcessing(ABC):
             self.index,
             exist_mol_names)
         logger.info(f'Ligand {self.index}: {self.name}')
+        self.openff_molecule.to_file(self.ligand_sdf_path, file_format='sdf')
     
     @abstractmethod
     def _load_ligand(self):

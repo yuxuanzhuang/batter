@@ -586,6 +586,9 @@ class SystemBuilder(ABC):
                                                      'old_chain',
                                                      'old_resid',
                                                      'new_resname', 'new_resid'])
+        # convert all histidine to HIS
+        renum_data['old_resname'] = renum_data['old_resname'].replace(
+            ['HIS', 'HIE', 'HIP', 'HID'], 'HIS')
         revised_resids = []
         resid_counter = 1
         prev_resid = 0
@@ -660,6 +663,9 @@ class SystemBuilder(ABC):
         for residue in u.select_atoms('protein').residues:
             resid_str = residue.resid
             resid_resname = residue.resname
+            if resid_resname in ['HIS', 'HIE', 'HIP', 'HID']:
+                # rename it to HIS
+                resid_resname = 'HIS'
             residue.atoms.chainIDs = renum_data.query(
                     f'old_resid == @resid_str').query(
                         f'old_resname == @resid_resname').old_chain.values[0]
@@ -1509,6 +1515,11 @@ class EquilibrationBuilder(SystemBuilder):
                     fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
                         '_L3_', L3).replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
+        with open(f"{self.amber_files_folder}/eqnvt.in", "rt") as fin:
+            with open("./eqnvt.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         with open(f"{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
@@ -1527,11 +1538,13 @@ class EquilibrationBuilder(SystemBuilder):
                     if i == (num_sim-1):
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps2)).replace('disang_file', 'disang%02d' % int(i)))
+                                '_num-atoms_', str(vac_atoms)).replace(
+                            '_lig_name_', mol).replace('_num-steps_', str(steps2)).replace('disang_file', 'disang%02d' % int(i)))
                     else:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_num-atoms_', str(vac_atoms)).replace('_num-steps_', str(steps1)).replace('disang_file', 'disang%02d' % int(i)))
+                                '_num-atoms_', str(vac_atoms)).replace(
+                            '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', 'disang%02d' % int(i)))
 
         with open(f'../{self.run_files_folder}/local-equil.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
