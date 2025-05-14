@@ -41,7 +41,11 @@ if [[ $overwrite -eq 0 && -f eqnpt_pre.rst7 ]]; then
     echo "Skipping minimization steps."
 else
     # Minimization
-    pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
+    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD  "$log_file" 2>&1
+    else
+        pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
+    fi
     check_sim_failure "Minimization"
 fi
 
@@ -50,8 +54,13 @@ if [[ $only_eq -eq 1 ]]; then
         echo "Skipping equilibration steps."
     else
         # Equilibration with protein and lipid restrained
-        pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref mini.rst7 > "$log_file" 2>&1
-        check_sim_failure "Pre Equilibration"
+        # this is to equilibrate the density of water
+        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+            mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 > "$log_file" 2>&1
+        else
+            pmemd -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 > "$log_file" 2>&1
+        fi
+        check_sim_failure "Pre equilibration"
 
         # Equilibration with COM restrained
         pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 > "$log_file" 2>&1

@@ -27,6 +27,10 @@ check_sim_failure() {
         echo "$stage Simulation failed."
         cat $log_file
         exit 1
+    elif grep -q "Calculation halted" "$log_file"; then
+        echo "$stage Simulation failed."
+        cat $log_file
+        exit 1
     else
         echo "$stage complete at $(date)"
     fi
@@ -37,7 +41,7 @@ if [[ $overwrite -eq 0 && -f eqnpt_pre.rst7 ]]; then
 else
     # Minimization
     if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD -nt $SLURM_JOB_CPUS_PER_NODE > "$log_file" 2>&1
+        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
     else
         pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD > "$log_file" 2>&1
     fi
@@ -47,18 +51,21 @@ fi
 if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
     echo "Skipping equilibration steps."
 else
-    # Heating steps
-    # pmemd.cuda -O -i therm1.in -p $PRMTOP -c mini.rst7 -o therm1.out -r therm1.rst7 -x therm1.nc -ref $INPCRD > "$log_file" 2>&1
-    # check_sim_failure "Heating 1"
-    # pmemd.cuda -O -i therm2.in -p $PRMTOP -c therm1.rst7 -o therm2.out -r therm2.rst7 -x therm2.nc -ref therm1.rst7 > "$log_file" 2>&1
-    # check_sim_failure "Heating 2"
+    # Equilbration with gradually-incrase lambda of the ligand
+    # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
+    pmemd.cuda -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD > "$log_file" 2>&1
+    check_sim_failure "NVT"
 
-    # Equilibration with protein restrained
-    # pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c therm2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref therm2.rst7 > "$log_file" 2>&1
-    pmemd.cuda -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x traj_pre.nc -ref mini.rst7 > "$log_file" 2>&1
+    # Equilibration with protein and ligand restrained
+    # this is to equilibrate the density of water
+    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 > "$log_file" 2>&1
+    else
+        pmemd -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 > "$log_file" 2>&1
+    fi
     check_sim_failure "Pre equilibration"
 
-    # Equilibration with COM restrained
+    # Equilibration with C-alpha restrained
     pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 > "$log_file" 2>&1
     check_sim_failure "Equilibration stage 0"
     for step in {1..4}; do

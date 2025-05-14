@@ -19,7 +19,7 @@ Minimizing.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '(@CA,C,N,O,P31 | :_lig_name_ | :1-2) & !@H=',
+  restraintmask = '(@CA,C,N,P31 | :_lig_name_ | :1-2) & !@H=',
   icfe = 1, clambda = lbd_val,
   logdvdl = 0,
   timask1 = ':mk1,mk4', timask2 = ':mk2,mk3',
