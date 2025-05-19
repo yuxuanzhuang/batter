@@ -31,7 +31,8 @@ from batter.utils import (
     log_info,
     COMPONENTS_LAMBDA_DICT,
     COMPONENTS_FOLDER_DICT,
-    COMPONENTS_DICT
+    COMPONENTS_DICT,
+    builder_fail_report,
 )
 
 
@@ -91,6 +92,7 @@ class SystemBuilder(ABC):
     def amber_files_folder(self):
         return f'{self.comp}_amber_files'
 
+    @builder_fail_report
     def build(self):
     
         with self._change_dir(self.working_dir):
@@ -114,7 +116,8 @@ class SystemBuilder(ABC):
 
                         self.mol = mda.Universe(f'{self.build_file_folder}/{self.pose}.pdb').residues[0].resname
                         self._create_amber_files()
-                        self._create_run_files()
+                        if self.win == -1:
+                            self._create_run_files()
                     self.mol = mda.Universe(f'{self.build_file_folder}/{self.pose}.pdb').residues[0].resname 
                     os.makedirs(self.window_folder, exist_ok=True)
                     with self._change_dir(self.window_folder):
@@ -813,6 +816,20 @@ class SystemBuilder(ABC):
                 sys.exit(1)
         f.close()
 
+        # regenerate full.pdb resid indices
+        u = mda.Universe('full.pdb')
+        renum_txt = 'build_files/protein_renum.txt'
+
+        renum_data = pd.read_csv(
+            renum_txt,
+            sep=r'\s+',
+            header=None,
+            names=['old_resname', 'old_chain', 'old_resid',
+                    'new_resname', 'new_resid'])
+
+        u.select_atoms('protein').residues.resids = renum_data['old_resid'].values
+        u.atoms.write('full.pdb')
+
         # Apply hydrogen mass repartitioning
         #shutil.copy(f'{self.amber_files_folder}/parmed-hmr.in', './')
         os.system(f'cp {self.amber_files_folder}/parmed-hmr.in ./')
@@ -1013,7 +1030,7 @@ class EquilibrationBuilder(SystemBuilder):
                     .query('old_chain == @protein_chain')
                     )
         if h1_entry.empty or h2_entry.empty or h3_entry.empty:
-            logger.warning('Receptor is not set as chain A; '
+            logger.debug('Receptor is not set as chain A; '
                            'trying to fetch the first residue '
                            'from the protein and it may be wrong.')
             h1_entry = (renum_data
@@ -1043,8 +1060,8 @@ class EquilibrationBuilder(SystemBuilder):
         P2 = f':{p2_resid}@{h2_atom}'
         P3 = f':{p3_resid}@{h3_atom}'
 
-        logger.info(f'Receptor anchors: P1: {P1}; P2: {P2}; P3: {P3}')
-        logger.info(f'Note this is not the same residue number from the receptor file '
+        logger.debug(f'Receptor anchors: P1: {P1}; P2: {P2}; P3: {P3}')
+        logger.debug(f'Note this is not the same residue number from the receptor file '
                     'because the residues were renumbered from 1.')
         self.P1 = P1
         self.P2 = P2
@@ -1195,33 +1212,7 @@ class EquilibrationBuilder(SystemBuilder):
 
     @log_info
     def _create_run_files(self):
-        hmr = self.sim_config.hmr
-
-        # Copy folder for running simulations
-        if not os.path.exists(self.run_files_folder):
-            shutil.copytree(
-                run_files_orig,
-                f'../{self.run_files_folder}', dirs_exist_ok=True)
-        if hmr == 'no':
-            replacement = 'full.prmtop'
-            for dname, dirs, files in os.walk(f'../{self.run_files_folder}'):
-                for fname in files:
-                    fpath = os.path.join(dname, fname)
-                    with open(fpath) as f:
-                        s = f.read()
-                        s = s.replace('full.hmr.prmtop', replacement)
-                    with open(fpath, "w") as f:
-                        f.write(s)
-        elif hmr == 'yes':
-            replacement = 'full.hmr.prmtop'
-            for dname, dirs, files in os.walk(f'../{self.run_files_folder}'):
-                for fname in files:
-                    fpath = os.path.join(dname, fname)
-                    with open(fpath) as f:
-                        s = f.read()
-                        s = s.replace('full.prmtop', replacement)
-                    with open(fpath, "w") as f:
-                        f.write(s)
+        pass
 
     @log_info
     def _create_simulation_dir(self):
@@ -1360,7 +1351,7 @@ class EquilibrationBuilder(SystemBuilder):
             L2 = ":"+lig_resid+"@"+splitdata[1]
             L3 = ":"+lig_resid+"@"+splitdata[2]
 
-        logger.info(f'Ligand anchors: L1: {L1}; L2: {L2}; L3: {L3}')
+        logger.debug(f'Ligand anchors: L1: {L1}; L2: {L2}; L3: {L3}')
 
         # Write the new pdb file
         build_file = open('build.pdb', 'w')
@@ -3436,7 +3427,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
         elif (comp == 'r' or comp == 'c'):
@@ -3452,7 +3443,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                         '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
 
@@ -3469,7 +3460,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                             '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
 
@@ -3552,7 +3543,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                        line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
@@ -3614,7 +3605,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                        line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
@@ -3685,7 +3676,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                        line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace(
                                         'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
@@ -3748,7 +3739,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                        line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
@@ -3812,7 +3803,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
@@ -3869,7 +3860,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
@@ -3932,7 +3923,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                        line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
@@ -3989,7 +3980,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                        line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace(
                                         '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
                     mdin = open("./mdin-%02d" % int(i), 'a')
@@ -4322,7 +4313,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                 line = 'irest = 0, \n'
                             elif 'restraintmask' in line:
                                 restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                         fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                             '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
             mdin = open("./mdin-%02d" % int(i), 'a')
@@ -5022,7 +5013,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
@@ -5717,7 +5708,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                    line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')

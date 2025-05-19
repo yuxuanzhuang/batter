@@ -107,8 +107,7 @@ class LigandProcessing(ABC):
 
         self.ligand_object = ligand
         self.openff_molecule = ligand.to_openff()
-        self._calculate_partial_charge()
-
+ 
     def generate_unique_name(self, exist_mol_names=[]):
         self._get_mol_name()
         self._name = _convert_mol_name_to_unique(
@@ -160,6 +159,7 @@ class LigandProcessing(ABC):
     def prepare_ligand_parameters(self):
         mol = self.name
         logger.debug(f'Preparing ligand {mol} parameters')
+        self._calculate_partial_charge()
         abspath_sdf = os.path.abspath(self.ligand_sdf_path)
         antechamber_command = f'{antechamber} -i {abspath_sdf} -fi sdf -o {self.output_dir}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol} -dr no'
 

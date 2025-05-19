@@ -58,6 +58,8 @@ from batter.utils.slurm_job import SLURMJob
 from batter.analysis.convergence import ConvergenceValidator, MBARValidator
 from batter.analysis.sim_validation import SimValidator
 from batter.data import frontier_files
+from batter.data import run_files as run_files_orig
+
 
 from MDAnalysis.analysis import rms, align
 
@@ -336,6 +338,7 @@ class System:
         self.unique_mol_names = []
         from batter.ligand_process import LigandFactory
         mols = []
+        new_ligand_paths = []
         for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
             logger.debug(f'Processing ligand {ind}: {ligand_path}')
             # first if self.mols is not empty, then use it as the ligand name
@@ -360,6 +363,9 @@ class System:
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
                 ligand.prepare_ligand_parameters()
+            new_ligand_paths.append(self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb'))
+        self._ligand_paths = new_ligand_paths
+        logger.debug(f'Ligand paths: {self._ligand_paths}')
         self.mols = mols
             
         self._prepare_ligand_poses()
@@ -568,16 +574,17 @@ class System:
             u.atoms.residues.segments = lig_seg
             u.atoms.residues.resnames = mol_name
             
+            logger.debug(f"Processing ligand {i}: {pose}")
             self._align_2_system(u.atoms)
             u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
             pose = f"{self.poses_folder}/pose{i}.pdb"
 
-            if not self.retain_lig_prot:
-                noh_path = f"{self.poses_folder}/pose{i}_noh.pdb"
-                run_with_log(f"{obabel} -i pdb {pose} -o pdb -O {noh_path} -d")
+            #if not self.retain_lig_prot:
+            #    noh_path = f"{self.poses_folder}/pose{i}_noh.pdb"
+            #    run_with_log(f"{obabel} -i pdb {pose} -o pdb -O {noh_path} -d")
 
-                # Add hydrogens based on the specified pH
-                run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {pose} -p {self.ligand_ph:.2f}")
+            #    # Add hydrogens based on the specified pH
+            #    run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {pose} -p {self.ligand_ph:.2f}")
 
             if not os.path.exists(f"{self.poses_folder}/pose{i}.pdb"):
                 shutil.copy(pose, f"{self.poses_folder}/pose{i}.pdb")
@@ -631,7 +638,7 @@ class System:
             sim_config = input_file
         else:
             raise ValueError(f"Invalid input_file: {input_file}")
-        logger.info(f'Simulation configuration: {sim_config}')
+        logger.debug(f'Simulation configuration: {sim_config}')
         if sim_config.lipid_ff != self.lipid_ff:
             logger.warning(f"Different lipid_ff in the input: {sim_config.lipid_ff}\n"
                              f"System is prepared with {self.lipid_ff}")
@@ -668,6 +675,10 @@ class System:
             partition: str = 'rondror',
             n_workers: int = 12,
             win_info_dict: dict = None,
+            avg_struc: str = None,
+            rmsf_file: str = None,
+            extra_restraints: str = None,
+            extra_restraints_fc: float = 10,
             ):
         """
         Prepare the system for the FEP simulation.
@@ -696,6 +707,13 @@ class System:
         self.builders_factory = BuilderFactory()
         self.partition = partition
         self._n_workers = n_workers
+        if avg_struc is not None and rmsf_file is not None:
+            rmsf_restraints = True
+        elif avg_struc is not None or rmsf_file is not None:
+            raise ValueError("Both avg_struc and rmsf_file should be provided")
+        else:
+            rmsf_restraints = False
+            
         self._get_sim_config(input_file)
         sim_config = self.sim_config
         self._component_windows_dict = ComponentWindowsDict(self)
@@ -706,9 +724,9 @@ class System:
                 self._component_windows_dict[key] = value
         
         if len(self.sim_config.poses_def) != len(self.ligand_paths):
-            logger.warning(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
+            logger.debug(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
                            f"does not match the number of ligands: {len(self.ligand_paths)}")
-            logger.warning(f"Using the ligand paths for the poses")
+            logger.debug(f"Using the ligand paths for the poses")
         self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
 
         if stage == 'equil':
@@ -725,6 +743,18 @@ class System:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
             
             self._prepare_equil_system()
+            if rmsf_restraints:
+                self.add_rmsf_restraints(
+                        stage='equil',
+                        avg_struc=avg_struc,
+                        rmsf_file=rmsf_file
+                    )
+            if extra_restraints is not None:
+                self.add_extra_restraints(
+                        stage='equil',
+                        extra_restraints=extra_restraints,
+                        extra_restraints_fc=extra_restraints_fc
+                    )
             logger.info('Equil System prepared')
             self._eq_prepared = True
         
@@ -762,8 +792,22 @@ class System:
 
             self._check_equilbration_binding()
             self._prepare_fe_system()
+            if rmsf_restraints:
+                self.add_rmsf_restraints(
+                        stage='fe',
+                        avg_struc=avg_struc,
+                        rmsf_file=rmsf_file
+                    )
+            if extra_restraints is not None:
+                self.add_extra_restraints(
+                        stage='fe',
+                        extra_restraints=extra_restraints,
+                        extra_restraints_fc=extra_restraints_fc
+                    )
             logger.info('FE System prepared')
             self._fe_prepared = True
+        
+
 
     @safe_directory
     @save_state
@@ -807,15 +851,15 @@ class System:
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
                     logger.info(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
-                    self._slurm_jobs.pop(f'{self.equil_folder}/{pose}', None)
+                    self._slurm_jobs.pop(f'eq_{pose}', None)
                     continue
                 if os.path.exists(f"{self.equil_folder}/{pose}/FAILED") and not overwrite:
                     logger.warning(f'Equilibration for {pose} has failed; add overwrite=True to re-run the simulation')
-                    self._slurm_jobs.pop(f'{self.equil_folder}/{pose}', None)
+                    self._slurm_jobs.pop(f'eq_{pose}', None)
                     continue
-                if f'{self.equil_folder}/{pose}' in self._slurm_jobs:
+                if f'eq_{pose}' in self._slurm_jobs:
                     # check if it's finished
-                    slurm_job = self._slurm_jobs[f'{self.equil_folder}/{pose}']
+                    slurm_job = self._slurm_jobs[f'eq_{pose}']
                     # if the job is finished but the FINISHED file is not created
                     # resubmit the job
                     if not slurm_job.is_still_running():
@@ -844,7 +888,7 @@ class System:
                 n_jobs_submitted += 1
                 logger.info(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
-                    {f'{self.equil_folder}/{pose}': slurm_job}
+                    {f'eq_{pose}': slurm_job}
                 )
                 # make sure the system is saved every time when a job is submitted
                 with open(f"{self.output_dir}/system.pkl", 'wb') as f:
@@ -869,17 +913,18 @@ class System:
                             n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
-                            self._slurm_jobs.pop(f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}', None)
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                             logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
                             continue
                         if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
-                            self._slurm_jobs.pop(f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}', None)
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                             logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
                             continue
-                        if f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}' in self._slurm_jobs:
-                            slurm_job = self._slurm_jobs[f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}']
+                        if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
+                            slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
                             if not slurm_job.is_still_running():
                                 slurm_job.submit(
+                                    requeue=True,
                                     other_env={
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
@@ -916,7 +961,7 @@ class System:
                         n_jobs_submitted += 1
                         logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                         self._slurm_jobs.update(
-                            {f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}': slurm_job}
+                            {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                         )
                         with open(f"{self.output_dir}/system.pkl", 'wb') as f:
                             pickle.dump(self, f)
@@ -935,22 +980,24 @@ class System:
                         n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                     if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
-                        self._slurm_jobs.pop(f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}', None)
+                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                         logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
                         continue
                     if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
-                        self._slurm_jobs.pop(f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}', None)
+                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                         logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
                         continue
                     if os.path.exists(f"{folder_2_check}/eqnpt04.rst7") and not overwrite:
                         logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
                         continue
-                    if f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}' in self._slurm_jobs:
-                        slurm_job = self._slurm_jobs[f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}']
+                    if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
+                        slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
                         if not slurm_job.is_still_running():
-                            slurm_job.submit(other_env={
-                                'ONLY_EQ': '1',
-                                'INPCRD': 'full.inpcrd'
+                            slurm_job.submit(
+                                requeue=True,
+                                other_env={
+                                    'ONLY_EQ': '1',
+                                    'INPCRD': 'full.inpcrd'
                             }
                             )
                             n_jobs_submitted += 1
@@ -987,7 +1034,7 @@ class System:
                     n_jobs_submitted += 1
                     logger.info(f'FE equil job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                     self._slurm_jobs.update(
-                        {f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}': slurm_job}
+                        {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                     )
                     with open(f"{self.output_dir}/system.pkl", 'wb') as f:
                         pickle.dump(self, f)
@@ -1040,10 +1087,38 @@ class System:
             shutil.copytree(self.ligandff_folder,
                         f"{self.equil_folder}/ff")
 
+        # copy run_files
+        if not os.path.exists(f"{self.equil_folder}/run_files"):
+            logger.debug(f'Copying run_files folder from {self.ligandff_folder} to {self.equil_folder}/run_files')
+            shutil.copytree(run_files_orig,
+                        f"{self.equil_folder}/run_files")
+        
+        hmr = self.sim_config.hmr
+        if hmr == 'no':
+            replacement = 'full.prmtop'
+            for dname, dirs, files in os.walk(f'{self.equil_folder}/run_files'):
+                for fname in files:
+                    fpath = os.path.join(dname, fname)
+                    with open(fpath) as f:
+                        s = f.read()
+                        s = s.replace('full.hmr.prmtop', replacement)
+                    with open(fpath, "w") as f:
+                        f.write(s)
+        elif hmr == 'yes':
+            replacement = 'full.hmr.prmtop'
+            for dname, dirs, files in os.walk(f'{self.equil_folder}/run_files'):
+                for fname in files:
+                    fpath = os.path.join(dname, fname)
+                    with open(fpath) as f:
+                        s = f.read()
+                        s = s.replace('full.prmtop', replacement)
+                    with open(fpath, "w") as f:
+                        f.write(s)
+
         builders = []
         for pose in self.sim_config.poses_def:
             #logger.info(f'Preparing pose: {pose}')
-            if os.path.exists(f"{self.equil_folder}/{pose}") and not self.overwrite:
+            if os.path.exists(f"{self.equil_folder}/{pose}/cv.in") and not self.overwrite:
                 logger.info(f'Pose {pose} already exists; add overwrite=True to re-build the pose')
                 continue
             equil_builder = self.builders_factory.get_builder(
@@ -1414,6 +1489,94 @@ class System:
         else:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('RMSF restraints added')
+
+    def add_extra_restraints(self,
+                            stage: str,
+                            extra_restraints: str,
+                            extra_restraints_fc: float = 10):
+        """
+        Add Harmonic position restraints to the system.
+
+        Parameters
+        ----------
+        stage : str
+            The stage of the simulation.
+            Options are 'equil' and 'fe'.
+        extra_restraints : str
+            The selection string of the atoms to be restrained.
+        extra_restraints_fc : float, optional
+            The force constant of the restraints. Default is 10.
+        """
+        logger.debug('Adding Harmonic postion restraints')
+
+
+        def write_restraint_block(ref_u, selection_string, files, pose):
+            selection = ref_u.select_atoms(f'({selection_string}) and name CA')
+            logger.debug(f"Selection: {selection} to be restrained")
+
+            atm_resids = selection.residues.resids
+
+            renum_txt = f'{self.equil_folder}/{pose}/build_files/protein_renum.txt'
+
+            renum_data = pd.read_csv(
+                renum_txt,
+                sep=r'\s+',
+                header=None,
+                names=['old_resname', 'old_chain', 'old_resid',
+                        'new_resname', 'new_resid'])
+
+            # map atm_resids to new_resid
+            amber_resids = renum_data.loc[renum_data['old_resid'].isin(atm_resids), 'new_resid']
+
+            formatted_resids = format_ranges(amber_resids)
+            logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
+
+            for file in files:
+                with open(f'{self.equil_folder}/{pose}/{file}', 'r') as f:
+                    lines = f.readlines()
+
+                with open(f'{self.equil_folder}/{pose}/{file}', 'w') as f:
+                    for line in lines:
+                        if 'ntr' in line and 'cntr' not in line:
+                            line = '  ntr = 1,\n'
+                        if 'restraintmask' in line:
+                            restraint_mask = line.split('=')[1].strip().replace("'", "")
+                            restraint_mask = f'({restraint_mask}) | ((:{formatted_resids}) & @CA)'
+                            # if number of characters is larger than 256, amber cannot handle it
+                            if len(restraint_mask) > 256:
+                                raise ValueError(f"Restraint mask is too long (>256 characters): {restraint_mask}")
+                            line = f'  restraintmask = "{restraint_mask}",\n'
+                        if 'restraint_wt' in line:
+                            line = f' restraint_wt = {extra_restraints_fc},\n'
+                        f.write(line)
+                    f.write("\n")
+
+        if stage == 'equil':
+            for pose in self.sim_config.poses_def:
+                ref_u = mda.Universe(
+                        f"{self.equil_folder}/{pose}/full.pdb",
+                        f"{self.equil_folder}/{pose}/full.inpcrd")
+                files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
+
+                write_restraint_block(ref_u, extra_restraints, files, pose)
+
+        elif stage == 'fe':
+            for pose in self.sim_config.poses_def:
+                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                    continue
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    ref_u = mda.Universe(
+                            f"{folder_comp}/{comp}-1/full.pdb",
+                            f"{folder_comp}/{comp}-1/full.inpcrd")
+                    windows = self.component_windows_dict[comp]
+                    files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
+
+                    write_restraint_block(ref_u, extra_restraints, files)
+        else:
+            raise ValueError(f"Invalid stage: {stage}")
+        logger.debug('Extra position restraints added')
 
     @safe_directory
     @save_state
@@ -1790,6 +1953,8 @@ EOF"""
                      rmsf_file: str = None,
                      only_equil: bool = False,
                      only_fe_preparation: bool = False,
+                     extra_restraints: str = None,
+                     extra_restraints_fc: float = 10,
                      partition: str = 'owners',
                      max_num_jobs: int = 2000,
                      verbose: bool = False
@@ -1804,11 +1969,11 @@ EOF"""
             The input file for the simulation.
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
-        avg_struc : str
+        avg_struc : str, optional
             The path of the average structure of the
             representative conformations. Default is None,
             which means no RMSF restraints are added.
-        rmsf_file : str
+        rmsf_file : str, optional
             The path of the RMSF file. Default is None,
             which means no RMSF restraints are added.
         only_equil : bool, optional
@@ -1818,6 +1983,11 @@ EOF"""
             Whether to prepare the files for the production stage
             without running the production stage.
             Default is False.
+        extra_restraints : str, optional
+            The selection string for the extra position restraints.
+            Default is None, which means no extra restraints are added.
+        extra_restraints_fc : float, optional
+            The force constant for the extra position restraints.
         partition : str, optional
             The partition to submit the job.
             Default is 'rondror'.
@@ -1834,21 +2004,10 @@ EOF"""
             logger.info('Verbose output is set to True')
         logger.info('Running the pipeline')
         self._max_num_jobs = max_num_jobs
-        if avg_struc is not None and rmsf_file is not None:
-            rmsf_restraints = True
-        elif avg_struc is not None or rmsf_file is not None:
-            raise ValueError("Both avg_struc and rmsf_file should be provided")
-        else:
-            rmsf_restraints = False
 
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')
         self._get_sim_config(input_file)
-        
-        if len(self.sim_config.poses_def) != len(self.ligand_paths):
-            logger.warning(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
-                           f"does not match the number of ligands: {len(self.ligand_paths)}")
-            logger.warning(f"Using the ligand paths for the poses")
         self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
 
         if self._check_equilibration():
@@ -1858,14 +2017,12 @@ EOF"""
                 stage='equil',
                 input_file=self.sim_config,
                 overwrite=overwrite,
-                partition=partition
+                partition=partition,
+                avg_struc=avg_struc,
+                rmsf_file=rmsf_file,
+                extra_restraints=extra_restraints,
+                extra_restraints_fc=extra_restraints_fc
             )
-            if rmsf_restraints:
-                self.add_rmsf_restraints(
-                    stage='equil',
-                    avg_struc=avg_struc,
-                    rmsf_file=rmsf_file
-                )
             logger.info('Submitting the equilibration')
             #2 submit the equilibration
             self.submit(
@@ -1899,14 +2056,12 @@ EOF"""
                 stage='fe',
                 input_file=self.sim_config,
                 overwrite=overwrite,
-                partition=partition
+                partition=partition,
+                avg_struc=avg_struc,
+                rmsf_file=rmsf_file,
+                extra_restraints=extra_restraints,
+                extra_restraints_fc=extra_restraints_fc
             )
-            if rmsf_restraints:
-                self.add_rmsf_restraints(
-                    stage='fe',
-                    avg_struc=avg_struc,
-                    rmsf_file=rmsf_file
-                )
 
             self.submit(
                     stage='fe_equil'
@@ -1917,8 +2072,10 @@ EOF"""
             while self._check_fe_equil():
                 # get finishd jobs
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
-                logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
+                # name f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}
+
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
@@ -1962,7 +2119,7 @@ EOF"""
             while self._check_fe():
                 # get finishd jobs
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
-                logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
@@ -1998,11 +2155,11 @@ EOF"""
         sim_failed = {}
         for pose in self.sim_config.poses_def:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
-                sim_finished[pose] = False
+                sim_finished[f'eq_{pose}'] = False
             else:
-                sim_finished[pose] = True
+                sim_finished[f'eq_{pose}'] = True
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
-                sim_failed[pose] = True
+                sim_failed[f'eq_{pose}'] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed
@@ -2036,11 +2193,11 @@ EOF"""
                 win = -1
                 folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{win:02d}'
                 if not os.path.exists(f"{folder_2_check}/EQ_FINISHED"):
-                    sim_finished[f'{pose}/{comp_folder}/{comp}{win:02d}'] = False
+                    sim_finished[f'fe_{pose}_{comp_folder}_{comp}{win:02d}'] = False
                 else:
-                    sim_finished[f'{pose}/{comp_folder}/{comp}{win:02d}'] = True
+                    sim_finished[f'fe_{pose}_{comp_folder}_{comp}{win:02d}'] = True
                 if os.path.exists(f"{folder_2_check}/FAILED"):
-                    sim_failed[f'{pose}/{comp_folder}/{comp}{win:02d}'] = True
+                    sim_failed[f'fe_{pose}_{comp_folder}_{comp}{win:02d}'] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed
@@ -2073,11 +2230,11 @@ EOF"""
                 for j in range(0, len(windows)):
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                     if not os.path.exists(f"{folder_2_check}/FINISHED"):
-                        sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = False
+                        sim_finished[f'fe_{pose}_{comp_folder}_{comp}{j:02d}'] = False
                     else:
-                        sim_finished[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
+                        sim_finished[f'fe_{pose}_{comp_folder}_{comp}{j:02d}'] = True
                     if os.path.exists(f"{folder_2_check}/FAILED"):
-                        sim_failed[f'{pose}/{comp_folder}/{comp}{j:02d}'] = True
+                        sim_failed[f'fe_{pose}_{comp_folder}_{comp}{j:02d}'] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed
@@ -2099,7 +2256,7 @@ EOF"""
         Continue the job if it is not finished.
         """
         if not job.is_still_running():
-            job.submit()
+            job.submit(requeue=True)
             logger.info(f'Job {job.jobid} is resubmitted')
 
     def check_jobs(self):
@@ -2816,6 +2973,8 @@ class ABFESystem(System):
     create one `MABFESystem` with multiple ligands as input.
     """
     def _process_ligands(self):
+        # TODO: it is current broken
+        raise NotImplementedError("ABFESystem is not implemented yet")
         # check if they are the same ligand
         n_atoms = mda.Universe(self.ligand_paths[0]).atoms.n_atoms
         for ligand_path in self.ligand_paths:
@@ -2878,3 +3037,27 @@ class ComponentWindowsDict(MutableMapping):
 
     def __len__(self):
         return len(self._data)
+    
+
+def format_ranges(numbers):
+    """
+    Convert a list of numbers into a string of ranges.
+    For example, [1, 2, 3, 5, 6] will be converted to "1-3,5-6".
+
+    This is to avoid the nasty AMBER issue that restraintmask can
+    only be 256 characters long. -.-
+    """
+    from itertools import groupby
+    numbers = sorted(set(numbers))
+    ranges = []
+
+    for _, group in groupby(enumerate(numbers), key=lambda x: x[1] - x[0]):
+        group = list(group)
+        start = group[0][1]
+        end = group[-1][1]
+        if start == end:
+            ranges.append(f"{start}")
+        else:
+            ranges.append(f"{start}-{end}")
+    
+    return ','.join(ranges)

@@ -30,12 +30,13 @@ class SLURMJob:
             for _ in range(3):
                 try:
                     self._requeue()
-                    break
+                    return
                 except RuntimeError as e:
                     logger.error(f"Failed to requeue job: {e}; retrying in 30 seconds")
                     time.sleep(30)
             else:
-                raise RuntimeError("Failed to requeue job after 3 attempts.")
+                logger.error(f"Failed to requeue job, submit a new job instead.")
+                
         for _ in range(5):
             try:
                 self._submit()
@@ -44,7 +45,7 @@ class SLURMJob:
                 logger.error(f"Failed to submit job: {e}; retrying in 30 seconds")
                 time.sleep(30)
         else:
-            raise RuntimeError("Failed to submit job after 3 attempts.")
+            raise RuntimeError("Failed to submit job after 5 attempts.")
 
     def _submit(self):
 
@@ -213,4 +214,5 @@ class SLURMJob:
         if job_state in finished_states:
             return False
         else:
+            logger.debug(f"Job {self.jobid} is still in state {job_state}")
             return True
