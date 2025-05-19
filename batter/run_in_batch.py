@@ -12,7 +12,8 @@ def check_stage(pose, comp, n_windows, fe_folder):
         if not os.path.exists(folder_2_check):
             logger.info(f'{folder_2_check} does not exist')
             return 'no_folder'
-        min_rst7 = f'{folder_2_check}/mini.in.rst7'
+        # use mini.in.out instead of mini.in.rst7
+        min_rst7 = f'{folder_2_check}/mini.in.out'
         if not os.path.exists(min_rst7):
             return 'min'
         mdin_files = glob.glob(f'{folder_2_check}/mdin-*.rst7')

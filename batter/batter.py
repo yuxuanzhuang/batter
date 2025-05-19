@@ -96,11 +96,13 @@ class System:
     """
     def __init__(self,
                  folder: str,
+                 create_new: bool = False,
                 ):
         """
         Initialize the System class with the folder name.
-        If the folder does not exist, a new system will be created.
-        If the folder exists, the system will be loaded.
+        The system will be loaded from the folder.
+        If create_new is True, a new system will be created when
+        the folder does not exist.
 
         Parameters
         ----------
@@ -108,6 +110,9 @@ class System:
             The folder containing the system files.
         """
         self.output_dir = os.path.abspath(folder) + '/'
+        if not os.path.exists(self.output_dir) and not create_new:
+            raise FileNotFoundError(f"System folder does not exist: {self.output_dir}; add create_new=True to create a new system")
+
         #logger.add(f"{self.output_dir}/batter.log", level='INFO')
         logger.add(f"{self.output_dir}/batter.log", level='DEBUG')
 
@@ -275,7 +280,7 @@ class System:
             self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths.values()]
             self._ligand_names = list(ligand_paths.keys())
         self.receptor_segment = receptor_segment
-        self.protein_align = protein_align
+        self._protein_align = protein_align
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ph = ligand_ph
         self.ligand_ff = ligand_ff
@@ -397,6 +402,13 @@ class System:
         Convert the path to a relative path to the output directory.
         """
         return os.path.relpath(path, self.output_dir)
+
+    @property
+    def protein_align(self):
+        try:
+            return self._protein_align
+        except AttributeError:
+            return 'name CA'
 
     @property
     def protein_input(self):
@@ -1681,6 +1693,9 @@ class System:
                 os.chdir('../../')
                 # generate aligned pdbs
                 # TODO
+
+
+
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
@@ -1757,14 +1772,18 @@ class System:
                     shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
                 os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
 
-                fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose,
-                                                      attach_rest,
-                                                      lambdas,
-                                        weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
-
+                try:
+                    fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose,
+                                                        attach_rest,
+                                                        lambdas,
+                                            weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
+                except Exception as e:
+                    logger.error(f'FE calculation failed for {pose}: {e}')
+                    fe_value = np.nan
+                    fe_std = np.nan
                 # if failed; it will return nan
                 if np.isnan(fe_value):
-                    logger.warning(f'FE calculation failed for {pose}')
+                    #logger.warning(f'FE calculation failed for {pose}')
                     with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
                         f.write("UNBOUND\n")
                     self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
@@ -1773,9 +1792,28 @@ class System:
 
                 self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
-                # generate aligned pdbs
-                # TODO
-                
+        # generate aligned pdbs
+
+        reference_pdb_file = f'{self.poses_folder}/{self.system_name}_docked.pdb'
+        u_ref = mda.Universe(reference_pdb_file)
+        os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
+        os.system(f'cp {reference_pdb_file} {self.output_dir}/Results/reference.pdb')
+
+        for pose in tqdm(poses_def, desc='Generating aligned pdbs'):
+            pdb_file = f'{self.equil_folder}/{pose}/representative.pdb'
+            u = mda.Universe(pdb_file)
+            align.alignto(u,
+                          u_ref,
+                          select=self.protein_align,
+                          weights="mass")
+            saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- and not resname {" ".join(self.lipid_mol)}')
+            saved_ag.write(f'{self.output_dir}/Results/protein_{pose}.pdb')
+
+            initial_pose = f'{self.poses_folder}/{pose}.pdb'
+            os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
+            
+
+            
         if convergence:
             validators_all = []
             poses_all = []
@@ -1802,11 +1840,13 @@ class System:
                         title=f'Convergence of {pose} {comp}'
                     ) for validator, pose, comp in zip(validators_all, poses_all, comps_all)
                 )
-
-        for i, (pose, fe) in enumerate(self.fe_results.items()):
-            mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
-        
+        with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
+            for i, (pose, fe) in enumerate(self.fe_results.items()):
+                mol_name = self.mols[i]
+                
+                logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+            
     @staticmethod
     def _find_anchor_atoms(u_prot,
                            u_lig,
@@ -2357,7 +2397,9 @@ EOF"""
                 sim_folder_temp = f'{pose}/{folder_name}/{component}'
                 n_sims = len(self.component_windows_dict[component])
 
-                stage_previous = f'{sim_folder_temp}REPXXX/equilibrated.rst7'
+                stage_previous = f'{sim_folder_temp}-1/eqnpt04.rst7'
+                if not os.path.exists(f'fe/{stage_previous}'):
+                    raise FileNotFoundError(f'File fe/{stage_previous} not found')
 
                 for stage in sim_stages[component_2_folder_dict[component]]:
                     groupfile_name = f'{pose_name}/groupfiles/{component}_{stage}.groupfile'
@@ -2445,24 +2487,25 @@ EOF"""
                                         line = '  ntxo = 2,\n'
                                     if 'ntwprt' in line:
                                         line = '\n'
-                                    if 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
-                                        # do not restraint the first dummy atom
-                                        # line = f"restraintmask = '(!:1 & ({restraint_mask}))' \n"
-                                        # alter
-                                        # replace :1-2
-                                        restraint_mask = restraint_mask.replace(':1-2', ':2')
-                                        restraint_mask = restraint_mask.replace(':2,3,', ':2')
-                                        # placeholder that does not exist in the system
-                                        restraint_mask = restraint_mask.replace(':1', '@ZYX')
-                                        restraint_mask = restraint_mask.replace(':3', '@ZYX')
-                                        if stage == 'mdin.in.extend':
-                                            line = f"restraintmask = '{restraint_mask}'\n"
-                                            #line = f"restraintmask = '@CA | {restraint_mask}' \n"
-                                        elif stage == 'mdin.in':
-                                            line = f"restraintmask = '@CA | :{mol} | {restraint_mask}' \n"
-                                        else:
-                                            line = f"restraintmask = '@CA | {restraint_mask}' \n"
+                                    if False:
+                                        if 'restraintmask' in line:
+                                            restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                            # do not restraint the first dummy atom
+                                            # line = f"restraintmask = '(!:1 & ({restraint_mask}))' \n"
+                                            # alter
+                                            # replace :1-2
+                                            restraint_mask = restraint_mask.replace(':1-2', ':2')
+                                            restraint_mask = restraint_mask.replace(':2,3,', ':2')
+                                            # placeholder that does not exist in the system
+                                            restraint_mask = restraint_mask.replace(':1', '@ZYX')
+                                            restraint_mask = restraint_mask.replace(':3', '@ZYX')
+                                            if stage == 'mdin.in.extend':
+                                                line = f"restraintmask = '{restraint_mask}'\n"
+                                                #line = f"restraintmask = '@CA | {restraint_mask}' \n"
+                                            elif stage == 'mdin.in':
+                                                line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
+                                            else:
+                                                line = f"restraintmask = '(@CA | {restraint_mask}' \n"
                                     if 'ntp' in line:
                                         # nvt simulation
                                         line = '  ntp = 0,\n'
