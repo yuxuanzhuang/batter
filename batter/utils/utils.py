@@ -164,6 +164,7 @@ def run_with_log(command, level='debug', working_dir=None,
                 log(line)
         raise
 
+
 def log_info(func):
     """
     A wrapper function that print out current working directory and function name
@@ -173,6 +174,7 @@ def log_info(func):
         logger.debug(f"Running function: {func.__name__}")
         return func(*args, **kwargs)
     return wrapper
+
 
 def save_state(method):
     @wraps(method)
@@ -194,6 +196,20 @@ def fail_report_wrapper(func):
         except Exception as e:
             logger.error(f'Error in {func}: {e}')
             logger.error(f'all args: {args}; kwargs: {kwargs}')
+            raise
+    return wrapper
+
+
+def builder_fail_report(func):
+    """
+    Decorator to report failure to build a system.
+    """
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            logger.error(f'Error in building {self.pose}: {e}')
             raise
     return wrapper
 
