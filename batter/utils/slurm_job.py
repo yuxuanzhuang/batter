@@ -32,7 +32,7 @@ class SLURMJob:
                     self._requeue()
                     return
                 except RuntimeError as e:
-                    logger.error(f"Failed to requeue job: {e}; retrying in 30 seconds")
+                    logger.debug(f"Failed to requeue job: {e}; retrying in 30 seconds")
                     time.sleep(30)
             else:
                 logger.error(f"Failed to requeue job, submit a new job instead.")
@@ -42,7 +42,7 @@ class SLURMJob:
                 self._submit()
                 break
             except RuntimeError as e:
-                logger.error(f"Failed to submit job: {e}; retrying in 30 seconds")
+                logger.debug(f"Failed to submit job: {e}; retrying in 30 seconds")
                 time.sleep(30)
         else:
             raise RuntimeError("Failed to submit job after 5 attempts.")

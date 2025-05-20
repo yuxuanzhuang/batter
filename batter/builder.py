@@ -155,9 +155,9 @@ class SystemBuilder(ABC):
         cut = self.sim_config.cut
         gamma_ln = self.sim_config.gamma_ln
         barostat = self.sim_config.barostat
-        if barostat == '1':
-            logger.warning('WARNING: Switch to M-C barostat')
-            barostat = '2'
+        if barostat == '2':
+            logger.warning('WARNING: Switch to Berendsen barostat')
+            barostat = '1'
         
         receptor_ff = self.sim_config.receptor_ff
         ligand_ff = self.sim_config.ligand_ff
@@ -1454,6 +1454,7 @@ class EquilibrationBuilder(SystemBuilder):
         for i in range(0, len(release_eq)):
             weight = release_eq[i]
             logger.debug('%s' % str(weight))
+            rest[5] = 0
             setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                              molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
             #shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
@@ -2826,19 +2827,22 @@ class FreeEnergyBuilder(SystemBuilder):
                                     float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, ldhf, ldhf, lign_d))
 
             # COM restraints
+            # TODO: why rcom leads to a crash?
+            rcom = 0
             cv_file = open('cv.in', 'w')
             cv_file.write('cv_file \n')
-            cv_file.write('&colvar \n')
-            cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-            cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
-            for i in range(0, len(hvy_h)):
-                cv_file.write(hvy_h[i])
-                cv_file.write(',')
-            cv_file.write('\n')
-            cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
-                        (float(0.0), float(0.0), float(0.0), float(999.0)))
-            cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
-            cv_file.write('/ \n')
+            if False:
+                cv_file.write('&colvar \n')
+                cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+                cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
+                for i in range(0, len(hvy_h)):
+                    cv_file.write(hvy_h[i])
+                    cv_file.write(',')
+                cv_file.write('\n')
+                cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                            (float(0.0), float(0.0), float(0.0), float(999.0)))
+                cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
+                cv_file.write('/ \n')
             if dec_method == 'sdr' or dec_method == 'exchange':
                 if comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x':
                     cv_file.write('&colvar \n')

@@ -22,7 +22,6 @@ Runs equilibrium stage
   ig = -1,
   ntp = _p_coupling_,
   csurften = _c_surften_,
-  fswitch = 10.0,
   barostat = _barostat_,
   nstlim = _num-steps_,
   dt = _step_,
@@ -31,12 +30,12 @@ Runs equilibrium stage
   ntr = 0,
   restraint_wt = 50.0,
   restraintmask = '',
-  infe = 1,
+  infe = 0,
   mcwat = 1,
   nmd = 1000,
   nmc = 1000,
   mcwatmask = ":_lig_name_",
-  mcligshift = 30,
+  mcligshift = 40,
   mcresstr = "WAT",
  /
  &pmd

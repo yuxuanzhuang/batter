@@ -21,7 +21,7 @@ Equilibrate, NPT.
   ig = -1,
   ntp = 1 ,
   csurften = _c_surften_,
-  barostat = 2,
+  barostat = 1,
   nstlim = 50000,
   dt = 0.001,
   nmropt = 1,

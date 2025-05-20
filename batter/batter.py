@@ -1552,8 +1552,11 @@ class System:
                         if 'ntr' in line and 'cntr' not in line:
                             line = '  ntr = 1,\n'
                         if 'restraintmask' in line:
-                            restraint_mask = line.split('=')[1].strip().replace("'", "")
-                            restraint_mask = f'({restraint_mask}) | ((:{formatted_resids}) & @CA)'
+                            restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                            if restraint_mask == '':  # empty mask
+                                restraint_mask = f'(:{formatted_resids}) & @CA'
+                            else:
+                                restraint_mask = f'({restraint_mask}) | ((:{formatted_resids}) & @CA)'
                             # if number of characters is larger than 256, amber cannot handle it
                             if len(restraint_mask) > 256:
                                 raise ValueError(f"Restraint mask is too long (>256 characters): {restraint_mask}")
