@@ -29,6 +29,12 @@ if not os.path.exists(vmd):
     if not os.path.exists(vmd):
         vmd = 'vmd'
 
+DEC_FOLDER_DICT = {
+    'dd': 'dd',
+    'sdr': 'sdr',
+    'exchange': 'sdr',
+}
+
 COMPONENTS_LAMBDA_DICT = {
     'v': 'lambdas',
     'e': 'lambdas',
