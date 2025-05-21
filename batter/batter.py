@@ -61,6 +61,7 @@ from batter.analysis.convergence import ConvergenceValidator, MBARValidator
 from batter.analysis.sim_validation import SimValidator
 from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
+from batter.data import build_files as build_files_orig
 
 
 from MDAnalysis.analysis import rms, align
@@ -273,11 +274,15 @@ class System:
             self._system_coordinate = self._convert_2_relative_path(system_coordinate)
         else:
             self._system_coordinate = None
+        
+        # always store a unique identifier for the ligand
         if isinstance(ligand_paths, list):
-            self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
+            self._ligand_list = {
+                f'lig{i}': self._convert_2_relative_path(path)
+                for i, path in enumerate(ligand_paths)
+            }
         elif isinstance(ligand_paths, dict):
-            self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths.values()]
-            self._ligand_names = list(ligand_paths.keys())
+            self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
         self.receptor_segment = receptor_segment
         self._protein_align = protein_align
         self.retain_lig_prot = retain_lig_prot
@@ -314,6 +319,10 @@ class System:
         u_sys.atoms.write(f"{self.poses_folder}/system_input.pdb")
         self._system_input_pdb = f"{self.poses_folder}/system_input.pdb"
         os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
+        
+        # copy dummy atom parameters to the ligandff folder
+        os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
+        os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
 
         if self.ligand_ff not in ['gaff', 'gaff2']:
             raise ValueError(f"Invalid ligand_ff: {self.ligand_ff}"
@@ -339,21 +348,21 @@ class System:
         if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
             self._process_system()
         
-        self.unique_mol_names = []
         from batter.ligand_process import LigandFactory
+        
+        self.unique_mol_names = []
         mols = []
-        new_ligand_paths = []
-        for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
-            logger.debug(f'Processing ligand {ind}: {ligand_path}')
+        # only process the unique ligand paths
+        # for ABFESystem, it will be a single ligand
+        # for MBABFE and RBFE, it will be multiple ligands
+        for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
+            logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
             # first if self.mols is not empty, then use it as the ligand name
             try:
                 ligand_name = self.mols[ind-1]
             except:
-                try:
-                    ligand_name = self._ligand_names[ind-1]
-                except:
-                    ligand_name = None
-            self._ligand_path = ligand_path
+                ligand_name = ligand_names[0]
+
             ligand_factory = LigandFactory()
             ligand = ligand_factory.create_ligand(
                     ligand_file=ligand_path,
@@ -362,16 +371,19 @@ class System:
                     ligand_name=ligand_name,
                     retain_lig_prot=self.retain_lig_prot,
                     ligand_ff=self.ligand_ff) 
+
             ligand.generate_unique_name(self.unique_mol_names)
             mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
                 ligand.prepare_ligand_parameters()
-            new_ligand_paths.append(self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb'))
-        self._ligand_paths = new_ligand_paths
-        logger.debug(f'Ligand paths: {self._ligand_paths}')
+            for ligand_name in ligand_names:
+                self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
+
+        logger.debug('updating the ligand paths')
+        logger.debug(self.ligand_list)
+
         self.mols = mols
-            
         self._prepare_ligand_poses()
 
         # always get the anchor atoms from the first pose
@@ -408,6 +420,11 @@ class System:
             return self._protein_align
         except AttributeError:
             return 'name CA'
+    
+    @protein_align.setter
+    def protein_align(self, value):
+        self._protein_align = value
+
 
     @property
     def protein_input(self):
@@ -423,7 +440,24 @@ class System:
 
     @property
     def ligand_paths(self):
-        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self._ligand_paths]
+        """
+        The paths to the ligand files.
+        """
+        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self._ligand_list.values()]
+    
+    @property
+    def ligand_list(self):
+        """
+        A dictionary of ligands.
+        """
+        return self._ligand_list
+    
+    @property
+    def ligand_names(self):
+        """
+        The names of the ligands.
+        """
+        return self._ligand_list.keys()
 
     def _process_ligands(self):
         """
@@ -561,48 +595,37 @@ class System:
         """
         Prepare ligand poses for the system.
         """
-        logger.debug('ligand poses')
+        logger.debug('prepare ligand poses')
+        with self._change_dir(self.output_dir):
+            new_ligand_list = {}
+            for i, (name, pose) in enumerate(self.ligand_list.items()):
+                if len(self.unique_mol_names) > 1:
+                    mol_name = self.unique_mol_names[i]
+                else:
+                    mol_name = self.unique_mol_names[0]
+                # align to the system
 
-        new_pose_paths = []
-        for i, pose in enumerate(self.ligand_paths):
-            if len(self.unique_mol_names) > 1:
-                mol_name = self.unique_mol_names[i]
-            else:
-                mol_name = self.unique_mol_names[0]
-            # align to the system
-            if not pose.lower().endswith('.sdf'):
                 u = mda.Universe(pose)
-            else:
-                molecule = Chem.MolFromMolFile(pose, removeHs=False)
-                u = mda.Universe(molecule)
-                u.add_TopologyAttr('resnames')
-            try:
-                u.atoms.chainIDs
-            except AttributeError:
-                u.add_TopologyAttr('chainIDs')
-            lig_seg = u.add_Segment(segid='LIG')
-            u.atoms.chainIDs = 'L'
-            u.atoms.residues.segments = lig_seg
-            u.atoms.residues.resnames = mol_name
-            
-            logger.debug(f"Processing ligand {i}: {pose}")
-            self._align_2_system(u.atoms)
-            u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
-            pose = f"{self.poses_folder}/pose{i}.pdb"
 
-            #if not self.retain_lig_prot:
-            #    noh_path = f"{self.poses_folder}/pose{i}_noh.pdb"
-            #    run_with_log(f"{obabel} -i pdb {pose} -o pdb -O {noh_path} -d")
+                try:
+                    u.atoms.chainIDs
+                except AttributeError:
+                    u.add_TopologyAttr('chainIDs')
+                lig_seg = u.add_Segment(segid='LIG')
+                u.atoms.chainIDs = 'L'
+                u.atoms.residues.segments = lig_seg
+                u.atoms.residues.resnames = mol_name
+                
+                logger.debug(f"Processing ligand {i}: {pose}")
+                self._align_2_system(u.atoms)
+                u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
+                pose = f"{self.poses_folder}/pose{i}.pdb"
 
-            #    # Add hydrogens based on the specified pH
-            #    run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {pose} -p {self.ligand_ph:.2f}")
+                if not os.path.exists(f"{self.poses_folder}/pose{i}.pdb"):
+                    shutil.copy(pose, f"{self.poses_folder}/pose{i}.pdb")
 
-            if not os.path.exists(f"{self.poses_folder}/pose{i}.pdb"):
-                shutil.copy(pose, f"{self.poses_folder}/pose{i}.pdb")
-
-            new_pose_paths.append(f"{self.poses_folder}/pose{i}.pdb")
-
-        self._ligand_paths = [self._convert_2_relative_path(pose) for pose in new_pose_paths]
+                new_ligand_list[name] = pose
+            self._ligand_list = new_ligand_list
 
     def _align_2_system(self, mobile_atoms):
 
@@ -2887,8 +2910,6 @@ class ABFESystem(System):
     create one `MABFESystem` with multiple ligands as input.
     """
     def _process_ligands(self):
-        # TODO: it is current broken
-        raise NotImplementedError("ABFESystem is not implemented yet")
         # check if they are the same ligand
         n_atoms = mda.Universe(self.ligand_paths[0]).atoms.n_atoms
         for ligand_path in self.ligand_paths:
@@ -2896,7 +2917,7 @@ class ABFESystem(System):
                 raise ValueError(f"Number of atoms in the ligands are different: {ligand_path}")
 
         # set the ligand path to the first ligand
-        self.unique_ligand_paths = [self.ligand_paths[0]]
+        self._unique_ligand_paths = {self.ligand_paths[0]: self.ligand_names}
 
 
 class MABFESystem(System):
@@ -2906,9 +2927,7 @@ class MABFESystem(System):
     The ABFE of the ligands to the provided **protein conformation** will be calculated
     """
     def _process_ligands(self):
-        # check if they are the same ligand
-        self.unique_ligand_paths = self.ligand_paths
-
+        self._unique_ligand_paths = {ligand_path: [ligand_name] for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names)}
 
 class RBFESystem(System):
     """
@@ -2916,12 +2935,12 @@ class RBFESystem(System):
     using the separated topology methodology in BAT.py.
     """
     def _process_ligands(self):
-        self.unique_ligand_paths = self.ligand_paths
-        if len(self.unique_ligand_paths) <= 1:
+        self._unique_ligand_paths = {ligand_path: [ligand_name] for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names)}
+
+        if len(self._unique_ligand_paths.keys()) < 2:
             raise ValueError("RBFESystem requires at least two ligands "
                              "for the relative binding free energy calculation")
-        logger.info(f'Reference ligand: {self.unique_ligand_paths[0]}')
-
+        logger.info(f'Reference ligand: {self._unique_ligand_paths.keys()[0]}')
 
 
 class ComponentWindowsDict(MutableMapping):

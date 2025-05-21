@@ -909,10 +909,6 @@ class EquilibrationBuilder(SystemBuilder):
         os.system(f'cp dum.mol2 ../../ff/dum.mol2')
         #shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
         os.system(f'cp dum.frcmod ../../ff/dum.frcmod')
-        #shutil.copy(f'dum.mol2', f'../../../ff/dum.mol2')
-        os.system(f'cp dum.mol2 ../../../ff/dum.mol2')
-        #shutil.copy(f'dum.frcmod', f'../../../ff/dum.frcmod')
-        os.system(f'cp dum.frcmod ../../../ff/dum.frcmod')
 
         all_pose_folder = self.system.poses_folder
         system_name = self.system.system_name

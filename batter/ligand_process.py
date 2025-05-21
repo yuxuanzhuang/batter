@@ -28,7 +28,6 @@ from batter.utils import (
 def random_three_letter_name():
     return ''.join(random.choices(string.ascii_lowercase, k=3))
 
-
 def _convert_mol_name_to_unique(mol_name, ind, mol_names):
     """
     Convert the molecule name to a unique name that is 

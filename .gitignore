@@ -126,3 +126,5 @@ ENV/
 .DS_Store
 ._.DS_Store
 notincluded
+
+test_pipeline
