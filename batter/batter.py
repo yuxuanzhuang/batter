@@ -43,6 +43,8 @@ from rdkit import Chem
 import time
 from tqdm import tqdm
 from joblib import Parallel, delayed
+from concurrent.futures import ThreadPoolExecutor
+
 
 from typing import List, Tuple
 import loguru
@@ -2366,29 +2368,28 @@ class System:
                 'eqnpt.in_03', 'eqnpt.in_04',
         ]
 
-        def write_2_pose(pose, components):
+        def write_2_pose(pose):
             """
             Write a groupfile for each component in the pose
             """
-            pose_name = f'fe/{pose}/'
-            os.makedirs(f'{pose_name}/groupfiles', exist_ok=True)
+            os.makedirs(f'fe/{pose}/groupfiles', exist_ok=True)
 
             n_sims = len(components)
 
-            stage_previous_template = f'{pose}/{{}}/{{}}/full.inpcrd'
+            stage_previous_template = f'{pose}/{{}}/{{}}-1/full.inpcrd'
 
             for stage in sim_stages:
-                groupfile_name = f'{pose_name}/groupfiles/fe_eq_{stage}.groupfile'
+                groupfile_name = f'fe/{pose}/groupfiles/fe_eq_{stage}.groupfile'
                 with open(groupfile_name, 'w') as f:
                     for component in components:
                         stage_previous = stage_previous_template.format(
                             COMPONENTS_FOLDER_DICT[component],
                             component
                         )
-                        sim_folder_temp = f'{pose_name}/{COMPONENTS_FOLDER_DICT[component]}/{component}'
+                        sim_folder_temp = f'{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}'
                         win_eq_sim_folder_name = f'{sim_folder_temp}-1'
                         prmtop = f'{win_eq_sim_folder_name}/full.hmr.prmtop'
-                        mdinput = f'{win_eq_sim_folder_name}/{stage.split("_")[0]}'
+                        mdinput = f'fe/{win_eq_sim_folder_name}/{stage.split("_")[0]}'
                         with open(mdinput, 'r') as infile:
                             input_lines = infile.readlines()
                             new_mdinput = f'{mdinput}_frontier'
@@ -2396,33 +2397,43 @@ class System:
                                 for line in input_lines:
                                     if 'cv_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                                        line = f"cv_file = '{win_eq_sim_folder_name}/{file_name},'\n"
+                                        line = f"cv_file = '{win_eq_sim_folder_name}/{file_name}'\n"
                                     if 'output_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                                        line = f"output_file = '{win_eq_sim_folder_name}/{file_name},'\n"
+                                        line = f"output_file = '{win_eq_sim_folder_name}/{file_name}'\n"
                                     if 'disang' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                                        line = f"DISANG={win_eq_sim_folder_name}/{file_name},\n"
+                                        line = f"DISANG={win_eq_sim_folder_name}/{file_name}\n"
                                     outfile.write(line)
                             f.write(f'#fe_eq {component} {stage}\n')
+                            file_name_map = {
+                                'mini.in': 'mini',
+                                'eqnpt0.in': 'eqnpt_pre',
+                                'eqnpt.in_00': 'eqnpt00',
+                                'eqnpt.in_01': 'eqnpt01',
+                                'eqnpt.in_02': 'eqnpt02',
+                                'eqnpt.in_03': 'eqnpt03',
+                                'eqnpt.in_04': 'eqnpt04',
+                            }
                             f.write(
                                 f'-O -i {win_eq_sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous} '
-                                f'-o {win_eq_sim_folder_name}/{stage}.out -r {win_eq_sim_folder_name}/{stage}.rst7 -x {win_eq_sim_folder_name}/{stage}.nc '
-                                f'-ref {stage_previous} -inf {win_eq_sim_folder_name}/{stage}.mdinfo -l {win_eq_sim_folder_name}/{stage}.log '
-                                f'-e {win_eq_sim_folder_name}/{stage}.mden\n'
+                                f'-o {win_eq_sim_folder_name}/{file_name_map[stage]}.out -r {win_eq_sim_folder_name}/{file_name_map[stage]}.rst7 -x {win_eq_sim_folder_name}/{file_name_map[stage]}.nc '
+                                f'-ref {stage_previous} -inf {win_eq_sim_folder_name}/{file_name_map[stage]}.mdinfo -l {win_eq_sim_folder_name}/{file_name_map[stage]}.log '
+                                f'-e {win_eq_sim_folder_name}/{file_name_map[stage]}.mden\n'
                             )
-                        stage_previous_template = f'{pose}/{{}}/{{}}/{stage}.rst7'
+                    stage_previous_template = f'{pose}/{{}}/{{}}-1/{file_name_map[stage]}.rst7'
 
         with self._change_dir(self.output_dir):
             for i, pose in enumerate(poses_def):
                 if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                     continue
-                write_2_pose(pose, components)
+                write_2_pose(pose)
                 logger.debug(f'Generated groupfiles for {pose}')
             # copy env.amber.24
             env_amber_file = f'{frontier_files}/env.amber.{version}'
-            shutil.copy(env_amber_file, 'fe/env.amber')
-            logger.info('Generated FE EQ groupfiles for all poses')
+            #shutil.copy(env_amber_file, 'fe/env.amber')
+            os.system(f'cp {env_amber_file} fe/env.amber')
+            logger.info('FE EQ groupfiles generated for all poses')
 
 
     def _generate_frontier_fe(self, remd=False, version=24):
@@ -2431,56 +2442,56 @@ class System:
         """
         poses_def = self.sim_config.poses_def
         components = self.sim_config.components
-        attach_rest = self.sim_config.attach_rest
-        weights = self.sim_config.weights
-        dec_int = self.sim_config.dec_int
-        dec_method = self.sim_config.dec_method
-        rest = self.sim_config.rest
 
         sim_stages = [
                 'mini.in',
                 'mdin.in', 'mdin.in.extend'
         ]
-        # write a groupfile for each component
+        
+        def calculate_performance(n_atoms, comp):
+            if comp not in COMPONENTS_DICT['dd']:
+                return 150 if n_atoms < 80000 else 80
+            else:
+                return 80 if n_atoms < 80000 else 40
+        
 
-        def write_2_pose(pose, components):
+        def write_2_pose(pose):
             """
             Write a groupfile for each component in the pose
             """
             all_replicates = {comp: [] for comp in components}
 
             pose_name = f'fe/{pose}/'
-            os.makedirs(f'{pose_name}/groupfiles', exist_ok=True)
+            logger.debug(f'Creating groupfiles for {pose}')
+            
             for component in components:
                 lambdas = self.component_windows_dict[component]
                 folder_name = COMPONENTS_FOLDER_DICT[component]
                 sim_folder_temp = f'{pose}/{folder_name}/{component}'
-                n_sims = len(self.component_windows_dict[component])
+                n_sims = len(lambdas)
 
                 stage_previous = f'{sim_folder_temp}-1/eqnpt04.rst7'
-                #if not os.path.exists(f'fe/{stage_previous}'):
-                #    raise FileNotFoundError(f'File fe/{stage_previous} not found')
 
                 for stage in sim_stages:
                     groupfile_name = f'{pose_name}/groupfiles/{component}_{stage}.groupfile'
                     with open(groupfile_name, 'w') as f:
                         for i in range(n_sims):
-                            #stage_previous_temp = stage_previous.replace('00', f'{i:02d}')
                             win_eq_sim_folder_name = f'{sim_folder_temp}-1'
                             sim_folder_name = f'{sim_folder_temp}{i:02d}'
                             prmtop = f'{win_eq_sim_folder_name}/full.hmr.prmtop'
-                            inpcrd = f'{win_eq_sim_folder_name}/full.inpcrd'
-                            mdinput = f'{sim_folder_name}/{stage.split("_")[0]}'
+                            mdinput_path = f'{sim_folder_name}/{stage.split("_")[0]}'
+                            
                             # Read and modify the MD input file to update the relative path
                             if stage == 'mdin.in':
-                                mdinput = mdinput.replace(stage, 'mdin-00')
-                            if stage == 'mdin.in.extend':
-                                mdinput = mdinput.replace(stage, 'mdin-01')
-                            with open(f'fe/{mdinput}', 'r') as infile:
+                                mdinput_path = mdinput_path.replace(stage, 'mdin-00')
+                            elif stage == 'mdin.in.extend':
+                                mdinput_path = mdinput_path.replace(stage, 'mdin-01')
+                            with open(f'fe/{mdinput_path}', 'r') as infile:
                                 input_lines = infile.readlines()
 
-                            new_mdinput = f'fe/{sim_folder_name}/{stage.split("_")[0]}_frontier'
-                            with open(new_mdinput, 'w') as outfile:
+                            new_mdinput_path = f'fe/{sim_folder_name}/{stage.split("_")[0]}_frontier'
+
+                            with open(new_mdinput_path, 'w') as outfile:
                                 for line in input_lines:
                                     if 'imin' in line:
                                         # add MC-MD water exchange
@@ -2513,8 +2524,6 @@ class System:
                                                 outfile.write('gti_chg_keep   = 1,\n')
                                             elif component == 'v':
                                                 outfile.write('gti_chg_keep   = 0,\n')
-                                            if stage == 'mini.in':
-                                                outfile.write('ntwr = 50,\n')
                                             if remd and stage != 'mini.in':
                                                 outfile.write(
                                                     'numexchg = 3000,\n'
@@ -2522,46 +2531,43 @@ class System:
                                                 outfile.write(
                                                     'bar_intervall = 100,\n'
                                                 )
-                                    if 'cv_file' in line:
+                                    elif 'cv_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
                                         line = f"cv_file = '{sim_folder_name}/{file_name}'\n"
-                                    if 'output_file' in line:
+                                    elif 'output_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
                                         line = f"output_file = '{sim_folder_name}/{file_name}'\n"
-                                    if 'disang' in line:
+                                    elif 'disang' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
                                         line = f"DISANG={sim_folder_name}/{file_name}\n"
                                     # update the number of steps
                                     # if 'nstlim = 50000' in line:
                                     #    line = '  nstlim = 5,\n'
                                     # do not only write the ntwprt atoms
-                                    if 'irest' in line:
+                                    elif 'irest' in line:
                                         #if remd and component in ['x', 'e', 'v', 'w', 'f']:
                                         if stage == 'mdin.in':
                                             line = '  irest = 0,\n'
-                                    if 'ntx =' in line:
+                                    elif 'ntx =' in line:
                                         #if remd:
                                         if stage == 'mdin.in':
                                             line = '  ntx = 1,\n'
-                                    if 'ntxo' in line:
+                                    elif 'ntxo' in line:
                                         line = '  ntxo = 2,\n'
-                                    if 'ntwprt' in line:
+                                    elif 'ntwprt' in line:
                                         line = '\n'
-                                    if 'ntp' in line:
+                                    elif 'ntp' in line:
                                         # nvt simulation
                                         line = '  ntp = 0,\n'
-                                    if 'gti_add_sc' in line:
+                                    elif 'gti_add_sc' in line:
                                         line = '\n'
-                                    if 'gti_chg_keep' in line:
+                                    elif 'gti_chg_keep' in line:
                                         line = '\n'
-                                    if 'mbar_lambda' in line:
+                                    elif 'mbar_lambda' in line:
                                         line = '\n'
-                                    if 'dt' in line:
-                                        if stage == 'mdin.in':
-                                            line = '  dt = 0.001,\n'
-                                    if 'maxcyc' in line:
-                                        line = '  maxcyc = 10000,\n'
-                                    if 'clambda' in line:
+                                    elif 'maxcyc' in line:
+                                        line = '  maxcyc = 5000,\n'
+                                    elif 'clambda' in line:
                                         final_line = []
                                         para_line = line.split(',')
                                         for p_i in range(len(para_line)):
@@ -2575,18 +2581,17 @@ class System:
                                         line = ',\n'.join(final_line)
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
-                                            inpcrd_file = f'fe/{win_eq_sim_folder_name}/full.inpcrd'
-                                            # read the second line of the inpcrd file
-                                            with open(inpcrd_file, 'r') as infile:
-                                                lines = infile.readlines()
-                                                n_atoms = int(lines[1])
-                                            performance = calculate_performance(n_atoms, component)
-                                            n_steps = int(50 / 60 / 24 * performance * 1000 * 1000 / 4)
-                                            n_steps = int(n_steps // 100000 * 100000)
-                                            line = f'  nstlim = {n_steps},\n'
                                             if remd and component in COMPONENTS_DICT['dd'] and stage != 'mini.in':
-                                                line = f'  nstlim = 100,\n'
+                                                line = '  nstlim = 100,\n'
+                                            else:
+                                               # hard estimation of the size to be 100000 atoms 
+                                                n_atoms = 100000
+                                                performance = calculate_performance(n_atoms, component)
+                                                n_steps = int(50 / 60 / 24 * performance * 1000 * 1000 / 4)
+                                                n_steps = int(n_steps // 100000 * 100000)
+                                                line = f'  nstlim = {n_steps},\n'
                                     outfile.write(line)
+
                             f.write(f'# {component} {i} {stage}\n')
                             if stage == 'mdin.in':
                                 f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
@@ -2608,39 +2613,34 @@ class System:
                             if stage == 'mdin.in':
                                 all_replicates[component].append(f'{sim_folder_name}')
                         stage_previous = f'{sim_folder_temp}REPXXX/{stage}.rst7'
-            logger.debug(f'all_replicates: {all_replicates}')
+            #logger.debug(f'all_replicates: {all_replicates}')
             return all_replicates
-
-        def calculate_performance(n_atoms, comp):
-            # Very rough estimate of the performance of the simulations
-            # for 200000-atom systems: rest: 100 ns/day, sdr: 50 ns/day
-            # for 70000-atom systems: rest: 200 ns/day, sdr: 100 ns/day
-            # run 30 mins for each simulation
-            if comp not in COMPONENTS_DICT['dd']:
-                if n_atoms < 80000:
-                    return 150
-                else:
-                    return 80
-            else:
-                if n_atoms < 80000:
-                    return 80
-                else:
-                    return 40
 
         all_replicates = []
 
         with self._change_dir(self.output_dir):
+            filtered_poses = [pose for pose in poses_def if not os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND")]
 
-            for i, pose in enumerate(poses_def):
-                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                    continue
-                all_replicates.append(write_2_pose(pose, components))
-                logger.debug(f'Generated groupfiles for {pose}')
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                results = list(tqdm(executor.map(write_2_pose, filtered_poses),
+                                    total=len(filtered_poses),
+                                    desc='Generating production groupfiles'))
+                all_replicates.extend(results)
+
+        #with self._change_dir(self.output_dir):
+        #    for i, pose in tqdm(enumerate(poses_def),
+        #                        desc='Generating production groupfiles',
+        #                        total=len(poses_def)):
+        #        if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+        #            continue
+        #        all_replicates.append(write_2_pose(pose, components))
+        #        logger.debug(f'Generated groupfiles for {pose}')
             logger.debug(all_replicates)
             # copy env.amber.24
             env_amber_file = f'{frontier_files}/env.amber.{version}'
-            shutil.copy(env_amber_file, 'fe/env.amber')
-            logger.info('Generated production groupfiles for all poses')
+            #shutil.copy(env_amber_file, 'fe/env.amber')
+            os.system(f'cp {env_amber_file} fe/env.amber')
+            logger.info('FE production groupfiles generated for all poses')
     
     def check_sim_stage(self):
         """
@@ -2661,7 +2661,8 @@ class System:
 
                 # only base name
                 # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
-                sort_key = lambda x: int(os.path.splitext(os.path.basename(x))[0][-2:])
+                def sort_key(x):
+                    return int(os.path.splitext(os.path.basename(x))[0][-2:])
                 mdin_files.sort(key=sort_key)
                 if len(mdin_files) > 0:
                     stage_sims[pose][comp] = sort_key(mdin_files[-1])
