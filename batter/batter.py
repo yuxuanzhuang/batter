@@ -1954,13 +1954,14 @@ class System:
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 logger.warning(f"Pose {pose} is UNBOUND in equilibration")
                 continue
-            if os.path.exists(f"{self.equil_folder}/{pose}/representative.pdb"):
+            if os.path.exists(f"{self.equil_folder}/{pose}/representative.rst7"):
                 bound_poses.append([pose_i, pose])
                 logger.debug(f"Representative snapshot found for pose {pose}")
                 continue
             with self._change_dir(f"{self.equil_folder}/{pose}"):
                 pdb = "full.pdb"
-                trajs = [f"md-{i:02d}.nc" for i in range(num_eq_sims)]
+                # exclude the first equilibration simulation
+                trajs = [f"md-{i:02d}.nc" for i in range(1, num_eq_sims)]
                 universe = mda.Universe(pdb, trajs)
                 sim_val = SimValidator(universe)
                 sim_val.plot_ligand_bs()
@@ -1976,7 +1977,7 @@ class System:
                     logger.info(f"Representative snapshot: {rep_snapshot}")
                     
                     cpptraj_command = "cpptraj -p full.prmtop <<EOF\n"
-                    for i in range(num_eq_sims):
+                    for i in range(1, num_eq_sims):
                         cpptraj_command += f"trajin md-{i:02d}.nc\n"
                     cpptraj_command += f"trajout representative.pdb pdb onlyframes {rep_snapshot+1}\n"
                     cpptraj_command += f"trajout representative.rst7 restart onlyframes {rep_snapshot+1}\n"

@@ -818,7 +818,7 @@ class SystemBuilder(ABC):
 
         # regenerate full.pdb resid indices
         u = mda.Universe('full.pdb')
-        renum_txt = 'build_files/protein_renum.txt'
+        renum_txt = f'../{self.build_file_folder}/protein_renum.txt'
 
         renum_data = pd.read_csv(
             renum_txt,
@@ -1640,9 +1640,6 @@ class FreeEnergyBuilder(SystemBuilder):
         min_adis = self.sim_config.min_adis
         sdr_dist = self.sim_config.sdr_dist
 
-        if os.path.exists(self.build_file_folder):
-            shutil.rmtree(self.build_file_folder, ignore_errors=True)
-        
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
@@ -1660,6 +1657,11 @@ class FreeEnergyBuilder(SystemBuilder):
         os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
         #shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
         os.system(f'cp ../../../../equil/{pose}/build_amber_renum.txt ./')
+        os.system(f'cp ../../../../equil/{pose}/build_files/protein_renum.txt ./')
+        if not os.path.exists('protein_renum.txt'):
+            raise FileNotFoundError(f'protein_renum.txt not found in {os.getcwd()}')
+
+
         for file in glob.glob(f'../../../../equil/{pose}/full*.prmtop'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
@@ -4403,9 +4405,6 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         min_adis = self.sim_config.min_adis
         sdr_dist = self.sim_config.sdr_dist
 
-        if os.path.exists(self.build_file_folder):
-            shutil.rmtree(self.build_file_folder, ignore_errors=True)
-        
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
@@ -4423,6 +4422,9 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
         #shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
         os.system(f'cp ../../../../equil/{pose}/build_amber_renum.txt ./')
+        os.system(f'cp ../../../../equil/{pose}/build_files/protein_renum.txt ./')
+        if not os.path.exists('protein_renum.txt'):
+            raise FileNotFoundError(f'protein_renum.txt not found in {os.getcwd()}')
         for file in glob.glob(f'../../../../equil/{pose}/full*.prmtop'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
@@ -5089,9 +5091,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         min_adis = self.sim_config.min_adis
         sdr_dist = 0
 
-        if os.path.exists(self.build_file_folder):
-            shutil.rmtree(self.build_file_folder, ignore_errors=True)
-        
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         # copy dum param to ff
@@ -5109,6 +5108,11 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         os.system(f'cp ../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
         #shutil.copy(f'../../../equil/{pose}/build_amber_renum.txt', './')
         os.system(f'cp ../../../equil/{pose}/build_amber_renum.txt ./')
+        os.system(f'cp ../../../equil/{pose}/build_files/protein_renum.txt ./')
+        if not os.path.exists('protein_renum.txt'):
+            raise FileNotFoundError(f'protein_renum.txt not found in {os.getcwd()}')
+
+
         # Lustre has a problem with copy
         # https://confluence.ecmwf.int/display/UDOC/HPC2020%3A+Python+known+issues
         for file in glob.glob(f'../../../equil/{pose}/full*.prmtop'):
