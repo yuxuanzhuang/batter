@@ -1521,6 +1521,7 @@ class System:
         """
         logger.debug('Adding Harmonic postion restraints')
 
+        num_eq_sim = len(self.sim_config.release_eq)
 
         def write_restraint_block(ref_u, selection_string, files, pose):
             selection = ref_u.select_atoms(f'({selection_string}) and name CA')
@@ -1571,7 +1572,9 @@ class System:
                 ref_u = mda.Universe(
                         f"{self.equil_folder}/{pose}/full.pdb",
                         f"{self.equil_folder}/{pose}/full.inpcrd")
-                files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
+                files = ['eqnpt.in']
+                for i in range(num_eq_sim):
+                    files.append(f'mdin-{i:02d}')
 
                 write_restraint_block(ref_u, extra_restraints, files, pose)
 
@@ -1920,6 +1923,7 @@ class System:
         Check if the ligand is bound after equilibration
         """
         bound_poses = []
+        num_eq_sims = len(self.sim_config.release_eq)
         for pose_i, pose in enumerate(self.sim_config.poses_def):
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 raise FileNotFoundError(f"Equilibration not finished yet")
@@ -1934,7 +1938,7 @@ class System:
                 continue
             with self._change_dir(f"{self.equil_folder}/{pose}"):
                 pdb = "full.pdb"
-                trajs = ["md-01.nc", "md-02.nc", "md-03.nc"]
+                trajs = [f"md-{i:02d}.nc" for i in range(num_eq_sims)]
                 universe = mda.Universe(pdb, trajs)
                 sim_val = SimValidator(universe)
                 sim_val.plot_ligand_bs()
@@ -1948,13 +1952,13 @@ class System:
                     bound_poses.append([pose_i, pose])
                     rep_snapshot = sim_val.find_representative_snapshot()
                     logger.info(f"Representative snapshot: {rep_snapshot}")
-                    cpptraj_command = f"""cpptraj -p full.prmtop <<EOF
-trajin md-01.nc
-trajin md-02.nc
-trajin md-03.nc
-trajout representative.pdb pdb onlyframes {rep_snapshot+1}
-trajout md03.rst7 restart onlyframes {rep_snapshot+1}
-EOF"""
+                    
+                    cpptraj_command = "cpptraj -p full.prmtop <<EOF\n"
+                    for i in range(num_eq_sims):
+                        cpptraj_command += f"trajin md-{i:02d}.nc\n"
+                    cpptraj_command += f"trajout representative.pdb pdb onlyframes {rep_snapshot+1}\n"
+                    cpptraj_command += f"trajout representative.rst7 restart onlyframes {rep_snapshot+1}\n"
+                    cpptraj_command += "EOF\n"
                     run_with_log(cpptraj_command,
                                 working_dir=f"{self.equil_folder}/{pose}")
         logger.debug(f"Bound poses: {bound_poses} will be used for the production stage")

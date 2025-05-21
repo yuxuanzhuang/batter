@@ -1454,7 +1454,6 @@ class EquilibrationBuilder(SystemBuilder):
         for i in range(0, len(release_eq)):
             weight = release_eq[i]
             logger.debug('%s' % str(weight))
-            rest[5] = 0
             setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
                              molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
             #shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
@@ -1526,17 +1525,19 @@ class EquilibrationBuilder(SystemBuilder):
         # Create gradual release files for equilibrium
         for i in range(0, num_sim):
             with open(f'{self.amber_files_folder}/mdin-equil', "rt") as fin:
-                with open("./mdin-%02d" % int(i), "wt") as fout:
-                    if i == (num_sim-1):
+                with open(f"./mdin-{i:02d}", "wt") as fout:
+                    # when no restraint is applied
+                    # run longer
+                    if self.sim_config.release_eq[i] == 0:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace(
-                            '_lig_name_', mol).replace('_num-steps_', str(steps2)).replace('disang_file', 'disang%02d' % int(i)))
+                            '_lig_name_', mol).replace('_num-steps_', str(steps2)).replace('disang_file', f'disang{i:02d}'))
                     else:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace(
-                            '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', 'disang%02d' % int(i)))
+                            '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
 
         with open(f'../{self.run_files_folder}/local-equil.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
@@ -1642,7 +1643,6 @@ class FreeEnergyBuilder(SystemBuilder):
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
         sdr_dist = self.sim_config.sdr_dist
-        fwin = len(self.sim_config.release_eq) - 1
 
         if os.path.exists(self.build_file_folder):
             shutil.rmtree(self.build_file_folder, ignore_errors=True)
@@ -1658,8 +1658,8 @@ class FreeEnergyBuilder(SystemBuilder):
         #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
         os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
         # Get last state from equilibrium simulations
-        #shutil.copy(f'../../../../equil/{pose}/md{fwin:02d}.rst7', './')
-        os.system(f'cp ../../../../equil/{pose}/md{fwin:02d}.rst7 ./')
+        #shutil.copy(f'../../../../equil/{pose}/representative.rst7', './')
+        os.system(f'cp ../../../../equil/{pose}/representative.rst7 ./')
         #shutil.copy(f'../../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
         os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
         #shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
@@ -1674,7 +1674,7 @@ class FreeEnergyBuilder(SystemBuilder):
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
 
-        run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
+        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -3312,7 +3312,7 @@ class FreeEnergyBuilder(SystemBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = len(self.sim_config.release_eq)
+        num_sim = 4
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -3492,7 +3492,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = len(self.sim_config.release_eq)
+        num_sim = 4
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -4071,21 +4071,19 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
         sdr_dist = self.sim_config.sdr_dist
-        fwin = len(self.sim_config.release_eq) - 1
 
         # Build reference ligand from last state of equilibrium simulations
         
-        #shutil.copy('../../../../equil/'+poser+'/md%02d.rst7' % fwin, './')
-        os.system('cp ../../../../equil/%s/md%02d.rst7 ./' % (poser, fwin))
-        #shutil.copy('../../../../equil/'+pose+'/full.pdb', './aligned-nc.pdb')
-        os.system('cp ../../../../equil/%s/full.pdb ./' % poser)
-        for file in glob.glob('../../../../equil/%s/full*.prmtop' % poser.lower()):
+        os.system(f'cp ../../../../equil{poser}/representative.rst7 ./')
+        os.system(f'cp ../../../../equil/{poser}/full.pdb ./')
+        os.system(f'cp ../../../../equil/{poser}/full.pdb ./aligned-nc.pdb')
+        for file in glob.glob(f'../../../../equil/{poser.lower()}/full*.prmtop'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        for file in glob.glob('../../../../equil/%s/vac*' % poser.lower()):
+        for file in glob.glob(f'../../../../equil/{poser.lower()}/vac*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        run_with_log(cpptraj + ' -p full.prmtop -y md%02d.rst7 -x rec_file.pdb' % fwin)
+        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
 
         # restore resid index
         
@@ -4267,7 +4265,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         temperature = self.sim_config.temperature
         mol = self.mol
         molr = self.molr
-        num_sim = len(self.sim_config.release_eq)
+        num_sim = 4
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -4408,7 +4406,6 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
         sdr_dist = self.sim_config.sdr_dist
-        fwin = len(self.sim_config.release_eq) - 1
 
         if os.path.exists(self.build_file_folder):
             shutil.rmtree(self.build_file_folder, ignore_errors=True)
@@ -4424,8 +4421,8 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
         os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
         # Get last state from equilibrium simulations
-        #shutil.copy(f'../../../../equil/{pose}/md{fwin:02d}.rst7', './')
-        os.system(f'cp ../../../../equil/{pose}/md{fwin:02d}.rst7 ./')
+        #shutil.copy(f'../../../../equil/{pose}/representative.rst7', './')
+        os.system(f'cp ../../../../equil/{pose}representative.rst7 ./')
         #shutil.copy(f'../../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
         os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
         #shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
@@ -4440,7 +4437,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
 
-        run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
+        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -4964,7 +4961,7 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = len(self.sim_config.release_eq)
+        num_sim = 4
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -5095,7 +5092,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
         sdr_dist = 0
-        fwin = len(self.sim_config.release_eq) - 1
 
         if os.path.exists(self.build_file_folder):
             shutil.rmtree(self.build_file_folder, ignore_errors=True)
@@ -5111,8 +5107,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         #shutil.copy(f'../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb', './')
         os.system(f'cp ../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb ./')
         # Get last state from equilibrium simulations
-        #shutil.copy(f'../../../equil/{pose}/md{fwin:02d}.rst7', './')
-        os.system(f'cp ../../../equil/{pose}/md{fwin:02d}.rst7 ./')
+        #shutil.copy(f'../../../equil/{pose}/representative.rst7', './')
+        os.system(f'cp ../../../equil/{pose}/representative.rst7 ./')
         #shutil.copy(f'../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
         os.system(f'cp ../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
         #shutil.copy(f'../../../equil/{pose}/build_amber_renum.txt', './')
@@ -5134,7 +5130,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
 
-        run_with_log(f'{cpptraj} -p full.prmtop -y md{fwin:02d}.rst7 -x rec_file.pdb')
+        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -5659,7 +5655,9 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = len(self.sim_config.release_eq)
+        # 2 equilibration step
+        # 2 production steps
+        num_sim = 4
         pose = self.pose
         comp = self.comp
         win = self.win
