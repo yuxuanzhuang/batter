@@ -93,6 +93,9 @@ def run_in_batch(
         run_lines.append(f'cd {system.fe_folder}')
         for pose in system.sim_config.poses_def:
             for comp_ind, comp in enumerate(system.sim_config.components):
+                # skip m
+                if comp == 'm' and system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
+                    continue
                 # check the status of the component
                 windows = system.component_windows_dict[comp]
                 n_windows = len(windows)
@@ -101,10 +104,8 @@ def run_in_batch(
                 if last_rst7 == 'no_folder':
                     logger.warning(f'{pose} {comp} {last_rst7}')
                     continue
-                else:
-                    sim_to_run = True
-                
                 if last_rst7 == 'eq_mini':
+                    sim_to_run = True
                     # only run eq for the first component
                     # as the rest will be run in the same job
                     if comp_ind != 0:
@@ -118,6 +119,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == 'eqnpt_pre':
+                    sim_to_run = True
                     if comp_ind != 0:
                         continue
                     n_windows = len(system.sim_config.components)
@@ -129,6 +131,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == 'eqnpt00':
+                    sim_to_run = True
                     if comp_ind != 0:
                         continue
                     n_windows = len(system.sim_config.components)
@@ -140,6 +143,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == 'eqnpt01':
+                    sim_to_run = True
                     if comp_ind != 0:
                         continue
                     n_windows = len(system.sim_config.components)
@@ -151,6 +155,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == 'eqnpt02':
+                    sim_to_run = True
                     if comp_ind != 0:
                         continue
                     n_windows = len(system.sim_config.components)
@@ -162,6 +167,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == 'eqnpt03':
+                    sim_to_run = True
                     if comp_ind != 0:
                         continue
                     n_windows = len(system.sim_config.components)
@@ -173,6 +179,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == 'eqnpt04':
+                    sim_to_run = True
                     if comp_ind != 0:
                         continue
                     n_windows = len(system.sim_config.components)
@@ -184,6 +191,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == 'min':
+                    sim_to_run = True
                     run_line = f'srun -N {n_nodes} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile  || echo "Error in {pose}/{comp} min" &'
                     logger.info(f'{pose} {comp} min')
                     run_lines.append(f'# {pose} {comp} min')
@@ -191,6 +199,7 @@ def run_in_batch(
                     run_lines.append(f'sleep 0.3\n')
                     run_lines.append(f'\n')
                 elif last_rst7 == '-1':
+                    sim_to_run = True
                     if remd and comp in ['e', 'v', 'x', 'o', 's']:
                         run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile || echo "Error in {pose}/{comp} md" &'
                     else:
@@ -206,6 +215,7 @@ def run_in_batch(
                     else:
                         run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile || echo "Error in {pose}/{comp} md" &'
                     if last_rst7 <= len_md:
+                        sim_to_run = True
                         next_rst7 = last_rst7 + 1
                         logger.info(f'{pose} {comp} md {last_rst7}')
                         run_lines.append(f'# {pose} {comp} md {last_rst7}')
