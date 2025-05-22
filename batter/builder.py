@@ -819,6 +819,8 @@ class SystemBuilder(ABC):
         # regenerate full.pdb resid indices
         u = mda.Universe('full.pdb')
         renum_txt = f'../{self.build_file_folder}/protein_renum.txt'
+        if not os.path.exists(renum_txt):
+            renum_txt = f'{self.build_file_folder}/protein_renum.txt'
 
         renum_data = pd.read_csv(
             renum_txt,
@@ -858,10 +860,6 @@ class SystemBuilder(ABC):
         yield
         os.chdir(cwd)
         logger.debug(f'Changed directory back to {os.getcwd()}')
-
-    @property
-    def ff_folder(self):
-        return f'{self.working_dir}/ff'
 
 
 class EquilibrationBuilder(SystemBuilder):
@@ -903,12 +901,6 @@ class EquilibrationBuilder(SystemBuilder):
         min_adis = self.sim_config.min_adis
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
-
-        # copy dum param to ff
-        #shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
-        os.system(f'cp dum.mol2 ../../ff/dum.mol2')
-        #shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
-        os.system(f'cp dum.frcmod ../../ff/dum.frcmod')
 
         all_pose_folder = self.system.poses_folder
         system_name = self.system.system_name
@@ -1595,9 +1587,6 @@ class FreeEnergyBuilder(SystemBuilder):
         self.comp_folder = f"{COMPONENTS_FOLDER_DICT[component]}"
         self.window_folder = f"{self.comp}{self.win:02d}"
 
-        # copy ff
-        shutil.copytree(f'{self.working_dir}/../ff', f'{self.working_dir}/ff', dirs_exist_ok=True)
-
         self.lipid_mol = self.sim_config.lipid_mol
         if self.lipid_mol:
             # This will not effect SDR/DD
@@ -1641,12 +1630,6 @@ class FreeEnergyBuilder(SystemBuilder):
         sdr_dist = self.sim_config.sdr_dist
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
-
-        # copy dum param to ff
-        #shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
-        os.system(f'cp dum.mol2 ../../ff/dum.mol2')
-        #shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
-        os.system(f'cp dum.frcmod ../../ff/dum.frcmod')
 
         #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
         os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
@@ -3339,17 +3322,6 @@ class FreeEnergyBuilder(SystemBuilder):
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
                             '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/therm1.in", "rt") as fin:
-                with open("./therm1.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
-                            '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/therm2.in", "rt") as fin:
-                with open("./therm2.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                            '_L3_', L3).replace('_temperature_', str(temperature)).replace(
-                            '_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt0-fe.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
@@ -3393,17 +3365,6 @@ class FreeEnergyBuilder(SystemBuilder):
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
-                            '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/therm1-sim.in", "rt") as fin:
-                with open("./therm1.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
-                            '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/therm2-sim.in", "rt") as fin:
-                with open("./therm2.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                            '_L3_', L3).replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt0-sim.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
@@ -4237,24 +4198,6 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                        ('REMARK A', P1, P2, P3, L1, L2, L3, first_res, recep_last))
             fout.writelines(data[1:])
 
-        # Get parameters from equilibrium
-        if not os.path.exists('../ff'):
-            os.makedirs('../ff')
-        for file in glob.glob('../../../../equil/ff/*.mol2'):
-            #shutil.copy(file, '../ff/')
-            os.system(f'cp {file} ../ff/')
-        for file in glob.glob('../../../../equil/ff/*.frcmod'):
-            #shutil.copy(file, '../ff/')
-            os.system(f'cp {file} ../ff/')
-        #shutil.copy('../../../../equil/ff/%s.mol2' % (molr.lower()), '../ff/')
-        os.system(f'cp ../../../../equil/ff/{molr.lower()}.mol2 ../ff/')
-        #shutil.copy('../../../../equil/ff/%s.frcmod' % (molr.lower()), '../ff/')
-        os.system(f'cp ../../../../equil/ff/{molr.lower()}.frcmod ../ff/')
-        #shutil.copy('../../../../equil/ff/dum.mol2', '../ff/')
-        os.system('cp ../../../../equil/ff/dum.mol2 ../ff/')
-        #shutil.copy('../../../../equil/ff/dum.frcmod', '../ff/')
-        os.system('cp ../../../../equil/ff/dum.frcmod ../ff/')
-    
     @log_info
     def _sim_files(self):
         # Find anchors
@@ -4406,12 +4349,6 @@ class UNOFreeEnergyBuilder(FreeEnergyBuilder):
         sdr_dist = self.sim_config.sdr_dist
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
-
-        # copy dum param to ff
-        #shutil.copy(f'dum.mol2', f'../../ff/dum.mol2')
-        os.system(f'cp dum.mol2 ../../ff/dum.mol2')
-        #shutil.copy(f'dum.frcmod', f'../../ff/dum.frcmod')
-        os.system(f'cp dum.frcmod ../../ff/dum.frcmod')
 
         #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
         os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
@@ -5092,12 +5029,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         sdr_dist = 0
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
-
-        # copy dum param to ff
-        #shutil.copy(f'dum.mol2', f'../ff/dum.mol2')
-        os.system(f'cp dum.mol2 ../ff/dum.mol2')
-        #shutil.copy(f'dum.frcmod', f'../ff/dum.frcmod')
-        os.system(f'cp dum.frcmod ../ff/dum.frcmod')
 
         #shutil.copy(f'../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb', './')
         os.system(f'cp ../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb ./')
