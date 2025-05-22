@@ -765,6 +765,12 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     logger.debug('dt: %s' % dt)
     logger.debug('----------------------------------------------')
 
+    # TODO: temporary fix to ignore m comp when no conformational restraints
+    if 'm' in components:
+        if rest[1] == 0 and rest[4] == 0:
+            components.remove('m')
+            logger.debug('Removing m component from calculation')
+    
     # Total simulation time
     total_time = 0
     for i in components:
