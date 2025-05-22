@@ -1,11 +1,17 @@
 import click
+import hashlib  
 import os
 import glob
 import subprocess
 from batter import MABFESystem
 import numpy as np
 from loguru import logger
-            
+
+
+def hash_string_list(str_list):
+    joined = '\n'.join(str_list)
+    return hashlib.sha256(joined.encode('utf-8')).hexdigest()[:8]
+
 def check_stage(pose, comp, n_windows, fe_folder):
     sim_type = 'rest' if comp in ['m', 'n'] else 'sdr'
     # check equilibration of FE has finished
@@ -64,7 +70,6 @@ def check_stage(pose, comp, n_windows, fe_folder):
               help='JSON file with the windows inforation e.g. lambda values and rest force constant to run.',
                 type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
 @click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared frontier files.')
-
 def run_in_batch(
         folders,
         resubmit,
@@ -81,13 +86,17 @@ def run_in_batch(
     cwd = os.getcwd()
     len_md = nrestarts
 
+    job_sleep_interval = 0.3
+
+    job_name = hash_string_list(folders)
+
     for folder in folders:
         system = MABFESystem(folder)
         if window_json is not None:
             system.load_window_json(window_json)
             overwrite = True
         if not os.path.exists(f'{system.fe_folder}/pose0/groupfiles') or overwrite:
-            logger.warning(f'generating run files...')
+            logger.info('Generating run files...')
             system.generate_frontier_files(remd=remd)
         run_lines.append(f'# {folder}')
         run_lines.append(f'cd {system.fe_folder}')
@@ -116,8 +125,7 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} eq_mini')
                     run_lines.append(f'# {pose} {comp} eq_mini')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt_pre':
                     sim_to_run = True
                     if comp_ind != 0:
@@ -128,8 +136,7 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} eqnpt_pre')
                     run_lines.append(f'# {pose} {comp} eqnpt_pre')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt00':
                     sim_to_run = True
                     if comp_ind != 0:
@@ -140,8 +147,7 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} eqnpt00')
                     run_lines.append(f'# {pose} {comp} eqnpt00')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt01':
                     sim_to_run = True
                     if comp_ind != 0:
@@ -152,8 +158,7 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} eqnpt01')
                     run_lines.append(f'# {pose} {comp} eqnpt01')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt02':
                     sim_to_run = True
                     if comp_ind != 0:
@@ -164,8 +169,7 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} eqnpt02')
                     run_lines.append(f'# {pose} {comp} eqnpt02')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt03':
                     sim_to_run = True
                     if comp_ind != 0:
@@ -176,8 +180,7 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} eqnpt03')
                     run_lines.append(f'# {pose} {comp} eqnpt03')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt04':
                     sim_to_run = True
                     if comp_ind != 0:
@@ -188,16 +191,14 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} eqnpt04')
                     run_lines.append(f'# {pose} {comp} eqnpt04')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'min':
                     sim_to_run = True
                     run_line = f'srun -N {n_nodes} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile  || echo "Error in {pose}/{comp} min" &'
                     logger.info(f'{pose} {comp} min')
                     run_lines.append(f'# {pose} {comp} min')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == '-1':
                     sim_to_run = True
                     if remd and comp in ['e', 'v', 'x', 'o', 's']:
@@ -207,8 +208,7 @@ def run_in_batch(
                     logger.info(f'{pose} {comp} md start')
                     run_lines.append(f'# {pose} {comp} md start')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep 0.3\n')
-                    run_lines.append(f'\n')
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 else:
                     if remd and comp in ['e', 'v', 'x', 'o', 's']:
                         run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile || echo "Error in {pose}/{comp} md" &'
@@ -238,8 +238,7 @@ def run_in_batch(
                         run_lines.append(f'sed "s/CURRNUM/${{latest_num}}/g" {pose}/groupfiles/{comp}_mdin.in.extend.groupfile > {pose}/groupfiles/{comp}_temp_mdin.groupfile')
                         run_lines.append(f'sed "s/NEXTNUM/${{next_num}}/g" {pose}/groupfiles/{comp}_temp_mdin.groupfile > {pose}/groupfiles/{comp}_current_mdin.groupfile')
                         run_lines.append(run_line)
-                        run_lines.append(f'sleep 0.3\n')
-                        run_lines.append(f'\n')
+                        run_lines.append(f'sleep {job_sleep_interval}\n\n')
                     else:
                         logger.info(f'{pose} {comp} md {last_rst7} finished')
                 total_num_nodes += n_nodes
@@ -261,7 +260,7 @@ def run_in_batch(
         '#!/usr/bin/env bash',
         '#SBATCH -A BIP152',
         f'#SBATCH -J {cwd}',
-        '#SBATCH -o run.out',
+        f'#SBATCH -o run_{job_name}.out',
         '#SBATCH -t 00:50:00',
         '#SBATCH -p batch',
         f'#SBATCH -N {total_num_nodes}',
@@ -276,7 +275,7 @@ def run_in_batch(
         'echo "HIP_VISIBLE_DEVICES: $HIP_VISIBLE_DEVICES"',
     ]
 
-    with open('run_in_batch.sbatch', 'w') as f:
+    with open(f'run_{job_name}.sbatch', 'w') as f:
         f.write('\n'.join(headers))
         f.write('\n\n\n')
         f.write('\n'.join(run_lines))
@@ -294,7 +293,7 @@ def run_in_batch(
         f.write('wait\n')
 
     if resubmit:
-        result = subprocess.run(['sbatch', 'run_in_batch.sbatch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(['sbatch', f'run_{job_name}.sbatch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         
         print("STDOUT:", result.stdout)
         print("STDERR:", result.stderr)
