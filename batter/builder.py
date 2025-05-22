@@ -4324,7 +4324,128 @@ class RESTFreeEnergyBuilder(FreeEnergyBuilder):
     Builder for restrain free energy calculations system
     """
 
-class UNOFreeEnergyBuilder(FreeEnergyBuilder):
+class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
+    """
+    Builder for vdw + elec single decoupling free energy calculations system
+    """
+    @log_info
+    def _sim_files(self):
+        
+        dec_method = self.dec_method
+        hmr = self.sim_config.hmr
+        temperature = self.sim_config.temperature
+        mol = self.mol
+        num_sim = 4
+        pose = self.pose
+        comp = self.comp
+        win = self.win
+        stage = self.stage
+        steps1 = self.sim_config.dic_steps1[comp]
+        steps2 = self.sim_config.dic_steps2[comp]
+        rng = self.sim_config.rng
+        lipid_mol = self.lipid_mol
+        ntwx = self.sim_config.ntwx
+        lambdas = self.system.component_windows_dict[comp]
+        weight = lambdas[self.win if self.win != -1 else 0]
+
+        # Read 'disang.rest' and extract L1, L2, L3
+        #with open('disang.rest', 'r') as f:
+        #    data = f.readline().split()
+        #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
+
+        # Read 'vac.pdb' once
+        with open('./vac.pdb') as f:
+            lines = f.readlines()
+
+        # Get number of atoms in vacuum (third-to-last line)
+        vac_atoms = lines[-3][6:11].strip()
+
+        # Get the last ligand residue number
+        last_lig = None
+        for line in lines:
+            if line[17:20].strip().lower() == mol.lower():  # Compare residue name
+                last_lig = line[22:26].strip()  # Extract residue number
+
+        if last_lig is None:
+            raise ValueError(f"No ligand residue matching '{mol}' found in vac.pdb")
+
+        # Create simulation files for elec+vdw decoupling
+        if (dec_method == 'sdr'):
+            # Simulation files for simultaneous decoupling
+            with open('./vac.pdb') as myfile:
+                data = myfile.readlines()
+                mk2 = int(last_lig)
+                mk1 = int(mk2 - 1)
+            for i in range(0, num_sim+1):
+                with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
+                    with open("./mdin-%02d" % int(i), "wt") as fout:
+                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
+                mdin = open("./mdin-%02d" % int(i), 'a')
+                mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                mdin.write('  mbar_lambda = ')
+                for i in range(0, len(lambdas)):
+                    mdin.write(' %6.5f,' % (lambdas[i]))
+                mdin.write('\n')
+                mdin.write('  infe = 1,\n')
+                mdin.write(' /\n')
+                mdin.write(' &pmd \n')
+                mdin.write(' output_file = \'cmass.txt\' \n')
+                mdin.write(' output_freq = %02d \n' % int(ntwx))
+                mdin.write(' cv_file = \'cv.in\' \n')
+                mdin.write(' /\n')
+                mdin.write(' &wt type = \'END\' , /\n')
+                #mdin.write('DISANG=disang.rest\n')
+                #mdin.write('LISTOUT=POUT\n')
+
+            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
+                with open("./mini.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+
+        # Create running scripts for local and server
+        with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+            with open("./run-local.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
+        with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
+            with open("./PBS-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
+            with open("./SLURMM-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
+                            'SYSTEMNAME', self.system.system_name).replace(
+                                'PARTITIONNAME', self.system.partition))
+
+
+
+class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
     """
     Builder for vdw + elec single decoupling free energy calculations system
     + flat-bottom COM restraints

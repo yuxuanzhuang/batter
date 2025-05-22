@@ -304,10 +304,10 @@ class SimulationConfig(BaseModel):
             case 'relative':
                 self.components = ['x', 'e', 'n', 'm']
                 self.dec_method = 'exchange'
-            case 'x_express':
+            case 'uno':
                 self.components = ['m', 'n', 'o']
                 self.dec_method = 'sdr'
-            case 'uno':
+            case 'uno_com':
                 self.components = ['o']
                 self.dec_method = 'sdr'
             case 'self':
@@ -341,8 +341,8 @@ class SimulationConfig(BaseModel):
                        "sdr", "sdr-rest",
                        "dd-rest",
                        "express", "relative",
-                       "x_express",
                        "uno",
+                       "uno_com",
                        "self",
                        "custom"}
         if value not in valid_types:
