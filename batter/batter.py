@@ -2392,7 +2392,8 @@ class System:
     @save_state
     def generate_frontier_files(self,
                                     remd=False,
-                                    version=24):
+                                    version=24,
+                                    ):
         """
         Generate the frontier files for the system
         to run them in a bundle.
@@ -2413,7 +2414,7 @@ class System:
         pass
 
 
-    def _generate_frontier_fe_equilibration(self, version):
+    def _generate_frontier_fe_equilibration(self, version=24):
         """
         Generate the frontier files for the free energy calculation equilibration stage.
         """
@@ -2433,9 +2434,7 @@ class System:
             Write a groupfile for each component in the pose
             """
             os.makedirs(f'fe/{pose}/groupfiles', exist_ok=True)
-
             n_sims = len(components)
-
             stage_previous_template = f'{pose}/{{}}/{{}}-1/full.inpcrd'
 
             for stage in sim_stages:
@@ -2496,7 +2495,10 @@ class System:
             logger.info('FE EQ groupfiles generated for all poses')
 
 
-    def _generate_frontier_fe(self, remd=False, version=24):
+    def _generate_frontier_fe(self,
+                              remd=False,
+                              version=24,
+                              ):
         """
         Generate the frontier files for the free energy calculation production stage.
         """
@@ -2570,20 +2572,23 @@ class System:
                                                 )
                                         if component in COMPONENTS_DICT['dd']:
                                             outfile.write(
-                                                #'scalpha = 0.5,\n'
-                                                #'scbeta = 1.0,\n'
                                                 'gti_add_sc      = 25,\n'
-                                                #'gti_lam_sch     = 1,\n'
-                                                #'gti_ele_sc      = 1,\n'
-                                                #'gti_vdw_sc      = 1,\n'
-                                                #'gti_cut_sc      = 2,\n'
                                                 f'clambda         = {lambdas[i]:.5f},\n'
                                                 f'mbar_lambda     = {", ".join([f"{l:.5f}" for l in lambdas])},\n'
                                             )
+                                            if component == 'o':
+                                                outfile.write(
+                                                    'gti_lam_sch     = 1,\n'
+                                                    'gti_ele_sc      = 1,\n'
+                                                    'gti_vdw_sc      = 1,\n'
+                                                    'gti_cut_sc      = 2,\n'
+                                                )
                                             if component == 'e':
                                                 outfile.write('gti_chg_keep   = 1,\n')
                                             elif component == 'v':
                                                 outfile.write('gti_chg_keep   = 0,\n')
+                                            elif component == 'o':
+                                                outfile.write('gti_chg_keep   = 1,\n')
                                             if remd and stage != 'mini.in':
                                                 outfile.write(
                                                     'numexchg = 3000,\n'

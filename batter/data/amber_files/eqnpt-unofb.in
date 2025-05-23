@@ -1,27 +1,33 @@
 *******************************************************
-*****************************       mini.in
+*****************************       eqnpt.in
 *******************************************************
-Minimizing.
+Equilibrate, NPT.
  &cntrl
-  imin = 1,
-  ntx = 1, 
+  imin = 0,
+  ntx = 5,
   ntxo = 1,
-  ntpr = 50,
-  maxcyc = 2000,
-  ntwr = 50,
-  ncyc = 500,
-  irest = 0,
-  ntmin = 2,
+  irest = 1,
+  ntpr = 5000,
+  ntwr = 5000,
+  ntwx = 5000,
+  ioutfm = 1,
+  iwrap = 1,
   ntf = 1,
-  ntc = 1,
-  ntb = 1,
+  ntc = 2,
   cut = _cutoff_,
-  nmropt = 1,
+  ntt = 3,
+  temp0 = _temperature_,
+  gamma_ln = _gamma_ln_,
+  ig = -1,
+  ntp = 1,
+  barostat = 1,
+  nstlim = 50000,
+  dt = 0.001,
+  nmropt = 0,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '(@CA,C,N,P31 | :_lig_name_ | :2) & !@H=',
-  infe = 1,
+  restraintmask = '(@CA | :_lig_name_) & !@H=',
   icfe = 1,
   clambda = lbd_val,
   scalpha = 0.5,
@@ -32,10 +38,12 @@ Minimizing.
   scmask1=':mk1',
   scmask2=':mk2',
   gti_add_sc = 25,
+  infe = 1,
  /
  &pmd
  output_file = 'cmass.txt'
- output_freq = 500
+ output_freq = 1000
  cv_file = 'cv.in'
  /
  &wt type = 'END', /
+

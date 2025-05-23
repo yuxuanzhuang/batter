@@ -100,11 +100,14 @@ def run_in_batch(
             system.generate_frontier_files(remd=remd)
         run_lines.append(f'# {folder}')
         run_lines.append(f'cd {system.fe_folder}')
-        for pose in system.sim_config.poses_def:
-            for comp_ind, comp in enumerate(system.sim_config.components):
+        for pose in system.bound_poses:
+            components = system.sim_config.components
+            # if system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
                 # skip m
-                if comp == 'm' and system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
-                    continue
+            #    components = [comp for comp in components if comp not in ['n']]
+                
+            for comp_ind, comp in enumerate(components):
+                # skip m
                 # check the status of the component
                 windows = system.component_windows_dict[comp]
                 n_windows = len(windows)
@@ -192,7 +195,12 @@ def run_in_batch(
                     run_lines.append(f'# {pose} {comp} eqnpt04')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
-                elif last_rst7 == 'min':
+                if comp == 'n' and system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
+                    total_num_nodes += n_nodes
+                    total_num_jobs += n_windows
+                    continue
+                
+                if last_rst7 == 'min':
                     sim_to_run = True
                     run_line = f'srun -N {n_nodes} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile  || echo "Error in {pose}/{comp} min" &'
                     logger.info(f'{pose} {comp} min')
@@ -241,11 +249,11 @@ def run_in_batch(
                         run_lines.append(f'sleep {job_sleep_interval}\n\n')
                     else:
                         logger.info(f'{pose} {comp} md {last_rst7} finished')
+                        continue
                 total_num_nodes += n_nodes
                 total_num_jobs += n_windows
         
-        run_lines.append(f'cd {cwd}')
-        run_lines.append(f'\n')
+        run_lines.append(f'cd {cwd}\n')
 
     total_num_nodes = int(np.ceil(total_num_nodes))
     total_num_jobs = int(total_num_jobs)
@@ -283,7 +291,7 @@ def run_in_batch(
         if resubmit:
             f.write('sleep 200\n')
 
-            command = f'batter run-in-batch'
+            command = 'batter run-in-batch'
             for folder in folders:
                 command += f' -f {folder}'
             command += ' --resubmit'

@@ -375,7 +375,7 @@ class SystemBuilder(ABC):
         f.close()
 
         # Adjust ions for LJ and electrostatic Calculations (avoid neutralizing plasma)
-        if (comp == 'v' and dec_method == 'sdr') or comp == 'x':
+        if (comp == 'v' and dec_method == 'sdr') or comp == 'x' or comp == 'o':
             charge_neut = neu_cat - neu_ani - 2*lig_cat + 2*lig_ani
             neu_cat = 0
             neu_ani = 0
@@ -2166,7 +2166,7 @@ class FreeEnergyBuilder(SystemBuilder):
 
                     build_file.write('%6.2f%6.2f\n' % (0, 0))
                 build_file.write('TER\n')
-        if comp == 'v' and (dec_method == 'sdr' or dec_method == 'exchange'):
+        if (comp == 'v' or comp == 'o') and (dec_method == 'sdr' or dec_method == 'exchange'):
             for i in range(0, lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
                                  ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid + 1)))
@@ -2349,7 +2349,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                 hvy_h.append(lines[i][6:11].strip())
 
             if dec_method == 'sdr' or dec_method == 'exchange':
-                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x'):
+                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o'):
 
                     rec_res = int(recep_last) + 2
                     lig_res = str((int(lig_res) + 1))
@@ -2404,7 +2404,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                         data = lines[i][12:16].strip()
                                         if data[0] != 'H':
                                             hvy_g.append(lines[i][6:11].strip())
-                        if comp == 'v':
+                        if comp == 'v' or comp == 'o':
                             for i in range(0, len(lines)):
                                 if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
                                     if lines[i][22:26].strip() == str(int(lig_res) + 1):
@@ -2452,7 +2452,7 @@ class FreeEnergyBuilder(SystemBuilder):
             beg = bb_start[i] - int(first_res) + 2
             end = bb_end[i] - int(first_res) + 2
             if dec_method == 'sdr' or dec_method == 'exchange':
-                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x'):
+                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o'):
                     beg = bb_start[i] - int(first_res) + 3
                     end = bb_end[i] - int(first_res) + 3
             for i in range(beg, end):
@@ -2667,7 +2667,7 @@ class FreeEnergyBuilder(SystemBuilder):
             ldhf = weight*rest[4]/100
             rcom = rest[5]
             lcom = rest[6]
-        elif comp == 'v' or comp == 'e' or comp == 'w' or comp == 'f' or comp == 'x':
+        elif comp == 'v' or comp == 'e' or comp == 'w' or comp == 'f' or comp == 'x' or comp == 'o':
             rdhf = rest[0]
             rdsf = rest[1]
             ldf = rest[2]
@@ -2777,7 +2777,7 @@ class FreeEnergyBuilder(SystemBuilder):
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, ldhf, ldhf, lign_d))
-                        if comp == 'v' and (dec_method == 'sdr' or dec_method == 'exchange'):
+                        if (comp == 'v' or comp == 'o') and (dec_method == 'sdr' or dec_method == 'exchange'):
                             nums2 = str(atm_num.index(data[0])+vac_atoms)+','+str(atm_num.index(data[1])+vac_atoms)+','+str(
                                 atm_num.index(data[2])+vac_atoms)+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
@@ -2825,7 +2825,7 @@ class FreeEnergyBuilder(SystemBuilder):
                 cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
                 cv_file.write('/ \n')
             if dec_method == 'sdr' or dec_method == 'exchange':
-                if comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x':
+                if comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o':
                     cv_file.write('&colvar \n')
                     cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
                     cv_file.write(' cv_ni = %s, cv_i = 2,0,' % str(len(hvy_g)+2))
@@ -3486,7 +3486,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         if last_lig is None:
             raise ValueError(f"No ligand residue matching '{mol}' found in vac.pdb")
 
-        if (comp == 'v'):
+        if (comp == 'v' or comp == 'o'):
             # Create simulation files for vdw decoupling
             if (dec_method == 'sdr'):
                 # Simulation files for simultaneous decoupling
@@ -4442,7 +4442,6 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
                             'SYSTEMNAME', self.system.system_name).replace(
                                 'PARTITIONNAME', self.system.partition))
-
 
 
 class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
