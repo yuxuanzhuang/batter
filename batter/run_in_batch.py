@@ -4,6 +4,7 @@ import os
 import glob
 import subprocess
 from batter import MABFESystem
+from batter.utils import COMPONENTS_DICT
 import numpy as np
 from loguru import logger
 
@@ -69,6 +70,9 @@ def check_stage(pose, comp, n_windows, fe_folder):
 @click.option('--window_json', '-w', default=None,
               help='JSON file with the windows inforation e.g. lambda values and rest force constant to run.',
                 type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
+@click.option('--lambda_schedule', '-l', default=None,
+               help='The lambda schedule file to use for the simulation.',
+                type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
 @click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared frontier files.')
 def run_in_batch(
         folders,
@@ -76,6 +80,7 @@ def run_in_batch(
         remd,
         nrestarts,
         window_json=None,
+        lambda_schedule=None,
         overwrite=False,
         ):
 
@@ -90,6 +95,13 @@ def run_in_batch(
 
     job_name = hash_string_list(folders)
 
+    if lambda_schedule is not None:
+        # convert to absolute path
+        lambda_schedule = os.path.abspath(lambda_schedule)
+        extra_flag = f'-lambda_sch {lambda_schedule}'
+    else:
+        extra_flag = ''
+
     for folder in folders:
         system = MABFESystem(folder)
         if window_json is not None:
@@ -102,12 +114,11 @@ def run_in_batch(
         run_lines.append(f'cd {system.fe_folder}')
         for pose in system.bound_poses:
             components = system.sim_config.components
-            # if system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
-                # skip m
-            #    components = [comp for comp in components if comp not in ['n']]
-                
+            if system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
+                # skip n
+                components = [comp for comp in components if comp not in ['n']]
+
             for comp_ind, comp in enumerate(components):
-                # skip m
                 # check the status of the component
                 windows = system.component_windows_dict[comp]
                 n_windows = len(windows)
@@ -125,8 +136,8 @@ def run_in_batch(
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
                     run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini.in.groupfile || echo "Error in {pose}/{comp} eq_mini" &'
-                    logger.info(f'{pose} {comp} eq_mini')
-                    run_lines.append(f'# {pose} {comp} eq_mini')
+                    logger.info(f'{pose} eq_mini')
+                    run_lines.append(f'# {pose}  eq_mini')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt_pre':
@@ -136,8 +147,8 @@ def run_in_batch(
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
                     run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt0.in.groupfile || echo "Error in {pose}/{comp} eqnpt_pre" &'
-                    logger.info(f'{pose} {comp} eqnpt_pre')
-                    run_lines.append(f'# {pose} {comp} eqnpt_pre')
+                    logger.info(f'{pose} eqnpt_pre')
+                    run_lines.append(f'# {pose} eqnpt_pre')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt00':
@@ -147,8 +158,8 @@ def run_in_batch(
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
                     run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_00.groupfile || echo "Error in {pose}/{comp} eqnpt00" &'
-                    logger.info(f'{pose} {comp} eqnpt00')
-                    run_lines.append(f'# {pose} {comp} eqnpt00')
+                    logger.info(f'{pose} eqnpt00')
+                    run_lines.append(f'# {pose} eqnpt00')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt01':
@@ -158,8 +169,8 @@ def run_in_batch(
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
                     run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_01.groupfile || echo "Error in {pose}/{comp} eqnpt01" &'
-                    logger.info(f'{pose} {comp} eqnpt01')
-                    run_lines.append(f'# {pose} {comp} eqnpt01')
+                    logger.info(f'{pose} eqnpt01')
+                    run_lines.append(f'# {pose} eqnpt01')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt02':
@@ -169,8 +180,8 @@ def run_in_batch(
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
                     run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_02.groupfile || echo "Error in {pose}/{comp} eqnpt02" &'
-                    logger.info(f'{pose} {comp} eqnpt02')
-                    run_lines.append(f'# {pose} {comp} eqnpt02')
+                    logger.info(f'{pose} eqnpt02')
+                    run_lines.append(f'# {pose} eqnpt02')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt03':
@@ -180,8 +191,8 @@ def run_in_batch(
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
                     run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_03.groupfile || echo "Error in {pose}/{comp} eqnpt03" &'
-                    logger.info(f'{pose} {comp} eqnpt03')
-                    run_lines.append(f'# {pose} {comp} eqnpt03')
+                    logger.info(f'{pose} eqnpt03')
+                    run_lines.append(f'# {pose} eqnpt03')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == 'eqnpt04':
@@ -191,26 +202,21 @@ def run_in_batch(
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
                     run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_04.groupfile || echo "Error in {pose}/{comp} eqnpt04" &'
-                    logger.info(f'{pose} {comp} eqnpt04')
-                    run_lines.append(f'# {pose} {comp} eqnpt04')
+                    logger.info(f'{pose} eqnpt04')
+                    run_lines.append(f'# {pose} eqnpt04')
                     run_lines.append(run_line)
-                    run_lines.append(f'sleep {job_sleep_interval}\n\n')
-                if comp == 'n' and system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
-                    total_num_nodes += n_nodes
-                    total_num_jobs += n_windows
-                    continue
-                
-                if last_rst7 == 'min':
+                    run_lines.append(f'sleep {job_sleep_interval}\n\n')                
+                elif last_rst7 == 'min':
                     sim_to_run = True
-                    run_line = f'srun -N {n_nodes} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile  || echo "Error in {pose}/{comp} min" &'
+                    run_line = f'srun -N {n_nodes} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile || echo "Error in {pose}/{comp} min" &'
                     logger.info(f'{pose} {comp} min')
                     run_lines.append(f'# {pose} {comp} min')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 elif last_rst7 == '-1':
                     sim_to_run = True
-                    if remd and comp in ['e', 'v', 'x', 'o', 's']:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile || echo "Error in {pose}/{comp} md" &'
+                    if remd and comp in COMPONENTS_DICT['dd']:
+                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     else:
                         run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile || echo "Error in {pose}/{comp} md" &'
                     logger.info(f'{pose} {comp} md start')
@@ -218,10 +224,10 @@ def run_in_batch(
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 else:
-                    if remd and comp in ['e', 'v', 'x', 'o', 's']:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile || echo "Error in {pose}/{comp} md" &'
+                    if remd and comp in COMPONENTS_DICT['dd']:
+                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     else:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     if last_rst7 <= len_md:
                         sim_to_run = True
                         next_rst7 = last_rst7 + 1
@@ -267,7 +273,7 @@ def run_in_batch(
     headers = [
         '#!/usr/bin/env bash',
         '#SBATCH -A BIP152',
-        f'#SBATCH -J {cwd}',
+        f'#SBATCH -J {cwd}/{folders[0]}',
         f'#SBATCH -o run_{job_name}.out',
         '#SBATCH -t 00:50:00',
         '#SBATCH -p batch',
@@ -297,11 +303,17 @@ def run_in_batch(
             command += ' --resubmit'
             if remd:
                 command += ' --remd'
+            if nrestarts is not None:
+                command += f' -n {nrestarts}'
+            if lambda_schedule is not None:
+                command += f' -l {lambda_schedule}'
+            if window_json is not None:
+                command += f' -w {window_json}'
             f.write(f'{command}\n')
         f.write('wait\n')
 
     if resubmit:
         result = subprocess.run(['sbatch', f'run_{job_name}.sbatch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        
-        print("STDOUT:", result.stdout)
-        print("STDERR:", result.stderr)
+        click.echo(f"Submitted jobscript: run_{job_name}.sbatch")
+        click.echo(f"STDOUT: {result.stdout}")
+        click.echo(f"STDERR: {result.stderr}")

@@ -11,13 +11,11 @@ import numpy as np
 from loguru import logger
 import pandas as pd
 from batter.data import charmmlipid2amber
+from batter.utils import (
+    COMPONENTS_LAMBDA_DICT
+)
 
-FEP_COMPONENTS = ['a', 'l', 't',
-                  'm', 'n', 'c',
-                  'r', 'e', 'v', 
-                  'f', 'w', 'x',
-                  'o', 's']
-
+FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 
 class SimulationConfig(BaseModel):
     software: str = Field("amber", info={'description': "Software to use (amber, openmm)"})
@@ -306,6 +304,9 @@ class SimulationConfig(BaseModel):
                 self.dec_method = 'exchange'
             case 'uno':
                 self.components = ['m', 'n', 'o']
+                self.dec_method = 'sdr'
+            case 'uno_rest':
+                self.components = ['z']
                 self.dec_method = 'sdr'
             case 'uno_com':
                 self.components = ['o']

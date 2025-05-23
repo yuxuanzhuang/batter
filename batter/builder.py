@@ -375,7 +375,7 @@ class SystemBuilder(ABC):
         f.close()
 
         # Adjust ions for LJ and electrostatic Calculations (avoid neutralizing plasma)
-        if (comp == 'v' and dec_method == 'sdr') or comp == 'x' or comp == 'o':
+        if (comp == 'v' and dec_method == 'sdr') or comp == 'x':
             charge_neut = neu_cat - neu_ani - 2*lig_cat + 2*lig_ani
             neu_cat = 0
             neu_ani = 0
@@ -385,7 +385,7 @@ class SystemBuilder(ABC):
                 neu_ani = abs(charge_neut)
         
         # only one charged ligand present
-        if comp == 's' or comp == 'o':
+        if comp == 's' or comp == 'o' or comp == 'z':
             charge_neut = neu_cat - neu_ani - 1*lig_cat + 1*lig_ani
             neu_cat = 0
             neu_ani = 0
@@ -2166,7 +2166,7 @@ class FreeEnergyBuilder(SystemBuilder):
 
                     build_file.write('%6.2f%6.2f\n' % (0, 0))
                 build_file.write('TER\n')
-        if (comp == 'v' or comp == 'o') and (dec_method == 'sdr' or dec_method == 'exchange'):
+        if (comp == 'v' or comp == 'o' or comp == 'z') and (dec_method == 'sdr' or dec_method == 'exchange'):
             for i in range(0, lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
                                  ('ATOM', i+1, lig_atomlist[i], mol, lig_chainlist[i], float(lig_resid + 1)))
@@ -2349,7 +2349,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                 hvy_h.append(lines[i][6:11].strip())
 
             if dec_method == 'sdr' or dec_method == 'exchange':
-                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o'):
+                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z'):
 
                     rec_res = int(recep_last) + 2
                     lig_res = str((int(lig_res) + 1))
@@ -2404,7 +2404,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                         data = lines[i][12:16].strip()
                                         if data[0] != 'H':
                                             hvy_g.append(lines[i][6:11].strip())
-                        if comp == 'v' or comp == 'o':
+                        if comp == 'v' or comp == 'o' or comp == 'z':
                             for i in range(0, len(lines)):
                                 if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
                                     if lines[i][22:26].strip() == str(int(lig_res) + 1):
@@ -2452,7 +2452,7 @@ class FreeEnergyBuilder(SystemBuilder):
             beg = bb_start[i] - int(first_res) + 2
             end = bb_end[i] - int(first_res) + 2
             if dec_method == 'sdr' or dec_method == 'exchange':
-                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o'):
+                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z'):
                     beg = bb_start[i] - int(first_res) + 3
                     end = bb_end[i] - int(first_res) + 3
             for i in range(beg, end):
@@ -2667,7 +2667,7 @@ class FreeEnergyBuilder(SystemBuilder):
             ldhf = weight*rest[4]/100
             rcom = rest[5]
             lcom = rest[6]
-        elif comp == 'v' or comp == 'e' or comp == 'w' or comp == 'f' or comp == 'x' or comp == 'o':
+        elif comp == 'v' or comp == 'e' or comp == 'w' or comp == 'f' or comp == 'x' or comp == 'o' or comp == 'z':
             rdhf = rest[0]
             rdsf = rest[1]
             ldf = rest[2]
@@ -2777,7 +2777,7 @@ class FreeEnergyBuilder(SystemBuilder):
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, ldhf, ldhf, lign_d))
-                        if (comp == 'v' or comp == 'o') and (dec_method == 'sdr' or dec_method == 'exchange'):
+                        if (comp == 'v' or comp == 'o' or comp == 'z') and (dec_method == 'sdr' or dec_method == 'exchange'):
                             nums2 = str(atm_num.index(data[0])+vac_atoms)+','+str(atm_num.index(data[1])+vac_atoms)+','+str(
                                 atm_num.index(data[2])+vac_atoms)+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
@@ -2825,7 +2825,7 @@ class FreeEnergyBuilder(SystemBuilder):
                 cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
                 cv_file.write('/ \n')
             if dec_method == 'sdr' or dec_method == 'exchange':
-                if comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o':
+                if comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z':
                     cv_file.write('&colvar \n')
                     cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
                     cv_file.write(' cv_ni = %s, cv_i = 2,0,' % str(len(hvy_g)+2))
@@ -3389,7 +3389,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
@@ -3405,7 +3405,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                         '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
@@ -3422,7 +3422,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                             '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
@@ -3486,7 +3486,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         if last_lig is None:
             raise ValueError(f"No ligand residue matching '{mol}' found in vac.pdb")
 
-        if (comp == 'v' or comp == 'o'):
+        if comp == 'v':
             # Create simulation files for vdw decoupling
             if (dec_method == 'sdr'):
                 # Simulation files for simultaneous decoupling
@@ -3505,7 +3505,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
@@ -3567,7 +3567,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
@@ -3638,7 +3638,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace(
                                         'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
@@ -3701,7 +3701,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
@@ -3765,7 +3765,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
@@ -3822,7 +3822,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
@@ -3866,7 +3866,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 'SYSTEMNAME', self.system.system_name).replace(
                                     'PARTITIONNAME', self.system.partition))
 
-        if (comp == 'o'):
+        if (comp == 'o' or comp == 'z'):
             # Create simulation files for elec+vdw decoupling
             if (dec_method == 'sdr'):
                 # Simulation files for simultaneous decoupling
@@ -3885,7 +3885,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
@@ -3942,7 +3942,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
                                     elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                                 fout.write(line.replace('_temperature_', str(temperature)).replace(
                                         '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
@@ -4255,7 +4255,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                             elif 'irest' in line:
                                 line = 'irest = 0, \n'
                             elif 'restraintmask' in line:
-                                restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                 line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                         fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                             '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
@@ -4387,7 +4387,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
@@ -4405,8 +4405,8 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                 mdin.write(' cv_file = \'cv.in\' \n')
                 mdin.write(' /\n')
                 mdin.write(' &wt type = \'END\' , /\n')
-                #mdin.write('DISANG=disang.rest\n')
-                #mdin.write('LISTOUT=POUT\n')
+                mdin.write('DISANG=disang.rest\n')
+                mdin.write('LISTOUT=POUT\n')
 
             with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
@@ -4442,6 +4442,24 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
                             'SYSTEMNAME', self.system.system_name).replace(
                                 'PARTITIONNAME', self.system.partition))
+
+
+class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
+    """
+    Builder for vdw + elec + restraint single decoupling free energy calculations system
+    """
+    @log_info
+    def _sim_files(self):
+        super()._sim_files()
+
+        # add lambda.sch to the folder
+        with open("./lambda.sch", "wt") as fout:
+            fout.write('TypeGen, linear, complementary, 0.0, 1.0\n')
+            fout.write('TypeBAT, linear, symmetric, 0.0, 1.0\n')
+            fout.write('TypeEleCC, smooth step2, symmetric, 0.0, 1.0\n')
+            fout.write('TypeEleSC, smooth step2, symmetric, 0.0, 1.0\n')
+            fout.write('TypeVDW, smooth step2, symmetric, 0.0, 1.0\n')
+            fout.write('TypeRestBA, linear, complementary, 0.0, 1.0\n')
 
 
 class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
@@ -5068,7 +5086,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
@@ -5760,7 +5778,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
                                 elif 'restraintmask' in line:
-                                    restraint_mask = line.split('=')[1].strip().replace("'", "")
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
@@ -5873,6 +5891,17 @@ class BuilderFactory:
                 )
             case 'o':
                 return UNOFreeEnergyBuilder(
+                    system=system,
+                    pose=pose,
+                    sim_config=sim_config,
+                    working_dir=working_dir,
+                    win=win,
+                    component=component,
+                    molr=molr,
+                    poser=poser,
+                )
+            case 'z':
+                return UNORESTFreeEnergyBuilder(
                     system=system,
                     pose=pose,
                     sim_config=sim_config,
