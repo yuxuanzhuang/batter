@@ -1,0 +1,10 @@
+
+        source leaprc.protein.ff14SB
+        source leaprc.gaff2
+        lig = loadmol2 /oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/ligand/test_ligandff/cau.mol2
+        loadamberparams /oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/ligand/test_ligandff/cau.frcmod
+        saveoff lig /oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/ligand/test_ligandff/cau.lib
+        saveamberparm lig /oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/ligand/test_ligandff/cau.prmtop /oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/ligand/test_ligandff/cau.inpcrd
+
+        quit
+        

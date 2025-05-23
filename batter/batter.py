@@ -2570,32 +2570,13 @@ class System:
                                                     '  mcresstr = "WAT",\n'
                                                     #'  numexchg = 1000,\n'
                                                 )
-                                        if component in COMPONENTS_DICT['dd']:
+                                        if component in COMPONENTS_DICT['dd'] and remd and stage != 'mini.in':
                                             outfile.write(
-                                                'gti_add_sc      = 25,\n'
-                                                f'clambda         = {lambdas[i]:.5f},\n'
-                                                f'mbar_lambda     = {", ".join([f"{l:.5f}" for l in lambdas])},\n'
+                                                'numexchg = 3000,\n'
                                             )
-                                            if component == 'o':
-                                                outfile.write(
-                                                    'gti_lam_sch     = 1,\n'
-                                                    'gti_ele_sc      = 1,\n'
-                                                    'gti_vdw_sc      = 1,\n'
-                                                    'gti_cut_sc      = 2,\n'
-                                                )
-                                            if component == 'e':
-                                                outfile.write('gti_chg_keep   = 1,\n')
-                                            elif component == 'v':
-                                                outfile.write('gti_chg_keep   = 0,\n')
-                                            elif component == 'o':
-                                                outfile.write('gti_chg_keep   = 1,\n')
-                                            if remd and stage != 'mini.in':
-                                                outfile.write(
-                                                    'numexchg = 3000,\n'
-                                                )
-                                                outfile.write(
-                                                    'bar_intervall = 100,\n'
-                                                )
+                                            outfile.write(
+                                                'bar_intervall = 100,\n'
+                                            )
                                     elif 'cv_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
                                         line = f"cv_file = '{sim_folder_name}/{file_name}'\n"
@@ -2621,29 +2602,8 @@ class System:
                                         line = '  ntxo = 2,\n'
                                     elif 'ntwprt' in line:
                                         line = '\n'
-                                    elif 'ntp' in line:
-                                        # nvt simulation
-                                        line = '  ntp = 0,\n'
-                                    elif 'gti_add_sc' in line:
-                                        line = '\n'
-                                    elif 'gti_chg_keep' in line:
-                                        line = '\n'
-                                    elif 'mbar_lambda' in line:
-                                        line = '\n'
                                     elif 'maxcyc' in line:
                                         line = '  maxcyc = 5000,\n'
-                                    elif 'clambda' in line:
-                                        final_line = []
-                                        para_line = line.split(',')
-                                        for p_i in range(len(para_line)):
-                                            if 'clambda' in para_line[p_i]:
-                                                continue
-                                            if 'scalpha' in para_line[p_i]:
-                                                continue
-                                            if 'scbeta' in para_line[p_i]:
-                                                continue
-                                            final_line.append(para_line[p_i])
-                                        line = ',\n'.join(final_line)
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
                                             if remd and component in COMPONENTS_DICT['dd'] and stage != 'mini.in':
