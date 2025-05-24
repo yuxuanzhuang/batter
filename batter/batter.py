@@ -857,6 +857,7 @@ class System:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
 
             self._check_equilbration_binding()
+            self._find_new_anchor_atoms()
             self._prepare_fe_system()
             if rmsf_restraints:
                 self.add_rmsf_restraints(
@@ -1702,9 +1703,13 @@ class System:
             for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
                 os.chdir(f'{self.fe_folder}/{pose}')
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                    logger.info(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
-                    continue
+                    try:
+                        self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                        logger.info(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
+                        continue
+                    except Exception as e:
+                        logger.warning(f'Failed to load FE for {pose} from {self.fe_folder}/{pose}/Results/Results.dat: {e}')
+                        logger.warning('Re-running the FE analysis')
                 # remove the existing Results folder
                 if os.path.exists(f'{self.fe_folder}/{pose}/Results'):
                     shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
@@ -1746,7 +1751,7 @@ class System:
                 if np.isnan(fe_value):
                     logger.warning(f'FE calculation failed for {pose}')
                     with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                        f.write("UNBOUND\n")
+                        f.write("FAILED\n")
                     self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
 
                     continue
@@ -1827,7 +1832,16 @@ class System:
         poses_def = self.all_poses
 
         with self._change_dir(self.output_dir):
-            for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
+            pbar = tqdm(
+                poses_def,
+                desc='Analyzing FE for poses',
+            )
+            for pose in pbar:
+                pbar.set_postfix(pose=pose)
+                if pose not in self.bound_poses:
+                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                    logger.info(f'Pose {pose} is not a bound pose; skipping FE analysis')
+                    continue
                 os.chdir(f'{self.fe_folder}/{pose}')
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
                     self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
@@ -1851,15 +1865,17 @@ class System:
                 if np.isnan(fe_value):
                     #logger.warning(f'FE calculation failed for {pose}')
                     with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                        f.write("UNBOUND\n")
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-
+                        f.write("FAILED\n")
+                    #self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
                     continue
 
                 self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
-        # generate aligned pdbs
+                pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
 
+
+        # generate aligned pdbs
+        logger.info('Generating aligned pdbs')
         reference_pdb_file = f'{self.poses_folder}/{self.system_name}_docked.pdb'
         u_ref = mda.Universe(reference_pdb_file)
         os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
@@ -1870,15 +1886,13 @@ class System:
             u = mda.Universe(pdb_file)
             align.alignto(u,
                           u_ref,
-                          select=self.protein_align,
+                          select=f'(({self.protein_align}) and not resname NME ACE and protein)',
                           weights="mass")
             saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- and not resname {" ".join(self.lipid_mol)}')
             saved_ag.write(f'{self.output_dir}/Results/protein_{pose}.pdb')
 
             initial_pose = f'{self.poses_folder}/{pose}.pdb'
             os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
-            
-
             
         if convergence:
             validators_all = []
@@ -1963,7 +1977,9 @@ class System:
         if ligand_anchor_atom is not None:
             lig_atom = u_merge.select_atoms(ligand_anchor_atom)
             if lig_atom.n_atoms == 0:
-                raise ValueError('Error: ligand anchor atom not found')
+                logger.warning(f"Provided ligand anchor atom {ligand_anchor_atom} not found in the ligand."
+                               "Using all ligand atoms instead.")
+                lig_atom = u_lig.atoms
         else:
             lig_atom = u_lig.atoms
 
@@ -2023,25 +2039,31 @@ class System:
                     cpptraj_command += "EOF\n"
                     run_with_log(cpptraj_command,
                                 working_dir=f"{self.equil_folder}/{pose}")
+                    
+                    # convert representative.pdb resid info to old residues.
+                    # instead of start from 1.
+                    renum_txt = f"{self.equil_folder}/{pose}/build_files/protein_renum.txt"
+                    renum_data = pd.read_csv(
+                        renum_txt,
+                        sep=r'\s+',
+                        header=None,
+                        names=['old_resname', 'old_chain', 'old_resid',
+                                'new_resname', 'new_resid'])
+                    u = mda.Universe(f"{self.equil_folder}/{pose}/representative.pdb")
+                    u.select_atoms('protein').residues.resids = renum_data['old_resid'].values
+                    u.atoms.write(f"{self.equil_folder}/{pose}/representative.pdb")
+                    
         self._bound_poses = [pose for _, pose in bound_poses]
         logger.debug(f"Bound poses: {bound_poses} will be used for the production stage")
 
+    def _find_new_anchor_atoms(self):
+        """
+        Find the new anchor atoms for the ligand and the protein after equilibration.
+        """
         # get new l1x, l1y, l1z distances
-        for pose_i, pose in bound_poses:
+        for pose_i, pose in self.bound_poses:
             u_sys = mda.Universe(f'{self.equil_folder}/{pose}/representative.pdb')
             u_lig = u_sys.select_atoms(f'resname {self.mols[pose_i]}')
-
-            anchor_file = f'{self.equil_folder}/{pose}/build_files/protein_anchors.txt'
-            with open(anchor_file, 'r') as f:
-                anchor_atoms_lines = f.readlines()
-            # convert amber selection to mda selection
-            # amber: :84@CA
-            # mda :resid 84 and name CA
-            anchor_atoms = []
-            for line in anchor_atoms_lines:
-                resid = line.split(':')[1].split('@')[0]
-                atom_name = line.split('@')[1].strip()
-                anchor_atoms.append(f'resid {resid} and name {atom_name}')
 
             ligand_anchor_atom = self.ligand_anchor_atom
 
@@ -2049,10 +2071,12 @@ class System:
             l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
                         u_sys,
                         u_lig,
-                        anchor_atoms,
+                        self.anchor_atoms,
                         ligand_anchor_atom)
             with open(f'{self.equil_folder}/{pose}/anchor_list.txt', 'w') as f:
                 f.write(f'{l1_x} {l1_y} {l1_z}')
+        
+
 
     @safe_directory
     @save_state

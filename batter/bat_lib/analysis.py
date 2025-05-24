@@ -240,13 +240,12 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
         fe_bd = generate_analytical_rest('t', rest, temperature)
     if 'm' in components:
         fe_bd = generate_analytical_rest('m', rest, temperature)
-    logger.info(f'Analytical release: {fe_bd:.2f} kcal/mol')
+    logger.debug(f'Analytical release: {fe_bd:.2f} kcal/mol')
 
     # TODO: temporary fix to ignore m comp when no conformational restraints
-    if 'm' in components:
-        if rest[1] == 0 and rest[4] == 0:
-            components.remove('n')
-            logger.info('Removing n component from calculation')
+    if 'n' in components and rest[1] == 0 and rest[4] == 0:
+        components.remove('n')
+        logger.debug('Removing n component from calculation')
     
     # Total simulation time
     total_time = 0
@@ -259,7 +258,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
 
     if not sim_range:
         sim_range = (None, None)
-    logger.info(f'Simulation range: {sim_range}')
+    logger.debug(f'Simulation range: {sim_range}')
 
     # Set initial values to zero
     fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
@@ -271,7 +270,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     #os.chdir(pose)
     components_dict = {
         'rest': ['a', 'l', 't', 'c', 'r', 'm', 'n'],
-        'dd': ['e', 'v', 'f', 'w', 'x'],
+        'dd': ['e', 'v', 'f', 'w', 'x', 'o'],
     }
 
     # First do a quick sanity check to see if all simulations are done
@@ -284,6 +283,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     unfinished = []
     for i in range(0, len(components)):
         comp = components[i]
+
         if comp in components_dict['rest']:
             for j in range(0, len(attach_rest)):
                 folder_2_check = f'rest/{comp}{j:02d}'
@@ -400,7 +400,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 elif comp == 'r':
                     fe_r = -1.00*float(splitdata[1])
             os.chdir('../')
-        elif comp == 'v' or comp == 'e' or comp == 'f' or comp == 'w' or comp == 'x':
+        elif comp == 'v' or comp == 'e' or comp == 'f' or comp == 'w' or comp == 'x' or comp == 'o':
             if dec_method == 'dd':
                 os.chdir(dec_method)
             if dec_method == 'sdr' or dec_method == 'exchange':
@@ -417,6 +417,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 elif comp == 'v' and dec_method == 'dd':
                     fe_v = float(splitdata[1])
                 elif comp == 'v' and dec_method == 'sdr':
+                    fe_vs = float(splitdata[1])
+                elif comp == 'o' and dec_method == 'sdr':
                     fe_vs = float(splitdata[1])
                 elif comp == 'w':
                     fe_w = -1.00*float(splitdata[1])
@@ -454,7 +456,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                 elif comp == 'r':
                     sd_r = np.std(b_data)
             os.chdir('../')
-        elif comp == 'e' or comp == 'v' or comp == 'f' or comp == 'w' or comp == 'x':
+        elif comp == 'e' or comp == 'v' or comp == 'f' or comp == 'w' or comp == 'x' or comp == 'o':
             if dec_method == 'dd':
                 os.chdir(dec_method)
             if dec_method == 'sdr' or dec_method == 'exchange':
@@ -481,6 +483,16 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                             b_data.append(float(splitdata[1]))
                     sd_es = np.std(b_data)
                 if comp == 'v' and dec_method == 'sdr':
+                    b_data = []
+                    for k in range(0, blocks):
+                        with open('./data/mbar-'+comp+'-b%02d.dat' % (k+1), "r") as f_in:
+                            lines = (line.rstrip() for line in f_in)
+                            lines = list(line for line in lines if line)
+                            data = lines[-1]
+                            splitdata = data.split()
+                            b_data.append(float(splitdata[1]))
+                    sd_vs = np.std(b_data)
+                if comp == 'o' and dec_method == 'sdr':
                     b_data = []
                     for k in range(0, blocks):
                         with open('./data/mbar-'+comp+'-b%02d.dat' % (k+1), "r") as f_in:
@@ -571,6 +583,16 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                             splitdata = data.split()
                             b_data.append(float(splitdata[1]))
                     sd_vs = np.std(b_data)
+                if comp == 'o' and dec_method == 'sdr':
+                    b_data = []
+                    for k in range(0, blocks):
+                        with open('./data/ti-'+comp+'-b%02d.dat' % (k+1), "r") as f_in:
+                            lines = (line.rstrip() for line in f_in)
+                            lines = list(line for line in lines if line)
+                            data = lines[-1]
+                            splitdata = data.split()
+                            b_data.append(float(splitdata[1]))
+                    sd_vs = np.std(b_data)
                 if comp == 'f':
                     b_data = []
                     for k in range(0, blocks):
@@ -636,7 +658,7 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                     elif comp == 'r':
                         fb_r = -1.00*float(splitdata[1])
                 os.chdir('../')
-            elif comp == 'v' or comp == 'e' or comp == 'f' or comp == 'w' or comp == 'x':
+            elif comp == 'v' or comp == 'e' or comp == 'f' or comp == 'w' or comp == 'x' or comp == 'o':
                 if dec_method == 'dd':
                     os.chdir(dec_method)
                 if dec_method == 'sdr' or dec_method == 'exchange':
@@ -653,6 +675,8 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
                     elif comp == 'v' and dec_method == 'dd':
                         fb_v = float(splitdata[1])
                     elif comp == 'v' and dec_method == 'sdr':
+                        fb_vs = float(splitdata[1])
+                    elif comp == 'o' and dec_method == 'sdr':
                         fb_vs = float(splitdata[1])
                     elif comp == 'f':
                         fb_f = -1.00*float(splitdata[1])
@@ -789,10 +813,6 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     sd_exc = math.sqrt(sd_a**2 + sd_l**2 + sd_t**2 + sd_es**2 + sd_x**2 + sd_bd**2 + sd_c**2 + sd_r**2)
     sd_merg_sdr = math.sqrt(sd_m**2 + sd_es**2 + sd_vs**2 + sd_bd**2 + sd_n**2)
     sd_merg_exc = math.sqrt(sd_m**2 + sd_es**2 + sd_x**2 + sd_bd**2 + sd_n**2)
-
-    logger.warning('----------------------------------------------')
-    logger.warning(f'{fe_a} {fe_l} {fe_t} {fe_e} {fe_v} {fe_w} {fe_f} {fe_bd} {fe_c} {fe_r}')
-    logger.warning(f'{fe_m} {fe_n} {fe_es} {fe_vs} {fe_x}')
 
     resfile = open('./Results/Results.dat', 'w')
     if dec_method == 'dd' and os.path.exists('./dd/data/'):

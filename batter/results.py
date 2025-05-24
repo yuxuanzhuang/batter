@@ -118,7 +118,9 @@ class FEResult(ComponentFEResult):
         """
         with open(self.result_file, 'r') as f:
             result_lines = f.readlines()
-        if 'UNBOUND' in result_lines[0]:
+        if 'FAILED' in result_lines[0]:
+            raise ValueError("Analysis failed")
+        elif 'UNBOUND' in result_lines[0]:
             self._results = {}
             self._results['fe'] = (np.nan, np.nan)
             self._results['attach'] = (np.nan, np.nan)
