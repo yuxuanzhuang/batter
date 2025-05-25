@@ -59,6 +59,7 @@ from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob
 from batter.analysis.convergence import ConvergenceValidator, MBARValidator
 from batter.analysis.sim_validation import SimValidator
+from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis
 from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
@@ -739,7 +740,7 @@ class System:
     @save_state
     def prepare(self,
             stage: str,
-            input_file: Union[str, Path, SimulationConfig],
+            input_file: Union[str, Path, SimulationConfig] = None,
             overwrite: bool = False,
             partition: str = 'rondror',
             n_workers: int = 12,
@@ -757,7 +758,8 @@ class System:
         stage : str
             The stage of the simulation. Options are 'equil' and 'fe'.
         input_file : str
-            Path to the input file for the simulation.
+            Path to the input file for the simulation. If None,
+            the loaded SimulationConfig will be used.
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
         partition : str, optional
@@ -782,9 +784,15 @@ class System:
             raise ValueError("Both avg_struc and rmsf_file should be provided")
         else:
             rmsf_restraints = False
-            
-        self._get_sim_config(input_file)
-        sim_config = self.sim_config
+        
+        if input_file is not None:
+            self._get_sim_config(input_file)
+        
+        try:
+            sim_config = self.sim_config
+        except AttributeError:
+            raise ValueError("Simulation configuration is not set. "
+                             "Please provide an input file")
         self._component_windows_dict = ComponentWindowsDict(self)
         if win_info_dict is not None:
             for key, value in win_info_dict.items():
@@ -795,7 +803,7 @@ class System:
         if len(self.sim_config.poses_def) != len(self.ligand_paths):
             logger.debug(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
                            f"does not match the number of ligands: {len(self.ligand_paths)}")
-            logger.debug(f"Using the ligand paths for the poses")
+            logger.debug("Using the ligand paths for the poses")
         self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
         self.sim_config.poses_def = self._all_poses 
 
@@ -1703,10 +1711,6 @@ class System:
         """
         New analysis rountine with alchemlyb
         """
-        from alchemlyb.parsing.amber import extract_u_nk
-        from alchemlyb.convergence import forward_backward_convergence, block_average
-        from alchemlyb.visualisation import plot_block_average
-        from alchemlyb.visualisation import plot_convergence
         if input_file is not None:
             self._get_sim_config(input_file)
         
@@ -1718,24 +1722,9 @@ class System:
             
         if not sim_range:
             sim_range = (None, None)
-            
-        blocks = self.sim_config.blocks
-        components = self.sim_config.components
-        temperature = self.sim_config.temperature
-        attach_rest = self.sim_config.attach_rest
-        lambdas = self.sim_config.lambdas
-        weights = self.sim_config.weights
-        dec_int = self.sim_config.dec_int
-        dec_method = self.sim_config.dec_method
-        rest = self.sim_config.rest
-        dic_steps1 = self.sim_config.dic_steps1
-        dic_steps2 = self.sim_config.dic_steps2
-        dt = self.sim_config.dt
-        poses_def = self.all_poses
-
+        
         with self._change_dir(self.output_dir):
-            for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
-                os.chdir(f'{self.fe_folder}/{pose}')
+            for pose in tqdm(self.all_poses, desc='Analyzing FE for poses'):
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
                     try:
                         self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
@@ -1749,59 +1738,54 @@ class System:
                     shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
                 os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
 
-                #fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
-                #                        weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
+                fe_value = np.nan
+                fe_std = np.nan
 
-                # assume it's FEP
-                comp = components[0]
-                comp = 'o'
-                windows = lambdas
-                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                    fe_value = np.nan
-                if os.path.exists(f"{self.fe_folder}/{pose}/df_list.pkl"):
-                    df_list = pd.read_pickle(f"{self.fe_folder}/{pose}/df_list.pkl")
-                else:
-                    df_list = []
-                    for win_i, lam in enumerate(windows):
-                        df = pd.concat([extract_u_nk(
-                            f'{self.fe_folder}/{pose}/sdr/{comp}{win_i:02d}/mdin-{i:02d}.out',                                T=310,
-                                                    reduced=False) for i in sim_range])
-                        df_list.append(df)
-                    # dump
-                    with open(f'{self.fe_folder}/{pose}/df_list.pkl', 'wb') as f:
-                        pd.to_pickle(df_list, f)
+                # first get analytical results from Boresch restraint
 
-                mbar_v = MBARValidator(
-                    df_list,
-                    temperature=temperature,
-                    energy_unit='kcal/mol',
-                )
-                mbar_v.analysis()
-                fe_value = - mbar_v.mbar.delta_f_.iloc[0, -1]
-                fe_std = 0
-                with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                    f.write(f"{fe_value:.2f} ± {fe_std:.2f}\n")
+                if 'v' in self.sim_config.components:
+                    disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
+                elif 'o' in self.sim_config.components:
+                    disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
 
-                # if failed; it will return nan
-                if np.isnan(fe_value):
-                    logger.warning(f'FE calculation failed for {pose}')
-                    with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                        f.write("FAILED\n")
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                k_r = self.sim_config.rest[2]
+                k_a = self.sim_config.rest[3]
+                bor_ana = BoreschAnalysis(
+                                     disangfile=disangfile,
+                                     k_r=k_r, k_a=k_a,
+                                     temperature=self.sim_config.temperature,)
+                bor_ana.run_analysis()
+                fe_value += bor_ana.results['fe']
+                fe_std += bor_ana.results['fe_error']
+                
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    comp_path = f'{self.fe_folder}/{pose}/{comp_folder}'
+                    windows = self.component_windows_dict[comp]
 
-                    continue
-            
+                    if comp in COMPONENTS_DICT['dd']:
+                        # directly read energy files
+                        mbar_ana = MBARAnalysis(
+                            comp_folder=comp_path,
+                            component=comp,
+                            windows=windows,
+                            temperature=self.sim_config.temperature,
+                            sim_range=sim_range,
+                            load=load
+                        )
+                        mbar_ana.run_analysis()
+                        mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
+                                                  title=f'Convergence for {comp} {pose}',
+                        )
+
+                        fe_value += mbar_ana.results['fe']
+                        fe_std += mbar_ana.results['fe_error']
+
                 self.fe_results[pose] = ComponentFEResult(
                     fe_value=fe_value,
                     fe_std=fe_std,
                 )
                 
-                os.chdir('../../')
-                # generate aligned pdbs
-                # TODO
-
-
-
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
@@ -2135,8 +2119,8 @@ class System:
 
         Parameters
         ----------
-        input_file : str
-            The input file for the simulation.
+        input_file : str or SimulationConfig
+            The input file for the simulation
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
         avg_struc : str, optional
@@ -2426,7 +2410,7 @@ class System:
 
     def check_jobs(self):
         """
-        Check the status of the jobs.
+        Check the status of the jobs and print the not finished jobs.
         """
         logger.info('Checking the status of the jobs in')
         logger.info(f'{self.output_dir}')

@@ -30,8 +30,6 @@ Equilibrate, NPT.
   restraintmask = '(@CA | :_lig_name_) & !@H=',
   icfe = 1,
   clambda = lbd_val,
-  scalpha = 0.5,
-  scbeta = 12.0,
   timask1 = ':mk1',
   timask2 = ':mk2',
   ifsc=1,
