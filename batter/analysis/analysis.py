@@ -24,6 +24,8 @@ class FEAnalysisBase(ABC):
     Abstract base class for analysis of each component.
     """
     def __init__(self, comp_folder):
+        if not os.path.exists(comp_folder):
+            raise ValueError(f"Component folder {comp_folder} does not exist.")
         self.comp_folder = comp_folder
         self.results = {
             'fe': None,
@@ -253,6 +255,12 @@ class V_MBARAnalysis(MBARAnalysis):
     """
     component = 'v'
 
+
+class O_MBARAnalysis(MBARAnalysis):
+    """
+    Analysis class for O_MBAR.
+    """
+    component = 'o'
 
 class SuppressLoguru:
     def __enter__(self):

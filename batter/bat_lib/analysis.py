@@ -236,6 +236,11 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     logger.debug('dt: %s' % dt)
     logger.debug('----------------------------------------------')
 
+    # Set initial values to zero
+    fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
+    fb_a = fb_bd = fb_t = fb_m = fb_n = fb_v = fb_e = fb_c = fb_r = fb_l = fb_f = fb_w = fb_es = fb_vs = fb_x = 0
+    sd_a = sd_bd = sd_t = sd_m = sd_n = sd_v = sd_e = sd_c = sd_r = sd_l = sd_f = sd_w = sd_vs = sd_es = sd_x = 0
+
     if 't' in components:
         fe_bd = generate_analytical_rest('t', rest, temperature)
     if 'm' in components:
@@ -259,11 +264,6 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
     if not sim_range:
         sim_range = (None, None)
     logger.debug(f'Simulation range: {sim_range}')
-
-    # Set initial values to zero
-    fe_a = fe_bd = fe_t = fe_m = fe_n = fe_v = fe_e = fe_c = fe_r = fe_l = fe_f = fe_w = fe_vs = fe_es = fe_x = 0
-    fb_a = fb_bd = fb_t = fb_m = fb_n = fb_v = fb_e = fb_c = fb_r = fb_l = fb_f = fb_w = fb_es = fb_vs = fb_x = 0
-    sd_a = sd_bd = sd_t = sd_m = sd_n = sd_v = sd_e = sd_c = sd_r = sd_l = sd_f = sd_w = sd_vs = sd_es = sd_x = 0
 
     # Acquire simulation data
     #os.chdir('fe')
@@ -691,7 +691,6 @@ def fe_values(blocks, components, temperature, pose, attach_rest, lambdas, weigh
             fb_n = fb_c
             fb_c = 0
 
-        fb_bd = fe_bd
         blck_sdr = -1*(fb_a + fb_l + fb_t + fb_es + fb_vs + fb_bd + fb_c + fb_r)
         blck_exc = -1*(fb_a + fb_l + fb_t + fb_es + fb_x + fb_bd + fb_c + fb_r)
         blck_dd = -1*(fb_a + fb_l + fb_t + fb_e + fb_v + fb_w + fb_f + fb_bd + fb_c + fb_r)

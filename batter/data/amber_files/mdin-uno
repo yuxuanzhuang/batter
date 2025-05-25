@@ -25,7 +25,7 @@ Production runs LJ decoupling
   barostat = _barostat_,
   nstlim = _num-steps_,
   dt = _step_,
-  nmropt = 0,
+  nmropt = 1,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,

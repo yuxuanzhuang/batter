@@ -482,6 +482,18 @@ class System:
             self._check_equilbration_binding()
             return self._bound_poses
 
+    @property
+    def bound_mols(self):
+        """
+        The bound molecules of the ligands. It will be estimated
+        from equilibration simulation.
+        """
+        try:
+            return self._bound_mols
+        except AttributeError:
+            self._check_equilbration_binding()
+            return self._bound_mols
+
     def _process_ligands(self):
         """
         Process the ligands to get the ligand paths.
@@ -848,8 +860,12 @@ class System:
             
             if not os.path.exists(f"{self.fe_folder}/ff"):
                 logger.debug(f'Copying ff folder from {self.ligandff_folder} to {self.fe_folder}/ff')
-                shutil.copytree(self.ligandff_folder,
-                            f"{self.fe_folder}/ff")
+                # shutil.copytree(self.ligandff_folder,
+                #             f"{self.fe_folder}/ff")
+                # use os.copy instead
+                os.makedirs(f"{self.fe_folder}/ff", exist_ok=True)
+                for file in os.listdir(self.ligandff_folder):
+                    os.system(f"cp {self.ligandff_folder}/{file} {self.fe_folder}/ff/{file}")
 
 
             
@@ -1147,18 +1163,30 @@ class System:
         logger.info(f'Prepare for equilibration stage at {self.equil_folder}')
         if not os.path.exists(f"{self.equil_folder}/all-poses"):
             logger.debug(f'Copying all-poses folder from {self.poses_folder} to {self.equil_folder}/all-poses')
-            shutil.copytree(self.poses_folder,
-                        f"{self.equil_folder}/all-poses")
+            #shutil.copytree(self.poses_folder,
+            #            f"{self.equil_folder}/all-poses")
+            # use os.copy instead
+            os.makedirs(f"{self.equil_folder}/all-poses", exist_ok=True)
+            for file in os.listdir(self.poses_folder):
+                os.system(f"cp {self.poses_folder}/{file} {self.equil_folder}/all-poses/{file}")
         if not os.path.exists(f"{self.equil_folder}/ff"):
             logger.debug(f'Copying ff folder from {self.ligandff_folder} to {self.equil_folder}/ff')
-            shutil.copytree(self.ligandff_folder,
-                        f"{self.equil_folder}/ff")
+            #shutil.copytree(self.ligandff_folder,
+            #            f"{self.equil_folder}/ff")
+            # use os.copy instead
+            os.makedirs(f"{self.equil_folder}/ff", exist_ok=True)
+            for file in os.listdir(self.ligandff_folder):
+                os.system(f"cp {self.ligandff_folder}/{file} {self.equil_folder}/ff/{file}")
 
         # copy run_files
         if not os.path.exists(f"{self.equil_folder}/run_files"):
             logger.debug(f'Copying run_files folder from {self.ligandff_folder} to {self.equil_folder}/run_files')
-            shutil.copytree(run_files_orig,
-                        f"{self.equil_folder}/run_files")
+            #shutil.copytree(run_files_orig,
+            #            f"{self.equil_folder}/run_files")
+            # use os.copy instead
+            os.makedirs(f"{self.equil_folder}/run_files", exist_ok=True)
+            for file in os.listdir(f"{self.ligandff_folder}/run_files"):
+                os.system(f"cp {self.ligandff_folder}/run_files/{file} {self.equil_folder}/run_files/{file}")
         
         hmr = self.sim_config.hmr
         if hmr == 'no':
@@ -1232,8 +1260,12 @@ class System:
                 sim_config.l1_z = l1z
 
             # copy ff folder
-            shutil.copytree(self.ligandff_folder,
-                            f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
+            #shutil.copytree(self.ligandff_folder,
+            #                f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
+            os.makedirs(f"{self.fe_folder}/{pose}/ff", exist_ok=True)
+            for file in os.listdir(self.ligandff_folder):
+                shutil.copy(f"{self.ligandff_folder}/{file}",
+                            f"{self.fe_folder}/{pose}/ff/{file}")
             
             for component in sim_config.components:
                 logger.debug(f'Preparing component: {component}')
@@ -1487,6 +1519,7 @@ class System:
                     for line in cv_lines:
                         f.write(line)
                 
+        logger.info(f'Adding RMSF restraints for {stage} stage')
         if stage == 'equil':
             for pose in self.all_poses:
                 u_ref = mda.Universe(
@@ -1622,6 +1655,7 @@ class System:
                         f.write(line)
                     f.write("\n")
 
+        logger.info(f'Adding extra restraints for {stage} stage')
         if stage == 'equil':
             for pose in self.all_poses:
                 ref_u = mda.Universe(
@@ -1720,6 +1754,7 @@ class System:
 
                 # assume it's FEP
                 comp = components[0]
+                comp = 'o'
                 windows = lambdas
                 if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                     fe_value = np.nan
@@ -1895,6 +1930,7 @@ class System:
             os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
             
         if convergence:
+            logger.info('Checking convergence of FE results')
             validators_all = []
             poses_all = []
             comps_all = []
@@ -2009,7 +2045,7 @@ class System:
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 logger.warning(f"Pose {pose} is UNBOUND in equilibration")
                 continue
-            if os.path.exists(f"{self.equil_folder}/{pose}/representative.rst7"):
+            if os.path.exists(f"{self.equil_folder}/{pose}/representative.rst7",) and not self.overwrite:
                 bound_poses.append([pose_i, pose])
                 logger.debug(f"Representative snapshot found for pose {pose}")
                 continue
@@ -2019,8 +2055,7 @@ class System:
                 trajs = [f"md-{i:02d}.nc" for i in range(1, num_eq_sims)]
                 universe = mda.Universe(pdb, trajs)
                 sim_val = SimValidator(universe)
-                sim_val.plot_ligand_bs()
-                sim_val.plot_rmsd()
+                sim_val.plot_analysis()
                 if sim_val.results['ligand_bs'][-1] > UNBOUND_THRESHOLD:
                     logger.warning(f"Ligand is not bound for pose {pose}")
                     # write "UNBOUND" file
@@ -2054,6 +2089,7 @@ class System:
                     u.atoms.write(f"{self.equil_folder}/{pose}/representative.pdb")
                     
         self._bound_poses = [pose for _, pose in bound_poses]
+        self._bound_mols = [self.mols[pose_i] for pose_i, _ in bound_poses]
         logger.debug(f"Bound poses: {bound_poses} will be used for the production stage")
 
     def _find_new_anchor_atoms(self):
@@ -2061,9 +2097,9 @@ class System:
         Find the new anchor atoms for the ligand and the protein after equilibration.
         """
         # get new l1x, l1y, l1z distances
-        for pose_i, pose in self.bound_poses:
+        for i, pose in enumerate(self.bound_poses):
             u_sys = mda.Universe(f'{self.equil_folder}/{pose}/representative.pdb')
-            u_lig = u_sys.select_atoms(f'resname {self.mols[pose_i]}')
+            u_lig = u_sys.select_atoms(f'resname {self.bound_mols[i]}')
 
             ligand_anchor_atom = self.ligand_anchor_atom
 

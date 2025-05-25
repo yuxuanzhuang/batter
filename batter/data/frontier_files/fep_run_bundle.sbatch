@@ -29,7 +29,7 @@ for i in $(seq 1 $num_simulations)
 do
   cd lig_$i
   echo "Starting simulation $i"
-  srun -N 2 -n 16 pmemd.hip_DPFP.MPI -rem 3 -ng 16 -groupfile inputs/ti.groupfile &
+  srun -N 2 -n 16 pmemd.hip.MPI -rem 3 -ng 16 -groupfile inputs/ti.groupfile &
   # Allow a brief pause between job submissions to avoid overloading the scheduler
   sleep 0.2
   cd ..

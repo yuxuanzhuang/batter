@@ -157,7 +157,7 @@ def run_in_batch(
                         continue
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_00.groupfile || echo "Error in {pose}/{comp} eqnpt00" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_00.groupfile || echo "Error in {pose}/{comp} eqnpt00" &'
                     logger.info(f'{pose} eqnpt00')
                     run_lines.append(f'# {pose} eqnpt00')
                     run_lines.append(run_line)
@@ -168,7 +168,7 @@ def run_in_batch(
                         continue
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_01.groupfile || echo "Error in {pose}/{comp} eqnpt01" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_01.groupfile || echo "Error in {pose}/{comp} eqnpt01" &'
                     logger.info(f'{pose} eqnpt01')
                     run_lines.append(f'# {pose} eqnpt01')
                     run_lines.append(run_line)
@@ -179,7 +179,7 @@ def run_in_batch(
                         continue
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_02.groupfile || echo "Error in {pose}/{comp} eqnpt02" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_02.groupfile || echo "Error in {pose}/{comp} eqnpt02" &'
                     logger.info(f'{pose} eqnpt02')
                     run_lines.append(f'# {pose} eqnpt02')
                     run_lines.append(run_line)
@@ -190,7 +190,7 @@ def run_in_batch(
                         continue
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_03.groupfile || echo "Error in {pose}/{comp} eqnpt03" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_03.groupfile || echo "Error in {pose}/{comp} eqnpt03" &'
                     logger.info(f'{pose} eqnpt03')
                     run_lines.append(f'# {pose} eqnpt03')
                     run_lines.append(run_line)
@@ -201,7 +201,7 @@ def run_in_batch(
                         continue
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_04.groupfile || echo "Error in {pose}/{comp} eqnpt04" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt.in_04.groupfile || echo "Error in {pose}/{comp} eqnpt04" &'
                     logger.info(f'{pose} eqnpt04')
                     run_lines.append(f'# {pose} eqnpt04')
                     run_lines.append(run_line)
@@ -216,18 +216,18 @@ def run_in_batch(
                 elif last_rst7 == '-1':
                     sim_to_run = True
                     if remd and comp in COMPONENTS_DICT['dd']:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     else:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile || echo "Error in {pose}/{comp} md" &'
                     logger.info(f'{pose} {comp} md start')
                     run_lines.append(f'# {pose} {comp} md start')
                     run_lines.append(run_line)
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 else:
                     if remd and comp in COMPONENTS_DICT['dd']:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     else:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     if last_rst7 <= len_md:
                         sim_to_run = True
                         next_rst7 = last_rst7 + 1
