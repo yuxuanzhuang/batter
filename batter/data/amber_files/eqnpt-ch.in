@@ -28,10 +28,13 @@ Equilibrate, NPT.
   ntr = 1,
   restraint_wt = 50.0,
   restraintmask = '(@CA | :_lig_name_) & !@H=',
-  icfe = 1, clambda = lbd_val,
-  timask1 = ':mk1,mk4', timask2 = ':mk2,mk3',
-  ifsc=0, crgmask = ':mk2,mk4',
-  gti_chg_keep = 0,
+  icfe = 1,
+  clambda = lbd_val,
+  timask1 = ':mk1,mk4',
+  timask2 = ':mk2,mk3',
+  ifsc=0,
+  crgmask = ':mk2,mk4',
+  gti_chg_keep = 1,
   infe = 1,
  /
  &pmd

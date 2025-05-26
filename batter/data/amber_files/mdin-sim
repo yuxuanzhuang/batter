@@ -21,8 +21,7 @@ Production runs
   temp0 = _temperature_,
   gamma_ln = _gamma_ln_,
   ig = -1,
-  ntp = _p_coupling_,
-  csurften = _c_surften_,
+  ntp = 0,
   barostat = _barostat_,
   nstlim = _num-steps_,
   dt = _step_,
@@ -31,14 +30,4 @@ Production runs
   ntr = 1,
   restraint_wt = 50.0,
   restraintmask = ':2',
-  infe = 1,
- /
- &pmd
- output_file = 'cmass.txt'
- output_freq = _ntwx_
- cv_file = 'cv.in'
- /
- &wt type = 'END', /
-DISANG=disang_file.rest
-LISTOUT=POUT
-
+  

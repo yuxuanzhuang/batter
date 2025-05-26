@@ -1,19 +1,6 @@
 """
 Provide the primary functions for preparing and processing FEP systems.
 """
-
-from batter.utils import (
-    run_with_log,
-    save_state,
-    safe_directory,
-    antechamber,
-    tleap,
-    cpptraj,
-    parmchk2,
-    charmmlipid2amber,
-    obabel,
-    vmd)
-
 import inspect
 from collections.abc import MutableMapping
 import numpy as np
@@ -21,54 +8,44 @@ import os
 import sys
 import shutil
 import glob
-import subprocess as sp
 from contextlib import contextmanager
-import tempfile
 import MDAnalysis as mda
-from MDAnalysis.guesser import DefaultGuesser
 from MDAnalysis.analysis import align
+from MDAnalysis.analysis import align
+
 import pandas as pd
 from importlib import resources
 import json
 from typing import Union
 from pathlib import Path
 import pickle
-from functools import wraps
 try:
     from openff.toolkit import Molecule
 except:
     raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
-from rdkit import Chem
 
 import time
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor
-
-
 from typing import List, Tuple
-import loguru
 from loguru import logger
-logger.add(sys.stdout, level='INFO')
-
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
-from batter.results import FEResult, ComponentFEResult
-#from batter.ligand_process import LigandFactory
+from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob
-from batter.analysis.convergence import ConvergenceValidator, MBARValidator
+from batter.analysis.convergence import ConvergenceValidator
 from batter.analysis.sim_validation import SimValidator
+from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 from batter.data import frontier_files
-from batter.data import run_files as run_files_orig
-
-
-from MDAnalysis.analysis import rms, align
-
+from batter.data import build_files as build_files_orig
 from batter.builder import BuilderFactory
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=ResourceWarning)
+from batter.utils import (
+    run_with_log,
+    save_state,
+    safe_directory,
+)
 
 from batter.utils import (
     COMPONENTS_LAMBDA_DICT,
@@ -77,6 +54,9 @@ from batter.utils import (
     DEC_FOLDER_DICT,
 )
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=ResourceWarning)
 
 
 AVAILABLE_COMPONENTS = COMPONENTS_DICT['dd'] + COMPONENTS_DICT['rest']
@@ -273,11 +253,15 @@ class System:
             self._system_coordinate = self._convert_2_relative_path(system_coordinate)
         else:
             self._system_coordinate = None
+        
+        # always store a unique identifier for the ligand
         if isinstance(ligand_paths, list):
-            self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths]
+            self._ligand_list = {
+                f'lig{i}': self._convert_2_relative_path(path)
+                for i, path in enumerate(ligand_paths)
+            }
         elif isinstance(ligand_paths, dict):
-            self._ligand_paths = [self._convert_2_relative_path(ligand_path) for ligand_path in ligand_paths.values()]
-            self._ligand_names = list(ligand_paths.keys())
+            self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
         self.receptor_segment = receptor_segment
         self._protein_align = protein_align
         self.retain_lig_prot = retain_lig_prot
@@ -314,6 +298,10 @@ class System:
         u_sys.atoms.write(f"{self.poses_folder}/system_input.pdb")
         self._system_input_pdb = f"{self.poses_folder}/system_input.pdb"
         os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
+        
+        # copy dummy atom parameters to the ligandff folder
+        os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
+        os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
 
         if self.ligand_ff not in ['gaff', 'gaff2']:
             raise ValueError(f"Invalid ligand_ff: {self.ligand_ff}"
@@ -339,21 +327,21 @@ class System:
         if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
             self._process_system()
         
-        self.unique_mol_names = []
         from batter.ligand_process import LigandFactory
+        
+        self.unique_mol_names = []
         mols = []
-        new_ligand_paths = []
-        for ind, ligand_path in enumerate(self.unique_ligand_paths, start=1):
-            logger.debug(f'Processing ligand {ind}: {ligand_path}')
+        # only process the unique ligand paths
+        # for ABFESystem, it will be a single ligand
+        # for MBABFE and RBFE, it will be multiple ligands
+        for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
+            logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
             # first if self.mols is not empty, then use it as the ligand name
             try:
                 ligand_name = self.mols[ind-1]
             except:
-                try:
-                    ligand_name = self._ligand_names[ind-1]
-                except:
-                    ligand_name = None
-            self._ligand_path = ligand_path
+                ligand_name = ligand_names[0]
+
             ligand_factory = LigandFactory()
             ligand = ligand_factory.create_ligand(
                     ligand_file=ligand_path,
@@ -361,17 +349,21 @@ class System:
                     output_dir=self.ligandff_folder,
                     ligand_name=ligand_name,
                     retain_lig_prot=self.retain_lig_prot,
-                    ligand_ff=self.ligand_ff) 
-            ligand.generate_unique_name(self.unique_mol_names)
+                    ligand_ff=self.ligand_ff,
+                    unique_mol_names=self.unique_mol_names
+            )
+
             mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
                 ligand.prepare_ligand_parameters()
-            new_ligand_paths.append(self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb'))
-        self._ligand_paths = new_ligand_paths
-        logger.debug(f'Ligand paths: {self._ligand_paths}')
+            for ligand_name in ligand_names:
+                self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
+
+        logger.debug('updating the ligand paths')
+        logger.debug(self.ligand_list)
+
         self.mols = mols
-            
         self._prepare_ligand_poses()
 
         # always get the anchor atoms from the first pose
@@ -408,6 +400,11 @@ class System:
             return self._protein_align
         except AttributeError:
             return 'name CA'
+    
+    @protein_align.setter
+    def protein_align(self, value):
+        self._protein_align = value
+
 
     @property
     def protein_input(self):
@@ -423,7 +420,58 @@ class System:
 
     @property
     def ligand_paths(self):
-        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self._ligand_paths]
+        """
+        The paths to the ligand files.
+        """
+        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self._ligand_list.values()]
+    
+    @property
+    def ligand_list(self):
+        """
+        A dictionary of ligands.
+        """
+        return self._ligand_list
+    
+    @property
+    def ligand_names(self):
+        """
+        The names of the ligands.
+        """
+        return self._ligand_list.keys()
+    
+    @property
+    def all_poses(self):
+        """
+        The path to the all-poses folder.
+        """
+        try:
+            return self._all_poses
+        except AttributeError:
+            return [f'pose{i}' for i in range(len(self.ligand_paths))]
+        
+    @property
+    def bound_poses(self):
+        """
+        The bound poses of the ligands. It will be estimated
+        from equilibration simulation.
+        """
+        try:
+            return self._bound_poses
+        except AttributeError:
+            self._check_equilbration_binding()
+            return self._bound_poses
+
+    @property
+    def bound_mols(self):
+        """
+        The bound molecules of the ligands. It will be estimated
+        from equilibration simulation.
+        """
+        try:
+            return self._bound_mols
+        except AttributeError:
+            self._check_equilbration_binding()
+            return self._bound_mols
 
     def _process_ligands(self):
         """
@@ -561,48 +609,37 @@ class System:
         """
         Prepare ligand poses for the system.
         """
-        logger.debug('ligand poses')
+        logger.debug('prepare ligand poses')
+        with self._change_dir(self.output_dir):
+            new_ligand_list = {}
+            for i, (name, pose) in enumerate(self.ligand_list.items()):
+                if len(self.unique_mol_names) > 1:
+                    mol_name = self.unique_mol_names[i]
+                else:
+                    mol_name = self.unique_mol_names[0]
+                # align to the system
 
-        new_pose_paths = []
-        for i, pose in enumerate(self.ligand_paths):
-            if len(self.unique_mol_names) > 1:
-                mol_name = self.unique_mol_names[i]
-            else:
-                mol_name = self.unique_mol_names[0]
-            # align to the system
-            if not pose.lower().endswith('.sdf'):
                 u = mda.Universe(pose)
-            else:
-                molecule = Chem.MolFromMolFile(pose, removeHs=False)
-                u = mda.Universe(molecule)
-                u.add_TopologyAttr('resnames')
-            try:
-                u.atoms.chainIDs
-            except AttributeError:
-                u.add_TopologyAttr('chainIDs')
-            lig_seg = u.add_Segment(segid='LIG')
-            u.atoms.chainIDs = 'L'
-            u.atoms.residues.segments = lig_seg
-            u.atoms.residues.resnames = mol_name
-            
-            logger.debug(f"Processing ligand {i}: {pose}")
-            self._align_2_system(u.atoms)
-            u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
-            pose = f"{self.poses_folder}/pose{i}.pdb"
 
-            #if not self.retain_lig_prot:
-            #    noh_path = f"{self.poses_folder}/pose{i}_noh.pdb"
-            #    run_with_log(f"{obabel} -i pdb {pose} -o pdb -O {noh_path} -d")
+                try:
+                    u.atoms.chainIDs
+                except AttributeError:
+                    u.add_TopologyAttr('chainIDs')
+                lig_seg = u.add_Segment(segid='LIG')
+                u.atoms.chainIDs = 'L'
+                u.atoms.residues.segments = lig_seg
+                u.atoms.residues.resnames = mol_name
+                
+                logger.debug(f"Processing ligand {i}: {pose}")
+                self._align_2_system(u.atoms)
+                u.atoms.write(f"{self.poses_folder}/pose{i}.pdb")
+                pose = f"{self.poses_folder}/pose{i}.pdb"
 
-            #    # Add hydrogens based on the specified pH
-            #    run_with_log(f"{obabel} -i pdb {noh_path} -o pdb -O {pose} -p {self.ligand_ph:.2f}")
+                if not os.path.exists(f"{self.poses_folder}/pose{i}.pdb"):
+                    shutil.copy(pose, f"{self.poses_folder}/pose{i}.pdb")
 
-            if not os.path.exists(f"{self.poses_folder}/pose{i}.pdb"):
-                shutil.copy(pose, f"{self.poses_folder}/pose{i}.pdb")
-
-            new_pose_paths.append(f"{self.poses_folder}/pose{i}.pdb")
-
-        self._ligand_paths = [self._convert_2_relative_path(pose) for pose in new_pose_paths]
+                new_ligand_list[name] = pose
+            self._ligand_list = new_ligand_list
 
     def _align_2_system(self, mobile_atoms):
 
@@ -681,7 +718,7 @@ class System:
     @save_state
     def prepare(self,
             stage: str,
-            input_file: Union[str, Path, SimulationConfig],
+            input_file: Union[str, Path, SimulationConfig] = None,
             overwrite: bool = False,
             partition: str = 'rondror',
             n_workers: int = 12,
@@ -699,7 +736,8 @@ class System:
         stage : str
             The stage of the simulation. Options are 'equil' and 'fe'.
         input_file : str
-            Path to the input file for the simulation.
+            Path to the input file for the simulation. If None,
+            the loaded SimulationConfig will be used.
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
         partition : str, optional
@@ -724,10 +762,15 @@ class System:
             raise ValueError("Both avg_struc and rmsf_file should be provided")
         else:
             rmsf_restraints = False
-            
-        self._get_sim_config(input_file)
-        sim_config = self.sim_config
-        self._component_windows_dict = ComponentWindowsDict(self)
+        
+        if input_file is not None:
+            self._get_sim_config(input_file)
+        
+        try:
+            sim_config = self.sim_config
+        except AttributeError:
+            raise ValueError("Simulation configuration is not set. "
+                             "Please provide an input file")
         if win_info_dict is not None:
             for key, value in win_info_dict.items():
                 if key not in self._component_windows_dict:
@@ -737,8 +780,9 @@ class System:
         if len(self.sim_config.poses_def) != len(self.ligand_paths):
             logger.debug(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
                            f"does not match the number of ligands: {len(self.ligand_paths)}")
-            logger.debug(f"Using the ligand paths for the poses")
-        self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
+            logger.debug("Using the ligand paths for the poses")
+        self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        self.sim_config.poses_def = self._all_poses 
 
         if stage == 'equil':
             if self.overwrite:
@@ -746,8 +790,9 @@ class System:
                 shutil.rmtree(self.equil_folder, ignore_errors=True)
                 self._eq_prepared = False
             elif self._eq_prepared and os.path.exists(f"{self.equil_folder}"):
-                logger.info(f'Equilibration already prepared')
+                logger.info('Equilibration already prepared')
                 return
+            self._slurm_jobs = {}
             # save the input file to the equil directory
             os.makedirs(f"{self.equil_folder}", exist_ok=True)
             with open(f"{self.equil_folder}/sim_config.json", 'w') as f:
@@ -771,15 +816,15 @@ class System:
         
         if stage == 'fe':
             if not os.path.exists(f"{self.equil_folder}"):
-                raise FileNotFoundError(f"Equilibration not generated yet. Run prepare('equil') first.")
+                raise FileNotFoundError("Equilibration not generated yet. Run prepare('equil') first.")
         
-            if not os.path.exists(f"{self.equil_folder}/{self.sim_config.poses_def[0]}/md03.rst7"):
-                raise FileNotFoundError(f"Equilibration not finished yet. First run the equilibration.")
+            if not os.path.exists(f"{self.equil_folder}/{self.all_poses[0]}/md03.rst7"):
+                raise FileNotFoundError("Equilibration not finished yet. First run the equilibration.")
                 
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
             if sim_config_eq != sim_config.model_dump():
             # raise ValueError(f"Equilibration and free energy simulation configurations are different")
-                warnings.warn(f"Equilibration and free energy simulation configurations are different")
+                warnings.warn("Equilibration and free energy simulation configurations are different")
                 # get the difference
                 diff = {k: v for k, v in sim_config_eq.items() if sim_config.model_dump().get(k) != v}
                 logger.warning(f"Different configurations: {diff}")
@@ -792,16 +837,28 @@ class System:
                 shutil.rmtree(self.fe_folder, ignore_errors=True)
                 self._fe_prepared = False
             elif self._fe_prepared and os.path.exists(f"{self.fe_folder}"):
-                logger.info(f'Free energy already prepared')
+                logger.info('Free energy already prepared')
                 return
+            self._slurm_jobs = {}
             self._fe_prepared = False
             os.makedirs(f"{self.fe_folder}", exist_ok=True)
+            
+            if not os.path.exists(f"{self.fe_folder}/ff"):
+                logger.debug(f'Copying ff folder from {self.ligandff_folder} to {self.fe_folder}/ff')
+                # shutil.copytree(self.ligandff_folder,
+                #             f"{self.fe_folder}/ff")
+                # use os.copy instead
+                os.makedirs(f"{self.fe_folder}/ff", exist_ok=True)
+                for file in os.listdir(self.ligandff_folder):
+                    os.system(f"cp {self.ligandff_folder}/{file} {self.fe_folder}/ff/{file}")
+
 
             
             with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
 
             self._check_equilbration_binding()
+            self._find_new_anchor_atoms()
             self._prepare_fe_system()
             if rmsf_restraints:
                 self.add_rmsf_restraints(
@@ -853,7 +910,7 @@ class System:
 
         if stage == 'equil':
             logger.info('Submit equilibration stage')
-            for pose in self.sim_config.poses_def:
+            for pose in self.all_poses:
                 # check n_jobs_submitted is less than the max_jobs
                 while n_jobs_submitted >= self.max_num_jobs:
                     time.sleep(120)
@@ -909,7 +966,7 @@ class System:
 
         elif stage == 'fe':
             logger.info('Submit free energy stage')
-            for pose in self.sim_config.poses_def:
+            for pose in self.bound_poses:
                 #shutil.copy(f'{self.fe_folder}/{pose}/rest/run_files/run-express.bash',
                 #            f'{self.fe_folder}/{pose}')
                 #run_with_log(f'bash run-express.bash',
@@ -980,7 +1037,7 @@ class System:
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
         elif stage == 'fe_equil':
             logger.info('Submit NPT equilibration part of free energy stage')
-            for pose in self.sim_config.poses_def:
+            for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
@@ -1059,7 +1116,7 @@ class System:
             raise NotImplementedError("Frontier submission is not implemented yet")
         elif stage == 'fe':
             running_fe_equi = False
-            for pose in self.sim_config.poses_def:
+            for pose in self.bound_poses:
                 if not os.path.exists(f"{self.fe_folder}/{pose}/rest/m00/eqnpt.in_04.rst7"):
                     run_with_log(f'sbatch fep_m_{pose}_eq.sbatch',
                             working_dir=f'{self.fe_folder}')
@@ -1091,18 +1148,30 @@ class System:
         logger.info(f'Prepare for equilibration stage at {self.equil_folder}')
         if not os.path.exists(f"{self.equil_folder}/all-poses"):
             logger.debug(f'Copying all-poses folder from {self.poses_folder} to {self.equil_folder}/all-poses')
-            shutil.copytree(self.poses_folder,
-                        f"{self.equil_folder}/all-poses")
+            #shutil.copytree(self.poses_folder,
+            #            f"{self.equil_folder}/all-poses")
+            # use os.copy instead
+            os.makedirs(f"{self.equil_folder}/all-poses", exist_ok=True)
+            for file in os.listdir(self.poses_folder):
+                os.system(f"cp {self.poses_folder}/{file} {self.equil_folder}/all-poses/{file}")
         if not os.path.exists(f"{self.equil_folder}/ff"):
             logger.debug(f'Copying ff folder from {self.ligandff_folder} to {self.equil_folder}/ff')
-            shutil.copytree(self.ligandff_folder,
-                        f"{self.equil_folder}/ff")
+            #shutil.copytree(self.ligandff_folder,
+            #            f"{self.equil_folder}/ff")
+            # use os.copy instead
+            os.makedirs(f"{self.equil_folder}/ff", exist_ok=True)
+            for file in os.listdir(self.ligandff_folder):
+                os.system(f"cp {self.ligandff_folder}/{file} {self.equil_folder}/ff/{file}")
 
         # copy run_files
         if not os.path.exists(f"{self.equil_folder}/run_files"):
             logger.debug(f'Copying run_files folder from {self.ligandff_folder} to {self.equil_folder}/run_files')
-            shutil.copytree(run_files_orig,
-                        f"{self.equil_folder}/run_files")
+            #shutil.copytree(run_files_orig,
+            #            f"{self.equil_folder}/run_files")
+            # use os.copy instead
+            os.makedirs(f"{self.equil_folder}/run_files", exist_ok=True)
+            for file in os.listdir(f"{self.ligandff_folder}/run_files"):
+                os.system(f"cp {self.ligandff_folder}/run_files/{file} {self.equil_folder}/run_files/{file}")
         
         hmr = self.sim_config.hmr
         if hmr == 'no':
@@ -1127,7 +1196,7 @@ class System:
                         f.write(s)
 
         builders = []
-        for pose in self.sim_config.poses_def:
+        for pose in self.all_poses:
             #logger.info(f'Preparing pose: {pose}')
             if os.path.exists(f"{self.equil_folder}/{pose}/cv.in") and not self.overwrite:
                 logger.info(f'Pose {pose} already exists; add overwrite=True to re-build the pose')
@@ -1155,7 +1224,7 @@ class System:
         # are used for exchange FE simulations.
         sim_config = self.sim_config
         molr = self.mols[0]
-        poser = self.sim_config.poses_def[0]
+        poser = self.bound_poses[0]
         builders = []
         for pose in sim_config.poses_def:
             # if "UNBOUND" found in equilibration, skip
@@ -1164,7 +1233,6 @@ class System:
                 os.makedirs(f"{self.fe_folder}/{pose}/Results", exist_ok=True)
                 with open(f"{self.fe_folder}/{pose}/Results/Results.dat", 'w') as f:
                     f.write("UNBOUND\n")
-                pbar.update(len(sim_config.components))
                 continue
             logger.debug(f'Preparing pose: {pose}')
             
@@ -1177,8 +1245,12 @@ class System:
                 sim_config.l1_z = l1z
 
             # copy ff folder
-            shutil.copytree(self.ligandff_folder,
-                            f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
+            #shutil.copytree(self.ligandff_folder,
+            #                f"{self.fe_folder}/{pose}/ff", dirs_exist_ok=True)
+            os.makedirs(f"{self.fe_folder}/{pose}/ff", exist_ok=True)
+            for file in os.listdir(self.ligandff_folder):
+                shutil.copy(f"{self.ligandff_folder}/{file}",
+                            f"{self.fe_folder}/{pose}/ff/{file}")
             
             for component in sim_config.components:
                 logger.debug(f'Preparing component: {component}')
@@ -1212,11 +1284,14 @@ class System:
     def _prepare_fe_windows(self, regenerate: bool = False):
         sim_config = self.sim_config
         molr = self.mols[0]
-        poser = self.sim_config.poses_def[0]
+        poser = self.bound_poses[0]
 
         builders = []
 
-        for pose in self.sim_config.poses_def:
+        for pose in self.bound_poses:
+            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
+                continue
+
             for component in sim_config.components:
                 if regenerate:
                     # delete existing windows
@@ -1429,8 +1504,9 @@ class System:
                     for line in cv_lines:
                         f.write(line)
                 
+        logger.info(f'Adding RMSF restraints for {stage} stage')
         if stage == 'equil':
-            for pose in self.sim_config.poses_def:
+            for pose in self.all_poses:
                 u_ref = mda.Universe(
                         f"{self.equil_folder}/{pose}/full.pdb",
                         f"{self.equil_folder}/{pose}/full.inpcrd")
@@ -1461,9 +1537,7 @@ class System:
                             f.write(line)
 
         elif stage == 'fe':
-            for pose in self.sim_config.poses_def:
-                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                    continue
+            for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
@@ -1522,7 +1596,7 @@ class System:
 
         num_eq_sim = len(self.sim_config.release_eq)
 
-        def write_restraint_block(ref_u, selection_string, files, pose):
+        def write_restraint_block(ref_u, selection_string, files, folder_2_write):
             selection = ref_u.select_atoms(f'({selection_string}) and name CA')
             logger.debug(f"Selection: {selection} to be restrained")
 
@@ -1544,10 +1618,10 @@ class System:
             logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
 
             for file in files:
-                with open(f'{self.equil_folder}/{pose}/{file}', 'r') as f:
+                with open(f'{folder_2_write}/{file}', 'r') as f:
                     lines = f.readlines()
 
-                with open(f'{self.equil_folder}/{pose}/{file}', 'w') as f:
+                with open(f'{folder_2_write}/{file}', 'w') as f:
                     for line in lines:
                         if 'ntr' in line and 'cntr' not in line:
                             line = '  ntr = 1,\n'
@@ -1566,8 +1640,9 @@ class System:
                         f.write(line)
                     f.write("\n")
 
+        logger.info(f'Adding extra restraints for {stage} stage')
         if stage == 'equil':
-            for pose in self.sim_config.poses_def:
+            for pose in self.all_poses:
                 ref_u = mda.Universe(
                         f"{self.equil_folder}/{pose}/full.pdb",
                         f"{self.equil_folder}/{pose}/full.inpcrd")
@@ -1575,12 +1650,14 @@ class System:
                 for i in range(num_eq_sim):
                     files.append(f'mdin-{i:02d}')
 
-                write_restraint_block(ref_u, extra_restraints, files, pose)
+                write_restraint_block(
+                                      ref_u=ref_u,
+                                      selection_string=extra_restraints,
+                                      files=files,
+                                      folder_2_write=f'{self.equil_folder}/{pose}/')
 
         elif stage == 'fe':
-            for pose in self.sim_config.poses_def:
-                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                    continue
+            for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
@@ -1589,8 +1666,12 @@ class System:
                             f"{folder_comp}/{comp}-1/full.inpcrd")
                     windows = self.component_windows_dict[comp]
                     files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
-
-                    write_restraint_block(ref_u, extra_restraints, files)
+                    for j in range(-1, len(windows)):
+                        write_restraint_block(
+                                        ref_u=ref_u,
+                                        selection_string=extra_restraints,
+                                        files=files,
+                                        folder_2_write=f'{folder_comp}/{comp}{j:02d}/')
         else:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('Extra position restraints added')
@@ -1603,14 +1684,22 @@ class System:
         load=True,
         check_finished: bool = True,
         sim_range: Tuple[int, int] = None,
+        overwrite: bool = False,
         ):
         """
         New analysis rountine with alchemlyb
         """
-        from alchemlyb.parsing.amber import extract_u_nk
-        from alchemlyb.convergence import forward_backward_convergence, block_average
-        from alchemlyb.visualisation import plot_block_average
-        from alchemlyb.visualisation import plot_convergence
+
+        # the direction of the components that are used in the simulation
+        COMPONENT_DIRECTION_DICT = {
+            'm': -1,
+            'n': 1,
+            'e': -1,
+            'v': -1,
+            'o': -1,
+            'Boresch': -1,
+        }
+
         if input_file is not None:
             self._get_sim_config(input_file)
         
@@ -1622,89 +1711,143 @@ class System:
             
         if not sim_range:
             sim_range = (None, None)
-            
-        blocks = self.sim_config.blocks
-        components = self.sim_config.components
-        temperature = self.sim_config.temperature
-        attach_rest = self.sim_config.attach_rest
-        lambdas = self.sim_config.lambdas
-        weights = self.sim_config.weights
-        dec_int = self.sim_config.dec_int
-        dec_method = self.sim_config.dec_method
-        rest = self.sim_config.rest
-        dic_steps1 = self.sim_config.dic_steps1
-        dic_steps2 = self.sim_config.dic_steps2
-        dt = self.sim_config.dt
-        poses_def = self.sim_config.poses_def
-
+        
         with self._change_dir(self.output_dir):
-            for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
-                os.chdir(f'{self.fe_folder}/{pose}')
+            pbar = tqdm(
+                self.all_poses,
+                desc='Analyzing FE for poses',
+            )
+            for pose in pbar:
+                pbar.set_postfix(pose=pose)
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                    logger.info(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
-                    continue
-                # remove the existing Results folder
-                if os.path.exists(f'{self.fe_folder}/{pose}/Results'):
-                    shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
+                    try:
+                        self.fe_results[pose] = NewFEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                        logger.debug(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
+                        pbar.set_description(f'FE for {pose} = {self.fe_results[pose].fe:.2f} ± {self.fe_results[pose].fe_std:.2f} kcal/mol')
+                        continue
+                    except Exception as e:
+                        logger.warning(f'Failed to load FE for {pose} from {self.fe_folder}/{pose}/Results/Results.dat: {e}')
+                        logger.warning('Re-running the FE analysis')
                 os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
 
-                #fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose, attach_rest, lambdas,
-                #                        weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
+                results_entries = []
 
-                # assume it's FEP
-                comp = components[0]
-                windows = lambdas
-                if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                    fe_value = np.nan
-                if os.path.exists(f"{self.fe_folder}/{pose}/df_list.pkl"):
-                    df_list = pd.read_pickle(f"{self.fe_folder}/{pose}/df_list.pkl")
-                else:
-                    df_list = []
-                    for win_i, lam in enumerate(windows):
-                        df = pd.concat([extract_u_nk(
-                            f'{self.fe_folder}/{pose}/sdr/{comp}{win_i:02d}/mdin-{i:02d}.out',                                T=310,
-                                                    reduced=False) for i in sim_range])
-                        df_list.append(df)
-                    # dump
-                    with open(f'{self.fe_folder}/{pose}/df_list.pkl', 'wb') as f:
-                        pd.to_pickle(df_list, f)
+                fe_values = []
+                fe_stds = []
 
-                mbar_v = MBARValidator(
-                    df_list,
-                    temperature=temperature,
-                    energy_unit='kcal/mol',
-                )
-                mbar_v.analysis()
-                fe_value = - mbar_v.mbar.delta_f_.iloc[0, -1]
-                fe_std = 0
-                with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                    f.write(f"{fe_value:.2f} ± {fe_std:.2f}\n")
+                # first get analytical results from Boresch restraint
 
-                # if failed; it will return nan
-                if np.isnan(fe_value):
-                    logger.warning(f'FE calculation failed for {pose}')
-                    with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                        f.write("UNBOUND\n")
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                if 'v' in self.sim_config.components:
+                    disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
+                elif 'o' in self.sim_config.components:
+                    disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
 
-                    continue
-            
-                self.fe_results[pose] = ComponentFEResult(
-                    fe_value=fe_value,
-                    fe_std=fe_std,
+                rest = self.sim_config.rest
+                k_r = rest[2]
+                k_a = rest[3]
+                bor_ana = BoreschAnalysis(
+                                     disangfile=disangfile,
+                                     k_r=k_r, k_a=k_a,
+                                     temperature=self.sim_config.temperature,)
+                bor_ana.run_analysis()
+                fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
+                fe_stds.append(bor_ana.results['fe_error'])
+                results_entries.append(
+                    f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
                 )
                 
-                os.chdir('../../')
-                # generate aligned pdbs
-                # TODO
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    comp_path = f'{self.fe_folder}/{pose}/{comp_folder}'
+                    windows = self.component_windows_dict[comp]
 
+                    # skip n if no conformational restraints are applied
+                    if comp == 'n' and rest[1] == 0 and rest[4] == 0:
+                        logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
+                        continue
 
+                    if comp in COMPONENTS_DICT['dd']:
+                        # directly read energy files
+                        mbar_ana = MBARAnalysis(
+                            comp_folder=comp_path,
+                            component=comp,
+                            windows=windows,
+                            temperature=self.sim_config.temperature,
+                            sim_range=sim_range,
+                            load=overwrite
+                        )
+                        mbar_ana.run_analysis()
+                        mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
+                                                  title=f'Convergence for {comp} {pose}',
+                        )
 
-        for i, (pose, fe) in enumerate(self.fe_results.items()):
-            mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
-        
+                        fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
+                        fe_stds.append(mbar_ana.results['fe_error'])
+                        results_entries.append(
+                            f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
+                        )
+                    elif comp in COMPONENTS_DICT['rest']:
+                        rest_mbar_ana = RESTMBARAnalysis(
+                            comp_folder=comp_path,
+                            component=comp,
+                            windows=windows,
+                            temperature=self.sim_config.temperature,
+                            sim_range=sim_range,
+                            load=overwrite
+                        )
+                        rest_mbar_ana.run_analysis()
+                        rest_mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
+                                                  title=f'Convergence for {comp} {pose}',
+                        )
+
+                        fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
+                        fe_stds.append(rest_mbar_ana.results['fe_error'])
+                        results_entries.append(
+                            f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
+                        )
+                
+                # calculate total free energy
+                fe_value = np.sum(fe_values)
+                fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
+                
+                results_entries.append(
+                    f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+                )
+                with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+                    f.write('\n'.join(results_entries))
+                
+                self.fe_results[pose] = NewFEResult(
+                    f'{self.fe_folder}/{pose}/Results/Results.dat',
+                )
+                pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+
+        # generate aligned pdbs
+        logger.info('Generating aligned pdbs')
+        reference_pdb_file = f'{self.poses_folder}/{self.system_name}_docked.pdb'
+        u_ref = mda.Universe(reference_pdb_file)
+        os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
+        os.system(f'cp {reference_pdb_file} {self.output_dir}/Results/reference.pdb')
+
+        for pose in tqdm(self.all_poses, desc='Generating aligned pdbs'):
+            pdb_file = f'{self.equil_folder}/{pose}/representative.pdb'
+            u = mda.Universe(pdb_file)
+            align.alignto(u,
+                          u_ref,
+                          select=f'(({self.protein_align}) and not resname NME ACE and protein)',
+                          weights="mass")
+            saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- and not resname {" ".join(self.lipid_mol)}')
+            saved_ag.write(f'{self.output_dir}/Results/protein_{pose}.pdb')
+
+            initial_pose = f'{self.poses_folder}/{pose}.pdb'
+            os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
+            
+        with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
+            for i, (pose, fe) in enumerate(self.fe_results.items()):
+                mol_name = self.mols[i]
+                
+                logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+            
 
     @safe_directory
     @save_state
@@ -1763,10 +1906,19 @@ class System:
         dic_steps1 = self.sim_config.dic_steps1
         dic_steps2 = self.sim_config.dic_steps2
         dt = self.sim_config.dt
-        poses_def = self.sim_config.poses_def
+        poses_def = self.all_poses
 
         with self._change_dir(self.output_dir):
-            for pose in tqdm(poses_def, desc='Analyzing FE for poses'):
+            pbar = tqdm(
+                poses_def,
+                desc='Analyzing FE for poses',
+            )
+            for pose in pbar:
+                pbar.set_postfix(pose=pose)
+                if pose not in self.bound_poses:
+                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                    logger.info(f'Pose {pose} is not a bound pose; skipping FE analysis')
+                    continue
                 os.chdir(f'{self.fe_folder}/{pose}')
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
                     self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
@@ -1790,15 +1942,17 @@ class System:
                 if np.isnan(fe_value):
                     #logger.warning(f'FE calculation failed for {pose}')
                     with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                        f.write("UNBOUND\n")
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-
+                        f.write("FAILED\n")
+                    #self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
                     continue
 
                 self.fe_results[pose] = FEResult('Results/Results.dat')
                 os.chdir('../../')
-        # generate aligned pdbs
+                pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
 
+
+        # generate aligned pdbs
+        logger.info('Generating aligned pdbs')
         reference_pdb_file = f'{self.poses_folder}/{self.system_name}_docked.pdb'
         u_ref = mda.Universe(reference_pdb_file)
         os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
@@ -1809,7 +1963,7 @@ class System:
             u = mda.Universe(pdb_file)
             align.alignto(u,
                           u_ref,
-                          select=self.protein_align,
+                          select=f'(({self.protein_align}) and not resname NME ACE and protein)',
                           weights="mass")
             saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- and not resname {" ".join(self.lipid_mol)}')
             saved_ag.write(f'{self.output_dir}/Results/protein_{pose}.pdb')
@@ -1817,9 +1971,8 @@ class System:
             initial_pose = f'{self.poses_folder}/{pose}.pdb'
             os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
             
-
-            
         if convergence:
+            logger.info('Checking convergence of FE results')
             validators_all = []
             poses_all = []
             comps_all = []
@@ -1902,7 +2055,9 @@ class System:
         if ligand_anchor_atom is not None:
             lig_atom = u_merge.select_atoms(ligand_anchor_atom)
             if lig_atom.n_atoms == 0:
-                raise ValueError('Error: ligand anchor atom not found')
+                logger.warning(f"Provided ligand anchor atom {ligand_anchor_atom} not found in the ligand."
+                               "Using all ligand atoms instead.")
+                lig_atom = u_lig.atoms
         else:
             lig_atom = u_lig.atoms
 
@@ -1921,9 +2076,10 @@ class System:
         """
         Check if the ligand is bound after equilibration
         """
+        UNBOUND_THRESHOLD = 8.0
         bound_poses = []
         num_eq_sims = len(self.sim_config.release_eq)
-        for pose_i, pose in enumerate(self.sim_config.poses_def):
+        for pose_i, pose in enumerate(self.all_poses):
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 raise FileNotFoundError(f"Equilibration not finished yet")
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
@@ -1931,18 +2087,18 @@ class System:
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 logger.warning(f"Pose {pose} is UNBOUND in equilibration")
                 continue
-            if os.path.exists(f"{self.equil_folder}/{pose}/representative.pdb"):
+            if os.path.exists(f"{self.equil_folder}/{pose}/representative.rst7",) and not self.overwrite:
                 bound_poses.append([pose_i, pose])
                 logger.debug(f"Representative snapshot found for pose {pose}")
                 continue
             with self._change_dir(f"{self.equil_folder}/{pose}"):
                 pdb = "full.pdb"
-                trajs = [f"md-{i:02d}.nc" for i in range(num_eq_sims)]
+                # exclude the first equilibration simulation
+                trajs = [f"md-{i:02d}.nc" for i in range(1, num_eq_sims)]
                 universe = mda.Universe(pdb, trajs)
                 sim_val = SimValidator(universe)
-                sim_val.plot_ligand_bs()
-                sim_val.plot_rmsd()
-                if sim_val.results['ligand_bs'][-1] > 8:
+                sim_val.plot_analysis()
+                if sim_val.results['ligand_bs'][-1] > UNBOUND_THRESHOLD:
                     logger.warning(f"Ligand is not bound for pose {pose}")
                     # write "UNBOUND" file
                     with open(f"{self.equil_folder}/{pose}/UNBOUND", 'w') as f:
@@ -1953,31 +2109,39 @@ class System:
                     logger.info(f"Representative snapshot: {rep_snapshot}")
                     
                     cpptraj_command = "cpptraj -p full.prmtop <<EOF\n"
-                    for i in range(num_eq_sims):
+                    for i in range(1, num_eq_sims):
                         cpptraj_command += f"trajin md-{i:02d}.nc\n"
                     cpptraj_command += f"trajout representative.pdb pdb onlyframes {rep_snapshot+1}\n"
                     cpptraj_command += f"trajout representative.rst7 restart onlyframes {rep_snapshot+1}\n"
                     cpptraj_command += "EOF\n"
                     run_with_log(cpptraj_command,
                                 working_dir=f"{self.equil_folder}/{pose}")
+                    
+                    # convert representative.pdb resid info to old residues.
+                    # instead of start from 1.
+                    renum_txt = f"{self.equil_folder}/{pose}/build_files/protein_renum.txt"
+                    renum_data = pd.read_csv(
+                        renum_txt,
+                        sep=r'\s+',
+                        header=None,
+                        names=['old_resname', 'old_chain', 'old_resid',
+                                'new_resname', 'new_resid'])
+                    u = mda.Universe(f"{self.equil_folder}/{pose}/representative.pdb")
+                    u.select_atoms('protein').residues.resids = renum_data['old_resid'].values
+                    u.atoms.write(f"{self.equil_folder}/{pose}/representative.pdb")
+                    
+        self._bound_poses = [pose for _, pose in bound_poses]
+        self._bound_mols = [self.mols[pose_i] for pose_i, _ in bound_poses]
         logger.debug(f"Bound poses: {bound_poses} will be used for the production stage")
 
+    def _find_new_anchor_atoms(self):
+        """
+        Find the new anchor atoms for the ligand and the protein after equilibration.
+        """
         # get new l1x, l1y, l1z distances
-        for pose_i, pose in bound_poses:
+        for i, pose in enumerate(self.bound_poses):
             u_sys = mda.Universe(f'{self.equil_folder}/{pose}/representative.pdb')
-            u_lig = u_sys.select_atoms(f'resname {self.mols[pose_i]}')
-
-            anchor_file = f'{self.equil_folder}/{pose}/build_files/protein_anchors.txt'
-            with open(anchor_file, 'r') as f:
-                anchor_atoms_lines = f.readlines()
-            # convert amber selection to mda selection
-            # amber: :84@CA
-            # mda :resid 84 and name CA
-            anchor_atoms = []
-            for line in anchor_atoms_lines:
-                resid = line.split(':')[1].split('@')[0]
-                atom_name = line.split('@')[1].strip()
-                anchor_atoms.append(f'resid {resid} and name {atom_name}')
+            u_lig = u_sys.select_atoms(f'resname {self.bound_mols[i]}')
 
             ligand_anchor_atom = self.ligand_anchor_atom
 
@@ -1985,10 +2149,12 @@ class System:
             l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
                         u_sys,
                         u_lig,
-                        anchor_atoms,
+                        self.anchor_atoms,
                         ligand_anchor_atom)
             with open(f'{self.equil_folder}/{pose}/anchor_list.txt', 'w') as f:
                 f.write(f'{l1_x} {l1_y} {l1_z}')
+        
+
 
     @safe_directory
     @save_state
@@ -2011,8 +2177,8 @@ class System:
 
         Parameters
         ----------
-        input_file : str
-            The input file for the simulation.
+        input_file : str or SimulationConfig
+            The input file for the simulation
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
         avg_struc : str, optional
@@ -2054,7 +2220,7 @@ class System:
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')
         self._get_sim_config(input_file)
-        self.sim_config.poses_def = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
 
         if self._check_equilibration():
             #1 prepare the system
@@ -2079,7 +2245,7 @@ class System:
             logger.info('Checking the equilibration')
             while self._check_equilibration():
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
-                logger.info(f'Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
@@ -2108,6 +2274,7 @@ class System:
                 extra_restraints=extra_restraints,
                 extra_restraints_fc=extra_restraints_fc
             )
+            #self._slurm_jobs = {}
 
             self.submit(
                     stage='fe_equil'
@@ -2131,7 +2298,7 @@ class System:
             logger.info('Free energy equilibration is already finished')
 
         # copy last equilibration snapshot to the free energy folder
-        for pose in self.sim_config.poses_def:
+        for pose in self.bound_poses:
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 continue
             for comp in self.sim_config.components:
@@ -2199,7 +2366,7 @@ class System:
         """
         sim_finished = {}
         sim_failed = {}
-        for pose in self.sim_config.poses_def:
+        for pose in self.all_poses:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 sim_finished[f'eq_{pose}'] = False
             else:
@@ -2229,10 +2396,7 @@ class System:
         """
         sim_finished = {}
         sim_failed = {}
-        for pose in self.sim_config.poses_def:
-            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                sim_finished[pose] = True
-                continue
+        for pose in self.bound_poses:
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
 
@@ -2266,10 +2430,7 @@ class System:
         """
         sim_finished = {}
         sim_failed = {}
-        for pose in self.sim_config.poses_def:
-            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                sim_finished[pose] = True
-                continue
+        for pose in self.bound_poses:
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
                 windows = self.component_windows_dict[comp]
@@ -2307,7 +2468,7 @@ class System:
 
     def check_jobs(self):
         """
-        Check the status of the jobs.
+        Check the status of the jobs and print the not finished jobs.
         """
         logger.info('Checking the status of the jobs in')
         logger.info(f'{self.output_dir}')
@@ -2321,8 +2482,9 @@ class System:
 
         if len(not_finished) == 0:
             logger.info('All jobs are finished')
+            self._slurm_jobs = {}
         else:
-            for pose in self.sim_config.poses_def:
+            for pose in self.all_poses:
                 logger.info(f'Not finished in {pose}:')
                 not_finished_pose = [k for k in not_finished if pose in k]
                 not_finished_pose = [job.split('/')[-1] for job in not_finished_pose]
@@ -2332,7 +2494,8 @@ class System:
     @save_state
     def generate_frontier_files(self,
                                     remd=False,
-                                    version=24):
+                                    version=24,
+                                    ):
         """
         Generate the frontier files for the system
         to run them in a bundle.
@@ -2353,11 +2516,11 @@ class System:
         pass
 
 
-    def _generate_frontier_fe_equilibration(self, version):
+    def _generate_frontier_fe_equilibration(self, version=24):
         """
         Generate the frontier files for the free energy calculation equilibration stage.
         """
-        poses_def = self.sim_config.poses_def
+        poses_def = self.bound_poses
         components = self.sim_config.components
 
         sim_stages = [
@@ -2373,9 +2536,7 @@ class System:
             Write a groupfile for each component in the pose
             """
             os.makedirs(f'fe/{pose}/groupfiles', exist_ok=True)
-
             n_sims = len(components)
-
             stage_previous_template = f'{pose}/{{}}/{{}}-1/full.inpcrd'
 
             for stage in sim_stages:
@@ -2436,11 +2597,14 @@ class System:
             logger.info('FE EQ groupfiles generated for all poses')
 
 
-    def _generate_frontier_fe(self, remd=False, version=24):
+    def _generate_frontier_fe(self,
+                              remd=False,
+                              version=24,
+                              ):
         """
         Generate the frontier files for the free energy calculation production stage.
         """
-        poses_def = self.sim_config.poses_def
+        poses_def = self.bound_poses
         components = self.sim_config.components
 
         sim_stages = [
@@ -2508,29 +2672,13 @@ class System:
                                                     '  mcresstr = "WAT",\n'
                                                     #'  numexchg = 1000,\n'
                                                 )
-                                        if component in COMPONENTS_DICT['dd']:
+                                        if component in COMPONENTS_DICT['dd'] and remd and stage != 'mini.in':
                                             outfile.write(
-                                                #'scalpha = 0.5,\n'
-                                                #'scbeta = 1.0,\n'
-                                                'gti_add_sc      = 25,\n'
-                                                #'gti_lam_sch     = 1,\n'
-                                                #'gti_ele_sc      = 1,\n'
-                                                #'gti_vdw_sc      = 1,\n'
-                                                #'gti_cut_sc      = 2,\n'
-                                                f'clambda         = {lambdas[i]:.5f},\n'
-                                                f'mbar_lambda     = {", ".join([f"{l:.5f}" for l in lambdas])},\n'
+                                                'numexchg = 3000,\n'
                                             )
-                                            if component == 'e':
-                                                outfile.write('gti_chg_keep   = 1,\n')
-                                            elif component == 'v':
-                                                outfile.write('gti_chg_keep   = 0,\n')
-                                            if remd and stage != 'mini.in':
-                                                outfile.write(
-                                                    'numexchg = 3000,\n'
-                                                )
-                                                outfile.write(
-                                                    'bar_intervall = 100,\n'
-                                                )
+                                            outfile.write(
+                                                'bar_intervall = 100,\n'
+                                            )
                                     elif 'cv_file' in line:
                                         file_name = line.split('=')[1].strip().replace("'", "")
                                         line = f"cv_file = '{sim_folder_name}/{file_name}'\n"
@@ -2556,29 +2704,8 @@ class System:
                                         line = '  ntxo = 2,\n'
                                     elif 'ntwprt' in line:
                                         line = '\n'
-                                    elif 'ntp' in line:
-                                        # nvt simulation
-                                        line = '  ntp = 0,\n'
-                                    elif 'gti_add_sc' in line:
-                                        line = '\n'
-                                    elif 'gti_chg_keep' in line:
-                                        line = '\n'
-                                    elif 'mbar_lambda' in line:
-                                        line = '\n'
                                     elif 'maxcyc' in line:
                                         line = '  maxcyc = 5000,\n'
-                                    elif 'clambda' in line:
-                                        final_line = []
-                                        para_line = line.split(',')
-                                        for p_i in range(len(para_line)):
-                                            if 'clambda' in para_line[p_i]:
-                                                continue
-                                            if 'scalpha' in para_line[p_i]:
-                                                continue
-                                            if 'scbeta' in para_line[p_i]:
-                                                continue
-                                            final_line.append(para_line[p_i])
-                                        line = ',\n'.join(final_line)
                                     if stage == 'mdin.in' or stage == 'mdin.in.extend':
                                         if 'nstlim' in line:
                                             if remd and component in COMPONENTS_DICT['dd'] and stage != 'mini.in':
@@ -2647,7 +2774,7 @@ class System:
         Check the status of running of all the simulations
         """
         stage_sims = {}
-        for pose in self.sim_config.poses_def:
+        for pose in self.bound_poses:
             stage_sims[pose] = {}
             for comp in self.sim_config.components:
                 if comp in ['m', 'n']:
@@ -2673,7 +2800,7 @@ class System:
         import pandas as pd
 
         stage_sims_df = pd.DataFrame(stage_sims)
-        fig, ax = plt.subplots(figsize=(1* len(self.sim_config.poses_def), 5))
+        fig, ax = plt.subplots(figsize=(1* len(self.bound_poses), 5))
         sns.heatmap(stage_sims_df, ax=ax, annot=True, cmap='viridis')
         plt.show()
 
@@ -2713,7 +2840,7 @@ class System:
             os.makedirs('fe', exist_ok=True)
             # for fe, only copy necessary files
             folder_names = ['ff', 'groupfiles']
-            for pose in self.sim_config.poses_def:
+            for pose in self.all_poses:
                 os.makedirs(f'fe/{pose}', exist_ok=True)
                 for folder_name in folder_names:
                     if os.path.exists(f'{self.fe_folder}/{pose}/{folder_name}'):
@@ -2724,7 +2851,7 @@ class System:
                     'mini.in', 'mdin-00', 'mdin-01', 'SLURMM-run', 'run-local.bash',
                     'cv.in', 'disang.rest', 'restraints.in']
 
-            for pose in tqdm(self.sim_config.poses_def, desc='Copying files'):
+            for pose in tqdm(self.all_poses, desc='Copying files'):
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
 
@@ -2791,16 +2918,6 @@ class System:
         self._prepare_fe_windows(
             regenerate=True,
         )
-
-        # create equilibrated.rst7
-        for pose in self.sim_config.poses_def:
-            for comp in self.sim_config.components:
-                comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                eq_file = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}-1/eqnpt04.rst7'
-                for i, win in enumerate(self.component_windows_dict[comp]):
-                    win_folder = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{i:02d}'
-                    os.system(f'cp {eq_file} {win_folder}/equilibrated.rst7')
-                                    
 
     @property
     def component_windows_dict(self):
@@ -2887,8 +3004,6 @@ class ABFESystem(System):
     create one `MABFESystem` with multiple ligands as input.
     """
     def _process_ligands(self):
-        # TODO: it is current broken
-        raise NotImplementedError("ABFESystem is not implemented yet")
         # check if they are the same ligand
         n_atoms = mda.Universe(self.ligand_paths[0]).atoms.n_atoms
         for ligand_path in self.ligand_paths:
@@ -2896,7 +3011,7 @@ class ABFESystem(System):
                 raise ValueError(f"Number of atoms in the ligands are different: {ligand_path}")
 
         # set the ligand path to the first ligand
-        self.unique_ligand_paths = [self.ligand_paths[0]]
+        self._unique_ligand_paths = {self.ligand_paths[0]: self.ligand_names}
 
 
 class MABFESystem(System):
@@ -2906,9 +3021,7 @@ class MABFESystem(System):
     The ABFE of the ligands to the provided **protein conformation** will be calculated
     """
     def _process_ligands(self):
-        # check if they are the same ligand
-        self.unique_ligand_paths = self.ligand_paths
-
+        self._unique_ligand_paths = {ligand_path: [ligand_name] for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names)}
 
 class RBFESystem(System):
     """
@@ -2916,12 +3029,12 @@ class RBFESystem(System):
     using the separated topology methodology in BAT.py.
     """
     def _process_ligands(self):
-        self.unique_ligand_paths = self.ligand_paths
-        if len(self.unique_ligand_paths) <= 1:
+        self._unique_ligand_paths = {ligand_path: [ligand_name] for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names)}
+
+        if len(self._unique_ligand_paths.keys()) < 2:
             raise ValueError("RBFESystem requires at least two ligands "
                              "for the relative binding free energy calculation")
-        logger.info(f'Reference ligand: {self.unique_ligand_paths[0]}')
-
+        logger.info(f'Reference ligand: {self._unique_ligand_paths.keys()[0]}')
 
 
 class ComponentWindowsDict(MutableMapping):

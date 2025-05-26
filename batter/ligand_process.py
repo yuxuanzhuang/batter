@@ -28,8 +28,7 @@ from batter.utils import (
 def random_three_letter_name():
     return ''.join(random.choices(string.ascii_lowercase, k=3))
 
-
-def _convert_mol_name_to_unique(mol_name, ind, mol_names):
+def _convert_mol_name_to_unique(mol_name, ind, exist_mol_names):
     """
     Convert the molecule name to a unique name that is 
     at most 3 lowercase characters, as required by AMBER.
@@ -46,10 +45,10 @@ def _convert_mol_name_to_unique(mol_name, ind, mol_names):
         mol_name = mol_name[:3]  # Truncate longer names
 
     # Ensure uniqueness
-    if mol_name in mol_names:
+    if mol_name in exist_mol_names:
         for _ in range(100):  # Try up to 100 times
             new_name = random_three_letter_name()
-            if new_name not in mol_names:
+            if new_name not in exist_mol_names:
                 mol_name = new_name
                 break
         else:
@@ -83,6 +82,7 @@ class LigandProcessing(ABC):
                 charge='am1bcc',
                 retain_lig_prot=True,
                 ligand_ff='gaff2',
+                unique_mol_names=[],
                 database=None,
                 ):
 
@@ -98,6 +98,7 @@ class LigandProcessing(ABC):
         self.charge = charge
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ff = ligand_ff
+        self.unique_mol_names = unique_mol_names
         ligand_rdkit = self._load_ligand()
         
         if ligand_name is None:
@@ -107,13 +108,15 @@ class LigandProcessing(ABC):
 
         self.ligand_object = ligand
         self.openff_molecule = ligand.to_openff()
+        self._generate_unique_name()
  
-    def generate_unique_name(self, exist_mol_names=[]):
+    def _generate_unique_name(self):
         self._get_mol_name()
         self._name = _convert_mol_name_to_unique(
             self._name,
             self.index,
-            exist_mol_names)
+            self.unique_mol_names
+        )
         logger.info(f'Ligand {self.index}: {self.name}')
         self.openff_molecule.to_file(self.ligand_sdf_path, file_format='sdf')
     
@@ -267,6 +270,7 @@ class LigandFactory:
                       charge='am1bcc',
                       retain_lig_prot=True,
                       ligand_ff='gaff2',
+                      unique_mol_names=[],
                       database=None,
                     ):
         """
@@ -296,6 +300,9 @@ class LigandFactory:
             Default is True.
         ligand_ff : str, optional
             The ligand force field. Default is ``"gaff2"``.
+        unique_mol_names : list, optional
+            The list of unique molecule names to avoid name conflicts.
+            Default is an empty list.
         database : str, optional
             The ligand database. Default is None.
             If provided, the ligand will be searched in the database.
@@ -310,6 +317,7 @@ class LigandFactory:
                 charge=charge,
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
+                unique_mol_names=unique_mol_names,
                 database=database,
             )
         elif ligand_file.lower().endswith('.sdf'):
@@ -321,6 +329,7 @@ class LigandFactory:
                 charge=charge,
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
+                unique_mol_names=unique_mol_names,
                 database=database,
             )
         elif ligand_file.lower().endswith('.mol2'):
@@ -332,6 +341,7 @@ class LigandFactory:
                 charge=charge,
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
+                unique_mol_names=unique_mol_names,
                 database=database,
             )
         else:

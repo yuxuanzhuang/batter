@@ -205,6 +205,36 @@ class SimValidator:
         areas.run()
         self.results['leaflet_areas'] = areas.areas
 
+    def plot_analysis(self, savefig=True):
+        # plot ligand_bs, rmsd, dihedral in three rows
+        fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
+        # Plot ligand binding site distance
+        axes[0].plot(self.results['ligand_bs'], label='Ligand to binding site distance')
+        axes[0].set_ylabel('RMSD (Å)')
+        axes[0].legend()
+        # Plot RMSD
+        axes[1].plot(self.results['protein_rmsd'], label='Protein RMSD')
+        axes[1].plot(self.results['ligand_rmsd'], label='Ligand RMSD')
+        axes[1].set_ylabel('RMSD (Å)')
+        axes[1].legend()
+        # Plot dihedrals
+        self._ligand_dihedral()
+        dihed = self.results['ligand_dihedrals']
+        n_dihed = dihed.shape[1]
+        # split axes[2] into n_dihed subplots
+        for i in range(n_dihed):
+            axes[2].plot(dihed[:, i], label=f'Dihedral {i+1}')
+        
+        axes[2].set_ylabel('Dihedral (degrees)')
+        axes[2].set_xlabel('Frame')
+        axes[2].legend()
+        plt.tight_layout()
+        if savefig:
+            plt.savefig('simulation_analysis.png')
+        else:
+            plt.show()
+        plt.close(fig)
+
     def plot_box(self, savefig=True):
         logger.debug('Plotting box size')
         box_results = np.array(self.results['box'])
@@ -271,7 +301,7 @@ class SimValidator:
         plt.close(fig)
     
     # get the mode value of the dihedral
-    def find_representative_snapshot(self):
+    def find_representative_snapshot(self, savefig=True):
         """
         Find the representative snapshot based on the mode dihedral values.
         """
@@ -304,8 +334,10 @@ class SimValidator:
             ax[i].vlines(dihed[representative_index, i], ymin=0, ymax=0.05,
                         color='r', linestyle='--', label='Representative')
         plt.tight_layout()
-        plt.savefig('dihed.png')
-        plt.show()
+        if savefig:
+            plt.savefig('dihed_hist.png')
+        else:
+            plt.show()
         plt.close(fig)
 
         return representative_index

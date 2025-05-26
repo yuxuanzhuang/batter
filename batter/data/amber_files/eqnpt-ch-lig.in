@@ -26,10 +26,13 @@ Equilibrate, NPT.
   dt = 0.001,
   nmropt = 1,
   pencut = -1,
-  icfe = 1, clambda = lbd_val,
-  timask1 = ':mk1', timask2 = ':mk2',
-  ifsc=0, crgmask = ':mk2',
-  gti_chg_keep = 0,
+  icfe = 1,
+  clambda = lbd_val,
+  timask1 = ':mk1',
+  timask2 = ':mk2',
+  ifsc=0,
+  crgmask = ':mk2',
+  gti_chg_keep = 1,
  /
  &wt type = 'END', /
 DISANG=disang.rest

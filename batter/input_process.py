@@ -11,13 +11,11 @@ import numpy as np
 from loguru import logger
 import pandas as pd
 from batter.data import charmmlipid2amber
+from batter.utils import (
+    COMPONENTS_LAMBDA_DICT
+)
 
-FEP_COMPONENTS = ['a', 'l', 't',
-                  'm', 'n', 'c',
-                  'r', 'e', 'v', 
-                  'f', 'w', 'x',
-                  'o', 's']
-
+FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 
 class SimulationConfig(BaseModel):
     software: str = Field("amber", info={'description': "Software to use (amber, openmm)"})
@@ -304,10 +302,13 @@ class SimulationConfig(BaseModel):
             case 'relative':
                 self.components = ['x', 'e', 'n', 'm']
                 self.dec_method = 'exchange'
-            case 'x_express':
+            case 'uno':
                 self.components = ['m', 'n', 'o']
                 self.dec_method = 'sdr'
-            case 'uno':
+            case 'uno_rest':
+                self.components = ['z']
+                self.dec_method = 'sdr'
+            case 'uno_com':
                 self.components = ['o']
                 self.dec_method = 'sdr'
             case 'self':
@@ -341,8 +342,8 @@ class SimulationConfig(BaseModel):
                        "sdr", "sdr-rest",
                        "dd-rest",
                        "express", "relative",
-                       "x_express",
                        "uno",
+                       "uno_com",
                        "self",
                        "custom"}
         if value not in valid_types:
