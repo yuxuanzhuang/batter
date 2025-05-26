@@ -8,14 +8,10 @@ import os
 import sys
 import shutil
 import glob
-import subprocess as sp
 from contextlib import contextmanager
-import tempfile
-
 import MDAnalysis as mda
-from MDAnalysis.guesser import DefaultGuesser
 from MDAnalysis.analysis import align
-from MDAnalysis.analysis import rms, align
+from MDAnalysis.analysis import align
 
 import pandas as pd
 from importlib import resources
@@ -23,12 +19,10 @@ import json
 from typing import Union
 from pathlib import Path
 import pickle
-from functools import wraps
 try:
     from openff.toolkit import Molecule
 except:
     raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
-from rdkit import Chem
 
 import time
 from tqdm import tqdm
@@ -38,28 +32,20 @@ from typing import List, Tuple
 from loguru import logger
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
-from batter.results import FEResult, ComponentFEResult, NewFEResult
-#from batter.ligand_process import LigandFactory
+from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob
-from batter.analysis.convergence import ConvergenceValidator, MBARValidator
+from batter.analysis.convergence import ConvergenceValidator
 from batter.analysis.sim_validation import SimValidator
 from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 from batter.data import frontier_files
-from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
 from batter.builder import BuilderFactory
 from batter.utils import (
     run_with_log,
     save_state,
     safe_directory,
-    antechamber,
-    tleap,
-    cpptraj,
-    parmchk2,
-    charmmlipid2amber,
-    obabel,
-    vmd)
+)
 
 from batter.utils import (
     COMPONENTS_LAMBDA_DICT,
@@ -785,7 +771,6 @@ class System:
         except AttributeError:
             raise ValueError("Simulation configuration is not set. "
                              "Please provide an input file")
-        self._component_windows_dict = ComponentWindowsDict(self)
         if win_info_dict is not None:
             for key, value in win_info_dict.items():
                 if key not in self._component_windows_dict:
@@ -805,7 +790,7 @@ class System:
                 shutil.rmtree(self.equil_folder, ignore_errors=True)
                 self._eq_prepared = False
             elif self._eq_prepared and os.path.exists(f"{self.equil_folder}"):
-                logger.info(f'Equilibration already prepared')
+                logger.info('Equilibration already prepared')
                 return
             self._slurm_jobs = {}
             # save the input file to the equil directory
@@ -831,15 +816,15 @@ class System:
         
         if stage == 'fe':
             if not os.path.exists(f"{self.equil_folder}"):
-                raise FileNotFoundError(f"Equilibration not generated yet. Run prepare('equil') first.")
+                raise FileNotFoundError("Equilibration not generated yet. Run prepare('equil') first.")
         
             if not os.path.exists(f"{self.equil_folder}/{self.all_poses[0]}/md03.rst7"):
-                raise FileNotFoundError(f"Equilibration not finished yet. First run the equilibration.")
+                raise FileNotFoundError("Equilibration not finished yet. First run the equilibration.")
                 
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
             if sim_config_eq != sim_config.model_dump():
             # raise ValueError(f"Equilibration and free energy simulation configurations are different")
-                warnings.warn(f"Equilibration and free energy simulation configurations are different")
+                warnings.warn("Equilibration and free energy simulation configurations are different")
                 # get the difference
                 diff = {k: v for k, v in sim_config_eq.items() if sim_config.model_dump().get(k) != v}
                 logger.warning(f"Different configurations: {diff}")
@@ -852,7 +837,7 @@ class System:
                 shutil.rmtree(self.fe_folder, ignore_errors=True)
                 self._fe_prepared = False
             elif self._fe_prepared and os.path.exists(f"{self.fe_folder}"):
-                logger.info(f'Free energy already prepared')
+                logger.info('Free energy already prepared')
                 return
             self._slurm_jobs = {}
             self._fe_prepared = False
@@ -1835,11 +1820,6 @@ class System:
                     f'{self.fe_folder}/{pose}/Results/Results.dat',
                 )
                 pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
-
-        for i, (pose, fe) in enumerate(self.fe_results.items()):
-            mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
-        
 
         # generate aligned pdbs
         logger.info('Generating aligned pdbs')

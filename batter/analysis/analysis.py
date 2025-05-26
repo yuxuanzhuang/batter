@@ -73,7 +73,7 @@ class MBARAnalysis(FEAnalysisBase):
                 energy_unit='kcal/mol',
                 sim_range=None,
                 n_bootstraps=100,
-                n_jobs=12,
+                n_jobs=6,
                 load=False,
                 ):
         """
