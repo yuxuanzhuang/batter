@@ -11,6 +11,10 @@ from alchemlyb.visualisation import (
                 plot_mbar_overlap_matrix,
                 plot_block_average
             )
+
+from batter.utils import run_with_log, cpptraj
+
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
@@ -67,7 +71,6 @@ class MBARAnalysis(FEAnalysisBase):
                 windows,
                 temperature,
                 energy_unit='kcal/mol',
-                log_level='INFO',
                 sim_range=None,
                 n_bootstraps=100,
                 n_jobs=12,
@@ -88,8 +91,6 @@ class MBARAnalysis(FEAnalysisBase):
             The temperature in Kelvin for the analysis.
         energy_unit : str, optional
             The energy unit for the results. Can be 'kcal/mol', 'kJ/mol', or 'kT'. Default is 'kcal/mol'.
-        log_level : str, optional
-            The log level for logging the analysis. Default is 'INFO'.
         sim_range : tuple of int, optional
             The range of simulations to include in the analysis. If None, all simulations are included.
         n_bootstraps : int, optional
@@ -123,9 +124,6 @@ class MBARAnalysis(FEAnalysisBase):
         self.n_jobs = n_jobs
         self.load = load
         self._data_initialized = False
-
-        #logger.remove()
-        #logger.add(sys.stderr, level=log_level)
 
     def get_mbar_data(self):
         """
@@ -162,7 +160,7 @@ class MBARAnalysis(FEAnalysisBase):
         elif self.energy_unit == 'kT':
             self.results['fe'] = mbar.delta_f_.iloc[0, -1]
             self.results['fe_error'] = error
-        logger.info(f"Free energy results for {self.component}: {self.results['fe']:.2f} +- {self.results['fe_error']:.2f} {self.energy_unit}")
+        logger.debug(f"Free energy results for {self.component}: {self.results['fe']:.2f} +- {self.results['fe_error']:.2f} {self.energy_unit}")
 
         # convergence
         logger.debug(f"Calculating convergence for {self.component}...")
@@ -192,7 +190,7 @@ class MBARAnalysis(FEAnalysisBase):
                             T=temperature, reduced=False)
                 for i in sim_range
             ])
-            t0, g, Neff_max = detect_equulibration(df.iloc[:, win_i], nskip=10)
+            t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
         df = df[df.index.get_level_values(0) > t0]
         return df
 
@@ -206,13 +204,13 @@ class MBARAnalysis(FEAnalysisBase):
                                                  temperature=self.temperature,
                                                  sim_range=self.sim_range)           
                 for win_i in range(len(self.windows)))
-        with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'wb') as f:
-            pickle.dump(df_list, f)
-
         for df in df_list:
             df.attrs['temperature'] = self.temperature
             df.attrs['energy_unit'] = 'kT'
         
+        with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'wb') as f:
+            pickle.dump(df_list, f)
+
         return df_list
 
     @property
@@ -278,6 +276,237 @@ class MBARAnalysis(FEAnalysisBase):
             plt.close(fig)
         else:
             plt.show()
+
+class RESTMBARAnalysis(MBARAnalysis):
+    """
+    Analysis class for components that calculate applied restraints and use MBAR
+    to estimate free energy of applying the restraint.
+    """
+    def _extract_restraints_from_windows(self):
+        num_win = len(self.windows)
+        component = self.component
+        # Read disang file to get restraints type
+        disang_file = f'{self.comp_folder}/{component}00/disang.rest'
+        with open(disang_file, 'r') as f:
+            disang =  f.readlines()
+
+        num_rest = 0
+        if (component == 't'):
+            for line in disang:
+                cols = line.split()
+                if len(cols) != 0 and (cols[-1] == "#Lig_TR"):
+                    num_rest += 1
+        elif (component == 'l' or component == 'c'):
+            for line in disang:
+                cols = line.split()
+                if len(cols) != 0 and (cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"):
+                    num_rest += 1
+        elif (component == 'a' or component == 'r'):
+            for line in disang:
+                cols = line.split()
+                if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D"):
+                    num_rest += 1
+        elif (component == 'm' or component == 'n'):
+            for line in disang:
+                cols = line.split()
+                if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D" or cols[-1] == "#Lig_TR" or cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"):
+                    num_rest += 1
+        
+        rty = ['d'] * num_rest
+        rfc = np.zeros([num_win, num_rest], dtype=float)
+        req = np.zeros([num_win, num_rest], dtype=float)
+                       
+        for win in range(num_win):
+            disang_file = f'{self.comp_folder}/{component}{win:02d}/disang.rest'
+            with open(disang_file, 'r') as disang:
+                disang = disang.readlines()
+
+            # Read restraints from disang file
+            r = 0
+            for line in disang:
+                cols = line.split()
+                if (component == 't'):
+                    if len(cols) != 0 and (cols[-1] == "#Lig_TR"):
+                        natms = len(cols[2].split(','))-1
+                        req[win, r] = float(cols[6].replace(",", ""))
+                        if natms == 2:
+                            rty[r] = 'd'
+                            rfc[win, r] = float(cols[12].replace(",", ""))
+                        elif natms == 3:
+                            rty[r] = 'a'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        elif natms == 4:
+                            rty[r] = 't'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        else:
+                            sys.exit("not sure about restraint type!")
+                        r += 1
+                elif (component == 'l' or component == 'c'):
+                    if len(cols) != 0 and (cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"):
+                        natms = len(cols[2].split(','))-1
+                        req[win, r] = float(cols[6].replace(",", ""))
+                        if natms == 2:
+                            rty[r] = 'd'
+                            rfc[win, r] = float(cols[12].replace(",", ""))
+                        elif natms == 3:
+                            rty[r] = 'a'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        elif natms == 4:
+                            rty[r] = 't'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        else:
+                            sys.exit("not sure about restraint type!")
+                        r += 1
+                elif (component == 'a' or component == 'r'):
+                    if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D"):
+                        natms = len(cols[2].split(','))-1
+                        req[win, r] = float(cols[6].replace(",", ""))
+                        if natms == 2:
+                            rty[r] = 'd'
+                            rfc[win, r] = float(cols[12].replace(",", ""))
+                        elif natms == 3:
+                            rty[r] = 'a'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        elif natms == 4:
+                            rty[r] = 't'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        else:
+                            sys.exit("not sure about restraint type!")
+                        r += 1
+                elif (component == 'm' or component == 'n'):
+                    if len(cols) != 0 and (cols[-1] == "#Rec_C" or cols[-1] == "#Rec_D" or cols[-1] == "#Lig_TR" or cols[-1] == "#Lig_C" or cols[-1] == "#Lig_D"
+                                        ):
+                        natms = len(cols[2].split(','))-1
+                        req[win, r] = float(cols[6].replace(",", ""))
+                        if natms == 2:
+                            rty[r] = 'd'
+                            rfc[win, r] = float(cols[12].replace(",", ""))
+                        elif natms == 3:
+                            rty[r] = 'a'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        elif natms == 4:
+                            rty[r] = 't'
+                            rfc[win, r] = float(cols[12].replace(",", ""))*(np.pi/180.0)*(np.pi/180.0)  # Convert to degrees
+                        else:
+                            sys.exit("not sure about restraint type!")
+                        r += 1
+
+        return rfc, req, rty, num_rest
+
+    def _get_data_list(self):
+        logger.debug(f"Extracting data for {self.component}...")
+        # add additional code to extract restraints from all windows ahead
+        
+        rfc, req, rty, num_rest = self._extract_restraints_from_windows()
+        logger.debug(f"Extracted restraints for {self.component}: {num_rest} restraints found.")
+
+        df_list = Parallel(n_jobs=self.n_jobs)(
+            delayed(self._extract_all_for_window)(
+                                                 win_i=win_i,
+                                                 comp_folder=self.comp_folder,
+                                                 component=self.component,
+                                                 temperature=self.temperature,
+                                                 sim_range=self.sim_range,
+                                                 rfc=rfc,
+                                                 req=req,
+                                                 rty=rty,
+                                                 num_rest=num_rest,
+                                                 num_win=len(self.windows)
+            )          
+                for win_i in range(len(self.windows)))
+        with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'wb') as f:
+            pickle.dump(df_list, f)
+
+        for df in df_list:
+            df.attrs['temperature'] = self.temperature
+            df.attrs['energy_unit'] = 'kT'
+        
+        return df_list
+    
+    @staticmethod
+    def _extract_all_for_window(win_i, comp_folder, component, temperature,
+                               sim_range, rfc, req, rty, num_rest, num_win):
+        """
+        Return a dataframe with the energy in kT units for the given window.
+        As no direct report of the MBAR energy is present in the output,
+        we need to extract the data from the simulations.
+        """
+        kT = 0.0019872041 * temperature
+        os.chdir(f'{comp_folder}/{component}{win_i:02d}')
+        if sim_range is None:
+            n_sims = len(glob.glob(f'mdin-*.nc'))
+            sim_range = range(n_sims)
+        logger.debug(f"Extracting data for {component}{win_i:02d} with {len(sim_range)} simulations...")
+
+        md_sim_files = []
+        for i in sim_range:
+            md_sim_files.append(f'mdin-{i:02d}.nc')
+        
+        generate_results_rest(md_sim_files, component, blocks=5, top='full')
+        logger.debug(f"Reading data for {component}{win_i:02d}...")
+
+        # read simulation data
+
+        # Read disang file to get restraints
+        restraint_file = 'restraints.dat'
+        with open(restraint_file, 'r') as f:
+            restdat = f.readlines()
+            
+        val = np.zeros([len(restdat)-1, num_rest], dtype=float)
+
+        n = 0
+        for line in restdat:
+            if line[0] != '#' and line[0] != '@':
+                cols = line.split()
+                for r in range(num_rest):
+                    if rty[r] == 't':  # Do phase corrections
+                        tmp = float(cols[r+1])
+                        if tmp < req[win_i, r]-180.0:
+                            val[n, r] = tmp + 360
+                        elif tmp > req[win_i, r]+180.0:
+                            val[n, r] = tmp - 360
+                        else:
+                            val[n, r] = tmp
+                    else:
+                        val[n, r] = float(cols[r+1])
+                n += 1
+
+        # get reduced potential
+        if component != 'u':  # Attach/Release Restraints
+            if rfc[win_i, 0] == 0:
+                tmp = np.ones([num_rest], np.float64) * 0.001  # CHECK THIS!! might interfere on protein attach
+                u = np.sum(tmp*((val-req[win_i])**2) / kT, axis=1)
+            else:
+                u = np.sum(rfc[win_i]*((val-req[win_i])**2) / kT, axis=1)
+        else:  # Umbrella/Translation
+            u = (rfc[win_i, 0]*((val[:, 0]-req[win_i, 0])**2) / kT)
+        
+        # get equilibration time from the reduced potential
+        with SuppressLoguru():
+            t0, g, Neff_max = detect_equilibration(u, nskip=10)
+        
+        u = u[t0:]
+
+        Upot = np.zeros([num_win, len(u)], np.float64)
+
+        for win in range(num_win):
+            if component != 'u':  # Attach Restraints
+                Upot[win] = np.sum(rfc[win]*((val[t0:]-req[win])**2) / kT, axis=1)
+            else:  # Umbrella/Translation
+                Upot[win] = (rfc[win, 0]*((val[t0:, 0]-req[win, 0])**2) / kT)
+            
+        win_i_list = np.arange(num_win, dtype=np.float64)
+        mbar_time = np.arange(len(u), dtype=np.float64)
+        clambda = win_i
+        mbar_df = pd.DataFrame(
+            Upot,
+            index=np.array(win_i_list, dtype=np.float64),
+            columns=pd.MultiIndex.from_arrays(
+                [mbar_time, np.repeat(clambda, len(mbar_time))],
+                names=["time", "lambdas"],
+            ),
+        ).T
+        return mbar_df
 
 
 class BoreschAnalysis(FEAnalysisBase):
@@ -475,9 +704,6 @@ class BoreschAnalysis(FEAnalysisBase):
         return R*temperature*np.log((1/(8.0*np.pi*np.pi))*(1.0/1660.0)*r1_int*a1_int*t1_int*a2_int*t2_int*t3_int)
 
 
-
-
-
 class SuppressLoguru:
     def __enter__(self):
         self.handler_ids = list(logger._core.handlers.keys())
@@ -487,3 +713,38 @@ class SuppressLoguru:
         logger_format = ('{level} | <level>{message}</level> ')
         # format time to be human readable
         logger.add(sys.stderr, format=logger_format, level="INFO")
+
+
+def generate_results_rest(md_sim_files,
+                          comp,
+                          blocks=5,
+                          top='full'):
+    data = []
+    
+    # Read the 'restraints.in' file
+    with open('restraints.in', 'r') as f:
+        lines = f.readlines()
+    # remove lines contains 'trajin'
+    lines = [line for line in lines if 'trajin' not in line]
+    # get the line index of parm
+    line_index = lines.index([line for line in lines if 'parm' in line][0])
+    # replace 'vac.prmtop' with '{top}.prmtop'
+    lines[line_index] = lines[line_index].replace('vac.prmtop',
+                                                f'../{comp}-1/{top}.prmtop')
+    with open('restraints_curr.in', 'w') as f:
+        # Write lines up to and including the target line
+        f.writelines(lines[:line_index + 1])
+        # Append the sorted mdin files
+        for mdin_file in md_sim_files:
+            f.write(f'trajin {mdin_file}\n')
+        # Write the remaining lines
+        f.writelines(lines[line_index + 1:])
+    # Run cpptraj with logging
+    logger.debug('Running cpptraj')
+    run_with_log(f"{cpptraj} -i restraints_curr.in > restraints.log 2>&1")
+    logger.debug('cpptraj finished')
+
+    with open("restraints.dat", "r") as fin:
+        for line in fin:
+            if not '#' in line:
+                data.append(line)
