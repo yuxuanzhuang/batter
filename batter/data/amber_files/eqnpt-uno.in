@@ -23,7 +23,7 @@ Equilibrate, NPT.
   barostat = 1,
   nstlim = 50000,
   dt = 0.001,
-  nmropt = 0,
+  nmropt = 1,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,

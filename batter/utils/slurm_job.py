@@ -27,15 +27,11 @@ class SLURMJob:
         self.overwrite = overwrite
         self.other_env = other_env
         if requeue:
-            for _ in range(3):
-                try:
-                    self._requeue()
-                    return
-                except RuntimeError as e:
-                    logger.debug(f"Failed to requeue job: {e}; retrying in 30 seconds")
-                    time.sleep(30)
-            else:
-                logger.error(f"Failed to requeue job, submit a new job instead.")
+            try:
+                self._requeue()
+                return
+            except RuntimeError as e:
+                logger.debug(f"Failed to requeue job: {e}")
                 
         for _ in range(5):
             try:

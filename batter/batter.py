@@ -39,6 +39,7 @@ from batter.analysis.convergence import ConvergenceValidator
 from batter.analysis.sim_validation import SimValidator
 from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 from batter.data import frontier_files
+from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
 from batter.builder import BuilderFactory
 from batter.utils import (
@@ -1170,8 +1171,8 @@ class System:
             #            f"{self.equil_folder}/run_files")
             # use os.copy instead
             os.makedirs(f"{self.equil_folder}/run_files", exist_ok=True)
-            for file in os.listdir(f"{self.ligandff_folder}/run_files"):
-                os.system(f"cp {self.ligandff_folder}/run_files/{file} {self.equil_folder}/run_files/{file}")
+            for file in os.listdir(run_files_orig):
+                os.system(f"cp {run_files_orig}/{file} {self.equil_folder}/run_files/{file}")
         
         hmr = self.sim_config.hmr
         if hmr == 'no':

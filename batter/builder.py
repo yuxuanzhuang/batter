@@ -3400,6 +3400,7 @@ class FreeEnergyBuilder(SystemBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
                 mdin = open("./mdin-%02d" % int(i), "a")
+                mdin.write(' /\n')
                 mdin.write(' &wt type = \'END\' , /\n')
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
@@ -4428,8 +4429,14 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
             # Simulation files for simultaneous decoupling
             with open('./vac.pdb') as myfile:
                 data = myfile.readlines()
-                mk2 = int(last_lig)
-                mk1 = int(mk2 - 1)
+                mk1 = int(last_lig)
+                mk2 = int(mk2 - 1)
+
+            # WARNING
+            # UNO component has different direction of ti1 and ti2
+            # that is flipped compared to e,v
+            # so we can apply lambda schedule to estimate the restraints
+
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
@@ -4464,6 +4471,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                 mdin.write(' &wt type = \'END\' , /\n')
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
+
 
             with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
