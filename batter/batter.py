@@ -1710,9 +1710,6 @@ class System:
                 self.check_jobs()
                 return
             
-        if not sim_range:
-            sim_range = (None, None)
-        
         with self._change_dir(self.output_dir):
             pbar = tqdm(
                 self.all_poses,
@@ -2344,8 +2341,10 @@ class System:
 
         #5 analyze the results
         logger.info('Analyzing the results')
-        self.analysis(load=False)
-
+        self.analysis_new(
+            load=True,
+            check_finished=False,
+        )
         logger.info('Pipeline finished')
         logger.info(f'The results are in the {self.output_dir}')
         end_time = time.time()
@@ -2359,7 +2358,7 @@ class System:
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
-        
+
     @save_state
     def _check_equilibration(self):
         """

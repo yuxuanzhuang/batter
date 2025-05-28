@@ -112,14 +112,14 @@ class MBARAnalysis(FEAnalysisBase):
             raise ValueError(f"Energy unit {energy_unit} not recognized. Use 'kcal/mol', 'kJ/mol' or 'kT'.")
         self.energy_unit = energy_unit
         self.kT = 0.0019872041 * self.temperature
-        self.sim_range = sim_range
-        if sim_range is not None and not isinstance(sim_range, (list, tuple)):
-            raise ValueError("sim_range must be a list or tuple of integers.")
-        if isinstance(sim_range, (list, tuple)) and len(sim_range) == 2:
+        if sim_range is not None:
+            if not isinstance(sim_range, (list, tuple)):
+                raise ValueError("sim_range must be a list or tuple of integers.")
+            if len(sim_range) != 2:
+                raise ValueError("sim_range must be a list or tuple of exactly two integers.")
             self.sim_range = range(sim_range[0], sim_range[1])
-        elif isinstance(sim_range, (list, tuple)) and len(sim_range) > 2:
-            raise ValueError("sim_range must be a list or tuple of two integers.")
-
+        else:
+            self.sim_range = sim_range
         self.n_bootstraps = n_bootstraps
         self.n_jobs = n_jobs
         self.load = load
@@ -184,12 +184,32 @@ class MBARAnalysis(FEAnalysisBase):
             n_sims = len(glob.glob(f'{comp_folder}/{component}{win_i:02d}/mdin-*.out'))
             sim_range = range(n_sims)
         logger.debug(f"Extracting data for {component}{win_i:02d} with {len(sim_range)} simulations...")
+
+
+        md_sim_files = []
+        for i in sim_range:
+            if os.path.exists(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out'):
+                md_sim_files.append(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out')
+
+        if len(md_sim_files) == 0:
+            # the simulation is done probably not on Frontier
+            md_sim_files = [
+                #f'{comp_folder}/{component}{win_i:02d}/md-01.out',
+                #f'{comp_folder}/{component}{win_i:02d}/md-02.out',
+                f'{comp_folder}/{component}{win_i:02d}/md-03.out',
+                f'{comp_folder}/{component}{win_i:02d}/md-04.out'
+            ]
+
         with SuppressLoguru():
-            df = pd.concat([
-                extract_u_nk(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out',
-                            T=temperature, reduced=False)
-                for i in sim_range
-            ])
+            dfs = []
+            for md_sim_file in md_sim_files:
+                try:
+                    df_part = extract_u_nk(md_sim_file, T=temperature, reduced=False)
+                    dfs.append(df_part)
+                except Exception as e:
+                    raise RuntimeError(f"Error processing {md_sim_file}: {e}")
+
+            df = pd.concat(dfs, ignore_index=True)
             t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
         df = df[df.index.get_level_values(0) > t0]
         return df
@@ -433,6 +453,7 @@ class RESTMBARAnalysis(MBARAnalysis):
         """
         kT = 0.0019872041 * temperature
         os.chdir(f'{comp_folder}/{component}{win_i:02d}')
+
         if sim_range is None:
             n_sims = len(glob.glob(f'mdin-*.nc'))
             sim_range = range(n_sims)
@@ -440,9 +461,17 @@ class RESTMBARAnalysis(MBARAnalysis):
 
         md_sim_files = []
         for i in sim_range:
-            md_sim_files.append(f'mdin-{i:02d}.nc')
+            if os.path.exists(f'mdin-{i:02d}.nc'):
+                md_sim_files.append(f'mdin-{i:02d}.nc')
         
-        generate_results_rest(md_sim_files, component, blocks=5, top='full')
+        top = 'full'
+        # make sure all nc files exist
+        if len(md_sim_files) == 0:
+            # the simulation is done probably not on Frontier
+            md_sim_files = ['md01.nc', 'md02.nc', 'md03.nc', 'md04.nc']
+            # locally, it stores only vac # of atoms
+            top = 'vac'
+        generate_results_rest(md_sim_files, component, blocks=5, top=top)
         logger.debug(f"Reading data for {component}{win_i:02d}...")
 
         # read simulation data

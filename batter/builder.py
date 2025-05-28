@@ -4430,7 +4430,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
             with open('./vac.pdb') as myfile:
                 data = myfile.readlines()
                 mk1 = int(last_lig)
-                mk2 = int(mk2 - 1)
+                mk2 = int(mk1 - 1)
 
             # WARNING
             # UNO component has different direction of ti1 and ti2
