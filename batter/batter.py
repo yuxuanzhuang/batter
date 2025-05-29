@@ -2700,6 +2700,9 @@ class System:
                                         #if remd:
                                         if stage == 'mdin.in':
                                             line = '  ntx = 1,\n'
+                                    elif 'nmropt' in line:
+                                        if stage == 'mdin.in':
+                                            line = '  nmropt = 0,\n'
                                     elif 'ntxo' in line:
                                         line = '  ntxo = 2,\n'
                                     elif 'ntwprt' in line:
