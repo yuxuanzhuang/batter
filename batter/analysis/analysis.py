@@ -209,7 +209,7 @@ class MBARAnalysis(FEAnalysisBase):
                 except Exception as e:
                     raise RuntimeError(f"Error processing {md_sim_file}: {e}")
 
-            df = pd.concat(dfs, ignore_index=True)
+            df = pd.concat(dfs)
             t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
         df = df[df.index.get_level_values(0) > t0]
         return df

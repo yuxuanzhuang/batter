@@ -22,6 +22,10 @@ class ComponentFEResult:
         """
         return self._results
 
+
+    def __repr__(self):
+        return f"FE: {self.fe if 'fe' in self._results else 'not calculated'} kcal/mol"
+
 # Dynamically add properties
 def _make_property(name, index):
     def getter(self):
@@ -151,5 +155,10 @@ class NewFEResult(ComponentFEResult):
             if comp is not None:
                 energy = line.split()[-2][:-1]
                 std = line.split()[-1]
-                results[comp] = (float(energy), float(std))
+                if energy == 'na':
+                    energy = np.nan
+                    std = np.nan
+                    results[comp] = (energy, std)
+                else:
+                    results[comp] = (float(energy), float(std))
         self._results = results

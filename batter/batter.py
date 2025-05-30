@@ -911,6 +911,7 @@ class System:
 
         if stage == 'equil':
             logger.info('Submit equilibration stage')
+            pbar = tqdm(total=len(self.all_poses), desc='Submitting equilibration jobs')
             for pose in self.all_poses:
                 # check n_jobs_submitted is less than the max_jobs
                 while n_jobs_submitted >= self.max_num_jobs:
@@ -955,7 +956,8 @@ class System:
                                 jobname=f'fep_{self.equil_folder}/{pose}_equil')
                 slurm_job.submit(overwrite=overwrite)
                 n_jobs_submitted += 1
-                logger.info(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
+                pbar.update(1)
+                pbar.set_description(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
                     {f'eq_{pose}': slurm_job}
                 )
@@ -963,10 +965,12 @@ class System:
                 with open(f"{self.output_dir}/system.pkl", 'wb') as f:
                     pickle.dump(self, f)
 
+            pbar.close()
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
 
         elif stage == 'fe':
             logger.info('Submit free energy stage')
+            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
             for pose in self.bound_poses:
                 #shutil.copy(f'{self.fe_folder}/{pose}/rest/run_files/run-express.bash',
                 #            f'{self.fe_folder}/{pose}')
@@ -1010,7 +1014,7 @@ class System:
                                 n_jobs_submitted += 1
                                 continue
                             else:
-                                logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
+                                logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
                                 continue
 
                         if overwrite:
@@ -1028,16 +1032,19 @@ class System:
                                         }
                         )
                         n_jobs_submitted += 1
-                        logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
+                        pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                         self._slurm_jobs.update(
                             {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                         )
                         with open(f"{self.output_dir}/system.pkl", 'wb') as f:
                             pickle.dump(self, f)
+                pbar.update(1)
+            pbar.close()
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
         elif stage == 'fe_equil':
             logger.info('Submit NPT equilibration part of free energy stage')
+            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy equilibration jobs')
             for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
@@ -1082,7 +1089,7 @@ class System:
                             n_jobs_submitted += 1
                             continue
                         else:
-                            logger.info(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
+                            logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
                             continue
 
                     if overwrite:
@@ -1101,14 +1108,16 @@ class System:
                         'INPCRD': 'full.inpcrd'
                     })
                     n_jobs_submitted += 1
-                    logger.info(f'FE equil job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
+                    pbar.set_description(f'FE equil job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                     self._slurm_jobs.update(
                         {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                     )
                     with open(f"{self.output_dir}/system.pkl", 'wb') as f:
                         pickle.dump(self, f)
 
+                pbar.update(1)
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')        
+            pbar.close()
         else:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -1715,7 +1724,7 @@ class System:
                 self.all_poses,
                 desc='Analyzing FE for poses',
             )
-            for pose in pbar:
+            for pose in self.all_poses:
                 pbar.set_postfix(pose=pose)
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
                     try:
@@ -1754,60 +1763,65 @@ class System:
                     f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
                 )
                 
-                for comp in self.sim_config.components:
-                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                    comp_path = f'{self.fe_folder}/{pose}/{comp_folder}'
-                    windows = self.component_windows_dict[comp]
+                try:
+                    for comp in self.sim_config.components:
+                        comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                        comp_path = f'{self.fe_folder}/{pose}/{comp_folder}'
+                        windows = self.component_windows_dict[comp]
 
-                    # skip n if no conformational restraints are applied
-                    if comp == 'n' and rest[1] == 0 and rest[4] == 0:
-                        logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
-                        continue
+                        # skip n if no conformational restraints are applied
+                        if comp == 'n' and rest[1] == 0 and rest[4] == 0:
+                            logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
+                            continue
 
-                    if comp in COMPONENTS_DICT['dd']:
-                        # directly read energy files
-                        mbar_ana = MBARAnalysis(
-                            comp_folder=comp_path,
-                            component=comp,
-                            windows=windows,
-                            temperature=self.sim_config.temperature,
-                            sim_range=sim_range,
-                            load=overwrite
-                        )
-                        mbar_ana.run_analysis()
-                        mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
-                                                  title=f'Convergence for {comp} {pose}',
-                        )
+                        if comp in COMPONENTS_DICT['dd']:
+                            # directly read energy files
+                            mbar_ana = MBARAnalysis(
+                                comp_folder=comp_path,
+                                component=comp,
+                                windows=windows,
+                                temperature=self.sim_config.temperature,
+                                sim_range=sim_range,
+                                load=False
+                            )
+                            mbar_ana.run_analysis()
+                            mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
+                                                    title=f'Convergence for {comp} {pose}',
+                            )
 
-                        fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
-                        fe_stds.append(mbar_ana.results['fe_error'])
-                        results_entries.append(
-                            f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
-                        )
-                    elif comp in COMPONENTS_DICT['rest']:
-                        rest_mbar_ana = RESTMBARAnalysis(
-                            comp_folder=comp_path,
-                            component=comp,
-                            windows=windows,
-                            temperature=self.sim_config.temperature,
-                            sim_range=sim_range,
-                            load=overwrite
-                        )
-                        rest_mbar_ana.run_analysis()
-                        rest_mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
-                                                  title=f'Convergence for {comp} {pose}',
-                        )
+                            fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
+                            fe_stds.append(mbar_ana.results['fe_error'])
+                            results_entries.append(
+                                f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
+                            )
+                        elif comp in COMPONENTS_DICT['rest']:
+                            rest_mbar_ana = RESTMBARAnalysis(
+                                comp_folder=comp_path,
+                                component=comp,
+                                windows=windows,
+                                temperature=self.sim_config.temperature,
+                                sim_range=sim_range,
+                                load=False
+                            )
+                            rest_mbar_ana.run_analysis()
+                            rest_mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
+                                                    title=f'Convergence for {comp} {pose}',
+                            )
 
-                        fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
-                        fe_stds.append(rest_mbar_ana.results['fe_error'])
-                        results_entries.append(
-                            f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
-                        )
+                            fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
+                            fe_stds.append(rest_mbar_ana.results['fe_error'])
+                            results_entries.append(
+                                f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
+                            )
                 
-                # calculate total free energy
-                fe_value = np.sum(fe_values)
-                fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
-                
+                    # calculate total free energy
+                    fe_value = np.sum(fe_values)
+                    fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
+                except Exception as e:
+                    logger.error(f'Error during FE analysis for {pose}: {e}')
+                    fe_value = np.nan
+                    fe_std = np.nan
+
                 results_entries.append(
                     f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
                 )
@@ -1843,7 +1857,7 @@ class System:
             for i, (pose, fe) in enumerate(self.fe_results.items()):
                 mol_name = self.mols[i]
                 
-                logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                logger.debug(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
                 f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
             
 
@@ -1904,14 +1918,13 @@ class System:
         dic_steps1 = self.sim_config.dic_steps1
         dic_steps2 = self.sim_config.dic_steps2
         dt = self.sim_config.dt
-        poses_def = self.all_poses
 
         with self._change_dir(self.output_dir):
             pbar = tqdm(
-                poses_def,
+                 self.all_poses,
                 desc='Analyzing FE for poses',
             )
-            for pose in pbar:
+            for pose in self.all_poses:
                 pbar.set_postfix(pose=pose)
                 if pose not in self.bound_poses:
                     self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
@@ -1956,7 +1969,7 @@ class System:
         os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
         os.system(f'cp {reference_pdb_file} {self.output_dir}/Results/reference.pdb')
 
-        for pose in tqdm(poses_def, desc='Generating aligned pdbs'):
+        for pose in tqdm(self.all_poses, desc='Generating aligned pdbs'):
             pdb_file = f'{self.equil_folder}/{pose}/representative.pdb'
             u = mda.Universe(pdb_file)
             align.alignto(u,
@@ -1974,7 +1987,7 @@ class System:
             validators_all = []
             poses_all = []
             comps_all = []
-            for pose in poses_def:
+            for pose in self.all_poses:
                 for i, comp in enumerate(components):
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
@@ -2285,9 +2298,12 @@ class System:
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
                 logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
+                failed = [k for k, v in self._sim_failed.items() if v]
                 # name f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}
 
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                # exclude the failed jobs
+                not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(5*60)
@@ -2332,7 +2348,10 @@ class System:
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
                 logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
+                failed = [k for k, v in self._sim_failed.items() if v]
+
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(10*60)
@@ -2464,7 +2483,7 @@ class System:
         """
         if not job.is_still_running():
             job.submit(requeue=True)
-            logger.info(f'Job {job.jobid} is resubmitted')
+            logger.debug(f'Job {job.jobid} is resubmitted')
 
     def check_jobs(self):
         """
