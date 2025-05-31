@@ -135,7 +135,7 @@ def run_in_batch(
                         continue
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini.in.groupfile || echo "Error in {pose}/{comp} eq_mini" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini.in.groupfile || echo "Error in {pose}/{comp} eq_mini" &'
                     logger.info(f'{pose} eq_mini')
                     run_lines.append(f'# {pose}  eq_mini')
                     run_lines.append(run_line)
@@ -146,7 +146,7 @@ def run_in_batch(
                         continue
                     n_windows = len(system.sim_config.components)
                     n_nodes = int(np.ceil(n_windows / 8))
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt0.in.groupfile || echo "Error in {pose}/{comp} eqnpt_pre" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt0.in.groupfile || echo "Error in {pose}/{comp} eqnpt_pre" &'
                     logger.info(f'{pose} eqnpt_pre')
                     run_lines.append(f'# {pose} eqnpt_pre')
                     run_lines.append(run_line)
@@ -208,7 +208,7 @@ def run_in_batch(
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')                
                 elif last_rst7 == 'min':
                     sim_to_run = True
-                    run_line = f'srun -N {n_nodes} -n {n_windows * 8} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile || echo "Error in {pose}/{comp} min" &'
+                    run_line = f'srun -N {n_nodes} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile || echo "Error in {pose}/{comp} min" &'
                     logger.info(f'{pose} {comp} min')
                     run_lines.append(f'# {pose} {comp} min')
                     run_lines.append(run_line)
@@ -238,18 +238,18 @@ def run_in_batch(
                                 f'latest_file=$(ls {pose}/*/{comp}00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)')
                         # check the size latest_file is not 0
                         # Check if the latest file exists and is not empty
-                        run_lines.append(f'if [ ! -s "$latest_file" ]; then')
+                        run_lines.append('if [ ! -s "$latest_file" ]; then')
                         run_lines.append(f'    echo "Last file for {pose}/{comp}: $latest_file is empty"')
 
                         # Attempt to use the second-to-last file if the latest is empty
                         run_lines.append(
                             f'    latest_file=$(ls {pose}/*/{comp}00/mdin-??.rst7 2>/dev/null | sort | tail -n 2 | head -n 1)')
                         run_lines.append(f'    echo "Using second last file for {pose}/{comp}: $latest_file"')
-                        run_lines.append(f'fi')
+                        run_lines.append('fi')
                         run_lines.append(f'echo "Last file for {pose}/{comp}: $latest_file"')
-                        run_lines.append(f'latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{{2}}(?=\.rst7)")')
-                        run_lines.append(f'next_num=$(printf "%02d" $((10#$latest_num + 1)))')
-                        run_lines.append(f'echo "Next number: $next_num"')
+                        run_lines.append('latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{2}(?=\.rst7)")')
+                        run_lines.append('next_num=$(printf "%02d" $((10#$latest_num + 1)))')
+                        run_lines.append('echo "Next number: $next_num"')
                         run_lines.append(f'sed "s/CURRNUM/${{latest_num}}/g" {pose}/groupfiles/{comp}_mdin.in.extend.groupfile > {pose}/groupfiles/{comp}_temp_mdin.groupfile')
                         run_lines.append(f'sed "s/NEXTNUM/${{next_num}}/g" {pose}/groupfiles/{comp}_temp_mdin.groupfile > {pose}/groupfiles/{comp}_current_mdin.groupfile')
                         # remove existing output files from next run related
@@ -282,6 +282,7 @@ def run_in_batch(
         '#SBATCH -t 00:50:00',
         '#SBATCH -p batch',
         f'#SBATCH -N {total_num_nodes}',
+        f'#SBATCH -n {total_num_jobs * 8}',
         '#SBATCH -S 0',
         '#SBATCH --open-mode=append',
         '#SBATCH --dependency=singleton',

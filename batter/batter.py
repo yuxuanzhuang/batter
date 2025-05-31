@@ -11,8 +11,7 @@ import glob
 from contextlib import contextmanager
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
-from MDAnalysis.analysis import align
-
+import re
 import pandas as pd
 from importlib import resources
 import json
@@ -1626,6 +1625,7 @@ class System:
 
             formatted_resids = format_ranges(amber_resids)
             logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
+            new_mask_component = f'(:{formatted_resids}) & @CA'
 
             for file in files:
                 with open(f'{folder_2_write}/{file}', 'r') as f:
@@ -1635,17 +1635,25 @@ class System:
                     for line in lines:
                         if 'ntr' in line and 'cntr' not in line:
                             line = '  ntr = 1,\n'
-                        if 'restraintmask' in line:
-                            restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                            if restraint_mask == '':  # empty mask
-                                restraint_mask = f'(:{formatted_resids}) & @CA'
+                        elif 'restraintmask' in line:
+                            current_mask = re.search(r'restraintmask\s*=\s*["\']([^"\']*)["\']', line)
+                            if current_mask:
+                                base_mask = current_mask.group(1).strip().rstrip(',')
+                                # Remove previously appended CA-residue parts if present
+                                base_mask = re.sub(r'\|\s*\(\(:.*?\)&\s*@CA\)', '', base_mask).strip()
                             else:
-                                restraint_mask = f'({restraint_mask}) | ((:{formatted_resids}) & @CA)'
-                            # if number of characters is larger than 256, amber cannot handle it
+                                base_mask = ""
+                            
+                            if base_mask:
+                                restraint_mask = f'({base_mask}) | ({new_mask_component})'
+                            else:
+                                restraint_mask = new_mask_component
+
+                            line = f'  restraintmask = "{restraint_mask}",\n'
                             if len(restraint_mask) > 256:
                                 raise ValueError(f"Restraint mask is too long (>256 characters): {restraint_mask}")
-                            line = f'  restraintmask = "{restraint_mask}",\n'
-                        if 'restraint_wt' in line:
+                        
+                        elif 'restraint_wt' in line:
                             line = f' restraint_wt = {extra_restraints_fc},\n'
                         f.write(line)
                     f.write("\n")
@@ -2721,6 +2729,9 @@ class System:
                                         #if remd:
                                         if stage == 'mdin.in':
                                             line = '  ntx = 1,\n'
+                                    elif 'nmropt' in line:
+                                        if stage == 'mdin.in':
+                                            line = '  nmropt = 0,\n'
                                     elif 'ntxo' in line:
                                         line = '  ntxo = 2,\n'
                                     elif 'ntwprt' in line:
