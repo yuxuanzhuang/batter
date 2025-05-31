@@ -1840,7 +1840,7 @@ class System:
         os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
         os.system(f'cp {reference_pdb_file} {self.output_dir}/Results/reference.pdb')
 
-        for pose in tqdm(self.all_poses, desc='Generating aligned pdbs'):
+        for pose in tqdm(self.bound_poses, desc='Generating aligned pdbs'):
             pdb_file = f'{self.equil_folder}/{pose}/representative.pdb'
             u = mda.Universe(pdb_file)
             align.alignto(u,
@@ -2087,6 +2087,7 @@ class System:
         """
         Check if the ligand is bound after equilibration
         """
+        logger.info("Checking if the ligand is bound after equilibration")
         UNBOUND_THRESHOLD = 8.0
         bound_poses = []
         num_eq_sims = len(self.sim_config.release_eq)
@@ -2117,7 +2118,7 @@ class System:
                 else:
                     bound_poses.append([pose_i, pose])
                     rep_snapshot = sim_val.find_representative_snapshot()
-                    logger.info(f"Representative snapshot: {rep_snapshot}")
+                    logger.debug(f"Representative snapshot: {rep_snapshot}")
                     
                     cpptraj_command = "cpptraj -p full.prmtop <<EOF\n"
                     for i in range(1, num_eq_sims):
@@ -2266,6 +2267,7 @@ class System:
         else:
             logger.info('Equilibration is already finished')
         
+        self._check_equilbration_binding()
         if only_equil:
             logger.info('only_equil is set to True. '
                         'Skipping the free energy calculation.')
