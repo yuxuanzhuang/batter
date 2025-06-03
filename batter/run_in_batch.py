@@ -111,7 +111,7 @@ def run_in_batch(
             logger.info('Generating run files...')
             system.generate_frontier_files(remd=remd)
         run_lines.append(f'# {folder}')
-        run_lines.append(f'cd {system.fe_folder}')
+        run_lines.append(f'cd {system.fe_folder}\n\n')
         for pose in system.bound_poses:
             components = system.sim_config.components
             if system.sim_config.rec_discf_force == 0 and system.sim_config.lig_dihcf_force == 0:
@@ -300,7 +300,7 @@ def run_in_batch(
         f.write('\n'.join(run_lines))
         f.write('\n')
         if resubmit:
-            f.write('sleep 200\n')
+            f.write('sleep 200\n\n')
 
             command = 'batter run-in-batch'
             for folder in folders:
