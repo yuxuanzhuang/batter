@@ -1644,7 +1644,7 @@ class System:
                             else:
                                 base_mask = ""
                             
-                            if base_mask:
+                            if base_mask != "":
                                 restraint_mask = f'({base_mask}) | ({new_mask_component})'
                             else:
                                 restraint_mask = new_mask_component
