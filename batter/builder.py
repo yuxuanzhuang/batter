@@ -1527,14 +1527,10 @@ class EquilibrationBuilder(SystemBuilder):
                                 '_num-atoms_', str(vac_atoms)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
 
-        with open(f'../{self.run_files_folder}/local-equil.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/run-equil.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('RANGE', str(rng)))
-        with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-            with open("./PBS-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', stage).replace('POSE', pose))
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -3295,7 +3291,7 @@ class FreeEnergyBuilder(SystemBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = 4
+        num_sim = self.sim_config.num_fe_range
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -3384,7 +3380,7 @@ class FreeEnergyBuilder(SystemBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-rest', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -3410,7 +3406,7 @@ class FreeEnergyBuilder(SystemBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-lig', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -3432,7 +3428,7 @@ class FreeEnergyBuilder(SystemBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-sim', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -3461,14 +3457,14 @@ class FreeEnergyBuilder(SystemBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-        with open(f'../{self.run_files_folder}/local-lig.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+            with open("./run_failures.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
-        with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-            with open("./PBS-run", "wt") as fout:
+        with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
+            with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                    fout.write(line.replace('FERANGE', str(num_sim)))
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -3485,7 +3481,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = 4
+        num_sim = self.sim_config.num_fe_range
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -3531,7 +3527,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-lj', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            n_steps_run = str(steps1) if i == 0 else str(steps2)
                             for line in fin:
                                 if i == 0:
                                     if 'ntx = 5' in line:
@@ -3598,7 +3594,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            n_steps_run = str(steps1) if i == 0 else str(steps2)
                             for line in fin:
                                 if i == 0:
                                     if 'ntx = 5' in line:
@@ -3646,14 +3642,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+            with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-                with open("./PBS-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('FERANGE', str(num_sim)))
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -3674,7 +3666,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-ch', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            n_steps_run = str(steps1) if i == 0 else str(steps2)
                             for line in fin:
                                 if i == 0:
                                     if 'ntx = 5' in line:
@@ -3742,7 +3734,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-ch-dd', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            n_steps_run = str(steps1) if i == 0 else str(steps2)
                             for line in fin:
                                 if i == 0:
                                     if 'ntx = 5' in line:
@@ -3790,14 +3782,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+            with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-                with open("./PBS-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('FERANGE', str(num_sim)))
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -3811,7 +3799,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-ch-dd', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -3853,14 +3841,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+            with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-                with open("./PBS-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('FERANGE', str(num_sim)))
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -3873,7 +3857,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 mk1 = '1'
                 with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -3915,14 +3899,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+            with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-                with open("./PBS-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('FERANGE', str(num_sim)))
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -3941,7 +3921,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            n_steps_run = str(steps1) if i == 0 else str(steps2)
                             for line in fin:
                                 if i == 0:
                                     if 'ntx = 5' in line:
@@ -4003,7 +3983,7 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                 for i in range(0, num_sim+1):
                     with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
                         with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                            n_steps_run = str(steps1) if i == 0 else str(steps2)
                             for line in fin:
                                 if i == 0:
                                     if 'ntx = 5' in line:
@@ -4051,14 +4031,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+            with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-                with open("./PBS-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                        fout.write(line.replace('FERANGE', str(num_sim)))
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4280,7 +4256,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         temperature = self.sim_config.temperature
         mol = self.mol
         molr = self.molr
-        num_sim = 4
+        num_sim = self.sim_config.num_fe_range
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -4321,7 +4297,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         for i in range(0, num_sim+1):
             with open(f'../{self.amber_files_folder}/mdin-ex', "rt") as fin:
                 with open("./mdin-%02d" % int(i), "wt") as fout:
-                    n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                    n_steps_run = str(steps1) if i == 0 else str(steps2)
                     for line in fin:
                         if i == 0:
                             if 'ntx = 5' in line:
@@ -4382,14 +4358,10 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
 
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-            with open("./PBS-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                    fout.write(line.replace('FERANGE', str(num_sim)))
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -4414,7 +4386,6 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = 4
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -4464,7 +4435,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -4519,14 +4490,10 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-            with open("./PBS-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                    fout.write(line.replace('FERANGE', str(num_sim)))
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -5125,7 +5092,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        num_sim = 4
+        num_sim = self.sim_config.num_fe_range
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -5169,7 +5136,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -5223,14 +5190,10 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-            with open("./PBS-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                    fout.write(line.replace('FERANGE', str(num_sim)))
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -5820,9 +5783,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         hmr = self.sim_config.hmr
         temperature = self.sim_config.temperature
         mol = self.mol
-        # 2 equilibration step
-        # 2 production steps
-        num_sim = 4
+        num_sim = self.sim_config.num_fe_range
         pose = self.pose
         comp = self.comp
         win = self.win
@@ -5866,7 +5827,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
             for i in range(0, num_sim+1):
                 with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
                     with open("./mdin-%02d" % int(i), "wt") as fout:
-                        n_steps_run = str(round(steps1/2)) if i == 1 or i == 0 else str(steps2)
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
                         for line in fin:
                             if i == 0:
                                 if 'ntx = 5' in line:
@@ -5920,14 +5881,10 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/local-dd.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/local-run.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/PBS-Am', "rt") as fin:
-            with open("./PBS-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))))
+                    fout.write(line.replace('FERANGE', str(num_sim)))
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:

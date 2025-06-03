@@ -134,6 +134,7 @@ class SimulationConfig(BaseModel):
     barostat: str = Field(
         '2', info={'description': "type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)"})
     dt: str = Field('0.004', info={'description': "time step in ps"})
+    num_fe_range: int = Field(10, info={'description': "Number of free energy simulations restarts to run for each lambda; total simulation steps will be num_fe_range * n_steps"})
 
     # OpenMM specific options for production simulations
     itcheck: str = Field('100', info={'description': "write checkpoint file every itcheck iterations"})
