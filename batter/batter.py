@@ -2179,7 +2179,7 @@ class System:
     @safe_directory
     @save_state
     def run_pipeline(self,
-                     input_file: Union[str, Path, SimulationConfig],
+                     input_file: Union[str, Path, SimulationConfig] = None,
                      overwrite: bool = False,              
                      avg_struc: str = None,
                      rmsf_file: str = None,
@@ -2239,7 +2239,11 @@ class System:
 
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')
-        self._get_sim_config(input_file)
+        if input_file is not None:
+            self._get_sim_config(input_file)
+        else:
+            if not hasattr(self, 'sim_config'):
+                raise ValueError('Input file is not provided and sim_config is not set.')
         self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
 
         if self._check_equilibration():
@@ -2970,6 +2974,15 @@ class System:
         if not hasattr(self, '_n_workers'):
             self._n_workers = 12
         return self._n_workers
+    
+    @n_workers.setter
+    def n_workers(self, n_workers):
+        """
+        Set the number of workers
+        """
+        if n_workers <= 0:
+            raise ValueError("Number of workers must be positive")
+        self._n_workers = n_workers
     
     @property
     def poses_folder(self):

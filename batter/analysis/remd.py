@@ -1,8 +1,28 @@
 # Copy from Amber FETools
 import os
 import numpy as np
+from loguru import logger
 
+class RemdLog:
+    def __init__(self, inputfile):
+        if not os.path.isfile(inputfile):
+            raise FileNotFoundError(f"Input file '{inputfile}' does not exist.")
+        self.inputfile = inputfile
+        self.replica_trajectory = None
+        self.replica_state_count = None
+        self.replica_ex_count = None
+        self.replica_ex_succ = None
+        self.ARs = None
 
+    def read_log(self):
+        (self.replica_trajectory, self.replica_state_count,
+         self.replica_ex_count, self.replica_ex_succ, self.ARs) = read_rem_log(self.inputfile)
+
+    def analyze(self):
+        if self.replica_trajectory is None:
+            raise ValueError("Replica trajectory is not initialized. Call read_log() first.")
+        return remd_analysis(self.replica_trajectory, self.ARs)
+    
 def read_rem_log(inputfile):
     print("")
     print("Analyzing remlog file", )

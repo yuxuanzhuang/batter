@@ -38,6 +38,14 @@ Equilibrate, NPT.
   scmask1=':mk1',
   scmask2=':mk2',
   gti_add_sc = 25,
+  gti_cut         = 1,
+  gti_output      = 1,
+  gti_scale_beta  = 1,
+  gti_cut_sc_on   = 7,
+  gti_cut_sc_off  = 9,
+  gti_ele_exp     = 2,
+  gti_vdw_exp     = 2,
+  gti_chg_keep    = 1,
   infe = 0,
  /
  &pmd

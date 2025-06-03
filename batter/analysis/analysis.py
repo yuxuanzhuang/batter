@@ -204,7 +204,7 @@ class MBARAnalysis(FEAnalysisBase):
             dfs = []
             for md_sim_file in md_sim_files:
                 try:
-                    df_part = extract_u_nk(md_sim_file, T=temperature, reduced=False)
+                    df_part = extract_u_nk(md_sim_file, T=temperature, reduced=False, raise_error=False)
                     dfs.append(df_part)
                 except Exception as e:
                     raise RuntimeError(f"Error processing {md_sim_file}: {e}")

@@ -3391,6 +3391,8 @@ class FreeEnergyBuilder(SystemBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
@@ -3415,6 +3417,8 @@ class FreeEnergyBuilder(SystemBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
@@ -3435,6 +3439,8 @@ class FreeEnergyBuilder(SystemBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
@@ -3532,6 +3538,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'ntx = 1, \n'
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
+                                    elif 'dt = ' in line:
+                                        line = 'dt = 0.001, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         if restraint_mask == '':
@@ -3597,6 +3605,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'ntx = 1, \n'
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
+                                    elif 'dt = ' in line:
+                                        line = 'dt = 0.001, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         if restraint_mask == '':
@@ -3671,6 +3681,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'ntx = 1, \n'
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
+                                    elif 'dt = ' in line:
+                                        line = 'dt = 0.001, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         if restraint_mask == '':
@@ -3737,6 +3749,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'ntx = 1, \n'
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
+                                    elif 'dt = ' in line:
+                                        line = 'dt = 0.001, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         if restraint_mask == '':
@@ -3804,6 +3818,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
@@ -3864,6 +3880,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
@@ -3930,6 +3948,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'ntx = 1, \n'
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
+                                    elif 'dt = ' in line:
+                                        line = 'dt = 0.001, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         if restraint_mask == '':
@@ -3990,6 +4010,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = 'ntx = 1, \n'
                                     elif 'irest' in line:
                                         line = 'irest = 0, \n'
+                                    elif 'dt = ' in line:
+                                        line = 'dt = 0.001, \n'
                                     elif 'restraintmask' in line:
                                         restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                         if restraint_mask == '':
@@ -4306,6 +4328,8 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                 line = 'ntx = 1, \n'
                             elif 'irest' in line:
                                 line = 'irest = 0, \n'
+                            elif 'dt = ' in line:
+                                line = 'dt = 0.001, \n'
                             elif 'restraintmask' in line:
                                 restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                 if restraint_mask == '':
@@ -4447,6 +4471,8 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
@@ -5150,6 +5176,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
@@ -5845,6 +5873,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                                     line = 'ntx = 1, \n'
                                 elif 'irest' in line:
                                     line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
                                 elif 'restraintmask' in line:
                                     restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
                                     if restraint_mask == '':
