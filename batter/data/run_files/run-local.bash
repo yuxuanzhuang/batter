@@ -14,7 +14,7 @@ fi
 
 source run_failures.bash
 
-if [[ $overwrite -eq 0 && -f mini.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
     echo "Skipping minimization steps."
 else
     # Minimization
@@ -27,7 +27,7 @@ else
 fi
 
 if [[ $only_eq -eq 1 ]]; then
-    if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
+    if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
         echo "Skipping equilibration steps."
     else
         # Equilibration with protein and lipid restrained
@@ -52,14 +52,14 @@ if [[ $only_eq -eq 1 ]]; then
         cpptraj -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> "$log_file" 2>&1
     fi
     echo "Only equilibration requested and finished."
-    if [[ -f eq_output.pdb ]]; then
+    if [[ -s eq_output.pdb ]]; then
         echo "EQ_FINISHED" > EQ_FINISHED
         echo "Job completed at $(date)"
     fi
     exit 0
 fi
 
-if [[ $overwrite -eq 0 && -f md01.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     # Initial MD production run
@@ -75,7 +75,7 @@ while [ $i -le FERANGE ]; do
     y=$(printf "%02d" $j)
     z=$(printf "%02d" $k)
     # x is the current step, y is the previous step, z is the next step
-    if [[ $overwrite -eq 0 && -f mdin-$z.rst7 ]]; then
+    if [[ $overwrite -eq 0 && -s mdin-$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
         pmemd.cuda -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin$x.rst7 -x mdin-$x.nc -ref eqnpt04.rst7 >> $log_file 2>&1
@@ -88,7 +88,7 @@ cpptraj -p $PRMTOP -y md$x.rst7 -x output.pdb >> "$log_file" 2>&1
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion
-if [[ -f output.pdb ]]; then
+if [[ -s output.pdb ]]; then
     echo "FINISHED" > FINISHED
     exit 0
 fi

@@ -1660,10 +1660,11 @@ class System:
 
         logger.info(f'Adding extra restraints for {stage} stage')
         if stage == 'equil':
+            # only need to do it once as all poses have the same protein
+            ref_u = mda.Universe(
+                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
+                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
             for pose in self.all_poses:
-                ref_u = mda.Universe(
-                        f"{self.equil_folder}/{pose}/full.pdb",
-                        f"{self.equil_folder}/{pose}/full.inpcrd")
                 files = ['eqnpt.in']
                 for i in range(num_eq_sim):
                     files.append(f'mdin-{i:02d}')
@@ -1675,13 +1676,14 @@ class System:
                                       folder_2_write=f'{self.equil_folder}/{pose}/')
 
         elif stage == 'fe':
+            # only need to do it once as all poses have the same protein
+            ref_u = mda.Universe(
+                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
+                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
             for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    ref_u = mda.Universe(
-                            f"{folder_comp}/{comp}-1/full.pdb",
-                            f"{folder_comp}/{comp}-1/full.inpcrd")
                     windows = self.component_windows_dict[comp]
                     files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
                     for j in range(-1, len(windows)):

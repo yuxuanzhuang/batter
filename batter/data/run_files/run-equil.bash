@@ -14,7 +14,7 @@ fi
 
 source run_failures.bash
 
-if [[ $overwrite -eq 0 && -f mini.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
     echo "Skipping EM steps." 
 else
     # Minimization
@@ -26,7 +26,7 @@ else
     check_sim_failure "Minimization" "$log_file"
 fi
 
-if [[ $overwrite -eq 0 && -f md00.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping equilibration steps."
 else
     # Equilbration with gradually-incrase lambda of the ligand
@@ -58,7 +58,7 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-if [[ $overwrite -eq 0 && -f md01.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
 # Initial MD run
@@ -74,7 +74,7 @@ while [ $i -le RANGE ]; do
     y=$(printf "%02d" $j)
     z=$(printf "%02d" $k)
     # x is the current step, y is the previous step, z is the next step
-    if [[ $overwrite -eq 0 && -f md$z.rst7 ]]; then
+    if [[ $overwrite -eq 0 && -s md$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
         pmemd.cuda -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 >> $log_file 2>&1
@@ -87,7 +87,7 @@ cpptraj -p $PRMTOP -y md$x.rst7 -x output.pdb >> "$log_file" 2>&1
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion
-if [[ -f output.pdb ]]; then
+if [[ -s output.pdb ]]; then
     echo "EQFINISHED" > FINISHED
     exit 0
 fi

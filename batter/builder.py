@@ -1526,7 +1526,11 @@ class EquilibrationBuilder(SystemBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
-
+                            
+        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+            with open("./run_failures.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
         with open(f'../{self.run_files_folder}/run-equil.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
