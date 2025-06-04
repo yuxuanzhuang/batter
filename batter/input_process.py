@@ -1,11 +1,11 @@
 from pydantic import (
     BaseModel,
     Field,
-    validator,
     model_validator,
     field_validator
 )
 
+import sys
 from typing import List, Optional, Dict, Union
 import numpy as np
 from loguru import logger
@@ -345,6 +345,7 @@ class SimulationConfig(BaseModel):
                        "express", "relative",
                        "uno",
                        "uno_com",
+                       "uno_rest",
                        "self",
                        "custom"}
         if value not in valid_types:
