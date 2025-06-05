@@ -12,6 +12,10 @@ if [[ -f FINISHED ]]; then
     exit 0
 fi
 
+if [[ -f FAILED ]]; then
+    rm FAILED
+fi
+
 source run_failures.bash
 
 if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then

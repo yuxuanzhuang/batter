@@ -117,7 +117,7 @@ class LigandProcessing(ABC):
             self.index,
             self.unique_mol_names
         )
-        logger.info(f'Ligand {self.index}: {self.name}')
+        logger.debug(f'Ligand {self.index}: {self.name}')
         self.openff_molecule.to_file(self.ligand_sdf_path, file_format='sdf')
     
     @abstractmethod

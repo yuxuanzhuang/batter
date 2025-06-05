@@ -58,14 +58,21 @@ else
         # Requeue the same job (retains the same job ID).
         # Exclude the node where the job failed.
         # wait for 2 min
-        sleep 120
-        #bad_node=$(scontrol show job $SLURM_JOB_ID | grep NodeList | awk -F= '{print $2}')
-        #echo "Bad node: $bad_node"
-        #if [ -z "$bad_node" ]; then
-        scontrol requeue $SLURM_JOB_ID
-        #else
-        #    scontrol requeue $SLURM_JOB_ID --exclude=$bad_node
-        #fi
+        sleep 30
+        bad_node=$(
+        scontrol show job $SLURM_JOB_ID |
+            grep -m1 '^[[:space:]]*NodeList=' |
+            awk -F= '{print $2}' |
+            tr -d '[:space:]'
+        )
+        #echo "$bad_node"
+        echo "Bad node: $bad_node"
+        if [ -z "$bad_node" ]; then
+            scontrol requeue "$SLURM_JOB_ID"
+        else
+            scontrol requeue "$SLURM_JOB_ID" --exclude="$bad_node"
+        fi
+        
         exit 0
     else
         echo "FAILED" > FAILED

@@ -360,6 +360,7 @@ class System:
             for ligand_name in ligand_names:
                 self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
 
+        logger.debug( f"Unique ligand names: {self.unique_mol_names} ")
         logger.debug('updating the ligand paths')
         logger.debug(self.ligand_list)
 
@@ -909,7 +910,7 @@ class System:
             return
 
         if stage == 'equil':
-            logger.info('Submit equilibration stage')
+            logger.debug('Submit equilibration stage')
             pbar = tqdm(total=len(self.all_poses), desc='Submitting equilibration jobs')
             for pose in self.all_poses:
                 # check n_jobs_submitted is less than the max_jobs
@@ -919,7 +920,7 @@ class System:
 
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
-                    logger.info(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
+                    logger.debug(f'Equilibration for {pose} has finished; add overwrite=True to re-run the simulation')
                     self._slurm_jobs.pop(f'eq_{pose}', None)
                     continue
                 if os.path.exists(f"{self.equil_folder}/{pose}/FAILED") and not overwrite:
@@ -941,7 +942,7 @@ class System:
                         n_jobs_submitted += 1
                         continue
                     else:
-                        logger.info(f'Equilibration job for {pose} is still running')
+                        logger.debug(f'Equilibration job for {pose} is still running')
                         continue
 
                 if overwrite:
@@ -1904,6 +1905,7 @@ class System:
         convergence : bool, optional
             Whether to check the convergence of the free energy results.
         """
+        raise NotImplementedError("Use analysis_new() instead for alchemlyb-based analysis.")
         if input_file is not None:
             self._get_sim_config(input_file)
         
@@ -2177,7 +2179,6 @@ class System:
                 f.write(f'{l1_x} {l1_y} {l1_z}')
         
 
-
     @safe_directory
     @save_state
     def run_pipeline(self,
@@ -2250,7 +2251,8 @@ class System:
 
         if self._check_equilibration():
             #1 prepare the system
-            logger.info('Preparing the system')
+            logger.info('Preparing the equilibration stage')
+            logger.info('If you want to have a fresh start, set overwrite=True')
             self.prepare(
                 stage='equil',
                 input_file=self.sim_config,
@@ -2261,36 +2263,48 @@ class System:
                 extra_restraints=extra_restraints,
                 extra_restraints_fc=extra_restraints_fc
             )
+            logger.info(f'Equilibration folder: {self.equil_folder} prepared for equilibration')
             logger.info('Submitting the equilibration')
             #2 submit the equilibration
             self.submit(
                 stage='equil',
             )
+            logger.info('Equilibration jobs submitted')
 
             # Check for equilibration to finish
-            logger.info('Checking the equilibration')
+            pbar = tqdm(total=len(self.all_poses), desc="Equil sims finished", unit="job")
             while self._check_equilibration():
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
-                logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                pbar.update(n_finished - pbar.n)
+                now = time.strftime("%m-%d %H:%M:%S")
+                desc = f"{now} – Equilibration sims finished"
+                pbar.set_description(desc)
+
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
-                time.sleep(10*60)
-
+                # sleep for 10 minutes to avoid overwhelming the scheduler
+                time.sleep(10 * 60)
+            pbar.update(len(self.all_poses) - pbar.n)  # update to total
+            pbar.set_description('Equilibration finished')
+            pbar.close()
         else:
-            logger.info('Equilibration is already finished')
+            logger.info('Equilibration simulations are already finished')
+            logger.info(f'If you want to have a fresh start, remove {self.equil_folder} manually')
         
-        self._check_equilbration_binding()
         if only_equil:
             logger.info('only_equil is set to True. '
                         'Skipping the free energy calculation.')
             return
 
         #4.0, submit the free energy equilibration
-        logger.info('Running free energy equilibration')
+        logger.info('Running equilibrations before final FE simulations')
         if self._check_fe_equil():
             #3 prepare the free energy calculation
+            logger.info('Preparing the free energy equilibration stage')
+            logger.info('If you want to have a fresh start, set overwrite=True')
             self.prepare(
                 stage='fe',
                 input_file=self.sim_config,
@@ -2301,18 +2315,27 @@ class System:
                 extra_restraints=extra_restraints,
                 extra_restraints_fc=extra_restraints_fc
             )
-            #self._slurm_jobs = {}
 
+            logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
+            logger.info('Submitting the free energy equilibration')
             self.submit(
                     stage='fe_equil'
                 )
+            logger.info('Free energy equilibration jobs submitted')
 
             # Check the free energy eq calculation to finish
-            logger.info('Checking the free energy eq calculation')
+            pbar = tqdm(total=len(self.bound_poses) * len(self.sim_config.components),
+                        desc="FE equil sims finished",
+                        unit="job")
             while self._check_fe_equil():
                 # get finishd jobs
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
-                logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                pbar.update(n_finished - pbar.n)
+                now = time.strftime("%m-%d %H:%M:%S")
+                desc = f"{now} – FE Equilibration sims finished:"
+                pbar.set_description(desc)
+
+                #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
                 failed = [k for k, v in self._sim_failed.items() if v]
                 # name f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}
@@ -2323,14 +2346,16 @@ class System:
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(5*60)
+            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.set_description('FE equilibration finished')
+            pbar.close()
 
         else:
-            logger.info('Free energy equilibration is already finished')
+            logger.info('Free energy equilibration simulations are already finished')
+            logger.info(f'If you want to have a fresh start, remove {self.fe_folder} manually')
 
         # copy last equilibration snapshot to the free energy folder
         for pose in self.bound_poses:
-            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                continue
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
                 folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
@@ -2344,14 +2369,22 @@ class System:
                     # get relative path of eq_rst7
                     eq_rst7_rel = os.path.relpath(eq_rst7, start=f'{folder_comp}/{comp}{j:02d}')
                     os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/equilibrated.rst7')
+
+
         if only_fe_preparation:
             logger.info('only_fe_preparation is set to True. '
                         'Skipping the free energy calculation.')
+            logger.info('Move the prepared and equilibrated system to HPC center for further simulations')
             return
 
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')
 
+        pbar = tqdm(
+            total=len(self.bound_poses) * len(self.sim_config.components),
+            desc="FE sims finished",
+            unit="job"
+        )
         if self._check_fe():
             logger.info('Submitting the free energy calculation')
             self.submit(
@@ -2362,7 +2395,11 @@ class System:
             while self._check_fe():
                 # get finishd jobs
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
-                logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                pbar.update(n_finished - pbar.n)
+                now = time.strftime("%m-%d %H:%M:%S")
+                desc = f"{now} – Equilibration sims finished:"
+                pbar.set_description(desc)
+                #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
                 failed = [k for k, v in self._sim_failed.items() if v]
 
@@ -2371,8 +2408,12 @@ class System:
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(10*60)
+            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.set_description('FE calculation finished')
+            pbar.close()
         else:
             logger.info('Free energy calculation is already finished')
+            logger.info(f'If you want to have a fresh start, remove {self.fe_folder} manually')
 
         #5 analyze the results
         logger.info('Analyzing the results')
@@ -2380,12 +2421,7 @@ class System:
             load=True,
             check_finished=False,
         )
-        logger.info('Pipeline finished')
         logger.info(f'The results are in the {self.output_dir}')
-        end_time = time.time()
-        logger.info(f'End time: {time.ctime()}')
-        total_time = end_time - start_time
-        logger.info(f'Total time: {total_time:.2f} seconds')
         logger.info(f'Results')
         logger.info(f'---------------------------------')
         logger.info(f'Mol\tPose\tFree Energy (kcal/mol)')
@@ -2393,6 +2429,11 @@ class System:
         for i, (pose, fe) in enumerate(self.fe_results.items()):
             mol_name = self.mols[i]
             logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
+        logger.info('Pipeline finished')
+        end_time = time.time()
+        logger.info(f'End time: {time.ctime()}')
+        total_time = end_time - start_time
+        logger.info(f'Total time: {total_time:.2f} seconds')
 
     @save_state
     def _check_equilibration(self):
@@ -2449,7 +2490,8 @@ class System:
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy EQ calculation failed: {self._sim_failed}')
-            return True
+            raise ValueError(f'Free energy EQ calculation failed: {self._sim_failed}')
+            
         if all(self._sim_finished.values()):
             logger.debug('Free energy EQ calculation is finished')
             return False
@@ -2483,7 +2525,7 @@ class System:
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
-            return True
+            raise ValueError(f'Free energy calculation failed: {self._sim_failed}')
         if all(self._sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False
@@ -2491,6 +2533,7 @@ class System:
             not_finished = [k for k, v in self._sim_finished.items() if not v]
             logger.debug(f'Not finished: {not_finished}')
             return True
+
 
     @staticmethod
     def _continue_job(job: SLURMJob):
@@ -2500,6 +2543,7 @@ class System:
         if not job.is_still_running():
             job.submit(requeue=True)
             logger.debug(f'Job {job.jobid} is resubmitted')
+
 
     def check_jobs(self):
         """
@@ -2525,12 +2569,13 @@ class System:
                 not_finished_pose = [job.split('/')[-1] for job in not_finished_pose]
                 logger.info(not_finished_pose)
     
+
     @safe_directory
     @save_state
     def generate_frontier_files(self,
-                                    remd=False,
-                                    version=24,
-                                    ):
+                                remd=False,
+                                version=24,
+                                ):
         """
         Generate the frontier files for the system
         to run them in a bundle.
@@ -3069,6 +3114,7 @@ class MABFESystem(System):
     """
     def _process_ligands(self):
         self._unique_ligand_paths = {ligand_path: [ligand_name] for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names)}
+
 
 class RBFESystem(System):
     """
