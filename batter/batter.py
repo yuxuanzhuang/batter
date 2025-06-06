@@ -555,9 +555,21 @@ class System:
         membrane_ag.residues.segments = memb_seg
         logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
         water_ag = u_sys.select_atoms('byres (resname TIP3 and around 15 (protein or resname POPC))')
+        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
+        # also include ions (in CHARMM name) to water_ag
+        ion_ag = u_sys.select_atoms('byres (resname SOD POT CLA and around 5 (protein))')
+        logger.debug(f'Number of ion molecules: {ion_ag.n_residues}')
+        # replace SOD with Na+ and POT with K+ and CLA with Cl-
+        ion_ag.select_atoms('resname SOD').names = 'Na+'
+        ion_ag.select_atoms('resname SOD').residues.resnames = 'Na+'
+        ion_ag.select_atoms('resname POT').names = 'K+'
+        ion_ag.select_atoms('resname POT').residues.resnames = 'K+'
+        ion_ag.select_atoms('resname CLA').names = 'Cl-'
+        ion_ag.select_atoms('resname CLA').residues.resnames = 'Cl-'
+
+        water_ag = water_ag + ion_ag
         water_ag.chainIDs = 'W'
         water_ag.residues.segments = water_seg
-        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
 
         # modify the chaininfo to be unique for each segment
         current_chain = 66
@@ -2268,11 +2280,14 @@ class System:
             #2 submit the equilibration
             self.submit(
                 stage='equil',
+                partition=partition,
             )
             logger.info('Equilibration jobs submitted')
 
             # Check for equilibration to finish
-            pbar = tqdm(total=len(self.all_poses), desc="Equil sims finished", unit="job")
+            pbar = tqdm(total=len(self.all_poses),
+                        desc="Equilibration sims finished",
+                        unit="job")
             while self._check_equilibration():
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
                 #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
@@ -2319,20 +2334,21 @@ class System:
             logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
             logger.info('Submitting the free energy equilibration')
             self.submit(
-                    stage='fe_equil'
+                    stage='fe_equil',
+                    partition=partition
                 )
             logger.info('Free energy equilibration jobs submitted')
 
             # Check the free energy eq calculation to finish
             pbar = tqdm(total=len(self.bound_poses) * len(self.sim_config.components),
-                        desc="FE equil sims finished",
+                        desc="FE Equilibration sims finished",
                         unit="job")
             while self._check_fe_equil():
                 # get finishd jobs
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
                 pbar.update(n_finished - pbar.n)
                 now = time.strftime("%m-%d %H:%M:%S")
-                desc = f"{now} – FE Equilibration sims finished:"
+                desc = f"{now} – FE Equilibration sims finished"
                 pbar.set_description(desc)
 
                 #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
@@ -2363,12 +2379,12 @@ class System:
                 
                 windows = self.component_windows_dict[comp]
                 for j in range(0, len(windows)):
-                    if os.path.exists(f'{folder_comp}/{comp}{j:02d}/equilibrated.rst7'):
+                    if os.path.exists(f'{folder_comp}/{comp}{j:02d}/eqnpt04.rst7'):
                         continue
-                    #os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/equilibrated.rst7')
+                    #os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/eqnpt04.rst7')
                     # get relative path of eq_rst7
                     eq_rst7_rel = os.path.relpath(eq_rst7, start=f'{folder_comp}/{comp}{j:02d}')
-                    os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/equilibrated.rst7')
+                    os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/eqnpt04.rst7')
 
 
         if only_fe_preparation:
@@ -2380,24 +2396,26 @@ class System:
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')
 
-        pbar = tqdm(
-            total=len(self.bound_poses) * len(self.sim_config.components),
-            desc="FE sims finished",
-            unit="job"
-        )
         if self._check_fe():
             logger.info('Submitting the free energy calculation')
             self.submit(
                 stage='fe',
+                partition=partition
             )
+            logger.info('Free energy jobs submitted')
+            
             # Check the free energy calculation to finish
-            logger.info('Checking the free energy calculation')
+            pbar = tqdm(
+                total=len(self.bound_poses) * len(self.sim_config.components),
+                desc="FE simsulations finished",
+                unit="job"
+            )
             while self._check_fe():
                 # get finishd jobs
                 n_finished = len([k for k, v in self._sim_finished.items() if v])
                 pbar.update(n_finished - pbar.n)
                 now = time.strftime("%m-%d %H:%M:%S")
-                desc = f"{now} – Equilibration sims finished:"
+                desc = f"{now} – FE simulations finished"
                 pbar.set_description(desc)
                 #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
                 not_finished = [k for k, v in self._sim_finished.items() if not v]
@@ -2930,7 +2948,7 @@ class System:
                         os.system(f'cp -r {self.fe_folder}/{pose}/{folder_name} fe/{pose}/')
 
             sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
-                    'equilibrated.rst7',
+                    'eqnpt04.rst7',
                     'mini.in', 'mdin-00', 'mdin-01', 'SLURMM-run', 'run-local.bash',
                     'cv.in', 'disang.rest', 'restraints.in']
 
@@ -3113,7 +3131,12 @@ class MABFESystem(System):
     The ABFE of the ligands to the provided **protein conformation** will be calculated
     """
     def _process_ligands(self):
-        self._unique_ligand_paths = {ligand_path: [ligand_name] for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names)}
+        self._unique_ligand_paths = {}
+        for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names):
+            if ligand_path not in self._unique_ligand_paths:
+                self._unique_ligand_paths[ligand_path] = []
+            self._unique_ligand_paths[ligand_path].append(ligand_name)
+        logger.debug(f' Unique ligand paths: {self._unique_ligand_paths}')
 
 
 class RBFESystem(System):
@@ -3122,7 +3145,11 @@ class RBFESystem(System):
     using the separated topology methodology in BAT.py.
     """
     def _process_ligands(self):
-        self._unique_ligand_paths = {ligand_path: [ligand_name] for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names)}
+        self._unique_ligand_paths = {}
+        for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names):
+            if ligand_path not in self._unique_ligand_paths:
+                self._unique_ligand_paths[ligand_path] = set()
+            self._unique_ligand_paths[ligand_path].add(ligand_name)
 
         if len(self._unique_ligand_paths.keys()) < 2:
             raise ValueError("RBFESystem requires at least two ligands "

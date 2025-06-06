@@ -959,12 +959,6 @@ class EquilibrationBuilder(SystemBuilder):
                                    .replace('MMM', f"\'{mol}\'"))
         run_with_log(f'{vmd} -dispdev text -e split.tcl', error_match='syntax error')
 
-        # Remove possible remaining molecules
-        if not other_mol:
-            open('others.pdb', 'w').close()
-        if not lipid_mol:
-            open('lipids.pdb', 'w').close()
-
         #shutil.copy('./protein.pdb', './protein_vmd.pdb')
         os.system(f'cp protein.pdb protein_vmd.pdb')
         run_with_log('pdb4amber -i protein_vmd.pdb -o protein.pdb -y')
@@ -1235,6 +1229,7 @@ class EquilibrationBuilder(SystemBuilder):
         pose = self.pose
         other_mol = self.other_mol
         lipid_mol = self.lipid_mol
+        ion_mol = ['Na+', 'K+', 'Cl-']
 
         first_res = self.first_res
         recep_resid_num = self.recep_resid_num
@@ -1279,7 +1274,7 @@ class EquilibrationBuilder(SystemBuilder):
         for i in range(0, len(lines)):
             if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
                 molecule = lines[i][17:21].strip()
-                if molecule not in {mol, 'DUM', 'WAT'} and molecule not in other_mol and molecule not in lipid_mol:
+                if molecule not in {mol, 'DUM', 'WAT'} and molecule not in other_mol and molecule not in lipid_mol and molecule not in ion_mol:
                     recep_coords.append((
                         float(lines[i][30:38].strip()),
                         float(lines[i][38:46].strip()),
@@ -1300,7 +1295,7 @@ class EquilibrationBuilder(SystemBuilder):
                     lig_chainlist.append(lines[i][21].strip())
                     lig_atom += 1
                     total_atom += 1
-                elif (molecule == 'WAT') or (molecule in other_mol):
+                elif (molecule == 'WAT') or (molecule in other_mol) or (molecule in ion_mol):
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
@@ -1715,12 +1710,6 @@ class FreeEnergyBuilder(SystemBuilder):
                     .replace('MMM', f"\'{mol}\'"))
         run_with_log(f'{vmd} -dispdev text -e split.tcl')
 
-        # Remove possible remaining molecules
-        if not other_mol:
-            open('others.pdb', 'w').close()
-        if not lipid_mol:
-            open('lipids.pdb', 'w').close()
-
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
                      'protein.pdb',
@@ -1911,6 +1900,7 @@ class FreeEnergyBuilder(SystemBuilder):
         resname_lig = mol
         other_mol = self.other_mol
         lipid_mol = self.lipid_mol
+        ion_mol = ['Na+', 'K+', 'Cl-']
         comp = self.comp
         sdr_dist = self.sim_config.sdr_dist
 
@@ -2003,7 +1993,7 @@ class FreeEnergyBuilder(SystemBuilder):
         for i in range(0, len(lines)):
             if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
                 molecule = lines[i][17:21].strip() 
-                if (molecule != mol) and (molecule != 'DUM') and (molecule != 'WAT') and (molecule not in other_mol) and (molecule not in lipid_mol):
+                if (molecule != mol) and (molecule != 'DUM') and (molecule != 'WAT') and (molecule not in other_mol) and (molecule not in lipid_mol) and (molecule not in ion_mol):
                     recep_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     recep_atomlist.append(lines[i][12:16].strip())
@@ -2022,7 +2012,7 @@ class FreeEnergyBuilder(SystemBuilder):
                     lig_chainlist.append(lines[i][21].strip())
                     lig_atom += 1
                     total_atom += 1
-                elif (molecule == 'WAT') or (molecule in other_mol):
+                elif (molecule == 'WAT') or (molecule in other_mol) or (molecule in ion_mol):
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
@@ -3646,6 +3636,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
+            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+                with open("./run_failures.bash", "wt") as fout:
+                    for line in fin:
+                        fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
@@ -3786,6 +3780,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
+            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+                with open("./run_failures.bash", "wt") as fout:
+                    for line in fin:
+                        fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
@@ -3845,6 +3843,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
+            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+                with open("./run_failures.bash", "wt") as fout:
+                    for line in fin:
+                        fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
@@ -3903,6 +3905,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
+            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+                with open("./run_failures.bash", "wt") as fout:
+                    for line in fin:
+                        fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
@@ -4035,6 +4041,10 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
+            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+                with open("./run_failures.bash", "wt") as fout:
+                    for line in fin:
+                        fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
@@ -4122,12 +4132,6 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     .replace('mmm', molr.lower())
                     .replace('MMM', f"\'{molr.lower()}\'"))
         run_with_log(f'{vmd} -dispdev text -e split.tcl')
-
-        # Remove possible remaining molecules
-        if not other_mol:
-            open('others.pdb', 'w').close()
-        if not lipid_mol:
-            open('lipids.pdb', 'w').close()
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -4362,6 +4366,10 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
 
 
         # Create running scripts for local and server
+        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+            with open("./run_failures.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
@@ -4490,6 +4498,10 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
+        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+            with open("./run_failures.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
@@ -4613,6 +4625,10 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
+        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+            with open("./run_failures.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
@@ -4736,12 +4752,6 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
         run_with_log(f'{vmd} -dispdev text -e split.tcl')
-
-        # Remove possible remaining molecules
-        if not other_mol:
-            open('others.pdb', 'w').close()
-        if not lipid_mol:
-            open('lipids.pdb', 'w').close()
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -4904,6 +4914,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         resname_lig = mol
         other_mol = self.other_mol
         lipid_mol = self.lipid_mol
+        ion_mol = ['Na+', 'K+', 'Cl-']
         comp = self.comp
         sdr_dist = self.sim_config.sdr_dist
 
@@ -4980,7 +4991,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         for i in range(0, len(lines)):
             if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
                 molecule = lines[i][17:21].strip() 
-                if (molecule != mol) and (molecule != 'DUM') and (molecule != 'WAT') and (molecule not in other_mol) and (molecule not in lipid_mol):
+                if (molecule != mol) and (molecule != 'DUM') and (molecule != 'WAT') and (molecule not in other_mol) and (molecule not in lipid_mol) and (molecule not in ion_mol):
                     recep_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     recep_atomlist.append(lines[i][12:16].strip())
@@ -4999,7 +5010,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                     lig_chainlist.append(lines[i][21].strip())
                     lig_atom += 1
                     total_atom += 1
-                elif (molecule == 'WAT') or (molecule in other_mol):
+                elif (molecule == 'WAT') or (molecule in other_mol) or (molecule in ion_mol):
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
@@ -5299,6 +5310,10 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
+        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+            with open("./run_failures.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
@@ -5426,12 +5441,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
         run_with_log(f'{vmd} -dispdev text -e split.tcl')
-
-        # Remove possible remaining molecules
-        if not other_mol:
-            open('others.pdb', 'w').close()
-        if not lipid_mol:
-            open('lipids.pdb', 'w').close()
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -5594,6 +5603,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         resname_lig = mol
         other_mol = self.other_mol
         lipid_mol = self.lipid_mol
+        ion_mol = ['Na+', 'K+', 'Cl-']
         comp = self.comp
         sdr_dist = 0
 
@@ -5672,7 +5682,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         for i in range(0, len(lines)):
             if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
                 molecule = lines[i][17:21].strip() 
-                if (molecule != mol) and (molecule != 'DUM') and (molecule != 'WAT') and (molecule not in other_mol) and (molecule not in lipid_mol):
+                if (molecule != mol) and (molecule != 'DUM') and (molecule != 'WAT') and (molecule not in other_mol) and (molecule not in lipid_mol) and (molecule not in ion_mol):
                     recep_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     recep_atomlist.append(lines[i][12:16].strip())
@@ -5691,7 +5701,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                     lig_chainlist.append(lines[i][21].strip())
                     lig_atom += 1
                     total_atom += 1
-                elif (molecule == 'WAT') or (molecule in other_mol):
+                elif (molecule == 'WAT') or (molecule in other_mol) or (molecule in ion_mol):
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
@@ -5990,6 +6000,10 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
+        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
+            with open("./run_failures.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:

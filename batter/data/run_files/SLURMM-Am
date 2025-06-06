@@ -70,7 +70,8 @@ else
         if [ -z "$bad_node" ]; then
             scontrol requeue "$SLURM_JOB_ID"
         else
-            scontrol requeue "$SLURM_JOB_ID" --exclude="$bad_node"
+            scontrol update JobId=$SLURM_JOB_ID ExcNodeList=="$bad_node"
+            scontrol requeue "$SLURM_JOB_ID"
         fi
         
         exit 0
