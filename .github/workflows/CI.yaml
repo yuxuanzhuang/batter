@@ -30,7 +30,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # <-- This is needed for submodules
+          submodules: 'recursive'
 
       - name: Additional info about the build
         shell: bash
