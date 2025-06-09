@@ -30,7 +30,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # <-- This is needed for submodules
+          submodules: 'recursive'
 
       - name: Additional info about the build
         shell: bash
@@ -58,18 +58,13 @@ jobs:
             python=${{ matrix.python-version }}
           init-shell: bash
 
-      - name: Install deps from main environment
+      - name: Install deps from main environment file
         shell: bash -l {0}
         run: |
-          micromamba activate batter_dev
-          micromamba install -y -n batter --file environment.yml
-
-      - name: Install packages (editable)
-        shell: bash -l {0}
-        run: |
-          pip install -e ./extern/alchemlyb
-          pip install -e ./extern/openfe
-          pip install -e .
+          micromamba install -y -n batter_dev --file environment.yml
+          micromamba run -n batter_dev pip install -e ./extern/alchemlyb
+          micromamba run -n batter_dev pip install -e ./extern/openfe
+          micromamba run -n batter_dev pip install -e .
 
       - name: List installed packages
         shell: bash -l {0}

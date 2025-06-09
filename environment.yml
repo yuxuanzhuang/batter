@@ -15,5 +15,10 @@ dependencies:
   - pandas
   - alchemlyb
   - vmd
+  # Tests
+  - pytest
+  - pytest-xdist
+  - pytest-cov
+  - pytest-snapshot
   # - pip:
   #  - git+https://github.com/yuxuanzhuang/mdanalysis.git@unwrap_enhancement

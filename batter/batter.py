@@ -22,7 +22,7 @@ try:
     from openff.toolkit import Molecule
 except:
     raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
-
+from rdkit import Chem
 import time
 from tqdm import tqdm
 from joblib import Parallel, delayed
@@ -438,7 +438,7 @@ class System:
         """
         The names of the ligands.
         """
-        return self._ligand_list.keys()
+        return list(self._ligand_list.keys())
     
     @property
     def all_poses(self):
@@ -3122,8 +3122,16 @@ class ABFESystem(System):
     """
     def _process_ligands(self):
         # check if they are the same ligand
-        n_atoms = mda.Universe(self.ligand_paths[0]).atoms.n_atoms
+        if self.ligand_paths[0].lower().endswith('.sdf'):
+            suppl = Chem.SDMolSupplier(self.ligand_paths[0], removeHs=False)
+            mol = suppl[0]
+        elif self.ligand_paths[0].lower().endswith('.pdb'):
+            mol = self.ligand_paths[0]
+        n_atoms = mda.Universe(mol).atoms.n_atoms
         for ligand_path in self.ligand_paths:
+            if ligand_path.lower().endswith('.sdf'):
+                suppl = Chem.SDMolSupplier(ligand_path, removeHs=False)
+                ligand_path = suppl[0]
             if mda.Universe(ligand_path).atoms.n_atoms != n_atoms:
                 raise ValueError(f"Number of atoms in the ligands are different: {ligand_path}")
 

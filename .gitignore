@@ -128,3 +128,4 @@ ENV/
 notincluded
 
 test_pipeline
+test.ipynb
