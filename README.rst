@@ -23,11 +23,14 @@ To install, first clone the repository and then run the following command:
 
     git clone git@github.com:yuxuanzhuang/batter.git
     cd batter
+    git submodule update --init --recursive
 
     conda env create -f extern/openfe/environment.yml -n batter
     conda env update --name batter --file environment.yml
 
     conda activate batter
+    
+    pip install -e ./extern/alchemlyb
     pip install -e ./extern/openfe
     pip install -e .
 
