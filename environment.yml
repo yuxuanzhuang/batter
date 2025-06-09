@@ -1,18 +1,18 @@
 name: batter
 channels:
-  - conda-forge  # Place conda-forge first for priority
+  - conda-forge
   - defaults
 dependencies:
   # Conda dependencies
   - ambertools=23.6
-  # vmd is problematic to install with error about sqlite
-  # - vmd-python
   - openbabel
-  - rdkit
   - pandas
-  - python=3.11
-  - pip
   - prettypyplot
   - seaborn
-  # openff to get charge
-  - openff-toolkit-base
+  - loguru
+  - pydantic
+  - click
+  - pandas
+  - alchemlyb
+  # - pip:
+  #  - git+https://github.com/yuxuanzhuang/mdanalysis.git@unwrap_enhancement

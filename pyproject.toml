@@ -19,18 +19,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 requires-python = ">=3.10"
-# Declare any run-time dependencies that should be installed with the package.
-dependencies = [
-    "MDAnalysis",
-    "loguru",
-    "pydantic",
-    "click",
-    "rdkit",
-    "pandas",
-    'jax',
-    'alchemlyb',
-    'openfe',
-]
 
 [project.scripts]
 batter = "batter.cli:main"
