@@ -55,8 +55,7 @@ def slurm_submit_or_run(default_partition="rondror",
                     f"#SBATCH --partition={partition}",
                     f"#SBATCH --output=slurm-%j.out",
                     f"#SBATCH --error=slurm-%j.err",
-                    "#SBATCH --time=01:00:00",
-                    "#SBATCH --ntasks=32",
+                    "#SBATCH --time=02:00:00",
                     '#SBATCH --nodes=1',
                     "#SBATCH --cpus-per-task=1",
                 ]
@@ -148,8 +147,14 @@ def copy_system(input, output, only_equil, symlink):
     default=False,
     help="If set, load existing results instead of performing new analysis."
 )
+@click.option(
+    "--n-workers", "-n",
+    type=int,
+    default=64,
+    help="Number of workers to use for analysis (default: 64)."
+)
 @slurm_submit_or_run()
-def gather(inputs, sim_range=(0, -1), load=False):
+def gather(inputs, sim_range=(0, -1), load=False, n_workers=64):
     """
     Analyze the specified systems and gather results.
 
@@ -158,6 +163,6 @@ def gather(inputs, sim_range=(0, -1), load=False):
     for input_path in inputs:
         logger.info(f"Processing system: {input_path}")
         system = System(input_path)
-        system.n_workers = 32
+        system.n_workers = n_workers
         system.analysis_new(load=load, check_finished=False, sim_range=sim_range)
         logger.info(f"Finished processing system: {input_path}")
