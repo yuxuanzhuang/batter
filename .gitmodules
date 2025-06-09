@@ -3,4 +3,6 @@
 	url = git@github.com:OpenFreeEnergy/openfe.git
 [submodule "extern/alchemlyb"]
 	path = extern/alchemlyb
-	url = git@github.com:alchemistry/alchemlyb.git
+	#url = git@github.com:alchemistry/alchemlyb.git
+	# https://github.com/yuxuanzhuang/alchemlyb/tree/reduce
+	url = git@github.com:yuxuanzhuang/alchemlyb.git
