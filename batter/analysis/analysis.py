@@ -217,6 +217,10 @@ class MBARAnalysis(FEAnalysisBase):
     def _get_data_list(self):
         logger.debug(f"Extracting data for {self.component}...")
 
+        logger.info(f"windows: {self.windows}")
+        logger.info(f"sim_range: {self.sim_range}")
+        logger.info(f"temperature: {self.temperature}")
+        logger.info(f"component: {self.component}")
         df_list = Parallel(n_jobs=self.n_jobs)(
             delayed(self._extract_all_for_window)(win_i=win_i,
                                                  comp_folder=self.comp_folder,

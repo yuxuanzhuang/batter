@@ -7,6 +7,8 @@ from functools import wraps
 import contextlib
 import joblib
 from tqdm import tqdm
+import re
+
 
 
 antechamber = 'antechamber'
@@ -253,3 +255,14 @@ def tqdm_joblib(tqdm_object):
     finally:
         joblib.parallel.BatchCompletionCallBack = old_batch_callback
         tqdm_object.close()
+
+def atoi(text):
+    return int(text) if text.isdigit() else text
+
+
+def natural_keys(text):
+    """
+    alist.sort(key=natural_keys) sorts in human order
+    http://nedbatchelder.com/blog/200712/human_sorting.html
+    """
+    return [atoi(c) for c in re.split(r"(\d+)", text)]

@@ -816,8 +816,8 @@ class SystemBuilder(ABC):
                 sys.exit(1)
         f.close()
 
-        # regenerate full.pdb resid indices
         u = mda.Universe('full.pdb')
+        # regenerate full.pdb resid indices
         renum_txt = f'../{self.build_file_folder}/protein_renum.txt'
         if not os.path.exists(renum_txt):
             renum_txt = f'{self.build_file_folder}/protein_renum.txt'
@@ -830,6 +830,29 @@ class SystemBuilder(ABC):
                     'new_resname', 'new_resid'])
 
         u.select_atoms('protein').residues.resids = renum_data['old_resid'].values
+        
+        # regenerate segments
+        seg_txt = 'build_amber_renum.txt'
+
+        segment_renum_data = pd.read_csv(
+            seg_txt,
+            sep=r'\s+',
+            header=None,
+            names=['old_resname', 'old_chain', 'old_resid',
+                'new_resname', 'new_resid'])
+        
+        chain_list = renum_data.old_chain.values
+        #for res, chain in zip(u.residues[:len(chain_list)], chain_list):
+        #    res.atoms.chainIDs = chain  # set chainID for each residue
+        #u.residues[len(chain_list):].atoms.chainIDs = 'Z'  # set chainID for extra residues
+
+        u_chain_segments = {}
+        for chain in chain_list:
+            u_chain_segments[chain] = u.add_Segment(segid=chain)
+
+        for res, chain in zip(u.residues[:len(chain_list)], chain_list):
+            res.segment = u_chain_segments[chain]  # assign each residue to its segment
+
         u.atoms.write('full.pdb')
 
         # Apply hydrogen mass repartitioning

@@ -25,12 +25,14 @@ from batter.batpy import copy_system, gather
 from batter.utils.error_report import error_report
 from batter.utils.align import aligning
 from batter.run_in_batch import run_in_batch
+from batter.analysis.preprocessing import preprocess
 
 main.add_command(copy_system)
 main.add_command(gather)
 main.add_command(error_report)
 main.add_command(aligning)
 main.add_command(run_in_batch)
+main.add_command(preprocess)
 
 if __name__ == "__main__":
     main()  # pragma: no cover

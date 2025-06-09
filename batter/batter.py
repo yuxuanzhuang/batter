@@ -1715,7 +1715,7 @@ class System:
         self,
         input_file: Union[str, Path, SimulationConfig]=None,
         load=True,
-        check_finished: bool = True,
+        check_finished: bool = False,
         sim_range: Tuple[int, int] = None,
         overwrite: bool = False,
         ):
@@ -1752,6 +1752,8 @@ class System:
                 if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
                     try:
                         self.fe_results[pose] = NewFEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
+                        if np.isnan(self.fe_results[pose].fe):
+                            raise ValueError(f'FE for {pose} is invalid (None or NaN); rerun')
                         logger.debug(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
                         pbar.set_description(f'FE for {pose} = {self.fe_results[pose].fe:.2f} ± {self.fe_results[pose].fe_std:.2f} kcal/mol')
                         continue
@@ -1771,6 +1773,8 @@ class System:
                     disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
                 elif 'o' in self.sim_config.components:
                     disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
+                elif 'z' in self.sim_config.components:
+                    disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
 
                 rest = self.sim_config.rest
                 k_r = rest[2]
@@ -1842,6 +1846,7 @@ class System:
                     fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
                 except Exception as e:
                     logger.error(f'Error during FE analysis for {pose}: {e}')
+                    raise
                     fe_value = np.nan
                     fe_std = np.nan
 
@@ -1855,7 +1860,16 @@ class System:
                     f'{self.fe_folder}/{pose}/Results/Results.dat',
                 )
                 pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+ 
+        with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
+            for i, (pose, fe) in enumerate(self.fe_results.items()):
+                mol_name = self.mols[i]
+                
+                logger.debug(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+            
 
+    def _generate_aligned_pdbs(self):
         # generate aligned pdbs
         logger.info('Generating aligned pdbs')
         reference_pdb_file = f'{self.poses_folder}/{self.system_name}_docked.pdb'
@@ -1875,15 +1889,7 @@ class System:
 
             initial_pose = f'{self.poses_folder}/{pose}.pdb'
             os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
-            
-        with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
-            for i, (pose, fe) in enumerate(self.fe_results.items()):
-                mol_name = self.mols[i]
-                
-                logger.debug(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
-                f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
-            
-
+           
     @safe_directory
     @save_state
     def analysis(
@@ -2386,6 +2392,7 @@ class System:
                     eq_rst7_rel = os.path.relpath(eq_rst7, start=f'{folder_comp}/{comp}{j:02d}')
                     os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/eqnpt04.rst7')
 
+        self._generate_aligned_pdbs()
 
         if only_fe_preparation:
             logger.info('only_fe_preparation is set to True. '
