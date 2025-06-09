@@ -24,8 +24,7 @@ jobs:
         # os: [macOS-latest, ubuntu-latest, windows-latest]
         os: [ubuntu-latest]
 
-        python-version: ["3.10", "3.11",]
-        # "3.12"]
+        python-version: ["3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -37,22 +36,33 @@ jobs:
           df -h
           ulimit -a
 
-      # More info on options: https://github.com/marketplace/actions/setup-micromamba
-      - uses: mamba-org/setup-micromamba@v1
+      - name: Set up micromamba
+        uses: mamba-org/setup-micromamba@v1
         with:
-          environment-file: devtools/conda-envs/test_env.yaml
-          environment-name: test
+          environment-name: batter
+          create-args: >-
+            python=${{ matrix.python-version }}
           condarc: |
             channels:
               - conda-forge
-          create-args: >- 
-            python=${{ matrix.python-version }}
-      
-      - name: Install package
-        # conda setup requires this special shell
+          init-shell: bash
+
+      - name: Create environment from OpenFE and main environment
         shell: bash -l {0}
         run: |
-          python -m pip install . --no-deps
+          micromamba env update -n batter -f extern/openfe/environment.yml
+          micromamba env update -n batter -f environment.yml
+
+      - name: Install packages (editable)
+        shell: bash -l {0}
+        run: |
+          pip install -e ./extern/alchemlyb
+          pip install -e ./extern/openfe
+          pip install -e .
+
+      - name: List installed packages
+        shell: bash -l {0}
+        run: |
           micromamba list
 
       - name: Run tests

@@ -14,5 +14,6 @@ dependencies:
   - click
   - pandas
   - alchemlyb
+  - vmd
   # - pip:
   #  - git+https://github.com/yuxuanzhuang/mdanalysis.git@unwrap_enhancement
