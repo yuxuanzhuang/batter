@@ -1737,8 +1737,8 @@ class FreeEnergyBuilder(SystemBuilder):
         filenames = ['dummy.pdb',
                      'protein.pdb',
                     f'{mol.lower()}.pdb',
-                     'others.pdb',
                      'lipids.pdb',
+                     'others.pdb',
                      'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
@@ -4160,8 +4160,8 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         filenames = ['dummy.pdb',
                     'protein.pdb',
                     '%s.pdb' % molr.lower(),
-                    'others.pdb',
                     'lipids.pdb',
+                    'others.pdb',
                     'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
@@ -4780,8 +4780,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         filenames = ['dummy.pdb',
                      'protein.pdb',
                     f'{mol.lower()}.pdb',
-                     'others.pdb',
                      'lipids.pdb',
+                     'others.pdb',
                      'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
@@ -5469,8 +5469,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         filenames = ['dummy.pdb',
                      'protein.pdb',
                     f'{mol.lower()}.pdb',
-                     'others.pdb',
                      'lipids.pdb',
+                     'others.pdb',
                      'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
