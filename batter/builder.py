@@ -1679,8 +1679,8 @@ class FreeEnergyBuilder(SystemBuilder):
                                     'old_chain',
                                     'old_resid',
                                     'new_resname', 'new_resid'])
-        u = mda.Universe('rec_file.pdb')
 
+        u = mda.Universe('rec_file.pdb')
         for residue in u.select_atoms('protein').residues:
             resid_str = residue.resid
             residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]

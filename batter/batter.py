@@ -888,8 +888,6 @@ class System:
             logger.info('FE System prepared')
             self._fe_prepared = True
         
-
-
     @safe_directory
     @save_state
     def submit(self,
@@ -1357,10 +1355,10 @@ class System:
         Prepare the free energy system.
         """
         logger.info('Prepare for free energy stage')
-        logger.info(f'Prepare FE equilibration')
+        logger.info('Prepare FE equilibration')
         self._prepare_fe_equil_system()
 
-        logger.info(f'Prepare FE windows')
+        logger.info('Prepare FE windows')
         self._prepare_fe_windows()
         logger.info('Free energy systems have been created for all poses listed in the input file.')
 
@@ -1618,28 +1616,7 @@ class System:
 
         num_eq_sim = len(self.sim_config.release_eq)
 
-        def write_restraint_block(ref_u, selection_string, files, folder_2_write):
-            selection = ref_u.select_atoms(f'({selection_string}) and name CA')
-            logger.debug(f"Selection: {selection} to be restrained")
-
-            atm_resids = selection.residues.resids
-
-            renum_txt = f'{self.equil_folder}/{pose}/build_files/protein_renum.txt'
-
-            renum_data = pd.read_csv(
-                renum_txt,
-                sep=r'\s+',
-                header=None,
-                names=['old_resname', 'old_chain', 'old_resid',
-                        'new_resname', 'new_resid'])
-
-            # map atm_resids to new_resid
-            amber_resids = renum_data.loc[renum_data['old_resid'].isin(atm_resids), 'new_resid']
-
-            formatted_resids = format_ranges(amber_resids)
-            logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
-            new_mask_component = f'(:{formatted_resids}) & @CA'
-
+        def write_restraint_block(files, folder_2_write):
             for file in files:
                 with open(f'{folder_2_write}/{file}', 'r') as f:
                     lines = f.readlines()
@@ -1682,14 +1659,34 @@ class System:
             ref_u = mda.Universe(
                     f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
                     f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+            
+            selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
+            logger.debug(f"Selection: {selection} to be restrained")
+
+            atm_resids = selection.residues.resids
+
             for pose in self.all_poses:
+                renum_txt = f'{self.equil_folder}/{pose}/build_files/protein_renum.txt'
+
+                renum_data = pd.read_csv(
+                    renum_txt,
+                    sep=r'\s+',
+                    header=None,
+                    names=['old_resname', 'old_chain', 'old_resid',
+                            'new_resname', 'new_resid'])
+
+                # map atm_resids to new_resid
+                amber_resids = renum_data.loc[renum_data['old_resid'].isin(atm_resids), 'new_resid']
+
+                formatted_resids = format_ranges(amber_resids)
+                logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
+                new_mask_component = f'(:{formatted_resids}) & @CA'
+
                 files = ['eqnpt.in']
                 for i in range(num_eq_sim):
                     files.append(f'mdin-{i:02d}')
 
                 write_restraint_block(
-                                      ref_u=ref_u,
-                                      selection_string=extra_restraints,
                                       files=files,
                                       folder_2_write=f'{self.equil_folder}/{pose}/')
 
@@ -1698,18 +1695,36 @@ class System:
             ref_u = mda.Universe(
                     f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
                     f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+            
+            selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
+            logger.debug(f"Selection: {selection} to be restrained")
+
+            atm_resids = selection.residues.resids
             for pose in self.bound_poses:
+                renum_txt = f'{self.equil_folder}/{pose}/build_files/protein_renum.txt'
+
+                renum_data = pd.read_csv(
+                    renum_txt,
+                    sep=r'\s+',
+                    header=None,
+                    names=['old_resname', 'old_chain', 'old_resid',
+                            'new_resname', 'new_resid'])
+
+                # map atm_resids to new_resid
+                amber_resids = renum_data.loc[renum_data['old_resid'].isin(atm_resids), 'new_resid']
+
+                formatted_resids = format_ranges(amber_resids)
+                logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
+                new_mask_component = f'(:{formatted_resids}) & @CA'
+
                 for comp in self.sim_config.components:
-                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
                     files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
                     for j in range(-1, len(windows)):
                         write_restraint_block(
-                                        ref_u=ref_u,
-                                        selection_string=extra_restraints,
-                                        files=files,
-                                        folder_2_write=f'{folder_comp}/{comp}{j:02d}/')
+                            files=files,
+                            folder_2_write=f'{folder_comp}/{comp}{j:02d}/')
         else:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('Extra position restraints added')
