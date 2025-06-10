@@ -34,7 +34,6 @@ from batter.bat_lib import analysis
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob
-from batter.analysis.convergence import ConvergenceValidator
 from batter.analysis.sim_validation import SimValidator
 from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 from batter.data import frontier_files
@@ -53,6 +52,7 @@ from batter.utils import (
     COMPONENTS_DICT,
     DEC_FOLDER_DICT,
 )
+
 
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -1741,6 +1741,10 @@ class System:
                 logger.info('FE simulation is not finished yet')
                 self.check_jobs()
                 return
+        
+        if not os.path.exists(f'{self.output_dir}/Results'):
+            os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
+            self._generate_aligned_pdbs()
             
         with self._change_dir(self.output_dir):
             pbar = tqdm(

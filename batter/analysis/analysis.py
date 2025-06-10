@@ -72,7 +72,8 @@ class MBARAnalysis(FEAnalysisBase):
                 temperature,
                 energy_unit='kcal/mol',
                 sim_range=None,
-                n_bootstraps=100,
+                detect_equil=False,
+                n_bootstraps=0,
                 n_jobs=6,
                 load=False,
                 ):
@@ -93,8 +94,10 @@ class MBARAnalysis(FEAnalysisBase):
             The energy unit for the results. Can be 'kcal/mol', 'kJ/mol', or 'kT'. Default is 'kcal/mol'.
         sim_range : tuple of int, optional
             The range of simulations to include in the analysis. If None, all simulations are included.
+        detect_equil : bool, optional
+            If True, detect equilibration time and truncate the data accordingly. Default is False.
         n_bootstraps : int, optional
-            The number of bootstraps to perform for error estimation. Default is 100.
+            The number of bootstraps to perform for error estimation. Default is 0.
         n_jobs : int, optional
             The number of parallel jobs to run for data extraction. Default is 12.
         load : bool, optional
@@ -105,6 +108,7 @@ class MBARAnalysis(FEAnalysisBase):
             raise ValueError(f"Component folder {comp_folder} does not exist.")
         self.comp_folder = comp_folder
         self.component = component
+        logger.debug(f"Initializing MBAR analysis for component {self.component} in folder {self.comp_folder}")
 
         self.windows = windows
         self.temperature = temperature
@@ -120,6 +124,7 @@ class MBARAnalysis(FEAnalysisBase):
             self.sim_range = range(sim_range[0], sim_range[1])
         else:
             self.sim_range = sim_range
+        self.detect_equil = detect_equil
         self.n_bootstraps = n_bootstraps
         self.n_jobs = n_jobs
         self.load = load
@@ -164,9 +169,11 @@ class MBARAnalysis(FEAnalysisBase):
 
         # convergence
         logger.debug(f"Calculating convergence for {self.component}...")
-        with SuppressLoguru():
+            logger.debug("Calculating forward-backward convergence...")
             self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list, 'MBAR')
+            logger.debug("Calculating block average convergence...")
             self.results['convergence']['block_convergence'] = block_average(self.data_list, 'MBAR')
+            logger.debug("Calculating overlap matrix...")
             self.results['convergence']['overlap_matrix'] = mbar.overlap_matrix
             self.results['convergence']['mbar'] = mbar
         
@@ -176,7 +183,7 @@ class MBARAnalysis(FEAnalysisBase):
 
     @staticmethod
     def _extract_all_for_window(win_i, comp_folder, component, temperature,
-                               sim_range):
+                               sim_range, truncate):
         """
         Return a dataframe with the energy in kT units for the given window.
         """
@@ -210,23 +217,25 @@ class MBARAnalysis(FEAnalysisBase):
                     raise RuntimeError(f"Error processing {md_sim_file}: {e}")
 
             df = pd.concat(dfs)
-            t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
-        df = df[df.index.get_level_values(0) > t0]
+            if truncate:
+                t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                df = df[df.index.get_level_values(0) > t0]
         return df
 
     def _get_data_list(self):
         logger.debug(f"Extracting data for {self.component}...")
 
-        logger.info(f"windows: {self.windows}")
-        logger.info(f"sim_range: {self.sim_range}")
-        logger.info(f"temperature: {self.temperature}")
-        logger.info(f"component: {self.component}")
+        logger.debug(f"windows: {self.windows}")
+        logger.debug(f"sim_range: {self.sim_range}")
+        logger.debug(f"temperature: {self.temperature}")
+        logger.debug(f"component: {self.component}")
         df_list = Parallel(n_jobs=self.n_jobs)(
             delayed(self._extract_all_for_window)(win_i=win_i,
                                                  comp_folder=self.comp_folder,
                                                  component=self.component,
                                                  temperature=self.temperature,
-                                                 sim_range=self.sim_range)           
+                                                 sim_range=self.sim_range,
+                                                 truncate=self.detect_equil) 
                 for win_i in range(len(self.windows)))
         for df in df_list:
             df.attrs['temperature'] = self.temperature
@@ -431,6 +440,7 @@ class RESTMBARAnalysis(MBARAnalysis):
                                                  component=self.component,
                                                  temperature=self.temperature,
                                                  sim_range=self.sim_range,
+                                                 truncate=self.detect_equil,
                                                  rfc=rfc,
                                                  req=req,
                                                  rty=rty,
@@ -449,7 +459,7 @@ class RESTMBARAnalysis(MBARAnalysis):
     
     @staticmethod
     def _extract_all_for_window(win_i, comp_folder, component, temperature,
-                               sim_range, rfc, req, rty, num_rest, num_win):
+                               sim_range, rfc, req, rty, num_rest, num_win, truncate):
         """
         Return a dataframe with the energy in kT units for the given window.
         As no direct report of the MBAR energy is present in the output,
@@ -514,11 +524,11 @@ class RESTMBARAnalysis(MBARAnalysis):
         else:  # Umbrella/Translation
             u = (rfc[win_i, 0]*((val[:, 0]-req[win_i, 0])**2) / kT)
         
+        if truncate:
         # get equilibration time from the reduced potential
-        with SuppressLoguru():
-            t0, g, Neff_max = detect_equilibration(u, nskip=10)
-        
-        u = u[t0:]
+            with SuppressLoguru():
+                t0, g, Neff_max = detect_equilibration(u, nskip=10)
+                u = u[t0:]
 
         Upot = np.zeros([num_win, len(u)], np.float64)
 

@@ -56,8 +56,9 @@ def slurm_submit_or_run(default_partition="rondror",
                     f"#SBATCH --output=slurm-%j.out",
                     f"#SBATCH --error=slurm-%j.err",
                     "#SBATCH --time=02:00:00",
-                    '#SBATCH --nodes=1',
+                    "#SBATCH --nodes=1",
                     "#SBATCH --cpus-per-task=1",
+                    "#SBATCH --mem=200G",
                 ]
                 if project:
                     slurm_lines.append(f"#SBATCH -A {project}")
