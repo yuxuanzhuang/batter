@@ -1644,6 +1644,11 @@ class System:
                 with open(f'{folder_2_write}/{file}', 'r') as f:
                     lines = f.readlines()
 
+                # if new_mask_component is already in the file, skip
+                if any(new_mask_component in line for line in lines):
+                    logger.debug(f"Restraint mask {new_mask_component} already exists in {file}; skipping")
+                    continue
+                
                 with open(f'{folder_2_write}/{file}', 'w') as f:
                     for line in lines:
                         if 'ntr' in line and 'cntr' not in line:

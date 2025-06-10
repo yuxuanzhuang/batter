@@ -169,6 +169,7 @@ class MBARAnalysis(FEAnalysisBase):
 
         # convergence
         logger.debug(f"Calculating convergence for {self.component}...")
+        with SuppressLoguru():
             logger.debug("Calculating forward-backward convergence...")
             self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list, 'MBAR')
             logger.debug("Calculating block average convergence...")
