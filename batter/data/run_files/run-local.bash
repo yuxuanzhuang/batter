@@ -22,11 +22,14 @@ if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
     echo "Skipping minimization steps."
 else
     # Minimization
-    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    else
-        pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    fi
+    #if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+    #    mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    #else
+    #    pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    #fi
+    # We need to use pmemd.cuda to run minimization on GPUs
+    # because we need to use GTI routine
+    pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 fi
 
