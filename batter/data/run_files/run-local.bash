@@ -88,7 +88,7 @@ while [ $i -le FERANGE ]; do
     i=$((i + 1))
 done
 
-cpptraj -p $PRMTOP -y md-$x.rst7 -x output.pdb >> "$log_file" 2>&1
+cpptraj -p $PRMTOP -y mdin-$x.rst7 -x output.pdb >> "$log_file" 2>&1
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion
