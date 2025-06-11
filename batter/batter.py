@@ -1615,6 +1615,7 @@ class System:
         logger.debug('Adding Harmonic postion restraints')
 
         num_eq_sim = len(self.sim_config.release_eq)
+        num_fe_sim = self.sim_config.num_fe_range
 
         def write_restraint_block(files, folder_2_write):
             for file in files:
@@ -1720,7 +1721,9 @@ class System:
                 for comp in self.sim_config.components:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
-                    files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
+                    files = ['eqnpt.in']
+                    for i in range(num_fe_sim):
+                        files.append(f'mdin-{i:02d}')
                     for j in range(-1, len(windows)):
                         write_restraint_block(
                             files=files,
