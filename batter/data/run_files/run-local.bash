@@ -21,27 +21,29 @@ source run_failures.bash
 # Should almost never skip minimization because it may pass
 # with astronomical forces
 # TODO: add energy check
-if [[ $overwrite -eq 0 && -s mdin-00.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
     echo "Skipping minimization steps."
 else
     # Minimization
-    #if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-    #    mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    #else
-    #    pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    #fi
+    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    else
+        pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    fi
     # We need to use pmemd.cuda to run minimization on GPUs
     # because we need to use GTI routine
-    pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    #pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 fi
 
 if [[ $only_eq -eq 1 ]]; then
-    if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
+    if [[ $overwrite -eq 0]]; then
         echo "Skipping equilibration steps."
     else
         # Equilibration with protein and lipid restrained
         # this is to equilibrate the density of water
+        # Note we are not using the GPU version here
+        # because for large box size change, an error will be raised.
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
             mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 >> "$log_file" 2>&1
         else

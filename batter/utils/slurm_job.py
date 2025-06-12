@@ -38,10 +38,11 @@ class SLURMJob:
                 self._submit()
                 break
             except RuntimeError as e:
+                err_msg = str(e)
                 logger.debug(f"Failed to submit job: {e}; retrying in 30 seconds")
                 time.sleep(30)
         else:
-            raise RuntimeError("Failed to submit job after 5 attempts.")
+            raise RuntimeError("Failed to submit job after 5 attempts with error: {err_msg}")
 
     def _submit(self):
 

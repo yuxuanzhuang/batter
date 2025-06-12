@@ -1065,15 +1065,15 @@ class System:
                         time.sleep(120)
                         n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
-                    if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
-                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
-                        logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
-                        continue
+                    #if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
+                    #    self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                    #    logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
+                    #    continue
                     if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
                         self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                         logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
                         continue
-                    if os.path.exists(f"{folder_2_check}/eqnpt04.rst7") and not overwrite:
+                    if os.path.exists(f"{folder_2_check}/EQ_FINISHED") and not overwrite:
                         logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
                         continue
                     if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
