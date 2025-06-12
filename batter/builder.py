@@ -1671,7 +1671,7 @@ class FreeEnergyBuilder(SystemBuilder):
         u = mda.Universe('rec_file.pdb')
         for residue in u.select_atoms('protein').residues:
             resid_str = residue.resid
-            residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
+            residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
         if lipid_mol:
             # fix lipid resids
