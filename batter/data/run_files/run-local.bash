@@ -18,7 +18,10 @@ fi
 
 source run_failures.bash
 
-if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
+# Should almost never skip minimization because it may pass
+# with astronomical forces
+# TODO: add energy check
+if [[ $overwrite -eq 0 && -s mdin-00.rst7 ]]; then
     echo "Skipping minimization steps."
 else
     # Minimization
@@ -29,7 +32,7 @@ else
     #fi
     # We need to use pmemd.cuda to run minimization on GPUs
     # because we need to use GTI routine
-    pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 fi
 
@@ -66,7 +69,7 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     # Initial MD production run

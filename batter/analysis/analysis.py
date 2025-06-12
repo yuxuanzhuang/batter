@@ -72,8 +72,8 @@ class MBARAnalysis(FEAnalysisBase):
                 temperature,
                 energy_unit='kcal/mol',
                 sim_range=None,
-                detect_equil=False,
-                n_bootstraps=0,
+                detect_equil=True,
+                n_bootstraps=25,
                 n_jobs=6,
                 load=False,
                 ):

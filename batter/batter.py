@@ -1741,6 +1741,7 @@ class System:
         check_finished: bool = False,
         sim_range: Tuple[int, int] = None,
         overwrite: bool = False,
+        raise_on_error: bool = True,
         ):
         """
         New analysis rountine with alchemlyb
@@ -1790,35 +1791,35 @@ class System:
                         logger.warning('Re-running the FE analysis')
                 os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
 
-                results_entries = []
-
-                fe_values = []
-                fe_stds = []
-
-                # first get analytical results from Boresch restraint
-
-                if 'v' in self.sim_config.components:
-                    disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
-                elif 'o' in self.sim_config.components:
-                    disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
-                elif 'z' in self.sim_config.components:
-                    disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
-
-                rest = self.sim_config.rest
-                k_r = rest[2]
-                k_a = rest[3]
-                bor_ana = BoreschAnalysis(
-                                     disangfile=disangfile,
-                                     k_r=k_r, k_a=k_a,
-                                     temperature=self.sim_config.temperature,)
-                bor_ana.run_analysis()
-                fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
-                fe_stds.append(bor_ana.results['fe_error'])
-                results_entries.append(
-                    f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
-                )
-                
                 try:
+                    results_entries = []
+
+                    fe_values = []
+                    fe_stds = []
+
+                    # first get analytical results from Boresch restraint
+
+                    if 'v' in self.sim_config.components:
+                        disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
+                    elif 'o' in self.sim_config.components:
+                        disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
+                    elif 'z' in self.sim_config.components:
+                        disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
+
+                    rest = self.sim_config.rest
+                    k_r = rest[2]
+                    k_a = rest[3]
+                    bor_ana = BoreschAnalysis(
+                                        disangfile=disangfile,
+                                        k_r=k_r, k_a=k_a,
+                                        temperature=self.sim_config.temperature,)
+                    bor_ana.run_analysis()
+                    fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
+                    fe_stds.append(bor_ana.results['fe_error'])
+                    results_entries.append(
+                        f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
+                    )
+                    
                     for comp in self.sim_config.components:
                         comp_folder = COMPONENTS_FOLDER_DICT[comp]
                         comp_path = f'{self.fe_folder}/{pose}/{comp_folder}'
@@ -1874,7 +1875,8 @@ class System:
                     fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
                 except Exception as e:
                     logger.error(f'Error during FE analysis for {pose}: {e}')
-                    raise
+                    if raise_on_error:
+                        raise e
                     fe_value = np.nan
                     fe_std = np.nan
 
@@ -2441,7 +2443,6 @@ class System:
             
             # Check the free energy calculation to finish
             pbar = tqdm(
-                total=len(self.bound_poses) * len(self.sim_config.components),
                 desc="FE simsulations finished",
                 unit="job"
             )
