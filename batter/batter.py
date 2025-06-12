@@ -778,6 +778,7 @@ class System:
         
         if input_file is not None:
             self._get_sim_config(input_file)
+            self._component_windows_dict = ComponentWindowsDict(self)
         
         try:
             sim_config = self.sim_config
@@ -2145,7 +2146,7 @@ class System:
         """
         Check if the ligand is bound after equilibration
         """
-        logger.info("Checking if the ligand is bound after equilibration")
+        logger.info("Checking if ligands are bound after equilibration")
         UNBOUND_THRESHOLD = 8.0
         bound_poses = []
         num_eq_sims = len(self.sim_config.release_eq)
