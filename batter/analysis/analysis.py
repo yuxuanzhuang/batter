@@ -531,6 +531,8 @@ class RESTMBARAnalysis(MBARAnalysis):
                 t0, g, Neff_max = detect_equilibration(u, nskip=10)
                 u = u[t0:]
 
+        else:
+            t0 = 0
         Upot = np.zeros([num_win, len(u)], np.float64)
 
         for win in range(num_win):

@@ -104,7 +104,7 @@ def run_in_batch(
     cwd = os.getcwd()
     len_md = nrestarts
 
-    job_sleep_interval = 0.3
+    job_sleep_interval = 0.1
 
     job_name = hash_string_list(folders)
 
@@ -148,7 +148,7 @@ def run_in_batch(
                         lines = f.readlines()
                     run_line = f'srun -N 1 -n 1 pmemd.hip_DPFP {lines[1].rstrip()} || echo "Error in {pose} eq_mini" &'
                 else:
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini.in.groupfile || echo "Error in {pose} eq_mini" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini.in.groupfile || echo "Error in {pose} eq_mini" &'
                 logger.info(f'{pose} eq_mini')
                 run_lines.append(f'# {pose}  eq_mini')
                 run_lines.append(run_line)
@@ -163,7 +163,7 @@ def run_in_batch(
                         lines = f.readlines()
                     run_line = f'srun -N 1 -n 4 pmemd.MPI {lines[1].rstrip()} || echo "Error in {pose} eqnpt_pre" &'
                 else:
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt0.in.groupfile || echo "Error in {pose}/ eqnpt_pre" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_eqnpt0.in.groupfile || echo "Error in {pose}/ eqnpt_pre" &'
                 logger.info(f'{pose} eqnpt_pre')
                 run_lines.append(f'# {pose} eqnpt_pre')
                 run_lines.append(run_line)
@@ -266,7 +266,7 @@ def run_in_batch(
                     continue
                 elif last_rst7 == 'min':
                     sim_to_run = True
-                    run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile || echo "Error in {pose}/{comp} min" &'
+                    run_line = f'srun -N {n_nodes} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mini.in.groupfile || echo "Error in {pose}/{comp} min" &'
                     logger.info(f'{pose} {comp} min')
                     run_lines.append(f'# {pose} {comp} min')
                     run_lines.append(run_line)
@@ -345,6 +345,7 @@ def run_in_batch(
         '#SBATCH --open-mode=append',
         '#SBATCH --dependency=singleton',
         '#SBATCH --export=ALL',
+        '#SBATCH --mail-type=BEGIN,END,FAIL',
         'source ~/env.amber > /dev/null 2>&1',
         'echo $AMBERHOME',
         'if [ -z "${AMBERHOME}" ]; then echo "AMBERHOME is not set" && exit 0; fi',
