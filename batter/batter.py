@@ -33,7 +33,7 @@ from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
-from batter.utils.slurm_job import SLURMJob
+from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
 from batter.analysis.sim_validation import SimValidator
 from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 from batter.data import frontier_files
@@ -914,7 +914,6 @@ class System:
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
-        n_jobs_submitted = 0
         if cluster == 'frontier':
             self._submit_frontier(stage)
             logger.info(f'Frontier {stage} job submitted!')
@@ -925,9 +924,9 @@ class System:
             pbar = tqdm(total=len(self.all_poses), desc='Submitting equilibration jobs')
             for pose in self.all_poses:
                 # check n_jobs_submitted is less than the max_jobs
-                while n_jobs_submitted >= self.max_num_jobs:
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                     time.sleep(120)
-                    n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
+                    pbar.set_description(f'Waiting to submit equilibration jobs')
 
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
@@ -945,12 +944,10 @@ class System:
                     # resubmit the job
                     if not slurm_job.is_still_running():
                         slurm_job.submit()
-                        n_jobs_submitted += 1
                         continue
                     elif overwrite:
                         slurm_job.cancel()
                         slurm_job.submit(overwrite=True)
-                        n_jobs_submitted += 1
                         continue
                     else:
                         logger.debug(f'Equilibration job for {pose} is still running')
@@ -966,7 +963,6 @@ class System:
                                 partition=partition,
                                 jobname=f'fep_{self.equil_folder}/{pose}_equil')
                 slurm_job.submit(overwrite=overwrite)
-                n_jobs_submitted += 1
                 pbar.update(1)
                 pbar.set_description(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
@@ -992,9 +988,11 @@ class System:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
                     for j in range(len(windows)):
-                        if n_jobs_submitted >= self.max_num_jobs:
+                        # check n_jobs_submitted is less than the max_jobs
+                        while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                             time.sleep(120)
-                            n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
+                            pbar.set_description(f'Waiting to submit FE jobs')
+
                         folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                         if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
                             self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
@@ -1013,7 +1011,6 @@ class System:
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
                                 )
-                                n_jobs_submitted += 1
                                 continue
                             elif overwrite:
                                 slurm_job.cancel()
@@ -1022,7 +1019,6 @@ class System:
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
                                 )
-                                n_jobs_submitted += 1
                                 continue
                             else:
                                 logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
@@ -1042,7 +1038,7 @@ class System:
                                             'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                         }
                         )
-                        n_jobs_submitted += 1
+
                         pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                         self._slurm_jobs.update(
                             {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
@@ -1053,6 +1049,7 @@ class System:
             pbar.close()
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
+
         elif stage == 'fe_equil':
             logger.info('Submit NPT equilibration part of free energy stage')
             pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy equilibration jobs')
@@ -1062,9 +1059,10 @@ class System:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     # only run for window -1 (eq)
                     j = -1
-                    if n_jobs_submitted >= self.max_num_jobs:
+                    # check n_jobs_submitted is less than the max_jobs
+                    while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                         time.sleep(120)
-                        n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
+                        pbar.set_description(f'Waiting to submit FE equilibration jobs')
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                     #if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
                     #    self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
@@ -1087,7 +1085,6 @@ class System:
                                     'INPCRD': 'full.inpcrd'
                             }
                             )
-                            n_jobs_submitted += 1
                             continue
                         elif overwrite:
                             slurm_job.cancel()
@@ -1097,7 +1094,6 @@ class System:
                                     'INPCRD': 'full.inpcrd'
                                 }
                             )
-                            n_jobs_submitted += 1
                             continue
                         else:
                             logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
@@ -1118,7 +1114,6 @@ class System:
                         'ONLY_EQ': '1',
                         'INPCRD': 'full.inpcrd'
                     })
-                    n_jobs_submitted += 1
                     pbar.set_description(f'FE equil job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                     self._slurm_jobs.update(
                         {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
@@ -2277,7 +2272,7 @@ class System:
             Default is 'rondror'.
         max_num_jobs : int, optional
             The maximum number of jobs to submit at a time.
-            Default is 500.
+            Default is 2000.
         verbose : bool, optional
             Whether to print the verbose output. Default is False.
         """
@@ -2342,6 +2337,9 @@ class System:
             pbar.update(len(self.all_poses) - pbar.n)  # update to total
             pbar.set_description('Equilibration finished')
             pbar.close()
+            
+            self._generate_aligned_pdbs()
+
         else:
             logger.info('Equilibration simulations are already finished')
             logger.info(f'If you want to have a fresh start, remove {self.equil_folder} manually')
@@ -2423,7 +2421,6 @@ class System:
                     eq_rst7_rel = os.path.relpath(eq_rst7, start=f'{folder_comp}/{comp}{j:02d}')
                     os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/eqnpt04.rst7')
 
-        self._generate_aligned_pdbs()
 
         if only_fe_preparation:
             logger.info('only_fe_preparation is set to True. '

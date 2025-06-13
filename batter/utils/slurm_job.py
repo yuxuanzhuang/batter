@@ -3,6 +3,7 @@ import subprocess
 from datetime import datetime
 from loguru import logger
 import time
+import getpass
 
 class SLURMJob:
     def __init__(self, filename, partition=None, jobname=None):
@@ -213,3 +214,17 @@ class SLURMJob:
         else:
             logger.debug(f"Job {self.jobid} is still in state {job_state}")
             return True
+
+
+
+def get_squeue_job_count(user=None, partition=None):
+    if user is None:
+        user = getpass.getuser()
+
+    cmd = ["squeue", "-u", user]
+    if partition:
+        cmd += ["-p", partition]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    lines = result.stdout.strip().split("\n")
+    return max(len(lines) - 1, 0)
