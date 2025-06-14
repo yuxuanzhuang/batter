@@ -24,6 +24,9 @@ from loguru import logger
 import sys
 import glob
 import os
+from batter.utils import (
+    COMPONENTS_FOLDER_DICT,
+)
 
 class FEAnalysisBase(ABC):
     """
@@ -66,7 +69,7 @@ class FEAnalysisBase(ABC):
 
 class MBARAnalysis(FEAnalysisBase):
     def __init__(self,
-                comp_folder,
+                pose_folder,
                 component,
                 windows,
                 temperature,
@@ -82,8 +85,8 @@ class MBARAnalysis(FEAnalysisBase):
         
         Parameters
         ----------
-        comp_folder : str
-            The path to the component folder containing the simulation data.
+        pose_folder : str
+            The path to the pose folder containing the simulation data.
         component : str
             The name of the component to analyze (e.g., 'v', 'e', 'o')
         windows : list of int
@@ -104,6 +107,9 @@ class MBARAnalysis(FEAnalysisBase):
             If True, load the data from a previously saved file instead of extracting it again. 
             """
         super().__init__()
+        self.pose_folder = pose_folder
+        os.makedirs(f'{self.pose_folder}/Results', exist_ok=True)
+        comp_folder = f'{self.pose_folder}/{COMPONENTS_FOLDER_DICT[component]}'
         if not os.path.exists(comp_folder):
             raise ValueError(f"Component folder {comp_folder} does not exist.")
         self.comp_folder = comp_folder
@@ -242,7 +248,7 @@ class MBARAnalysis(FEAnalysisBase):
             self.results['convergence']['mbar'] = mbar
         
         # Save the results
-        with open(f'{self.comp_folder}/{self.component}_results.pickle', 'wb') as f:
+        with open(f'{self.pose_folder}/Results/{self.component}_results.pickle', 'wb') as f:
             pickle.dump(self.results, f)
 
     @staticmethod

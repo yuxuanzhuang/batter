@@ -18,10 +18,6 @@ import json
 from typing import Union
 from pathlib import Path
 import pickle
-try:
-    from openff.toolkit import Molecule
-except:
-    raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
 from rdkit import Chem
 import time
 from tqdm import tqdm
@@ -34,8 +30,6 @@ from batter.bat_lib import analysis
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
-from batter.analysis.sim_validation import SimValidator
-from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
@@ -61,6 +55,16 @@ warnings.filterwarnings("ignore", category=ResourceWarning)
 
 AVAILABLE_COMPONENTS = COMPONENTS_DICT['dd'] + COMPONENTS_DICT['rest']
 
+# the direction of the components that are used in the simulation
+COMPONENT_DIRECTION_DICT = {
+    'm': -1,
+    'n': 1,
+    'e': -1,
+    'v': -1,
+    'o': -1,
+    'z': -1,
+    'Boresch': -1,
+}
 
 class System:
     """
@@ -231,6 +235,12 @@ class System:
             The verbosity of the output. If True, it will print the debug messages.
             Default is False.
         """
+        # fail late on import openff
+        try:
+            from openff.toolkit import Molecule
+        except:
+            raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
+
         # Log every argument
         if verbose:
             logger.remove()
@@ -1742,9 +1752,138 @@ class System:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('Extra position restraints added')
 
+    def analyze_pose(self,
+                    pose: str = None,
+                    load: bool = True,
+                    sim_range: Tuple[int, int] = None,
+                    raise_on_error: bool = True):
+        """
+        Analyze the free energy results for one pose
+        Parameters
+        ----------
+        pose : str
+            The pose to analyze.
+        load : bool
+            Whether to load the results from file.
+        sim_range : tuple
+            The range of simulations to analyze.
+        raise_on_error : bool
+            Whether to raise an error if the analysis fails.
+        """
+        from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
+
+        pose_path = f'{self.fe_folder}/{pose}'
+
+        if load and os.path.exists(f'{pose_path}/Results/Results.dat'):
+            try:
+                self.fe_results[pose] = NewFEResult(f'{pose_path}/Results/Results.dat')
+                if np.isnan(self.fe_results[pose].fe):
+                    raise ValueError(f'FE for {pose} is invalid (None or NaN); rerun')
+                logger.debug(f'FE for {pose} loaded from {pose_path}/Results/Results.dat')
+                return
+            except Exception as e:
+                logger.warning(f'Failed to load FE for {pose} from {pose_path}/Results/Results.dat: {e}')
+                logger.warning('Re-running the FE analysis')
+        os.makedirs(f'{pose_path}/Results', exist_ok=True)
+
+        try:
+            results_entries = []
+
+            fe_values = []
+            fe_stds = []
+
+            # first get analytical results from Boresch restraint
+
+            if 'v' in self.sim_config.components:
+                disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
+            elif 'o' in self.sim_config.components:
+                disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
+            elif 'z' in self.sim_config.components:
+                disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
+
+            rest = self.sim_config.rest
+            k_r = rest[2]
+            k_a = rest[3]
+            bor_ana = BoreschAnalysis(
+                                disangfile=disangfile,
+                                k_r=k_r, k_a=k_a,
+                                temperature=self.sim_config.temperature,)
+            bor_ana.run_analysis()
+            fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
+            fe_stds.append(bor_ana.results['fe_error'])
+            results_entries.append(
+                f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
+            )
+            
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                comp_path = f'{pose_path}/{comp_folder}'
+                windows = self.component_windows_dict[comp]
+
+                # skip n if no conformational restraints are applied
+                if comp == 'n' and rest[1] == 0 and rest[4] == 0:
+                    logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
+                    continue
+
+                if comp in COMPONENTS_DICT['dd']:
+                    # directly read energy files
+                    mbar_ana = MBARAnalysis(
+                        pose_folder=pose_path,
+                        component=comp,
+                        windows=windows,
+                        temperature=self.sim_config.temperature,
+                        sim_range=sim_range,
+                        load=False
+                    )
+                    mbar_ana.run_analysis()
+                    mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                            title=f'Convergence for {comp} {pose}',
+                    )
+
+                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
+                    fe_stds.append(mbar_ana.results['fe_error'])
+                    results_entries.append(
+                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
+                    )
+                elif comp in COMPONENTS_DICT['rest']:
+                    rest_mbar_ana = RESTMBARAnalysis(
+                        pose_folder=pose_path,
+                        component=comp,
+                        windows=windows,
+                        temperature=self.sim_config.temperature,
+                        sim_range=sim_range,
+                        load=False
+                    )
+                    rest_mbar_ana.run_analysis()
+                    rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                            title=f'Convergence for {comp} {pose}',
+                    )
+
+                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
+                    fe_stds.append(rest_mbar_ana.results['fe_error'])
+                    results_entries.append(
+                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
+                    )
+        
+            # calculate total free energy
+            fe_value = np.sum(fe_values)
+            fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
+        except Exception as e:
+            logger.error(f'Error during FE analysis for {pose}: {e}')
+            if raise_on_error:
+                raise e
+            fe_value = np.nan
+            fe_std = np.nan
+
+        results_entries.append(
+            f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+        )
+        with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+            f.write('\n'.join(results_entries))
+                
     @safe_directory
     @save_state
-    def analysis_new(
+    def analysis(
         self,
         input_file: Union[str, Path, SimulationConfig]=None,
         load=True,
@@ -1754,20 +1893,22 @@ class System:
         raise_on_error: bool = True,
         ):
         """
-        New analysis rountine with alchemlyb
+        Analyze the free energy results for all poses.
+        Parameters
+        ----------
+        input_file : str or Path or SimulationConfig, optional
+            The input file or SimulationConfig object to load the simulation configuration.
+        load : bool, optional
+            Whether to load the existing results from the output directory. Default is True.
+        check_finished : bool, optional
+            Whether to check if the simulation is finished before analyzing. Default is False.
+        sim_range : tuple, optional
+            The range of simulations to analyze. Default is None, which means all simulations.
+        overwrite : bool, optional
+            Whether to overwrite the existing results. Default is False.
+        raise_on_error : bool, optional
+            Whether to raise an error if the analysis fails. Default is True.
         """
-
-        # the direction of the components that are used in the simulation
-        COMPONENT_DIRECTION_DICT = {
-            'm': -1,
-            'n': 1,
-            'e': -1,
-            'v': -1,
-            'o': -1,
-            'z': -1,
-            'Boresch': -1,
-        }
-
         if input_file is not None:
             self._get_sim_config(input_file)
         
@@ -1788,117 +1929,17 @@ class System:
             )
             for pose in self.all_poses:
                 pbar.set_postfix(pose=pose)
-                if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
-                    try:
-                        self.fe_results[pose] = NewFEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                        if np.isnan(self.fe_results[pose].fe):
-                            raise ValueError(f'FE for {pose} is invalid (None or NaN); rerun')
-                        logger.debug(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
-                        pbar.set_description(f'FE for {pose} = {self.fe_results[pose].fe:.2f} ± {self.fe_results[pose].fe_std:.2f} kcal/mol')
-                        continue
-                    except Exception as e:
-                        logger.warning(f'Failed to load FE for {pose} from {self.fe_folder}/{pose}/Results/Results.dat: {e}')
-                        logger.warning('Re-running the FE analysis')
-                os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
-
-                try:
-                    results_entries = []
-
-                    fe_values = []
-                    fe_stds = []
-
-                    # first get analytical results from Boresch restraint
-
-                    if 'v' in self.sim_config.components:
-                        disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
-                    elif 'o' in self.sim_config.components:
-                        disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
-                    elif 'z' in self.sim_config.components:
-                        disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
-
-                    rest = self.sim_config.rest
-                    k_r = rest[2]
-                    k_a = rest[3]
-                    bor_ana = BoreschAnalysis(
-                                        disangfile=disangfile,
-                                        k_r=k_r, k_a=k_a,
-                                        temperature=self.sim_config.temperature,)
-                    bor_ana.run_analysis()
-                    fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
-                    fe_stds.append(bor_ana.results['fe_error'])
-                    results_entries.append(
-                        f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
-                    )
-                    
-                    for comp in self.sim_config.components:
-                        comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                        comp_path = f'{self.fe_folder}/{pose}/{comp_folder}'
-                        windows = self.component_windows_dict[comp]
-
-                        # skip n if no conformational restraints are applied
-                        if comp == 'n' and rest[1] == 0 and rest[4] == 0:
-                            logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
-                            continue
-
-                        if comp in COMPONENTS_DICT['dd']:
-                            # directly read energy files
-                            mbar_ana = MBARAnalysis(
-                                comp_folder=comp_path,
-                                component=comp,
-                                windows=windows,
-                                temperature=self.sim_config.temperature,
-                                sim_range=sim_range,
-                                load=False
-                            )
-                            mbar_ana.run_analysis()
-                            mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
-                                                    title=f'Convergence for {comp} {pose}',
-                            )
-
-                            fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
-                            fe_stds.append(mbar_ana.results['fe_error'])
-                            results_entries.append(
-                                f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
-                            )
-                        elif comp in COMPONENTS_DICT['rest']:
-                            rest_mbar_ana = RESTMBARAnalysis(
-                                comp_folder=comp_path,
-                                component=comp,
-                                windows=windows,
-                                temperature=self.sim_config.temperature,
-                                sim_range=sim_range,
-                                load=False
-                            )
-                            rest_mbar_ana.run_analysis()
-                            rest_mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
-                                                    title=f'Convergence for {comp} {pose}',
-                            )
-
-                            fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
-                            fe_stds.append(rest_mbar_ana.results['fe_error'])
-                            results_entries.append(
-                                f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
-                            )
-                
-                    # calculate total free energy
-                    fe_value = np.sum(fe_values)
-                    fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
-                except Exception as e:
-                    logger.error(f'Error during FE analysis for {pose}: {e}')
-                    if raise_on_error:
-                        raise e
-                    fe_value = np.nan
-                    fe_std = np.nan
-
-                results_entries.append(
-                    f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+                self.analyze_pose(
+                    pose=pose,
+                    load=load,
+                    sim_range=sim_range,
+                    raise_on_error=raise_on_error
                 )
-                with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                    f.write('\n'.join(results_entries))
-                
                 self.fe_results[pose] = NewFEResult(
                     f'{self.fe_folder}/{pose}/Results/Results.dat',
                 )
+                fe_value = self.fe_results[pose].fe
+                fe_std = self.fe_results[pose].fe_std
                 pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
  
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
@@ -1908,6 +1949,27 @@ class System:
                 logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
                 f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
             
+        
+    @safe_directory
+    @save_state
+    def analysis_new(
+        self,
+        input_file: Union[str, Path, SimulationConfig]=None,
+        load=True,
+        check_finished: bool = False,
+        sim_range: Tuple[int, int] = None,
+        overwrite: bool = False,
+        raise_on_error: bool = True,
+        ):
+        """
+        doublegangler for analysis method
+        """
+        self.analysis(input_file=input_file,
+                      load=load,
+                      check_finished=check_finished,
+                      sim_range=sim_range,
+                      overwrite=overwrite,
+                      raise_on_error=raise_on_error)
 
     def _generate_aligned_pdbs(self):
         # generate aligned pdbs
@@ -2001,6 +2063,8 @@ class System:
         """
         Check if the ligand is bound after equilibration
         """
+        from batter.analysis.sim_validation import SimValidator
+
         logger.info("Checking if ligands are bound after equilibration")
         UNBOUND_THRESHOLD = 8.0
         bound_poses = []
