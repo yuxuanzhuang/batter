@@ -42,10 +42,6 @@ def check_eq_stage(pose, comps, fe_folder):
 
 def check_stage(pose, comp, n_windows, fe_folder):
     sim_type = 'rest' if comp in ['m', 'n'] else 'sdr'
-    # check equilibration of FE has finished
-    # mini.rst7
-
-
     for window in range(n_windows):
         folder_2_check = f'{fe_folder}/{pose}/{sim_type}/{comp}{window:02d}'
         if not os.path.exists(folder_2_check):
