@@ -173,16 +173,20 @@ def gather(inputs, sim_range=(0, -1), load=False, n_workers=64):
         logger.info(f"Finished processing system: {input_path}")
 
 @click.command()
-@click.option("--partition", "-p", default="rondror", help="SLURM partition to report jobs from.")
+@click.option("--partition", "-p", default=None, help="SLURM partition to report jobs from; if not specified, report all partitions.")
 @click.option("--detailed", "-d", is_flag=True, default=False, help="Show detailed job information.")
-def report_jobs(partition="rondror", detailed=False):
+def report_jobs(partition=None, detailed=False):
     """
     Report the status of SLURM jobs of FEP simulations
     """
     try:
         # Get current user's SLURM jobs
+        if partition is None:
+            command = ["squeue", "--user", os.getenv("USER"), "--format=%i %j %T"]
+        else:
+            command = ["squeue", "--partition", partition, "--user", os.getenv("USER"), "--format=%i %j %T"]
         result = subprocess.run(
-            ["squeue", "--partition", partition, "--user", os.getenv("USER"), "--format=%i %j %T"],
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -271,3 +275,50 @@ def report_jobs(partition="rondror", detailed=False):
                     click.echo(click.style(f"Job ID: {row['jobid']} - Pose: {row['pose']} - Comp: {row['comp']} - Win: {row['win']} - Status: {row['status']}", fg="green"), bold=True)
                 elif row['status'] == 'PENDING':
                     click.echo(click.style(f"Job ID: {row['jobid']} - Pose: {row['pose']} - Comp: {row['comp']} - Win: {row['win']} - Status: {row['status']}", fg="red"))
+        click.echo("-" * 60)
+    click.echo("If you want to cancel jobs, use 'batter cancel-jobs --name <system_name>' command.")
+
+@click.command()
+@click.option("--name", "-n", type=click.Path(exists=True), required=True, help="Path to the system to cancel jobs for.")
+def cancel_jobs(name):
+    """
+    Cancel all SLURM jobs that include the given system path in their job name.
+    """
+    """
+    Cancel all SLURM jobs whose job name includes the given system path.
+    """
+    try:
+        # Run the equivalent of: squeue -u $USER --format="%i %j"
+        result = subprocess.run(
+            ["squeue", "-u", os.getenv("USER"), "--format=%i %j"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        click.echo(f"Error querying SLURM: {e.stderr}")
+        return
+
+    lines = result.stdout.strip().split("\n")[1:]
+
+    matching_ids = [
+        line.split()[0]
+        for line in lines
+        if name in line
+    ]
+
+    if not matching_ids:
+        click.echo(f"No jobs found containing '{name}' in job name.")
+        return
+
+    click.echo(f"Cancelling {len(matching_ids)} job(s)")
+
+    # cancel 30 jobs at a time
+    for i in range(0, len(matching_ids), 30):
+        batch = matching_ids[i:i+30]
+        #click.echo(f"Cancelling jobs: {', '.join(batch)}")
+        try:
+            subprocess.run(["scancel"] + batch, check=True)
+        except subprocess.CalledProcessError as e:
+            click.echo(f"Failed to cancel jobs: {e.stderr}")
