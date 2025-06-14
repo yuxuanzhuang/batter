@@ -37,7 +37,7 @@ else
 fi
 
 if [[ $only_eq -eq 1 ]]; then
-    if [[ $overwrite -eq 0]]; then
+    if [[ $overwrite -eq 0 && -s eq_output.pdb ]]; then
         echo "Skipping equilibration steps."
     else
         # Equilibration with protein and lipid restrained

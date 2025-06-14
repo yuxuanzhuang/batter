@@ -301,7 +301,7 @@ def run_in_batch(
                         run_lines.append(f'    echo "Using second last file for {pose}/{comp}: $latest_file"')
                         run_lines.append('fi')
                         run_lines.append(f'echo "Last file for {pose}/{comp}: $latest_file"')
-                        run_lines.append('latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{2}(?=\.rst7)")')
+                        run_lines.append(r'latest_num=$(echo "$latest_file" | grep -oP "(?<=-)[0-9]{2}(?=\.rst7)")')
                         run_lines.append('next_num=$(printf "%02d" $((10#$latest_num + 1)))')
                         run_lines.append('echo "Next number: $next_num"')
                         run_lines.append(f'sed "s/CURRNUM/${{latest_num}}/g" {pose}/groupfiles/{comp}_mdin.in.extend.groupfile > {pose}/groupfiles/{comp}_temp_mdin.groupfile')

@@ -272,7 +272,7 @@ def report_jobs(partition=None, detailed=False):
         if detailed:
             for _, row in system_df.iterrows():
                 if row['status'] == 'RUNNING':
-                    click.echo(click.style(f"Job ID: {row['jobid']} - Pose: {row['pose']} - Comp: {row['comp']} - Win: {row['win']} - Status: {row['status']}", fg="green"), bold=True)
+                    click.echo(click.style(f"Job ID: {row['jobid']} - Pose: {row['pose']} - Comp: {row['comp']} - Win: {row['win']} - Status: {row['status']}", fg="green", bold=True))
                 elif row['status'] == 'PENDING':
                     click.echo(click.style(f"Job ID: {row['jobid']} - Pose: {row['pose']} - Comp: {row['comp']} - Win: {row['win']} - Status: {row['status']}", fg="red"))
         click.echo("-" * 60)

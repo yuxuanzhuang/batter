@@ -4495,13 +4495,19 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_lig_name_', mol))
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_lig_name_', mol))
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
 
         # Create running scripts for local and server
         with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
@@ -4617,13 +4623,19 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_lig_name_', mol))
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_lig_name_', mol))
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
 
         # Create running scripts for local and server
         with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
@@ -5981,24 +5993,26 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                 #mdin.write('DISANG=disang.rest\n')
                 #mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
-                with open("./eqnpt0.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
+                        fout.write(line.replace('_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
 
         # Create running scripts for local and server
         with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
