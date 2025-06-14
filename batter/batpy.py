@@ -278,6 +278,7 @@ def report_jobs(partition=None, detailed=False):
         click.echo("-" * 60)
     click.echo("If you want to cancel jobs, use 'batter cancel-jobs --name <system_name>' command.")
 
+
 @click.command()
 @click.option("--name", "-n", type=click.Path(exists=True), required=True, help="Path to the system to cancel jobs for.")
 def cancel_jobs(name):

@@ -1886,11 +1886,13 @@ class System:
     def analysis(
         self,
         input_file: Union[str, Path, SimulationConfig]=None,
-        load=True,
+        load: bool = True,
         check_finished: bool = False,
         sim_range: Tuple[int, int] = None,
         overwrite: bool = False,
-        raise_on_error: bool = True,
+        raise_on_error: bool = False,
+        run_with_slurm: bool = False,
+        run_with_slurm_kwargs: dict = None,
         ):
         """
         Analyze the free energy results for all poses.
@@ -1907,7 +1909,13 @@ class System:
         overwrite : bool, optional
             Whether to overwrite the existing results. Default is False.
         raise_on_error : bool, optional
-            Whether to raise an error if the analysis fails. Default is True.
+            Whether to raise an error if the analysis fails. Default is False.
+        run_with_slurm : bool, optional
+            Whether to dispatch the analysis jobs using SLURM. Default is False.
+        run_with_slurm_kwargs : dict, optional
+            Additional keyword arguments for SLURM job submission. Default is None.
+            Check https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
+            for available options.
         """
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -1921,33 +1929,101 @@ class System:
         if not os.path.exists(f'{self.output_dir}/Results'):
             os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
             self._generate_aligned_pdbs()
-            
-        with self._change_dir(self.output_dir):
-            pbar = tqdm(
-                self.all_poses,
-                desc='Analyzing FE for poses',
+
+        if run_with_slurm:
+            logger.info('Running analysis with SLURM Cluster')
+            from dask_jobqueue import SLURMCluster
+            from dask.distributed import Client, as_completed
+
+            slurm_kwargs = {
+                # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
+                'queue': self.partition,
+                'cores': 4,
+                'memory': '8GB',
+                'walltime': '00:20:00',
+                'job_extra_directives': [
+                    f'--output=/tmp/dask-%j.out',
+                    f'--error=/tmp/dask-%j.err',
+                ],
+                # 'account': 'your_slurm_account',
+            }
+            if run_with_slurm_kwargs is not None:
+                slurm_kwargs.update(run_with_slurm_kwargs)
+            cluster = SLURMCluster(
+                **slurm_kwargs,
             )
-            for pose in self.all_poses:
-                pbar.set_postfix(pose=pose)
+            cluster.scale(jobs=len(self.all_poses))
+            logger.info(f'SLURM Cluster created with {len(self.all_poses)} workers')
+
+            client = Client(cluster)
+
+            def analyze_single_pose(pose, load, sim_range, raise_on_error):
                 self.analyze_pose(
                     pose=pose,
                     load=load,
                     sim_range=sim_range,
-                    raise_on_error=raise_on_error
+                    raise_on_error=raise_on_error,
+
                 )
-                self.fe_results[pose] = NewFEResult(
-                    f'{self.fe_folder}/{pose}/Results/Results.dat',
+                return pose
+
+            with self._change_dir(self.output_dir):
+                futures = []
+                for pose in self.all_poses:
+                    logger.debug(f'Submitting analysis for pose: {pose}')
+                    fut = client.submit(
+                        analyze_single_pose,
+                        pose,
+                        load,
+                        sim_range,
+                        raise_on_error,
+                        pure=False,
+                    )
+                    futures.append(fut)
+
+                for future in tqdm(as_completed(futures),
+                                    total=len(futures),
+                                    desc="Analyzing FE for poses in SLURM Cluster"):
+                    pose = future.result()
+                    self.fe_results[pose] = NewFEResult(
+                        f'{self.fe_folder}/{pose}/Results/Results.dat',
+                    )
+                    fe_value = self.fe_results[pose].fe
+                    fe_std = self.fe_results[pose].fe_std
+                    # tqdm.write(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+            logger.info('Analysis with SLURM Cluster completed')
+            client.close()
+            cluster.close()
+            
+        else:
+            with self._change_dir(self.output_dir):
+                pbar = tqdm(
+                    self.all_poses,
+                    desc='Analyzing FE for poses',
                 )
-                fe_value = self.fe_results[pose].fe
-                fe_std = self.fe_results[pose].fe_std
-                pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
- 
+                for pose in self.all_poses:
+                    pbar.set_postfix(pose=pose)
+                    self.analyze_pose(
+                        pose=pose,
+                        load=load,
+                        sim_range=sim_range,
+                        raise_on_error=raise_on_error
+                    )
+                    self.fe_results[pose] = NewFEResult(
+                        f'{self.fe_folder}/{pose}/Results/Results.dat',
+                    )
+                    fe_value = self.fe_results[pose].fe
+                    fe_std = self.fe_results[pose].fe_std
+                    pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+    
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
             for i, (pose, fe) in enumerate(self.fe_results.items()):
                 mol_name = self.mols[i]
                 ligand_name = self.pose_ligand_dict[pose]
                 logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
                 f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+        
+        logger.info(f'self.fe_results: {self.fe_results}')
             
         
     @safe_directory
