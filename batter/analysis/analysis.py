@@ -142,6 +142,7 @@ class MBARAnalysis(FEAnalysisBase):
 
         self._data_list = df_list
         self._u_df = pd.concat(df_list)
+        self.timeseries = [df.index.get_level_values('time').values for df in df_list]
         self._data_initialized = True
     
     def run_analysis(self):
@@ -168,12 +169,74 @@ class MBARAnalysis(FEAnalysisBase):
         logger.debug(f"Free energy results for {self.component}: {self.results['fe']:.2f} +- {self.results['fe_error']:.2f} {self.energy_unit}")
 
         # convergence
+
         logger.debug(f"Calculating convergence for {self.component}...")
         with SuppressLoguru():
             logger.debug("Calculating forward-backward convergence...")
             self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list, 'MBAR')
+            forward_end_time = [
+                [series[int(len(series) * fraction)-1]
+                for series in self.timeseries]
+                for fraction in self.results['convergence']['time_convergence']['data_fraction']
+            ]
+            backward_start_time = [
+                [series[int(len(series) * (1 - fraction))-1]
+                for series in self.timeseries]
+                for fraction in self.results['convergence']['time_convergence']['data_fraction']
+            ]
+            forward_FE = self.results['convergence']['time_convergence'].Forward.values
+            forward_FE_err = self.results['convergence']['time_convergence'].Forward_Error.values
+            backward_FE = self.results['convergence']['time_convergence'].Backward.values
+            backward_FE_err = self.results['convergence']['time_convergence'].Backward_Error.values
+
+            forward_end_time_tuples = [tuple(times) for times in forward_end_time]
+            backward_start_time_tuples = [tuple(times) for times in backward_start_time]
+
+            self.results['convergence']['forward_timeseries'] = pd.DataFrame(
+                np.column_stack([forward_FE, forward_FE_err]),
+                index=pd.MultiIndex.from_tuples(forward_end_time_tuples,
+                                                names=[f"time_{i}" for i in range(len(forward_end_time_tuples[0]))]),
+                columns=['FE', 'FE_Error']
+            )
+            self.results['convergence']['backward_timeseries'] = pd.DataFrame(
+                np.column_stack([backward_FE, backward_FE_err]),
+                index=pd.MultiIndex.from_tuples(backward_start_time_tuples,
+                                                names=[f"time_{i}" for i in range(len(backward_start_time_tuples[0]))]),
+                columns=['FE', 'FE_Error']
+            )
+            
             logger.debug("Calculating block average convergence...")
-            self.results['convergence']['block_convergence'] = block_average(self.data_list, 'MBAR')
+            num_blocks = 10
+            self.results['convergence']['block_convergence'] = block_average(self.data_list,
+                                                                             estimator='MBAR',
+                                                                             num=num_blocks)
+
+            block_FE = self.results['convergence']['block_convergence'].FE.values
+            block_FE_err = self.results['convergence']['block_convergence'].FE_Error.values
+            fractions = np.linspace(0, 1, num_blocks)
+            block_start_time = [
+                [series[int(len(series) * fraction)]
+                for series in self.timeseries]
+                for fraction in fractions[:-1]
+            ]
+            block_end_time = [
+                [series[int(len(series) * fraction)-1]
+                for series in self.timeseries]
+                for fraction in fractions[1:]
+            ]
+
+            # Store both start and end times in a MultiIndex
+            block_times = [
+                (tuple(start), tuple(end))
+                for start, end in zip(block_start_time, block_end_time)
+            ]
+
+            self.results['convergence']['block_timeseries'] = pd.DataFrame(
+                np.column_stack([block_FE, block_FE_err]),
+                index=pd.MultiIndex.from_tuples(block_times, names=["start_time", "end_time"]),
+                columns=['FE', 'FE_Error']
+            )
+
             logger.debug("Calculating overlap matrix...")
             self.results['convergence']['overlap_matrix'] = mbar.overlap_matrix
             self.results['convergence']['mbar'] = mbar
@@ -531,6 +594,8 @@ class RESTMBARAnalysis(MBARAnalysis):
                 t0, g, Neff_max = detect_equilibration(u, nskip=10)
                 u = u[t0:]
 
+        else:
+            t0 = 0
         Upot = np.zeros([num_win, len(u)], np.float64)
 
         for win in range(num_win):

@@ -434,6 +434,18 @@ class System:
         return self._ligand_list
     
     @property
+    def pose_ligand_dict(self):
+        """
+        A dictionary of ligands with pose names as keys.
+        """
+        try:
+            return self._pose_ligand_dict
+        except AttributeError:
+            return {pose.split('/')[-1].split('.')[0]: ligand
+                    for ligand, pose in self.ligand_list.items()}
+
+    
+    @property
     def ligand_names(self):
         """
         The names of the ligands.
@@ -766,7 +778,6 @@ class System:
         """
         logger.debug('Preparing the system')
         self.overwrite = overwrite
-        self.builders_factory = BuilderFactory()
         self.partition = partition
         self._n_workers = n_workers
         if avg_struc is not None and rmsf_file is not None:
@@ -796,6 +807,7 @@ class System:
                            f"does not match the number of ligands: {len(self.ligand_paths)}")
             logger.debug("Using the ligand paths for the poses")
         self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        self._pose_ligand_dict = {pose: ligand for pose, ligand in zip(self._all_poses, self.ligand_names)}
         self.sim_config.poses_def = self._all_poses 
 
         if stage == 'equil':
@@ -1212,12 +1224,13 @@ class System:
                         f.write(s)
 
         builders = []
+        builders_factory = BuilderFactory()
         for pose in self.all_poses:
             #logger.info(f'Preparing pose: {pose}')
             if os.path.exists(f"{self.equil_folder}/{pose}/cv.in") and not self.overwrite:
                 logger.info(f'Pose {pose} already exists; add overwrite=True to re-build the pose')
                 continue
-            equil_builder = self.builders_factory.get_builder(
+            equil_builder = builders_factory.get_builder(
                 stage='equil',
                 system=self,
                 pose=pose,
@@ -1242,6 +1255,7 @@ class System:
         molr = self.mols[0]
         poser = self.bound_poses[0]
         builders = []
+        builders_factory = BuilderFactory()
         for pose in sim_config.poses_def:
             # if "UNBOUND" found in equilibration, skip
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
@@ -1277,7 +1291,7 @@ class System:
                 if os.path.exists(cv_path) and not self.overwrite:
                     logger.info(f"Component {component} for pose {pose} already exists; add overwrite=True to re-build the component")
                     continue
-                fe_eq_builder = self.builders_factory.get_builder(
+                fe_eq_builder = builders_factory.get_builder(
                     stage='fe',
                     win=-1,
                     component=component,
@@ -1303,7 +1317,7 @@ class System:
         poser = self.bound_poses[0]
 
         builders = []
-
+        builders_factory = BuilderFactory()
         for pose in self.bound_poses:
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 continue
@@ -1325,7 +1339,7 @@ class System:
                     continue
 
                 for i, lambdas in enumerate(lambdas_comp):
-                    fe_builder = self.builders_factory.get_builder(
+                    fe_builder = builders_factory.get_builder(
                         stage='fe',
                         win=i,
                         component=component,
@@ -1885,14 +1899,14 @@ class System:
                 self.fe_results[pose] = NewFEResult(
                     f'{self.fe_folder}/{pose}/Results/Results.dat',
                 )
-                pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+                pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
  
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
             for i, (pose, fe) in enumerate(self.fe_results.items()):
                 mol_name = self.mols[i]
-                
-                logger.debug(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
-                f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+                ligand_name = self.pose_ligand_dict[pose]
+                logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
             
 
     def _generate_aligned_pdbs(self):
