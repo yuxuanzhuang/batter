@@ -38,6 +38,8 @@ from batter.utils import (
     run_with_log,
     save_state,
     safe_directory,
+    natural_keys
+
 )
 
 from batter.utils import (
@@ -2016,7 +2018,11 @@ class System:
                     fe_std = self.fe_results[pose].fe_std
                     pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
     
+        # sort self.fe_sults by pose
+        self._fe_results = dict(sorted(self._fe_results.items(), key=lambda item: natural_keys(item[0])))
+    
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
+
             for i, (pose, fe) in enumerate(self.fe_results.items()):
                 mol_name = self.mols[i]
                 ligand_name = self.pose_ligand_dict[pose]
@@ -2914,20 +2920,19 @@ class System:
                     sim_type = 'rest'
                 elif comp in COMPONENTS_DICT['dd']:
                     sim_type = 'sdr'
-                folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}00'
-                mdin_files = glob.glob(f'{folder}/md*.rst7')
-                # make sure the size is not empty
-                mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
-
-                # only base name
-                # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
-                def sort_key(x):
-                    return int(os.path.splitext(os.path.basename(x))[0][-2:])
-                mdin_files.sort(key=sort_key)
-                if len(mdin_files) > 0:
-                    stage_sims[pose][comp] = sort_key(mdin_files[-1])
-                else:
-                    stage_sims[pose][comp] = -1
+                min_stage = float('inf')
+                for win in range(0, len(self.component_windows_dict[comp])):
+                    folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}{win:02d}'
+                    mdin_files = glob.glob(f'{folder}/md*.rst7')
+                    # make sure the size is not empty
+                    mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
+                    # only base name
+                    # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
+                    def sort_key(x):
+                        return int(os.path.splitext(os.path.basename(x))[0][-2:])
+                    mdin_files.sort(key=sort_key)
+                    min_stage = min(min_stage, sort_key(mdin_files[-1]) if mdin_files else -1)
+                stage_sims[pose][comp] = min_stage
         import matplotlib.pyplot as plt
         import seaborn as sns
         import pandas as pd
@@ -2935,6 +2940,7 @@ class System:
         stage_sims_df = pd.DataFrame(stage_sims)
         fig, ax = plt.subplots(figsize=(1* len(self.bound_poses), 5))
         sns.heatmap(stage_sims_df, ax=ax, annot=True, cmap='viridis')
+        plt.title('Simulation Stages for each Pose and Component')
         plt.show()
 
 
@@ -3104,6 +3110,7 @@ class System:
     @property
     def fe_results(self):
         return self._fe_results
+
 
     @property
     def ligand_poses(self):
