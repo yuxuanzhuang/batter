@@ -227,10 +227,20 @@ def report_jobs(partition=None, detailed=False):
             }
             job_info_list.append(job_info)
     
+    
     job_df = pd.DataFrame(job_info_list)
     if job_df.empty:
         click.echo("No FEP jobs found.")
         return
+
+    # confirm no duplicate system + pose + comp + win + stage
+    duplicates = job_df.duplicated(subset=["system", "pose", "comp", "win", "stage"], keep=False)
+    if duplicates.any():
+        click.echo(click.style("Warning: Found duplicate jobs with the same system, pose, comp, win, and stage.", fg="yellow"))
+        for _, row in job_df[duplicates].iterrows():
+            click.echo(f"Duplicate Job ID: {row['jobid']} - System: {row['system']} - Pose: {row['pose']} - Comp: {row['comp']} - Win: {row['win']} - Stage: {row['stage']} - Status: {row['status']}")
+        logger.warning("Duplicate jobs detected. Please check the job list.")
+        
     # print number of running/pending jobs
     total_jobs = len(job_df)
     running_jobs = job_df[job_df['status'] == 'RUNNING'].shape[0]

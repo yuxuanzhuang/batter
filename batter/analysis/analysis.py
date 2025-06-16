@@ -269,13 +269,15 @@ class MBARAnalysis(FEAnalysisBase):
                 md_sim_files.append(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out')
 
         if len(md_sim_files) == 0:
-            # the simulation is done probably not on Frontier
+            # the simulation is done probably in older versions
             md_sim_files = [
                 #f'{comp_folder}/{component}{win_i:02d}/md-01.out',
                 #f'{comp_folder}/{component}{win_i:02d}/md-02.out',
                 f'{comp_folder}/{component}{win_i:02d}/md-03.out',
                 f'{comp_folder}/{component}{win_i:02d}/md-04.out'
             ]
+            if all(not os.path.exists(md_file) for md_file in md_sim_files):
+                raise FileNotFoundError(f"No simulation files found for {component}{win_i:02d}")
 
         with SuppressLoguru():
             dfs = []
@@ -551,11 +553,17 @@ class RESTMBARAnalysis(MBARAnalysis):
         top = 'full'
         # make sure all nc files exist
         if len(md_sim_files) == 0:
-            # the simulation is done probably not on Frontier
+            # the simulation is done probably in order versions
             md_sim_files = ['md01.nc', 'md02.nc', 'md03.nc', 'md04.nc']
-            # locally, it stores only vac # of atoms
+            if all(not os.path.exists(md_file) for md_file in md_sim_files):
+                raise FileNotFoundError(f"No simulation files found for {component}{win_i:02d}")
+        try:
+            generate_results_rest(md_sim_files, component, blocks=5, top=top)
+        except:
+            # try use vac
             top = 'vac'
-        generate_results_rest(md_sim_files, component, blocks=5, top=top)
+            generate_results_rest(md_sim_files, component, blocks=5, top=top)
+
         logger.debug(f"Reading data for {component}{win_i:02d}...")
 
         # read simulation data

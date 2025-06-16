@@ -1078,15 +1078,16 @@ class System:
             logger.info('Submit NPT equilibration part of free energy stage')
             pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy equilibration jobs')
             for pose in self.bound_poses:
+                # only check for each pose to reduce frequently checking SLURM 
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
+                    time.sleep(120)
+                    pbar.set_description(f'Waiting to submit FE equilibration jobs')
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     # only run for window -1 (eq)
                     j = -1
                     # check n_jobs_submitted is less than the max_jobs
-                    while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
-                        time.sleep(120)
-                        pbar.set_description(f'Waiting to submit FE equilibration jobs')
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
                     #if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
                     #    self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
@@ -1882,6 +1883,8 @@ class System:
         )
         with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
             f.write('\n'.join(results_entries))
+        
+        return
                 
     @safe_directory
     @save_state
@@ -1908,6 +1911,7 @@ class System:
             Whether to check if the simulation is finished before analyzing. Default is False.
         sim_range : tuple, optional
             The range of simulations to analyze. Default is None, which means all simulations.
+            If less simulations were found than specified, it will analyze all found simulations.
         overwrite : bool, optional
             Whether to overwrite the existing results. Default is False.
         raise_on_error : bool, optional
@@ -1979,7 +1983,8 @@ class System:
                         load,
                         sim_range,
                         raise_on_error,
-                        pure=False,
+                        pure=True,
+                        key=f'analyze_{pose}'
                     )
                     futures.append(fut)
 
