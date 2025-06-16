@@ -1973,55 +1973,53 @@ class System:
                 )
                 return pose
 
-            with self._change_dir(self.output_dir):
-                futures = []
-                for pose in self.all_poses:
-                    logger.debug(f'Submitting analysis for pose: {pose}')
-                    fut = client.submit(
-                        analyze_single_pose,
-                        pose,
-                        load,
-                        sim_range,
-                        raise_on_error,
-                        pure=True,
-                        key=f'analyze_{pose}'
-                    )
-                    futures.append(fut)
+            futures = []
+            for pose in self.all_poses:
+                logger.debug(f'Submitting analysis for pose: {pose}')
+                fut = client.submit(
+                    analyze_single_pose,
+                    pose,
+                    load,
+                    sim_range,
+                    raise_on_error,
+                    pure=True,
+                    key=f'analyze_{pose}'
+                )
+                futures.append(fut)
 
-                for future in tqdm(as_completed(futures),
-                                    total=len(futures),
-                                    desc="Analyzing FE for poses in SLURM Cluster"):
-                    pose = future.result()
-                    self.fe_results[pose] = NewFEResult(
-                        f'{self.fe_folder}/{pose}/Results/Results.dat',
-                    )
-                    fe_value = self.fe_results[pose].fe
-                    fe_std = self.fe_results[pose].fe_std
-                    # tqdm.write(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+            for future in tqdm(as_completed(futures),
+                                total=len(futures),
+                                desc="Analyzing FE for poses in SLURM Cluster"):
+                pose = future.result()
+                self.fe_results[pose] = NewFEResult(
+                    f'{self.fe_folder}/{pose}/Results/Results.dat',
+                )
+                fe_value = self.fe_results[pose].fe
+                fe_std = self.fe_results[pose].fe_std
+                # tqdm.write(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
             logger.info('Analysis with SLURM Cluster completed')
             client.close()
             cluster.close()
             
         else:
-            with self._change_dir(self.output_dir):
-                pbar = tqdm(
-                    self.all_poses,
-                    desc='Analyzing FE for poses',
+            pbar = tqdm(
+                self.all_poses,
+                desc='Analyzing FE for poses',
+            )
+            for pose in self.all_poses:
+                pbar.set_postfix(pose=pose)
+                self.analyze_pose(
+                    pose=pose,
+                    load=load,
+                    sim_range=sim_range,
+                    raise_on_error=raise_on_error
                 )
-                for pose in self.all_poses:
-                    pbar.set_postfix(pose=pose)
-                    self.analyze_pose(
-                        pose=pose,
-                        load=load,
-                        sim_range=sim_range,
-                        raise_on_error=raise_on_error
-                    )
-                    self.fe_results[pose] = NewFEResult(
-                        f'{self.fe_folder}/{pose}/Results/Results.dat',
-                    )
-                    fe_value = self.fe_results[pose].fe
-                    fe_std = self.fe_results[pose].fe_std
-                    pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+                self.fe_results[pose] = NewFEResult(
+                    f'{self.fe_folder}/{pose}/Results/Results.dat',
+                )
+                fe_value = self.fe_results[pose].fe
+                fe_std = self.fe_results[pose].fe_std
+                pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
     
         # sort self.fe_sults by pose
         self._fe_results = dict(sorted(self._fe_results.items(), key=lambda item: natural_keys(item[0])))
