@@ -817,6 +817,7 @@ class SystemBuilder(ABC):
         f.close()
 
         u = mda.Universe('full.pdb')
+        u_vac = mda.Universe('vac.pdb')
         # regenerate full.pdb resid indices
         renum_txt = f'../{self.build_file_folder}/protein_renum.txt'
         if not os.path.exists(renum_txt):
@@ -830,6 +831,7 @@ class SystemBuilder(ABC):
                     'new_resname', 'new_resid'])
 
         u.select_atoms('protein').residues.resids = renum_data['old_resid'].values
+        u_vac.select_atoms('protein').residues.resids = renum_data['old_resid'].values
         
         # regenerate segments
         seg_txt = 'build_amber_renum.txt'
@@ -854,6 +856,7 @@ class SystemBuilder(ABC):
             res.segment = u_chain_segments[chain]  # assign each residue to its segment
 
         u.atoms.write('full.pdb')
+        u_vac.atoms.write('vac.pdb')
 
         # Apply hydrogen mass repartitioning
         #shutil.copy(f'{self.amber_files_folder}/parmed-hmr.in', './')

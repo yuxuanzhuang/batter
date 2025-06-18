@@ -1769,6 +1769,7 @@ class System:
             Whether to load the results from file.
         sim_range : tuple
             The range of simulations to analyze.
+            If files are missing from the range, the analysis will fail.
         raise_on_error : bool
             Whether to raise an error if the analysis fails.
         """
