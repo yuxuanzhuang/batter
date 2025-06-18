@@ -38,7 +38,11 @@ def check_eq_stage(pose, comps, fe_folder):
             if not os.path.exists(eq_file) or os.path.getsize(eq_file) == 0:
                 logger.debug(f'{eq_file} does not exist')
                 min_stage = min(min_stage, eq_stage + 2)
-    return eq_stages[min_stage]
+                
+    if min_stage == 1000:
+        return 'eq_finished'
+    else:
+        return eq_stages[min_stage]
 
 def check_stage(pose, comp, n_windows, fe_folder):
     sim_type = 'rest' if comp in ['m', 'n'] else 'sdr'
@@ -239,6 +243,9 @@ def run_in_batch(
                 run_lines.append(f'# {pose} eqnpt04')
                 run_lines.append(run_line)
                 run_lines.append(f'sleep {job_sleep_interval}\n\n')  
+            elif last_rst7 == 'eq_finished':
+                logger.debug(f'{pose} eq stage finished')
+                continue
             total_num_nodes += n_nodes
             total_num_jobs += n_windows
 
