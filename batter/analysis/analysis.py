@@ -24,6 +24,9 @@ from loguru import logger
 import sys
 import glob
 import os
+from batter.utils import (
+    COMPONENTS_FOLDER_DICT,
+)
 
 class FEAnalysisBase(ABC):
     """
@@ -66,13 +69,14 @@ class FEAnalysisBase(ABC):
 
 class MBARAnalysis(FEAnalysisBase):
     def __init__(self,
-                comp_folder,
+                pose_folder,
                 component,
                 windows,
                 temperature,
                 energy_unit='kcal/mol',
                 sim_range=None,
-                n_bootstraps=100,
+                detect_equil=True,
+                n_bootstraps=25,
                 n_jobs=6,
                 load=False,
                 ):
@@ -81,8 +85,8 @@ class MBARAnalysis(FEAnalysisBase):
         
         Parameters
         ----------
-        comp_folder : str
-            The path to the component folder containing the simulation data.
+        pose_folder : str
+            The path to the pose folder containing the simulation data.
         component : str
             The name of the component to analyze (e.g., 'v', 'e', 'o')
         windows : list of int
@@ -93,18 +97,25 @@ class MBARAnalysis(FEAnalysisBase):
             The energy unit for the results. Can be 'kcal/mol', 'kJ/mol', or 'kT'. Default is 'kcal/mol'.
         sim_range : tuple of int, optional
             The range of simulations to include in the analysis. If None, all simulations are included.
+        detect_equil : bool, optional
+            If True, detect equilibration time and truncate the data accordingly. Default is False.
         n_bootstraps : int, optional
-            The number of bootstraps to perform for error estimation. Default is 100.
+            The number of bootstraps to perform for error estimation. Default is 0.
         n_jobs : int, optional
             The number of parallel jobs to run for data extraction. Default is 12.
         load : bool, optional
             If True, load the data from a previously saved file instead of extracting it again. 
             """
         super().__init__()
+        self.pose_folder = pose_folder
+        self.result_folder = f'{self.pose_folder}/Results'
+        os.makedirs(f'{self.result_folder}', exist_ok=True)
+        comp_folder = f'{self.pose_folder}/{COMPONENTS_FOLDER_DICT[component]}'
         if not os.path.exists(comp_folder):
             raise ValueError(f"Component folder {comp_folder} does not exist.")
         self.comp_folder = comp_folder
         self.component = component
+        logger.debug(f"Initializing MBAR analysis for component {self.component} in folder {self.comp_folder}")
 
         self.windows = windows
         self.temperature = temperature
@@ -120,6 +131,7 @@ class MBARAnalysis(FEAnalysisBase):
             self.sim_range = range(sim_range[0], sim_range[1])
         else:
             self.sim_range = sim_range
+        self.detect_equil = detect_equil
         self.n_bootstraps = n_bootstraps
         self.n_jobs = n_jobs
         self.load = load
@@ -129,14 +141,15 @@ class MBARAnalysis(FEAnalysisBase):
         """
         Get the data for the component.
         """
-        if os.path.exists(f'{self.comp_folder}/{self.component}_df_list.pickle') and self.load:
-            with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'rb') as f:
+        if os.path.exists(f'{self.result_folder}/{self.component}_df_list.pickle') and self.load:
+            with open(f'{self.result_folder}/{self.component}_df_list.pickle', 'rb') as f:
                 df_list = pickle.load(f)
         else:
             df_list = self._get_data_list()
 
         self._data_list = df_list
         self._u_df = pd.concat(df_list)
+        self.timeseries = [df.index.get_level_values('time').values for df in df_list]
         self._data_initialized = True
     
     def run_analysis(self):
@@ -163,20 +176,85 @@ class MBARAnalysis(FEAnalysisBase):
         logger.debug(f"Free energy results for {self.component}: {self.results['fe']:.2f} +- {self.results['fe_error']:.2f} {self.energy_unit}")
 
         # convergence
+
         logger.debug(f"Calculating convergence for {self.component}...")
         with SuppressLoguru():
+            logger.debug("Calculating forward-backward convergence...")
             self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list, 'MBAR')
-            self.results['convergence']['block_convergence'] = block_average(self.data_list, 'MBAR')
+            forward_end_time = [
+                [series[int(len(series) * fraction)-1]
+                for series in self.timeseries]
+                for fraction in self.results['convergence']['time_convergence']['data_fraction']
+            ]
+            backward_start_time = [
+                [series[int(len(series) * (1 - fraction))-1]
+                for series in self.timeseries]
+                for fraction in self.results['convergence']['time_convergence']['data_fraction']
+            ]
+            forward_FE = self.results['convergence']['time_convergence'].Forward.values
+            forward_FE_err = self.results['convergence']['time_convergence'].Forward_Error.values
+            backward_FE = self.results['convergence']['time_convergence'].Backward.values
+            backward_FE_err = self.results['convergence']['time_convergence'].Backward_Error.values
+
+            forward_end_time_tuples = [tuple(times) for times in forward_end_time]
+            backward_start_time_tuples = [tuple(times) for times in backward_start_time]
+
+            self.results['convergence']['forward_timeseries'] = pd.DataFrame(
+                np.column_stack([forward_FE, forward_FE_err]),
+                index=pd.MultiIndex.from_tuples(forward_end_time_tuples,
+                                                names=[f"time_{i}" for i in range(len(forward_end_time_tuples[0]))]),
+                columns=['FE', 'FE_Error']
+            )
+            self.results['convergence']['backward_timeseries'] = pd.DataFrame(
+                np.column_stack([backward_FE, backward_FE_err]),
+                index=pd.MultiIndex.from_tuples(backward_start_time_tuples,
+                                                names=[f"time_{i}" for i in range(len(backward_start_time_tuples[0]))]),
+                columns=['FE', 'FE_Error']
+            )
+            
+            logger.debug("Calculating block average convergence...")
+            num_blocks = 10
+            self.results['convergence']['block_convergence'] = block_average(self.data_list,
+                                                                             estimator='MBAR',
+                                                                             num=num_blocks)
+
+            block_FE = self.results['convergence']['block_convergence'].FE.values
+            block_FE_err = self.results['convergence']['block_convergence'].FE_Error.values
+            fractions = np.linspace(0, 1, num_blocks)
+            block_start_time = [
+                [series[int(len(series) * fraction)]
+                for series in self.timeseries]
+                for fraction in fractions[:-1]
+            ]
+            block_end_time = [
+                [series[int(len(series) * fraction)-1]
+                for series in self.timeseries]
+                for fraction in fractions[1:]
+            ]
+
+            # Store both start and end times in a MultiIndex
+            block_times = [
+                (tuple(start), tuple(end))
+                for start, end in zip(block_start_time, block_end_time)
+            ]
+
+            self.results['convergence']['block_timeseries'] = pd.DataFrame(
+                np.column_stack([block_FE, block_FE_err]),
+                index=pd.MultiIndex.from_tuples(block_times, names=["start_time", "end_time"]),
+                columns=['FE', 'FE_Error']
+            )
+
+            logger.debug("Calculating overlap matrix...")
             self.results['convergence']['overlap_matrix'] = mbar.overlap_matrix
             self.results['convergence']['mbar'] = mbar
         
         # Save the results
-        with open(f'{self.comp_folder}/{self.component}_results.pickle', 'wb') as f:
+        with open(f'{self.result_folder}/{self.component}_results.pickle', 'wb') as f:
             pickle.dump(self.results, f)
 
     @staticmethod
     def _extract_all_for_window(win_i, comp_folder, component, temperature,
-                               sim_range):
+                               sim_range, truncate):
         """
         Return a dataframe with the energy in kT units for the given window.
         """
@@ -190,15 +268,19 @@ class MBARAnalysis(FEAnalysisBase):
         for i in sim_range:
             if os.path.exists(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out'):
                 md_sim_files.append(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out')
+            else:
+                raise FileNotFoundError(f"Simulation file {comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out not found.")
 
         if len(md_sim_files) == 0:
-            # the simulation is done probably not on Frontier
+            # the simulation is done probably in older versions
             md_sim_files = [
                 #f'{comp_folder}/{component}{win_i:02d}/md-01.out',
                 #f'{comp_folder}/{component}{win_i:02d}/md-02.out',
                 f'{comp_folder}/{component}{win_i:02d}/md-03.out',
                 f'{comp_folder}/{component}{win_i:02d}/md-04.out'
             ]
+            if all(not os.path.exists(md_file) for md_file in md_sim_files):
+                raise FileNotFoundError(f"No simulation files found for {component}{win_i:02d}")
 
         with SuppressLoguru():
             dfs = []
@@ -210,29 +292,31 @@ class MBARAnalysis(FEAnalysisBase):
                     raise RuntimeError(f"Error processing {md_sim_file}: {e}")
 
             df = pd.concat(dfs)
-            t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
-        df = df[df.index.get_level_values(0) > t0]
+            if truncate:
+                t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                df = df[df.index.get_level_values(0) > t0]
         return df
 
     def _get_data_list(self):
         logger.debug(f"Extracting data for {self.component}...")
 
-        logger.info(f"windows: {self.windows}")
-        logger.info(f"sim_range: {self.sim_range}")
-        logger.info(f"temperature: {self.temperature}")
-        logger.info(f"component: {self.component}")
+        logger.debug(f"windows: {self.windows}")
+        logger.debug(f"sim_range: {self.sim_range}")
+        logger.debug(f"temperature: {self.temperature}")
+        logger.debug(f"component: {self.component}")
         df_list = Parallel(n_jobs=self.n_jobs)(
             delayed(self._extract_all_for_window)(win_i=win_i,
                                                  comp_folder=self.comp_folder,
                                                  component=self.component,
                                                  temperature=self.temperature,
-                                                 sim_range=self.sim_range)           
+                                                 sim_range=self.sim_range,
+                                                 truncate=self.detect_equil) 
                 for win_i in range(len(self.windows)))
         for df in df_list:
             df.attrs['temperature'] = self.temperature
             df.attrs['energy_unit'] = 'kT'
         
-        with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'wb') as f:
+        with open(f'{self.result_folder}/{self.component}_df_list.pickle', 'wb') as f:
             pickle.dump(df_list, f)
 
         return df_list
@@ -431,6 +515,7 @@ class RESTMBARAnalysis(MBARAnalysis):
                                                  component=self.component,
                                                  temperature=self.temperature,
                                                  sim_range=self.sim_range,
+                                                 truncate=self.detect_equil,
                                                  rfc=rfc,
                                                  req=req,
                                                  rty=rty,
@@ -438,7 +523,7 @@ class RESTMBARAnalysis(MBARAnalysis):
                                                  num_win=len(self.windows)
             )          
                 for win_i in range(len(self.windows)))
-        with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'wb') as f:
+        with open(f'{self.result_folder}/{self.component}_df_list.pickle', 'wb') as f:
             pickle.dump(df_list, f)
 
         for df in df_list:
@@ -449,7 +534,7 @@ class RESTMBARAnalysis(MBARAnalysis):
     
     @staticmethod
     def _extract_all_for_window(win_i, comp_folder, component, temperature,
-                               sim_range, rfc, req, rty, num_rest, num_win):
+                               sim_range, rfc, req, rty, num_rest, num_win, truncate):
         """
         Return a dataframe with the energy in kT units for the given window.
         As no direct report of the MBAR energy is present in the output,
@@ -467,15 +552,23 @@ class RESTMBARAnalysis(MBARAnalysis):
         for i in sim_range:
             if os.path.exists(f'mdin-{i:02d}.nc'):
                 md_sim_files.append(f'mdin-{i:02d}.nc')
+            else:
+                raise FileNotFoundError(f"Simulation file mdin-{i:02d}.nc not found.")
         
         top = 'full'
         # make sure all nc files exist
         if len(md_sim_files) == 0:
-            # the simulation is done probably not on Frontier
+            # the simulation is done probably in order versions
             md_sim_files = ['md01.nc', 'md02.nc', 'md03.nc', 'md04.nc']
-            # locally, it stores only vac # of atoms
+            if all(not os.path.exists(md_file) for md_file in md_sim_files):
+                raise FileNotFoundError(f"No simulation files found for {component}{win_i:02d}")
+        try:
+            generate_results_rest(md_sim_files, component, blocks=5, top=top)
+        except:
+            # try use vac
             top = 'vac'
-        generate_results_rest(md_sim_files, component, blocks=5, top=top)
+            generate_results_rest(md_sim_files, component, blocks=5, top=top)
+
         logger.debug(f"Reading data for {component}{win_i:02d}...")
 
         # read simulation data
@@ -514,12 +607,14 @@ class RESTMBARAnalysis(MBARAnalysis):
         else:  # Umbrella/Translation
             u = (rfc[win_i, 0]*((val[:, 0]-req[win_i, 0])**2) / kT)
         
+        if truncate:
         # get equilibration time from the reduced potential
-        with SuppressLoguru():
-            t0, g, Neff_max = detect_equilibration(u, nskip=10)
-        
-        u = u[t0:]
+            with SuppressLoguru():
+                t0, g, Neff_max = detect_equilibration(u, nskip=10)
+                u = u[t0:]
 
+        else:
+            t0 = 0
         Upot = np.zeros([num_win, len(u)], np.float64)
 
         for win in range(num_win):

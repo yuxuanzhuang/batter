@@ -14,6 +14,8 @@ from MDAnalysis.analysis import align
 from MDAnalysis.transformations.base import TransformationBase
 import MDAnalysis.transformations as trans
 from tqdm import tqdm
+from joblib import Parallel, delayed
+
 
 
 # From https://groups.google.com/g/mdnalysis-discussion/c/umDpvbCmQiE/m/FKtNClazAwAJ
@@ -112,7 +114,7 @@ def combine_trajectories(
         non_prot = u.select_atoms(f"not {protein_selection}")
         wrap = trans.wrap(non_prot)
         u.trajectory.add_transformations(
-            *[unwrap, prot_group, center_in_box, wrap, rot_fit_trans]
+            *[unwrap, prot_group, center_in_box, rot_fit_trans]
         )
 
     output_folder = f'{output_folder}/skip{skip}'
@@ -134,40 +136,46 @@ def combine_trajectories(
 
 
 @click.command()
-@click.option('--folder', type=click.Path(exists=True, file_okay=False), required=True, help='Folder containing trajectory files to process')
+@click.option('--folder', type=click.Path(exists=True, file_okay=False), multiple=True, required=True,
+              help='One or more folders containing trajectory files to process')
 @click.option('--fix_pbc', is_flag=True, default=True, help='Fix pbc and align (default: True)')
 @click.option('--skip', type=int, default=5, help='Number of frames to skip in each trajectory (default: 1)')
-def preprocess(folder, fix_pbc=True, skip=5):
+@click.option('--n_jobs', type=int, default=4, help='Number of parallel jobs to run (default: 4)')
+def preprocess(folder, fix_pbc=True, skip=5, n_jobs=4):
     """
-    Process all trajectory files in the specified folder and combine them into a single trajectory.
+    Process trajectory files in one or more specified folders and combine them into single trajectories.
     """
-    logger.info(f"Processing trajectories in folder: {folder}")
-    
-    topology = os.path.join(folder, 'full.pdb')
-    if not os.path.exists(topology):
-        logger.error(f"Topology file not found: {topology}")
-        return
-    bonbded_topology = os.path.join(folder, 'full.prmtop')
-    if not os.path.exists(bonbded_topology):
-        logger.error(f"Bonded topology file not found: {bonbded_topology}")
-        return
+    def process_one_folder(folder_path):
+        logger.info(f"Processing trajectories in folder: {folder_path}")
 
-    trajectories = glob.glob(f"{folder}/md*.nc")
-    if not trajectories:
-        logger.warning("No trajectory files found in the specified folder.")
-        return
-    
-    trajectories.sort(key=natural_keys)
-    logger.info(f"Processing {len(trajectories)} trajectory files: {trajectories}")
+        topology = os.path.join(folder_path, 'full.pdb')
+        if not os.path.exists(topology):
+            logger.error(f"Topology file not found: {topology}")
+            return
 
-    combine_trajectories(
-        topology=topology,
-        bonded_topology=bonbded_topology,
-        trajectory_files=trajectories,
-        output_folder=folder,
-        protein_selection='not resname DUM TIP3 SOD CLA POPC WAT Na+ Cl- PA PC OL',
-        skip=skip,
-        fix_pbc=fix_pbc
-    )
+        bonded_topology = os.path.join(folder_path, 'full.prmtop')
+        if not os.path.exists(bonded_topology):
+            logger.error(f"Bonded topology file not found: {bonded_topology}")
+            return
 
-    logger.info("Trajectory processing completed successfully.")
+        trajectories = glob.glob(f"{folder_path}/md*.nc")
+        if not trajectories:
+            logger.warning(f"No trajectory files found in {folder_path}")
+            return
+
+        trajectories.sort(key=natural_keys)
+        logger.info(f"[{folder_path}] Found {len(trajectories)} trajectory files.")
+
+        combine_trajectories(
+            topology=topology,
+            bonded_topology=bonded_topology,
+            trajectory_files=trajectories,
+            output_folder=folder_path,
+            protein_selection='not resname DUM TIP3 SOD CLA POPC WAT Na+ Cl- PA PC OL',
+            skip=skip,
+            fix_pbc=fix_pbc
+        )
+
+        logger.info(f"[{folder_path}] Trajectory processing completed successfully.")
+
+    Parallel(n_jobs=n_jobs)(delayed(process_one_folder)(f) for f in folder)

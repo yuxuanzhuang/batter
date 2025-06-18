@@ -18,10 +18,6 @@ import json
 from typing import Union
 from pathlib import Path
 import pickle
-try:
-    from openff.toolkit import Molecule
-except:
-    raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
 from rdkit import Chem
 import time
 from tqdm import tqdm
@@ -33,10 +29,7 @@ from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.bat_lib import analysis
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
-from batter.utils.slurm_job import SLURMJob
-from batter.analysis.convergence import ConvergenceValidator
-from batter.analysis.sim_validation import SimValidator
-from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
+from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
 from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
@@ -45,6 +38,8 @@ from batter.utils import (
     run_with_log,
     save_state,
     safe_directory,
+    natural_keys
+
 )
 
 from batter.utils import (
@@ -54,6 +49,7 @@ from batter.utils import (
     DEC_FOLDER_DICT,
 )
 
+
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -61,6 +57,16 @@ warnings.filterwarnings("ignore", category=ResourceWarning)
 
 AVAILABLE_COMPONENTS = COMPONENTS_DICT['dd'] + COMPONENTS_DICT['rest']
 
+# the direction of the components that are used in the simulation
+COMPONENT_DIRECTION_DICT = {
+    'm': -1,
+    'n': 1,
+    'e': -1,
+    'v': -1,
+    'o': -1,
+    'z': -1,
+    'Boresch': -1,
+}
 
 class System:
     """
@@ -231,6 +237,12 @@ class System:
             The verbosity of the output. If True, it will print the debug messages.
             Default is False.
         """
+        # fail late on import openff
+        try:
+            from openff.toolkit import Molecule
+        except:
+            raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
+
         # Log every argument
         if verbose:
             logger.remove()
@@ -432,6 +444,18 @@ class System:
         A dictionary of ligands.
         """
         return self._ligand_list
+    
+    @property
+    def pose_ligand_dict(self):
+        """
+        A dictionary of ligands with pose names as keys.
+        """
+        try:
+            return self._pose_ligand_dict
+        except AttributeError:
+            return {pose.split('/')[-1].split('.')[0]: ligand
+                    for ligand, pose in self.ligand_list.items()}
+
     
     @property
     def ligand_names(self):
@@ -766,7 +790,6 @@ class System:
         """
         logger.debug('Preparing the system')
         self.overwrite = overwrite
-        self.builders_factory = BuilderFactory()
         self.partition = partition
         self._n_workers = n_workers
         if avg_struc is not None and rmsf_file is not None:
@@ -778,6 +801,7 @@ class System:
         
         if input_file is not None:
             self._get_sim_config(input_file)
+            self._component_windows_dict = ComponentWindowsDict(self)
         
         try:
             sim_config = self.sim_config
@@ -795,6 +819,7 @@ class System:
                            f"does not match the number of ligands: {len(self.ligand_paths)}")
             logger.debug("Using the ligand paths for the poses")
         self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        self._pose_ligand_dict = {pose: ligand for pose, ligand in zip(self._all_poses, self.ligand_names)}
         self.sim_config.poses_def = self._all_poses 
 
         if stage == 'equil':
@@ -888,8 +913,6 @@ class System:
             logger.info('FE System prepared')
             self._fe_prepared = True
         
-
-
     @safe_directory
     @save_state
     def submit(self,
@@ -915,7 +938,6 @@ class System:
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
-        n_jobs_submitted = 0
         if cluster == 'frontier':
             self._submit_frontier(stage)
             logger.info(f'Frontier {stage} job submitted!')
@@ -926,9 +948,9 @@ class System:
             pbar = tqdm(total=len(self.all_poses), desc='Submitting equilibration jobs')
             for pose in self.all_poses:
                 # check n_jobs_submitted is less than the max_jobs
-                while n_jobs_submitted >= self.max_num_jobs:
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                     time.sleep(120)
-                    n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
+                    pbar.set_description(f'Waiting to submit equilibration jobs')
 
                 # check existing jobs
                 if os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") and not overwrite:
@@ -946,12 +968,10 @@ class System:
                     # resubmit the job
                     if not slurm_job.is_still_running():
                         slurm_job.submit()
-                        n_jobs_submitted += 1
                         continue
                     elif overwrite:
                         slurm_job.cancel()
                         slurm_job.submit(overwrite=True)
-                        n_jobs_submitted += 1
                         continue
                     else:
                         logger.debug(f'Equilibration job for {pose} is still running')
@@ -967,7 +987,6 @@ class System:
                                 partition=partition,
                                 jobname=f'fep_{self.equil_folder}/{pose}_equil')
                 slurm_job.submit(overwrite=overwrite)
-                n_jobs_submitted += 1
                 pbar.update(1)
                 pbar.set_description(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
@@ -979,103 +998,30 @@ class System:
 
             pbar.close()
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
-
-        elif stage == 'fe':
-            logger.info('Submit free energy stage')
-            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
-            for pose in self.bound_poses:
-                #shutil.copy(f'{self.fe_folder}/{pose}/rest/run_files/run-express.bash',
-                #            f'{self.fe_folder}/{pose}')
-                #run_with_log(f'bash run-express.bash',
-                #            working_dir=f'{self.fe_folder}/{pose}')
-                for comp in self.sim_config.components:
-                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    windows = self.component_windows_dict[comp]
-                    for j in range(len(windows)):
-                        if n_jobs_submitted >= self.max_num_jobs:
-                            time.sleep(120)
-                            n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
-                        folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
-                        if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
-                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
-                            logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
-                            continue
-                        if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
-                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
-                            logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
-                            continue
-                        if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
-                            slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
-                            if not slurm_job.is_still_running():
-                                slurm_job.submit(
-                                    requeue=True,
-                                    other_env={
-                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
-                                    }
-                                )
-                                n_jobs_submitted += 1
-                                continue
-                            elif overwrite:
-                                slurm_job.cancel()
-                                slurm_job.submit(overwrite=True,
-                                    other_env={
-                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
-                                    }
-                                )
-                                n_jobs_submitted += 1
-                                continue
-                            else:
-                                logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
-                                continue
-
-                        if overwrite:
-                            # remove FINISHED and FAILED
-                            os.remove(f"{folder_2_check}/FINISHED", ignore_errors=True)
-                            os.remove(f"{folder_2_check}/FAILED", ignore_errors=True)
-
-                        slurm_job = SLURMJob(
-                                        filename=f'{folder_2_check}/SLURMM-run',
-                                        partition=partition,
-                                        jobname=f'fep_{folder_2_check}_fe')
-                        slurm_job.submit(overwrite=overwrite,
-                                    other_env={
-                                            'INPCRD': f'../{comp}-1/eqnpt04.rst7'
-                                        }
-                        )
-                        n_jobs_submitted += 1
-                        pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
-                        self._slurm_jobs.update(
-                            {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
-                        )
-                        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                            pickle.dump(self, f)
-                pbar.update(1)
-            pbar.close()
-
-            logger.info('Free energy systems have been submitted for all poses listed in the input file.')
         elif stage == 'fe_equil':
             logger.info('Submit NPT equilibration part of free energy stage')
             pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy equilibration jobs')
             for pose in self.bound_poses:
+                # only check for each pose to reduce frequently checking SLURM 
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
+                    time.sleep(120)
+                    pbar.set_description(f'Waiting to submit FE equilibration jobs')
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     # only run for window -1 (eq)
                     j = -1
-                    if n_jobs_submitted >= self.max_num_jobs:
-                        time.sleep(120)
-                        n_jobs_submitted = sum([1 for job in self._slurm_jobs.values() if job.is_still_running()])
+                    # check n_jobs_submitted is less than the max_jobs
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
-                    if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
-                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
-                        logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
-                        continue
+                    #if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
+                    #    self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                    #    logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
+                    #    continue
                     if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
                         self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
                         logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
                         continue
-                    if os.path.exists(f"{folder_2_check}/eqnpt04.rst7") and not overwrite:
+                    if os.path.exists(f"{folder_2_check}/EQ_FINISHED") and not overwrite:
                         logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
                         continue
                     if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
@@ -1088,7 +1034,6 @@ class System:
                                     'INPCRD': 'full.inpcrd'
                             }
                             )
-                            n_jobs_submitted += 1
                             continue
                         elif overwrite:
                             slurm_job.cancel()
@@ -1098,7 +1043,6 @@ class System:
                                     'INPCRD': 'full.inpcrd'
                                 }
                             )
-                            n_jobs_submitted += 1
                             continue
                         else:
                             logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
@@ -1119,7 +1063,6 @@ class System:
                         'ONLY_EQ': '1',
                         'INPCRD': 'full.inpcrd'
                     })
-                    n_jobs_submitted += 1
                     pbar.set_description(f'FE equil job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
                     self._slurm_jobs.update(
                         {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
@@ -1130,6 +1073,81 @@ class System:
                 pbar.update(1)
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')        
             pbar.close()
+        elif stage == 'fe':
+            logger.info('Submit free energy stage')
+            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
+            priorities = np.arange(1, len(self.bound_poses) + 1)[::-1] * 10000
+            for i, pose in enumerate(self.bound_poses):
+                # set gradually lower priority for jobs
+                priority = priorities[i]
+                # only check for each pose to reduce frequently checking SLURM 
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
+                    time.sleep(120)
+                    pbar.set_description(f'Waiting to submit FE jobs')
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    windows = self.component_windows_dict[comp]
+                    for j in range(len(windows)):
+                        # check n_jobs_submitted is less than the max_jobs
+                        folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
+                        if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                            logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
+                            continue
+                        if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                            logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
+                            continue
+                        if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
+                            slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
+                            slurm_job.priority = priority
+                            if not slurm_job.is_still_running():
+                                slurm_job.submit(
+                                    requeue=True,
+                                    other_env={
+                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
+                                    }
+                                )
+                                continue
+                            elif overwrite:
+                                slurm_job.cancel()
+                                slurm_job.submit(overwrite=True,
+                                    other_env={
+                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
+                                    }
+                                )
+                                continue
+                            else:
+                                logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
+                                continue
+
+                        if overwrite:
+                            # remove FINISHED and FAILED
+                            os.remove(f"{folder_2_check}/FINISHED", ignore_errors=True)
+                            os.remove(f"{folder_2_check}/FAILED", ignore_errors=True)
+
+                        slurm_job = SLURMJob(
+                                        filename=f'{folder_2_check}/SLURMM-run',
+                                        partition=partition,
+                                        jobname=f'fep_{folder_2_check}_fe',
+                                        priority=priority)
+                        slurm_job.submit(overwrite=overwrite,
+                                    other_env={
+                                            'INPCRD': f'../{comp}-1/eqnpt04.rst7'
+                                        }
+                        )
+
+                        pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
+                        self._slurm_jobs.update(
+                            {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
+                        )
+                        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+                            pickle.dump(self, f)
+                pbar.update(1)
+            pbar.close()
+
+            logger.info('Free energy systems have been submitted for all poses listed in the input file.')
         else:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -1218,12 +1236,13 @@ class System:
                         f.write(s)
 
         builders = []
+        builders_factory = BuilderFactory()
         for pose in self.all_poses:
             #logger.info(f'Preparing pose: {pose}')
             if os.path.exists(f"{self.equil_folder}/{pose}/cv.in") and not self.overwrite:
                 logger.info(f'Pose {pose} already exists; add overwrite=True to re-build the pose')
                 continue
-            equil_builder = self.builders_factory.get_builder(
+            equil_builder = builders_factory.get_builder(
                 stage='equil',
                 system=self,
                 pose=pose,
@@ -1248,6 +1267,7 @@ class System:
         molr = self.mols[0]
         poser = self.bound_poses[0]
         builders = []
+        builders_factory = BuilderFactory()
         for pose in sim_config.poses_def:
             # if "UNBOUND" found in equilibration, skip
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
@@ -1283,7 +1303,7 @@ class System:
                 if os.path.exists(cv_path) and not self.overwrite:
                     logger.info(f"Component {component} for pose {pose} already exists; add overwrite=True to re-build the component")
                     continue
-                fe_eq_builder = self.builders_factory.get_builder(
+                fe_eq_builder = builders_factory.get_builder(
                     stage='fe',
                     win=-1,
                     component=component,
@@ -1309,7 +1329,7 @@ class System:
         poser = self.bound_poses[0]
 
         builders = []
-
+        builders_factory = BuilderFactory()
         for pose in self.bound_poses:
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 continue
@@ -1331,7 +1351,7 @@ class System:
                     continue
 
                 for i, lambdas in enumerate(lambdas_comp):
-                    fe_builder = self.builders_factory.get_builder(
+                    fe_builder = builders_factory.get_builder(
                         stage='fe',
                         win=i,
                         component=component,
@@ -1357,10 +1377,10 @@ class System:
         Prepare the free energy system.
         """
         logger.info('Prepare for free energy stage')
-        logger.info(f'Prepare FE equilibration')
+        logger.info('Prepare FE equilibration')
         self._prepare_fe_equil_system()
 
-        logger.info(f'Prepare FE windows')
+        logger.info('Prepare FE windows')
         self._prepare_fe_windows()
         logger.info('Free energy systems have been created for all poses listed in the input file.')
 
@@ -1617,33 +1637,18 @@ class System:
         logger.debug('Adding Harmonic postion restraints')
 
         num_eq_sim = len(self.sim_config.release_eq)
+        num_fe_sim = self.sim_config.num_fe_range
 
-        def write_restraint_block(ref_u, selection_string, files, folder_2_write):
-            selection = ref_u.select_atoms(f'({selection_string}) and name CA')
-            logger.debug(f"Selection: {selection} to be restrained")
-
-            atm_resids = selection.residues.resids
-
-            renum_txt = f'{self.equil_folder}/{pose}/build_files/protein_renum.txt'
-
-            renum_data = pd.read_csv(
-                renum_txt,
-                sep=r'\s+',
-                header=None,
-                names=['old_resname', 'old_chain', 'old_resid',
-                        'new_resname', 'new_resid'])
-
-            # map atm_resids to new_resid
-            amber_resids = renum_data.loc[renum_data['old_resid'].isin(atm_resids), 'new_resid']
-
-            formatted_resids = format_ranges(amber_resids)
-            logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
-            new_mask_component = f'(:{formatted_resids}) & @CA'
-
+        def write_restraint_block(files, folder_2_write):
             for file in files:
                 with open(f'{folder_2_write}/{file}', 'r') as f:
                     lines = f.readlines()
 
+                # if new_mask_component is already in the file, skip
+                if any(new_mask_component in line for line in lines):
+                    logger.debug(f"Restraint mask {new_mask_component} already exists in {file}; skipping")
+                    continue
+                
                 with open(f'{folder_2_write}/{file}', 'w') as f:
                     for line in lines:
                         if 'ntr' in line and 'cntr' not in line:
@@ -1677,14 +1682,34 @@ class System:
             ref_u = mda.Universe(
                     f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
                     f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+            
+            selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
+            logger.debug(f"Selection: {selection} to be restrained")
+
+            atm_resids = selection.residues.resids
+
             for pose in self.all_poses:
+                renum_txt = f'{self.equil_folder}/{pose}/build_files/protein_renum.txt'
+
+                renum_data = pd.read_csv(
+                    renum_txt,
+                    sep=r'\s+',
+                    header=None,
+                    names=['old_resname', 'old_chain', 'old_resid',
+                            'new_resname', 'new_resid'])
+
+                # map atm_resids to new_resid
+                amber_resids = renum_data.loc[renum_data['old_resid'].isin(atm_resids), 'new_resid']
+
+                formatted_resids = format_ranges(amber_resids)
+                logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
+                new_mask_component = f'(:{formatted_resids}) & @CA'
+
                 files = ['eqnpt.in']
                 for i in range(num_eq_sim):
                     files.append(f'mdin-{i:02d}')
 
                 write_restraint_block(
-                                      ref_u=ref_u,
-                                      selection_string=extra_restraints,
                                       files=files,
                                       folder_2_write=f'{self.equil_folder}/{pose}/')
 
@@ -1693,22 +1718,323 @@ class System:
             ref_u = mda.Universe(
                     f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
                     f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+            
+            selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
+            logger.debug(f"Selection: {selection} to be restrained")
+
+            atm_resids = selection.residues.resids
             for pose in self.bound_poses:
+                renum_txt = f'{self.equil_folder}/{pose}/build_files/protein_renum.txt'
+
+                renum_data = pd.read_csv(
+                    renum_txt,
+                    sep=r'\s+',
+                    header=None,
+                    names=['old_resname', 'old_chain', 'old_resid',
+                            'new_resname', 'new_resid'])
+
+                # map atm_resids to new_resid
+                amber_resids = renum_data.loc[renum_data['old_resid'].isin(atm_resids), 'new_resid']
+
+                formatted_resids = format_ranges(amber_resids)
+                logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
+                new_mask_component = f'(:{formatted_resids}) & @CA'
+
                 for comp in self.sim_config.components:
-                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
-                    files = ['eqnpt.in', 'mdin-00', 'mdin-01', 'mdin-02', 'mdin-03']
+                    files = ['eqnpt.in']
+                    for i in range(num_fe_sim):
+                        files.append(f'mdin-{i:02d}')
                     for j in range(-1, len(windows)):
                         write_restraint_block(
-                                        ref_u=ref_u,
-                                        selection_string=extra_restraints,
-                                        files=files,
-                                        folder_2_write=f'{folder_comp}/{comp}{j:02d}/')
+                            files=files,
+                            folder_2_write=f'{folder_comp}/{comp}{j:02d}/')
         else:
             raise ValueError(f"Invalid stage: {stage}")
         logger.debug('Extra position restraints added')
 
+    def analyze_pose(self,
+                    pose: str = None,
+                    load: bool = True,
+                    sim_range: Tuple[int, int] = None,
+                    raise_on_error: bool = True):
+        """
+        Analyze the free energy results for one pose
+        Parameters
+        ----------
+        pose : str
+            The pose to analyze.
+        load : bool
+            Whether to load the results from file.
+        sim_range : tuple
+            The range of simulations to analyze.
+            If files are missing from the range, the analysis will fail.
+        raise_on_error : bool
+            Whether to raise an error if the analysis fails.
+        """
+        from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
+
+        pose_path = f'{self.fe_folder}/{pose}'
+
+        if load and os.path.exists(f'{pose_path}/Results/Results.dat'):
+            try:
+                self.fe_results[pose] = NewFEResult(f'{pose_path}/Results/Results.dat')
+                if np.isnan(self.fe_results[pose].fe):
+                    raise ValueError(f'FE for {pose} is invalid (None or NaN); rerun')
+                logger.debug(f'FE for {pose} loaded from {pose_path}/Results/Results.dat')
+                return
+            except Exception as e:
+                logger.warning(f'Failed to load FE for {pose} from {pose_path}/Results/Results.dat: {e}')
+                logger.warning('Re-running the FE analysis')
+        os.makedirs(f'{pose_path}/Results', exist_ok=True)
+
+        try:
+            results_entries = []
+
+            fe_values = []
+            fe_stds = []
+
+            # first get analytical results from Boresch restraint
+
+            if 'v' in self.sim_config.components:
+                disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
+            elif 'o' in self.sim_config.components:
+                disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
+            elif 'z' in self.sim_config.components:
+                disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
+
+            rest = self.sim_config.rest
+            k_r = rest[2]
+            k_a = rest[3]
+            bor_ana = BoreschAnalysis(
+                                disangfile=disangfile,
+                                k_r=k_r, k_a=k_a,
+                                temperature=self.sim_config.temperature,)
+            bor_ana.run_analysis()
+            fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
+            fe_stds.append(bor_ana.results['fe_error'])
+            results_entries.append(
+                f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
+            )
+            
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                comp_path = f'{pose_path}/{comp_folder}'
+                windows = self.component_windows_dict[comp]
+
+                # skip n if no conformational restraints are applied
+                if comp == 'n' and rest[1] == 0 and rest[4] == 0:
+                    logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
+                    continue
+
+                if comp in COMPONENTS_DICT['dd']:
+                    # directly read energy files
+                    mbar_ana = MBARAnalysis(
+                        pose_folder=pose_path,
+                        component=comp,
+                        windows=windows,
+                        temperature=self.sim_config.temperature,
+                        sim_range=sim_range,
+                        load=False
+                    )
+                    mbar_ana.run_analysis()
+                    mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                            title=f'Convergence for {comp} {pose}',
+                    )
+
+                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
+                    fe_stds.append(mbar_ana.results['fe_error'])
+                    results_entries.append(
+                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
+                    )
+                elif comp in COMPONENTS_DICT['rest']:
+                    rest_mbar_ana = RESTMBARAnalysis(
+                        pose_folder=pose_path,
+                        component=comp,
+                        windows=windows,
+                        temperature=self.sim_config.temperature,
+                        sim_range=sim_range,
+                        load=False
+                    )
+                    rest_mbar_ana.run_analysis()
+                    rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                            title=f'Convergence for {comp} {pose}',
+                    )
+
+                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
+                    fe_stds.append(rest_mbar_ana.results['fe_error'])
+                    results_entries.append(
+                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
+                    )
+        
+            # calculate total free energy
+            fe_value = np.sum(fe_values)
+            fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
+        except Exception as e:
+            logger.error(f'Error during FE analysis for {pose}: {e}')
+            if raise_on_error:
+                raise e
+            fe_value = np.nan
+            fe_std = np.nan
+
+        results_entries.append(
+            f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+        )
+        with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+            f.write('\n'.join(results_entries))
+        
+        return
+                
+    @safe_directory
+    @save_state
+    def analysis(
+        self,
+        input_file: Union[str, Path, SimulationConfig]=None,
+        load: bool = True,
+        check_finished: bool = False,
+        sim_range: Tuple[int, int] = None,
+        overwrite: bool = False,
+        raise_on_error: bool = False,
+        run_with_slurm: bool = False,
+        run_with_slurm_kwargs: dict = None,
+        ):
+        """
+        Analyze the free energy results for all poses.
+        Parameters
+        ----------
+        input_file : str or Path or SimulationConfig, optional
+            The input file or SimulationConfig object to load the simulation configuration.
+        load : bool, optional
+            Whether to load the existing results from the output directory. Default is True.
+        check_finished : bool, optional
+            Whether to check if the simulation is finished before analyzing. Default is False.
+        sim_range : tuple, optional
+            The range of simulations to analyze. Default is None, which means all simulations.
+            If less simulations were found than specified, it will analyze all found simulations.
+        overwrite : bool, optional
+            Whether to overwrite the existing results. Default is False.
+        raise_on_error : bool, optional
+            Whether to raise an error if the analysis fails. Default is False.
+        run_with_slurm : bool, optional
+            Whether to dispatch the analysis jobs using SLURM. Default is False.
+        run_with_slurm_kwargs : dict, optional
+            Additional keyword arguments for SLURM job submission. Default is None.
+            Check https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
+            for available options.
+        """
+        if input_file is not None:
+            self._get_sim_config(input_file)
+        
+        if check_finished:
+            if self._check_fe():
+                logger.info('FE simulation is not finished yet')
+                self.check_jobs()
+                return
+        
+        if not os.path.exists(f'{self.output_dir}/Results'):
+            os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
+            self._generate_aligned_pdbs()
+
+        if run_with_slurm:
+            logger.info('Running analysis with SLURM Cluster')
+            from dask_jobqueue import SLURMCluster
+            from dask.distributed import Client, as_completed
+
+            slurm_kwargs = {
+                # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
+                'queue': self.partition,
+                'cores': 4,
+                'memory': '8GB',
+                'walltime': '00:10:00',
+                'job_extra_directives': [
+                    f'--output=/tmp/dask-%j.out',
+                    f'--error=/tmp/dask-%j.err',
+                ],
+                # 'account': 'your_slurm_account',
+            }
+            if run_with_slurm_kwargs is not None:
+                slurm_kwargs.update(run_with_slurm_kwargs)
+            cluster = SLURMCluster(
+                **slurm_kwargs,
+            )
+            cluster.scale(jobs=len(self.all_poses))
+            logger.info(f'SLURM Cluster created with {len(self.all_poses)} workers')
+
+            client = Client(cluster)
+
+            def analyze_single_pose(pose, load, sim_range, raise_on_error):
+                self.analyze_pose(
+                    pose=pose,
+                    load=load,
+                    sim_range=sim_range,
+                    raise_on_error=raise_on_error,
+
+                )
+                return pose
+
+            futures = []
+            for pose in self.all_poses:
+                logger.debug(f'Submitting analysis for pose: {pose}')
+                fut = client.submit(
+                    analyze_single_pose,
+                    pose,
+                    load,
+                    sim_range,
+                    raise_on_error,
+                    pure=True,
+                    key=f'analyze_{pose}'
+                )
+                futures.append(fut)
+
+            for future in tqdm(as_completed(futures),
+                                total=len(futures),
+                                desc="Analyzing FE for poses in SLURM Cluster"):
+                pose = future.result()
+                self.fe_results[pose] = NewFEResult(
+                    f'{self.fe_folder}/{pose}/Results/Results.dat',
+                )
+                fe_value = self.fe_results[pose].fe
+                fe_std = self.fe_results[pose].fe_std
+                # tqdm.write(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+            logger.info('Analysis with SLURM Cluster completed')
+            client.close()
+            cluster.close()
+            
+        else:
+            pbar = tqdm(
+                self.all_poses,
+                desc='Analyzing FE for poses',
+            )
+            for pose in self.all_poses:
+                pbar.set_postfix(pose=pose)
+                self.analyze_pose(
+                    pose=pose,
+                    load=load,
+                    sim_range=sim_range,
+                    raise_on_error=raise_on_error
+                )
+                self.fe_results[pose] = NewFEResult(
+                    f'{self.fe_folder}/{pose}/Results/Results.dat',
+                )
+                fe_value = self.fe_results[pose].fe
+                fe_std = self.fe_results[pose].fe_std
+                pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+    
+        # sort self.fe_sults by pose
+        self._fe_results = dict(sorted(self._fe_results.items(), key=lambda item: natural_keys(item[0])))
+    
+        with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
+
+            for i, (pose, fe) in enumerate(self.fe_results.items()):
+                mol_name = self.mols[i]
+                ligand_name = self.pose_ligand_dict[pose]
+                logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+        
+        logger.info(f'self.fe_results: {self.fe_results}')
+            
+        
     @safe_directory
     @save_state
     def analysis_new(
@@ -1718,156 +2044,38 @@ class System:
         check_finished: bool = False,
         sim_range: Tuple[int, int] = None,
         overwrite: bool = False,
+        raise_on_error: bool = True,
         ):
         """
-        New analysis rountine with alchemlyb
+        doublegangler for analysis method
         """
+        self.analysis(input_file=input_file,
+                      load=load,
+                      check_finished=check_finished,
+                      sim_range=sim_range,
+                      overwrite=overwrite,
+                      raise_on_error=raise_on_error)
 
-        # the direction of the components that are used in the simulation
-        COMPONENT_DIRECTION_DICT = {
-            'm': -1,
-            'n': 1,
-            'e': -1,
-            'v': -1,
-            'o': -1,
-            'Boresch': -1,
-        }
-
-        if input_file is not None:
-            self._get_sim_config(input_file)
+    
+    @safe_directory
+    @save_state
+    def load_results(self):
+        """
+        Load the results from the output directory.
+        """
+        for pose in self.all_poses:
+            results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
+            if os.path.exists(results_file):
+                self.fe_results[pose] = NewFEResult(results_file)
+                if np.isnan(self.fe_results[pose].fe):
+                    logger.warning(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
+                logger.debug(f'FE for {pose} loaded from {results_file}')
+            else:
+                logger.warning(f'FE results file {results_file} not found for pose {pose}')
+        if not self.fe_results:
+            raise ValueError('No results found in the output directory. Please run the analysis first.')
+        logger.info('Results loaded successfully')
         
-        if check_finished:
-            if self._check_fe():
-                logger.info('FE simulation is not finished yet')
-                self.check_jobs()
-                return
-            
-        with self._change_dir(self.output_dir):
-            pbar = tqdm(
-                self.all_poses,
-                desc='Analyzing FE for poses',
-            )
-            for pose in self.all_poses:
-                pbar.set_postfix(pose=pose)
-                if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
-                    try:
-                        self.fe_results[pose] = NewFEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                        if np.isnan(self.fe_results[pose].fe):
-                            raise ValueError(f'FE for {pose} is invalid (None or NaN); rerun')
-                        logger.debug(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
-                        pbar.set_description(f'FE for {pose} = {self.fe_results[pose].fe:.2f} ± {self.fe_results[pose].fe_std:.2f} kcal/mol')
-                        continue
-                    except Exception as e:
-                        logger.warning(f'Failed to load FE for {pose} from {self.fe_folder}/{pose}/Results/Results.dat: {e}')
-                        logger.warning('Re-running the FE analysis')
-                os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
-
-                results_entries = []
-
-                fe_values = []
-                fe_stds = []
-
-                # first get analytical results from Boresch restraint
-
-                if 'v' in self.sim_config.components:
-                    disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
-                elif 'o' in self.sim_config.components:
-                    disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
-                elif 'z' in self.sim_config.components:
-                    disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
-
-                rest = self.sim_config.rest
-                k_r = rest[2]
-                k_a = rest[3]
-                bor_ana = BoreschAnalysis(
-                                     disangfile=disangfile,
-                                     k_r=k_r, k_a=k_a,
-                                     temperature=self.sim_config.temperature,)
-                bor_ana.run_analysis()
-                fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
-                fe_stds.append(bor_ana.results['fe_error'])
-                results_entries.append(
-                    f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
-                )
-                
-                try:
-                    for comp in self.sim_config.components:
-                        comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                        comp_path = f'{self.fe_folder}/{pose}/{comp_folder}'
-                        windows = self.component_windows_dict[comp]
-
-                        # skip n if no conformational restraints are applied
-                        if comp == 'n' and rest[1] == 0 and rest[4] == 0:
-                            logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
-                            continue
-
-                        if comp in COMPONENTS_DICT['dd']:
-                            # directly read energy files
-                            mbar_ana = MBARAnalysis(
-                                comp_folder=comp_path,
-                                component=comp,
-                                windows=windows,
-                                temperature=self.sim_config.temperature,
-                                sim_range=sim_range,
-                                load=False
-                            )
-                            mbar_ana.run_analysis()
-                            mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
-                                                    title=f'Convergence for {comp} {pose}',
-                            )
-
-                            fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
-                            fe_stds.append(mbar_ana.results['fe_error'])
-                            results_entries.append(
-                                f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
-                            )
-                        elif comp in COMPONENTS_DICT['rest']:
-                            rest_mbar_ana = RESTMBARAnalysis(
-                                comp_folder=comp_path,
-                                component=comp,
-                                windows=windows,
-                                temperature=self.sim_config.temperature,
-                                sim_range=sim_range,
-                                load=False
-                            )
-                            rest_mbar_ana.run_analysis()
-                            rest_mbar_ana.plot_convergence(save_path=f'{comp_path}/{comp}_convergence.png',
-                                                    title=f'Convergence for {comp} {pose}',
-                            )
-
-                            fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
-                            fe_stds.append(rest_mbar_ana.results['fe_error'])
-                            results_entries.append(
-                                f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
-                            )
-                
-                    # calculate total free energy
-                    fe_value = np.sum(fe_values)
-                    fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
-                except Exception as e:
-                    logger.error(f'Error during FE analysis for {pose}: {e}')
-                    raise
-                    fe_value = np.nan
-                    fe_std = np.nan
-
-                results_entries.append(
-                    f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
-                )
-                with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                    f.write('\n'.join(results_entries))
-                
-                self.fe_results[pose] = NewFEResult(
-                    f'{self.fe_folder}/{pose}/Results/Results.dat',
-                )
-                pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
- 
-        with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
-            for i, (pose, fe) in enumerate(self.fe_results.items()):
-                mol_name = self.mols[i]
-                
-                logger.debug(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
-                f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
-            
 
     def _generate_aligned_pdbs(self):
         # generate aligned pdbs
@@ -1890,162 +2098,6 @@ class System:
             initial_pose = f'{self.poses_folder}/{pose}.pdb'
             os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
            
-    @safe_directory
-    @save_state
-    def analysis(
-        self,
-        input_file: Union[str, Path, SimulationConfig]=None,
-        load=True,
-        check_finished: bool = True,
-        sim_range: Tuple[int, int] = None,
-        convergence: bool = False,
-        ):
-        """
-        Analyze the simulation results.
-
-        Parameters
-        ----------
-        input_file : str
-            The input file for the simulation.
-            Default is None and will use the input file
-            used for the simulation.
-        load : bool, optional
-            Whether to load the system fe results from before
-            Default is True.
-        check_finished : bool, optional
-            Whether to check if the FINISHED file exists in FE simulation.
-            Default is True.
-        sim_range : Tuple[int, int], optional
-            The range of simulations to analyze.
-            For simulations run on Frontier, due to the time constraints,
-            the simulations are run into multiple parts.
-            Default is None, which will analyze all the simulations.
-        convergence : bool, optional
-            Whether to check the convergence of the free energy results.
-        """
-        raise NotImplementedError("Use analysis_new() instead for alchemlyb-based analysis.")
-        if input_file is not None:
-            self._get_sim_config(input_file)
-        
-        if check_finished:
-            if self._check_fe():
-                logger.info('FE simulation is not finished yet')
-                self.check_jobs()
-                return
-            
-        if not sim_range:
-            sim_range = (None, None)
-            
-        blocks = self.sim_config.blocks
-        components = self.sim_config.components
-        temperature = self.sim_config.temperature
-        attach_rest = self.sim_config.attach_rest
-        lambdas = self.component_windows_dict['e']
-        weights = self.sim_config.weights
-        dec_int = self.sim_config.dec_int
-        dec_method = self.sim_config.dec_method
-        rest = self.sim_config.rest
-        dic_steps1 = self.sim_config.dic_steps1
-        dic_steps2 = self.sim_config.dic_steps2
-        dt = self.sim_config.dt
-
-        with self._change_dir(self.output_dir):
-            pbar = tqdm(
-                 self.all_poses,
-                desc='Analyzing FE for poses',
-            )
-            for pose in self.all_poses:
-                pbar.set_postfix(pose=pose)
-                if pose not in self.bound_poses:
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                    logger.info(f'Pose {pose} is not a bound pose; skipping FE analysis')
-                    continue
-                os.chdir(f'{self.fe_folder}/{pose}')
-                if load and os.path.exists(f'{self.fe_folder}/{pose}/Results/Results.dat'):
-                    self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                    logger.info(f'FE for {pose} loaded from {self.fe_folder}/{pose}/Results/Results.dat')
-                    continue
-                # remove the existing Results folder
-                if os.path.exists(f'{self.fe_folder}/{pose}/Results'):
-                    shutil.rmtree(f'{self.fe_folder}/{pose}/Results', ignore_errors=True)
-                os.makedirs(f'{self.fe_folder}/{pose}/Results', exist_ok=True)
-
-                try:
-                    fe_value, fe_std = analysis.fe_values(blocks, components, temperature, pose,
-                                                        attach_rest,
-                                                        lambdas,
-                                            weights, dec_int, dec_method, rest, dic_steps1, dic_steps2, dt, sim_range) 
-                except Exception as e:
-                    logger.error(f'FE calculation failed for {pose}: {e}')
-                    fe_value = np.nan
-                    fe_std = np.nan
-                # if failed; it will return nan
-                if np.isnan(fe_value):
-                    #logger.warning(f'FE calculation failed for {pose}')
-                    with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-                        f.write("FAILED\n")
-                    #self.fe_results[pose] = FEResult(f'{self.fe_folder}/{pose}/Results/Results.dat')
-                    continue
-
-                self.fe_results[pose] = FEResult('Results/Results.dat')
-                os.chdir('../../')
-                pbar.set_description(f'FE for {pose} = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
-
-
-        # generate aligned pdbs
-        logger.info('Generating aligned pdbs')
-        reference_pdb_file = f'{self.poses_folder}/{self.system_name}_docked.pdb'
-        u_ref = mda.Universe(reference_pdb_file)
-        os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
-        os.system(f'cp {reference_pdb_file} {self.output_dir}/Results/reference.pdb')
-
-        for pose in tqdm(self.all_poses, desc='Generating aligned pdbs'):
-            pdb_file = f'{self.equil_folder}/{pose}/representative.pdb'
-            u = mda.Universe(pdb_file)
-            align.alignto(u,
-                          u_ref,
-                          select=f'(({self.protein_align}) and not resname NME ACE and protein)',
-                          weights="mass")
-            saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- and not resname {" ".join(self.lipid_mol)}')
-            saved_ag.write(f'{self.output_dir}/Results/protein_{pose}.pdb')
-
-            initial_pose = f'{self.poses_folder}/{pose}.pdb'
-            os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
-            
-        if convergence:
-            logger.info('Checking convergence of FE results')
-            validators_all = []
-            poses_all = []
-            comps_all = []
-            for pose in self.all_poses:
-                for i, comp in enumerate(components):
-                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    windows = self.component_windows_dict[comp]
-                    Upot = np.load(f"{folder_comp}/data/Upot_{comp}_all.npy")
-                    validator = ConvergenceValidator(
-                        Upot=Upot,
-                        lambdas=windows,
-                        temperature=temperature,
-                    )
-                    validators_all.append(validator)
-                    poses_all.append(pose)
-                    comps_all.append(comp)
-                
-            with tqdm_joblib(tqdm(validators_all, desc='Convergence analysis on FE results',
-                                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
-                Parallel(n_jobs=self.n_workers, backend='loky')(
-                    delayed(validator.plot_convergence)(
-                        save_path=f"{self.fe_folder}/{pose}/Results/convergence_{pose}_{comp}.png",
-                        title=f'Convergence of {pose} {comp}'
-                    ) for validator, pose, comp in zip(validators_all, poses_all, comps_all)
-                )
-        with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
-            for i, (pose, fe) in enumerate(self.fe_results.items()):
-                mol_name = self.mols[i]
-                
-                logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
-                f.write(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
-            
     @staticmethod
     def _find_anchor_atoms(u_prot,
                            u_lig,
@@ -2117,7 +2169,9 @@ class System:
         """
         Check if the ligand is bound after equilibration
         """
-        logger.info("Checking if the ligand is bound after equilibration")
+        from batter.analysis.sim_validation import SimValidator
+
+        logger.info("Checking if ligands are bound after equilibration")
         UNBOUND_THRESHOLD = 8.0
         bound_poses = []
         num_eq_sims = len(self.sim_config.release_eq)
@@ -2246,7 +2300,7 @@ class System:
             Default is 'rondror'.
         max_num_jobs : int, optional
             The maximum number of jobs to submit at a time.
-            Default is 500.
+            Default is 2000.
         verbose : bool, optional
             Whether to print the verbose output. Default is False.
         """
@@ -2311,6 +2365,9 @@ class System:
             pbar.update(len(self.all_poses) - pbar.n)  # update to total
             pbar.set_description('Equilibration finished')
             pbar.close()
+            
+            self._generate_aligned_pdbs()
+
         else:
             logger.info('Equilibration simulations are already finished')
             logger.info(f'If you want to have a fresh start, remove {self.equil_folder} manually')
@@ -2392,7 +2449,6 @@ class System:
                     eq_rst7_rel = os.path.relpath(eq_rst7, start=f'{folder_comp}/{comp}{j:02d}')
                     os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/eqnpt04.rst7')
 
-        self._generate_aligned_pdbs()
 
         if only_fe_preparation:
             logger.info('only_fe_preparation is set to True. '
@@ -2413,7 +2469,6 @@ class System:
             
             # Check the free energy calculation to finish
             pbar = tqdm(
-                total=len(self.bound_poses) * len(self.sim_config.components),
                 desc="FE simsulations finished",
                 unit="job"
             )
@@ -2889,20 +2944,19 @@ class System:
                     sim_type = 'rest'
                 elif comp in COMPONENTS_DICT['dd']:
                     sim_type = 'sdr'
-                folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}00'
-                mdin_files = glob.glob(f'{folder}/md*.rst7')
-                # make sure the size is not empty
-                mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
-
-                # only base name
-                # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
-                def sort_key(x):
-                    return int(os.path.splitext(os.path.basename(x))[0][-2:])
-                mdin_files.sort(key=sort_key)
-                if len(mdin_files) > 0:
-                    stage_sims[pose][comp] = sort_key(mdin_files[-1])
-                else:
-                    stage_sims[pose][comp] = -1
+                min_stage = float('inf')
+                for win in range(0, len(self.component_windows_dict[comp])):
+                    folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}{win:02d}'
+                    mdin_files = glob.glob(f'{folder}/md*.rst7')
+                    # make sure the size is not empty
+                    mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
+                    # only base name
+                    # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
+                    def sort_key(x):
+                        return int(os.path.splitext(os.path.basename(x))[0][-2:])
+                    mdin_files.sort(key=sort_key)
+                    min_stage = min(min_stage, sort_key(mdin_files[-1]) if mdin_files else -1)
+                stage_sims[pose][comp] = min_stage
         import matplotlib.pyplot as plt
         import seaborn as sns
         import pandas as pd
@@ -2910,6 +2964,7 @@ class System:
         stage_sims_df = pd.DataFrame(stage_sims)
         fig, ax = plt.subplots(figsize=(1* len(self.bound_poses), 5))
         sns.heatmap(stage_sims_df, ax=ax, annot=True, cmap='viridis')
+        plt.title('Simulation Stages for each Pose and Component')
         plt.show()
 
 

@@ -1,13 +1,7 @@
 import numpy as np
 import os
 import sys
-
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-os.environ['JAX_PLATFORMS'] = 'cpu'
-from jax import config
-config.update("jax_enable_x64", True)
 import pandas as pd
-
 from loguru import logger
 
 

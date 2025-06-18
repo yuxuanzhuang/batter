@@ -3,9 +3,10 @@ import subprocess
 from datetime import datetime
 from loguru import logger
 import time
+import getpass
 
 class SLURMJob:
-    def __init__(self, filename, partition=None, jobname=None):
+    def __init__(self, filename, partition=None, jobname=None, priority=None):
         if not os.path.exists(filename):
             raise FileNotFoundError(f"{filename} does not exist")
 
@@ -14,6 +15,7 @@ class SLURMJob:
         self.file_basename = os.path.basename(filename)
         self.partition = partition
         self.jobname = jobname
+        self.priority = priority
         self.jobid = None
 
     def submit(self,
@@ -38,10 +40,11 @@ class SLURMJob:
                 self._submit()
                 break
             except RuntimeError as e:
+                err_msg = str(e)
                 logger.debug(f"Failed to submit job: {e}; retrying in 30 seconds")
                 time.sleep(30)
         else:
-            raise RuntimeError("Failed to submit job after 5 attempts.")
+            raise RuntimeError("Failed to submit job after 5 attempts with error: {err_msg}")
 
     def _submit(self):
 
@@ -56,6 +59,8 @@ class SLURMJob:
             cmd.append(f"--partition={self.partition}")
         if self.jobname:
             cmd.append(f"--job-name={self.jobname}")
+        if self.priority:
+            cmd.append(f"--priority={self.priority}")
         cmd.append(self.file_basename)
 
         result = subprocess.run(
@@ -212,3 +217,17 @@ class SLURMJob:
         else:
             logger.debug(f"Job {self.jobid} is still in state {job_state}")
             return True
+
+
+
+def get_squeue_job_count(user=None, partition=None):
+    if user is None:
+        user = getpass.getuser()
+
+    cmd = ["squeue", "-u", user]
+    if partition:
+        cmd += ["-p", partition]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    lines = result.stdout.strip().split("\n")
+    return max(len(lines) - 1, 0)

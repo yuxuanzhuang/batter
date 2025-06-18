@@ -18,7 +18,10 @@ fi
 
 source run_failures.bash
 
-if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
+# Should almost never skip minimization because it may pass
+# with astronomical forces
+# TODO: add energy check
+if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
     echo "Skipping minimization steps."
 else
     # Minimization
@@ -27,15 +30,20 @@ else
     else
         pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     fi
+    # We need to use pmemd.cuda to run minimization on GPUs
+    # because we need to use GTI routine
+    #pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 fi
 
 if [[ $only_eq -eq 1 ]]; then
-    if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
+    if [[ $overwrite -eq 0 && -s eq_output.pdb ]]; then
         echo "Skipping equilibration steps."
     else
         # Equilibration with protein and lipid restrained
         # this is to equilibrate the density of water
+        # Note we are not using the GPU version here
+        # because for large box size change, an error will be raised.
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
             mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 >> "$log_file" 2>&1
         else
@@ -63,7 +71,7 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     # Initial MD production run
@@ -88,7 +96,7 @@ while [ $i -le FERANGE ]; do
     i=$((i + 1))
 done
 
-cpptraj -p $PRMTOP -y md-$x.rst7 -x output.pdb >> "$log_file" 2>&1
+cpptraj -p $PRMTOP -y mdin-$x.rst7 -x output.pdb >> "$log_file" 2>&1
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion

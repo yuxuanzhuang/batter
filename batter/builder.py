@@ -793,7 +793,7 @@ class SystemBuilder(ABC):
         tleap_solvate.write('model = combine {dum prot others outside_wat}\n\n')
 
         tleap_solvate.write('\n')
-        tleap_solvate.write('set model box {%.2f %.2f %.2f}\n' % (box_final[0], box_final[1], box_final[2]))
+        tleap_solvate.write('set model box {%.6f %.6f %.6f}\n' % (box_final[0], box_final[1], box_final[2]))
         tleap_solvate.write('desc model\n')
         tleap_solvate.write('savepdb model full.pdb\n')
         tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
@@ -817,6 +817,7 @@ class SystemBuilder(ABC):
         f.close()
 
         u = mda.Universe('full.pdb')
+        u_vac = mda.Universe('vac.pdb')
         # regenerate full.pdb resid indices
         renum_txt = f'../{self.build_file_folder}/protein_renum.txt'
         if not os.path.exists(renum_txt):
@@ -830,6 +831,7 @@ class SystemBuilder(ABC):
                     'new_resname', 'new_resid'])
 
         u.select_atoms('protein').residues.resids = renum_data['old_resid'].values
+        u_vac.select_atoms('protein').residues.resids = renum_data['old_resid'].values
         
         # regenerate segments
         seg_txt = 'build_amber_renum.txt'
@@ -854,6 +856,7 @@ class SystemBuilder(ABC):
             res.segment = u_chain_segments[chain]  # assign each residue to its segment
 
         u.atoms.write('full.pdb')
+        u_vac.atoms.write('vac.pdb')
 
         # Apply hydrogen mass repartitioning
         #shutil.copy(f'{self.amber_files_folder}/parmed-hmr.in', './')
@@ -1499,19 +1502,7 @@ class EquilibrationBuilder(SystemBuilder):
         with open(f"{self.amber_files_folder}/mini.in", "rt") as fin:
             with open("./mini.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
-                            '_lig_name_', mol))
-        with open(f"{self.amber_files_folder}/therm1.in", "rt") as fin:
-            with open("./therm1.in", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace('_L3_', L3).replace(
-                            '_lig_name_', mol))
-        with open(f"{self.amber_files_folder}/therm2.in", "rt") as fin:
-            with open("./therm2.in", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('_L1_', L1).replace('_L2_', L2).replace(
-                        '_L3_', L3).replace('_temperature_', str(temperature)).replace(
-                            '_lig_name_', mol))
+                    fout.write(line.replace('_lig_name_', mol))
         with open(f"{self.amber_files_folder}/eqnvt.in", "rt") as fin:
             with open("./eqnvt.in", "wt") as fout:
                 for line in fin:
@@ -1679,11 +1670,11 @@ class FreeEnergyBuilder(SystemBuilder):
                                     'old_chain',
                                     'old_resid',
                                     'new_resname', 'new_resid'])
-        u = mda.Universe('rec_file.pdb')
 
+        u = mda.Universe('rec_file.pdb')
         for residue in u.select_atoms('protein').residues:
             resid_str = residue.resid
-            residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
+            residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
         if lipid_mol:
             # fix lipid resids
@@ -1737,8 +1728,8 @@ class FreeEnergyBuilder(SystemBuilder):
         filenames = ['dummy.pdb',
                      'protein.pdb',
                     f'{mol.lower()}.pdb',
-                     'others.pdb',
                      'lipids.pdb',
+                     'others.pdb',
                      'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
@@ -4160,8 +4151,8 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         filenames = ['dummy.pdb',
                     'protein.pdb',
                     '%s.pdb' % molr.lower(),
-                    'others.pdb',
                     'lipids.pdb',
+                    'others.pdb',
                     'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
@@ -4500,25 +4491,30 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-
-            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
-                with open("./eqnpt0.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
+                        fout.write(line.replace('_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        if 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        if 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
 
         # Create running scripts for local and server
         with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
@@ -4627,25 +4623,30 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-
-            with open(f"../{self.amber_files_folder}/eqnpt0-unorest.in", "rt") as fin:
-                with open("./eqnpt0.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt-unorest.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/mini-unorest", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
+                        fout.write(line.replace('_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        if 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        if 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
 
         # Create running scripts for local and server
         with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
@@ -4780,8 +4781,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         filenames = ['dummy.pdb',
                      'protein.pdb',
                     f'{mol.lower()}.pdb',
-                     'others.pdb',
                      'lipids.pdb',
+                     'others.pdb',
                      'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
@@ -5469,8 +5470,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         filenames = ['dummy.pdb',
                      'protein.pdb',
                     f'{mol.lower()}.pdb',
-                     'others.pdb',
                      'lipids.pdb',
+                     'others.pdb',
                      'crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
@@ -6003,24 +6004,30 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                 #mdin.write('DISANG=disang.rest\n')
                 #mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
-                with open("./eqnpt0.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
+                        fout.write(line.replace('_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        if 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        if 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
 
         # Create running scripts for local and server
         with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
