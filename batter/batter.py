@@ -998,82 +998,6 @@ class System:
 
             pbar.close()
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
-
-        elif stage == 'fe':
-            logger.info('Submit free energy stage')
-            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
-            for pose in self.bound_poses:
-                #shutil.copy(f'{self.fe_folder}/{pose}/rest/run_files/run-express.bash',
-                #            f'{self.fe_folder}/{pose}')
-                #run_with_log(f'bash run-express.bash',
-                #            working_dir=f'{self.fe_folder}/{pose}')
-                for comp in self.sim_config.components:
-                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
-                    windows = self.component_windows_dict[comp]
-                    for j in range(len(windows)):
-                        # check n_jobs_submitted is less than the max_jobs
-                        while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
-                            time.sleep(120)
-                            pbar.set_description(f'Waiting to submit FE jobs')
-
-                        folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
-                        if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
-                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
-                            logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
-                            continue
-                        if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
-                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
-                            logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
-                            continue
-                        if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
-                            slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
-                            if not slurm_job.is_still_running():
-                                slurm_job.submit(
-                                    requeue=True,
-                                    other_env={
-                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
-                                    }
-                                )
-                                continue
-                            elif overwrite:
-                                slurm_job.cancel()
-                                slurm_job.submit(overwrite=True,
-                                    other_env={
-                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
-                                    }
-                                )
-                                continue
-                            else:
-                                logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
-                                continue
-
-                        if overwrite:
-                            # remove FINISHED and FAILED
-                            os.remove(f"{folder_2_check}/FINISHED", ignore_errors=True)
-                            os.remove(f"{folder_2_check}/FAILED", ignore_errors=True)
-
-                        slurm_job = SLURMJob(
-                                        filename=f'{folder_2_check}/SLURMM-run',
-                                        partition=partition,
-                                        jobname=f'fep_{folder_2_check}_fe')
-                        slurm_job.submit(overwrite=overwrite,
-                                    other_env={
-                                            'INPCRD': f'../{comp}-1/eqnpt04.rst7'
-                                        }
-                        )
-
-                        pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
-                        self._slurm_jobs.update(
-                            {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
-                        )
-                        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                            pickle.dump(self, f)
-                pbar.update(1)
-            pbar.close()
-
-            logger.info('Free energy systems have been submitted for all poses listed in the input file.')
-
         elif stage == 'fe_equil':
             logger.info('Submit NPT equilibration part of free energy stage')
             pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy equilibration jobs')
@@ -1149,6 +1073,81 @@ class System:
                 pbar.update(1)
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')        
             pbar.close()
+        elif stage == 'fe':
+            logger.info('Submit free energy stage')
+            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
+            priorities = np.arange(1, len(self.bound_poses) + 1)[::-1] * 10000
+            for i, pose in enumerate(self.bound_poses):
+                # set gradually lower priority for jobs
+                priority = priorities[i]
+                # only check for each pose to reduce frequently checking SLURM 
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
+                    time.sleep(120)
+                    pbar.set_description(f'Waiting to submit FE jobs')
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    windows = self.component_windows_dict[comp]
+                    for j in range(len(windows)):
+                        # check n_jobs_submitted is less than the max_jobs
+                        folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}'
+                        if os.path.exists(f"{folder_2_check}/FINISHED") and not overwrite:
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                            logger.debug(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has finished; add overwrite=True to re-run the simulation')
+                            continue
+                        if os.path.exists(f"{folder_2_check}/FAILED") and not overwrite:
+                            self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}{j:02d}', None)
+                            logger.warning(f'FE for {pose}/{comp_folder}/{comp}{j:02d} has failed; add overwrite=True to re-run the simulation')
+                            continue
+                        if f'fe_{pose}_{comp_folder}_{comp}{j:02d}' in self._slurm_jobs:
+                            slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}{j:02d}']
+                            slurm_job.priority = priority
+                            if not slurm_job.is_still_running():
+                                slurm_job.submit(
+                                    requeue=True,
+                                    other_env={
+                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
+                                    }
+                                )
+                                continue
+                            elif overwrite:
+                                slurm_job.cancel()
+                                slurm_job.submit(overwrite=True,
+                                    other_env={
+                                        'INPCRD': f'../{comp}-1/eqnpt04.rst7'
+                                    }
+                                )
+                                continue
+                            else:
+                                logger.debug(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} is still running')
+                                continue
+
+                        if overwrite:
+                            # remove FINISHED and FAILED
+                            os.remove(f"{folder_2_check}/FINISHED", ignore_errors=True)
+                            os.remove(f"{folder_2_check}/FAILED", ignore_errors=True)
+
+                        slurm_job = SLURMJob(
+                                        filename=f'{folder_2_check}/SLURMM-run',
+                                        partition=partition,
+                                        jobname=f'fep_{folder_2_check}_fe',
+                                        priority=priority)
+                        slurm_job.submit(overwrite=overwrite,
+                                    other_env={
+                                            'INPCRD': f'../{comp}-1/eqnpt04.rst7'
+                                        }
+                        )
+
+                        pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}{j:02d} submitted')
+                        self._slurm_jobs.update(
+                            {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
+                        )
+                        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+                            pickle.dump(self, f)
+                pbar.update(1)
+            pbar.close()
+
+            logger.info('Free energy systems have been submitted for all poses listed in the input file.')
         else:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -1946,7 +1945,7 @@ class System:
                 'queue': self.partition,
                 'cores': 4,
                 'memory': '8GB',
-                'walltime': '00:20:00',
+                'walltime': '00:10:00',
                 'job_extra_directives': [
                     f'--output=/tmp/dask-%j.out',
                     f'--error=/tmp/dask-%j.err',
@@ -2055,6 +2054,27 @@ class System:
                       sim_range=sim_range,
                       overwrite=overwrite,
                       raise_on_error=raise_on_error)
+
+    
+    @safe_directory
+    @save_state
+    def load_results(self):
+        """
+        Load the results from the output directory.
+        """
+        for pose in self.all_poses:
+            results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
+            if os.path.exists(results_file):
+                self.fe_results[pose] = NewFEResult(results_file)
+                if np.isnan(self.fe_results[pose].fe):
+                    logger.warning(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
+                logger.debug(f'FE for {pose} loaded from {results_file}')
+            else:
+                logger.warning(f'FE results file {results_file} not found for pose {pose}')
+        if not self.fe_results:
+            raise ValueError('No results found in the output directory. Please run the analysis first.')
+        logger.info('Results loaded successfully')
+        
 
     def _generate_aligned_pdbs(self):
         # generate aligned pdbs
@@ -3113,7 +3133,6 @@ class System:
     @property
     def fe_results(self):
         return self._fe_results
-
 
     @property
     def ligand_poses(self):

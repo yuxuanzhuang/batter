@@ -6,7 +6,7 @@ import time
 import getpass
 
 class SLURMJob:
-    def __init__(self, filename, partition=None, jobname=None):
+    def __init__(self, filename, partition=None, jobname=None, priority=None):
         if not os.path.exists(filename):
             raise FileNotFoundError(f"{filename} does not exist")
 
@@ -15,6 +15,7 @@ class SLURMJob:
         self.file_basename = os.path.basename(filename)
         self.partition = partition
         self.jobname = jobname
+        self.priority = priority
         self.jobid = None
 
     def submit(self,
@@ -58,6 +59,8 @@ class SLURMJob:
             cmd.append(f"--partition={self.partition}")
         if self.jobname:
             cmd.append(f"--job-name={self.jobname}")
+        if self.priority:
+            cmd.append(f"--priority={self.priority}")
         cmd.append(self.file_basename)
 
         result = subprocess.run(
