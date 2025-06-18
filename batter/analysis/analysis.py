@@ -108,7 +108,8 @@ class MBARAnalysis(FEAnalysisBase):
             """
         super().__init__()
         self.pose_folder = pose_folder
-        os.makedirs(f'{self.pose_folder}/Results', exist_ok=True)
+        self.result_folder = f'{self.pose_folder}/Results'
+        os.makedirs(f'{self.result_folder}', exist_ok=True)
         comp_folder = f'{self.pose_folder}/{COMPONENTS_FOLDER_DICT[component]}'
         if not os.path.exists(comp_folder):
             raise ValueError(f"Component folder {comp_folder} does not exist.")
@@ -140,8 +141,8 @@ class MBARAnalysis(FEAnalysisBase):
         """
         Get the data for the component.
         """
-        if os.path.exists(f'{self.comp_folder}/{self.component}_df_list.pickle') and self.load:
-            with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'rb') as f:
+        if os.path.exists(f'{self.result_folder}/{self.component}_df_list.pickle') and self.load:
+            with open(f'{self.result_folder}/{self.component}_df_list.pickle', 'rb') as f:
                 df_list = pickle.load(f)
         else:
             df_list = self._get_data_list()
@@ -248,7 +249,7 @@ class MBARAnalysis(FEAnalysisBase):
             self.results['convergence']['mbar'] = mbar
         
         # Save the results
-        with open(f'{self.pose_folder}/Results/{self.component}_results.pickle', 'wb') as f:
+        with open(f'{self.result_folder}/{self.component}_results.pickle', 'wb') as f:
             pickle.dump(self.results, f)
 
     @staticmethod
@@ -267,6 +268,8 @@ class MBARAnalysis(FEAnalysisBase):
         for i in sim_range:
             if os.path.exists(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out'):
                 md_sim_files.append(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out')
+            else:
+                raise FileNotFoundError(f"Simulation file {comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out not found.")
 
         if len(md_sim_files) == 0:
             # the simulation is done probably in older versions
@@ -313,7 +316,7 @@ class MBARAnalysis(FEAnalysisBase):
             df.attrs['temperature'] = self.temperature
             df.attrs['energy_unit'] = 'kT'
         
-        with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'wb') as f:
+        with open(f'{self.result_folder}/{self.component}_df_list.pickle', 'wb') as f:
             pickle.dump(df_list, f)
 
         return df_list
@@ -520,7 +523,7 @@ class RESTMBARAnalysis(MBARAnalysis):
                                                  num_win=len(self.windows)
             )          
                 for win_i in range(len(self.windows)))
-        with open(f'{self.comp_folder}/{self.component}_df_list.pickle', 'wb') as f:
+        with open(f'{self.result_folder}/{self.component}_df_list.pickle', 'wb') as f:
             pickle.dump(df_list, f)
 
         for df in df_list:
@@ -549,6 +552,8 @@ class RESTMBARAnalysis(MBARAnalysis):
         for i in sim_range:
             if os.path.exists(f'mdin-{i:02d}.nc'):
                 md_sim_files.append(f'mdin-{i:02d}.nc')
+            else:
+                raise FileNotFoundError(f"Simulation file mdin-{i:02d}.nc not found.")
         
         top = 'full'
         # make sure all nc files exist
