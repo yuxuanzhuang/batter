@@ -26,7 +26,6 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple
 from loguru import logger
 from batter.input_process import SimulationConfig, get_configure_from_file
-from batter.bat_lib import analysis
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count

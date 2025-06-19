@@ -17,7 +17,7 @@ from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.data import build_files as build_files_orig
 from batter.data import amber_files as amber_files_orig
 from batter.data import run_files as run_files_orig
-from batter.bat_lib import setup, analysis, scripts
+from batter.bat_lib import setup, scripts
 
 from batter.utils import (
     run_with_log,
