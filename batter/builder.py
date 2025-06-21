@@ -270,6 +270,7 @@ class SystemBuilder(ABC):
         other_mol = self.other_mol
         mol = self.mol
         comp = self.comp
+        solv_shell = self.sim_config.solv_shell
         if comp == 'x':
             molr = self.molr
             poser = self.poser
@@ -279,11 +280,15 @@ class SystemBuilder(ABC):
         buffer_x = self.sim_config.buffer_x
         buffer_y = self.sim_config.buffer_y
         buffer_z = self.sim_config.buffer_z
+
+        # default to 20 A
         if buffer_z == 0:
-            raise ValueError(
-                'Buffer z cannot be 0. '
-                'Please set it to a positive value, e.g. 20 (angstroms).'
-            )
+            buffer_z = 20
+        # decide based on existing water shell
+        # to reach buffer_z angstroms on each side
+        buffer_z = get_buffer_z('build.pdb', targeted_buf=buffer_z)
+        #logger.info(f'Using buffer_z = {buffer_z} angstroms')
+
         water_model = self.sim_config.water_model
         num_waters = self.sim_config.num_waters
         if num_waters != 0:
@@ -300,20 +305,18 @@ class SystemBuilder(ABC):
         if lipid_mol:
             buffer_x = 0
             buffer_y = 0
-
-        # copy all the files from the ff directory
-        for file in glob.glob('../../ff/*'):
-            if file.endswith('.in') or file.endswith('.pdb'):
-                continue
-            #shutil.copy(file, '.')
-            os.system(f'cp {file} .')
-
+        
+        for file in glob.glob(f'../../ff/{mol.lower()}.*'):
+            os.system(f'cp {file} ./')
+        if mol != molr:
+            for file in glob.glob(f'../../ff/{molr.lower()}.*'):
+                os.system(f'cp {file} ./')
+        for file in glob.glob('../../ff/dum.*'):
+            os.system(f'cp {file} ./')
+        
         # Copy tleap files that are used for restraint generation and analysis
-        #shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap_vac.in')
         os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac.in')
-        #shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap_vac_ligand.in')
         os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac_ligand.in')
-        #shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap.in')
         os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap.in')
 
         # Append tleap file for vacuum
@@ -768,7 +771,8 @@ class SystemBuilder(ABC):
             res.segment = u_chain_segments[chain]  # assign each residue to its segment
 
         u.atoms.write('full.pdb')
-        u_vac.atoms.write('vac.pdb')
+
+        u_vac.atoms.write('vac_orig.pdb')
 
         # Apply hydrogen mass repartitioning
         os.system(f'cp {self.amber_files_folder}/parmed-hmr.in ./')
@@ -1341,8 +1345,6 @@ class EquilibrationBuilder(SystemBuilder):
 
     @log_info
     def _restraints(self):
-        # TODO: remove it
-        os.chdir('..')
         pose = self.pose
         rest = self.sim_config.rest
         bb_start = self.sim_config.bb_start
@@ -1359,17 +1361,296 @@ class EquilibrationBuilder(SystemBuilder):
         other_mol = self.other_mol
 
         release_eq = self.sim_config.release_eq
+        pdb_file = 'vac.pdb'
+        ligand_pdb_file = 'vac_ligand.pdb'
+        reflig_pdb_file = 'vac_reference.pdb'
+        # Find anchors
+        with open(f'equil-{mol.lower()}.pdb', 'r') as f:
+            data = f.readline().split()
+            P1 = data[2].strip()
+            P2 = data[3].strip()
+            P3 = data[4].strip()
+            p1_res = P1.split('@')[0][1:]
+            p2_res = P2.split('@')[0][1:]
+            p3_res = P3.split('@')[0][1:]
+            p1_atom = P1.split('@')[1]
+            p2_atom = P2.split('@')[1]
+            p3_atom = P3.split('@')[1]
+            L1 = data[5].strip()
+            L2 = data[6].strip()
+            L3 = data[7].strip()
+            l1_atom = L1.split('@')[1]
+            l2_atom = L2.split('@')[1]
+            l3_atom = L3.split('@')[1]
+            lig_res = L1.split('@')[0][1:]
+            first_res = data[8].strip()
+            recep_last = data[9].strip()
+
+
+        rst = []
+        atm_num = []
+        mlines = []
+        hvy_h = []
+        hvy_g = []
+        hvy_g2 = []
+        msk = []
+        # Restraint identifiers
+        recep_tr = '#Rec_TR'
+        recep_c = '#Rec_C'
+        recep_d = '#Rec_D'
+        lign_tr = '#Lig_TR'
+        lign_c = '#Lig_C'
+        lign_d = '#Lig_D'
+
+        # Get backbone atoms and adjust anchors
+        # Get protein backbone atoms
+        with open('./vac.pdb') as f_in:
+            lines = (line.rstrip() for line in f_in)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+            for i in range(0, len(lines)):
+                if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                    if int(lines[i][22:26].strip()) >= 2 and int(lines[i][22:26].strip()) < int(lig_res):
+                        data = lines[i][12:16].strip()
+                        if data == 'CA' or data == 'N' or data == 'C' or data == 'O':
+                            hvy_h.append(lines[i][6:11].strip())
+
+        # Get a relation between atom number and masks
+        atm_num = scripts.num_to_mask(pdb_file)
+        ligand_atm_num = scripts.num_to_mask(ligand_pdb_file)
+
+        # Get number of ligand atoms
+        with open('./vac_ligand.pdb') as myfile:
+            data = myfile.readlines()
+            vac_atoms = int(data[-3][6:11].strip())
+
+        # Define anchor atom distance restraints on the protein
+        rst.append(''+P1+' '+P2+'')
+        rst.append(''+P2+' '+P3+'')
+        rst.append(''+P3+' '+P1+'')
+
+        # Define protein dihedral restraints in the given range
+        nd = 0
+        for i in range(0, len(bb_start)):
+            beg = bb_start[i] - int(first_res) + 2
+            end = bb_end[i] - int(first_res) + 2
+            for i in range(beg, end):
+                j = i+1
+                psi1 = ':'+str(i)+'@N'
+                psi2 = ':'+str(i)+'@CA'
+                psi3 = ':'+str(i)+'@C'
+                psi4 = ':'+str(j)+'@N'
+                psit = '%s %s %s %s' % (psi1, psi2, psi3, psi4)
+                rst.append(psit)
+                nd += 1
+                phi1 = ':'+str(i)+'@C'
+                phi2 = ':'+str(j)+'@N'
+                phi3 = ':'+str(j)+'@CA'
+                phi4 = ':'+str(j)+'@C'
+                phit = '%s %s %s %s' % (phi1, phi2, phi3, phi4)
+                rst.append(phit)
+                nd += 1
+
+        # Define translational/rotational and anchor atom distance restraints on the ligand
+
+        rst.append(''+P1+' '+L1+'')
+        rst.append(''+P2+' '+P1+' '+L1+'')
+        rst.append(''+P3+' '+P2+' '+P1+' '+L1+'')
+        rst.append(''+P1+' '+L1+' '+L2+'')
+        rst.append(''+P2+' '+P1+' '+L1+' '+L2+'')
+        rst.append(''+P1+' '+L1+' '+L2+' '+L3+'')
+
+        # Get ligand dihedral restraints from ligand parameter/pdb file
+
+        spool = 0
+        with open('./vac_ligand.prmtop') as fin:
+            lines = (line.rstrip() for line in fin)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+            for line in lines:
+                if 'FLAG DIHEDRALS_WITHOUT_HYDROGEN' in line:
+                    spool = 1
+                elif 'FLAG EXCLUDED_ATOMS_LIST' in line:
+                    spool = 0
+                if spool != 0 and (len(line.split()) > 3):
+                    mlines.append(line)
+
+        for i in range(0, len(mlines)):
+            data = mlines[i].split()
+            if int(data[3]) > 0:
+                anum = []
+                for j in range(0, len(data)):
+                    anum.append(abs(int(data[j])//3)+1)
+                msk.append('%s %s %s %s' % (
+                    ligand_atm_num[anum[0]], ligand_atm_num[anum[1]], ligand_atm_num[anum[2]], ligand_atm_num[anum[3]]))
+
+        for i in range(0, len(mlines)):
+            data = mlines[i].split()
+            if len(data) > 7:
+                if int(data[8]) > 0:
+                    anum = []
+                    for j in range(0, len(data)):
+                        anum.append(abs(int(data[j])//3)+1)
+                    msk.append('%s %s %s %s' % (
+                        ligand_atm_num[anum[5]], ligand_atm_num[anum[6]], ligand_atm_num[anum[7]], ligand_atm_num[anum[8]]))
+
+        excl = msk[:]
+        ind = 0
+        mat = []
+        for i in range(0, len(excl)):
+            data = excl[i].split()
+            for j in range(0, len(excl)):
+                if j == i:
+                    break
+                data2 = excl[j].split()
+                if (data[1] == data2[1] and data[2] == data2[2]) or (data[1] == data2[2] and data[2] == data2[1]):
+                    ind = 0
+                    for k in range(0, len(mat)):
+                        if mat[k] == j:
+                            ind = 1
+                    if ind == 0:
+                        mat.append(j)
+
+        for i in range(0, len(mat)):
+            msk[mat[i]] = ''
+
+        if (comp != 'c' and comp != 'w' and comp != 'f'):
+            msk = list(filter(None, msk))
+            msk = [m.replace(':1', ':'+lig_res) for m in msk]
+        else:
+            msk = list(filter(None, msk))
+
+        # Remove dihedral restraints on sp carbons to avoid crashes
+        sp_carb = []
+        with open(f'./{mol.lower()}.mol2') as fin:
+            lines = (line.rstrip() for line in fin)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+            for line in lines:
+                data = line.split()
+                if len(data) > 6:
+                    if data[5] == 'cg' or data[5] == 'c1':
+                        sp_carb.append(data[1])
+        for i in range(0, len(msk)):
+            rem_dih = 0
+            data = msk[i].split()
+            for j in range(0, len(sp_carb)):
+                atom_name1 = data[1].split('@')[1]
+                atom_name2 = data[2].split('@')[1]
+                if atom_name1 == sp_carb[j] or atom_name2 == sp_carb[j]:
+                    rem_dih = 1
+                    break
+            if rem_dih == 0:
+                rst.append(msk[i])
+
+        # Get initial restraint values for references
+
+        assign_file = open('assign.in', 'w')
+        assign_file.write('%s  %s  %s  %s  %s  %s  %s\n' % ('# Anchor atoms', P1, P2, P3, L1, L2, L3))
+        assign_file.write('parm full.hmr.prmtop\n')
+        assign_file.write('trajin full.inpcrd\n')
+        for i in range(0, len(rst)):
+            arr = rst[i].split()
+            if len(arr) == 2:
+                assign_file.write('%s %s %s' % ('distance r'+str(i), rst[i], 'noimage out assign.dat\n'))
+            if len(arr) == 3:
+                assign_file.write('%s %s %s' % ('angle r'+str(i), rst[i], 'out assign.dat\n'))
+            if len(arr) == 4:
+                assign_file.write('%s %s %s' % ('dihedral r'+str(i), rst[i], 'out assign.dat\n'))
+
+        assign_file.close()
+        run_with_log(cpptraj + ' -i assign.in > assign.log')
+
+        # Assign reference values for restraints
+        with open('./assign.dat') as fin:
+            lines = (line.rstrip() for line in fin)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+            vals = lines[1].split()
+            vals.append(vals.pop(0))
+            del vals[-1]
+
         logger.debug('Equil release weights:')
-        for i in range(0, len(release_eq)):
-            weight = release_eq[i]
+        for relase_eq_i in range(0, len(release_eq)):
+            weight = release_eq[relase_eq_i]
             logger.debug('%s' % str(weight))
-            setup.restraints(pose, rest, bb_start, bb_end, weight, stage, mol,
-                             molr, comp, bb_equil, sdr_dist, dec_method, other_mol)
-            #shutil.copy('./'+pose+'/disang.rest', './'+pose+'/disang%02d.rest' % int(i))
-            os.system(f'cp ./{pose}/disang.rest ./{pose}/disang{i:02d}.rest')
-        #shutil.copy('./'+pose+'/disang%02d.rest' % int(0), './'+pose+'/disang.rest')
-        os.system(f'cp ./{pose}/disang00.rest ./{pose}/disang.rest')
-        os.chdir(pose)
+
+            # Define spring constants based on stage and weight
+            if bb_equil == 'yes':
+                rdhf = rest[0]
+            else:
+                rdhf = 0
+            rdsf = rest[1]
+            ldf = weight*rest[2]/100
+            laf = weight*rest[3]/100
+            ldhf = weight*rest[4]/100
+            rcom = rest[5]
+
+            # Write AMBER restraint file for the full system
+            disang_file = open('disang.rest', 'w')
+            disang_file.write('%s  %s  %s  %s  %s  %s  %s  %s  %s \n' % ('# Anchor atoms', P1,
+                            P2, P3, L1, L2, L3, 'stage = '+stage, 'weight = '+str(weight)))
+            for i in range(0, len(rst)):
+                data = rst[i].split()
+                # Protein conformation (P1-P3 distance restraints)
+                if i < 3:
+                    if len(data) == 2:
+                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+','
+                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
+                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
+                            float(0.0), float(vals[i]), float(vals[i]), float(999.0), rdsf, rdsf, recep_c))
+                # Protein conformation (backbone restraints)
+                elif i >= 3 and i < 3+nd:
+                    if len(data) == 4:
+                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
+                            ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
+                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
+                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
+                            float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, rdhf, rdhf, recep_d))
+                # Ligand translational/rotational restraints
+                elif i >= 3+nd and i < 9+nd and comp != 'a':
+                    if len(data) == 2:
+                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+','
+                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
+                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
+                            float(0.0), float(vals[i]), float(vals[i]), float(999.0), ldf, ldf, lign_tr))
+                    elif len(data) == 3:
+                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
+                            ','+str(atm_num.index(data[2]))+','
+                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
+                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
+                            float(0.0), float(vals[i]), float(vals[i]), float(180.0), laf, laf, lign_tr))
+                    elif len(data) == 4:
+                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
+                            ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
+                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
+                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
+                            float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
+                # Ligand conformation (non-hydrogen dihedrals)
+                elif i >= 9+nd and comp != 'a':
+                    if len(data) == 4:
+                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
+                            ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
+                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
+                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
+                            float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, ldhf, ldhf, lign_d))
+                        
+                # COM restraints
+                cv_file = open('cv.in', 'w')
+                cv_file.write('cv_file \n')
+                cv_file.write('&colvar \n')
+                cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+                cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
+                for i in range(0, len(hvy_h)):
+                    cv_file.write(hvy_h[i])
+                    cv_file.write(',')
+                cv_file.write('\n')
+                cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                            (float(0.0), float(0.0), float(0.0), float(999.0)))
+                cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
+                cv_file.write('/ \n')
+                cv_file.close()
+
+            disang_file.write('\n')
+            disang_file.close()
+
+            os.system(f'cp disang.rest disang{relase_eq_i:02d}.rest')
 
     @log_info
     def _sim_files(self):
@@ -1826,31 +2107,25 @@ class FreeEnergyBuilder(SystemBuilder):
         os.symlink(f'../{self.amber_files_folder}', self.amber_files_folder)
 
         for file in glob.glob(f'../{self.build_file_folder}/vac_ligand*'):
-            #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        #shutil.copy(f'../{self.build_file_folder}/{mol.lower()}.pdb', './')
+
         os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
-        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
-        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
-        #shutil.copy(f'../{self.build_file_folder}/anchors-{self.pose}.txt', './')
         os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
-        #shutil.copy(f'../{self.build_file_folder}/equil-reference.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
 
-        for file in glob.glob('../../../ff/*.mol2'):
+        for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        for file in glob.glob('../../../ff/*.frcmod'):
-            #shutil.copy(file, './')
-            os.system(f'cp {file} ./')
-        for file in glob.glob('../../../ff/{mol.lower()}.*'):
-            #shutil.copy(file, './')
-            os.system(f'cp {file} ./')
+        if mol != molr:
+            for file in glob.glob(f'../../../ff/{molr.lower()}.*'):
+                #shutil.copy(file, './')
+                os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/dum.*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
+
 
         # Get TER statements
         ter_atom = []
@@ -4850,31 +5125,24 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         os.symlink(f'../{self.amber_files_folder}', self.amber_files_folder)
 
         for file in glob.glob(f'../{self.build_file_folder}/vac_ligand*'):
-            #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        #shutil.copy(f'../{self.build_file_folder}/{mol.lower()}.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
-        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
-        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
-        #shutil.copy(f'../{self.build_file_folder}/anchors-{self.pose}.txt', './')
         os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
-        #shutil.copy(f'../{self.build_file_folder}/equil-reference.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
 
-        for file in glob.glob('../../../ff/*.mol2'):
+        for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        for file in glob.glob('../../../ff/*.frcmod'):
-            #shutil.copy(file, './')
-            os.system(f'cp {file} ./')
-        for file in glob.glob('../../../ff/{mol.lower()}.*'):
-            #shutil.copy(file, './')
-            os.system(f'cp {file} ./')
+        if mol != molr:
+            for file in glob.glob(f'../../../ff/{molr.lower()}.*'):
+                #shutil.copy(file, './')
+                os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/dum.*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
+
 
         # Get TER statements
         ter_atom = []
@@ -5539,28 +5807,21 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         os.symlink(f'../{self.amber_files_folder}', self.amber_files_folder)
 
         for file in glob.glob(f'../{self.build_file_folder}/vac_ligand*'):
-            #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        #shutil.copy(f'../{self.build_file_folder}/{mol.lower()}.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
-        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './build-ini.pdb')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
-        #shutil.copy(f'../{self.build_file_folder}/fe-{mol.lower()}.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
-        #shutil.copy(f'../{self.build_file_folder}/anchors-{self.pose}.txt', './')
         os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
-        #shutil.copy(f'../{self.build_file_folder}/equil-reference.pdb', './')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
 
-        for file in glob.glob('../../../ff/*.mol2'):
+
+        for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        for file in glob.glob('../../../ff/*.frcmod'):
-            #shutil.copy(file, './')
-            os.system(f'cp {file} ./')
-        for file in glob.glob('../../../ff/{mol.lower()}.*'):
-            #shutil.copy(file, './')
-            os.system(f'cp {file} ./')
+        if mol != molr:
+            for file in glob.glob(f'../../../ff/{molr.lower()}.*'):
+                #shutil.copy(file, './')
+                os.system(f'cp {file} ./')
         for file in glob.glob('../../../ff/dum.*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
@@ -6035,3 +6296,30 @@ class BuilderFactory:
                 )
             case _:
                 raise ValueError(f"Invalid component: {component} for now")
+
+
+def get_buffer_z(protein_file, targeted_buf=20):
+    """
+    Get the additional buffer_z (in Å) needed to reach the targeted water layer thickness
+    on both sides of the protein along the z-axis.
+    """
+    u = mda.Universe(protein_file)
+
+    protein = u.select_atoms('protein')
+    prot_z_min = protein.positions[:, 2].min()
+    prot_z_max = protein.positions[:, 2].max()
+
+    sys_z_min = u.atoms.positions[:, 2].min()
+    sys_z_max = u.atoms.positions[:, 2].max()
+
+    # How much water is already present on top and bottom
+    buffer_top = sys_z_max - prot_z_max
+    buffer_bottom = prot_z_min - sys_z_min
+
+    # Find the limiting (smallest) buffer
+    current_buffer = min(buffer_top, buffer_bottom)
+
+    # Compute how much more is needed to reach the targeted buffer
+    required_extra = max(0.0, targeted_buf - current_buffer)
+
+    return required_extra

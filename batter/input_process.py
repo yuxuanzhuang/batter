@@ -243,7 +243,7 @@ class SimulationConfig(BaseModel):
             self.lig_com_force
         ]
         if self.buffer_z == 0:
-            raise ValueError("'buffer_z' must be provided (non-zero values).")
+            logger.info('Buffer size along Z-axis is set to 0; an automatic buffer will be applied.')
 
         if self.num_waters != 0:
             raise ValueError("'num_waters' is removed")
