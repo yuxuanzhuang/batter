@@ -1937,6 +1937,12 @@ class FreeEnergyBuilder(SystemBuilder):
         rec_res = int(recep_last)+1
         p1_vmd = p1_resid
 
+        sdr_dist = get_sdr_dist('complex.pdb',
+                                lig_resname=mol.lower(),
+                                targeted_sdr_dist=sdr_dist)
+        logger.info(f'SDR distance: {sdr_dist}')
+        self.corrected_sdr_dist = sdr_dist
+
         # Replace names in initial files and VMD scripts
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
@@ -2097,7 +2103,7 @@ class FreeEnergyBuilder(SystemBuilder):
         lipid_mol = self.lipid_mol
         ion_mol = ['Na+', 'K+', 'Cl-']
         comp = self.comp
-        sdr_dist = self.sim_config.sdr_dist
+        sdr_dist = self.corrected_sdr_dist
 
         dec_method = self.dec_method
 
@@ -2468,7 +2474,7 @@ class FreeEnergyBuilder(SystemBuilder):
         molr = self.molr
         comp = self.comp
         bb_equil = self.sim_config.bb_equil
-        sdr_dist = self.sim_config.sdr_dist
+        sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
         lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
@@ -4354,6 +4360,14 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         rec_res = int(recep_last)+1
         p1_vmd = p1_resid
 
+
+        sdr_dist = get_sdr_dist(
+            'complex.pdb',
+            mol.lower(),
+            sdr_dist
+        )
+        self.corrected_sdr_dist = sdr_dist
+
         # Replace names in initial files and VMD scripts
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
@@ -4984,6 +4998,13 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         rec_res = int(recep_last)+1
         p1_vmd = p1_resid
 
+        sdr_dist = get_sdr_dist(
+            'complex.pdb',
+            mol.lower(),
+            sdr_dist
+        )
+        self.corrected_sdr_dist = sdr_dist
+        
         # Replace names in initial files and VMD scripts
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
@@ -5115,7 +5136,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         lipid_mol = self.lipid_mol
         ion_mol = ['Na+', 'K+', 'Cl-']
         comp = self.comp
-        sdr_dist = self.sim_config.sdr_dist
+        sdr_dist = self.corrected_sdr_dist
 
         dec_method = self.dec_method
 
@@ -5329,7 +5350,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         molr = self.molr
         comp = self.comp
         bb_equil = self.sim_config.bb_equil
-        sdr_dist = self.sim_config.sdr_dist
+        sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
         lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
@@ -6323,3 +6344,26 @@ def get_buffer_z(protein_file, targeted_buf=20):
     required_extra = max(0.0, targeted_buf - current_buffer)
 
     return required_extra
+
+
+def get_sdr_dist(protein_file,
+                 lig_resname,
+                 targeted_sdr_dist):
+    """
+    Set the shifted distance of a ligand to reach targeted sdr dist
+
+    The targeted_sdr_dist is the minimum z distance of the ligand in bulk solvent
+    """
+    u = mda.Universe(protein_file)
+    ligand = u.select_atoms(f'resname {lig_resname}')
+    if ligand.n_atoms == 0:
+        raise ValueError(f"Ligand {lig_resname} not found in {protein_file}")
+
+    prot_z_max = u.select_atoms('protein').positions[:, 2].max()
+
+    # shift the ligand upward
+    targeted_lig_z = prot_z_max + targeted_sdr_dist
+    lig_z = ligand.positions[:, 2].mean()
+    sdr_dist = targeted_lig_z - lig_z
+    return sdr_dist
+
