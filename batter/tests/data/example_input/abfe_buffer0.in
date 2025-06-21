@@ -48,9 +48,12 @@ lambdas = [ 0.00 0.04 0.09 0.13 0.17 0.22 0.26 0.30 0.35 0.39 0.43 0.48 0.52 0.5
 # The distance of the ligand in the bulk solvent to the center of protein.
 sdr_dist = 50.00
 
+#dec_method = dd
+
 # Additional variables for analysis 
 
 dec_int = mbar # Integration method for double decoupling (MBAR or TI with Gaussian quadrature)
+
 blocks = 5 # Number of blocks for block data analysis
 
 # Force constants
@@ -68,7 +71,7 @@ lig_com_force        =  10.0  # Guest COM spring constant for simultaneous decou
 water_model     = TIP3P   # Water model (SPCE, TIP4PEW, TIP3P, TIP3PF or OPC)
 buffer_x        = 12      # Box solvation buffer in the x axis
 buffer_y        = 12      # Box solvation buffer in the y axis 
-# buffer_z        = 22      # Box solvation buffer in the z axis 
+buffer_z        = 22      # Box solvation buffer in the z axis 
 lig_buffer      = 15      # Buffer size for the three axes of the ligand-only box
 
 # Counterions 
@@ -150,7 +153,7 @@ ntwx = 10000               # write coordinates to trajectory file every ntwx ste
 cut = 9.0                  # cutoff for nonbonded interactions 
 gamma_ln = 1.0             # collision frequency in ps^-1 for Langevin Dynamics (temperature control)
 barostat = 1               # type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)
-dt = 0.004                 # simulation time step in ps
+dt = 0.003                 # simulation time step in ps
 
 # Force field options for receptor and ligand
 

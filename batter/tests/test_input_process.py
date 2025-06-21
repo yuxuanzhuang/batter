@@ -1,5 +1,6 @@
 from .data import (
     ABFE, ABFE_UNO, ABFE_UNOREST,
+    ABFE_BUFFER0
 )
 from .data import (
     INPUT_NUMWATER
@@ -12,7 +13,9 @@ import json
 
 @pytest.mark.parametrize('input_file', [ABFE, 
                                         ABFE_UNO, 
-                                        ABFE_UNOREST])
+                                        ABFE_UNOREST,
+                                        ABFE_BUFFER0
+                                        ])
 def test_read_input(snapshot, input_file):
     logger.debug(f'input_file: {input_file}')
     sim_config = get_configure_from_file(input_file)
@@ -23,6 +26,7 @@ def test_read_input(snapshot, input_file):
     # Use snapshot.assert_match to compare the result with the stored snapshot
     snapshot.assert_match(sim_config_json, f"snapshots/{input_file.stem}.json")
 
+    
 def test_read_input_numwater(snapshot):
     logger.debug(f'input_file: {INPUT_NUMWATER}')
     with pytest.raises(ValueError, match="'num_waters' is removed"):

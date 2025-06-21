@@ -10,6 +10,8 @@ ABFE = (example_input_files / 'abfe.in')
 ABFE_UNO = (example_input_files / 'abfe_uno.in')
 ABFE_UNOREST = (example_input_files / 'abfe_unorest.in')
 
+ABFE_BUFFER0 = (example_input_files / 'abfe_buffer0.in')
+
 ## Incorrect input for test
 INPUT_NUMWATER = (example_input_files / 'abfe_nwat.in')
 
