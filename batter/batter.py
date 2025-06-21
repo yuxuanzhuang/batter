@@ -1757,7 +1757,8 @@ class System:
                     pose: str = None,
                     load: bool = True,
                     sim_range: Tuple[int, int] = None,
-                    raise_on_error: bool = True):
+                    raise_on_error: bool = True,
+                    n_workers: int = 4):
         """
         Analyze the free energy results for one pose
         Parameters
@@ -1771,6 +1772,9 @@ class System:
             If files are missing from the range, the analysis will fail.
         raise_on_error : bool
             Whether to raise an error if the analysis fails.
+        n_workers : int
+            The number of workers to use for parallel processing.
+            Default is 4.
         """
         from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 
@@ -1835,7 +1839,8 @@ class System:
                         windows=windows,
                         temperature=self.sim_config.temperature,
                         sim_range=sim_range,
-                        load=False
+                        load=False,
+                        n_jobs=n_workers
                     )
                     mbar_ana.run_analysis()
                     mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
@@ -1854,7 +1859,8 @@ class System:
                         windows=windows,
                         temperature=self.sim_config.temperature,
                         sim_range=sim_range,
-                        load=False
+                        load=False,
+                        n_jobs=n_workers,
                     )
                     rest_mbar_ana.run_analysis()
                     rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
@@ -1943,9 +1949,9 @@ class System:
             slurm_kwargs = {
                 # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
                 'queue': self.partition,
-                'cores': 4,
+                'cores': 6,
                 'memory': '8GB',
-                'walltime': '00:10:00',
+                'walltime': '00:15:00',
                 'job_extra_directives': [
                     f'--output=/tmp/dask-%j.out',
                     f'--error=/tmp/dask-%j.err',
@@ -1968,7 +1974,7 @@ class System:
                     load=load,
                     sim_range=sim_range,
                     raise_on_error=raise_on_error,
-
+                    n_workers=6,
                 )
                 return pose
 

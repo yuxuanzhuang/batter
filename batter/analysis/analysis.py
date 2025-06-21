@@ -363,7 +363,7 @@ class MBARAnalysis(FEAnalysisBase):
     def plot_convergence(self, save_path=None, title=None):
         logger.debug(f"Plotting convergence for {self.component}...")
         fig, axes = plt.subplot_mosaic(
-            [["A", "A", "B"], ["C", "C", "C"]], figsize=(15, 10)
+            [["A", "A", "B"], ["C", "C", "C"]], figsize=(25, 15)
         )
         self.plot_time_convergence(ax=axes['A'],
                                 units=self.energy_unit,
