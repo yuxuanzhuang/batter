@@ -19,11 +19,12 @@ FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 
 class SimulationConfig(BaseModel):
     software: str = Field("amber", info={'description': "Software to use (amber, openmm)"})
+    
+    # all deprecated
     # Calculation definitions
-    calc_type: str = Field(..., info={'description': "Calculation type (dock, rank, crystal)"})
-    celpp_receptor: Union[List[str], str] = Field(..., info={
-                                                  'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
-    poses_list: List[str] = Field(default_factory=list, info={'description': "List of poses"})
+    calc_type: Optional[str] = None
+    celpp_receptor: Optional[str] = None
+    poses_list: Optional[List[str]] = None
 
     # Molecular definitions
     # Protein anchor
@@ -210,19 +211,22 @@ class SimulationConfig(BaseModel):
         self.rng = len(self.release_eq) - 1
         self.ion_def = [self.cation, self.anion, self.ion_conc]
 
-        if not isinstance(self.celpp_receptor, list):
-            self.celp_st = self.celpp_receptor.strip('\'\"-,.:;#()][').split(',')
-        else:
-            self.celp_st = self.celpp_receptor
+        if False:
+            if self.celpp_receptor is None:
+                self.celp_st = [self.celpp_receptor]
+            elif not isinstance(self.celpp_receptor, list):
+                self.celp_st = self.celpp_receptor.strip('\'\"-,.:;#()][').split(',')
 
-        if self.calc_type == "dock":
-            self.celp_st = self.celp_st[0]
-            self.poses_def = [f'pose{pose}' for pose in self.poses_list]
-        elif self.calc_type == "rank":
-            self.celp_st = self.celp_st[0]
-            self.poses_def = self.ligand_list
-        elif self.calc_type == "crystal":
-            self.poses_def = self.celp_st
+            if self.calc_type == "dock":
+                self.celp_st = self.celp_st[0]
+                self.poses_def = [f'pose{pose}' for pose in self.poses_list]
+            elif self.calc_type == "rank":
+                self.celp_st = self.celp_st[0]
+                self.poses_def = self.ligand_list
+            elif self.calc_type == "crystal":
+                self.poses_def = self.celp_st
+            else:
+                self.poses_def = None
 
         for comp in FEP_COMPONENTS:
             self.dic_steps1.update({f'{comp}': self.n_steps_dict[f'{comp}_steps1']})
@@ -231,7 +235,6 @@ class SimulationConfig(BaseModel):
             self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
 
         self.components = self.components
-
 
         self.rest = [
             self.rec_dihcf_force,

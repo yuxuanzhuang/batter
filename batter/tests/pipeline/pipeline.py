@@ -24,7 +24,7 @@ from batter import MABFESystem, RBFESystem
 @click.option('--input', required=True, type=click.Path(exists=True), help='Path to the system JSON file.')
 @click.option('--param', required=True, type=click.Path(exists=True), help='Path to the ABFE input configuration file.')
 @click.option('--output-folder', required=True, type=str, help='Output folder for the simulation.')
-@click.option('--overwrite', is_flag=True, default=True, help='If set, overwrite existing output folders.')
+@click.option('--overwrite', is_flag=True, default=False, help='If set, overwrite existing output folders.')
 @click.option('--dry-run', is_flag=True, default=False, help='If set, stop before submitting jobs.')
 def run_pipeline(input, param, output_folder, overwrite, dry_run):
     """Run the ABFE pipeline."""
@@ -87,6 +87,7 @@ def run_pipeline(input, param, output_folder, overwrite, dry_run):
         dry_run=dry_run,
         only_equil=True,
         extra_restraints=extra_restraints,
+        partition='rondror',
     )
 
 if __name__ == '__main__':

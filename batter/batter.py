@@ -1743,7 +1743,7 @@ class System:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
                     files = ['eqnpt.in']
-                    for i in range(num_fe_sim):
+                    for i in range(num_fe_sim+1):
                         files.append(f'mdin-{i:02d}')
                     for j in range(-1, len(windows)):
                         write_restraint_block(
@@ -1963,7 +1963,8 @@ class System:
             cluster = SLURMCluster(
                 **slurm_kwargs,
             )
-            cluster.scale(jobs=len(self.all_poses))
+            #cluster.scale(jobs=len(self.all_poses))
+            cluster.scale(jobs=10)
             logger.info(f'SLURM Cluster created with {len(self.all_poses)} workers')
 
             client = Client(cluster)
@@ -1987,7 +1988,7 @@ class System:
                     load,
                     sim_range,
                     raise_on_error,
-                    pure=True,
+                    pure=False,
                     key=f'analyze_{pose}'
                 )
                 futures.append(fut)
