@@ -2259,6 +2259,7 @@ class System:
                      rmsf_file: str = None,
                      only_equil: bool = False,
                      only_fe_preparation: bool = False,
+                     dry_run: bool = False,
                      extra_restraints: str = None,
                      extra_restraints_fc: float = 10,
                      partition: str = 'owners',
@@ -2289,6 +2290,9 @@ class System:
             Whether to prepare the files for the production stage
             without running the production stage.
             Default is False.
+        dry_run : bool, optional
+            Whether to run the pipeline until performing any
+            simulation submissions. Default is False.
         extra_restraints : str, optional
             The selection string for the extra position restraints.
             Default is None, which means no extra restraints are added.
@@ -2337,6 +2341,10 @@ class System:
             logger.info(f'Equilibration folder: {self.equil_folder} prepared for equilibration')
             logger.info('Submitting the equilibration')
             #2 submit the equilibration
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the equilibration submission.')
+                return
             self.submit(
                 stage='equil',
                 partition=partition,
@@ -2395,6 +2403,10 @@ class System:
 
             logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
             logger.info('Submitting the free energy equilibration')
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the free energy equilibration submission.')
+                return
             self.submit(
                     stage='fe_equil',
                     partition=partition
@@ -2460,6 +2472,10 @@ class System:
 
         if self._check_fe():
             logger.info('Submitting the free energy calculation')
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the free energy submission.')
+                return
             self.submit(
                 stage='fe',
                 partition=partition

@@ -2,7 +2,7 @@ from pydantic import (
     BaseModel,
     Field,
     model_validator,
-    field_validator
+    field_validator,
 )
 
 import sys
@@ -68,6 +68,7 @@ class SimulationConfig(BaseModel):
     # Water model, number and box size in the x and y direction
     water_model: str = Field("TIP3P", info={'description': "Water model (SPCE, TIP4PEW, TIP3P, TIP3PF or OPC)"})
     num_waters: Optional[int] = Field(0, info={'description': "Number of water molecules in the system"})
+    
     buffer_x: Optional[float] = Field(
         0, info={'description': "Buffer size along X-axis; this will be omitted in membrane simulations"})
     buffer_y: Optional[float] = Field(
@@ -241,15 +242,11 @@ class SimulationConfig(BaseModel):
             self.rec_com_force,
             self.lig_com_force
         ]
+        if self.buffer_z == 0:
+            raise ValueError("'buffer_z' must be provided (non-zero values).")
 
-        num_waters = self.num_waters
-        buffer_z = self.buffer_z
-
-        if num_waters == 0 and buffer_z == 0:
-            raise ValueError("Either 'num_waters' or 'buffer_z' must be provided (non-zero values).")
-
-        if num_waters != 0 and buffer_z != 0:
-            raise ValueError("Cannot specify both 'num_waters' and 'buffer_z' (non-zero values).")
+        if self.num_waters != 0:
+            raise ValueError("'num_waters' is removed")
 
         lipid_mol = self.lipid_mol
         if lipid_mol:

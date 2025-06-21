@@ -279,8 +279,17 @@ class SystemBuilder(ABC):
         buffer_x = self.sim_config.buffer_x
         buffer_y = self.sim_config.buffer_y
         buffer_z = self.sim_config.buffer_z
+        if buffer_z == 0:
+            raise ValueError(
+                'Buffer z cannot be 0. '
+                'Please set it to a positive value, e.g. 20 (angstroms).'
+            )
         water_model = self.sim_config.water_model
         num_waters = self.sim_config.num_waters
+        if num_waters != 0:
+            raise NotImplementedError(
+                'Fixed number of water molecules is not implemented yet. '
+                'Please use fixed z buffer instead.')
         ion_def = self.sim_config.ion_def
         ion_conc = self.sim_config.ion_conc
         neut = self.sim_config.neut
@@ -298,7 +307,6 @@ class SystemBuilder(ABC):
                 continue
             #shutil.copy(file, '.')
             os.system(f'cp {file} .')
-
 
         # Copy tleap files that are used for restraint generation and analysis
         #shutil.copy(f'{self.amber_files_folder}/tleap.in.amber16', 'tleap_vac.in')
@@ -333,9 +341,9 @@ class SystemBuilder(ABC):
         # Append tleap file for ligand only
         tleap_vac_ligand = open('tleap_vac_ligand.in', 'a')
         tleap_vac_ligand.write('# Load the ligand parameters\n')
-        tleap_vac_ligand.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-        tleap_vac_ligand.write('%s = loadmol2 %s.mol2\n\n' % (mol, mol.lower()))
-        tleap_vac_ligand.write('model = loadpdb %s.pdb\n\n' % (mol.lower()))
+        tleap_vac_ligand.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_vac_ligand.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
+        tleap_vac_ligand.write(f'model = loadpdb {mol.lower()}.pdb\n\n')
         tleap_vac_ligand.write('check model\n')
         tleap_vac_ligand.write('savepdb model vac_ligand.pdb\n')
         tleap_vac_ligand.write('saveamberparm model vac_ligand.prmtop vac_ligand.inpcrd\n')
@@ -343,10 +351,10 @@ class SystemBuilder(ABC):
         tleap_vac_ligand.close()
 
         # Generate complex in vacuum
-        p = run_with_log(tleap + ' -s -f tleap_vac.in > tleap_vac.log')
+        p = run_with_log(f'{tleap} -s -f tleap_vac.in > tleap_vac.log')
 
         # Generate ligand structure in vacuum
-        p = run_with_log(tleap + ' -s -f tleap_vac_ligand.in > tleap_vac_ligand.log')
+        p = run_with_log(f'{tleap} -s -f tleap_vac_ligand.in > tleap_vac_ligand.log')
 
         # Find out how many cations/anions are needed for neutralization
         neu_cat = 0
@@ -416,103 +424,8 @@ class SystemBuilder(ABC):
         elif water_model == 'TIP3PF':
             water_box = water_model.upper()+'BOX'
 
-        # Fixed number of water molecules
-        if num_waters != 0:
-
-            # Create the first box guess to get the initial number of waters and cross sectional area
-            buff = 50.0
-            scripts.write_tleap(mol, molr, comp, water_model, water_box, buff, buffer_x, buffer_y, other_mol)
-            num_added = scripts.check_tleap()
-            cross_area = scripts.cross_sectional_area()
-
-            # First iteration to estimate box volume and number of ions
-            res_diff = num_added - num_waters
-            buff_diff = res_diff/(ratio*cross_area)
-            buff -= buff_diff
-            if buff < 0:
-                logger.error(
-                    'Not enough water molecules to fill the system in the z direction, please increase the number of water molecules')
-                sys.exit(1)
-            # Get box volume and number of added ions
-            scripts.write_tleap(mol, molr, comp, water_model, water_box, buff, buffer_x, buffer_y, other_mol)
-            box_volume = scripts.box_volume()
-            logger.debug(f'Box volume {box_volume}')
-            # box volume already takes into account system shrinking during equilibration
-            num_cations = round(ion_def[2]*6.02e23*box_volume*1e-27)
-
-            # A rough reduction of the number of cations
-            # for lipid systems
-            if lipid_mol:
-                num_cations = num_cations // 2
-
-            # Number of cations and anions
-            num_cat = num_cations
-            num_ani = num_cations - neu_cat + neu_ani
-            # If there are not enough chosen cations to neutralize the system
-            if num_ani < 0:
-                num_cat = neu_cat
-                num_cations = neu_cat
-                num_ani = 0
-            logger.debug(f'Number of cations: {num_cat}')
-            logger.debug(f'Number of anions: {num_ani}')
-
-            # Update target number of residues according to the ion definitions and vacuum waters
-            vac_wt = 0
-            with open('./build.pdb') as myfile:
-                for line in myfile:
-                    if 'WAT' in line and ' O ' in line:
-                        vac_wt += 1
-            if (neut == 'no'):
-                target_num = int(num_waters - neu_cat + neu_ani + 2*int(num_cations) - vac_wt)
-            elif (neut == 'yes'):
-                target_num = int(num_waters + neu_cat + neu_ani - vac_wt)
-
-            # Define a few parameters for solvation iteration
-            buff = 50.0
-            count = 0
-            max_count = 10
-            rem_limit = 16
-            factor = 1
-            ind = 0.90
-            buff_diff = 1.0
-
-            # Iterate to get the correct number of waters
-            while num_added != target_num:
-                count += 1
-                if count > max_count:
-                    # Try different parameters
-                    rem_limit += 4
-                    if ind > 0.5:
-                        ind = ind - 0.02
-                    else:
-                        ind = 0.90
-                    factor = 1
-                    max_count = max_count + 10
-                tleap_remove = None
-                # Manually remove waters if inside removal limit
-                if num_added > target_num and (num_added - target_num) < rem_limit:
-                    difference = num_added - target_num
-                    tleap_remove = [target_num + 1 + i for i in range(difference)]
-                    scripts.write_tleap(mol, molr, comp, water_model, water_box, buff,
-                                        buffer_x, buffer_y, other_mol, tleap_remove)
-                    scripts.check_tleap()
-                    break
-                # Set new buffer size based on chosen water density
-                res_diff = num_added - target_num - (rem_limit/2)
-                buff_diff = res_diff/(ratio*cross_area)
-                buff -= (buff_diff * factor)
-                if buff < 0:
-                    logger.error(
-                        'Not enough water molecules to fill the system in the z direction, please increase the number of water molecules')
-                    sys.exit(1)
-                # Set relaxation factor
-                factor = ind * factor
-                # Get number of waters
-                scripts.write_tleap(mol, molr, comp, water_model, water_box, buff, buffer_x, buffer_y, other_mol)
-                num_added = scripts.check_tleap()
-            logger.debug(f'{count} iterations for fixed water number')
         # Fixed z buffer
-        elif buffer_z != 0:
+        if buffer_z != 0:
             buff = buffer_z
             tleap_remove = None
             # Get box volume and number of added ions
@@ -543,27 +456,26 @@ class SystemBuilder(ABC):
         tleap_solvate = open('tleap_solvate_pre.in', 'a')
         tleap_solvate.write('# Load the necessary parameters\n')
         for i in range(0, len(other_mol)):
-            tleap_solvate.write('loadamberparams %s.frcmod\n' % (other_mol[i].lower()))
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n' % (other_mol[i], other_mol[i].lower()))
-        tleap_solvate.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-        tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (mol, mol.lower()))
+            tleap_solvate.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
+            tleap_solvate.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
+        tleap_solvate.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_solvate.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
         if comp == 'x':
-            tleap_solvate.write('loadamberparams %s.frcmod\n' % (molr.lower()))
+            tleap_solvate.write(f'loadamberparams {molr.lower()}.frcmod\n')
         if comp == 'x':
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (molr, molr.lower()))
+            tleap_solvate.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
         tleap_solvate.write('# Load the water and jc ion parameters\n')
         if water_model.lower() != 'tip3pf':
-            tleap_solvate.write('source leaprc.water.%s\n\n' % (water_model.lower()))
+            tleap_solvate.write(f'source leaprc.water.{water_model.lower()}\n\n')
         else:
             tleap_solvate.write('source leaprc.water.fb3\n\n')
         tleap_solvate.write('model = loadpdb build.pdb\n\n')
         tleap_solvate.write('# Create water box with chosen model\n')
-        tleap_solvate.write('solvatebox model ' + water_box +
-                            ' {' + str(buffer_x) + ' ' + str(buffer_y) + ' ' + str(buff) + '} 1\n\n')
+        tleap_solvate.write(f'solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buff} }} 1\n\n')
         if tleap_remove is not None:
             tleap_solvate.write('# Remove a few waters manually\n')
             for water in tleap_remove:
-                tleap_solvate.write('remove model model.%s\n' % water)
+                tleap_solvate.write(f'remove model model.{water}\n')
             tleap_solvate.write('\n')
         tleap_solvate.write('desc model\n')
         tleap_solvate.write('savepdb model full_pre.pdb\n')
@@ -690,8 +602,6 @@ class SystemBuilder(ABC):
         with open('solvate_pre_prot.pdb', 'w') as f:
             f.writelines(dum_lines)
 
-     #    final_system_prot.write('solvate_pre_prot.pdb')
-
         dum_lines = []
         for residue in final_system_dum.residues:
             # create a temp pdb file in /tmp/
@@ -760,20 +670,22 @@ class SystemBuilder(ABC):
         tleap_solvate = open('tleap_solvate.in', 'a')
         tleap_solvate.write('# Load the necessary parameters\n')
         for i in range(0, len(other_mol)):
-            tleap_solvate.write('loadamberparams %s.frcmod\n' % (other_mol[i].lower()))
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n' % (other_mol[i], other_mol[i].lower()))
-        tleap_solvate.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-        tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (mol, mol.lower()))
+            tleap_solvate.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
+            tleap_solvate.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
+
+        tleap_solvate.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_solvate.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
+
         if comp == 'x':
-            tleap_solvate.write('loadamberparams %s.frcmod\n' % (molr.lower()))
-        if comp == 'x':
-            tleap_solvate.write('%s = loadmol2 %s.mol2\n\n' % (molr, molr.lower()))
+            tleap_solvate.write(f'loadamberparams {molr.lower()}.frcmod\n')
+            tleap_solvate.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
+
         tleap_solvate.write('# Load the water and jc ion parameters\n')
+
         if water_model.lower() != 'tip3pf':
-            tleap_solvate.write('source leaprc.water.%s\n\n' % (water_model.lower()))
+            tleap_solvate.write(f'source leaprc.water.{water_model.lower()}\n\n')
         else:
             tleap_solvate.write('source leaprc.water.fb3\n\n')
-
         tleap_solvate.write('dum = loadpdb solvate_pre_dum.pdb\n\n')
         tleap_solvate.write('prot = loadpdb solvate_pre_prot.pdb\n\n')
         tleap_solvate.write('others = loadpdb solvate_pre_others.pdb\n\n')
@@ -781,25 +693,25 @@ class SystemBuilder(ABC):
 
         if (neut == 'no'):
             tleap_solvate.write('# Add ions for neutralization/ionization\n')
-            tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[0], num_cat))
-            tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[1], num_ani))
+            tleap_solvate.write(f'addionsrand outside_wat {ion_def[0]} {num_cat}\n')
+            tleap_solvate.write(f'addionsrand outside_wat {ion_def[1]} {num_ani}\n')
         elif (neut == 'yes'):
             tleap_solvate.write('# Add ions for neutralization/ionization\n')
             if neu_cat != 0:
-                tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[0], neu_cat))
+                tleap_solvate.write(f'addionsrand outside_wat {ion_def[0]} {neu_cat}\n')
             if neu_ani != 0:
-                tleap_solvate.write('addionsrand outside_wat %s %d\n' % (ion_def[1], neu_ani))
+                tleap_solvate.write(f'addionsrand outside_wat {ion_def[1]} {neu_ani}\n')
 
         tleap_solvate.write('model = combine {dum prot others outside_wat}\n\n')
 
         tleap_solvate.write('\n')
-        tleap_solvate.write('set model box {%.6f %.6f %.6f}\n' % (box_final[0], box_final[1], box_final[2]))
+        tleap_solvate.write(f'set model box {{{box_final[0]:.6f} {box_final[1]:.6f} {box_final[2]:.6f}}}\n')
         tleap_solvate.write('desc model\n')
         tleap_solvate.write('savepdb model full.pdb\n')
         tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
         tleap_solvate.write('quit')
         tleap_solvate.close()
-        p = run_with_log(tleap + ' -s -f tleap_solvate.in > tleap_solvate.log')
+        p = run_with_log(f'{tleap} -s -f tleap_solvate.in > tleap_solvate.log')
 
         f = open('tleap_solvate.log', 'r')
         for line in f:
@@ -859,7 +771,6 @@ class SystemBuilder(ABC):
         u_vac.atoms.write('vac.pdb')
 
         # Apply hydrogen mass repartitioning
-        #shutil.copy(f'{self.amber_files_folder}/parmed-hmr.in', './')
         os.system(f'cp {self.amber_files_folder}/parmed-hmr.in ./')
         run_with_log('parmed -O -n -i parmed-hmr.in > parmed-hmr.log')
 
@@ -931,14 +842,8 @@ class EquilibrationBuilder(SystemBuilder):
         all_pose_folder = self.system.poses_folder
         system_name = self.system.system_name
 
-        #shutil.copy(f'{all_pose_folder}/reference.pdb',
-        #            f'reference.pdb')
         os.system(f'cp {all_pose_folder}/reference.pdb reference.pdb')
-        #shutil.copy(f'{all_pose_folder}/{system_name}_docked.pdb',
-        #            f'rec_file.pdb')
         os.system(f'cp {all_pose_folder}/{system_name}_docked.pdb rec_file.pdb')
-        #shutil.copy(f'{all_pose_folder}/{self.pose}.pdb',
-        #            f'.')
         os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
 
         other_mol = self.sim_config.other_mol
@@ -954,17 +859,12 @@ class EquilibrationBuilder(SystemBuilder):
                              f'cannot be in the other_mol list: '
                              f'{other_mol}')
         # rename pose atom name
-        #shutil.copy(f'../../ff/{mol.lower()}.mol2', '.')
         os.system(f'cp ../../ff/{mol.lower()}.mol2 .')
 
         ante_mol = mda.Universe(f'{mol.lower()}.mol2')
         mol_u.atoms.names = ante_mol.atoms.names
         mol_u.atoms.residues.resnames = mol
         mol_u.atoms.write(f'{mol.lower()}.pdb')
-
-        # rename pose param
-        # shutil.copy(f'../../ff/ligand.frcmod', f'../../ff/{mol.lower()}.frcmod')
-        # shutil.copy(f'../../ff/ligand.mol2', f'../../ff/{mol.lower()}.mol2')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:

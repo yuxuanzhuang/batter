@@ -23,7 +23,7 @@ from batter import MABFESystem, RBFESystem
 @click.option('--input', required=True, type=click.Path(exists=True), help='Path to the system JSON file.')
 @click.option('--param', required=True, type=click.Path(exists=True), help='Path to the ABFE input configuration file.')
 @click.option('--output-folder', required=True, type=str, help='Output folder for the simulation.')
-@click.option('--overwrite', is_flag=True, default=False, help='If set, overwrite existing output folders.')
+@click.option('--overwrite', is_flag=True, default=True, help='If set, overwrite existing output folders.')
 @click.option('--only-equil', is_flag=True, default=False, help='If set, only run the equilibration step.')
 def run_pipeline(input, param, output_folder, overwrite, only_equil):
     """Run the ABFE pipeline."""
@@ -74,7 +74,8 @@ def run_pipeline(input, param, output_folder, overwrite, only_equil):
 
     system.run_pipeline(
         input_file=param,
-        only_fe_preparation=only_equil,
+        only_equil=only_equil,
+        dry_run=True,
         extra_restraints=extra_restraints,
     )
 
