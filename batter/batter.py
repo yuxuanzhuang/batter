@@ -918,6 +918,7 @@ class System:
                stage: str,
                cluster: str = 'slurm',
                partition=None,
+               time=None,
                overwrite: bool = False,
                ):
         """
@@ -934,12 +935,13 @@ class System:
             The partition to submit the job. Default is None,
             which means the default partition during prepartiion
             will be used.
+        time: str, optional
+            The time limit for the job. Default is None,
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
         if cluster == 'frontier':
-            self._submit_frontier(stage)
-            logger.info(f'Frontier {stage} job submitted!')
+            raise NotImplementedError('run with `batter run-in-batch` instead')
             return
 
         if stage == 'equil':
@@ -966,11 +968,12 @@ class System:
                     # if the job is finished but the FINISHED file is not created
                     # resubmit the job
                     if not slurm_job.is_still_running():
-                        slurm_job.submit()
+                        slurm_job.submit(time=time)
                         continue
                     elif overwrite:
                         slurm_job.cancel()
-                        slurm_job.submit(overwrite=True)
+                        slurm_job.submit(overwrite=True,
+                                         time=time)
                         continue
                     else:
                         logger.debug(f'Equilibration job for {pose} is still running')
@@ -985,7 +988,7 @@ class System:
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
                                 partition=partition,
                                 jobname=f'fep_{self.equil_folder}/{pose}_equil')
-                slurm_job.submit(overwrite=overwrite)
+                slurm_job.submit(overwrite=overwrite, time=time)
                 pbar.update(1)
                 pbar.set_description(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
@@ -1028,6 +1031,7 @@ class System:
                         if not slurm_job.is_still_running():
                             slurm_job.submit(
                                 requeue=True,
+                                time=time,
                                 other_env={
                                     'ONLY_EQ': '1',
                                     'INPCRD': 'full.inpcrd'
@@ -1037,6 +1041,7 @@ class System:
                         elif overwrite:
                             slurm_job.cancel()
                             slurm_job.submit(overwrite=True,
+                                time=time,
                                 other_env={
                                     'ONLY_EQ': '1',
                                     'INPCRD': 'full.inpcrd'
@@ -1058,6 +1063,7 @@ class System:
                                     jobname=f'fep_{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}_equil')
                     slurm_job.submit(
                         overwrite=overwrite,
+                        time=time,
                         other_env={
                         'ONLY_EQ': '1',
                         'INPCRD': 'full.inpcrd'
@@ -1104,6 +1110,7 @@ class System:
                             if not slurm_job.is_still_running():
                                 slurm_job.submit(
                                     requeue=True,
+                                    time=time,
                                     other_env={
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
@@ -1112,6 +1119,7 @@ class System:
                             elif overwrite:
                                 slurm_job.cancel()
                                 slurm_job.submit(overwrite=True,
+                                    time=time,
                                     other_env={
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
@@ -1132,6 +1140,7 @@ class System:
                                         jobname=f'fep_{folder_2_check}_fe',
                                         priority=priority)
                         slurm_job.submit(overwrite=overwrite,
+                                    time=time,
                                     other_env={
                                             'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                         }
@@ -1147,34 +1156,6 @@ class System:
             pbar.close()
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
-        else:
-            raise ValueError(f"Invalid stage: {stage}")
-
-    def _submit_frontier(self, stage: str):
-        if stage == 'equil':
-            raise NotImplementedError("Frontier submission is not implemented yet")
-        elif stage == 'fe':
-            running_fe_equi = False
-            for pose in self.bound_poses:
-                if not os.path.exists(f"{self.fe_folder}/{pose}/rest/m00/eqnpt.in_04.rst7"):
-                    run_with_log(f'sbatch fep_m_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    run_with_log(f'sbatch fep_n_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    run_with_log(f'sbatch fep_e_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    run_with_log(f'sbatch fep_v_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    running_fe_equi = True
-            if running_fe_equi:
-                return
-                                  
-            if not os.path.exists(f"{self.fe_folder}/current_mdin.groupfile"):
-                run_with_log(f'sbatch fep_md.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                
-            run_with_log(f'sbatch fep_md_extend.sbatch',
-                        working_dir=f'{self.fe_folder}')
         else:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -2271,6 +2252,7 @@ class System:
                      extra_restraints_fc: float = 10,
                      partition: str = 'owners',
                      max_num_jobs: int = 2000,
+                     time_limit: str = '6:00:00',
                      verbose: bool = False
                      ):
         """
@@ -2311,6 +2293,9 @@ class System:
         max_num_jobs : int, optional
             The maximum number of jobs to submit at a time.
             Default is 2000.
+        time_limit : str, optional
+            The time limit for the job submission.
+            Default is '6:00:00'.
         verbose : bool, optional
             Whether to print the verbose output. Default is False.
         """
@@ -2355,6 +2340,7 @@ class System:
             self.submit(
                 stage='equil',
                 partition=partition,
+                time=time_limit
             )
             logger.info('Equilibration jobs submitted')
 
@@ -2415,8 +2401,9 @@ class System:
                             'Skipping the free energy equilibration submission.')
                 return
             self.submit(
-                    stage='fe_equil',
-                    partition=partition
+                stage='fe_equil',
+                partition=partition,
+                time=time_limit,
                 )
             logger.info('Free energy equilibration jobs submitted')
 
@@ -2485,7 +2472,8 @@ class System:
                 return
             self.submit(
                 stage='fe',
-                partition=partition
+                partition=partition,
+                time=time_limit,
             )
             logger.info('Free energy jobs submitted')
             

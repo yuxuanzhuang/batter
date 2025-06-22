@@ -21,12 +21,25 @@ class SLURMJob:
     def submit(self,
                overwrite=False,
                requeue=False,
+               time=None,
                other_env=None):
         """
         Submit the job to the SLURM queue.
         It will be tried three times in case of failure.
+        
+        Parameters
+        ----------
+        overwrite : bool
+            If True, the job will add `OVERWRITE=1` to the environment.
+        requeue : bool
+            If True, the job will be requeued if it has already been submitted.
+        time : str
+            If provided, sets the time limit for the job in the format "HH:MM:SS".
+        other_env : dict
+            Additional environment variables to set for the job.
         """
         self.overwrite = overwrite
+        self.time = time
         self.other_env = other_env
         if requeue:
             try:
@@ -61,6 +74,8 @@ class SLURMJob:
             cmd.append(f"--job-name={self.jobname}")
         if self.priority:
             cmd.append(f"--priority={self.priority}")
+        if self.time:
+            cmd.append(f"--time={self.time}")
         cmd.append(self.file_basename)
 
         result = subprocess.run(
