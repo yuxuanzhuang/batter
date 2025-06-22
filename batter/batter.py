@@ -24,6 +24,7 @@ from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple
 from loguru import logger
+from collections import defaultdict
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
@@ -2943,40 +2944,92 @@ class System:
             os.system(f'cp {env_amber_file} fe/env.amber')
             logger.info('FE production groupfiles generated for all poses')
     
-    def check_sim_stage(self):
+    def check_sim_stage(self, output='image', min_file_size=100, max_workers=16):
         """
-        Check the status of running of all the simulations
-        """
-        stage_sims = {}
-        for pose in self.bound_poses:
-            stage_sims[pose] = {}
-            for comp in self.sim_config.components:
-                if comp in ['m', 'n']:
-                    sim_type = 'rest'
-                elif comp in COMPONENTS_DICT['dd']:
-                    sim_type = 'sdr'
-                min_stage = float('inf')
-                for win in range(0, len(self.component_windows_dict[comp])):
-                    folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}{win:02d}'
-                    mdin_files = glob.glob(f'{folder}/md*.rst7')
-                    # make sure the size is not empty
-                    mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
-                    # only base name
-                    # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
-                    def sort_key(x):
-                        return int(os.path.splitext(os.path.basename(x))[0][-2:])
-                    mdin_files.sort(key=sort_key)
-                    min_stage = min(min_stage, sort_key(mdin_files[-1]) if mdin_files else -1)
-                stage_sims[pose][comp] = min_stage
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-        import pandas as pd
+        Check the simulation stage for each pose and component.
 
-        stage_sims_df = pd.DataFrame(stage_sims)
-        fig, ax = plt.subplots(figsize=(1* len(self.bound_poses), 5))
-        sns.heatmap(stage_sims_df, ax=ax, annot=True, cmap='viridis')
-        plt.title('Simulation Stages for each Pose and Component')
-        plt.show()
+        Parameters
+        ----------
+        output : str
+            'text', 'image', or 'both'
+        min_file_size : int
+            Minimum file size (in bytes) to count a .rst7 file as valid
+        max_workers : int
+            Number of threads to use for directory scanning
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def sort_key(x):
+            return int(os.path.splitext(os.path.basename(x))[0][-2:])
+        def latest_stage(folder):
+            try:
+                entries = os.listdir(folder)
+            except FileNotFoundError:
+                return -1
+
+            max_idx = -1
+            for name in entries:
+                if name.endswith('.rst7') and name.startswith('md') and len(name) >= 8:
+                    try:
+                        stage_idx = sort_key(name)
+                        full_path = os.path.join(folder, name)
+                        if os.path.getsize(full_path) > min_file_size:
+                            max_idx = max(max_idx, stage_idx)
+                    except (ValueError, FileNotFoundError, OSError):
+                        continue
+            return max_idx
+
+        def stage_task(pose, comp, win):
+            folder = f'{self.fe_folder}/{pose}/{comp_type[comp]}/{comp}{win:02d}'
+            return latest_stage(folder)
+
+        comp_type = {
+            comp: ('rest' if comp in ['m', 'n'] else 'sdr')
+            for comp in self.sim_config.components
+            if comp in ['m', 'n'] or comp in COMPONENTS_DICT['dd']
+        }
+
+        # Prepare all jobs
+        jobs = []
+        for pose in self.bound_poses:
+            for comp in comp_type:
+                for win in range(len(self.component_windows_dict.get(comp, []))):
+                    jobs.append((pose, comp, win))
+
+        results = defaultdict(lambda: defaultdict(list))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_job = {
+                executor.submit(stage_task, pose, comp, win): (pose, comp)
+                for (pose, comp, win) in jobs
+            }
+            for future in as_completed(future_to_job):
+                pose, comp = future_to_job[future]
+                stage = future.result()
+                results[pose][comp].append(stage)
+
+        # Collect min stage per component per pose
+        final_stages = {
+            pose: {comp: min(vals) if vals else -1 for comp, vals in comps.items()}
+            for pose, comps in results.items()
+        }
+
+        stage_df = pd.DataFrame(final_stages)
+
+        # Output
+        if output == 'text':
+            print(stage_df.to_string())
+
+        if output == 'image':
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+
+            fig, ax = plt.subplots(figsize=(max(6, len(self.bound_poses)), 5))
+            sns.heatmap(stage_df, ax=ax, annot=True, cmap='viridis')
+            plt.title('Simulation Stages for Each Pose and Component')
+            plt.tight_layout()
+            plt.show()
+
+        #return stage_df
 
 
     def copy_2_new_folder(self,

@@ -169,7 +169,7 @@ def gather(inputs, sim_range=(0, -1), load=False, n_workers=64):
         logger.info(f"Processing system: {input_path}")
         system = System(input_path)
         system.n_workers = n_workers
-        system.analysis_new(load=load, check_finished=False, sim_range=sim_range)
+        system.analysis(load=load, check_finished=False, sim_range=sim_range)
         logger.info(f"Finished processing system: {input_path}")
 
 @click.command()
