@@ -918,7 +918,7 @@ class System:
                stage: str,
                cluster: str = 'slurm',
                partition=None,
-               time=None,
+               time_limit=None,
                overwrite: bool = False,
                ):
         """
@@ -935,7 +935,7 @@ class System:
             The partition to submit the job. Default is None,
             which means the default partition during prepartiion
             will be used.
-        time: str, optional
+        time_limit: str, optional
             The time limit for the job. Default is None,
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
@@ -968,12 +968,12 @@ class System:
                     # if the job is finished but the FINISHED file is not created
                     # resubmit the job
                     if not slurm_job.is_still_running():
-                        slurm_job.submit(time=time)
+                        slurm_job.submit(time=time_limit)
                         continue
                     elif overwrite:
                         slurm_job.cancel()
                         slurm_job.submit(overwrite=True,
-                                         time=time)
+                                         time=time_limit)
                         continue
                     else:
                         logger.debug(f'Equilibration job for {pose} is still running')
@@ -988,7 +988,7 @@ class System:
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
                                 partition=partition,
                                 jobname=f'fep_{self.equil_folder}/{pose}_equil')
-                slurm_job.submit(overwrite=overwrite, time=time)
+                slurm_job.submit(overwrite=overwrite, time=time_limit)
                 pbar.update(1)
                 pbar.set_description(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
@@ -1031,7 +1031,7 @@ class System:
                         if not slurm_job.is_still_running():
                             slurm_job.submit(
                                 requeue=True,
-                                time=time,
+                                time=time_limit,
                                 other_env={
                                     'ONLY_EQ': '1',
                                     'INPCRD': 'full.inpcrd'
@@ -1041,7 +1041,7 @@ class System:
                         elif overwrite:
                             slurm_job.cancel()
                             slurm_job.submit(overwrite=True,
-                                time=time,
+                                time=time_limit,
                                 other_env={
                                     'ONLY_EQ': '1',
                                     'INPCRD': 'full.inpcrd'
@@ -1063,7 +1063,7 @@ class System:
                                     jobname=f'fep_{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}_equil')
                     slurm_job.submit(
                         overwrite=overwrite,
-                        time=time,
+                        time=time_limit,
                         other_env={
                         'ONLY_EQ': '1',
                         'INPCRD': 'full.inpcrd'
@@ -1110,7 +1110,7 @@ class System:
                             if not slurm_job.is_still_running():
                                 slurm_job.submit(
                                     requeue=True,
-                                    time=time,
+                                    time=time_limit,
                                     other_env={
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
@@ -1119,7 +1119,7 @@ class System:
                             elif overwrite:
                                 slurm_job.cancel()
                                 slurm_job.submit(overwrite=True,
-                                    time=time,
+                                    time=time_limit,
                                     other_env={
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
@@ -1140,7 +1140,7 @@ class System:
                                         jobname=f'fep_{folder_2_check}_fe',
                                         priority=priority)
                         slurm_job.submit(overwrite=overwrite,
-                                    time=time,
+                                    time=time_limit,
                                     other_env={
                                             'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                         }
@@ -1927,15 +1927,17 @@ class System:
             from dask_jobqueue import SLURMCluster
             from dask.distributed import Client, as_completed
 
+            log_dir = os.path.expanduser('~/.batter_jobs')
+            os.makedirs(log_dir, exist_ok=True)
             slurm_kwargs = {
                 # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
                 'queue': self.partition,
                 'cores': 6,
-                'memory': '8GB',
+                'memory': '16GB',
                 'walltime': '00:15:00',
                 'job_extra_directives': [
-                    f'--output=/tmp/dask-%j.out',
-                    f'--error=/tmp/dask-%j.err',
+                    f'--output={log_dir}/dask-%j.out',
+                    f'--error={log_dir}/dask-%j.err',
                 ],
                 # 'account': 'your_slurm_account',
             }
@@ -2340,7 +2342,7 @@ class System:
             self.submit(
                 stage='equil',
                 partition=partition,
-                time=time_limit
+                time_limit=time_limit
             )
             logger.info('Equilibration jobs submitted')
 
@@ -2403,7 +2405,7 @@ class System:
             self.submit(
                 stage='fe_equil',
                 partition=partition,
-                time=time_limit,
+                time_limit=time_limit,
                 )
             logger.info('Free energy equilibration jobs submitted')
 
@@ -2473,7 +2475,7 @@ class System:
             self.submit(
                 stage='fe',
                 partition=partition,
-                time=time_limit,
+                time_limit=time_limit,
             )
             logger.info('Free energy jobs submitted')
             
