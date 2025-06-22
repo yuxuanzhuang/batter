@@ -12,7 +12,6 @@ from contextlib import contextmanager
 import tempfile
 import warnings
 from typing import Union
-from rdkit import Chem
 
 
 from batter.input_process import SimulationConfig, get_configure_from_file
@@ -6412,6 +6411,7 @@ def get_ligand_candidates(ligand_sdf):
     # From RXRX protocol
     # The non-hydrogen atoms connected to at least two heavy atoms are
     # selected as candidate atoms for the ligand's restraint component
+    from rdkit import Chem
     
     supplier = Chem.SDMolSupplier(ligand_sdf, removeHs=False)
     mol = [s for s in supplier if s is not None][0]

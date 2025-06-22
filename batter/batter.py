@@ -18,7 +18,6 @@ import json
 from typing import Union
 from pathlib import Path
 import pickle
-from rdkit import Chem
 import time
 from tqdm import tqdm
 from joblib import Parallel, delayed
@@ -1736,7 +1735,6 @@ class System:
 
     def analyze_pose(self,
                     pose: str = None,
-                    load: bool = True,
                     sim_range: Tuple[int, int] = None,
                     raise_on_error: bool = True,
                     n_workers: int = 4):
@@ -1746,8 +1744,6 @@ class System:
         ----------
         pose : str
             The pose to analyze.
-        load : bool
-            Whether to load the results from file.
         sim_range : tuple
             The range of simulations to analyze.
             If files are missing from the range, the analysis will fail.
@@ -1760,17 +1756,6 @@ class System:
         from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 
         pose_path = f'{self.fe_folder}/{pose}'
-
-        if load and os.path.exists(f'{pose_path}/Results/Results.dat'):
-            try:
-                self.fe_results[pose] = NewFEResult(f'{pose_path}/Results/Results.dat')
-                if np.isnan(self.fe_results[pose].fe):
-                    raise ValueError(f'FE for {pose} is invalid (None or NaN); rerun')
-                logger.debug(f'FE for {pose} loaded from {pose_path}/Results/Results.dat')
-                return
-            except Exception as e:
-                logger.warning(f'Failed to load FE for {pose} from {pose_path}/Results/Results.dat: {e}')
-                logger.warning('Re-running the FE analysis')
         os.makedirs(f'{pose_path}/Results', exist_ok=True)
 
         try:
@@ -1922,6 +1907,20 @@ class System:
             os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
             self._generate_aligned_pdbs()
 
+        # gather existing results
+        if load:
+            self.load_results()
+
+            # get unfinished or failed poses
+            unfinished_poses = []
+            for pose in self.all_poses:
+                if self.fe_results[pose] is None:
+                    unfinished_poses.append(pose)
+                elif np.isnan(self.fe_results[pose].fe):
+                    unfinished_poses.append(pose)
+        else:
+            unfinished_poses = self.all_poses
+        
         if run_with_slurm:
             logger.info('Running analysis with SLURM Cluster')
             from dask_jobqueue import SLURMCluster
@@ -1933,11 +1932,19 @@ class System:
                 # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
                 'queue': self.partition,
                 'cores': 6,
-                'memory': '16GB',
-                'walltime': '00:15:00',
+                'memory': '30GB',
+                'walltime': '00:30:00',
+                'processes': 1,
                 'job_extra_directives': [
+                    f'--job-name=batter-analysis',
                     f'--output={log_dir}/dask-%j.out',
                     f'--error={log_dir}/dask-%j.err',
+                ],
+                'worker_extra_args': [
+                    "--resources",
+                    "analysis=1",
+                    "--no-dashboard",
+                    f"--local-directory={log_dir}/scratch"
                 ],
                 # 'account': 'your_slurm_account',
             }
@@ -1946,84 +1953,69 @@ class System:
             cluster = SLURMCluster(
                 **slurm_kwargs,
             )
-            #cluster.scale(jobs=len(self.all_poses))
-            cluster.scale(jobs=10)
+            cluster.scale(jobs=len(self.all_poses))
+            #cluster.scale(jobs=10)
             logger.info(f'SLURM Cluster created with {len(self.all_poses)} workers')
 
             client = Client(cluster)
-
-            def analyze_single_pose(pose, load, sim_range, raise_on_error):
-                self.analyze_pose(
-                    pose=pose,
-                    load=load,
-                    sim_range=sim_range,
-                    raise_on_error=raise_on_error,
-                    n_workers=6,
-                )
-                return pose
-
+            logger.info(f'Dask Client connected to SLURM Cluster: {client}')
+            logger.info(f'Link: {client.dashboard_link}')
             futures = []
-            for pose in self.all_poses:
+            input_dict = {
+                'sim_range': sim_range,
+                'raise_on_error': raise_on_error,
+                'n_workers': 6,
+            }
+            for pose in unfinished_poses:
+                output_dir = self.output_dir
                 logger.debug(f'Submitting analysis for pose: {pose}')
                 fut = client.submit(
-                    analyze_single_pose,
+                    analyze_single_pose_wrapper,
+                    output_dir,
                     pose,
-                    load,
-                    sim_range,
-                    raise_on_error,
+                    input_dict,
                     pure=False,
+                    resources={'analysis': 1},
                     key=f'analyze_{pose}'
                 )
                 futures.append(fut)
-
-            for future in tqdm(as_completed(futures),
-                                total=len(futures),
-                                desc="Analyzing FE for poses in SLURM Cluster"):
-                pose = future.result()
-                self.fe_results[pose] = NewFEResult(
-                    f'{self.fe_folder}/{pose}/Results/Results.dat',
-                )
-                fe_value = self.fe_results[pose].fe
-                fe_std = self.fe_results[pose].fe_std
-                # tqdm.write(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+            
+            logger.info(f'{len(futures)} analysis jobs submitted to SLURM Cluster')
+            logger.info('Waiting for analysis jobs to complete...')
+            results = client.gather(futures)
+            
             logger.info('Analysis with SLURM Cluster completed')
             client.close()
             cluster.close()
             
         else:
             pbar = tqdm(
-                self.all_poses,
+                unfinished_poses,
                 desc='Analyzing FE for poses',
             )
-            for pose in self.all_poses:
+            for pose in unfinished_poses:
                 pbar.set_postfix(pose=pose)
                 self.analyze_pose(
                     pose=pose,
-                    load=load,
                     sim_range=sim_range,
-                    raise_on_error=raise_on_error
+                    raise_on_error=raise_on_error,
+                    n_workers=self.n_workers
                 )
-                self.fe_results[pose] = NewFEResult(
-                    f'{self.fe_folder}/{pose}/Results/Results.dat',
-                )
-                fe_value = self.fe_results[pose].fe
-                fe_std = self.fe_results[pose].fe_std
-                pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
     
         # sort self.fe_sults by pose
-        self._fe_results = dict(sorted(self._fe_results.items(), key=lambda item: natural_keys(item[0])))
+        self.load_results()
     
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
-
             for i, (pose, fe) in enumerate(self.fe_results.items()):
+                if fe is None:
+                    logger.warning(f'FE for {pose} is None; skipping')
+                    continue
                 mol_name = self.mols[i]
                 ligand_name = self.pose_ligand_dict[pose]
                 logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
                 f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
-        
         logger.info(f'self.fe_results: {self.fe_results}')
             
-        
     @safe_directory
     @save_state
     def analysis_new(
@@ -2052,18 +2044,21 @@ class System:
         """
         Load the results from the output directory.
         """
+        loaded_poses = []
         for pose in self.all_poses:
             results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
             if os.path.exists(results_file):
                 self.fe_results[pose] = NewFEResult(results_file)
                 if np.isnan(self.fe_results[pose].fe):
-                    logger.warning(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
+                    logger.debug(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
                 logger.debug(f'FE for {pose} loaded from {results_file}')
+                loaded_poses.append(pose)
             else:
-                logger.warning(f'FE results file {results_file} not found for pose {pose}')
+                logger.debug(f'FE results file {results_file} not found for pose {pose}')
+                self.fe_results[pose] = None
         if not self.fe_results:
             raise ValueError('No results found in the output directory. Please run the analysis first.')
-        logger.info('Results loaded successfully')
+        logger.info(f'Results for {loaded_poses} loaded successfully')
         
 
     def _generate_aligned_pdbs(self):
@@ -3188,6 +3183,8 @@ class ABFESystem(System):
     create one `MABFESystem` with multiple ligands as input.
     """
     def _process_ligands(self):
+        from rdkit import Chem
+
         # check if they are the same ligand
         if self.ligand_paths[0].lower().endswith('.sdf'):
             suppl = Chem.SDMolSupplier(self.ligand_paths[0], removeHs=False)
@@ -3290,3 +3287,18 @@ def format_ranges(numbers):
             ranges.append(f"{start}-{end}")
     
     return ','.join(ranges)
+
+
+def analyze_single_pose_wrapper(folder, pose, input_dict):
+    from distributed import get_worker
+    logger.info(f'Analyzing pose {pose} in folder {folder}')
+    logger.info(f"Running on worker: {get_worker().name}")
+    logger.debug(f'Input: {input_dict}')
+    sim_range = input_dict.get('sim_range')
+    raise_on_error = input_dict.get('raise_on_error', True)
+    n_workers = input_dict.get('n_workers', 4)
+    
+    obj = System(folder=folder)
+    obj.analyze_pose(pose=pose, 
+                     raise_on_error=raise_on_error,
+                     n_workers=n_workers)
