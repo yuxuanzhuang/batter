@@ -172,7 +172,10 @@ def run_with_log(command, level='debug', working_dir=None,
             log("Command error output:")
             for line in e.stderr.splitlines():
                 log(line)
-        raise
+        raise RuntimeError(
+            f"Command '{command}' failed with return code {e.returncode}. "
+            f"Check logs for details."
+        ) from e
 
 
 def log_info(func):
