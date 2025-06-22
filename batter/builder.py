@@ -12,6 +12,8 @@ from contextlib import contextmanager
 import tempfile
 import warnings
 from typing import Union
+from rdkit import Chem
+
 
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.data import build_files as build_files_orig
@@ -862,8 +864,9 @@ class EquilibrationBuilder(SystemBuilder):
             raise ValueError(f'The ligand {mol}'
                              f'cannot be in the other_mol list: '
                              f'{other_mol}')
-        # rename pose atom name
+
         os.system(f'cp ../../ff/{mol.lower()}.mol2 .')
+        os.system(f'cp ../../ff/{mol.lower()}.sdf .')
 
         ante_mol = mda.Universe(f'{mol.lower()}.mol2')
         mol_u.atoms.names = ante_mol.atoms.names
@@ -1009,27 +1012,8 @@ class EquilibrationBuilder(SystemBuilder):
         self.lipid_mol = lipid_mol
         logger.debug(f'Converting CHARMM lipids: {old_lipid_mol} to AMBER format: {lipid_mol}')
 
-        with open("prep-ini.tcl", "rt") as fin:
-            with open("prep.tcl", "wt") as fout:
-                other_mol_vmd = " ".join(other_mol)
-                lipid_mol_vmd = " ".join(lipid_mol)
-                for line in fin:
-                    fout.write(line.replace('MMM', f"\'{mol}\'").replace('mmm', mol.lower())
-                               .replace('NN', h1_atom)
-                               .replace('P1A', p1_vmd)
-                               .replace('FIRST', '1')
-                               .replace('LAST', str(recep_resid_num))
-                               .replace('STAGE', self.stage)
-                               .replace('XDIS', '%4.2f' % l1_x)
-                               .replace('YDIS', '%4.2f' % l1_y)
-                               .replace('ZDIS', '%4.2f' % l1_z)
-                               .replace('RANG', '%4.2f' % l1_range)
-                               .replace('DMAX', '%4.2f' % max_adis)
-                               .replace('DMIN', '%4.2f' % min_adis)
-                               .replace('SDRD', '%4.2f' % sdr_dist)
-                               .replace('OTHRS', str(other_mol_vmd))
-                               .replace('LIPIDS', str(lipid_mol_vmd))
-                               )
+
+
 
         # Create raw complex and clean it
         filenames = ['protein.pdb',
@@ -1097,6 +1081,36 @@ class EquilibrationBuilder(SystemBuilder):
             u.atoms.residues.resids = revised_resids
 
             u.atoms.write('aligned_amber.pdb')
+
+        # get ligand candidates for inclusion in Boresch restraints
+        sdf_file = f'{mol.lower()}.sdf'
+        candidates_indices = get_ligand_candidates(sdf_file)
+        pdb_file = f'aligned_amber.pdb'
+        u = mda.Universe(pdb_file)
+        lig_indices = u.select_atoms(f'resname {mol.lower()}')[candidates_indices].indices
+        lig_indices_str = ' '.join([str(i) for i in lig_indices])
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                other_mol_vmd = " ".join(other_mol)
+                lipid_mol_vmd = " ".join(lipid_mol)
+                for line in fin:
+                    fout.write(line.replace('MMM', f"\'{mol}\'").replace('mmm', mol.lower())
+                               .replace('NN', h1_atom)
+                               .replace('P1A', p1_vmd)
+                               .replace('FIRST', '1')
+                               .replace('LAST', str(recep_resid_num))
+                               .replace('STAGE', self.stage)
+                               .replace('XDIS', '%4.2f' % l1_x)
+                               .replace('YDIS', '%4.2f' % l1_y)
+                               .replace('ZDIS', '%4.2f' % l1_z)
+                               .replace('RANG', '%4.2f' % l1_range)
+                               .replace('DMAX', '%4.2f' % max_adis)
+                               .replace('DMIN', '%4.2f' % min_adis)
+                               .replace('SDRD', '%4.2f' % sdr_dist)
+                               .replace('OTHRS', str(other_mol_vmd))
+                               .replace('LIPIDS', str(lipid_mol_vmd))
+                               .replace('LIGCANDIND', lig_indices_str)
+                               )
 
         run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
@@ -1821,29 +1835,25 @@ class FreeEnergyBuilder(SystemBuilder):
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
-        #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
         os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
         # Get last state from equilibrium simulations
-        #shutil.copy(f'../../../../equil/{pose}/representative.rst7', './')
         os.system(f'cp ../../../../equil/{pose}/representative.rst7 ./')
-        #shutil.copy(f'../../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
         os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
-        #shutil.copy(f'../../../../equil/{pose}/build_amber_renum.txt', './')
         os.system(f'cp ../../../../equil/{pose}/build_amber_renum.txt ./')
         os.system(f'cp ../../../../equil/{pose}/build_files/protein_renum.txt ./')
         if not os.path.exists('protein_renum.txt'):
             raise FileNotFoundError(f'protein_renum.txt not found in {os.getcwd()}')
 
-
         for file in glob.glob(f'../../../../equil/{pose}/full*.prmtop'):
-            #shutil.copy(file, './')
             os.system(f'cp {file} ./')
         for file in glob.glob(f'../../../../equil/{pose}/vac*'):
-            #shutil.copy(file, './')
             os.system(f'cp {file} ./')
         
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
+        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.sdf ./')
+        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.mol2 ./')
+        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.pdb ./')
 
         run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
@@ -1882,7 +1892,6 @@ class FreeEnergyBuilder(SystemBuilder):
         u.atoms.write('rec_file.pdb')
 
         # Used for retrieving the box size
-        #shutil.copy('rec_file.pdb', 'equil-reference.pdb')
         os.system('cp rec_file.pdb equil-reference.pdb')
 
         # Split initial receptor file
@@ -1940,30 +1949,9 @@ class FreeEnergyBuilder(SystemBuilder):
         sdr_dist = get_sdr_dist('complex.pdb',
                                 lig_resname=mol.lower(),
                                 targeted_sdr_dist=sdr_dist)
-        logger.info(f'SDR distance: {sdr_dist}')
+        logger.debug(f'SDR distance: {sdr_dist:.02f}')
         self.corrected_sdr_dist = sdr_dist
 
-        # Replace names in initial files and VMD scripts
-        with open("prep-ini.tcl", "rt") as fin:
-            with open("prep.tcl", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('MMM', f"\'{mol}\'")
-                        .replace('mmm', mol.lower())
-                        .replace('NN', p1_atom)
-                        .replace('P1A', p1_vmd)
-                        .replace('FIRST', '2')
-                        .replace('LAST', str(rec_res))
-                        .replace('STAGE', 'fe')
-                        .replace('XDIS', '%4.2f' % l1_x)
-                        .replace('YDIS', '%4.2f' % l1_y)
-                        .replace('ZDIS', '%4.2f' % l1_z)
-                        .replace('RANG', '%4.2f' % l1_range)
-                        .replace('DMAX', '%4.2f' % max_adis)
-                        .replace('DMIN', '%4.2f' % min_adis)
-                        .replace('SDRD', '%4.2f' % sdr_dist)
-                        .replace('OTHRS', str(other_mol_vmd))
-                        .replace('LIPIDS', str(lipid_mol_vmd))
-                        )
 
         # Align to reference (equilibrium) structure using VMD's measure fit
         # For FE, to avoid membrane rotation inside the box
@@ -2006,6 +1994,34 @@ class FreeEnergyBuilder(SystemBuilder):
 
             u.atoms.write('aligned_amber.pdb')
         
+        # get ligand candidates for inclusion in Boresch restraints
+        sdf_file = f'{mol.lower()}.sdf'
+        candidates_indices = get_ligand_candidates(sdf_file)
+        pdb_file = f'aligned_amber.pdb'
+        u = mda.Universe(pdb_file)
+        lig_indices = u.select_atoms(f'resname {mol.lower()}')[candidates_indices].indices
+        lig_indices_str = ' '.join([str(i) for i in lig_indices])
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('MMM', f"\'{mol}\'")
+                        .replace('mmm', mol.lower())
+                        .replace('NN', p1_atom)
+                        .replace('P1A', p1_vmd)
+                        .replace('FIRST', '2')
+                        .replace('LAST', str(rec_res))
+                        .replace('STAGE', 'fe')
+                        .replace('XDIS', '%4.2f' % l1_x)
+                        .replace('YDIS', '%4.2f' % l1_y)
+                        .replace('ZDIS', '%4.2f' % l1_z)
+                        .replace('RANG', '%4.2f' % l1_range)
+                        .replace('DMAX', '%4.2f' % max_adis)
+                        .replace('DMIN', '%4.2f' % min_adis)
+                        .replace('SDRD', '%4.2f' % sdr_dist)
+                        .replace('OTHRS', str(other_mol_vmd))
+                        .replace('LIPIDS', str(lipid_mol_vmd))
+                        .replace('LIGCANDIND', lig_indices_str)
+                        )
         run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
         # Check size of anchor file
@@ -4368,28 +4384,6 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         )
         self.corrected_sdr_dist = sdr_dist
 
-        # Replace names in initial files and VMD scripts
-        with open("prep-ini.tcl", "rt") as fin:
-            with open("prep.tcl", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('MMM', f"\'{molr}\'")
-                    .replace('mmm', molr.lower())
-                    .replace('NN', p1_atom)
-                    .replace('P1A', p1_vmd)
-                    .replace('FIRST', '2')
-                    .replace('LAST', str(rec_res))
-                    .replace('STAGE', 'fe')
-                    .replace('XDIS', '%4.2f' % l1_x)
-                    .replace('YDIS', '%4.2f' % l1_y)
-                    .replace('ZDIS', '%4.2f' % l1_z)
-                    .replace('RANG', '%4.2f' % l1_range)
-                    .replace('DMAX', '%4.2f' % max_adis)
-                    .replace('DMIN', '%4.2f' % min_adis)
-                    .replace('SDRD', '%4.2f' % sdr_dist)
-                    .replace('OTHRS', str(other_mol_vmd))
-                    .replace('LIPIDS', str(lipid_mol_vmd))
-                    )
-
         # Align to reference (equilibrium) structure using VMD's measure fit
         run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
 
@@ -4427,6 +4421,34 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
 
             u.atoms.write('aligned_amber.pdb')
 
+        # get ligand candidates for inclusion in Boresch restraints
+        sdf_file = f'{mol.lower()}.sdf'
+        candidates_indices = get_ligand_candidates(sdf_file)
+        pdb_file = f'aligned-nc.pdb'
+        u = mda.Universe(pdb_file)
+        lig_indices = u.select_atoms(f'resname {mol.lower()}')[candidates_indices].indices
+        lig_indices_str = ' '.join([str(i) for i in lig_indices])
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('MMM', f"\'{molr}\'")
+                    .replace('mmm', molr.lower())
+                    .replace('NN', p1_atom)
+                    .replace('P1A', p1_vmd)
+                    .replace('FIRST', '2')
+                    .replace('LAST', str(rec_res))
+                    .replace('STAGE', 'fe')
+                    .replace('XDIS', '%4.2f' % l1_x)
+                    .replace('YDIS', '%4.2f' % l1_y)
+                    .replace('ZDIS', '%4.2f' % l1_z)
+                    .replace('RANG', '%4.2f' % l1_range)
+                    .replace('DMAX', '%4.2f' % max_adis)
+                    .replace('DMIN', '%4.2f' % min_adis)
+                    .replace('SDRD', '%4.2f' % sdr_dist)
+                    .replace('OTHRS', str(other_mol_vmd))
+                    .replace('LIPIDS', str(lipid_mol_vmd))
+                    .replace('LIGCANDIND', lig_indices_str)
+                    )
         run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
         # Check size of anchor file
@@ -5004,29 +5026,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
             sdr_dist
         )
         self.corrected_sdr_dist = sdr_dist
-        
-        # Replace names in initial files and VMD scripts
-        with open("prep-ini.tcl", "rt") as fin:
-            with open("prep.tcl", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('MMM', f"\'{mol}\'")
-                        .replace('mmm', mol.lower())
-                        .replace('NN', p1_atom)
-                        .replace('P1A', p1_vmd)
-                        .replace('FIRST', '2')
-                        .replace('LAST', str(rec_res))
-                        .replace('STAGE', 'fe')
-                        .replace('XDIS', '%4.2f' % l1_x)
-                        .replace('YDIS', '%4.2f' % l1_y)
-                        .replace('ZDIS', '%4.2f' % l1_z)
-                        .replace('RANG', '%4.2f' % l1_range)
-                        .replace('DMAX', '%4.2f' % max_adis)
-                        .replace('DMIN', '%4.2f' % min_adis)
-                        .replace('SDRD', '%4.2f' % sdr_dist)
-                        .replace('LIGSITE', '1')
-                        .replace('OTHRS', str(other_mol_vmd))
-                        .replace('LIPIDS', str(lipid_mol_vmd))
-                        )
+
 
         # Align to reference (equilibrium) structure using VMD's measure fit
         run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
@@ -5066,7 +5066,37 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
             u.atoms.residues.resids = final_resids[:len(revised_resids)]
 
             u.atoms.write('aligned_amber.pdb')
-        
+            
+        # get ligand candidates for inclusion in Boresch restraints
+        sdf_file = f'{mol.lower()}.sdf'
+        candidates_indices = get_ligand_candidates(sdf_file)
+        pdb_file = f'aligned-nc.pdb'
+        u = mda.Universe(pdb_file)
+        lig_indices = u.select_atoms(f'resname {mol.lower()}')[candidates_indices].indices
+        lig_indices_str = ' '.join([str(i) for i in lig_indices])
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('MMM', f"\'{mol}\'")
+                        .replace('mmm', mol.lower())
+                        .replace('NN', p1_atom)
+                        .replace('P1A', p1_vmd)
+                        .replace('FIRST', '2')
+                        .replace('LAST', str(rec_res))
+                        .replace('STAGE', 'fe')
+                        .replace('XDIS', '%4.2f' % l1_x)
+                        .replace('YDIS', '%4.2f' % l1_y)
+                        .replace('ZDIS', '%4.2f' % l1_z)
+                        .replace('RANG', '%4.2f' % l1_range)
+                        .replace('DMAX', '%4.2f' % max_adis)
+                        .replace('DMIN', '%4.2f' % min_adis)
+                        .replace('SDRD', '%4.2f' % sdr_dist)
+                        .replace('LIGSITE', '1')
+                        .replace('OTHRS', str(other_mol_vmd))
+                        .replace('LIPIDS', str(lipid_mol_vmd))
+                        .replace('LIGCANDIND', lig_indices_str)
+                        )
+
         run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
         # Check size of anchor file
@@ -5687,29 +5717,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         rec_res = int(recep_last)+1
         p1_vmd = p1_resid
 
-        # Replace names in initial files and VMD scripts
-        with open("prep-ini.tcl", "rt") as fin:
-            with open("prep.tcl", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('MMM', f"\'{mol}\'")
-                        .replace('mmm', mol.lower())
-                        .replace('NN', p1_atom)
-                        .replace('P1A', p1_vmd)
-                        .replace('FIRST', '2')
-                        .replace('LAST', str(rec_res))
-                        .replace('STAGE', 'fe')
-                        .replace('XDIS', '%4.2f' % l1_x)
-                        .replace('YDIS', '%4.2f' % l1_y)
-                        .replace('ZDIS', '%4.2f' % l1_z)
-                        .replace('RANG', '%4.2f' % l1_range)
-                        .replace('DMAX', '%4.2f' % max_adis)
-                        .replace('DMIN', '%4.2f' % min_adis)
-                        .replace('SDRD', '%4.2f' % sdr_dist)
-                        .replace('LIGSITE', '1')
-                        .replace('OTHRS', str(other_mol_vmd))
-                        .replace('LIPIDS', str(lipid_mol_vmd))
-                        )
-
         # Align to reference (equilibrium) structure using VMD's measure fit
         run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
 
@@ -5749,6 +5756,35 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
 
             u.atoms.write('aligned_amber.pdb')
         
+        # get ligand candidates for inclusion in Boresch restraints
+        sdf_file = f'{mol.lower()}.sdf'
+        candidates_indices = get_ligand_candidates(sdf_file)
+        pdb_file = f'aligned-nc.pdb'
+        u = mda.Universe(pdb_file)
+        lig_indices = u.select_atoms(f'resname {mol.lower()}')[candidates_indices].indices
+        lig_indices_str = ' '.join([str(i) for i in lig_indices])
+        with open("prep-ini.tcl", "rt") as fin:
+            with open("prep.tcl", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('MMM', f"\'{mol}\'")
+                        .replace('mmm', mol.lower())
+                        .replace('NN', p1_atom)
+                        .replace('P1A', p1_vmd)
+                        .replace('FIRST', '2')
+                        .replace('LAST', str(rec_res))
+                        .replace('STAGE', 'fe')
+                        .replace('XDIS', '%4.2f' % l1_x)
+                        .replace('YDIS', '%4.2f' % l1_y)
+                        .replace('ZDIS', '%4.2f' % l1_z)
+                        .replace('RANG', '%4.2f' % l1_range)
+                        .replace('DMAX', '%4.2f' % max_adis)
+                        .replace('DMIN', '%4.2f' % min_adis)
+                        .replace('SDRD', '%4.2f' % sdr_dist)
+                        .replace('LIGSITE', '1')
+                        .replace('OTHRS', str(other_mol_vmd))
+                        .replace('LIPIDS', str(lipid_mol_vmd))
+                        .replace('LIGCANDIND', lig_indices_str)
+                        )  
         run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
         # Check size of anchor file
@@ -6367,3 +6403,32 @@ def get_sdr_dist(protein_file,
     sdr_dist = targeted_lig_z - lig_z
     return sdr_dist
 
+
+def get_ligand_candidates(ligand_sdf):
+    """
+    Get the ligand candidates for Boresch restraints from a sdf file.
+    """
+    # 1. get ligand_candidate_atoms
+    # From RXRX protocol
+    # The non-hydrogen atoms connected to at least two heavy atoms are
+    # selected as candidate atoms for the ligand's restraint component
+    
+    supplier = Chem.SDMolSupplier(ligand_sdf, removeHs=False)
+    mol = [s for s in supplier if s is not None][0]
+
+    anchor_candidates = []
+    for atom in mol.GetAtoms():
+        # no H
+        if atom.GetAtomicNum() == 1:
+            continue
+        heavy_neighbors = 0
+        for neighbor in atom.GetNeighbors():
+            if neighbor.GetAtomicNum() != 1:
+                heavy_neighbors += 1
+        if heavy_neighbors >= 2:
+            anchor_candidates.append(atom.GetIdx())
+
+    if len(anchor_candidates) == 0:
+        logger.warning("No suitable ligand anchor candidates found. Use all ligand atoms as candidates.")
+        anchor_candidates = list(range(mol.GetNumAtoms()))
+    return anchor_candidates
