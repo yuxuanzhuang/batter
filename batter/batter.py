@@ -1962,19 +1962,22 @@ class System:
             logger.info(f'Link: {client.dashboard_link}')
             futures = []
             input_dict = {
+                'fe_folder': self.fe_folder,
+                'components': self.sim_config.components,
+                'rest': self.sim_config.rest,
+                'temperature': self.sim_config.temperature,
+                'component_windows_dict': self.component_windows_dict,
                 'sim_range': sim_range,
                 'raise_on_error': raise_on_error,
                 'n_workers': 6,
             }
             for pose in unfinished_poses:
-                output_dir = self.output_dir
                 logger.debug(f'Submitting analysis for pose: {pose}')
                 fut = client.submit(
                     analyze_single_pose_wrapper,
-                    output_dir,
                     pose,
                     input_dict,
-                    pure=False,
+                    pure=True,
                     resources={'analysis': 1},
                     key=f'analyze_{pose}'
                 )
@@ -2051,8 +2054,9 @@ class System:
                 self.fe_results[pose] = NewFEResult(results_file)
                 if np.isnan(self.fe_results[pose].fe):
                     logger.debug(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
-                logger.debug(f'FE for {pose} loaded from {results_file}')
-                loaded_poses.append(pose)
+                else:
+                    loaded_poses.append(pose)
+                    logger.debug(f'FE for {pose} loaded from {results_file}')
             else:
                 logger.debug(f'FE results file {results_file} not found for pose {pose}')
                 self.fe_results[pose] = None
@@ -3239,13 +3243,13 @@ class RBFESystem(System):
 class ComponentWindowsDict(MutableMapping):
     def __init__(self, system):
         self._data = {}
-        self.system = system
+        self.sim_config = system.sim_config
 
     def __getitem__(self, key):
         if key in COMPONENTS_DICT['dd']:
-            return self._data.get(key, self.system.sim_config.lambdas)
+            return self._data.get(key, self.sim_config.lambdas)
         elif key in COMPONENTS_DICT['rest']:
-            return self._data.get(key, self.system.sim_config.attach_rest)
+            return self._data.get(key, self.sim_config.attach_rest)
         else:
             raise ValueError(f"Component {key} not in the system")
     
@@ -3289,16 +3293,168 @@ def format_ranges(numbers):
     return ','.join(ranges)
 
 
-def analyze_single_pose_wrapper(folder, pose, input_dict):
+def analyze_single_pose_wrapper(pose, input_dict):
     from distributed import get_worker
-    logger.info(f'Analyzing pose {pose} in folder {folder}')
     logger.info(f"Running on worker: {get_worker().name}")
-    logger.debug(f'Input: {input_dict}')
-    sim_range = input_dict.get('sim_range')
+    logger.info(f'Analyzing pose: {pose}')
+    logger.info(f'Input: {input_dict}')
+    fe_folder = input_dict.get('fe_folder')
+    components = input_dict.get('components')
+    rest = input_dict.get('rest')
+    temperature = input_dict.get('temperature')
+    component_windows_dict = input_dict.get('component_windows_dict')
+    sim_range = input_dict.get('sim_range', None)
     raise_on_error = input_dict.get('raise_on_error', True)
     n_workers = input_dict.get('n_workers', 4)
     
-    obj = System(folder=folder)
-    obj.analyze_pose(pose=pose, 
-                     raise_on_error=raise_on_error,
-                     n_workers=n_workers)
+    analyze_pose_task(
+        fe_folder=fe_folder,
+        pose=pose,
+        components=components,
+        rest=rest,
+        temperature=temperature,
+        component_windows_dict=component_windows_dict,
+        sim_range=sim_range,
+        raise_on_error=raise_on_error,
+        n_workers=n_workers
+    )
+
+
+def analyze_pose_task(
+                fe_folder: str,
+                pose: str,
+                components: List[str],
+                rest: Tuple[float, float, float, float, float],
+                temperature: float,
+                component_windows_dict: "ComponentWindowsDict",
+                sim_range: Tuple[int, int] = None,
+                raise_on_error: bool = True,
+                n_workers: int = 4):
+    """
+    Analyze the free energy results for one pose as an independent task.
+
+    Parameters
+    ----------
+    fe_folder : str
+        The folder containing the free energy results for the pose.
+    pose : str
+        The pose to analyze.
+    components : List[str]
+        The components to analyze.
+        This should be a list of strings, e.g. ['e', 'v', 'z', 'n', 'o'].
+    rest : tuple
+        The restraint values for the pose.
+    temperature : float
+        The temperature of the simulation in Kelvin.
+    sim_range : tuple
+        The range of simulations to analyze.
+        If files are missing from the range, the analysis will fail.
+    raise_on_error : bool
+        Whether to raise an error if the analysis fails.
+    n_workers : int
+        The number of workers to use for parallel processing.
+        Default is 4.
+    """
+    from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
+
+    pose_path = f'{fe_folder}/{pose}'
+    os.makedirs(f'{pose_path}/Results', exist_ok=True)
+
+    try:
+        results_entries = []
+
+        fe_values = []
+        fe_stds = []
+
+        # first get analytical results from Boresch restraint
+
+        if 'v' in components:
+            disangfile = f'{fe_folder}/{pose}/sdr/v-1/disang.rest'
+        elif 'o' in components:
+            disangfile = f'{fe_folder}/{pose}/sdr/o-1/disang.rest'
+        elif 'z' in components:
+            disangfile = f'{fe_folder}/{pose}/sdr/z-1/disang.rest'
+
+        k_r = rest[2]
+        k_a = rest[3]
+        bor_ana = BoreschAnalysis(
+                            disangfile=disangfile,
+                            k_r=k_r, k_a=k_a,
+                            temperature=temperature)
+        bor_ana.run_analysis()
+        fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
+        fe_stds.append(bor_ana.results['fe_error'])
+        results_entries.append(
+            f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
+        )
+        
+        for comp in components:
+            comp_folder = COMPONENTS_FOLDER_DICT[comp]
+            comp_path = f'{pose_path}/{comp_folder}'
+            windows = component_windows_dict[comp]
+
+            # skip n if no conformational restraints are applied
+            if comp == 'n' and rest[1] == 0 and rest[4] == 0:
+                logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
+                continue
+
+            if comp in COMPONENTS_DICT['dd']:
+                # directly read energy files
+                mbar_ana = MBARAnalysis(
+                    pose_folder=pose_path,
+                    component=comp,
+                    windows=windows,
+                    temperature=temperature,
+                    sim_range=sim_range,
+                    load=False,
+                    n_jobs=n_workers
+                )
+                mbar_ana.run_analysis()
+                mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                        title=f'Convergence for {comp} {pose}',
+                )
+
+                fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
+                fe_stds.append(mbar_ana.results['fe_error'])
+                results_entries.append(
+                    f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
+                )
+            elif comp in COMPONENTS_DICT['rest']:
+                rest_mbar_ana = RESTMBARAnalysis(
+                    pose_folder=pose_path,
+                    component=comp,
+                    windows=windows,
+                    temperature=temperature,
+                    sim_range=sim_range,
+                    load=False,
+                    n_jobs=n_workers,
+                )
+                rest_mbar_ana.run_analysis()
+                rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                        title=f'Convergence for {comp} {pose}',
+                )
+
+                fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
+                fe_stds.append(rest_mbar_ana.results['fe_error'])
+                results_entries.append(
+                    f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
+                )
+    
+        # calculate total free energy
+        fe_value = np.sum(fe_values)
+        fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
+    except Exception as e:
+        logger.error(f'Error during FE analysis for {pose}: {e}')
+        if raise_on_error:
+            raise e
+        fe_value = np.nan
+        fe_std = np.nan
+
+    results_entries.append(
+        f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+    )
+    with open(f'{fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+        f.write('\n'.join(results_entries))
+    
+    return
+            
