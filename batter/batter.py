@@ -289,6 +289,7 @@ class System:
             if not os.path.exists(ligand_path):
                 raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
         
+        logger.info(f"{len(self.ligand_paths)} ligands to be simulated.")
         self._process_ligands()
 
         if system_coordinate is not None and not os.path.exists(system_coordinate):
@@ -1970,10 +1971,12 @@ class System:
             logger.info(f'Link: {client.dashboard_link}')
             # Wait for all expected workers
             try:
-                client.wait_for_workers(n_workers=len(unfinished_poses), timeout=120)
+                client.wait_for_workers(n_workers=len(unfinished_poses), timeout=200)
             except TimeoutError:
                 logger.warning(f"Timeout: Only {len(client.scheduler_info()['workers'])} workers started.")
                 # scale down the cluster to the number of available workers
+                if len(client.scheduler_info()['workers']) == 0:
+                    raise TimeoutError("No workers started in 200 sec. Check SLURM job status or run without SLURM.")
                 cluster.scale(jobs=len(client.scheduler_info()['workers']))
 
             futures = []
