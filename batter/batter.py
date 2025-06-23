@@ -995,8 +995,7 @@ class System:
                     {f'eq_{pose}': slurm_job}
                 )
                 # make sure the system is saved every time when a job is submitted
-                with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                    pickle.dump(self, f)
+                self._save_state()
 
             pbar.close()
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
@@ -1072,8 +1071,7 @@ class System:
                     self._slurm_jobs.update(
                         {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                     )
-                    with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                        pickle.dump(self, f)
+                    self._save_state()
 
                 pbar.update(1)
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')        
@@ -1150,8 +1148,7 @@ class System:
                         self._slurm_jobs.update(
                             {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                         )
-                        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                            pickle.dump(self, f)
+                        self._save_state()
                 pbar.update(1)
             pbar.close()
 
@@ -1926,7 +1923,7 @@ class System:
         else:
             unfinished_poses = self.all_poses
         
-        if run_with_slurm:
+        if run_with_slurm and len(unfinished_poses) > 0:
             logger.info('Running analysis with SLURM Cluster')
             from dask_jobqueue import SLURMCluster
             from dask.distributed import Client
@@ -1966,8 +1963,7 @@ class System:
             logger.info(f'SLURM Cluster created with {len(unfinished_poses)} workers')
 
             client = Client(cluster)
-            logger.info(f'Dask Client connected to SLURM Cluster: {client}')
-            logger.info(f'Link: {client.dashboard_link}')
+            logger.info(f'Dask Dashboard Link: {client.dashboard_link}')
             # Wait for all expected workers
             try:
                 client.wait_for_workers(n_workers=len(unfinished_poses), timeout=120)
@@ -2006,7 +2002,7 @@ class System:
             logger.info('Analysis with SLURM Cluster completed')
             client.close()
             cluster.close()
-        else:
+        elif len(unfinished_poses) >= 0:
             pbar = tqdm(
                 unfinished_poses,
                 desc='Analyzing FE for poses',
@@ -3045,6 +3041,12 @@ class System:
 
         #return stage_df
 
+    def _save_state(self):
+        """
+        Save the state of the system to a file.
+        """
+        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+            pickle.dump(self, f)
 
     def copy_2_new_folder(self,
                           folder_name,
@@ -3169,7 +3171,16 @@ class System:
             self._component_windows_dict = ComponentWindowsDict(self)
 
         return self._component_windows_dict
-
+    
+    @component_windows_dict.setter
+    def component_windows_dict(self, value):
+        """
+        Set the component windows dictionary
+        """
+        if not isinstance(value, ComponentWindowsDict):
+            raise ValueError("component_windows_dict must be an instance of ComponentWindowsDict")
+        self._component_windows_dict = value
+        self._save_state()
 
     @property
     def n_workers(self):
@@ -3310,7 +3321,7 @@ class RBFESystem(System):
 class ComponentWindowsDict(MutableMapping):
     def __init__(self, system):
         self._data = {}
-        self.sim_config = system.sim_config
+        self._sim_config = system.sim_config
 
     def __getitem__(self, key):
         if key in COMPONENTS_DICT['dd']:
@@ -3335,7 +3346,24 @@ class ComponentWindowsDict(MutableMapping):
     def __len__(self):
         return len(self._data)
     
-
+    @property
+    def sim_config(self):
+        """
+        Get the simulation configuration from the system.
+        """
+        try:
+            return self._sim_config
+        except AttributeError:
+            # old API use system instead
+            return self.system.sim_config
+        
+    @sim_config.setter
+    def sim_config(self, sim_config):
+        """
+        Set the simulation configuration for the component windows.
+        """
+        self._sim_config = sim_config
+    
 def format_ranges(numbers):
     """
     Convert a list of numbers into a string of ranges.
