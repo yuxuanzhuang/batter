@@ -193,9 +193,7 @@ def save_state(method):
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         result = method(self, *args, **kwargs)
-        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-            pickle.dump(self, f)
-        logger.debug(f"State saved to {self.output_dir}/system.pkl")
+        self._save_state()
         return result
     return wrapper
 
