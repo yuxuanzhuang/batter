@@ -180,7 +180,10 @@ class MBARAnalysis(FEAnalysisBase):
         logger.debug(f"Calculating convergence for {self.component}...")
         with SuppressLoguru():
             logger.debug("Calculating forward-backward convergence...")
-            self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list, 'MBAR')
+            self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list,
+                                                                                           'MBAR',
+                                                                                           # bootstrap leads to solver loop issues
+                                                                                           error_tol=100)
             forward_end_time = [
                 [series[int(len(series) * fraction)-1]
                 for series in self.timeseries]
