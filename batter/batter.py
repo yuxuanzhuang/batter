@@ -1870,6 +1870,7 @@ class System:
         raise_on_error: bool = False,
         run_with_slurm: bool = False,
         run_with_slurm_kwargs: dict = None,
+        job_extra_directives: list = None,
         ):
         """
         Analyze the free energy results for all poses.
@@ -1894,6 +1895,9 @@ class System:
             Additional keyword arguments for SLURM job submission. Default is None.
             Check https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
             for available options.
+        job_extra_directives : list, optional
+            Additional SLURM directives to update the job submission.
+            Default is None.
         """
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -1925,42 +1929,53 @@ class System:
         if run_with_slurm:
             logger.info('Running analysis with SLURM Cluster')
             from dask_jobqueue import SLURMCluster
-            from dask.distributed import Client, as_completed
+            from dask.distributed import Client
+            from distributed.utils import TimeoutError
 
             log_dir = os.path.expanduser('~/.batter_jobs')
             os.makedirs(log_dir, exist_ok=True)
             slurm_kwargs = {
                 # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
+                'n_workers': len(unfinished_poses),
                 'queue': self.partition,
                 'cores': 6,
                 'memory': '30GB',
                 'walltime': '00:30:00',
                 'processes': 1,
+                'interface': 'ib0',
+                'nanny': False,
                 'job_extra_directives': [
-                    f'--job-name=batter-analysis',
+                    '--job-name=batter-analysis',
                     f'--output={log_dir}/dask-%j.out',
                     f'--error={log_dir}/dask-%j.err',
                 ],
                 'worker_extra_args': [
-                    "--resources",
-                    "analysis=1",
                     "--no-dashboard",
-                    f"--local-directory={log_dir}/scratch"
+                    "--resources analysis=1"
                 ],
                 # 'account': 'your_slurm_account',
             }
             if run_with_slurm_kwargs is not None:
                 slurm_kwargs.update(run_with_slurm_kwargs)
+            if job_extra_directives is not None:
+                slurm_kwargs['job_extra_directives'].extend(job_extra_directives)
+
             cluster = SLURMCluster(
                 **slurm_kwargs,
             )
-            cluster.scale(jobs=len(self.all_poses))
-            #cluster.scale(jobs=10)
-            logger.info(f'SLURM Cluster created with {len(self.all_poses)} workers')
+            logger.info(f'SLURM Cluster created with {len(unfinished_poses)} workers')
 
             client = Client(cluster)
             logger.info(f'Dask Client connected to SLURM Cluster: {client}')
             logger.info(f'Link: {client.dashboard_link}')
+            # Wait for all expected workers
+            try:
+                client.wait_for_workers(n_workers=len(unfinished_poses), timeout=120)
+            except TimeoutError:
+                logger.warning(f"Timeout: Only {len(client.scheduler_info()['workers'])} workers started.")
+                # scale down the cluster to the number of available workers
+                cluster.scale(jobs=len(client.scheduler_info()['workers']))
+
             futures = []
             input_dict = {
                 'fe_folder': self.fe_folder,
@@ -1970,7 +1985,7 @@ class System:
                 'component_windows_dict': self.component_windows_dict,
                 'sim_range': sim_range,
                 'raise_on_error': raise_on_error,
-                'n_workers': 6,
+                'n_workers': slurm_kwargs['cores'],
             }
             for pose in unfinished_poses:
                 logger.debug(f'Submitting analysis for pose: {pose}')
@@ -1986,12 +2001,11 @@ class System:
             
             logger.info(f'{len(futures)} analysis jobs submitted to SLURM Cluster')
             logger.info('Waiting for analysis jobs to complete...')
-            results = client.gather(futures)
+            _ = client.gather(futures)
             
             logger.info('Analysis with SLURM Cluster completed')
             client.close()
             cluster.close()
-            
         else:
             pbar = tqdm(
                 unfinished_poses,
