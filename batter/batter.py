@@ -1752,109 +1752,21 @@ class System:
             The number of workers to use for parallel processing.
             Default is 4.
         """
-        from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
-
-        pose_path = f'{self.fe_folder}/{pose}'
-        os.makedirs(f'{pose_path}/Results', exist_ok=True)
-
-        try:
-            results_entries = []
-
-            fe_values = []
-            fe_stds = []
-
-            # first get analytical results from Boresch restraint
-
-            if 'v' in self.sim_config.components:
-                disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
-            elif 'o' in self.sim_config.components:
-                disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
-            elif 'z' in self.sim_config.components:
-                disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
-
-            rest = self.sim_config.rest
-            k_r = rest[2]
-            k_a = rest[3]
-            bor_ana = BoreschAnalysis(
-                                disangfile=disangfile,
-                                k_r=k_r, k_a=k_a,
-                                temperature=self.sim_config.temperature,)
-            bor_ana.run_analysis()
-            fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
-            fe_stds.append(bor_ana.results['fe_error'])
-            results_entries.append(
-                f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
-            )
-            
-            for comp in self.sim_config.components:
-                comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                comp_path = f'{pose_path}/{comp_folder}'
-                windows = self.component_windows_dict[comp]
-
-                # skip n if no conformational restraints are applied
-                if comp == 'n' and rest[1] == 0 and rest[4] == 0:
-                    logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
-                    continue
-
-                if comp in COMPONENTS_DICT['dd']:
-                    # directly read energy files
-                    mbar_ana = MBARAnalysis(
-                        pose_folder=pose_path,
-                        component=comp,
-                        windows=windows,
-                        temperature=self.sim_config.temperature,
-                        sim_range=sim_range,
-                        load=False,
-                        n_jobs=n_workers
-                    )
-                    mbar_ana.run_analysis()
-                    mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
-                                            title=f'Convergence for {comp} {pose}',
-                    )
-
-                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
-                    fe_stds.append(mbar_ana.results['fe_error'])
-                    results_entries.append(
-                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
-                    )
-                elif comp in COMPONENTS_DICT['rest']:
-                    rest_mbar_ana = RESTMBARAnalysis(
-                        pose_folder=pose_path,
-                        component=comp,
-                        windows=windows,
-                        temperature=self.sim_config.temperature,
-                        sim_range=sim_range,
-                        load=False,
-                        n_jobs=n_workers,
-                    )
-                    rest_mbar_ana.run_analysis()
-                    rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
-                                            title=f'Convergence for {comp} {pose}',
-                    )
-
-                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
-                    fe_stds.append(rest_mbar_ana.results['fe_error'])
-                    results_entries.append(
-                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
-                    )
-        
-            # calculate total free energy
-            fe_value = np.sum(fe_values)
-            fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
-        except Exception as e:
-            logger.error(f'Error during FE analysis for {pose}: {e}')
-            if raise_on_error:
-                raise e
-            fe_value = np.nan
-            fe_std = np.nan
-
-        results_entries.append(
-            f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+        input_dict = {
+            'fe_folder': self.fe_folder,
+            'components': self.sim_config.components,
+            'rest': self.sim_config.rest,
+            'temperature': self.sim_config.temperature,
+            'component_windows_dict': self.component_windows_dict,
+            'sim_range': sim_range,
+            'raise_on_error': raise_on_error,
+            'n_workers': n_workers,
+        }
+        analyze_pose_task(
+            pose=pose,
+            **input_dict
         )
-        with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-            f.write('\n'.join(results_entries))
         
-        return
                 
     @safe_directory
     @save_state
@@ -1961,17 +1873,21 @@ class System:
             cluster = SLURMCluster(
                 **slurm_kwargs,
             )
-            logger.info(f'SLURM Cluster created with {len(unfinished_poses)} workers')
+            logger.info(f'SLURM Cluster created.')
 
             client = Client(cluster)
             logger.info(f'Dask Dashboard Link: {client.dashboard_link}')
             # Wait for all expected workers
             try:
+                logger.info(f'Waiting for {len(unfinished_poses)} workers to start...')
                 client.wait_for_workers(n_workers=len(unfinished_poses), timeout=200)
             except TimeoutError:
                 logger.warning(f"Timeout: Only {len(client.scheduler_info()['workers'])} workers started.")
                 # scale down the cluster to the number of available workers
                 if len(client.scheduler_info()['workers']) == 0:
+                    client.close()
+                    cluster.close()
+                    
                     raise TimeoutError("No workers started in 200 sec. Check SLURM job status or run without SLURM.")
                 cluster.scale(jobs=len(client.scheduler_info()['workers']))
 
@@ -1989,7 +1905,7 @@ class System:
             for pose in unfinished_poses:
                 logger.debug(f'Submitting analysis for pose: {pose}')
                 fut = client.submit(
-                    analyze_single_pose_wrapper,
+                    analyze_single_pose_dask_wrapper,
                     pose,
                     input_dict,
                     pure=True,
@@ -3391,7 +3307,7 @@ def format_ranges(numbers):
     return ','.join(ranges)
 
 
-def analyze_single_pose_wrapper(pose, input_dict):
+def analyze_single_pose_dask_wrapper(pose, input_dict):
     from distributed import get_worker
     logger.info(f"Running on worker: {get_worker().name}")
     logger.info(f'Analyzing pose: {pose}')
