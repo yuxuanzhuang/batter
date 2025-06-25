@@ -85,7 +85,6 @@ def run_pipeline(input, param, output_folder, overwrite, dry_run):
     system.run_pipeline(
         input_file=param,
         dry_run=dry_run,
-        only_equil=True,
         extra_restraints=extra_restraints,
         partition='rondror',
     )

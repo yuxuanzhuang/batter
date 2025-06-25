@@ -22,3 +22,12 @@ B2AR_CAU_INPUT = (_base_ref / '2RH1')
 LIGAND_FILES = (_base_ref / 'ligand_data')
 KW6356 = (LIGAND_FILES / 'KW6356.sdf')
 KW6356_H = (LIGAND_FILES / 'KW6356_h.sdf')
+
+# Pipeline files
+pipeline_input_files =  (_base_ref / 'pipeline')
+pipeline_ligands_files = (pipeline_input_files / 'ligands')
+pipeline_reference_files = (pipeline_input_files / 'reference')
+pipeline_ligands_dict_json = (pipeline_input_files / 'ligands_dict.json')
+pipeline_simulation_input_json = (pipeline_input_files / 'simulation_input.json')
+pipeline_abfe_input = (pipeline_input_files / 'abfe.in')
+pipeline_equil_system = (pipeline_input_files / 'equil_system')

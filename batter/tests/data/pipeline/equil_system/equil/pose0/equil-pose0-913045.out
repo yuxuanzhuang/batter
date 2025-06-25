@@ -1,0 +1,53 @@
+JobId=913045 JobName=fep_/oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/pipeline/test_pipeline//equil/pose0_equil
+   UserId=yuzhuang(443694) GroupId=rondror(247017) MCS_label=N/A
+   Priority=1002886 Nice=0 Account=rondror QOS=normal
+   JobState=RUNNING Reason=None Dependency=(null)
+   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0
+   RunTime=00:00:09 TimeLimit=16:00:00 TimeMin=N/A
+   SubmitTime=2025-06-21T15:05:33 EligibleTime=2025-06-21T15:05:33
+   AccrueTime=Unknown
+   StartTime=2025-06-21T15:15:07 EndTime=2025-06-22T07:15:08 Deadline=N/A
+   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2025-06-21T15:15:07 Scheduler=Backfill
+   Partition=rondror AllocNode:Sid=sh03-11n09:234172
+   ReqNodeList=(null) ExcNodeList=(null)
+   NodeList=sh03-11n04
+   BatchHost=sh03-11n04
+   StepMgrEnabled=Yes
+   NumNodes=1 NumCPUs=4 NumTasks=1 CPUs/Task=4 ReqB:S:C:T=0:0:*:*
+   ReqTRES=cpu=4,mem=32000M,node=1,billing=26,gres/gpu=1
+   AllocTRES=cpu=4,mem=32000M,node=1,billing=26,gres/gpu=1
+   Socks/Node=* NtasksPerN:B:S:C=0:0:*:* CoreSpec=*
+   MinCPUsNode=4 MinMemoryCPU=8000M MinTmpDiskNode=0
+   Features=GPU_GEN:AMP|GPU_GEN:PSC DelayBoot=00:00:00
+   OverSubscribe=OK Contiguous=0 Licenses=fs_oak Network=(null)
+   Command=/oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/pipeline/test_pipeline/equil/pose0/SLURMM-run
+   WorkDir=/oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/pipeline/test_pipeline/equil/pose0
+   StdErr=/oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/pipeline/test_pipeline/equil/pose0/equil-pose0-913045.err
+   StdIn=/dev/null
+   StdOut=/oak/stanford/groups/rondror/users/yuzhuang/software/batter/batter/tests/pipeline/test_pipeline/equil/pose0/equil-pose0-913045.out
+   TresPerNode=gres/gpu:1
+   TresPerTask=cpu=4
+   
+
+Job started at Sat Jun 21 15:15:16 PDT 2025
+OVERWRITE: 0
+ONLY_EQ: 0
+Current attempt: 1
+Attempt 1 to run simulations...
+[INFO] Minimization completed successfully at Sat Jun 21 15:18:43 PDT 2025
+[INFO] NVT completed successfully at Sat Jun 21 15:18:59 PDT 2025
+[INFO] Pre equilibration completed successfully at Sat Jun 21 15:23:59 PDT 2025
+[INFO] Equilibration stage 0 completed successfully at Sat Jun 21 15:24:54 PDT 2025
+[INFO] Equilibration stage 1 completed successfully at Sat Jun 21 15:25:47 PDT 2025
+[INFO] Equilibration stage 2 completed successfully at Sat Jun 21 15:26:39 PDT 2025
+[INFO] Equilibration stage 3 completed successfully at Sat Jun 21 15:27:30 PDT 2025
+[INFO] Equilibration stage 4 completed successfully at Sat Jun 21 15:28:20 PDT 2025
+[INFO] MD stage 0 completed successfully at Sat Jun 21 15:44:11 PDT 2025
+[INFO] MD stage 1 completed successfully at Sat Jun 21 15:56:15 PDT 2025
+[INFO] MD stage 2 completed successfully at Sat Jun 21 16:08:24 PDT 2025
+[INFO] MD stage 3 completed successfully at Sat Jun 21 16:32:28 PDT 2025
+[INFO] MD stage 4 completed successfully at Sat Jun 21 16:56:35 PDT 2025
+[INFO] MD stage 5 completed successfully at Sat Jun 21 17:20:50 PDT 2025
+[INFO] MD stage 6 completed successfully at Sat Jun 21 17:45:08 PDT 2025
+Simulation completed successfully on attempt 1.
+Job completed at Sat Jun 21 17:45:09 PDT 2025
