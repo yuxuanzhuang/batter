@@ -854,7 +854,7 @@ class System:
             if not os.path.exists(f"{self.equil_folder}"):
                 raise FileNotFoundError("Equilibration not generated yet. Run prepare('equil') first.")
         
-            if not os.path.exists(f"{self.equil_folder}/{self.all_poses[0]}/md03.rst7"):
+            if not all(os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") for pose in self.all_poses):
                 raise FileNotFoundError("Equilibration not finished yet. First run the equilibration.")
                 
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
