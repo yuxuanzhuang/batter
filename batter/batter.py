@@ -15,14 +15,13 @@ import re
 import pandas as pd
 from importlib import resources
 import json
-from typing import Union
 from pathlib import Path
 import pickle
 import time
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Union
 from loguru import logger
 from collections import defaultdict
 from batter.input_process import SimulationConfig, get_configure_from_file
@@ -45,7 +44,6 @@ from batter.utils import (
     COMPONENTS_LAMBDA_DICT,
     COMPONENTS_FOLDER_DICT,
     COMPONENTS_DICT,
-    DEC_FOLDER_DICT,
 )
 
 
@@ -1734,7 +1732,7 @@ class System:
 
     def analyze_pose(self,
                     pose: str = None,
-                    sim_range: Tuple[int, int] = None,
+                    sim_range: Optional[Tuple[int, int]] = None,
                     raise_on_error: bool = True,
                     n_workers: int = 4):
         """
@@ -1852,7 +1850,6 @@ class System:
                 'memory': '30GB',
                 'walltime': '00:30:00',
                 'processes': 1,
-                'interface': 'ib0',
                 'nanny': False,
                 'job_extra_directives': [
                     '--job-name=batter-analysis',
@@ -1910,13 +1907,14 @@ class System:
                     input_dict,
                     pure=True,
                     resources={'analysis': 1},
-                    key=f'analyze_{pose}'
+                    key=f'analyze_{pose}',
+                    retries=3,
                 )
                 futures.append(fut)
             
             logger.info(f'{len(futures)} analysis jobs submitted to SLURM Cluster')
             logger.info('Waiting for analysis jobs to complete...')
-            _ = client.gather(futures)
+            _ = client.gather(futures, errors='skip')
             
             logger.info('Analysis with SLURM Cluster completed')
             client.close()
@@ -3332,6 +3330,8 @@ def analyze_single_pose_dask_wrapper(pose, input_dict):
         raise_on_error=raise_on_error,
         n_workers=n_workers
     )
+    logger.info(f'Finished analyzing pose: {pose}')
+    return pose
 
 
 def analyze_pose_task(
@@ -3373,9 +3373,9 @@ def analyze_pose_task(
 
     pose_path = f'{fe_folder}/{pose}'
     os.makedirs(f'{pose_path}/Results', exist_ok=True)
-
+    
+    results_entries = []
     try:
-        results_entries = []
 
         fe_values = []
         fe_stds = []
@@ -3388,6 +3388,8 @@ def analyze_pose_task(
             disangfile = f'{fe_folder}/{pose}/sdr/o-1/disang.rest'
         elif 'z' in components:
             disangfile = f'{fe_folder}/{pose}/sdr/z-1/disang.rest'
+        else:
+            raise ValueError("No valid disangfile found for Boresch analysis")
 
         k_r = rest[2]
         k_a = rest[3]
