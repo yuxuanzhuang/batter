@@ -316,10 +316,6 @@ class SimulationConfig(BaseModel):
                 self.components = ['s']
                 self.dec_method = 'sdr'
 
-        if (self.dec_method == 'sdr' or self.dec_method == 'exchange') and self.sdr_dist == 0:
-            logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
-            sys.exit(1)
-
         logger.debug(f'------------------ Simulation Configuration ------------------')
         logger.debug(f'Software: {self.software}')
         logger.debug(f'Receptor/complex structures: {self.celp_st}')

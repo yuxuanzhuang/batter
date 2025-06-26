@@ -280,14 +280,14 @@ class SystemBuilder(ABC):
             poser = self.pose
         buffer_x = self.sim_config.buffer_x
         buffer_y = self.sim_config.buffer_y
-        buffer_z = self.sim_config.buffer_z
+        targeted_buffer_z = self.sim_config.buffer_z
 
-        # default to 20 A
-        if buffer_z == 0:
-            buffer_z = 20
+        # default to 25 A
+        if targeted_buffer_z == 0:
+            targeted_buffer_z = 25
         # decide based on existing water shell
         # to reach buffer_z angstroms on each side
-        buffer_z = get_buffer_z('build.pdb', targeted_buf=buffer_z)
+        buffer_z = get_buffer_z('build.pdb', targeted_buf=targeted_buffer_z)
         #logger.info(f'Using buffer_z = {buffer_z} angstroms')
 
         water_model = self.sim_config.water_model
@@ -528,6 +528,7 @@ class SystemBuilder(ABC):
                              'tleap write incorrect PDB when '
                              'residue exceed 100,000.'
                              'I am not sure how to fix it yet.')
+        system_dimensions = u.dimensions[:3]
 
         u_orig = mda.Universe('equil-reference.pdb')
 
@@ -559,6 +560,17 @@ class SystemBuilder(ABC):
         outside_wat = final_system.select_atoms(
             f'byres (resname WAT and ((prop x > {box_xy[0] / 2}) or (prop x < -{box_xy[0] / 2}) or (prop y > {box_xy[1] / 2}) or (prop y < -{box_xy[1] / 2})))')
         final_system = final_system - outside_wat
+
+        if comp in ['e', 'v', 'o', 'z']:
+            # remove the water along z that is outside buffer z
+            protein_region_z_max = u.select_atoms('protein').positions[:, 2].max()
+            protein_region_z_min = u.select_atoms('protein').positions[:, 2].min()
+            outside_wat_z = final_system.select_atoms(
+                f'byres (resname WAT and ((prop z > {protein_region_z_max + targeted_buffer_z}) or (prop z < {protein_region_z_min - targeted_buffer_z})))')
+            final_system = final_system - outside_wat_z
+            logger.debug(f'Box dimensions before removing water: {system_dimensions}')
+            system_dimensions[2] = protein_region_z_max - protein_region_z_min + 2 * targeted_buffer_z
+            logger.debug(f'Box dimensions after removing water: {system_dimensions}')
 
         logger.debug(f'Final system: {final_system.n_atoms} atoms')
 
@@ -665,9 +677,8 @@ class SystemBuilder(ABC):
         with open('solvate_pre_outside_wat.pdb', 'w') as f:
             f.writelines(outside_wat_lines)
 
-        box_final = final_system_prot.dimensions
         
-        logger.debug(f'Final box dimensions: {box_final[:3]}')
+        logger.debug(f'Final box dimensions: {system_dimensions}')
         # Write the final tleap file with the correct system size and removed water molecules
         #shutil.copy('tleap.in', 'tleap_solvate.in')
         os.system(f'cp tleap.in tleap_solvate.in')
@@ -709,7 +720,7 @@ class SystemBuilder(ABC):
         tleap_solvate.write('model = combine {dum prot others outside_wat}\n\n')
 
         tleap_solvate.write('\n')
-        tleap_solvate.write(f'set model box {{{box_final[0]:.6f} {box_final[1]:.6f} {box_final[2]:.6f}}}\n')
+        tleap_solvate.write(f'set model box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
         tleap_solvate.write('desc model\n')
         tleap_solvate.write('savepdb model full.pdb\n')
         tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
@@ -1859,7 +1870,7 @@ class FreeEnergyBuilder(SystemBuilder):
         l1_range = self.sim_config.l1_range
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
-        sdr_dist = self.sim_config.sdr_dist
+        buffer_z = self.sim_config.buffer_z
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
@@ -1974,13 +1985,6 @@ class FreeEnergyBuilder(SystemBuilder):
         rec_res = int(recep_last)+1
         p1_vmd = p1_resid
 
-        sdr_dist = get_sdr_dist('complex.pdb',
-                                lig_resname=mol.lower(),
-                                targeted_sdr_dist=sdr_dist)
-        logger.debug(f'SDR distance: {sdr_dist:.02f}')
-        self.corrected_sdr_dist = sdr_dist
-
-
         # Align to reference (equilibrium) structure using VMD's measure fit
         # For FE, to avoid membrane rotation inside the box
         # due to alignment, we just use ues the input structure as the reference
@@ -2022,6 +2026,17 @@ class FreeEnergyBuilder(SystemBuilder):
 
             u.atoms.write('aligned_amber.pdb')
         
+        # default to 25 A
+        if buffer_z == 0:
+            buffer_z = 25
+        # we want to place the ligand in the middle of the solvent.
+        sdr_dist = get_sdr_dist('complex.pdb',
+                                lig_resname=mol.lower(),
+                                buffer_z=buffer_z,
+                                extra_buffer=5)
+        logger.debug(f'SDR distance: {sdr_dist:.02f}')
+        self.corrected_sdr_dist = sdr_dist
+
         # get ligand candidates for inclusion in Boresch restraints
         sdf_file = f'{mol.lower()}.sdf'
         candidates_indices = get_ligand_candidates(sdf_file)
@@ -4359,7 +4374,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         l1_range = self.sim_config.l1_range
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
-        sdr_dist = self.sim_config.sdr_dist
+        buffer_z = self.sim_config.buffer_z
 
         # Build reference ligand from last state of equilibrium simulations
         
@@ -4432,12 +4447,17 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         p1_vmd = p1_resid
 
 
-        sdr_dist = get_sdr_dist(
-            'complex.pdb',
-            mol.lower(),
-            sdr_dist
-        )
+        # default to 25 A
+        if buffer_z == 0:
+            buffer_z = 25
+        # we want to place the ligand in the middle of the solvent.
+        sdr_dist = get_sdr_dist('complex.pdb',
+                                lig_resname=mol.lower(),
+                                buffer_z=buffer_z,
+                                extra_buffer=5)
+        logger.debug(f'SDR distance: {sdr_dist:.02f}')
         self.corrected_sdr_dist = sdr_dist
+
 
         # Align to reference (equilibrium) structure using VMD's measure fit
         run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
@@ -4986,6 +5006,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         max_adis = self.sim_config.max_adis
         min_adis = self.sim_config.min_adis
         sdr_dist = self.sim_config.sdr_dist
+        buffer_z = self.sim_config.buffer_z
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
@@ -5103,11 +5124,15 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         rec_res = int(recep_last)+1
         p1_vmd = p1_resid
 
-        sdr_dist = get_sdr_dist(
-            'complex.pdb',
-            mol.lower(),
-            sdr_dist
-        )
+        # default to 25 A
+        if buffer_z == 0:
+            buffer_z = 25
+        # we want to place the ligand in the middle of the solvent.
+        sdr_dist = get_sdr_dist('complex.pdb',
+                                lig_resname=mol.lower(),
+                                buffer_z=buffer_z,
+                                extra_buffer=5)
+        logger.debug(f'SDR distance: {sdr_dist:.02f}')
         self.corrected_sdr_dist = sdr_dist
 
 
@@ -6523,21 +6548,25 @@ def get_buffer_z(protein_file, targeted_buf=20):
 
 def get_sdr_dist(protein_file,
                  lig_resname,
-                 targeted_sdr_dist):
+                 buffer_z,
+                 extra_buffer=5):
     """
-    Set the shifted distance of a ligand to reach targeted sdr dist
-
-    The targeted_sdr_dist is the minimum z distance of the ligand in bulk solvent
+    Set the shifted distance of a ligand along z to put the ligand in the middle of
+    the solvent.
     """
+    targeted_sdr_dist = buffer_z
     u = mda.Universe(protein_file)
     ligand = u.select_atoms(f'resname {lig_resname}')
     if ligand.n_atoms == 0:
         raise ValueError(f"Ligand {lig_resname} not found in {protein_file}")
 
-    prot_z_max = u.select_atoms('protein').positions[:, 2].max()
+    prot_z_max = u.select_atoms('protein and not resname WAT Na+ Cl-').positions[:, 2].max()
+    system_z_max = prot_z_max + buffer_z
+    prot_z_min = u.select_atoms('protein and not resname WAT NA+ Cl-').positions[:, 2].min()
+    system_z_min = prot_z_min - buffer_z
 
     # shift the ligand upward
-    targeted_lig_z = prot_z_max + targeted_sdr_dist
+    targeted_lig_z = prot_z_max + targeted_sdr_dist + extra_buffer
     lig_z = ligand.positions[:, 2].mean()
     sdr_dist = targeted_lig_z - lig_z
     return sdr_dist
