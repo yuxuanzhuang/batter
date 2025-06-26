@@ -83,7 +83,7 @@ def test_existence_of_output_files(system):
         'equil/pose0/mdin-00'
     ]
     for file in expected_files:
-        folder_path = system.output_folder / file
+        folder_path = system.output_dir / file
         assert folder_path.exists(), f"Expected file {file} does not exist."
 
 
