@@ -1097,8 +1097,8 @@ class EquilibrationBuilder(SystemBuilder):
         candidates_indices = get_ligand_candidates(sdf_file)
         pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
-        lig_indices = u.select_atoms(f'resname {mol.lower()}').indices
-        lig_indices_str = ' '.join([str(i) for i in lig_indices[candidates_indices]])
+        lig_names = u.select_atoms(f'resname {mol.lower()}').names
+        lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
                 other_mol_vmd = " ".join(other_mol)
@@ -1119,14 +1119,14 @@ class EquilibrationBuilder(SystemBuilder):
                                .replace('SDRD', '%4.2f' % sdr_dist)
                                .replace('OTHRS', str(other_mol_vmd))
                                .replace('LIPIDS', str(lipid_mol_vmd))
-                               .replace('LIGCANDIND', lig_indices_str)
+                               .replace('LIGANDNAME', lig_name_str)
                                )
         try:
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
-            lig_indices_str = ' '.join([str(i) for i in lig_indices])
+            lig_name_str = ' '.join([str(i) for i in lig_names])
             with open("prep-ini.tcl", "rt") as fin:
                 with open("prep.tcl", "wt") as fout:
                     other_mol_vmd = " ".join(other_mol)
@@ -1147,7 +1147,7 @@ class EquilibrationBuilder(SystemBuilder):
                                 .replace('SDRD', '%4.2f' % sdr_dist)
                                 .replace('OTHRS', str(other_mol_vmd))
                                 .replace('LIPIDS', str(lipid_mol_vmd))
-                                .replace('LIGCANDIND', lig_indices_str)
+                                .replace('LIGANDNAME', lig_name_str)
                                 )
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
@@ -2042,8 +2042,8 @@ class FreeEnergyBuilder(SystemBuilder):
         candidates_indices = get_ligand_candidates(sdf_file)
         pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
-        lig_indices = u.select_atoms(f'resname {mol.lower()}').indices
-        lig_indices_str = ' '.join([str(i) for i in lig_indices[candidates_indices]])
+        lig_names = u.select_atoms(f'resname {mol.lower()}').names
+        lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
                 for line in fin:
@@ -2063,14 +2063,14 @@ class FreeEnergyBuilder(SystemBuilder):
                         .replace('SDRD', '%4.2f' % sdr_dist)
                         .replace('OTHRS', str(other_mol_vmd))
                         .replace('LIPIDS', str(lipid_mol_vmd))
-                        .replace('LIGCANDIND', lig_indices_str)
+                        .replace('LIGANDNAME', lig_name_str)
                         )
         try:
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
-            lig_indices_str = ' '.join([str(i) for i in lig_indices])
+            lig_name_str = ' '.join([str(i) for i in lig_names])
             with open("prep-ini.tcl", "rt") as fin:
                 with open("prep.tcl", "wt") as fout:
                     for line in fin:
@@ -2090,7 +2090,7 @@ class FreeEnergyBuilder(SystemBuilder):
                             .replace('SDRD', '%4.2f' % sdr_dist)
                             .replace('OTHRS', str(other_mol_vmd))
                             .replace('LIPIDS', str(lipid_mol_vmd))
-                            .replace('LIGCANDIND', lig_indices_str)
+                            .replace('LIGANDNAME', lig_name_str)
                             )
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
@@ -4501,8 +4501,8 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         candidates_indices = get_ligand_candidates(sdf_file)
         pdb_file = f'aligned-nc.pdb'
         u = mda.Universe(pdb_file)
-        lig_indices = u.select_atoms(f'resname {mol.lower()}').indices
-        lig_indices_str = ' '.join([str(i) for i in lig_indices[candidates_indices]])
+        lig_names = u.select_atoms(f'resname {mol.lower()}').names
+        lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
                 for line in fin:
@@ -4522,14 +4522,14 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     .replace('SDRD', '%4.2f' % sdr_dist)
                     .replace('OTHRS', str(other_mol_vmd))
                     .replace('LIPIDS', str(lipid_mol_vmd))
-                    .replace('LIGCANDIND', lig_indices_str)
+                    .replace('LIGANDNAME', lig_name_str)
                     )
         try:
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
-            lig_indices_str = ' '.join([str(i) for i in lig_indices])
+            lig_name_str = ' '.join([str(i) for i in lig_names])
             with open("prep-ini.tcl", "rt") as fin:
                 with open("prep.tcl", "wt") as fout:
                     for line in fin:
@@ -4549,7 +4549,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                         .replace('SDRD', '%4.2f' % sdr_dist)
                         .replace('OTHRS', str(other_mol_vmd))
                         .replace('LIPIDS', str(lipid_mol_vmd))
-                        .replace('LIGCANDIND', lig_indices_str)
+                        .replace('LIGANDNAME', lig_name_str)
                         )
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
@@ -5180,8 +5180,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         candidates_indices = get_ligand_candidates(sdf_file)
         pdb_file = f'aligned-nc.pdb'
         u = mda.Universe(pdb_file)
-        lig_indices = u.select_atoms(f'resname {mol.lower()}').indices
-        lig_indices_str = ' '.join([str(i) for i in lig_indices[candidates_indices]])
+        lig_names = u.select_atoms(f'resname {mol.lower()}').names
+        lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
                 for line in fin:
@@ -5202,14 +5202,14 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                         .replace('LIGSITE', '1')
                         .replace('OTHRS', str(other_mol_vmd))
                         .replace('LIPIDS', str(lipid_mol_vmd))
-                        .replace('LIGCANDIND', lig_indices_str)
+                        .replace('LIGANDNAME', lig_name_str)
                         )
         try:
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
-            lig_indices_str = ' '.join([str(i) for i in lig_indices])
+            lig_name_str = ' '.join([str(i) for i in lig_names])
             with open("prep-ini.tcl", "rt") as fin:
                 with open("prep.tcl", "wt") as fout:
                     for line in fin:
@@ -5230,7 +5230,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             .replace('LIGSITE', '1')
                             .replace('OTHRS', str(other_mol_vmd))
                             .replace('LIPIDS', str(lipid_mol_vmd))
-                            .replace('LIGCANDIND', lig_indices_str)
+                            .replace('LIGANDNAME', lig_name_str)
                             )
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
@@ -5896,8 +5896,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         candidates_indices = get_ligand_candidates(sdf_file)
         pdb_file = f'aligned-nc.pdb'
         u = mda.Universe(pdb_file)
-        lig_indices = u.select_atoms(f'resname {mol.lower()}').indices
-        lig_indices_str = ' '.join([str(i) for i in lig_indices[candidates_indices]])
+        lig_names = u.select_atoms(f'resname {mol.lower()}').names
+        lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
         with open("prep-ini.tcl", "rt") as fin:
             with open("prep.tcl", "wt") as fout:
                 for line in fin:
@@ -5918,14 +5918,14 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                         .replace('LIGSITE', '1')
                         .replace('OTHRS', str(other_mol_vmd))
                         .replace('LIPIDS', str(lipid_mol_vmd))
-                        .replace('LIGCANDIND', lig_indices_str)
+                        .replace('LIGANDNAME', lig_name_str)
                         )  
         try:
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
-            lig_indices_str = ' '.join([str(i) for i in lig_indices])
+            lig_name_str = ' '.join([str(i) for i in lig_names])
             with open("prep-ini.tcl", "rt") as fin:
                 with open("prep.tcl", "wt") as fout:
                     for line in fin:
@@ -5946,7 +5946,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                             .replace('LIGSITE', '1')
                             .replace('OTHRS', str(other_mol_vmd))
                             .replace('LIPIDS', str(lipid_mol_vmd))
-                            .replace('LIGCANDIND', lig_indices_str)
+                            .replace('LIGANDNAME', lig_name_str)
                             ) 
             run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
 
@@ -6575,6 +6575,20 @@ def get_sdr_dist(protein_file,
 def get_ligand_candidates(ligand_sdf):
     """
     Get the ligand candidates for Boresch restraints from a sdf file.
+
+    The candidates are the non-hydrogen atoms connected to at least two heavy atoms.
+
+    If there are less than 3 candidates, all non-H atoms are returned.
+
+    Parameters
+    ----------
+    ligand_sdf : str
+        Path to the ligand sdf file.
+
+    Returns
+    -------
+    list
+        List of atom indices of the ligand candidates (0-based).
     """
     # 1. get ligand_candidate_atoms
     # From RXRX protocol
@@ -6586,6 +6600,7 @@ def get_ligand_candidates(ligand_sdf):
     mol = [s for s in supplier if s is not None][0]
 
     anchor_candidates = []
+    n_h_candidates = []
     for atom in mol.GetAtoms():
         # no H
         if atom.GetAtomicNum() == 1:
@@ -6596,8 +6611,9 @@ def get_ligand_candidates(ligand_sdf):
                 heavy_neighbors += 1
         if heavy_neighbors >= 2:
             anchor_candidates.append(atom.GetIdx())
+        n_h_candidates.append(atom.GetIdx())
 
-    if len(anchor_candidates) == 0:
-        logger.warning("No suitable ligand anchor candidates found. Use all ligand atoms as candidates.")
-        anchor_candidates = list(range(mol.GetNumAtoms()))
+    if len(anchor_candidates) < 3:
+        logger.warning("No suitable three ligand anchor candidates found. Use all non-Hligand atoms as candidates.")
+        anchor_candidates = n_h_candidates
     return anchor_candidates

@@ -29,7 +29,7 @@ $lig set resid 1
 $lig writepdb mmm.pdb
 $ligh writepdb mmm-noh.pdb
 
-set a [atomselect 1 "resname MMM and noh and index LIGCANDIND"]
+set a [atomselect 1 "resname MMM and noh and name LIGANDNAME"]
 set tot [$a get name]
 
 foreach i $tot {

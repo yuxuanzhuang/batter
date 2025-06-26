@@ -31,7 +31,7 @@ from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
 from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
-from batter.builder import BuilderFactory
+from batter.builder import BuilderFactory, get_ligand_candidates
 from batter.utils import (
     run_with_log,
     save_state,
@@ -380,9 +380,11 @@ class System:
         # always get the anchor atoms from the first pose
         u_prot = mda.Universe(f'{self.output_dir}/all-poses/reference.pdb')
         u_lig = mda.Universe(f'{self.output_dir}/all-poses/pose0.pdb')
-        l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
+        lig_sdf = f'{self.ligandff_folder}/{self.mols[0]}.sdf'
+        l1_x, l1_y, l1_z, p1, p2, p3, l1_range = self._find_anchor_atoms(
                     u_prot,
                     u_lig,
+                    lig_sdf,
                     anchor_atoms,
                     ligand_anchor_atom)
 
@@ -396,6 +398,8 @@ class System:
         self.p1 = p1
         self.p2 = p2
         self.p3 = p3
+
+        self.l1_range = l1_range
         
         logger.info('System loaded and prepared')
 
@@ -1254,13 +1258,15 @@ class System:
                 continue
             logger.debug(f'Preparing pose: {pose}')
             
+            sim_config_pose = sim_config.copy(deep=True)
             # load anchor_list
             with open(f"{self.equil_folder}/{pose}/anchor_list.txt", 'r') as f:
                 anchor_list = f.readlines()
-                l1x, l1y, l1z = [float(x) for x in anchor_list[0].split()]
-                sim_config.l1_x = l1x
-                sim_config.l1_y = l1y
-                sim_config.l1_z = l1z
+                l1x, l1y, l1z, l1_range = [float(x) for x in anchor_list[0].split()]
+                sim_config_pose.l1_x = l1x
+                sim_config_pose.l1_y = l1y
+                sim_config_pose.l1_z = l1z
+                sim_config_pose.l1_range = l1_range
 
             # copy ff folder
             #shutil.copytree(self.ligandff_folder,
@@ -1285,7 +1291,7 @@ class System:
                     component=component,
                     system=self,
                     pose=pose,
-                    sim_config=sim_config,
+                    sim_config=sim_config_pose,
                     working_dir=f'{self.fe_folder}',
                     molr=molr,
                     poser=poser
@@ -2017,6 +2023,7 @@ class System:
     @staticmethod
     def _find_anchor_atoms(u_prot,
                            u_lig,
+                           lig_sdf,
                            anchor_atoms,
                            ligand_anchor_atom):
         """
@@ -2029,6 +2036,8 @@ class System:
             The protein universe.
         u_lig : mda.Universe
             The ligand universe.
+        lig_sdf : str
+            The ligand sdf file.
         anchor_atoms : List[str]
             The list of three protein anchor atoms (selection strings)
             used to restrain ligand.
@@ -2050,6 +2059,8 @@ class System:
             The formatted string of the second protein anchor atom.
         p3_formatted : str
             The formatted string of the third protein anchor atom.
+        r_dist : float
+            The distance between the ligand anchor atom and the first protein anchor atom.
         """
 
         u_merge = mda.Merge(u_prot.atoms, u_lig.atoms)
@@ -2068,7 +2079,8 @@ class System:
                                "Using all ligand atoms instead.")
                 lig_atom = u_lig.atoms
         else:
-            lig_atom = u_lig.atoms
+            candidates = get_ligand_candidates(lig_sdf)
+            lig_atom = u_lig.atoms[candidates]
 
         # get ll_x,y,z distances
         r_vect = lig_atom.center_of_mass() - P1_atom.positions
@@ -2078,8 +2090,10 @@ class System:
         p2_formatted = f':{P2_atom.resids[0]}@{P2_atom.names[0]}'
         p3_formatted = f':{P3_atom.resids[0]}@{P3_atom.names[0]}'
         logger.debug(f'Receptor anchor atoms: P1: {p1_formatted}, P2: {p2_formatted}, P3: {p3_formatted}')
+        r_dist = np.linalg.norm(r_vect) + 1
         return (r_vect[0][0], r_vect[0][1], r_vect[0][2],
-                p1_formatted, p2_formatted, p3_formatted)
+                p1_formatted, p2_formatted, p3_formatted,
+                r_dist)
               
     def _check_equilbration_binding(self):
         """
@@ -2154,17 +2168,19 @@ class System:
         for i, pose in enumerate(self.bound_poses):
             u_sys = mda.Universe(f'{self.equil_folder}/{pose}/representative.pdb')
             u_lig = u_sys.select_atoms(f'resname {self.bound_mols[i]}')
+            lig_sdf = f'{self.ligandff_folder}/{self.bound_mols[i]}.sdf'
 
             ligand_anchor_atom = self.ligand_anchor_atom
 
             logger.debug(f'Finding anchor atoms for pose {pose}')
-            l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
+            l1_x, l1_y, l1_z, p1, p2, p3, l1_range = self._find_anchor_atoms(
                         u_sys,
                         u_lig,
+                        lig_sdf,
                         self.anchor_atoms,
                         ligand_anchor_atom)
             with open(f'{self.equil_folder}/{pose}/anchor_list.txt', 'w') as f:
-                f.write(f'{l1_x} {l1_y} {l1_z}')
+                f.write(f'{l1_x} {l1_y} {l1_z} {l1_range}')
         
 
     @safe_directory
