@@ -4814,7 +4814,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     for line in fin:
                         if 'infe' in line:
                             fout.write('  infe = 1,\n')
-                        if 'mcwat' in line:
+                        elif 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -4824,7 +4824,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                     for line in fin:
                         if 'infe' in line:
                             fout.write('  infe = 1,\n')
-                        if 'mcwat' in line:
+                        elif 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -4946,7 +4946,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                     for line in fin:
                         if 'infe' in line:
                             fout.write('  infe = 1,\n')
-                        if 'mcwat' in line:
+                        elif 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -4956,7 +4956,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                     for line in fin:
                         if 'infe' in line:
                             fout.write('  infe = 1,\n')
-                        if 'mcwat' in line:
+                        elif 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -6395,7 +6395,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                     for line in fin:
                         if 'infe' in line:
                             fout.write('  infe = 1,\n')
-                        if 'mcwat' in line:
+                        elif 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -6405,7 +6405,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                     for line in fin:
                         if 'infe' in line:
                             fout.write('  infe = 1,\n')
-                        if 'mcwat' in line:
+                        elif 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
