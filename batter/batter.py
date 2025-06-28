@@ -28,7 +28,6 @@ from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
-from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
 from batter.builder import BuilderFactory, get_ligand_candidates
@@ -933,7 +932,7 @@ class System:
             The stage of the simulation. Options are 'equil', 'fe', and 'fe_equil'.
         cluster : str
             The cluster to submit the simulation.
-            Options are 'slurm' and 'frontier'.
+            Options are 'slurm' and 'batch'.
         partition : str, optional
             The partition to submit the job. Default is None,
             which means the default partition during prepartiion
@@ -943,7 +942,7 @@ class System:
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
-        if cluster == 'frontier':
+        if cluster == 'batch':
             raise NotImplementedError('run with `batter run-in-batch` instead')
             return
 
@@ -2607,33 +2606,36 @@ class System:
 
     @safe_directory
     @save_state
-    def generate_frontier_files(self,
-                                remd=False,
-                                version=24,
-                                ):
+    def generate_batch_files(self,
+                            remd=False,
+                            time_limit=50 # 50 minutes
+                            ):
         """
-        Generate the frontier files for the system
-        to run them in a bundle.
-        """
-        self._generate_frontier_equilibration()
-        self._generate_frontier_fe_equilibration(version=version)
-        self._generate_frontier_fe(remd=remd, version=version)
+        Generate the batch-run files for the system
+        with the option to run them with ACES (H-REMD).
 
-    def _generate_frontier_equilibration(self):
+        Specially, it will generate input files so that they can
+        run from the fe folder.
         """
-        Generate the frontier files for the equilibration stage
+        self._generate_batch_equilibration()
+        self._generate_batch_fe_equilibration()
+        self._generate_batch_fe(remd=remd,
+                                time_limit=time_limit)
+
+    def _generate_batch_equilibration(self):
+        """
+        Generate the batch files for the equilibration stage
         to run them in a bundle.
         """
         # TODO: implement this function
         # The problem is that there's a time restriction of 2 hours
-        # to run jobs in Frontier.
+        # to run jobs in clusters e.g. Frontier.
         # Thus the equilibration need to be split into smaller jobs
         pass
 
-
-    def _generate_frontier_fe_equilibration(self, version=24):
+    def _generate_batch_fe_equilibration(self):
         """
-        Generate the frontier files for the free energy calculation equilibration stage.
+        Generate the batch files for the free energy calculation equilibration stage.
         """
         poses_def = self.bound_poses
         components = self.sim_config.components
@@ -2668,7 +2670,7 @@ class System:
                         mdinput = f'fe/{win_eq_sim_folder_name}/{stage.split("_")[0]}'
                         with open(mdinput, 'r') as infile:
                             input_lines = infile.readlines()
-                            new_mdinput = f'{mdinput}_frontier'
+                            new_mdinput = f'{mdinput}_batch'
                             with open(new_mdinput, 'w') as outfile:
                                 for line in input_lines:
                                     if 'cv_file' in line:
@@ -2692,7 +2694,7 @@ class System:
                                 'eqnpt.in_04': 'eqnpt04',
                             }
                             f.write(
-                                f'-O -i {win_eq_sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous} '
+                                f'-O -i {win_eq_sim_folder_name}/{stage.split("_")[0]}_batch -p {prmtop} -c {stage_previous} '
                                 f'-o {win_eq_sim_folder_name}/{file_name_map[stage]}.out -r {win_eq_sim_folder_name}/{file_name_map[stage]}.rst7 -x {win_eq_sim_folder_name}/{file_name_map[stage]}.nc '
                                 f'-ref {stage_previous} -inf {win_eq_sim_folder_name}/{file_name_map[stage]}.mdinfo -l {win_eq_sim_folder_name}/{file_name_map[stage]}.log '
                                 f'-e {win_eq_sim_folder_name}/{file_name_map[stage]}.mden\n'
@@ -2705,19 +2707,15 @@ class System:
                     continue
                 write_2_pose(pose)
                 logger.debug(f'Generated groupfiles for {pose}')
-            # copy env.amber.24
-            env_amber_file = f'{frontier_files}/env.amber.{version}'
-            #shutil.copy(env_amber_file, 'fe/env.amber')
-            os.system(f'cp {env_amber_file} fe/env.amber')
             logger.info('FE EQ groupfiles generated for all poses')
 
 
-    def _generate_frontier_fe(self,
-                              remd=False,
-                              version=24,
-                              ):
+    def _generate_batch_fe(self,
+                           remd=False,
+                           time_limit=50 # 50 minutes
+                           ):
         """
-        Generate the frontier files for the free energy calculation production stage.
+        Generate the batch files for the free energy calculation production stage.
         """
         poses_def = self.bound_poses
         components = self.sim_config.components
@@ -2768,7 +2766,7 @@ class System:
                             with open(f'fe/{mdinput_path}', 'r') as infile:
                                 input_lines = infile.readlines()
 
-                            new_mdinput_path = f'fe/{sim_folder_name}/{stage.split("_")[0]}_frontier'
+                            new_mdinput_path = f'fe/{sim_folder_name}/{stage.split("_")[0]}_batch'
 
                             with open(new_mdinput_path, 'w') as outfile:
                                 for line in input_lines:
@@ -2832,25 +2830,25 @@ class System:
                                                # hard estimation of the size to be 100000 atoms 
                                                 n_atoms = 100000
                                                 performance = calculate_performance(n_atoms, component)
-                                                n_steps = int(50 / 60 / 24 * performance * 1000 * 1000 / 4)
+                                                n_steps = int(time_limit / 60 / 24 * performance * 1000 * 1000 / 4)
                                                 n_steps = int(n_steps // 100000 * 100000)
                                                 line = f'  nstlim = {n_steps},\n'
                                     outfile.write(line)
 
                             f.write(f'# {component} {i} {stage}\n')
                             if stage == 'mdin.in':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in_batch -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
                                         f'-o {sim_folder_name}/mdin-00.out -r {sim_folder_name}/mdin-00.rst7 -x {sim_folder_name}/mdin-00.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
                                         f'-e {sim_folder_name}/mdin-00.mden\n')
                             elif stage == 'mdin.in.extend':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_frontier -p {prmtop} -c {sim_folder_name}/mdin-CURRNUM.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_batch -p {prmtop} -c {sim_folder_name}/mdin-CURRNUM.rst7 '
                                         f'-o {sim_folder_name}/mdin-NEXTNUM.out -r {sim_folder_name}/mdin-NEXTNUM.rst7 -x {sim_folder_name}/mdin-NEXTNUM.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
                                         f'-e {sim_folder_name}/mdin-NEXTNUM.mden\n')
                             else:
                                 f.write(
-                                    f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
+                                    f'-O -i {sim_folder_name}/{stage.split("_")[0]}_batch -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
                                     f'-o {sim_folder_name}/{stage}.out -r {sim_folder_name}/{stage}.rst7 -x {sim_folder_name}/{stage}.nc '
                                     f'-ref {stage_previous.replace("REPXXX", f"{i:02d}")} -inf {sim_folder_name}/{stage}.mdinfo -l {sim_folder_name}/{stage}.log '
                                     f'-e {sim_folder_name}/{stage}.mden\n'
@@ -2872,19 +2870,7 @@ class System:
                                     desc='Generating production groupfiles'))
                 all_replicates.extend(results)
 
-        #with self._change_dir(self.output_dir):
-        #    for i, pose in tqdm(enumerate(poses_def),
-        #                        desc='Generating production groupfiles',
-        #                        total=len(poses_def)):
-        #        if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-        #            continue
-        #        all_replicates.append(write_2_pose(pose, components))
-        #        logger.debug(f'Generated groupfiles for {pose}')
             logger.debug(all_replicates)
-            # copy env.amber.24
-            env_amber_file = f'{frontier_files}/env.amber.{version}'
-            #shutil.copy(env_amber_file, 'fe/env.amber')
-            os.system(f'cp {env_amber_file} fe/env.amber')
             logger.info('FE production groupfiles generated for all poses')
     
     def check_sim_stage(self, output='image', min_file_size=100, max_workers=16):
