@@ -30,6 +30,7 @@ from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
+from batter.data import batch_files as batch_files_orig
 from batter.builder import BuilderFactory, get_ligand_candidates
 from batter.utils import (
     run_with_log,
@@ -124,12 +125,12 @@ class System:
 
         try:
             with open(system_file, 'rb') as f:
+
                 loaded_state = pickle.load(f)
                 # in case the folder is moved
                 loaded_state.output_dir = self.output_dir
                 # Update self with loaded attributes
                 self.__dict__.update(loaded_state.__dict__)
-                logger.add(f"{self.output_dir}/batter.log", level='INFO')
 
         except Exception as e:
             logger.error(f"Error loading the system: {e}")
@@ -918,7 +919,7 @@ class System:
     @save_state
     def submit(self,
                stage: str,
-               cluster: str = 'slurm',
+               batch_mode: bool = False,
                partition=None,
                time_limit=None,
                overwrite: bool = False,
@@ -930,9 +931,8 @@ class System:
         ----------
         stage : str
             The stage of the simulation. Options are 'equil', 'fe', and 'fe_equil'.
-        cluster : str
-            The cluster to submit the simulation.
-            Options are 'slurm' and 'batch'.
+        batch_mode : str
+            Whether to submit the job in batch mode or not.
         partition : str, optional
             The partition to submit the job. Default is None,
             which means the default partition during prepartiion
@@ -942,8 +942,10 @@ class System:
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
-        if cluster == 'batch':
-            raise NotImplementedError('run with `batter run-in-batch` instead')
+        if batch_mode:
+            if stage != 'fe':
+                raise NotImplementedError("Batch mode is only implemented for 'fe' stage")
+            
             return
 
         if stage == 'equil':
@@ -1661,8 +1663,7 @@ class System:
         if stage == 'equil':
             # only need to do it once as all poses have the same protein
             ref_u = mda.Universe(
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb")
             
             selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
             logger.debug(f"Selection: {selection} to be restrained")
@@ -1698,7 +1699,7 @@ class System:
             # only need to do it once as all poses have the same protein
             ref_u = mda.Universe(
                     f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+            )
             
             selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
             logger.debug(f"Selection: {selection} to be restrained")
@@ -2322,6 +2323,10 @@ class System:
             return
 
         #4.0, submit the free energy equilibration
+
+        remd = self.sim_config.remd == 'yes'
+        num_fe_sim = self.sim_config.num_fe_range
+
         logger.info('Running equilibrations before final FE simulations')
         if self._check_fe_equil():
             #3 prepare the free energy calculation
@@ -2337,6 +2342,9 @@ class System:
                 extra_restraints=extra_restraints,
                 extra_restraints_fc=extra_restraints_fc
             )
+            if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+                logger.info('Generating batch run files...')
+                self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
 
             logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
             logger.info('Submitting the free energy equilibration')
@@ -2408,43 +2416,59 @@ class System:
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')
 
+        if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+            logger.info('Generating batch run files...')
+            self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
+
         if self._check_fe():
             logger.info('Submitting the free energy calculation')
             if dry_run:
                 logger.info('Dry run is set to True. '
                             'Skipping the free energy submission.')
                 return
-            self.submit(
-                stage='fe',
-                partition=partition,
-                time_limit=time_limit,
-            )
-            logger.info('Free energy jobs submitted')
             
-            # Check the free energy calculation to finish
-            pbar = tqdm(
-                desc="FE simsulations finished",
-                unit="job"
-            )
-            while self._check_fe():
-                # get finishd jobs
-                n_finished = len([k for k, v in self._sim_finished.items() if v])
-                pbar.update(n_finished - pbar.n)
-                now = time.strftime("%m-%d %H:%M:%S")
-                desc = f"{now} – FE simulations finished"
-                pbar.set_description(desc)
-                #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
-                not_finished = [k for k, v in self._sim_finished.items() if not v]
-                failed = [k for k, v in self._sim_failed.items() if v]
+            if remd:
+                logger.info('Running free energy calculation with REMD in batch mode')
+                self.submit(
+                    stage='fe',
+                    batch_mode=True,
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+                
+            else:
+                logger.info('Running free energy calculation without REMD')
+                self.submit(
+                    stage='fe',
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+                logger.info('Free energy jobs submitted')
+                
+                # Check the free energy calculation to finish
+                pbar = tqdm(
+                    desc="FE simsulations finished",
+                    unit="job"
+                )
+                while self._check_fe():
+                    # get finishd jobs
+                    n_finished = len([k for k, v in self._sim_finished.items() if v])
+                    pbar.update(n_finished - pbar.n)
+                    now = time.strftime("%m-%d %H:%M:%S")
+                    desc = f"{now} – FE simulations finished"
+                    pbar.set_description(desc)
+                    #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                    not_finished = [k for k, v in self._sim_finished.items() if not v]
+                    failed = [k for k, v in self._sim_failed.items() if v]
 
-                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
-                not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
-                for job in not_finished_slurm_jobs:
-                    self._continue_job(self._slurm_jobs[job])
-                time.sleep(10*60)
-            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
-            pbar.set_description('FE calculation finished')
-            pbar.close()
+                    not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                    not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
+                    for job in not_finished_slurm_jobs:
+                        self._continue_job(self._slurm_jobs[job])
+                    time.sleep(10*60)
+                pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+                pbar.set_description('FE calculation finished')
+                pbar.close()
         else:
             logger.info('Free energy calculation is already finished')
             logger.info(f'If you want to have a fresh start, remove {self.fe_folder} manually')
@@ -2608,7 +2632,8 @@ class System:
     @save_state
     def generate_batch_files(self,
                             remd=False,
-                            time_limit=50 # 50 minutes
+                            time_limit=50, # 50 minutes
+                            num_fe_sim=10, # run each window for 10 times (restart).
                             ):
         """
         Generate the batch-run files for the system
@@ -2617,10 +2642,10 @@ class System:
         Specially, it will generate input files so that they can
         run from the fe folder.
         """
-        self._generate_batch_equilibration()
         self._generate_batch_fe_equilibration()
         self._generate_batch_fe(remd=remd,
-                                time_limit=time_limit)
+                                time_limit=time_limit,
+                                num_fe_sim=num_fe_sim)
 
     def _generate_batch_equilibration(self):
         """
@@ -2711,8 +2736,11 @@ class System:
 
 
     def _generate_batch_fe(self,
-                           remd=False,
-                           time_limit=50 # 50 minutes
+                           remd: bool = False,
+                           time_limit: int = 50, # 50 minutes
+                           num_fe_sim: int = 10, # run each window for 10 times (restart).
+                           num_gpus: int = 4, # number of GPUs per node to be used for REMD simulations
+
                            ):
         """
         Generate the batch files for the free energy calculation production stage.
@@ -2856,21 +2884,52 @@ class System:
                             if stage == 'mdin.in':
                                 all_replicates[component].append(f'{sim_folder_name}')
                         stage_previous = f'{sim_folder_temp}REPXXX/{stage}.rst7'
-            #logger.debug(f'all_replicates: {all_replicates}')
+
+                # generate the mdin.in.extend groupfiles for num_fe_sim files
+                temp_file = f'{pose_name}/groupfiles/{component}_mdin.in.extend.groupfile'
+                with open(temp_file, 'r') as infile:
+                    input_lines = infile.readlines()
+                for i in range(num_fe_sim):
+                    # replace temp_file NEXTNUM to i+1
+                    # replace CURRNUM to i
+                    new_temp_file = f'{pose_name}/groupfiles/{component}_mdin.in.stage{i+1:02d}.groupfile'
+                    with open(new_temp_file, 'w') as outfile:
+                        for line in input_lines:
+                            if 'mdin-NEXTNUM' in line:
+                                line = line.replace('mdin-NEXTNUM', f'mdin-{i+1:02d}')
+                            if 'mdin-CURRNUM' in line:
+                                line = line.replace('mdin-CURRNUM', f'mdin-{i:02d}')
+                            outfile.write(line)
             return all_replicates
 
         all_replicates = []
 
         with self._change_dir(self.output_dir):
-            filtered_poses = [pose for pose in poses_def if not os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND")]
-
             with ThreadPoolExecutor(max_workers=8) as executor:
-                results = list(tqdm(executor.map(write_2_pose, filtered_poses),
-                                    total=len(filtered_poses),
+                results = list(tqdm(executor.map(write_2_pose, poses_def),
+                                    total=len(poses_def),
                                     desc='Generating production groupfiles'))
                 all_replicates.extend(results)
 
             logger.debug(all_replicates)
+
+            # Write SLURM run files into FE folder
+            os.makedirs(f'{self.fe_folder}/batch_run', exist_ok=True)
+            shutil.copytree(
+                batch_files_orig,
+                f'{self.fe_folder}/batch_run',
+                dirs_exist_ok=True
+            )
+            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "rt") as fin:
+                with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas)))
+                        )
+            for pose in poses_def:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    
             logger.info('FE production groupfiles generated for all poses')
     
     def check_sim_stage(self, output='image', min_file_size=100, max_workers=16):
@@ -3011,7 +3070,7 @@ class System:
             sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
                     'eqnpt04.rst7',
                     'mini.in', 'mdin-00', 'mdin-01', 'SLURMM-run', 'run-local.bash',
-                    'cv.in', 'disang.rest', 'restraints.in']
+                    'cv.in', 'disang.rest', 'restraints.in', 'mini.rst7']
 
             for pose in tqdm(self.all_poses, desc='Copying files'):
                 for comp in self.sim_config.components:

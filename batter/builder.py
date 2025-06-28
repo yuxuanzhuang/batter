@@ -1770,14 +1770,18 @@ class EquilibrationBuilder(SystemBuilder):
                                 '_num-atoms_', str(vac_atoms)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
                             
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
-        with open(f'../{self.run_files_folder}/run-equil.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('RANGE', str(rng)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp).replace(
+                        )
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -2128,6 +2132,9 @@ class FreeEnergyBuilder(SystemBuilder):
     @log_info
     def _create_run_files(self):
         hmr = self.sim_config.hmr
+        comp = self.comp
+        num_sim = self.sim_config.num_fe_range
+        lambdas = self.system.component_windows_dict[comp]
 
         if os.path.exists(self.run_files_folder):
             shutil.rmtree(self.run_files_folder, ignore_errors=True)
@@ -2563,8 +2570,8 @@ class FreeEnergyBuilder(SystemBuilder):
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas_comp[self.win]
+        lambdas = self.system.component_windows_dict[comp]
+        weight = lambdas[self.win if self.win != -1 else 0]
 
         rst = []
         atm_num = []
@@ -3576,6 +3583,8 @@ class FreeEnergyBuilder(SystemBuilder):
         rng = self.sim_config.rng
         ntwx = self.sim_config.ntwx
         lipid_mol = self.lipid_mol
+        lambdas = self.system.component_windows_dict[comp]
+        weight = lambdas[self.win if self.win != -1 else 0]
 
         # Find anchors
         with open('disang.rest', 'r') as f:
@@ -3732,14 +3741,18 @@ class FreeEnergyBuilder(SystemBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp).replace(
+                        )
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -3917,14 +3930,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4061,14 +4077,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4124,14 +4143,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4186,14 +4208,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4322,14 +4347,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4694,14 +4722,17 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
 
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -4831,14 +4862,17 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                     '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -4963,14 +4997,17 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                                     '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -5518,8 +5555,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas_comp[self.win]
+        lambdas = self.system.component_windows_dict[comp]
+        win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
         u = mda.Universe(pdb_file)
@@ -5652,7 +5689,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
-                mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                mdin.write(f'  mbar_states = {len(lambdas):02d}\n')
                 mdin.write('  mbar_lambda = ')
                 for i in range(0, len(lambdas)):
                     mdin.write(' %6.5f,' % (lambdas[i]))
@@ -5688,14 +5725,17 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                         '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -6235,8 +6275,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         sdr_dist = 0
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas_comp[self.win]
+        lambdas = self.system.component_windows_dict[comp]
+        win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
         u = mda.Universe(pdb_file)
@@ -6386,8 +6426,15 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                 #mdin.write('DISANG=disang.rest\n')
                 #mdin.write('LISTOUT=POUT\n')
 
+            # mini with TI
             with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_lig_name_', mol))
+
+            # mini and eq without TI
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
@@ -6412,14 +6459,17 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                                     '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:

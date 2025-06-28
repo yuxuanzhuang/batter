@@ -17,20 +17,24 @@ if [[ -f FAILED ]]; then
     rm FAILED
 fi
 
-source run_failures.bash
+source check_run.bash
 
 if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
     echo "Skipping EM steps." 
 else
-    # Minimization
-    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    else
-        pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    fi
+    pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
-fi
+    if ! check_min_energy "mini.out" 0; then
+        echo "Minimization failed with cuda; trying CPU"
+        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+            mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+        else
+            pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+        fi
+        check_sim_failure "Minimization" "$log_file"
+    fi
 
+fi
 if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping equilibration steps."
 else

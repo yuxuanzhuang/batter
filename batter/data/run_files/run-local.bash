@@ -16,28 +16,24 @@ if [[ -f FAILED ]]; then
     rm FAILED
 fi
 
-source run_failures.bash
-
-# Should almost never skip minimization because it may pass
-# with astronomical forces
-# TODO: add energy check
-if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
-    echo "Skipping minimization steps."
-else
-    # Minimization
-    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    else
-        pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    fi
-    # We need to use pmemd.cuda to run minimization on GPUs
-    # because we need to use GTI routine
-    #pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    check_sim_failure "Minimization" "$log_file"
-fi
+source check_run.bash
 
 if [[ $only_eq -eq 1 ]]; then
-    if [[ $overwrite -eq 0 && -s eq_output.pdb ]]; then
+    # Minimization
+    pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    check_sim_failure "Minimization" "$log_file"
+
+    if ! check_min_energy "mini.out" 0; then
+        echo "Minimization failed with cuda; try CPU"
+        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+            mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+        else
+            pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+        fi
+        check_sim_failure "Minimization" "$log_file"
+    fi
+
+    if [[ $overwrite -eq 0 && -s eqnpt04.rst7 ]]; then
         echo "Skipping equilibration steps."
     else
         # Equilibration with protein and lipid restrained
@@ -51,7 +47,7 @@ if [[ $only_eq -eq 1 ]]; then
         fi
         check_sim_failure "Pre equilibration" "$log_file"
 
-        # Equilibration with COM restrained
+        # Equilibration with protein restrained
         pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> "$log_file" 2>&1
         check_sim_failure "Equilibration stage 0" "$log_file"
         for step in {1..4}; do
@@ -61,8 +57,32 @@ if [[ $only_eq -eq 1 ]]; then
             check_sim_failure "Equilibration stage $step" "$log_file"
         done
 
-        cpptraj -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> "$log_file" 2>&1
+        # run minimization for each windows at this stage
+        for i in $(seq 0 $((NWINDOWS - 1))); do
+            win_folder=$(printf "../COMPONENT%02d" $i)
+            if [[ -s $win_folder/mini.rst7 ]]; then
+                echo "Skipping minimization for window $i, already exists."
+            else
+                echo "Running minimization for window $i"
+                cd $win_folder
+                pmemd.cuda -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
+                check_sim_failure "Minimization for window $i" "$log_file"
+                if ! check_min_energy "mini.in.out" 0; then
+                    echo "Minimization failed with cuda; try CPU"
+                    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+                        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
+                    else
+                        pmemd -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
+                    fi
+                    check_sim_failure "Minimization for window $i" "$log_file"
+                fi
+                cd ../COMPONENT-1
+            fi
+        done
     fi
+
+    cpptraj -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> "$log_file" 2>&1
+
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
         echo "EQ_FINISHED" > EQ_FINISHED
@@ -75,7 +95,7 @@ if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     # Initial MD production run
-    pmemd.cuda -O -i mdin-00 -p $PRMTOP -c mini.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.rst7 >> "$log_file" 2>&1
+    pmemd.cuda -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 >> "$log_file" 2>&1
     check_sim_failure "MD stage 0" "$log_file"
 fi
 
@@ -90,7 +110,7 @@ while [ $i -le FERANGE ]; do
     if [[ $overwrite -eq 0 && -s mdin-$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
-        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.rst7 >> $log_file 2>&1
+        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 >> $log_file 2>&1
         check_sim_failure "MD stage $i" "$log_file"
     fi
     i=$((i + 1))

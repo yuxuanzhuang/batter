@@ -40,6 +40,7 @@ class SimulationConfig(BaseModel):
 
     # Variables for setting up equilibrium and free energy calculations, also used on analysis
     fe_type: str = Field(..., info={'description': "Free energy type (rest, dd, sdr, etc.)"})
+    remd: Optional[str] = Field('no', info={'description': "H-REMD (yes or no)"})
     components: List[str] = Field(default_factory=list, info={
                                   'description': "Used with custom option for fe_type. Do not include b component here."})
     release_eq: List[float] = Field(default_factory=list, info={'description': "Short attach/release weights"})
@@ -316,6 +317,8 @@ class SimulationConfig(BaseModel):
                 self.components = ['s']
                 self.dec_method = 'sdr'
 
+        self.remd = self.remd
+        
         logger.debug(f'------------------ Simulation Configuration ------------------')
         logger.debug(f'Software: {self.software}')
         logger.debug(f'Receptor/complex structures: {self.celp_st}')
