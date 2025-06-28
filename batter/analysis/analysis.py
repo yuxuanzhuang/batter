@@ -76,7 +76,7 @@ class MBARAnalysis(FEAnalysisBase):
                 energy_unit='kcal/mol',
                 sim_range=None,
                 detect_equil=True,
-                n_bootstraps=25,
+                n_bootstraps=0,
                 n_jobs=6,
                 load=False,
                 ):
@@ -180,7 +180,11 @@ class MBARAnalysis(FEAnalysisBase):
         logger.debug(f"Calculating convergence for {self.component}...")
         with SuppressLoguru():
             logger.debug("Calculating forward-backward convergence...")
-            self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list, 'MBAR')
+            self.results['convergence']['time_convergence'] = forward_backward_convergence(self.data_list,
+                                                                                           'MBAR',
+                                                                                           # bootstrap leads to solver loop issues
+                                                                                           error_tol=100,
+                                                                                           method='default')
             forward_end_time = [
                 [series[int(len(series) * fraction)-1]
                 for series in self.timeseries]
@@ -216,7 +220,8 @@ class MBARAnalysis(FEAnalysisBase):
             num_blocks = 10
             self.results['convergence']['block_convergence'] = block_average(self.data_list,
                                                                              estimator='MBAR',
-                                                                             num=num_blocks)
+                                                                             num=num_blocks,
+                                                                             method='default')
 
             block_FE = self.results['convergence']['block_convergence'].FE.values
             block_FE_err = self.results['convergence']['block_convergence'].FE_Error.values
@@ -295,6 +300,11 @@ class MBARAnalysis(FEAnalysisBase):
             if truncate:
                 t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
                 df = df[df.index.get_level_values(0) > t0]
+            # substact df from the current window
+            # to get reduced potential
+            df = df
+            ref_col = df.iloc[:, win_i]
+            df = df.subtract(ref_col, axis=0)
         return df
 
     def _get_data_list(self):
@@ -363,7 +373,7 @@ class MBARAnalysis(FEAnalysisBase):
     def plot_convergence(self, save_path=None, title=None):
         logger.debug(f"Plotting convergence for {self.component}...")
         fig, axes = plt.subplot_mosaic(
-            [["A", "A", "B"], ["C", "C", "C"]], figsize=(15, 10)
+            [["A", "A", "B"], ["C", "C", "C"]], figsize=(25, 15)
         )
         self.plot_time_convergence(ax=axes['A'],
                                 units=self.energy_unit,

@@ -1,0 +1,34 @@
+source leaprc.protein.ff14SB
+source leaprc.gaff2
+source leaprc.lipid21
+
+# Load the dummy atom parameters
+loadamberparams dum.frcmod
+DUM = loadmol2 dum.mol2
+
+# Load the necessary parameters
+loadamberparams g1i.frcmod
+g1i = loadmol2 g1i.mol2
+
+# Load the water and jc ion parameters
+source leaprc.water.tip3p
+
+dum = loadpdb solvate_pre_dum.pdb
+
+prot = loadpdb solvate_pre_prot.pdb
+
+others = loadpdb solvate_pre_others.pdb
+
+outside_wat = loadpdb solvate_pre_outside_wat.pdb
+
+# Add ions for neutralization/ionization
+addionsrand outside_wat Na+ 49
+addionsrand outside_wat Cl- 54
+model = combine {dum prot others outside_wat}
+
+
+set model box {94.010002 84.985001 111.367996}
+desc model
+savepdb model full.pdb
+saveamberparm model full.prmtop full.inpcrd
+quit

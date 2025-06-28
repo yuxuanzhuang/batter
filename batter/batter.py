@@ -15,25 +15,23 @@ import re
 import pandas as pd
 from importlib import resources
 import json
-from typing import Union
 from pathlib import Path
 import pickle
-from rdkit import Chem
 import time
 from tqdm import tqdm
 from joblib import Parallel, delayed
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Tuple
+from typing import List, Tuple, Optional, Union
 from loguru import logger
+from collections import defaultdict
 from batter.input_process import SimulationConfig, get_configure_from_file
-from batter.bat_lib import analysis
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
 from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
-from batter.builder import BuilderFactory
+from batter.builder import BuilderFactory, get_ligand_candidates
 from batter.utils import (
     run_with_log,
     save_state,
@@ -46,7 +44,6 @@ from batter.utils import (
     COMPONENTS_LAMBDA_DICT,
     COMPONENTS_FOLDER_DICT,
     COMPONENTS_DICT,
-    DEC_FOLDER_DICT,
 )
 
 
@@ -290,6 +287,7 @@ class System:
             if not os.path.exists(ligand_path):
                 raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
         
+        logger.info(f"{len(self.ligand_paths)} ligands to be simulated.")
         self._process_ligands()
 
         if system_coordinate is not None and not os.path.exists(system_coordinate):
@@ -382,9 +380,11 @@ class System:
         # always get the anchor atoms from the first pose
         u_prot = mda.Universe(f'{self.output_dir}/all-poses/reference.pdb')
         u_lig = mda.Universe(f'{self.output_dir}/all-poses/pose0.pdb')
-        l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
+        lig_sdf = f'{self.ligandff_folder}/{self.mols[0]}.sdf'
+        l1_x, l1_y, l1_z, p1, p2, p3, l1_range = self._find_anchor_atoms(
                     u_prot,
                     u_lig,
+                    lig_sdf,
                     anchor_atoms,
                     ligand_anchor_atom)
 
@@ -398,6 +398,8 @@ class System:
         self.p1 = p1
         self.p2 = p2
         self.p3 = p3
+
+        self.l1_range = l1_range
         
         logger.info('System loaded and prepared')
 
@@ -856,7 +858,7 @@ class System:
             if not os.path.exists(f"{self.equil_folder}"):
                 raise FileNotFoundError("Equilibration not generated yet. Run prepare('equil') first.")
         
-            if not os.path.exists(f"{self.equil_folder}/{self.all_poses[0]}/md03.rst7"):
+            if not all(os.path.exists(f"{self.equil_folder}/{pose}/FINISHED") for pose in self.all_poses):
                 raise FileNotFoundError("Equilibration not finished yet. First run the equilibration.")
                 
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
@@ -919,6 +921,7 @@ class System:
                stage: str,
                cluster: str = 'slurm',
                partition=None,
+               time_limit=None,
                overwrite: bool = False,
                ):
         """
@@ -935,12 +938,13 @@ class System:
             The partition to submit the job. Default is None,
             which means the default partition during prepartiion
             will be used.
+        time_limit: str, optional
+            The time limit for the job. Default is None,
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
         if cluster == 'frontier':
-            self._submit_frontier(stage)
-            logger.info(f'Frontier {stage} job submitted!')
+            raise NotImplementedError('run with `batter run-in-batch` instead')
             return
 
         if stage == 'equil':
@@ -967,11 +971,12 @@ class System:
                     # if the job is finished but the FINISHED file is not created
                     # resubmit the job
                     if not slurm_job.is_still_running():
-                        slurm_job.submit()
+                        slurm_job.submit(time=time_limit)
                         continue
                     elif overwrite:
                         slurm_job.cancel()
-                        slurm_job.submit(overwrite=True)
+                        slurm_job.submit(overwrite=True,
+                                         time=time_limit)
                         continue
                     else:
                         logger.debug(f'Equilibration job for {pose} is still running')
@@ -986,15 +991,14 @@ class System:
                                 filename=f'{self.equil_folder}/{pose}/SLURMM-run',
                                 partition=partition,
                                 jobname=f'fep_{self.equil_folder}/{pose}_equil')
-                slurm_job.submit(overwrite=overwrite)
+                slurm_job.submit(overwrite=overwrite, time=time_limit)
                 pbar.update(1)
                 pbar.set_description(f'Equilibration job for {pose} submitted: {slurm_job.jobid}')
                 self._slurm_jobs.update(
                     {f'eq_{pose}': slurm_job}
                 )
                 # make sure the system is saved every time when a job is submitted
-                with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                    pickle.dump(self, f)
+                self._save_state()
 
             pbar.close()
             logger.info('Equilibration systems have been submitted for all poses listed in the input file.')
@@ -1029,6 +1033,7 @@ class System:
                         if not slurm_job.is_still_running():
                             slurm_job.submit(
                                 requeue=True,
+                                time=time_limit,
                                 other_env={
                                     'ONLY_EQ': '1',
                                     'INPCRD': 'full.inpcrd'
@@ -1038,6 +1043,7 @@ class System:
                         elif overwrite:
                             slurm_job.cancel()
                             slurm_job.submit(overwrite=True,
+                                time=time_limit,
                                 other_env={
                                     'ONLY_EQ': '1',
                                     'INPCRD': 'full.inpcrd'
@@ -1059,6 +1065,7 @@ class System:
                                     jobname=f'fep_{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}_equil')
                     slurm_job.submit(
                         overwrite=overwrite,
+                        time=time_limit,
                         other_env={
                         'ONLY_EQ': '1',
                         'INPCRD': 'full.inpcrd'
@@ -1067,8 +1074,7 @@ class System:
                     self._slurm_jobs.update(
                         {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                     )
-                    with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                        pickle.dump(self, f)
+                    self._save_state()
 
                 pbar.update(1)
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')        
@@ -1105,6 +1111,7 @@ class System:
                             if not slurm_job.is_still_running():
                                 slurm_job.submit(
                                     requeue=True,
+                                    time=time_limit,
                                     other_env={
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
@@ -1113,6 +1120,7 @@ class System:
                             elif overwrite:
                                 slurm_job.cancel()
                                 slurm_job.submit(overwrite=True,
+                                    time=time_limit,
                                     other_env={
                                         'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                     }
@@ -1133,6 +1141,7 @@ class System:
                                         jobname=f'fep_{folder_2_check}_fe',
                                         priority=priority)
                         slurm_job.submit(overwrite=overwrite,
+                                    time=time_limit,
                                     other_env={
                                             'INPCRD': f'../{comp}-1/eqnpt04.rst7'
                                         }
@@ -1142,40 +1151,11 @@ class System:
                         self._slurm_jobs.update(
                             {f'fe_{pose}_{comp_folder}_{comp}{j:02d}': slurm_job}
                         )
-                        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-                            pickle.dump(self, f)
+                        self._save_state()
                 pbar.update(1)
             pbar.close()
 
             logger.info('Free energy systems have been submitted for all poses listed in the input file.')
-        else:
-            raise ValueError(f"Invalid stage: {stage}")
-
-    def _submit_frontier(self, stage: str):
-        if stage == 'equil':
-            raise NotImplementedError("Frontier submission is not implemented yet")
-        elif stage == 'fe':
-            running_fe_equi = False
-            for pose in self.bound_poses:
-                if not os.path.exists(f"{self.fe_folder}/{pose}/rest/m00/eqnpt.in_04.rst7"):
-                    run_with_log(f'sbatch fep_m_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    run_with_log(f'sbatch fep_n_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    run_with_log(f'sbatch fep_e_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    run_with_log(f'sbatch fep_v_{pose}_eq.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                    running_fe_equi = True
-            if running_fe_equi:
-                return
-                                  
-            if not os.path.exists(f"{self.fe_folder}/current_mdin.groupfile"):
-                run_with_log(f'sbatch fep_md.sbatch',
-                            working_dir=f'{self.fe_folder}')
-                
-            run_with_log(f'sbatch fep_md_extend.sbatch',
-                        working_dir=f'{self.fe_folder}')
         else:
             raise ValueError(f"Invalid stage: {stage}")
 
@@ -1278,13 +1258,15 @@ class System:
                 continue
             logger.debug(f'Preparing pose: {pose}')
             
+            sim_config_pose = sim_config.copy(deep=True)
             # load anchor_list
             with open(f"{self.equil_folder}/{pose}/anchor_list.txt", 'r') as f:
                 anchor_list = f.readlines()
-                l1x, l1y, l1z = [float(x) for x in anchor_list[0].split()]
-                sim_config.l1_x = l1x
-                sim_config.l1_y = l1y
-                sim_config.l1_z = l1z
+                l1x, l1y, l1z, l1_range = [float(x) for x in anchor_list[0].split()]
+                sim_config_pose.l1_x = l1x
+                sim_config_pose.l1_y = l1y
+                sim_config_pose.l1_z = l1z
+                sim_config_pose.l1_range = l1_range
 
             # copy ff folder
             #shutil.copytree(self.ligandff_folder,
@@ -1309,7 +1291,7 @@ class System:
                     component=component,
                     system=self,
                     pose=pose,
-                    sim_config=sim_config,
+                    sim_config=sim_config_pose,
                     working_dir=f'{self.fe_folder}',
                     molr=molr,
                     poser=poser
@@ -1744,7 +1726,7 @@ class System:
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
                     files = ['eqnpt.in']
-                    for i in range(num_fe_sim):
+                    for i in range(num_fe_sim+1):
                         files.append(f'mdin-{i:02d}')
                     for j in range(-1, len(windows)):
                         write_restraint_block(
@@ -1756,135 +1738,39 @@ class System:
 
     def analyze_pose(self,
                     pose: str = None,
-                    load: bool = True,
-                    sim_range: Tuple[int, int] = None,
-                    raise_on_error: bool = True):
+                    sim_range: Optional[Tuple[int, int]] = None,
+                    raise_on_error: bool = True,
+                    n_workers: int = 4):
         """
         Analyze the free energy results for one pose
         Parameters
         ----------
         pose : str
             The pose to analyze.
-        load : bool
-            Whether to load the results from file.
         sim_range : tuple
             The range of simulations to analyze.
             If files are missing from the range, the analysis will fail.
         raise_on_error : bool
             Whether to raise an error if the analysis fails.
+        n_workers : int
+            The number of workers to use for parallel processing.
+            Default is 4.
         """
-        from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
-
-        pose_path = f'{self.fe_folder}/{pose}'
-
-        if load and os.path.exists(f'{pose_path}/Results/Results.dat'):
-            try:
-                self.fe_results[pose] = NewFEResult(f'{pose_path}/Results/Results.dat')
-                if np.isnan(self.fe_results[pose].fe):
-                    raise ValueError(f'FE for {pose} is invalid (None or NaN); rerun')
-                logger.debug(f'FE for {pose} loaded from {pose_path}/Results/Results.dat')
-                return
-            except Exception as e:
-                logger.warning(f'Failed to load FE for {pose} from {pose_path}/Results/Results.dat: {e}')
-                logger.warning('Re-running the FE analysis')
-        os.makedirs(f'{pose_path}/Results', exist_ok=True)
-
-        try:
-            results_entries = []
-
-            fe_values = []
-            fe_stds = []
-
-            # first get analytical results from Boresch restraint
-
-            if 'v' in self.sim_config.components:
-                disangfile = f'{self.fe_folder}/{pose}/sdr/v-1/disang.rest'
-            elif 'o' in self.sim_config.components:
-                disangfile = f'{self.fe_folder}/{pose}/sdr/o-1/disang.rest'
-            elif 'z' in self.sim_config.components:
-                disangfile = f'{self.fe_folder}/{pose}/sdr/z-1/disang.rest'
-
-            rest = self.sim_config.rest
-            k_r = rest[2]
-            k_a = rest[3]
-            bor_ana = BoreschAnalysis(
-                                disangfile=disangfile,
-                                k_r=k_r, k_a=k_a,
-                                temperature=self.sim_config.temperature,)
-            bor_ana.run_analysis()
-            fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
-            fe_stds.append(bor_ana.results['fe_error'])
-            results_entries.append(
-                f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
-            )
-            
-            for comp in self.sim_config.components:
-                comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                comp_path = f'{pose_path}/{comp_folder}'
-                windows = self.component_windows_dict[comp]
-
-                # skip n if no conformational restraints are applied
-                if comp == 'n' and rest[1] == 0 and rest[4] == 0:
-                    logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
-                    continue
-
-                if comp in COMPONENTS_DICT['dd']:
-                    # directly read energy files
-                    mbar_ana = MBARAnalysis(
-                        pose_folder=pose_path,
-                        component=comp,
-                        windows=windows,
-                        temperature=self.sim_config.temperature,
-                        sim_range=sim_range,
-                        load=False
-                    )
-                    mbar_ana.run_analysis()
-                    mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
-                                            title=f'Convergence for {comp} {pose}',
-                    )
-
-                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
-                    fe_stds.append(mbar_ana.results['fe_error'])
-                    results_entries.append(
-                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
-                    )
-                elif comp in COMPONENTS_DICT['rest']:
-                    rest_mbar_ana = RESTMBARAnalysis(
-                        pose_folder=pose_path,
-                        component=comp,
-                        windows=windows,
-                        temperature=self.sim_config.temperature,
-                        sim_range=sim_range,
-                        load=False
-                    )
-                    rest_mbar_ana.run_analysis()
-                    rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
-                                            title=f'Convergence for {comp} {pose}',
-                    )
-
-                    fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
-                    fe_stds.append(rest_mbar_ana.results['fe_error'])
-                    results_entries.append(
-                        f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
-                    )
-        
-            # calculate total free energy
-            fe_value = np.sum(fe_values)
-            fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
-        except Exception as e:
-            logger.error(f'Error during FE analysis for {pose}: {e}')
-            if raise_on_error:
-                raise e
-            fe_value = np.nan
-            fe_std = np.nan
-
-        results_entries.append(
-            f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+        input_dict = {
+            'fe_folder': self.fe_folder,
+            'components': self.sim_config.components,
+            'rest': self.sim_config.rest,
+            'temperature': self.sim_config.temperature,
+            'component_windows_dict': self.component_windows_dict,
+            'sim_range': sim_range,
+            'raise_on_error': raise_on_error,
+            'n_workers': n_workers,
+        }
+        analyze_pose_task(
+            pose=pose,
+            **input_dict
         )
-        with open(f'{self.fe_folder}/{pose}/Results/Results.dat', 'w') as f:
-            f.write('\n'.join(results_entries))
         
-        return
                 
     @safe_directory
     @save_state
@@ -1898,6 +1784,7 @@ class System:
         raise_on_error: bool = False,
         run_with_slurm: bool = False,
         run_with_slurm_kwargs: dict = None,
+        job_extra_directives: list = None,
         ):
         """
         Analyze the free energy results for all poses.
@@ -1922,6 +1809,9 @@ class System:
             Additional keyword arguments for SLURM job submission. Default is None.
             Check https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
             for available options.
+        job_extra_directives : list, optional
+            Additional SLURM directives to update the job submission.
+            Default is None.
         """
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -1936,105 +1826,133 @@ class System:
             os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
             self._generate_aligned_pdbs()
 
-        if run_with_slurm:
+        # gather existing results
+        if load:
+            self.load_results()
+
+            # get unfinished or failed poses
+            unfinished_poses = []
+            for pose in self.all_poses:
+                if self.fe_results[pose] is None:
+                    unfinished_poses.append(pose)
+                elif np.isnan(self.fe_results[pose].fe):
+                    unfinished_poses.append(pose)
+        else:
+            unfinished_poses = self.all_poses
+        
+        if run_with_slurm and len(unfinished_poses) > 0:
             logger.info('Running analysis with SLURM Cluster')
             from dask_jobqueue import SLURMCluster
-            from dask.distributed import Client, as_completed
+            from dask.distributed import Client
+            from distributed.utils import TimeoutError
 
+            log_dir = os.path.expanduser('~/.batter_jobs')
+            os.makedirs(log_dir, exist_ok=True)
             slurm_kwargs = {
                 # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
+                'n_workers': len(unfinished_poses),
                 'queue': self.partition,
-                'cores': 4,
-                'memory': '8GB',
-                'walltime': '00:10:00',
+                'cores': 6,
+                'memory': '30GB',
+                'walltime': '00:30:00',
+                'processes': 1,
+                'nanny': False,
                 'job_extra_directives': [
-                    f'--output=/tmp/dask-%j.out',
-                    f'--error=/tmp/dask-%j.err',
+                    '--job-name=batter-analysis',
+                    f'--output={log_dir}/dask-%j.out',
+                    f'--error={log_dir}/dask-%j.err',
+                ],
+                'worker_extra_args': [
+                    "--no-dashboard",
+                    "--resources analysis=1"
                 ],
                 # 'account': 'your_slurm_account',
             }
             if run_with_slurm_kwargs is not None:
                 slurm_kwargs.update(run_with_slurm_kwargs)
+            if job_extra_directives is not None:
+                slurm_kwargs['job_extra_directives'].extend(job_extra_directives)
+
             cluster = SLURMCluster(
                 **slurm_kwargs,
             )
-            cluster.scale(jobs=len(self.all_poses))
-            logger.info(f'SLURM Cluster created with {len(self.all_poses)} workers')
+            logger.info(f'SLURM Cluster created.')
 
             client = Client(cluster)
-
-            def analyze_single_pose(pose, load, sim_range, raise_on_error):
-                self.analyze_pose(
-                    pose=pose,
-                    load=load,
-                    sim_range=sim_range,
-                    raise_on_error=raise_on_error,
-
-                )
-                return pose
+            logger.info(f'Dask Dashboard Link: {client.dashboard_link}')
+            # Wait for all expected workers
+            try:
+                logger.info(f'Waiting for {len(unfinished_poses)} workers to start...')
+                client.wait_for_workers(n_workers=len(unfinished_poses), timeout=200)
+            except TimeoutError:
+                logger.warning(f"Timeout: Only {len(client.scheduler_info()['workers'])} workers started.")
+                # scale down the cluster to the number of available workers
+                if len(client.scheduler_info()['workers']) == 0:
+                    client.close()
+                    cluster.close()
+                    
+                    raise TimeoutError("No workers started in 200 sec. Check SLURM job status or run without SLURM.")
+                cluster.scale(jobs=len(client.scheduler_info()['workers']))
 
             futures = []
-            for pose in self.all_poses:
+            input_dict = {
+                'fe_folder': self.fe_folder,
+                'components': self.sim_config.components,
+                'rest': self.sim_config.rest,
+                'temperature': self.sim_config.temperature,
+                'component_windows_dict': self.component_windows_dict,
+                'sim_range': sim_range,
+                'raise_on_error': raise_on_error,
+                'n_workers': slurm_kwargs['cores'],
+            }
+            for pose in unfinished_poses:
                 logger.debug(f'Submitting analysis for pose: {pose}')
                 fut = client.submit(
-                    analyze_single_pose,
+                    analyze_single_pose_dask_wrapper,
                     pose,
-                    load,
-                    sim_range,
-                    raise_on_error,
+                    input_dict,
                     pure=True,
-                    key=f'analyze_{pose}'
+                    resources={'analysis': 1},
+                    key=f'analyze_{pose}',
+                    retries=3,
                 )
                 futures.append(fut)
-
-            for future in tqdm(as_completed(futures),
-                                total=len(futures),
-                                desc="Analyzing FE for poses in SLURM Cluster"):
-                pose = future.result()
-                self.fe_results[pose] = NewFEResult(
-                    f'{self.fe_folder}/{pose}/Results/Results.dat',
-                )
-                fe_value = self.fe_results[pose].fe
-                fe_std = self.fe_results[pose].fe_std
-                # tqdm.write(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
+            
+            logger.info(f'{len(futures)} analysis jobs submitted to SLURM Cluster')
+            logger.info('Waiting for analysis jobs to complete...')
+            _ = client.gather(futures, errors='skip')
+            
             logger.info('Analysis with SLURM Cluster completed')
             client.close()
             cluster.close()
-            
-        else:
+        elif len(unfinished_poses) >= 0:
             pbar = tqdm(
-                self.all_poses,
+                unfinished_poses,
                 desc='Analyzing FE for poses',
             )
-            for pose in self.all_poses:
+            for pose in unfinished_poses:
                 pbar.set_postfix(pose=pose)
                 self.analyze_pose(
                     pose=pose,
-                    load=load,
                     sim_range=sim_range,
-                    raise_on_error=raise_on_error
+                    raise_on_error=raise_on_error,
+                    n_workers=self.n_workers
                 )
-                self.fe_results[pose] = NewFEResult(
-                    f'{self.fe_folder}/{pose}/Results/Results.dat',
-                )
-                fe_value = self.fe_results[pose].fe
-                fe_std = self.fe_results[pose].fe_std
-                pbar.set_description(f'FE for {pose} ({self.pose_ligand_dict[pose]}) = {fe_value:.2f} ± {fe_std:.2f} kcal/mol')
     
         # sort self.fe_sults by pose
-        self._fe_results = dict(sorted(self._fe_results.items(), key=lambda item: natural_keys(item[0])))
+        self.load_results()
     
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
-
             for i, (pose, fe) in enumerate(self.fe_results.items()):
+                if fe is None:
+                    logger.warning(f'FE for {pose} is None; skipping')
+                    continue
                 mol_name = self.mols[i]
                 ligand_name = self.pose_ligand_dict[pose]
                 logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
                 f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
-        
         logger.info(f'self.fe_results: {self.fe_results}')
             
-        
     @safe_directory
     @save_state
     def analysis_new(
@@ -2063,18 +1981,22 @@ class System:
         """
         Load the results from the output directory.
         """
+        loaded_poses = []
         for pose in self.all_poses:
             results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
             if os.path.exists(results_file):
                 self.fe_results[pose] = NewFEResult(results_file)
                 if np.isnan(self.fe_results[pose].fe):
-                    logger.warning(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
-                logger.debug(f'FE for {pose} loaded from {results_file}')
+                    logger.debug(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
+                else:
+                    loaded_poses.append(pose)
+                    logger.debug(f'FE for {pose} loaded from {results_file}')
             else:
-                logger.warning(f'FE results file {results_file} not found for pose {pose}')
+                logger.debug(f'FE results file {results_file} not found for pose {pose}')
+                self.fe_results[pose] = None
         if not self.fe_results:
             raise ValueError('No results found in the output directory. Please run the analysis first.')
-        logger.info('Results loaded successfully')
+        logger.info(f'Results for {loaded_poses} loaded successfully')
         
 
     def _generate_aligned_pdbs(self):
@@ -2101,6 +2023,7 @@ class System:
     @staticmethod
     def _find_anchor_atoms(u_prot,
                            u_lig,
+                           lig_sdf,
                            anchor_atoms,
                            ligand_anchor_atom):
         """
@@ -2113,6 +2036,8 @@ class System:
             The protein universe.
         u_lig : mda.Universe
             The ligand universe.
+        lig_sdf : str
+            The ligand sdf file.
         anchor_atoms : List[str]
             The list of three protein anchor atoms (selection strings)
             used to restrain ligand.
@@ -2134,6 +2059,8 @@ class System:
             The formatted string of the second protein anchor atom.
         p3_formatted : str
             The formatted string of the third protein anchor atom.
+        r_dist : float
+            The distance between the ligand anchor atom and the first protein anchor atom.
         """
 
         u_merge = mda.Merge(u_prot.atoms, u_lig.atoms)
@@ -2152,7 +2079,8 @@ class System:
                                "Using all ligand atoms instead.")
                 lig_atom = u_lig.atoms
         else:
-            lig_atom = u_lig.atoms
+            candidates = get_ligand_candidates(lig_sdf)
+            lig_atom = u_lig.atoms[candidates]
 
         # get ll_x,y,z distances
         r_vect = lig_atom.center_of_mass() - P1_atom.positions
@@ -2162,8 +2090,10 @@ class System:
         p2_formatted = f':{P2_atom.resids[0]}@{P2_atom.names[0]}'
         p3_formatted = f':{P3_atom.resids[0]}@{P3_atom.names[0]}'
         logger.debug(f'Receptor anchor atoms: P1: {p1_formatted}, P2: {p2_formatted}, P3: {p3_formatted}')
+        r_dist = np.linalg.norm(r_vect) + 1
         return (r_vect[0][0], r_vect[0][1], r_vect[0][2],
-                p1_formatted, p2_formatted, p3_formatted)
+                p1_formatted, p2_formatted, p3_formatted,
+                r_dist)
               
     def _check_equilbration_binding(self):
         """
@@ -2238,17 +2168,19 @@ class System:
         for i, pose in enumerate(self.bound_poses):
             u_sys = mda.Universe(f'{self.equil_folder}/{pose}/representative.pdb')
             u_lig = u_sys.select_atoms(f'resname {self.bound_mols[i]}')
+            lig_sdf = f'{self.ligandff_folder}/{self.bound_mols[i]}.sdf'
 
             ligand_anchor_atom = self.ligand_anchor_atom
 
             logger.debug(f'Finding anchor atoms for pose {pose}')
-            l1_x, l1_y, l1_z, p1, p2, p3 = self._find_anchor_atoms(
+            l1_x, l1_y, l1_z, p1, p2, p3, l1_range = self._find_anchor_atoms(
                         u_sys,
                         u_lig,
+                        lig_sdf,
                         self.anchor_atoms,
                         ligand_anchor_atom)
             with open(f'{self.equil_folder}/{pose}/anchor_list.txt', 'w') as f:
-                f.write(f'{l1_x} {l1_y} {l1_z}')
+                f.write(f'{l1_x} {l1_y} {l1_z} {l1_range}')
         
 
     @safe_directory
@@ -2260,10 +2192,12 @@ class System:
                      rmsf_file: str = None,
                      only_equil: bool = False,
                      only_fe_preparation: bool = False,
+                     dry_run: bool = False,
                      extra_restraints: str = None,
                      extra_restraints_fc: float = 10,
                      partition: str = 'owners',
                      max_num_jobs: int = 2000,
+                     time_limit: str = '6:00:00',
                      verbose: bool = False
                      ):
         """
@@ -2290,6 +2224,9 @@ class System:
             Whether to prepare the files for the production stage
             without running the production stage.
             Default is False.
+        dry_run : bool, optional
+            Whether to run the pipeline until performing any
+            simulation submissions. Default is False.
         extra_restraints : str, optional
             The selection string for the extra position restraints.
             Default is None, which means no extra restraints are added.
@@ -2301,6 +2238,9 @@ class System:
         max_num_jobs : int, optional
             The maximum number of jobs to submit at a time.
             Default is 2000.
+        time_limit : str, optional
+            The time limit for the job submission.
+            Default is '6:00:00'.
         verbose : bool, optional
             Whether to print the verbose output. Default is False.
         """
@@ -2338,9 +2278,14 @@ class System:
             logger.info(f'Equilibration folder: {self.equil_folder} prepared for equilibration')
             logger.info('Submitting the equilibration')
             #2 submit the equilibration
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the equilibration submission.')
+                return
             self.submit(
                 stage='equil',
                 partition=partition,
+                time_limit=time_limit
             )
             logger.info('Equilibration jobs submitted')
 
@@ -2396,9 +2341,14 @@ class System:
 
             logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
             logger.info('Submitting the free energy equilibration')
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the free energy equilibration submission.')
+                return
             self.submit(
-                    stage='fe_equil',
-                    partition=partition
+                stage='fe_equil',
+                partition=partition,
+                time_limit=time_limit,
                 )
             logger.info('Free energy equilibration jobs submitted')
 
@@ -2461,9 +2411,14 @@ class System:
 
         if self._check_fe():
             logger.info('Submitting the free energy calculation')
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the free energy submission.')
+                return
             self.submit(
                 stage='fe',
-                partition=partition
+                partition=partition,
+                time_limit=time_limit,
             )
             logger.info('Free energy jobs submitted')
             
@@ -2932,41 +2887,99 @@ class System:
             os.system(f'cp {env_amber_file} fe/env.amber')
             logger.info('FE production groupfiles generated for all poses')
     
-    def check_sim_stage(self):
+    def check_sim_stage(self, output='image', min_file_size=100, max_workers=16):
         """
-        Check the status of running of all the simulations
+        Check the simulation stage for each pose and component.
+
+        Parameters
+        ----------
+        output : str
+            'text', 'image', or 'both'
+        min_file_size : int
+            Minimum file size (in bytes) to count a .rst7 file as valid
+        max_workers : int
+            Number of threads to use for directory scanning
         """
-        stage_sims = {}
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def sort_key(x):
+            return int(os.path.splitext(os.path.basename(x))[0][-2:])
+        def latest_stage(folder):
+            try:
+                entries = os.listdir(folder)
+            except FileNotFoundError:
+                return -1
+
+            max_idx = -1
+            for name in entries:
+                if name.endswith('.rst7') and name.startswith('md') and len(name) >= 8:
+                    try:
+                        stage_idx = sort_key(name)
+                        full_path = os.path.join(folder, name)
+                        if os.path.getsize(full_path) > min_file_size:
+                            max_idx = max(max_idx, stage_idx)
+                    except (ValueError, FileNotFoundError, OSError):
+                        continue
+            return max_idx
+
+        def stage_task(pose, comp, win):
+            folder = f'{self.fe_folder}/{pose}/{comp_type[comp]}/{comp}{win:02d}'
+            return latest_stage(folder)
+
+        comp_type = {
+            comp: ('rest' if comp in ['m', 'n'] else 'sdr')
+            for comp in self.sim_config.components
+            if comp in ['m', 'n'] or comp in COMPONENTS_DICT['dd']
+        }
+
+        # Prepare all jobs
+        jobs = []
         for pose in self.bound_poses:
-            stage_sims[pose] = {}
-            for comp in self.sim_config.components:
-                if comp in ['m', 'n']:
-                    sim_type = 'rest'
-                elif comp in COMPONENTS_DICT['dd']:
-                    sim_type = 'sdr'
-                min_stage = float('inf')
-                for win in range(0, len(self.component_windows_dict[comp])):
-                    folder = f'{self.fe_folder}/{pose}/{sim_type}/{comp}{win:02d}'
-                    mdin_files = glob.glob(f'{folder}/md*.rst7')
-                    # make sure the size is not empty
-                    mdin_files = [f for f in mdin_files if os.path.getsize(f) > 100]
-                    # only base name
-                    # sort_key = lambda x: int(x.split('-')[-1].split('.')[0])
-                    def sort_key(x):
-                        return int(os.path.splitext(os.path.basename(x))[0][-2:])
-                    mdin_files.sort(key=sort_key)
-                    min_stage = min(min_stage, sort_key(mdin_files[-1]) if mdin_files else -1)
-                stage_sims[pose][comp] = min_stage
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-        import pandas as pd
+            for comp in comp_type:
+                for win in range(len(self.component_windows_dict.get(comp, []))):
+                    jobs.append((pose, comp, win))
 
-        stage_sims_df = pd.DataFrame(stage_sims)
-        fig, ax = plt.subplots(figsize=(1* len(self.bound_poses), 5))
-        sns.heatmap(stage_sims_df, ax=ax, annot=True, cmap='viridis')
-        plt.title('Simulation Stages for each Pose and Component')
-        plt.show()
+        results = defaultdict(lambda: defaultdict(list))
 
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_job = {
+                executor.submit(stage_task, pose, comp, win): (pose, comp)
+                for (pose, comp, win) in jobs
+            }
+            for future in as_completed(future_to_job):
+                pose, comp = future_to_job[future]
+                stage = future.result()
+                results[pose][comp].append(stage)
+
+        # Collect min stage per component per pose
+        final_stages = {
+            pose: {comp: min(vals) if vals else -1 for comp, vals in comps.items()}
+            for pose, comps in results.items()
+        }
+
+        stage_df = pd.DataFrame(final_stages)
+
+        # Output
+        if output == 'text':
+            print(stage_df.to_string())
+
+        if output == 'image':
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+
+            fig, ax = plt.subplots(figsize=(max(6, len(self.bound_poses)), 5))
+            sns.heatmap(stage_df, ax=ax, annot=True, cmap='viridis')
+            plt.title('Simulation Stages for Each Pose and Component')
+            plt.tight_layout()
+            plt.show()
+
+        #return stage_df
+
+    def _save_state(self):
+        """
+        Save the state of the system to a file.
+        """
+        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
+            pickle.dump(self, f)
 
     def copy_2_new_folder(self,
                           folder_name,
@@ -3091,7 +3104,16 @@ class System:
             self._component_windows_dict = ComponentWindowsDict(self)
 
         return self._component_windows_dict
-
+    
+    @component_windows_dict.setter
+    def component_windows_dict(self, value):
+        """
+        Set the component windows dictionary
+        """
+        if not isinstance(value, ComponentWindowsDict):
+            raise ValueError("component_windows_dict must be an instance of ComponentWindowsDict")
+        self._component_windows_dict = value
+        self._save_state()
 
     @property
     def n_workers(self):
@@ -3176,6 +3198,8 @@ class ABFESystem(System):
     create one `MABFESystem` with multiple ligands as input.
     """
     def _process_ligands(self):
+        from rdkit import Chem
+
         # check if they are the same ligand
         if self.ligand_paths[0].lower().endswith('.sdf'):
             suppl = Chem.SDMolSupplier(self.ligand_paths[0], removeHs=False)
@@ -3230,13 +3254,13 @@ class RBFESystem(System):
 class ComponentWindowsDict(MutableMapping):
     def __init__(self, system):
         self._data = {}
-        self.system = system
+        self._sim_config = system.sim_config
 
     def __getitem__(self, key):
         if key in COMPONENTS_DICT['dd']:
-            return self._data.get(key, self.system.sim_config.lambdas)
+            return self._data.get(key, self.sim_config.lambdas)
         elif key in COMPONENTS_DICT['rest']:
-            return self._data.get(key, self.system.sim_config.attach_rest)
+            return self._data.get(key, self.sim_config.attach_rest)
         else:
             raise ValueError(f"Component {key} not in the system")
     
@@ -3255,7 +3279,24 @@ class ComponentWindowsDict(MutableMapping):
     def __len__(self):
         return len(self._data)
     
-
+    @property
+    def sim_config(self):
+        """
+        Get the simulation configuration from the system.
+        """
+        try:
+            return self._sim_config
+        except AttributeError:
+            # old API use system instead
+            return self.system.sim_config
+        
+    @sim_config.setter
+    def sim_config(self, sim_config):
+        """
+        Set the simulation configuration for the component windows.
+        """
+        self._sim_config = sim_config
+    
 def format_ranges(numbers):
     """
     Convert a list of numbers into a string of ranges.
@@ -3278,3 +3319,174 @@ def format_ranges(numbers):
             ranges.append(f"{start}-{end}")
     
     return ','.join(ranges)
+
+
+def analyze_single_pose_dask_wrapper(pose, input_dict):
+    from distributed import get_worker
+    logger.info(f"Running on worker: {get_worker().name}")
+    logger.info(f'Analyzing pose: {pose}')
+    logger.info(f'Input: {input_dict}')
+    fe_folder = input_dict.get('fe_folder')
+    components = input_dict.get('components')
+    rest = input_dict.get('rest')
+    temperature = input_dict.get('temperature')
+    component_windows_dict = input_dict.get('component_windows_dict')
+    sim_range = input_dict.get('sim_range', None)
+    raise_on_error = input_dict.get('raise_on_error', True)
+    n_workers = input_dict.get('n_workers', 4)
+    
+    analyze_pose_task(
+        fe_folder=fe_folder,
+        pose=pose,
+        components=components,
+        rest=rest,
+        temperature=temperature,
+        component_windows_dict=component_windows_dict,
+        sim_range=sim_range,
+        raise_on_error=raise_on_error,
+        n_workers=n_workers
+    )
+    logger.info(f'Finished analyzing pose: {pose}')
+    return pose
+
+
+def analyze_pose_task(
+                fe_folder: str,
+                pose: str,
+                components: List[str],
+                rest: Tuple[float, float, float, float, float],
+                temperature: float,
+                component_windows_dict: "ComponentWindowsDict",
+                sim_range: Tuple[int, int] = None,
+                raise_on_error: bool = True,
+                n_workers: int = 4):
+    """
+    Analyze the free energy results for one pose as an independent task.
+
+    Parameters
+    ----------
+    fe_folder : str
+        The folder containing the free energy results for the pose.
+    pose : str
+        The pose to analyze.
+    components : List[str]
+        The components to analyze.
+        This should be a list of strings, e.g. ['e', 'v', 'z', 'n', 'o'].
+    rest : tuple
+        The restraint values for the pose.
+    temperature : float
+        The temperature of the simulation in Kelvin.
+    sim_range : tuple
+        The range of simulations to analyze.
+        If files are missing from the range, the analysis will fail.
+    raise_on_error : bool
+        Whether to raise an error if the analysis fails.
+    n_workers : int
+        The number of workers to use for parallel processing.
+        Default is 4.
+    """
+    from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
+
+    pose_path = f'{fe_folder}/{pose}'
+    os.makedirs(f'{pose_path}/Results', exist_ok=True)
+    
+    results_entries = []
+    try:
+
+        fe_values = []
+        fe_stds = []
+
+        # first get analytical results from Boresch restraint
+
+        if 'v' in components:
+            disangfile = f'{fe_folder}/{pose}/sdr/v-1/disang.rest'
+        elif 'o' in components:
+            disangfile = f'{fe_folder}/{pose}/sdr/o-1/disang.rest'
+        elif 'z' in components:
+            disangfile = f'{fe_folder}/{pose}/sdr/z-1/disang.rest'
+        else:
+            raise ValueError("No valid disangfile found for Boresch analysis")
+
+        k_r = rest[2]
+        k_a = rest[3]
+        bor_ana = BoreschAnalysis(
+                            disangfile=disangfile,
+                            k_r=k_r, k_a=k_a,
+                            temperature=temperature)
+        bor_ana.run_analysis()
+        fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
+        fe_stds.append(bor_ana.results['fe_error'])
+        results_entries.append(
+            f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
+        )
+        
+        for comp in components:
+            comp_folder = COMPONENTS_FOLDER_DICT[comp]
+            comp_path = f'{pose_path}/{comp_folder}'
+            windows = component_windows_dict[comp]
+
+            # skip n if no conformational restraints are applied
+            if comp == 'n' and rest[1] == 0 and rest[4] == 0:
+                logger.debug(f'Skipping {comp} component as no conformational restraints are applied')
+                continue
+
+            if comp in COMPONENTS_DICT['dd']:
+                # directly read energy files
+                mbar_ana = MBARAnalysis(
+                    pose_folder=pose_path,
+                    component=comp,
+                    windows=windows,
+                    temperature=temperature,
+                    sim_range=sim_range,
+                    load=False,
+                    n_jobs=n_workers
+                )
+                mbar_ana.run_analysis()
+                mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                        title=f'Convergence for {comp} {pose}',
+                )
+
+                fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
+                fe_stds.append(mbar_ana.results['fe_error'])
+                results_entries.append(
+                    f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
+                )
+            elif comp in COMPONENTS_DICT['rest']:
+                rest_mbar_ana = RESTMBARAnalysis(
+                    pose_folder=pose_path,
+                    component=comp,
+                    windows=windows,
+                    temperature=temperature,
+                    sim_range=sim_range,
+                    load=False,
+                    n_jobs=n_workers,
+                )
+                rest_mbar_ana.run_analysis()
+                rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
+                                        title=f'Convergence for {comp} {pose}',
+                )
+
+                fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
+                fe_stds.append(rest_mbar_ana.results['fe_error'])
+                results_entries.append(
+                    f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
+                )
+    
+        # calculate total free energy
+        fe_value = np.sum(fe_values)
+        fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
+    except Exception as e:
+        logger.error(f'Error during FE analysis for {pose}: {e}')
+        if raise_on_error:
+            raise e
+        fe_value = np.nan
+        fe_std = np.nan
+
+    results_entries.append(
+        f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
+    )
+    with open(f'{fe_folder}/{pose}/Results/Results.dat', 'w') as f:
+        f.write('\n'.join(results_entries))
+    
+    return
+            

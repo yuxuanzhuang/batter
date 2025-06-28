@@ -16,6 +16,7 @@ import click
 import os
 import json
 import sys
+from datetime import datetime
 from batter import MABFESystem, RBFESystem
 
 
@@ -24,15 +25,15 @@ from batter import MABFESystem, RBFESystem
 @click.option('--param', required=True, type=click.Path(exists=True), help='Path to the ABFE input configuration file.')
 @click.option('--output-folder', required=True, type=str, help='Output folder for the simulation.')
 @click.option('--overwrite', is_flag=True, default=False, help='If set, overwrite existing output folders.')
-@click.option('--only-equil', is_flag=True, default=False, help='If set, only run the equilibration step.')
-def run_pipeline(input, param, output_folder, overwrite, only_equil):
+@click.option('--dry-run', is_flag=True, default=False, help='If set, stop before submitting jobs.')
+def run_pipeline(input, param, output_folder, overwrite, dry_run):
     """Run the ABFE pipeline."""
     click.echo(f"Running ABFE pipeline...")
     click.echo(f"System JSON: {input}")
     click.echo(f"Input param file: {param}")
     click.echo(f"Output folder: {output_folder}")
     click.echo(f"Overwrite: {overwrite}")
-    click.echo(f"Only equilibration: {only_equil}")
+    click.echo(f"Dry run: {dry_run}")
 
     # Load the system JSON file
     with open(input, 'r') as f:
@@ -50,6 +51,15 @@ def run_pipeline(input, param, output_folder, overwrite, only_equil):
     
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
+    else:
+        if overwrite:
+            # move to backup
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            backup_folder = f"{output_folder}_{timestamp}"
+            click.echo(f"Output folder {output_folder} already exists. Moving to backup: {backup_folder}")
+            os.rename(output_folder, backup_folder)
+
+            os.makedirs(output_folder)
 
     click.echo(f"Protein file: {protein_file}")
     click.echo(f"System file: {system_file}")
@@ -74,8 +84,9 @@ def run_pipeline(input, param, output_folder, overwrite, only_equil):
 
     system.run_pipeline(
         input_file=param,
-        only_fe_preparation=only_equil,
+        dry_run=dry_run,
         extra_restraints=extra_restraints,
+        partition='rondror',
     )
 
 if __name__ == '__main__':

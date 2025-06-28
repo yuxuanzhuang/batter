@@ -164,6 +164,7 @@ class LigandProcessing(ABC):
         logger.debug(f'Preparing ligand {mol} parameters')
         self._calculate_partial_charge()
         abspath_sdf = os.path.abspath(self.ligand_sdf_path)
+
         antechamber_command = f'{antechamber} -i {abspath_sdf} -fi sdf -o {self.output_dir}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol} -dr no'
 
         with tempfile.TemporaryDirectory() as tmpdir:

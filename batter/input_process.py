@@ -2,7 +2,7 @@ from pydantic import (
     BaseModel,
     Field,
     model_validator,
-    field_validator
+    field_validator,
 )
 
 import sys
@@ -19,11 +19,12 @@ FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 
 class SimulationConfig(BaseModel):
     software: str = Field("amber", info={'description': "Software to use (amber, openmm)"})
+    
+    # all deprecated
     # Calculation definitions
-    calc_type: str = Field(..., info={'description': "Calculation type (dock, rank, crystal)"})
-    celpp_receptor: Union[List[str], str] = Field(..., info={
-                                                  'description': "Choose CELPP receptor in upper case or pdb code in lower case"})
-    poses_list: List[str] = Field(default_factory=list, info={'description': "List of poses"})
+    calc_type: Optional[str] = None
+    celpp_receptor: Optional[str] = None
+    poses_list: Optional[List[str]] = None
 
     # Molecular definitions
     # Protein anchor
@@ -68,6 +69,7 @@ class SimulationConfig(BaseModel):
     # Water model, number and box size in the x and y direction
     water_model: str = Field("TIP3P", info={'description': "Water model (SPCE, TIP4PEW, TIP3P, TIP3PF or OPC)"})
     num_waters: Optional[int] = Field(0, info={'description': "Number of water molecules in the system"})
+    
     buffer_x: Optional[float] = Field(
         0, info={'description': "Buffer size along X-axis; this will be omitted in membrane simulations"})
     buffer_y: Optional[float] = Field(
@@ -209,19 +211,22 @@ class SimulationConfig(BaseModel):
         self.rng = len(self.release_eq) - 1
         self.ion_def = [self.cation, self.anion, self.ion_conc]
 
-        if not isinstance(self.celpp_receptor, list):
-            self.celp_st = self.celpp_receptor.strip('\'\"-,.:;#()][').split(',')
-        else:
-            self.celp_st = self.celpp_receptor
+        if False:
+            if self.celpp_receptor is None:
+                self.celp_st = [self.celpp_receptor]
+            elif not isinstance(self.celpp_receptor, list):
+                self.celp_st = self.celpp_receptor.strip('\'\"-,.:;#()][').split(',')
 
-        if self.calc_type == "dock":
-            self.celp_st = self.celp_st[0]
-            self.poses_def = [f'pose{pose}' for pose in self.poses_list]
-        elif self.calc_type == "rank":
-            self.celp_st = self.celp_st[0]
-            self.poses_def = self.ligand_list
-        elif self.calc_type == "crystal":
-            self.poses_def = self.celp_st
+            if self.calc_type == "dock":
+                self.celp_st = self.celp_st[0]
+                self.poses_def = [f'pose{pose}' for pose in self.poses_list]
+            elif self.calc_type == "rank":
+                self.celp_st = self.celp_st[0]
+                self.poses_def = self.ligand_list
+            elif self.calc_type == "crystal":
+                self.poses_def = self.celp_st
+            else:
+                self.poses_def = None
 
         for comp in FEP_COMPONENTS:
             self.dic_steps1.update({f'{comp}': self.n_steps_dict[f'{comp}_steps1']})
@@ -230,7 +235,6 @@ class SimulationConfig(BaseModel):
             self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
 
         self.components = self.components
-
 
         self.rest = [
             self.rec_dihcf_force,
@@ -241,15 +245,11 @@ class SimulationConfig(BaseModel):
             self.rec_com_force,
             self.lig_com_force
         ]
+        if self.buffer_z == 0:
+            logger.info('Buffer size along Z-axis is set to 0; an automatic buffer will be applied.')
 
-        num_waters = self.num_waters
-        buffer_z = self.buffer_z
-
-        if num_waters == 0 and buffer_z == 0:
-            raise ValueError("Either 'num_waters' or 'buffer_z' must be provided (non-zero values).")
-
-        if num_waters != 0 and buffer_z != 0:
-            raise ValueError("Cannot specify both 'num_waters' and 'buffer_z' (non-zero values).")
+        if self.num_waters != 0:
+            raise ValueError("'num_waters' is removed")
 
         lipid_mol = self.lipid_mol
         if lipid_mol:
@@ -315,10 +315,6 @@ class SimulationConfig(BaseModel):
             case 'self':
                 self.components = ['s']
                 self.dec_method = 'sdr'
-
-        if (self.dec_method == 'sdr' or self.dec_method == 'exchange') and self.sdr_dist == 0:
-            logger.error('Wrong input! Please choose a positive value for the sdr_dist variable when performing sdr or exchange.')
-            sys.exit(1)
 
         logger.debug(f'------------------ Simulation Configuration ------------------')
         logger.debug(f'Software: {self.software}')

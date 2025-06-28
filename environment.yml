@@ -15,6 +15,10 @@ dependencies:
   - pandas
   - alchemlyb
   - vmd
+  # dask distributed for analysis
+  - dask
+  - dask-jobqueue
+  - distributed
   # Tests
   - pytest
   - pytest-xdist

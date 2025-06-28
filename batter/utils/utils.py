@@ -172,7 +172,10 @@ def run_with_log(command, level='debug', working_dir=None,
             log("Command error output:")
             for line in e.stderr.splitlines():
                 log(line)
-        raise
+        raise RuntimeError(
+            f"Command '{command}' failed with return code {e.returncode}. "
+            f"Check logs for details."
+        ) from e
 
 
 def log_info(func):
@@ -190,9 +193,7 @@ def save_state(method):
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         result = method(self, *args, **kwargs)
-        with open(f"{self.output_dir}/system.pkl", 'wb') as f:
-            pickle.dump(self, f)
-        logger.debug(f"State saved to {self.output_dir}/system.pkl")
+        self._save_state()
         return result
     return wrapper
 

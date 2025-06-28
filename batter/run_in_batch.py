@@ -87,6 +87,7 @@ def check_stage(pose, comp, n_windows, fe_folder):
                help='The lambda schedule file to use for the simulation.',
                 type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
 @click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared frontier files.')
+@click.option('--env_amber', '-env', default='/ccs/home/yuzhuang/env.amber', help='Path to the AMBER environment script to source.')
 def run_in_batch(
         folders,
         resubmit,
@@ -95,8 +96,11 @@ def run_in_batch(
         window_json=None,
         lambda_schedule=None,
         overwrite=False,
+        env_amber='/ccs/home/yuzhuang/env.amber',
         ):
 
+    if not os.path.exists(env_amber):
+        raise FileNotFoundError(f'AMBER environment script {env_amber} does not exist. Please provide a valid path.')
     total_num_nodes = 0
     total_num_jobs = 0
     run_lines = []
@@ -259,6 +263,10 @@ def run_in_batch(
                 components = [comp for comp in components if comp not in ['n']]
 
             for comp_ind, comp in enumerate(components):
+                if comp == 'e':
+                    pmemd_exe = 'pmemd.hip_DPFP.MPI'
+                else:
+                    pmemd_exe = 'pmemd.hip.MPI'
                 # check the status of the component
                 windows = system.component_windows_dict[comp]
                 n_windows = len(windows)
@@ -277,9 +285,9 @@ def run_in_batch(
                 elif last_rst7 == '-1':
                     sim_to_run = True
                     if remd and comp in COMPONENTS_DICT['dd']:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} {pmemd_exe} -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     else:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip_DPFP.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} {pmemd_exe} -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_mdin.in.groupfile || echo "Error in {pose}/{comp} md" &'
                     logger.info(f'{pose} {comp} md start')
                     run_lines.append(f'# {pose} {comp} md start')
                     run_lines.append(f'rm -f {pose}/*/{comp}00/mdin-00.{{out,nc,log}}')
@@ -287,9 +295,9 @@ def run_in_batch(
                     run_lines.append(f'sleep {job_sleep_interval}\n\n')
                 else:
                     if remd and comp in COMPONENTS_DICT['dd']:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} {pmemd_exe} -ng {n_windows} -rem 3 -remlog {pose}/rem_{comp}_{last_rst7}.log -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     else:
-                        run_line = f'srun -N {n_nodes} -n {n_windows} pmemd.hip.MPI -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
+                        run_line = f'srun -N {n_nodes} -n {n_windows} {pmemd_exe} -ng {n_windows} -groupfile {pose}/groupfiles/{comp}_current_mdin.groupfile {extra_flag} || echo "Error in {pose}/{comp} md" &'
                     if last_rst7 <= len_md:
                         sim_to_run = True
                         next_rst7 = last_rst7 + 1
@@ -349,7 +357,7 @@ def run_in_batch(
         '#SBATCH --dependency=singleton',
         '#SBATCH --export=ALL',
         '#SBATCH --mail-type=BEGIN,END,FAIL',
-        'source ~/env.amber > /dev/null 2>&1',
+        f'source {env_amber} > /dev/null 2>&1',
         'echo $AMBERHOME',
         'if [ -z "${AMBERHOME}" ]; then echo "AMBERHOME is not set" && exit 0; fi',
         'export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7',
@@ -376,6 +384,7 @@ def run_in_batch(
                 command += f' -l {lambda_schedule}'
             if window_json is not None:
                 command += f' -w {window_json}'
+            command += f' --env_amber {env_amber}'
             f.write(f'{command}\n')
         f.write('wait\n')
 
