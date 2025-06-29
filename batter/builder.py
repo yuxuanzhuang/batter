@@ -573,6 +573,7 @@ class SystemBuilder(ABC):
             logger.debug(f'Box dimensions after removing water: {system_dimensions}')
 
         logger.debug(f'Final system: {final_system.n_atoms} atoms')
+        logger.debug(f'Final box dimensions: {system_dimensions}')
 
         # set correct residue number
         revised_resids = np.array(revised_resids)
@@ -583,41 +584,32 @@ class SystemBuilder(ABC):
         final_resids[len(revised_resids):] = np.arange(next_resnum, total_residues - len(revised_resids) + next_resnum)
         final_system.residues.resids = final_resids
 
-        final_system_prot = final_system.select_atoms('protein')
+        # split the system into the following parts
+        # 1. DUM
+        # 2. protein
+        # 3. ligands
+        # 4. other molecules (including lipids)
+        # 5. water that is outside 6 A from the protein (for ionization)
+        # 6. water that is around 6 A from the protein
+
+        # 1
         final_system_dum = final_system.select_atoms('resname DUM')
+        # 2
+        final_system_prot = final_system.select_atoms('protein')
         final_system_others = final_system - final_system_prot - final_system_dum
+        # 3
+        final_system_ligands = final_system.select_atoms(f'resname {mol} or resname {molr}')
+        # 4
+        final_system_other_mol = final_system_others.select_atoms('not resname WAT') - final_system_ligands
+        final_system_water = final_system_others.select_atoms('resname WAT')
         # filter out the water that is not around protein for ionization
-        water_outside_prot = final_system.select_atoms(
+        # 5
+        final_system_water_notaround = final_system.select_atoms(
             f'byres (resname WAT and not (around 6 protein))')
-        final_system_others = final_system_others - water_outside_prot
+        # 6
+        final_system_water_around = final_system_water - final_system_water_notaround
 
-        for residue in u.select_atoms('protein').residues:
-            resid_str = residue.resid
-            resid_resname = residue.resname
-            if resid_resname in ['HIS', 'HIE', 'HIP', 'HID']:
-                # rename it to HIS
-                resid_resname = 'HIS'
-            residue.atoms.chainIDs = renum_data.query(
-                    f'old_resid == @resid_str').query(
-                        f'old_resname == @resid_resname').old_chain.values[0]
-
-        dum_lines = []
-        for chain_name in np.unique(final_system.select_atoms('protein').atoms.chainIDs):
-            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
-
-            prot_segment = final_system.select_atoms(f'chainID {chain_name}')
-
-            prot_segment.write(temp_pdb.name)
-            temp_pdb.close()
-
-            with open(temp_pdb.name, 'r') as f:
-                # store lines start with ATOM
-                dum_lines += [line for line in f.readlines() if line.startswith('ATOM')]
-            dum_lines.append('TER\n')
-
-        with open('solvate_pre_prot.pdb', 'w') as f:
-            f.writelines(dum_lines)
-
+        # write 1 to solvate_pre_dum.pdb
         dum_lines = []
         for residue in final_system_dum.residues:
             # create a temp pdb file in /tmp/
@@ -635,31 +627,79 @@ class SystemBuilder(ABC):
         with open('solvate_pre_dum.pdb', 'w') as f:
             f.writelines(dum_lines)
 
-        non_prot_lines = []
+        # write 2 to solvate_pre_prot.pdb
+        for residue in u.select_atoms('protein').residues:
+            resid_str = residue.resid
+            resid_resname = residue.resname
+            if resid_resname in ['HIS', 'HIE', 'HIP', 'HID']:
+                # rename it to HIS
+                resid_resname = 'HIS'
+            residue.atoms.chainIDs = renum_data.query(
+                    f'old_resid == @resid_str').query(
+                        f'old_resname == @resid_resname').old_chain.values[0]
 
-        prev_resid = final_system_others.residues.resids[0]
-        for residue in final_system_others.residues:
+        prot_lines = []
+        for chain_name in np.unique(final_system_prot.atoms.chainIDs):
+            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+
+            prot_segment = final_system.select_atoms(f'chainID {chain_name}')
+
+            prot_segment.write(temp_pdb.name)
+            temp_pdb.close()
+
+            with open(temp_pdb.name, 'r') as f:
+                # store lines start with ATOM
+                prot_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+            prot_lines.append('TER\n')
+
+        with open('solvate_pre_prot.pdb', 'w') as f:
+            f.writelines(prot_lines)
+
+        # write 3 to solvate_pre_ligands.pdb
+        lig_lines = []
+        prev_resid = final_system_ligands.residues.resids[0]
+        for residue in final_system_ligands.residues:
             if residue.resid != prev_resid:
-                non_prot_lines.append('TER\n')
+                lig_lines.append('TER\n')
             # create a temp pdb file in /tmp/
             # write the residue to the temp file
             temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
 
             residue.atoms.write(temp_pdb.name)
             temp_pdb.close()
-            # store atom lines into non_prot_lines
+            # store atom lines into lig_lines
             with open(temp_pdb.name, 'r') as f:
                 # store lines start with ATOM
-                non_prot_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+                lig_lines += [line for line in f.readlines() if line.startswith('ATOM')]
             prev_resid = residue.resid
-
-        with open('solvate_pre_others.pdb', 'w') as f:
-            f.writelines(non_prot_lines)
+        with open('solvate_pre_ligands.pdb', 'w') as f:
+            f.writelines(lig_lines)
         
+        # write 4 to solvate_pre_others.pdb
+        other_lines = []
+        prev_resid = final_system_other_mol.residues.resids[0]
+        for residue in final_system_other_mol.residues:
+            if residue.resid != prev_resid:
+                other_lines.append('TER\n')
+            # create a temp pdb file in /tmp/
+            # write the residue to the temp file
+            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+
+            residue.atoms.write(temp_pdb.name)
+            temp_pdb.close()
+            # store atom lines into other_lines
+            with open(temp_pdb.name, 'r') as f:
+                # store lines start with ATOM
+                other_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+            prev_resid = residue.resid
+        with open('solvate_pre_others.pdb', 'w') as f:
+            f.writelines(other_lines)
+
+        # write 5 to solvate_pre_outside_wat.pdb 
         outside_wat_lines = []
 
-        prev_resid = water_outside_prot.residues.resids[0]
-        for residue in water_outside_prot.residues:
+        prev_resid = final_system_water_notaround.residues.resids[0]
+        for residue in final_system_water_notaround.residues:
             if residue.resid != prev_resid:
                 outside_wat_lines.append('TER\n')
             # create a temp pdb file in /tmp/
@@ -673,75 +713,150 @@ class SystemBuilder(ABC):
                 # store lines start with ATOM
                 outside_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
             prev_resid = residue.resid
-
         with open('solvate_pre_outside_wat.pdb', 'w') as f:
             f.writelines(outside_wat_lines)
 
+        # write 6 to solvate_pre_around_water.pdb
+        around_wat_lines = []
+
+        prev_resid = final_system_water_around.residues.resids[0]
+        for residue in final_system_water_around.residues:
+            if residue.resid != prev_resid:
+                around_wat_lines.append('TER\n')
+            # create a temp pdb file in /tmp/
+            # write the residue to the temp file
+            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+
+            residue.atoms.write(temp_pdb.name)
+            temp_pdb.close()
+            # store atom lines into around_wat_lines
+            with open(temp_pdb.name, 'r') as f:
+                # store lines start with ATOM
+                around_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+            prev_resid = residue.resid
+        with open('solvate_pre_around_water.pdb', 'w') as f:
+            f.writelines(around_wat_lines)
         
-        logger.debug(f'Final box dimensions: {system_dimensions}')
-        # Write the final tleap file with the correct system size and removed water molecules
-        #shutil.copy('tleap.in', 'tleap_solvate.in')
-        os.system(f'cp tleap.in tleap_solvate.in')
-        tleap_solvate = open('tleap_solvate.in', 'a')
-        tleap_solvate.write('# Load the necessary parameters\n')
-        for i in range(0, len(other_mol)):
-            tleap_solvate.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
-            tleap_solvate.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
+        # Generate prmtop and inpcrd files for each part of the system
+        # Note source leaprc.protein.ff14SB, leaprc.gaff2, leaprc.lipid21 is already included.
+        # 1. DUM
+        os.system(f'cp tleap.in tleap_solvate_dum.in')
+        tleap_dum = open('tleap_solvate_dum.in', 'a')
+        # already included
+        # tleap_dum.write('dum = loadmol2 dum.mol2\n\n')
+        # tleap_dum.write(f'loadamberparams dum.frcmod\n')
+        tleap_dum.write('dum = loadpdb solvate_pre_dum.pdb\n\n')
+        tleap_dum.write(f'set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_dum.write('savepdb dum solvate_dum.pdb\n')
+        tleap_dum.write('saveamberparm dum solvate_dum.prmtop solvate_dum.inpcrd\n')
+        tleap_dum.write('quit')
+        tleap_dum.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log')
 
-        tleap_solvate.write(f'loadamberparams {mol.lower()}.frcmod\n')
-        tleap_solvate.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
+        # 2. protein
+        os.system(f'cp tleap.in tleap_solvate_prot.in')
+        tleap_prot = open('tleap_solvate_prot.in', 'a')
+        tleap_prot.write('prot = loadpdb solvate_pre_prot.pdb\n\n')
+        tleap_prot.write(f'set prot box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_prot.write('savepdb prot solvate_prot.pdb\n')
+        tleap_prot.write('saveamberparm prot solvate_prot.prmtop solvate_prot.inpcrd\n')
+        tleap_prot.write('quit')
+        tleap_prot.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_prot.in > tleap_prot.log')
 
+        # 3. ligands
+        os.system(f'cp tleap.in tleap_solvate_ligands.in')
+        tleap_ligands = open('tleap_solvate_ligands.in', 'a')
+        tleap_ligands.write('# Load the necessary parameters\n')
+        tleap_ligands.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_ligands.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
         if comp == 'x':
-            tleap_solvate.write(f'loadamberparams {molr.lower()}.frcmod\n')
-            tleap_solvate.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
+            tleap_ligands.write(f'loadamberparams {molr.lower()}.frcmod\n')
+            tleap_ligands.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
+        tleap_ligands.write('ligands = loadpdb solvate_pre_ligands.pdb\n\n')
+        tleap_ligands.write(f'set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_ligands.write('savepdb ligands solvate_ligands.pdb\n')
+        tleap_ligands.write('saveamberparm ligands solvate_ligands.prmtop solvate_ligands.inpcrd\n')
+        tleap_ligands.write('quit')
+        tleap_ligands.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log')
 
-        tleap_solvate.write('# Load the water and jc ion parameters\n')
-
+        # 4. other molecules
+        os.system(f'cp tleap.in tleap_solvate_others.in')
+        tleap_others = open('tleap_solvate_others.in', 'a')
+        tleap_others.write('# Load the necessary parameters\n')
+        for i in range(0, len(other_mol)):
+            tleap_others.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
+            tleap_others.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
         if water_model.lower() != 'tip3pf':
-            tleap_solvate.write(f'source leaprc.water.{water_model.lower()}\n\n')
+            tleap_others.write(f'source leaprc.water.{water_model.lower()}\n\n')
         else:
-            tleap_solvate.write('source leaprc.water.fb3\n\n')
-        tleap_solvate.write('dum = loadpdb solvate_pre_dum.pdb\n\n')
-        tleap_solvate.write('prot = loadpdb solvate_pre_prot.pdb\n\n')
-        tleap_solvate.write('others = loadpdb solvate_pre_others.pdb\n\n')
-        tleap_solvate.write('outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n')
+            tleap_others.write('source leaprc.water.fb3\n\n')
+        tleap_others.write('others = loadpdb solvate_pre_others.pdb\n\n')
+        tleap_others.write(f'set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_others.write('savepdb others solvate_others.pdb\n')
+        tleap_others.write('saveamberparm others solvate_others.prmtop solvate_others.inpcrd\n')
+        tleap_others.write('quit')
+        tleap_others.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_others.in > tleap_others.log')
 
+        # 5. water that is outside 6 A from the protein
+        # add ionization
+        os.system(f'cp tleap.in tleap_solvate_outside_wat.in')
+        tleap_outside_wat = open('tleap_solvate_outside_wat.in', 'a')
+        if water_model.lower() != 'tip3pf':
+            tleap_outside_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
+        else:
+            tleap_outside_wat.write('source leaprc.water.fb3\n\n')
+        tleap_outside_wat.write('outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n')
         if (neut == 'no'):
-            tleap_solvate.write('# Add ions for neutralization/ionization\n')
-            tleap_solvate.write(f'addionsrand outside_wat {ion_def[0]} {num_cat}\n')
-            tleap_solvate.write(f'addionsrand outside_wat {ion_def[1]} {num_ani}\n')
+            tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
+            tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {num_cat}\n')
+            tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {num_ani}\n')
         elif (neut == 'yes'):
-            tleap_solvate.write('# Add ions for neutralization/ionization\n')
+            tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
             if neu_cat != 0:
-                tleap_solvate.write(f'addionsrand outside_wat {ion_def[0]} {neu_cat}\n')
+                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {neu_cat}\n')
             if neu_ani != 0:
-                tleap_solvate.write(f'addionsrand outside_wat {ion_def[1]} {neu_ani}\n')
+                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {neu_ani}\n')
+        tleap_outside_wat.write(f'set outside_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_outside_wat.write('savepdb outside_wat solvate_outside_wat.pdb\n')
+        tleap_outside_wat.write('saveamberparm outside_wat solvate_outside_wat.prmtop solvate_outside_wat.inpcrd\n')
+        tleap_outside_wat.write('quit')
+        tleap_outside_wat.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_outside_wat.in > tleap_outside_wat.log')
 
-        tleap_solvate.write('model = combine {dum prot others outside_wat}\n\n')
+        # 6. water that is around 6 A from the protein
+        os.system(f'cp tleap.in tleap_solvate_around_wat.in')
+        tleap_around_wat = open('tleap_solvate_around_wat.in', 'a')
+        if water_model.lower() != 'tip3pf':
+            tleap_around_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
+        else:
+            tleap_around_wat.write('source leaprc.water.fb3\n\n')
+        tleap_around_wat.write('around_wat = loadpdb solvate_pre_around_water.pdb\n\n')
+        tleap_around_wat.write(f'set around_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_around_wat.write('savepdb around_wat solvate_around_wat.pdb\n')
+        tleap_around_wat.write('saveamberparm around_wat solvate_around_wat.prmtop solvate_around_wat.inpcrd\n')
+        tleap_around_wat.write('quit')
+        tleap_around_wat.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_around_wat.in > tleap_around_wat.log')
 
-        tleap_solvate.write('\n')
-        tleap_solvate.write(f'set model box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
-        tleap_solvate.write('desc model\n')
-        tleap_solvate.write('savepdb model full.pdb\n')
-        tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
-        tleap_solvate.write('quit')
-        tleap_solvate.close()
-        p = run_with_log(f'{tleap} -s -f tleap_solvate.in > tleap_solvate.log')
+        # use parmed to combine everything into one system
 
-        f = open('tleap_solvate.log', 'r')
-        for line in f:
-            if "Could not open file" in line:
-                logger.error('Error!!!')
-                logger.error(line)
-                sys.exit(1)
-            if "WARNING: The unperturbed charge of the unit:" in line:
-                logger.warning(line)
-                logger.warning('The system is not neutralized properly after solvation')
-            if "addIonsRand: Argument #2 is type String must be of type: [unit]" in line:
-                logger.error('Aborted.The ion types specified in the input file could be wrong.')
-                logger.error('Please check the tleap_solvate.log file, and the ion types specified in the input file.\n')
-                sys.exit(1)
-        f.close()
+        import parmed as pmd
+        
+        dum_p = pmd.load_file('solvate_dum.prmtop', 'solvate_dum.inpcrd')
+        prot_p = pmd.load_file('solvate_prot.prmtop', 'solvate_prot.inpcrd')
+        ligands_p = pmd.load_file('solvate_ligands.prmtop', 'solvate_ligands.inpcrd')
+        others_p = pmd.load_file('solvate_others.prmtop', 'solvate_others.inpcrd')
+        outside_wat_p = pmd.load_file('solvate_outside_wat.prmtop', 'solvate_outside_wat.inpcrd')
+        around_wat_p = pmd.load_file('solvate_around_wat.prmtop', 'solvate_around_wat.inpcrd')
+        
+        # combine all parts
+        combined = dum_p + prot_p + ligands_p + others_p + outside_wat_p + around_wat_p
+        combined.save('full.prmtop', overwrite=True)
+        combined.save('full.inpcrd', overwrite=True)
+        combined.save('full.pdb', overwrite=True)
 
         u = mda.Universe('full.pdb')
         u_vac = mda.Universe('vac.pdb')
@@ -2534,11 +2649,11 @@ class FreeEnergyBuilder(SystemBuilder):
             #shutil.copy('./build.pdb', './%s.pdb' % mol.lower())
             os.system(f'cp ./build.pdb ./{mol.lower()}.pdb')
             tleap_vac = open('tleap_vac.in', 'w')
-            tleap_vac.write('source leaprc.'+ligand_ff+'\n\n')
+            tleap_vac.write(f'source leaprc.{ligand_ff}\n\n')
             tleap_vac.write('# Load the ligand parameters\n')
-            tleap_vac.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-            tleap_vac.write('%s = loadmol2 %s.mol2\n\n' % (mol.upper(), mol.lower()))
-            tleap_vac.write('model = loadpdb %s.pdb\n\n' % (mol.lower()))
+            tleap_vac.write(f'loadamberparams {mol.lower()}.frcmod\n')
+            tleap_vac.write(f'{mol.upper()} = loadmol2 {mol.lower()}.mol2\n\n')
+            tleap_vac.write(f'model = loadpdb {mol.lower()}.pdb\n\n')
             tleap_vac.write('check model\n')
             tleap_vac.write('savepdb model vac.pdb\n')
             tleap_vac.write('saveamberparm model vac.prmtop vac.inpcrd\n')
