@@ -31,7 +31,8 @@ if [[ $only_eq -eq 1 ]]; then
     check_sim_failure "Minimization" "$log_file"
 
     if ! check_min_energy "mini.out" 0; then
-        echo "Minimization failed with cuda; try CPU"
+        echo "Minimization not passed with cuda; try CPU"
+        rm -f "$log_file"
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
             mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         else
@@ -75,7 +76,8 @@ if [[ $only_eq -eq 1 ]]; then
                 pmemd.cuda -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
                 check_sim_failure "Minimization for window $i" "$log_file"
                 if ! check_min_energy "mini.in.out" 0; then
-                    echo "Minimization failed with cuda; try CPU"
+                    echo "Minimization not passed with cuda; try CPU"
+                    rm -f "$log_file"
                     if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
                         mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
                     else

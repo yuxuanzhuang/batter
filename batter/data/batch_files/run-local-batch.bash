@@ -12,13 +12,6 @@ INPCRD=${INPCRD:-full.inpcrd}
 overwrite=${OVERWRITE:-0}
 REMD=${REMD:-0}
 
-# if remd add -rem 3
-if [[ $REMD -eq 1 ]]; then
-    REMD_FLAG="-rem 3"
-else
-    REMD_FLAG=""
-fi
-
 source batch_run/check_run.bash
 
 if [[ -f ${PFOLDER}/${CFOLDER}/${COMP}_FINISHED ]]; then
@@ -34,6 +27,12 @@ fi
 if [[ -s ${PFOLDER}/${CFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
+    # if remd add -rem 3
+    if [[ $REMD -eq 1 ]]; then
+        REMD_FLAG="-rem 3 -remlog ${PFOLDER}/${CFOLDER}/rem_${COMP}_0.log"
+    else
+        REMD_FLAG=""
+    fi
     # Initial MD production run
     mpirun -np ${NWINDOWS} --oversubscribe pmemd.cuda.MPI -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.groupfile >> "$log_file" 2>&1
     check_sim_failure "md00" "$log_file"
@@ -52,13 +51,19 @@ while [ $i -le FERANGE ]; do
     if [[ $overwrite -eq 0 && -s ${PFOLDER}/${CFOLDER}/${COMP00}/mdin-${z}.rst7 ]]; then
         echo "Skipping md${x} steps."
     else
-        mpirun -np ${NWINDOWS} --oversubscribe pmemd.cuda.MPI -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${$x}.groupfile >> "$log_file" 2>&1
+        # if remd add -rem 3
+        if [[ $REMD -eq 1 ]]; then
+            REMD_FLAG="-rem 3 -remlog ${PFOLDER}/${CFOLDER}/rem_${COMP}_${x}.log"
+        else
+            REMD_FLAG=""
+        fi
+        mpirun -np ${NWINDOWS} --oversubscribe pmemd.cuda.MPI -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${x}.groupfile >> "$log_file" 2>&1
         check_sim_failure "md${x}" "$log_file"
     fi
     i=$((i + 1))
 done
 
-if [[ -s ${PFOLDER}/${CFOLDER}/${COMP}00/mdin-${$x}.rst7 ]]; then
+if [[ -s ${PFOLDER}/${CFOLDER}/${COMP}00/mdin-${x}.rst7 ]]; then
     echo "FINISHED" > ${PFOLDER}/${CFOLDER}/${COMP}_FINISHED
     exit 0
 fi

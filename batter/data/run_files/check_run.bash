@@ -26,13 +26,17 @@ check_min_energy() {
         return 2
     fi
 
-    # Convert to decimal if needed (handles scientific notation)
+    # Check if eam_line is a valid number
+    if ! [[ $eam_line =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+        echo "Error: EAMBER value '$eam_line' is not a valid number"
+        return 1
+    fi
+
     local eam_value
     eam_value=$(printf "%.4f" "$eam_line")
 
     echo "EAMBER energy: $eam_value kcal/mol (threshold: $threshold)"
 
-    # Compare using bc for floating point comparison
     if (( $(echo "$eam_value < $threshold" | bc -l) )); then
         echo "Energy is below threshold."
         return 0
