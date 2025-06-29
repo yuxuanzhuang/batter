@@ -2,32 +2,34 @@
 
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
 #SBATCH --partition=PARTITIONNAME
-#SBATCH --nodes=1
 #SBATCH --open-mode=append
 #SBATCH --output=STAGE-POSE-%j.out
 #SBATCH --error=STAGE-POSE-%j.err
-#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=1
 #SBATCH -t 16:00:00
 #SBATCH -d singleton
 #SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
+#SBATCH --nodes=NNODES
+#SBATCH --gpus=NGPUS
+#SBATCH --gpu_cmode="shared"
+
 
 scontrol show job $SLURM_JOB_ID
 # start time
 echo "Job started at $(date)"
 
 OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
-POSE=${POSE:-0}  # Default to 0 if not set
+PFOLDER=${PFOLDER:-0}  # Default to 0 if not set
 CFOLDER=${CFOLDER:-sdr}  # Default to sdr if not set
 COMP=${COMP:-z}  # Default to z if not set
 
 echo "OVERWRITE: $OVERWRITE"
-echo "POSE: $POSE"
+echo "PFOLDER: $PFOLDER"
 echo "COMP: $COMP"
 
 # Set a path for the retry count file on a shared filesystem.
 # Change this path as needed.
-ATTEMPT_FILE="${POSEFOLDER}/${CFOLDER}/${COMP}_job_attempt.txt"
+ATTEMPT_FILE="${PFOLDER}/${CFOLDER}/${COMP}_job_attempt.txt"
 
 # Initialize the attempt count file if it doesn't exist.
 if [ ! -f "$ATTEMPT_FILE" ]; then
@@ -45,7 +47,7 @@ source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."
-OVERWRITE=$OVERWRITE POSEFOLDER=$POSE CFOLDER=$CFOLDER COMP=$COMP source batch_run/run-local-batch.bash 2>&1 | tee run.log
+OVERWRITE=$OVERWRITE PFOLDER=$PFOLDER CFOLDER=$CFOLDER COMP=$COMP source batch_run/run-local-batch.bash 2>&1 | tee run.log
 error_code=${PIPESTATUS[0]}  # Capture the exit status of 'source run-local.bash'
 
 if [ $error_code -eq 0 ]; then

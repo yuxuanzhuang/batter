@@ -2740,7 +2740,7 @@ class System:
                            time_limit: int = 50, # 50 minutes
                            num_fe_sim: int = 10, # run each window for 10 times (restart).
                            num_gpus: int = 4, # number of GPUs per node to be used for REMD simulations
-
+                           num_nodes: int = 1, # number of nodes to be used for REMD simulations
                            ):
         """
         Generate the batch files for the free energy calculation production stage.
@@ -2753,11 +2753,11 @@ class System:
                 'mdin.in', 'mdin.in.extend'
         ]
         
-        def calculate_performance(n_atoms, comp):
+        def calculate_performance(n_atoms, comp, n_gpus_per_job):
             if comp not in COMPONENTS_DICT['dd']:
-                return 150 if n_atoms < 80000 else 80
+                return 150 * n_gpus_per_job if n_atoms < 80000 else 80 * n_gpus_per_job
             else:
-                return 80 if n_atoms < 80000 else 40
+                return 80 * n_gpus_per_job if n_atoms < 80000 else 40 * n_gpus_per_job
         
 
         def write_2_pose(pose):
@@ -2857,9 +2857,11 @@ class System:
                                             else:
                                                # hard estimation of the size to be 100000 atoms 
                                                 n_atoms = 100000
-                                                performance = calculate_performance(n_atoms, component)
+                                                performance = calculate_performance(n_atoms, component, n_gpus_per_job=num_gpus / n_sims)
                                                 n_steps = int(time_limit / 60 / 24 * performance * 1000 * 1000 / 4)
                                                 n_steps = int(n_steps // 100000 * 100000)
+                                                if stage == 'mdin.in':
+                                                    n_steps = n_steps // 10
                                                 line = f'  nstlim = {n_steps},\n'
                                     outfile.write(line)
 
@@ -2920,12 +2922,23 @@ class System:
                 f'{self.fe_folder}/batch_run',
                 dirs_exist_ok=True
             )
-            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "rt") as fin:
-                with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas)))
-                        )
+            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "rt") as f:
+                fin = f.readlines()
+            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas)))
+                    )
+            with open(f'{self.fe_folder}/batch_run/SLURMM-Am', "rt") as f:
+                fin = f.readlines()
+            with open(f"{self.fe_folder}/batch_run/SLURMM-run", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('STAGE', pose).replace(
+                                        'SYSTEMNAME', self.system.system_name).replace(
+                                    'PARTITIONNAME', self.system.partition).replace(
+                                        'NGPUS', str(num_gpus)).replace(
+                                            'NNODES', str(num_nodes)))
+
             for pose in poses_def:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]

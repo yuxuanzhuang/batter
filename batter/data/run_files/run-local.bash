@@ -20,15 +20,22 @@ source check_run.bash
 
 if [[ $only_eq -eq 1 ]]; then
     # Minimization
-    pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    # if mini_eq is found use mini_eq.in
+    if [[ -f mini_eq.in ]]; then
+        echo "Using mini_eq.in for minimization."
+    else
+        echo "mini_eq.in not found, using mini.in instead."
+        cp mini.in mini_eq.in
+    fi
+    pmemd.cuda -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 
     if ! check_min_energy "mini.out" 0; then
         echo "Minimization failed with cuda; try CPU"
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+            mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         else
-            pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+            pmemd -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         fi
         check_sim_failure "Minimization" "$log_file"
     fi

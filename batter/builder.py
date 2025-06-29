@@ -4701,18 +4701,21 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
                             '_lig_name_', f'{mol},{molr}'))
+
         with open(f"../{self.amber_files_folder}/eqnpt0-ex.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                         'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
                             '_lig_name_', f'{mol},{molr}'))
+
         with open(f"../{self.amber_files_folder}/eqnpt-ex.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
                         'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
                             '_lig_name_', f'{mol},{molr}'))
+                            
         with open(f"../{self.amber_files_folder}/heat-ex.in", "rt") as fin:
             with open("./heat.in", "wt") as fout:
                 for line in fin:
@@ -4836,10 +4839,18 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
+                    for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
+
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
@@ -4850,6 +4861,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
+
             with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
@@ -4971,8 +4983,15 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini-unorest", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
@@ -5724,6 +5743,32 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
                         '_lig_name_', mol))
 
+            # mini and eq without TI
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        elif 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        elif 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))                        
+
         # Create running scripts for local and server
         with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
             with open("./check_run.bash", "wt") as fout:
@@ -6427,7 +6472,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                 #mdin.write('LISTOUT=POUT\n')
 
             # mini with TI
-            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini_uno.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
