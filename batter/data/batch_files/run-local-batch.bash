@@ -6,9 +6,18 @@ PRMTOP="full.hmr.prmtop"
 PFOLDER=${PFOLDER:-pose0}
 CFOLDER=${CFOLDER:-sdr}
 COMP=${COMP:-z}
+NWINDOWS=${NWINDOWS:24}
 log_file="${PFOLDER}/${CFOLDER}/${COMP}_run.log"
 INPCRD=${INPCRD:-full.inpcrd}
 overwrite=${OVERWRITE:-0}
+REMD=${REMD:-0}
+
+# if remd add -rem 3
+if [[ $REMD -eq 1 ]]; then
+    REMD_FLAG="-rem 3"
+else
+    REMD_FLAG=""
+fi
 
 source batch_run/check_run.bash
 
@@ -26,7 +35,7 @@ if [[ -s ${PFOLDER}/${CFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     # Initial MD production run
-    mpirun -np NWINDOWS --oversubscribe pmemd.cuda.MPI -ng NWINDOWS -rem 3 -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.groupfile >> "$log_file" 2>&1
+    mpirun -np ${NWINDOWS} --oversubscribe pmemd.cuda.MPI -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.groupfile >> "$log_file" 2>&1
     check_sim_failure "md00" "$log_file"
 
 fi
@@ -43,7 +52,7 @@ while [ $i -le FERANGE ]; do
     if [[ $overwrite -eq 0 && -s ${PFOLDER}/${CFOLDER}/${COMP00}/mdin-${z}.rst7 ]]; then
         echo "Skipping md${x} steps."
     else
-        mpirun -np NWINDOWS --oversubscribe pmemd.cuda.MPI -ng NWINDOWS -rem 3 -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${$x}.groupfile >> "$log_file" 2>&1
+        mpirun -np ${NWINDOWS} --oversubscribe pmemd.cuda.MPI -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${$x}.groupfile >> "$log_file" 2>&1
         check_sim_failure "md${x}" "$log_file"
     fi
     i=$((i + 1))

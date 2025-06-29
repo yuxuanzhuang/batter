@@ -945,7 +945,7 @@ class System:
         if batch_mode:
             if stage != 'fe':
                 raise NotImplementedError("Batch mode is only implemented for 'fe' stage")
-            
+            raise NotImplementedError("Batch mode is not implemented yet")
             return
 
         if stage == 'equil':
@@ -2250,6 +2250,7 @@ class System:
             logger.add(f'{self.output_dir}/batter.log', level='DEBUG')
             logger.info('Verbose output is set to True')
         logger.info('Running the pipeline')
+        
         self._max_num_jobs = max_num_jobs
 
         start_time = time.time()
@@ -2924,25 +2925,40 @@ class System:
             )
             with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "rt") as f:
                 fin = f.readlines()
+            
             with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas)))
-                    )
-            with open(f'{self.fe_folder}/batch_run/SLURMM-Am', "rt") as f:
+                    fout.write(line.replace('FERANGE', str(num_fe_sim)))
+            with open(f'{self.fe_folder}/batch_run/SLURMM-BATCH-Am', "rt") as f:
                 fin = f.readlines()
-            with open(f"{self.fe_folder}/batch_run/SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace(
-                                        'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition).replace(
-                                        'NGPUS', str(num_gpus)).replace(
-                                            'NNODES', str(num_nodes)))
+            for pose in poses_def:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    num_windows = len(self.component_windows_dict.get(comp, []))
+                    with open(f"{self.fe_folder}/batch_run/SLURMM-run-{pose}-{comp}", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('STAGE', 'fe').replace(
+                                            'SYSTEMNAME', self.system_name).replace(
+                                            'POSE', pose).replace(
+                                            'PARTITIONNAME', self.partition).replace(
+                                            'NGPUS', str(num_gpus)).replace(
+                                            'NNODES', str(num_nodes)).replace(
+                                            'PFOLDERXXX', pose).replace(
+                                            'CFOLDERXXX', comp_folder).replace(
+                                            'COMPXXX', comp).replace(
+                                            'NWINDOWSXXX', str(num_windows)).replace(
+                                            'REMDXXX', '1' if remd else '0')
+                            )
 
             for pose in poses_def:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
-                    
+            
+            if 'z' in self.sim_config.components or 'o' in self.sim_config.components:
+                # add lambda.sch to the folder
+                with open(f'{self.fe_folder}/lambda.sch', 'w') as f:
+                    f.write('TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n')
+  
             logger.info('FE production groupfiles generated for all poses')
     
     def check_sim_stage(self, output='image', min_file_size=100, max_workers=16):

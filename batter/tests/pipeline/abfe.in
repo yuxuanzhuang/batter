@@ -87,6 +87,9 @@ n_steps2	=  3000000    # Number of steps per window for component n (production)
 m_steps1	=   50000    # Number of steps per window for component m (equilibrium)
 m_steps2	=  3000000    # Number of steps per window for component m (production)
 
+z_steps1   =   50000
+z_steps2   =   1000000
+
 # The other components are not tested and used
 a_steps1	=  100000    # Number of steps per window for component a (equilibrium)
 a_steps2	=  200000    # Number of steps per window for component a (production) 

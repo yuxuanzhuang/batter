@@ -72,8 +72,8 @@ class SLURMJob:
             cmd.append(f"--partition={self.partition}")
         if self.jobname:
             cmd.append(f"--job-name={self.jobname}")
-        if self.priority:
-            cmd.append(f"--priority={self.priority}")
+        #if self.priority:
+        #    cmd.append(f"--priority={self.priority}")
         if self.time:
             cmd.append(f"--time={self.time}")
         cmd.append(self.file_basename)

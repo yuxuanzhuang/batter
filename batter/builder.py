@@ -1774,14 +1774,10 @@ class EquilibrationBuilder(SystemBuilder):
             with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
+        with open(f'../{self.run_files_folder}/run-equil.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp).replace(
-                        )
-                    )
+                    fout.write(line.replace('RANGE', str(rng)))
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:

@@ -189,7 +189,7 @@ class SimulationConfig(BaseModel):
     @model_validator(mode="after")
     def initialize_ti(self):
         """
-        Calculate lambdas and weights dynamically if dec_int is 'ti'.
+        Calculate lambdas and weights dynamically.
         """
         dec_int = self.dec_int
         ti_points = self.ti_points
@@ -234,8 +234,6 @@ class SimulationConfig(BaseModel):
             self.dic_steps2.update({f'{comp}': self.n_steps_dict[f'{comp}_steps2']})
             self.dic_itera1.update({f'{comp}': self.n_iter_dict[f'{comp}_itera1']})
             self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
-
-        self.components = self.components
 
         self.rest = [
             self.rec_dihcf_force,
@@ -316,7 +314,24 @@ class SimulationConfig(BaseModel):
             case 'self':
                 self.components = ['s']
                 self.dec_method = 'sdr'
+            case _:
+                raise ValueError(
+                    f"Invalid fe_type: {self.fe_type}. Must be one of 'rest', 'dd', 'sdr', 'dd-rest', 'sdr-rest', "
+                    "'express', 'relative', 'uno', 'uno_com', 'uno_rest', 'self' or 'custom'."
+                )
 
+        for comp in self.components:
+            logger.debug(f'Using component: {comp}')
+            logger.debug(f'Steps for stage 1: {self.dic_steps1[comp]}')
+            logger.debug(f'Steps for stage 2: {self.dic_steps2[comp]}')
+            if self.dic_steps1[comp] == 0:
+                raise ValueError(
+                    f"Invalid input! {comp} steps for stage 1 must be greater than 0 with {comp}_steps1."
+                )
+            if self.dic_steps2[comp] == 0:
+                raise ValueError(
+                    f"Invalid input! {comp} steps for stage 2 must be greater than 0 with {comp}_steps2."
+                )
         self.remd = self.remd
         
         logger.debug(f'------------------ Simulation Configuration ------------------')

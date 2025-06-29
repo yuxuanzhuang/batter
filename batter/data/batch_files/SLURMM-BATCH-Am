@@ -12,6 +12,7 @@
 #SBATCH --nodes=NNODES
 #SBATCH --gpus=NGPUS
 #SBATCH --gpu_cmode="shared"
+#SBATCH --mem=64G
 
 
 scontrol show job $SLURM_JOB_ID
@@ -19,9 +20,11 @@ scontrol show job $SLURM_JOB_ID
 echo "Job started at $(date)"
 
 OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
-PFOLDER=${PFOLDER:-0}  # Default to 0 if not set
-CFOLDER=${CFOLDER:-sdr}  # Default to sdr if not set
-COMP=${COMP:-z}  # Default to z if not set
+PFOLDER=PFOLDERXXX
+CFOLDER=CFOLDERXXX
+COMP=COMPXXX
+NWINDOWS=NWINDOWSXXX
+REMD=REMDXXX
 
 echo "OVERWRITE: $OVERWRITE"
 echo "PFOLDER: $PFOLDER"
@@ -47,7 +50,7 @@ source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."
-OVERWRITE=$OVERWRITE PFOLDER=$PFOLDER CFOLDER=$CFOLDER COMP=$COMP source batch_run/run-local-batch.bash 2>&1 | tee run.log
+OVERWRITE=$OVERWRITE PFOLDER=$PFOLDER CFOLDER=$CFOLDER COMP=$COMP NWINDOWS=$NWINDOWS REMD=$REMD source batch_run/run-local-batch.bash 2>&1 | tee run.log
 error_code=${PIPESTATUS[0]}  # Capture the exit status of 'source run-local.bash'
 
 if [ $error_code -eq 0 ]; then
