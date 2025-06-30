@@ -19,16 +19,19 @@ scontrol show job $SLURM_JOB_ID
 # start time
 echo "Job started at $(date)"
 
-OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
-PFOLDER=PFOLDERXXX
-CFOLDER=CFOLDERXXX
-COMP=COMPXXX
-NWINDOWS=NWINDOWSXXX
-REMD=REMDXXX
+export OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
+export PFOLDER="PFOLDERXXX"
+export CFOLDER="CFOLDERXXX"
+export COMP="COMPXXX"
+export NWINDOWS="NWINDOWSXXX"
+export REMD="REMDXXX"
 
 echo "OVERWRITE: $OVERWRITE"
 echo "PFOLDER: $PFOLDER"
+echo "CFOLDER: $CFOLDER"
 echo "COMP: $COMP"
+echo "NWINDOWS: $NWINDOWS"
+echo "REMD: $REMD"
 
 # Set a path for the retry count file on a shared filesystem.
 # Change this path as needed.
@@ -50,8 +53,10 @@ source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."
-OVERWRITE=$OVERWRITE PFOLDER=$PFOLDER CFOLDER=$CFOLDER COMP=$COMP NWINDOWS=$NWINDOWS REMD=$REMD source batch_run/run-local-batch.bash 2>&1 | tee run.log
-error_code=${PIPESTATUS[0]}  # Capture the exit status of 'source run-local.bash'
+(
+    source batch_run/run-local-batch.bash
+)
+error_code=$?
 
 if [ $error_code -eq 0 ]; then
     echo "Simulation completed successfully on attempt $RETRY_COUNT."
@@ -65,7 +70,7 @@ else
         echo "Requeuing the job for attempt $NEXT_RETRY..."
         # Requeue the same job (retains the same job ID).
         # Exclude the node where the job failed.
-        # wait for 2 min
+        # wait for 0.5 min
         sleep 30
         bad_node=$(
         scontrol show job $SLURM_JOB_ID |

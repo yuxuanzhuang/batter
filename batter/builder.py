@@ -814,10 +814,23 @@ class SystemBuilder(ABC):
         # note we will replace the ligand parameter with existing ones
         # ligands_p = pmd.load_file('solvate_ligands.prmtop', 'solvate_ligands.inpcrd')
         ligand_p_1 = pmd.load_file(f'{self.mol.lower()}.prmtop')
-        # set resname
         ligand_p_1.residues[0].name = self.mol.lower()
-        ligand_p_1.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
-        ligands_p = ligand_p_1
+        # equilibration
+        if comp in ['q']:
+            # one ligand in inpcrd
+            # set resname
+            ligands_p = ligand_p_1
+            ligands_p.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
+        elif comp in ['z', 'o', 's', 'v']:
+            # two ligands in inpcrd
+            ligands_p = ligand_p_1 + ligand_p_1
+        elif comp in ['e']:
+            # four ligands in inpcrd
+            ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1 + ligand_p_1
+        else:
+            raise ValueError(f'Not implemented comp type {comp} for writing custom ligand parameters.')
+
+        ligands_p.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
 
         others_p = pmd.load_file('solvate_others.prmtop', 'solvate_others.inpcrd')
         outside_wat_p = pmd.load_file('solvate_outside_wat.prmtop', 'solvate_outside_wat.inpcrd')

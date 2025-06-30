@@ -6,7 +6,7 @@ PRMTOP="full.hmr.prmtop"
 PFOLDER=${PFOLDER:-pose0}
 CFOLDER=${CFOLDER:-sdr}
 COMP=${COMP:-z}
-NWINDOWS=${NWINDOWS:24}
+NWINDOWS=${NWINDOWS:-24}
 log_file="${PFOLDER}/${CFOLDER}/${COMP}_run.log"
 INPCRD=${INPCRD:-full.inpcrd}
 overwrite=${OVERWRITE:-0}
@@ -48,7 +48,7 @@ while [ $i -le FERANGE ]; do
     z=$(printf "%02d" $k)
 
     # x is the current step, y is the previous step, z is the next step
-    if [[ $overwrite -eq 0 && -s ${PFOLDER}/${CFOLDER}/${COMP00}/mdin-${z}.rst7 ]]; then
+    if [[ $overwrite -eq 0 && -s ${PFOLDER}/${CFOLDER}/${COMP}00/mdin-${z}.rst7 ]]; then
         echo "Skipping md${x} steps."
     else
         # if remd add -rem 3
