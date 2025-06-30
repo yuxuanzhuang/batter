@@ -3309,6 +3309,9 @@ class RBFESystem(System):
     using the separated topology methodology in BAT.py.
     """
     def _process_ligands(self):
+        raise NotImplementedError(
+            'RBFESystem is not implemented yet. '
+        )
         self._unique_ligand_paths = {}
         for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names):
             if ligand_path not in self._unique_ligand_paths:

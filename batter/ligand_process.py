@@ -131,6 +131,12 @@ class LigandProcessing(ABC):
             self.unique_mol_names
         )
         logger.debug(f'Ligand {self.index}: {self.name}')
+        self.openff_molecule.name = self.name.lower()
+
+        # needed for construction of residues
+        self.openff_molecule.add_default_hierarchy_schemes()
+        self.openff_molecule.residues[0].residue_name = self.name.lower()
+
         self.openff_molecule.to_file(self.ligand_sdf_path, file_format='sdf')
     
     @abstractmethod
@@ -204,7 +210,16 @@ class LigandProcessing(ABC):
         openff_ff = ForceField(f"{self.ligand_ff}.offxml")
         topology = Topology()
         topology.add_molecule(self.openff_molecule)
+
         interchange = openff_ff.create_interchange(topology)
+
+        # somehow topology doesn't capture the residue info of openff_molecule
+        for residue in interchange.topology.hierarchy_iterator("residues"):
+            residue.residue_name = mol.lower()
+        
+        # add atom name from mol2 file
+        for atom, atn in zip(interchange.topology.atoms, self.atomnames):
+            atom.name = atn
         interchange.to_prmtop(f"{self.output_dir}/{mol}.prmtop")
         logger.info(f'Ligand {mol} OpenFF parameters prepared: {self.output_dir}/{mol}.prmtop')
         
@@ -254,6 +269,10 @@ class LigandProcessing(ABC):
         run_with_log(f"{tleap} -f tleap.in",
                         working_dir=self.output_dir)
         
+        # save ligand atomnames from pdb file for future reference 
+        lig_u = mda.Universe(f"{self.output_dir}/{mol}.pdb")
+        self.atomnames = lig_u.atoms.names
+
         logger.info(f'Ligand {mol} AMBER parameters prepared: {self.output_dir}/{mol}.lib')
 
     def search_for_ligand(self):

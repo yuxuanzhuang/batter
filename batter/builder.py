@@ -811,7 +811,14 @@ class SystemBuilder(ABC):
         
         dum_p = pmd.load_file('solvate_dum.prmtop', 'solvate_dum.inpcrd')
         prot_p = pmd.load_file('solvate_prot.prmtop', 'solvate_prot.inpcrd')
-        ligands_p = pmd.load_file('solvate_ligands.prmtop', 'solvate_ligands.inpcrd')
+        # note we will replace the ligand parameter with existing ones
+        # ligands_p = pmd.load_file('solvate_ligands.prmtop', 'solvate_ligands.inpcrd')
+        ligand_p_1 = pmd.load_file(f'{self.mol.lower()}.prmtop')
+        # set resname
+        ligand_p_1.residues[0].name = self.mol.lower()
+        ligand_p_1.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
+        ligands_p = ligand_p_1
+
         others_p = pmd.load_file('solvate_others.prmtop', 'solvate_others.inpcrd')
         outside_wat_p = pmd.load_file('solvate_outside_wat.prmtop', 'solvate_outside_wat.inpcrd')
         around_wat_p = pmd.load_file('solvate_around_wat.prmtop', 'solvate_around_wat.inpcrd')
