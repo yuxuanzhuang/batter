@@ -23,14 +23,16 @@ from batter import MABFESystem, RBFESystem
 @click.command()
 @click.option('--input', required=True, type=click.Path(exists=True), help='Path to the system JSON file.')
 @click.option('--param', required=True, type=click.Path(exists=True), help='Path to the ABFE input configuration file.')
+@click.option('--ligand-ff', default='gaff2', type=click.Choice(['gaff2', 'openff-2.2.1'], case_sensitive=False))
 @click.option('--output-folder', required=True, type=str, help='Output folder for the simulation.')
 @click.option('--overwrite', is_flag=True, default=False, help='If set, overwrite existing output folders.')
 @click.option('--dry-run', is_flag=True, default=False, help='If set, stop before submitting jobs.')
-def run_pipeline(input, param, output_folder, overwrite, dry_run):
+def run_pipeline(input, param, ligand_ff, output_folder, overwrite, dry_run):
     """Run the ABFE pipeline."""
     click.echo(f"Running ABFE pipeline...")
     click.echo(f"System JSON: {input}")
     click.echo(f"Input param file: {param}")
+    click.echo(f"Ligand force field: {ligand_ff}")
     click.echo(f"Output folder: {output_folder}")
     click.echo(f"Overwrite: {overwrite}")
     click.echo(f"Dry run: {dry_run}")
@@ -76,6 +78,7 @@ def run_pipeline(input, param, output_folder, overwrite, dry_run):
                 system_topology=system_file,
                 system_coordinate=equilibrated_rst,
                 ligand_paths=ligand_files,
+                ligand_ff=ligand_ff,
                 overwrite=overwrite,
                 retain_lig_prot=True,
                 lipid_mol=['POPC'],

@@ -36,7 +36,6 @@ class SimulationConfig(BaseModel):
     other_mol: List[str] = Field(default_factory=list, info={'description': "Other co-binding molecules"})
     solv_shell: Optional[float] = Field(
         None, info={'description': "Water molecules around the protein that will be kept in the initial structure (in angstroms)"})
-    lipid_mol: List[str] = Field(default_factory=list, info={'description': "Lipid molecules resname"})
 
     # Variables for setting up equilibrium and free energy calculations, also used on analysis
     fe_type: str = Field(..., info={'description': "Free energy type (rest, dd, sdr, etc.)"})
@@ -142,15 +141,6 @@ class SimulationConfig(BaseModel):
     # OpenMM specific options for production simulations
     itcheck: str = Field('100', info={'description': "write checkpoint file every itcheck iterations"})
 
-    # Force field options for receptor and ligand
-    receptor_ff: str = Field("protein.ff14SB", info={'description': "Force field for the protein"})
-    ligand_ff: str = Field("gaff2", info={'description': "Force field for the ligand"})
-    ligand_ph: float = Field(7.4, info={'description': "Ligand pH"})
-    retain_lig_prot: str = Field("no", info={'description': "Retain ligand protonation (yes/no)"})
-    ligand_charge: Optional[int] = Field(None, info={'description': "Ligand charge"})
-    lipid_ff: str = Field(
-        "lipid21", info={'description': "Force field for the lipids; currently only lipid21 is supported"})
-
     # Internal usage
 
     weights: List[float] = Field(default_factory=list, info={'description': "Gaussian quadrature weights for TI"})
@@ -250,19 +240,6 @@ class SimulationConfig(BaseModel):
         if self.num_waters != 0:
             raise ValueError("'num_waters' is removed")
 
-        lipid_mol = self.lipid_mol
-        if lipid_mol:
-            logger.debug(f'Converting lipid input: {lipid_mol}')
-            charmm_amber_lipid_df = pd.read_csv(charmmlipid2amber, header=1, sep=',')
-
-            amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
-            amber_lipid_mol = amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
-
-            # extend instead of replacing so that we can have both
-            lipid_mol.extend(amber_lipid_mol)
-            self.lipid_mol = lipid_mol
-            logger.debug(f'New lipid_mol list: {self.lipid_mol}')
-
         if self.rec_bb == 'no':
             self.bb_start = [1]
             self.bb_end = [0]
@@ -339,7 +316,6 @@ class SimulationConfig(BaseModel):
         logger.debug(f'Receptor/complex structures: {self.celp_st}')
         logger.debug(f'Ligand names: {self.mols}')
         logger.debug(f'Cobinders names: {self.other_mol}')
-        logger.debug(f'Lipid names: {self.lipid_mol}')
         logger.debug(f'--------------------------------------------------------------')
         logger.debug(f'Finished initializing simulation configuration.')
         return self
@@ -366,7 +342,7 @@ class SimulationConfig(BaseModel):
             raise ValueError(f"Invalid fe_type: {value}. Must be one of {valid_types}.")
         return value
 
-    @field_validator("retain_lig_prot", "rec_bb", "neutralize_only", "hmr", "bb_equil", mode="before")
+    @field_validator("rec_bb", "neutralize_only", "hmr", "bb_equil", mode="before")
     def validate_yes_no(cls, value):
         if value.lower() not in {"yes", "no"}:
             raise ValueError(f"Invalid value: {value}. Must be 'yes' or 'no'.")
@@ -401,7 +377,7 @@ def parse_input_file(input_file: str) -> dict:
                         value = value.strip('\'\"-,.:;#()][')
                         if key in ['poses_list', 'ligand_list', 'other_mol',
                                    'celpp_receptor', 'ligand_name',
-                                   'bb_start', 'bb_end', 'lipid_mol']:
+                                   'bb_start', 'bb_end']:
                             split_sep = ','
                         else:
                             split_sep = None

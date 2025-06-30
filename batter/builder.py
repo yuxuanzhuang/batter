@@ -74,7 +74,7 @@ class SystemBuilder(ABC):
         self.pose = pose
         self.sim_config = sim_config
         self.other_mol = self.sim_config.other_mol
-        self.lipid_mol = self.sim_config.lipid_mol
+        self.lipid_mol = self.system.lipid_mol
 
         self.working_dir = working_dir
 
@@ -160,10 +160,13 @@ class SystemBuilder(ABC):
             logger.warning('WARNING: Switch to Berendsen barostat')
             barostat = '1'
         
-        receptor_ff = self.sim_config.receptor_ff
-        ligand_ff = self.sim_config.ligand_ff
-        lipid_ff = self.sim_config.lipid_ff
-        lipid_mol = self.sim_config.lipid_mol
+        receptor_ff = self.system.receptor_ff
+        ligand_ff = self.system.ligand_ff
+        if ligand_ff not in ['gaff', 'gaff2']:
+            # if ligand_ff is set to openff, use gaff2 to build the system
+            ligand_ff = 'gaff2'
+        lipid_ff = self.system.lipid_ff
+        lipid_mol = self.system.lipid_mol
         if lipid_mol:
             p_coupling = self.p_coupling if hasattr(self, 'p_coupling') else '3'
             c_surften = self.c_surften if hasattr(self, 'c_surften') else '3'
@@ -281,6 +284,7 @@ class SystemBuilder(ABC):
         buffer_x = self.sim_config.buffer_x
         buffer_y = self.sim_config.buffer_y
         targeted_buffer_z = self.sim_config.buffer_z
+        tleap_remove = None
 
         # default to 25 A
         if targeted_buffer_z == 0:
@@ -289,6 +293,7 @@ class SystemBuilder(ABC):
         # to reach buffer_z angstroms on each side
         buffer_z = get_buffer_z('build.pdb', targeted_buf=targeted_buffer_z)
         #logger.info(f'Using buffer_z = {buffer_z} angstroms')
+        buff = buffer_z
 
         water_model = self.sim_config.water_model
         num_waters = self.sim_config.num_waters
@@ -315,105 +320,14 @@ class SystemBuilder(ABC):
         for file in glob.glob('../../ff/dum.*'):
             os.system(f'cp {file} ./')
         
+        os.system(f'cp {mol.lower()}.mol2 vac_ligand.mol2')
+        os.system(f'cp {mol.lower()}.sdf vac_ligand.sdf')
+        os.system(f'cp {mol.lower()}.prmtop vac_ligand.prmtop')
+        os.system(f'cp {mol.lower()}.pdb vac_ligand.pdb')
+        os.system(f'cp {mol.lower()}.inpcrd vac_ligand.inpcrd')
+
         # Copy tleap files that are used for restraint generation and analysis
-        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac.in')
-        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac_ligand.in')
         os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap.in')
-
-        # Append tleap file for vacuum
-        with open('tleap_vac.in', 'a') as tleap_vac:
-            tleap_vac.write('# Load the necessary parameters\n')
-            for mol in other_mol:
-                tleap_vac.write(f'loadamberparams {mol.lower()}.frcmod\n')
-                tleap_vac.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n')
-            tleap_vac.write(f'loadamberparams {mol.lower()}.frcmod\n')
-            tleap_vac.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
-            if comp == 'x':
-                tleap_vac.write(f'loadamberparams {molr.lower()}.frcmod\n')
-                tleap_vac.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
-            tleap_vac.write('# Load the water parameters\n')
-            if water_model.lower() != 'tip3pf':
-                tleap_vac.write(f'source leaprc.water.{water_model.lower()}\n\n')
-            else:
-                tleap_vac.write('source leaprc.water.fb3\n\n')
-            tleap_vac.write('model = loadpdb build-dry.pdb\n\n')
-            tleap_vac.write('check model\n')
-            tleap_vac.write('savepdb model vac.pdb\n')
-            tleap_vac.write('saveamberparm model vac.prmtop vac.inpcrd\n')
-            tleap_vac.write('quit\n')
-
-        # Append tleap file for ligand only
-        tleap_vac_ligand = open('tleap_vac_ligand.in', 'a')
-        tleap_vac_ligand.write('# Load the ligand parameters\n')
-        tleap_vac_ligand.write(f'loadamberparams {mol.lower()}.frcmod\n')
-        tleap_vac_ligand.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
-        tleap_vac_ligand.write(f'model = loadpdb {mol.lower()}.pdb\n\n')
-        tleap_vac_ligand.write('check model\n')
-        tleap_vac_ligand.write('savepdb model vac_ligand.pdb\n')
-        tleap_vac_ligand.write('saveamberparm model vac_ligand.prmtop vac_ligand.inpcrd\n')
-        tleap_vac_ligand.write('quit\n')
-        tleap_vac_ligand.close()
-
-        # Generate complex in vacuum
-        p = run_with_log(f'{tleap} -s -f tleap_vac.in > tleap_vac.log')
-
-        # Generate ligand structure in vacuum
-        p = run_with_log(f'{tleap} -s -f tleap_vac_ligand.in > tleap_vac_ligand.log')
-
-        # Find out how many cations/anions are needed for neutralization
-        neu_cat = 0
-        neu_ani = 0
-        f = open('tleap_vac.log', 'r')
-        for line in f:
-            if "The unperturbed charge of the unit" in line:
-                splitline = line.split()
-                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
-                    neu_cat = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
-                    neu_ani = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-        f.close()
-
-        # Get ligand removed charge when doing LJ calculations
-        lig_cat = 0
-        lig_ani = 0
-        f = open('tleap_vac_ligand.log', 'r')
-        for line in f:
-            if "The unperturbed charge of the unit" in line:
-                splitline = line.split()
-                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
-                    lig_cat = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
-                    lig_ani = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-        f.close()
-
-        # Adjust ions for LJ and electrostatic Calculations (avoid neutralizing plasma)
-        if (comp == 'v' and dec_method == 'sdr') or comp == 'x':
-            charge_neut = neu_cat - neu_ani - 2*lig_cat + 2*lig_ani
-            neu_cat = 0
-            neu_ani = 0
-            if charge_neut > 0:
-                neu_cat = abs(charge_neut)
-            if charge_neut < 0:
-                neu_ani = abs(charge_neut)
-        
-        # only one charged ligand present
-        if comp == 's' or comp == 'o' or comp == 'z':
-            charge_neut = neu_cat - neu_ani - 1*lig_cat + 1*lig_ani
-            neu_cat = 0
-            neu_ani = 0
-            if charge_neut > 0:
-                neu_cat = abs(charge_neut)
-            if charge_neut < 0:
-                neu_ani = abs(charge_neut)
-
-        if comp == 'e' and dec_method == 'sdr':
-            charge_neut = neu_cat - neu_ani - 3*lig_cat + 3*lig_ani
-            neu_cat = 0
-            neu_ani = 0
-            if charge_neut > 0:
-                neu_cat = abs(charge_neut)
-            if charge_neut < 0:
-                neu_ani = abs(charge_neut)
 
         # Define volume density for different water models
         ratio = 0.060
@@ -427,32 +341,6 @@ class SystemBuilder(ABC):
             water_box = water_model.upper()+'BOX'
         elif water_model == 'TIP3PF':
             water_box = water_model.upper()+'BOX'
-
-        # Fixed z buffer
-        if buffer_z != 0:
-            buff = buffer_z
-            tleap_remove = None
-            # Get box volume and number of added ions
-            scripts.write_tleap(mol, molr, comp, water_model, water_box, buff, buffer_x, buffer_y, other_mol)
-            box_volume = scripts.box_volume()
-            logger.debug(f'Box volume {box_volume}')
-            # box volume already takes into account system shrinking during equilibration
-            num_cations = round(ion_def[2]*6.02e23*box_volume*1e-27)
-
-            # A rough reduction of the number of cations
-            # for lipid systems
-            if lipid_mol:
-                num_cations = num_cations // 2
-            # Number of cations and anions
-            num_cat = num_cations
-            num_ani = num_cations - neu_cat + neu_ani
-            # If there are not enough chosen cations to neutralize the system
-            if num_ani < 0:
-                num_cat = neu_cat
-                num_cations = neu_cat
-                num_ani = 0
-            logger.debug(f'Number of cations: {num_cat}')
-            logger.debug(f'Number of anions: {num_ani}')
 
         # First round just solvate the system
         #shutil.copy('tleap.in', 'tleap_solvate_pre.in')
@@ -738,6 +626,7 @@ class SystemBuilder(ABC):
             f.writelines(around_wat_lines)
         
         # Generate prmtop and inpcrd files for each part of the system
+
         # Note source leaprc.protein.ff14SB, leaprc.gaff2, leaprc.lipid21 is already included.
         # 1. DUM
         os.system(f'cp tleap.in tleap_solvate_dum.in')
@@ -800,6 +689,81 @@ class SystemBuilder(ABC):
         tleap_others.close()
         p = run_with_log(f'{tleap} -s -f tleap_solvate_others.in > tleap_others.log')
 
+        # Find out how many cations/anions are needed for neutralization
+        neu_cat = 0
+        neu_ani = 0
+        # I. add protein charge
+        f = open('tleap_prot.log', 'r')
+        for line in f:
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    neu_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    neu_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+        f.close()
+        # II. add other molecules charge
+        
+        # Get ligand removed charge when doing LJ calculations
+        f = open('tleap_others.log', 'r')
+        for line in f:
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    neu_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    neu_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+        f.close()
+
+        # III. add ligands charge
+        lig_cat = 0
+        lig_ani = 0
+        f = open('tleap_ligands.log', 'r')
+        for line in f:
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    lig_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    lig_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+        f.close()
+        # adjust ligand charge for the case when there are two ligands
+        if comp in ['x', 'z', 'o', 's', 'v']:
+            lig_cat = lig_cat // 2
+            lig_ani = lig_ani // 2
+        if comp == 'e':
+            lig_cat = lig_cat // 4
+            lig_ani = lig_ani // 4
+
+        charge_neut = neu_cat - neu_ani - lig_cat + lig_ani
+        neu_cat = 0
+        neu_ani = 0
+        if charge_neut > 0:
+            neu_cat = abs(charge_neut)
+        if charge_neut < 0:
+            neu_ani = abs(charge_neut)
+
+        # Get box volume and number of added ions
+        box_volume = system_dimensions[0] * system_dimensions[1] * system_dimensions[2]
+        logger.debug(f'Box volume {box_volume}')
+        # box volume already takes into account system shrinking during equilibration
+        num_cations = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+
+        # A rough reduction of the number of cations
+        # for lipid systems
+        if lipid_mol:
+            num_cations = num_cations // 2
+        # Number of cations and anions
+        num_cat = num_cations
+        num_ani = num_cations - neu_cat + neu_ani
+        # If there are not enough chosen cations to neutralize the system
+        if num_ani < 0:
+            num_cat = neu_cat
+            num_cations = neu_cat
+            num_ani = 0
+        logger.debug(f'Number of cations: {num_cat}')
+        logger.debug(f'Number of anions: {num_ani}')
+
         # 5. water that is outside 6 A from the protein
         # add ionization
         os.system(f'cp tleap.in tleap_solvate_outside_wat.in')
@@ -858,6 +822,12 @@ class SystemBuilder(ABC):
         combined.save('full.inpcrd', overwrite=True)
         combined.save('full.pdb', overwrite=True)
 
+        # combine vac parts
+        vac = dum_p + prot_p + ligands_p + others_p
+        vac.save('vac.prmtop', overwrite=True)
+        vac.save('vac.inpcrd', overwrite=True)
+        vac.save('vac.pdb', overwrite=True)
+        
         u = mda.Universe('full.pdb')
         u_vac = mda.Universe('vac.pdb')
         # regenerate full.pdb resid indices
@@ -978,7 +948,7 @@ class EquilibrationBuilder(SystemBuilder):
         os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
 
         other_mol = self.sim_config.other_mol
-        lipid_mol = self.sim_config.lipid_mol
+        lipid_mol = self.system.lipid_mol
         solv_shell = self.sim_config.solv_shell
         mol_u = mda.Universe(f'{self.pose}.pdb')
         if len(set(mol_u.residues.resnames)) > 1:
@@ -1587,9 +1557,7 @@ class EquilibrationBuilder(SystemBuilder):
         ligand_atm_num = scripts.num_to_mask(ligand_pdb_file)
 
         # Get number of ligand atoms
-        with open('./vac_ligand.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = int(data[-3][6:11].strip())
+        vac_atoms = mda.Universe(ligand_pdb_file).atoms.n_atoms
 
         # Define anchor atom distance restraints on the protein
         rst.append(''+P1+' '+P2+'')
@@ -1843,9 +1811,7 @@ class EquilibrationBuilder(SystemBuilder):
             L3 = data[8].strip()
 
         # Get number of atoms in vacuum
-        with open('./vac.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = data[-3][6:11].strip()
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
 
         # Create minimization and NPT equilibration files for big box and small ligand box
         with open(f"{self.amber_files_folder}/mini.in", "rt") as fin:
@@ -1945,7 +1911,7 @@ class FreeEnergyBuilder(SystemBuilder):
         self.comp_folder = f"{COMPONENTS_FOLDER_DICT[component]}"
         self.window_folder = f"{self.comp}{self.win:02d}"
 
-        self.lipid_mol = self.sim_config.lipid_mol
+        self.lipid_mol = self.system.lipid_mol
         if self.lipid_mol:
             # This will not effect SDR/DD
             # because semi-isotropic barostat is not supported
@@ -2820,16 +2786,11 @@ class FreeEnergyBuilder(SystemBuilder):
         atm_num = scripts.num_to_mask(pdb_file)
         ligand_atm_num = scripts.num_to_mask(ligand_pdb_file)
 
-        # Get number of ligand atoms
-        with open('./vac_ligand.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = int(data[-3][6:11].strip())
+        vac_atoms = mda.Universe('./vac_ligand.pdb').atoms.n_atoms
 
         # Get number of reference ligand atoms
         if comp == 'x':
-            with open('./vac_reference.pdb') as myfile:
-                data = myfile.readlines()
-                ref_atoms = int(data[-3][6:11].strip())
+            ref_atoms = mda.Universe('./vac_reference.pdb').atoms.n_atoms
 
         # Define anchor atom distance restraints on the protein
 
@@ -3705,9 +3666,7 @@ class FreeEnergyBuilder(SystemBuilder):
             L3 = data[8].strip()
 
         # Get number of atoms in vacuum
-        with open('./vac.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = data[-3][6:11].strip()
+        vac_atoms = mda.Universe('vac.pdb').atoms.n_atoms
 
         # Create minimization and NPT equilibration files for big box and small ligand box
         if comp != 'c' and comp != 'r' and comp != 'n':
@@ -3899,12 +3858,11 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             data = f.readline().split()
             L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('vac.pdb').atoms.n_atoms
+
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -4748,12 +4706,10 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
             data = f.readline().split()
             L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read and parse 'vac.pdb' once to reduce repeated file reads
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get the number of atoms in vacuum (from the third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Find the last ligand residue number
         last_lig = None
@@ -4889,12 +4845,10 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -5033,12 +4987,10 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -5775,12 +5727,10 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -6522,12 +6472,10 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None

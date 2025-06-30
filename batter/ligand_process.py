@@ -3,7 +3,6 @@ import numpy as np
 import MDAnalysis as mda
 from rdkit import Chem
 from openff.toolkit import Molecule
-from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
 from abc import ABC, abstractmethod
 from loguru import logger
 import random
@@ -100,6 +99,7 @@ class LigandProcessing(ABC):
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ff = ligand_ff
 
+        from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
         available_amber_ff = ['gaff', 'gaff2']
         available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
         if ligand_ff in available_amber_ff:
@@ -109,6 +109,7 @@ class LigandProcessing(ABC):
         else:
             raise ValueError(f"Unsupported force field: {ligand_ff}. "
                              f"Supported force fields are: {available_amber_ff + available_openff_ff}")
+        logger.debug(f'Using force field: {self.force_field} for ligand {ligand_file}')
 
         self.unique_mol_names = unique_mol_names
         ligand_rdkit = self._load_ligand()
@@ -168,7 +169,7 @@ class LigandProcessing(ABC):
         ligand_charge = np.round(np.sum([charge._magnitude
             for charge in molecule.partial_charges]))
         self.ligand_charge = ligand_charge
-        logger.info(f'The net charge of the ligand {self.name} in {self.ligand_file} is {ligand_charge}')
+        logger.info(f'The net charge of the ligand {self.name} in {self.ligand_file} is {ligand_charge}.')
 
     def prepare_ligand_parameters(self):
         if self.force_field == 'openff':
@@ -185,16 +186,27 @@ class LigandProcessing(ABC):
         It will generate the ligand topology with openff toolkit.
         We will use the prmtop file in the later steps.
         """
+        # First prepare the ligand parameters with AMBER force field
+        # this is for building the system with tleap
+        # as openff doesn't generate frcmod file for the ligand
+        
+        ligand_ff_openff = self.ligand_ff
+        self.ligand_ff = 'gaff2'
+        self.prepare_ligand_parameters_amberff()
+        self.ligand_ff = ligand_ff_openff
+
         from openff.toolkit import ForceField, Molecule, Topology
         from openfe import SmallMoleculeComponent
 
         mol = self.name
+        logger.debug(f'Preparing ligand {mol} parameters with OpenFF force field {self.ligand_ff}.')
 
         openff_ff = ForceField(f"{self.ligand_ff}.offxml")
         topology = Topology()
         topology.add_molecule(self.openff_molecule)
         interchange = openff_ff.create_interchange(topology)
         interchange.to_prmtop(f"{self.output_dir}/{mol}.prmtop")
+        logger.info(f'Ligand {mol} OpenFF parameters prepared: {self.output_dir}/{mol}.prmtop')
         
     def prepare_ligand_parameters_amberff(self):
         """
@@ -203,7 +215,7 @@ class LigandProcessing(ABC):
         We will use the prmtop file in the later steps.
         """
         mol = self.name
-        logger.debug(f'Preparing ligand {mol} parameters')
+        logger.debug(f'Preparing ligand {mol} parameters with AMBER force field {self.ligand_ff}.')
         self._calculate_partial_charge()
         abspath_sdf = os.path.abspath(self.ligand_sdf_path)
 
@@ -242,7 +254,7 @@ class LigandProcessing(ABC):
         run_with_log(f"{tleap} -f tleap.in",
                         working_dir=self.output_dir)
         
-        logger.info(f'Ligand {mol} parameters prepared: {self.output_dir}/{mol}.lib')
+        logger.info(f'Ligand {mol} AMBER parameters prepared: {self.output_dir}/{mol}.lib')
 
     def search_for_ligand(self):
         """

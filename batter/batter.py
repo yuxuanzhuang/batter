@@ -157,6 +157,7 @@ class System:
                     receptor_segment: str = None,
                     system_coordinate: str = None,
                     protein_align: str = 'name CA and resid 60 to 250',
+                    receptor_ff: str = 'protein.ff14SB',
                     retain_lig_prot: bool = True,
                     ligand_ph: float = 7.4,
                     ligand_ff: str = 'gaff2',
@@ -215,14 +216,17 @@ class System:
         protein_align : str
             The selection string for aligning the protein to the system.
             Default is 'name CA and resid 60 to 250'.
+        receptor_ff: str
+            Force field for the protein atoms.
+            Default is 'protein.ff14SB'.
         retain_lig_prot : bool, optional
             Whether to retain hydrogens in the ligand. Default is True.
         ligand_ph : float, optional
             pH value for protonating the ligand. Default is 7.4.
         ligand_ff : str, optional
             Parameter set for the ligand. Default is 'gaff2'.
-            'gaff' is not supported yet.
-            Options are 'gaff' and 'gaff2'.
+            Options are 'gaff' and 'gaff2' and openff force fields.
+            See https://github.com/openforcefield/openff-forcefields for full list.
         lipid_mol : List[str], optional
             List of lipid molecules to be included in the simulations.
             Default is an empty list.
@@ -273,6 +277,7 @@ class System:
             self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
         self.receptor_segment = receptor_segment
         self._protein_align = protein_align
+        self.receptor_ff = receptor_ff
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ph = ligand_ph
         self.ligand_ff = ligand_ff
@@ -313,11 +318,13 @@ class System:
         os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
         os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
 
-        if self.ligand_ff not in ['gaff', 'gaff2']:
-            raise ValueError(f"Invalid ligand_ff: {self.ligand_ff}"
-                             "Options are 'gaff' and 'gaff2'")
-        if self.ligand_ff == 'gaff':
-            raise NotImplementedError("gaff is not supported yet for dabble (maybe?)")
+        from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
+        available_amber_ff = ['gaff', 'gaff2']
+        available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
+        if ligand_ff not in available_amber_ff + available_openff_ff:
+            raise ValueError(f"Unsupported force field: {ligand_ff}. "
+                             f"Supported force fields are: {available_amber_ff + available_openff_ff}")
+
         self.lipid_mol = lipid_mol
         if not self.lipid_mol:
             self.membrane_simulation = False
@@ -726,17 +733,6 @@ class System:
         else:
             raise ValueError(f"Invalid input_file: {input_file}")
         logger.debug(f'Simulation configuration: {sim_config}')
-        if sim_config.lipid_ff != self.lipid_ff:
-            logger.warning(f"Different lipid_ff in the input: {sim_config.lipid_ff}\n"
-                             f"System is prepared with {self.lipid_ff}")
-        if sim_config.ligand_ff != self.ligand_ff:
-            logger.warning(f"Different ligand_ff in the input: {sim_config.ligand_ff}\n"
-                                f"System is prepared with {self.ligand_ff}")
-        sim_config_retain_lig_prot = sim_config.retain_lig_prot == 'yes'
-        if sim_config_retain_lig_prot != self.retain_lig_prot:
-            logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}\n"
-                            f"System is prepared with {self.retain_lig_prot}")
-        
         if sim_config.fe_type == 'relative' and not isinstance(self, RBFESystem):
             raise ValueError(f"Invalid fe_type: {sim_config.fe_type}, "
                  "should be 'relative' for RBFE system")
