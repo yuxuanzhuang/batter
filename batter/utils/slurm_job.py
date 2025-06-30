@@ -2,7 +2,7 @@ import os
 import subprocess
 from datetime import datetime
 from loguru import logger
-import time
+import time as time_m
 import getpass
 
 class SLURMJob:
@@ -55,9 +55,9 @@ class SLURMJob:
             except RuntimeError as e:
                 err_msg = str(e)
                 logger.debug(f"Failed to submit job: {e}; retrying in 30 seconds")
-                time.sleep(30)
+                time_m.sleep(30)
         else:
-            raise RuntimeError("Failed to submit job after 5 attempts with error: {err_msg}")
+            raise RuntimeError(f"Failed to submit job after 5 attempts with error: {err_msg}")
 
     def _submit(self):
 
@@ -72,8 +72,8 @@ class SLURMJob:
             cmd.append(f"--partition={self.partition}")
         if self.jobname:
             cmd.append(f"--job-name={self.jobname}")
-        if self.priority:
-            cmd.append(f"--priority={self.priority}")
+        #if self.priority:
+        #    cmd.append(f"--priority={self.priority}")
         if self.time:
             cmd.append(f"--time={self.time}")
         cmd.append(self.file_basename)

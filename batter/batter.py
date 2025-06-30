@@ -28,9 +28,9 @@ from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
-from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
+from batter.data import batch_files as batch_files_orig
 from batter.builder import BuilderFactory, get_ligand_candidates
 from batter.utils import (
     run_with_log,
@@ -125,12 +125,12 @@ class System:
 
         try:
             with open(system_file, 'rb') as f:
+
                 loaded_state = pickle.load(f)
                 # in case the folder is moved
                 loaded_state.output_dir = self.output_dir
                 # Update self with loaded attributes
                 self.__dict__.update(loaded_state.__dict__)
-                logger.add(f"{self.output_dir}/batter.log", level='INFO')
 
         except Exception as e:
             logger.error(f"Error loading the system: {e}")
@@ -157,6 +157,7 @@ class System:
                     receptor_segment: str = None,
                     system_coordinate: str = None,
                     protein_align: str = 'name CA and resid 60 to 250',
+                    receptor_ff: str = 'protein.ff14SB',
                     retain_lig_prot: bool = True,
                     ligand_ph: float = 7.4,
                     ligand_ff: str = 'gaff2',
@@ -215,14 +216,17 @@ class System:
         protein_align : str
             The selection string for aligning the protein to the system.
             Default is 'name CA and resid 60 to 250'.
+        receptor_ff: str
+            Force field for the protein atoms.
+            Default is 'protein.ff14SB'.
         retain_lig_prot : bool, optional
             Whether to retain hydrogens in the ligand. Default is True.
         ligand_ph : float, optional
             pH value for protonating the ligand. Default is 7.4.
         ligand_ff : str, optional
             Parameter set for the ligand. Default is 'gaff2'.
-            'gaff' is not supported yet.
-            Options are 'gaff' and 'gaff2'.
+            Options are 'gaff' and 'gaff2' and openff force fields.
+            See https://github.com/openforcefield/openff-forcefields for full list.
         lipid_mol : List[str], optional
             List of lipid molecules to be included in the simulations.
             Default is an empty list.
@@ -273,6 +277,7 @@ class System:
             self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
         self.receptor_segment = receptor_segment
         self._protein_align = protein_align
+        self.receptor_ff = receptor_ff
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ph = ligand_ph
         self.ligand_ff = ligand_ff
@@ -313,11 +318,13 @@ class System:
         os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
         os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
 
-        if self.ligand_ff not in ['gaff', 'gaff2']:
-            raise ValueError(f"Invalid ligand_ff: {self.ligand_ff}"
-                             "Options are 'gaff' and 'gaff2'")
-        if self.ligand_ff == 'gaff':
-            raise NotImplementedError("gaff is not supported yet for dabble (maybe?)")
+        from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
+        available_amber_ff = ['gaff', 'gaff2']
+        available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
+        if ligand_ff not in available_amber_ff + available_openff_ff:
+            raise ValueError(f"Unsupported force field: {ligand_ff}. "
+                             f"Supported force fields are: {available_amber_ff + available_openff_ff}")
+
         self.lipid_mol = lipid_mol
         if not self.lipid_mol:
             self.membrane_simulation = False
@@ -726,17 +733,6 @@ class System:
         else:
             raise ValueError(f"Invalid input_file: {input_file}")
         logger.debug(f'Simulation configuration: {sim_config}')
-        if sim_config.lipid_ff != self.lipid_ff:
-            logger.warning(f"Different lipid_ff in the input: {sim_config.lipid_ff}\n"
-                             f"System is prepared with {self.lipid_ff}")
-        if sim_config.ligand_ff != self.ligand_ff:
-            logger.warning(f"Different ligand_ff in the input: {sim_config.ligand_ff}\n"
-                                f"System is prepared with {self.ligand_ff}")
-        sim_config_retain_lig_prot = sim_config.retain_lig_prot == 'yes'
-        if sim_config_retain_lig_prot != self.retain_lig_prot:
-            logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}\n"
-                            f"System is prepared with {self.retain_lig_prot}")
-        
         if sim_config.fe_type == 'relative' and not isinstance(self, RBFESystem):
             raise ValueError(f"Invalid fe_type: {sim_config.fe_type}, "
                  "should be 'relative' for RBFE system")
@@ -919,7 +915,7 @@ class System:
     @save_state
     def submit(self,
                stage: str,
-               cluster: str = 'slurm',
+               batch_mode: bool = False,
                partition=None,
                time_limit=None,
                overwrite: bool = False,
@@ -931,9 +927,8 @@ class System:
         ----------
         stage : str
             The stage of the simulation. Options are 'equil', 'fe', and 'fe_equil'.
-        cluster : str
-            The cluster to submit the simulation.
-            Options are 'slurm' and 'frontier'.
+        batch_mode : str
+            Whether to submit the job in batch mode or not.
         partition : str, optional
             The partition to submit the job. Default is None,
             which means the default partition during prepartiion
@@ -943,8 +938,10 @@ class System:
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
-        if cluster == 'frontier':
-            raise NotImplementedError('run with `batter run-in-batch` instead')
+        if batch_mode:
+            if stage != 'fe':
+                raise NotImplementedError("Batch mode is only implemented for 'fe' stage")
+            raise NotImplementedError("Batch mode is not implemented yet")
             return
 
         if stage == 'equil':
@@ -1662,8 +1659,7 @@ class System:
         if stage == 'equil':
             # only need to do it once as all poses have the same protein
             ref_u = mda.Universe(
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb")
             
             selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
             logger.debug(f"Selection: {selection} to be restrained")
@@ -1699,7 +1695,7 @@ class System:
             # only need to do it once as all poses have the same protein
             ref_u = mda.Universe(
                     f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+            )
             
             selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
             logger.debug(f"Selection: {selection} to be restrained")
@@ -2250,6 +2246,7 @@ class System:
             logger.add(f'{self.output_dir}/batter.log', level='DEBUG')
             logger.info('Verbose output is set to True')
         logger.info('Running the pipeline')
+        
         self._max_num_jobs = max_num_jobs
 
         start_time = time.time()
@@ -2323,6 +2320,10 @@ class System:
             return
 
         #4.0, submit the free energy equilibration
+
+        remd = self.sim_config.remd == 'yes'
+        num_fe_sim = self.sim_config.num_fe_range
+
         logger.info('Running equilibrations before final FE simulations')
         if self._check_fe_equil():
             #3 prepare the free energy calculation
@@ -2338,6 +2339,9 @@ class System:
                 extra_restraints=extra_restraints,
                 extra_restraints_fc=extra_restraints_fc
             )
+            if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+                logger.info('Generating batch run files...')
+                self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
 
             logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
             logger.info('Submitting the free energy equilibration')
@@ -2409,43 +2413,59 @@ class System:
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')
 
+        if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+            logger.info('Generating batch run files...')
+            self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
+
         if self._check_fe():
             logger.info('Submitting the free energy calculation')
             if dry_run:
                 logger.info('Dry run is set to True. '
                             'Skipping the free energy submission.')
                 return
-            self.submit(
-                stage='fe',
-                partition=partition,
-                time_limit=time_limit,
-            )
-            logger.info('Free energy jobs submitted')
             
-            # Check the free energy calculation to finish
-            pbar = tqdm(
-                desc="FE simsulations finished",
-                unit="job"
-            )
-            while self._check_fe():
-                # get finishd jobs
-                n_finished = len([k for k, v in self._sim_finished.items() if v])
-                pbar.update(n_finished - pbar.n)
-                now = time.strftime("%m-%d %H:%M:%S")
-                desc = f"{now} – FE simulations finished"
-                pbar.set_description(desc)
-                #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
-                not_finished = [k for k, v in self._sim_finished.items() if not v]
-                failed = [k for k, v in self._sim_failed.items() if v]
+            if remd:
+                logger.info('Running free energy calculation with REMD in batch mode')
+                self.submit(
+                    stage='fe',
+                    batch_mode=True,
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+                
+            else:
+                logger.info('Running free energy calculation without REMD')
+                self.submit(
+                    stage='fe',
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+                logger.info('Free energy jobs submitted')
+                
+                # Check the free energy calculation to finish
+                pbar = tqdm(
+                    desc="FE simsulations finished",
+                    unit="job"
+                )
+                while self._check_fe():
+                    # get finishd jobs
+                    n_finished = len([k for k, v in self._sim_finished.items() if v])
+                    pbar.update(n_finished - pbar.n)
+                    now = time.strftime("%m-%d %H:%M:%S")
+                    desc = f"{now} – FE simulations finished"
+                    pbar.set_description(desc)
+                    #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                    not_finished = [k for k, v in self._sim_finished.items() if not v]
+                    failed = [k for k, v in self._sim_failed.items() if v]
 
-                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
-                not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
-                for job in not_finished_slurm_jobs:
-                    self._continue_job(self._slurm_jobs[job])
-                time.sleep(10*60)
-            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
-            pbar.set_description('FE calculation finished')
-            pbar.close()
+                    not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                    not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
+                    for job in not_finished_slurm_jobs:
+                        self._continue_job(self._slurm_jobs[job])
+                    time.sleep(10*60)
+                pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+                pbar.set_description('FE calculation finished')
+                pbar.close()
         else:
             logger.info('Free energy calculation is already finished')
             logger.info(f'If you want to have a fresh start, remove {self.fe_folder} manually')
@@ -2607,33 +2627,37 @@ class System:
 
     @safe_directory
     @save_state
-    def generate_frontier_files(self,
-                                remd=False,
-                                version=24,
-                                ):
+    def generate_batch_files(self,
+                            remd=False,
+                            time_limit=50, # 50 minutes
+                            num_fe_sim=10, # run each window for 10 times (restart).
+                            ):
         """
-        Generate the frontier files for the system
-        to run them in a bundle.
-        """
-        self._generate_frontier_equilibration()
-        self._generate_frontier_fe_equilibration(version=version)
-        self._generate_frontier_fe(remd=remd, version=version)
+        Generate the batch-run files for the system
+        with the option to run them with ACES (H-REMD).
 
-    def _generate_frontier_equilibration(self):
+        Specially, it will generate input files so that they can
+        run from the fe folder.
         """
-        Generate the frontier files for the equilibration stage
+        self._generate_batch_fe_equilibration()
+        self._generate_batch_fe(remd=remd,
+                                time_limit=time_limit,
+                                num_fe_sim=num_fe_sim)
+
+    def _generate_batch_equilibration(self):
+        """
+        Generate the batch files for the equilibration stage
         to run them in a bundle.
         """
         # TODO: implement this function
         # The problem is that there's a time restriction of 2 hours
-        # to run jobs in Frontier.
+        # to run jobs in clusters e.g. Frontier.
         # Thus the equilibration need to be split into smaller jobs
         pass
 
-
-    def _generate_frontier_fe_equilibration(self, version=24):
+    def _generate_batch_fe_equilibration(self):
         """
-        Generate the frontier files for the free energy calculation equilibration stage.
+        Generate the batch files for the free energy calculation equilibration stage.
         """
         poses_def = self.bound_poses
         components = self.sim_config.components
@@ -2668,7 +2692,7 @@ class System:
                         mdinput = f'fe/{win_eq_sim_folder_name}/{stage.split("_")[0]}'
                         with open(mdinput, 'r') as infile:
                             input_lines = infile.readlines()
-                            new_mdinput = f'{mdinput}_frontier'
+                            new_mdinput = f'{mdinput}_batch'
                             with open(new_mdinput, 'w') as outfile:
                                 for line in input_lines:
                                     if 'cv_file' in line:
@@ -2692,7 +2716,7 @@ class System:
                                 'eqnpt.in_04': 'eqnpt04',
                             }
                             f.write(
-                                f'-O -i {win_eq_sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous} '
+                                f'-O -i {win_eq_sim_folder_name}/{stage.split("_")[0]}_batch -p {prmtop} -c {stage_previous} '
                                 f'-o {win_eq_sim_folder_name}/{file_name_map[stage]}.out -r {win_eq_sim_folder_name}/{file_name_map[stage]}.rst7 -x {win_eq_sim_folder_name}/{file_name_map[stage]}.nc '
                                 f'-ref {stage_previous} -inf {win_eq_sim_folder_name}/{file_name_map[stage]}.mdinfo -l {win_eq_sim_folder_name}/{file_name_map[stage]}.log '
                                 f'-e {win_eq_sim_folder_name}/{file_name_map[stage]}.mden\n'
@@ -2705,19 +2729,18 @@ class System:
                     continue
                 write_2_pose(pose)
                 logger.debug(f'Generated groupfiles for {pose}')
-            # copy env.amber.24
-            env_amber_file = f'{frontier_files}/env.amber.{version}'
-            #shutil.copy(env_amber_file, 'fe/env.amber')
-            os.system(f'cp {env_amber_file} fe/env.amber')
             logger.info('FE EQ groupfiles generated for all poses')
 
 
-    def _generate_frontier_fe(self,
-                              remd=False,
-                              version=24,
-                              ):
+    def _generate_batch_fe(self,
+                           remd: bool = False,
+                           time_limit: int = 50, # 50 minutes
+                           num_fe_sim: int = 10, # run each window for 10 times (restart).
+                           num_gpus: int = 4, # number of GPUs per node to be used for REMD simulations
+                           num_nodes: int = 1, # number of nodes to be used for REMD simulations
+                           ):
         """
-        Generate the frontier files for the free energy calculation production stage.
+        Generate the batch files for the free energy calculation production stage.
         """
         poses_def = self.bound_poses
         components = self.sim_config.components
@@ -2727,11 +2750,11 @@ class System:
                 'mdin.in', 'mdin.in.extend'
         ]
         
-        def calculate_performance(n_atoms, comp):
+        def calculate_performance(n_atoms, comp, n_gpus_per_job):
             if comp not in COMPONENTS_DICT['dd']:
-                return 150 if n_atoms < 80000 else 80
+                return 150 * n_gpus_per_job if n_atoms < 80000 else 80 * n_gpus_per_job
             else:
-                return 80 if n_atoms < 80000 else 40
+                return 80 * n_gpus_per_job if n_atoms < 80000 else 40 * n_gpus_per_job
         
 
         def write_2_pose(pose):
@@ -2768,7 +2791,7 @@ class System:
                             with open(f'fe/{mdinput_path}', 'r') as infile:
                                 input_lines = infile.readlines()
 
-                            new_mdinput_path = f'fe/{sim_folder_name}/{stage.split("_")[0]}_frontier'
+                            new_mdinput_path = f'fe/{sim_folder_name}/{stage.split("_")[0]}_batch'
 
                             with open(new_mdinput_path, 'w') as outfile:
                                 for line in input_lines:
@@ -2831,26 +2854,28 @@ class System:
                                             else:
                                                # hard estimation of the size to be 100000 atoms 
                                                 n_atoms = 100000
-                                                performance = calculate_performance(n_atoms, component)
-                                                n_steps = int(50 / 60 / 24 * performance * 1000 * 1000 / 4)
+                                                performance = calculate_performance(n_atoms, component, n_gpus_per_job=num_gpus / n_sims)
+                                                n_steps = int(time_limit / 60 / 24 * performance * 1000 * 1000 / 4)
                                                 n_steps = int(n_steps // 100000 * 100000)
+                                                if stage == 'mdin.in':
+                                                    n_steps = n_steps // 10
                                                 line = f'  nstlim = {n_steps},\n'
                                     outfile.write(line)
 
                             f.write(f'# {component} {i} {stage}\n')
                             if stage == 'mdin.in':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in_batch -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
                                         f'-o {sim_folder_name}/mdin-00.out -r {sim_folder_name}/mdin-00.rst7 -x {sim_folder_name}/mdin-00.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
                                         f'-e {sim_folder_name}/mdin-00.mden\n')
                             elif stage == 'mdin.in.extend':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_frontier -p {prmtop} -c {sim_folder_name}/mdin-CURRNUM.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_batch -p {prmtop} -c {sim_folder_name}/mdin-CURRNUM.rst7 '
                                         f'-o {sim_folder_name}/mdin-NEXTNUM.out -r {sim_folder_name}/mdin-NEXTNUM.rst7 -x {sim_folder_name}/mdin-NEXTNUM.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
                                         f'-e {sim_folder_name}/mdin-NEXTNUM.mden\n')
                             else:
                                 f.write(
-                                    f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
+                                    f'-O -i {sim_folder_name}/{stage.split("_")[0]}_batch -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
                                     f'-o {sim_folder_name}/{stage}.out -r {sim_folder_name}/{stage}.rst7 -x {sim_folder_name}/{stage}.nc '
                                     f'-ref {stage_previous.replace("REPXXX", f"{i:02d}")} -inf {sim_folder_name}/{stage}.mdinfo -l {sim_folder_name}/{stage}.log '
                                     f'-e {sim_folder_name}/{stage}.mden\n'
@@ -2858,33 +2883,78 @@ class System:
                             if stage == 'mdin.in':
                                 all_replicates[component].append(f'{sim_folder_name}')
                         stage_previous = f'{sim_folder_temp}REPXXX/{stage}.rst7'
-            #logger.debug(f'all_replicates: {all_replicates}')
+
+                # generate the mdin.in.extend groupfiles for num_fe_sim files
+                temp_file = f'{pose_name}/groupfiles/{component}_mdin.in.extend.groupfile'
+                with open(temp_file, 'r') as infile:
+                    input_lines = infile.readlines()
+                for i in range(num_fe_sim):
+                    # replace temp_file NEXTNUM to i+1
+                    # replace CURRNUM to i
+                    new_temp_file = f'{pose_name}/groupfiles/{component}_mdin.in.stage{i+1:02d}.groupfile'
+                    with open(new_temp_file, 'w') as outfile:
+                        for line in input_lines:
+                            if 'mdin-NEXTNUM' in line:
+                                line = line.replace('mdin-NEXTNUM', f'mdin-{i+1:02d}')
+                            if 'mdin-CURRNUM' in line:
+                                line = line.replace('mdin-CURRNUM', f'mdin-{i:02d}')
+                            outfile.write(line)
             return all_replicates
 
         all_replicates = []
 
         with self._change_dir(self.output_dir):
-            filtered_poses = [pose for pose in poses_def if not os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND")]
-
             with ThreadPoolExecutor(max_workers=8) as executor:
-                results = list(tqdm(executor.map(write_2_pose, filtered_poses),
-                                    total=len(filtered_poses),
+                results = list(tqdm(executor.map(write_2_pose, poses_def),
+                                    total=len(poses_def),
                                     desc='Generating production groupfiles'))
                 all_replicates.extend(results)
 
-        #with self._change_dir(self.output_dir):
-        #    for i, pose in tqdm(enumerate(poses_def),
-        #                        desc='Generating production groupfiles',
-        #                        total=len(poses_def)):
-        #        if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-        #            continue
-        #        all_replicates.append(write_2_pose(pose, components))
-        #        logger.debug(f'Generated groupfiles for {pose}')
             logger.debug(all_replicates)
-            # copy env.amber.24
-            env_amber_file = f'{frontier_files}/env.amber.{version}'
-            #shutil.copy(env_amber_file, 'fe/env.amber')
-            os.system(f'cp {env_amber_file} fe/env.amber')
+
+            # Write SLURM run files into FE folder
+            os.makedirs(f'{self.fe_folder}/batch_run', exist_ok=True)
+            shutil.copytree(
+                batch_files_orig,
+                f'{self.fe_folder}/batch_run',
+                dirs_exist_ok=True
+            )
+            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "rt") as f:
+                fin = f.readlines()
+            
+            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('FERANGE', str(num_fe_sim)))
+            with open(f'{self.fe_folder}/batch_run/SLURMM-BATCH-Am', "rt") as f:
+                fin = f.readlines()
+            for pose in poses_def:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    num_windows = len(self.component_windows_dict.get(comp, []))
+                    with open(f"{self.fe_folder}/batch_run/SLURMM-run-{pose}-{comp}", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('STAGE', 'fe').replace(
+                                            'SYSTEMNAME', self.system_name).replace(
+                                            'POSE', pose).replace(
+                                            'PARTITIONNAME', self.partition).replace(
+                                            'NGPUS', str(num_gpus)).replace(
+                                            'NNODES', str(num_nodes)).replace(
+                                            'PFOLDERXXX', pose).replace(
+                                            'CFOLDERXXX', comp_folder).replace(
+                                            'COMPXXX', comp).replace(
+                                            'NWINDOWSXXX', str(num_windows)).replace(
+                                            'REMDXXX', '1' if remd else '0')
+                            )
+
+            for pose in poses_def:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+            
+            if 'z' in self.sim_config.components or 'o' in self.sim_config.components:
+                # add lambda.sch to the folder
+                with open(f'{self.fe_folder}/lambda.sch', 'w') as f:
+                    f.write('TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n')
+  
             logger.info('FE production groupfiles generated for all poses')
     
     def check_sim_stage(self, output='image', min_file_size=100, max_workers=16):
@@ -3025,7 +3095,7 @@ class System:
             sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
                     'eqnpt04.rst7',
                     'mini.in', 'mdin-00', 'mdin-01', 'SLURMM-run', 'run-local.bash',
-                    'cv.in', 'disang.rest', 'restraints.in']
+                    'cv.in', 'disang.rest', 'restraints.in', 'mini.rst7']
 
             for pose in tqdm(self.all_poses, desc='Copying files'):
                 for comp in self.sim_config.components:
