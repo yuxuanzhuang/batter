@@ -633,13 +633,8 @@ class System:
                              f"Available resnames are {np.unique(u_sys.atoms.resnames)}"
                              f"Please check the lipid_mol parameter.")
         else:
-            MEMB_OPLS_2_CHARMM_DICT = {
-                'O1': 'O12',
-                'O2': 'O11',
-                'O3': 'O13',
-                'O4': 'O14',
-                'P1': 'P',
-            }
+            with open(f'{build_files_orig}/memb_opls2charmm.json', 'r') as f:
+                MEMB_OPLS_2_CHARMM_DICT = json.load(f)
             if np.any(membrane_ag.names == 'O1'):
                 if np.any(membrane_ag.resnames != 'POPC'):
                     raise ValueError(f"Found OPLS lipid name {membrane_ag.residues.resnames}, only 'POPC' is supported. ")
@@ -652,7 +647,9 @@ class System:
             logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
             comp_2_combined.append(membrane_ag)
 
-        water_ag = u_sys.select_atoms('byres ((resname SPC or water) and around 15 (protein or group memb))', memb=membrane_ag)
+        # maestro generated pdb doesn't have SPC water H and O in the same place.
+        # probably a potential bug
+        water_ag = u_sys.select_atoms('byres (((resname SPC and name O) or water) and around 15 (protein or group memb))', memb=membrane_ag)
         logger.debug(f'Number of water molecules: {water_ag.n_residues}')
         
         # also include ions to water_ag

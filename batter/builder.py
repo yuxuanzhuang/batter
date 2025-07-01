@@ -1127,8 +1127,6 @@ class EquilibrationBuilder(SystemBuilder):
         logger.debug(f'Converting CHARMM lipids: {old_lipid_mol} to AMBER format: {lipid_mol}')
 
 
-
-
         # Create raw complex and clean it
         filenames = ['protein.pdb',
                      '%s.pdb' % mol.lower(),
