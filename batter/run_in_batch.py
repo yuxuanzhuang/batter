@@ -115,7 +115,12 @@ def run_in_batch(
     if lambda_schedule is not None:
         # convert to absolute path
         lambda_schedule = os.path.abspath(lambda_schedule)
-        extra_flag = f'-lambda_sch {lambda_schedule}'
+        if not os.path.exists(lambda_schedule):
+            raise FileNotFoundError(f'Lambda schedule file {lambda_schedule} does not exist. Please provide a valid path.')
+        # when using pmemd.mpi, this flag actually need to be inside the groupfile
+        #extra_flag = f'-lambda_sch {lambda_schedule}'
+        extra_flag = ''
+        # so we copy this file into the fe_folder later
     else:
         extra_flag = ''
 
@@ -123,6 +128,13 @@ def run_in_batch(
         eq_stage = False
 
         system = MABFESystem(folder)
+        # copy the lambda schedule file to the fe_folder if it exists
+        # first remove existing lambda.sch
+        if lambda_schedule is not None and os.path.exists(f'{system.fe_folder}/lambda.sch'):
+            os.remove(f'{system.fe_folder}/lambda.sch')
+            os.system(f'cp {lambda_schedule} {system.fe_folder}/lambda.sch')
+        elif lambda_schedule is None:
+            os.remove(f'{system.fe_folder}/lambda.sch')
         if window_json is not None:
             system.load_window_json(window_json)
             overwrite = True
@@ -250,6 +262,8 @@ def run_in_batch(
             elif last_rst7 == 'eq_finished':
                 logger.debug(f'{pose} eq stage finished')
                 continue
+            else:
+                raise ValueError(f'{pose} {last_rst7} is not a valid eq stage')
             total_num_nodes += n_nodes
             total_num_jobs += n_windows
 
