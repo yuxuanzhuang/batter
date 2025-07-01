@@ -70,7 +70,7 @@ def check_stage(pose, comp, n_windows, fe_folder):
                 raise ValueError(f'Second last {last_mdin} is also empty, panicking...')
         return int(last_mdin.split('-')[-1].split('.')[0])
 
-@click.command(help='Run the simulations in batch in Frontier.')
+@click.command(help='Run the simulations in batch.')
 @click.option('--folders', '-f',
               multiple=True,
               help='Folders of the simulations to gather simulations from.',
@@ -86,7 +86,7 @@ def check_stage(pose, comp, n_windows, fe_folder):
 @click.option('--lambda_schedule', '-l', default=None,
                help='The lambda schedule file to use for the simulation.',
                 type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
-@click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared frontier files.')
+@click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared batch files.')
 @click.option('--env_amber', '-env', default='/ccs/home/yuzhuang/env.amber', help='Path to the AMBER environment script to source.')
 def run_in_batch(
         folders,
@@ -128,7 +128,7 @@ def run_in_batch(
             overwrite = True
         if not os.path.exists(f'{system.fe_folder}/pose0/groupfiles') or overwrite:
             logger.info('Generating run files...')
-            system.generate_frontier_files(remd=remd)
+            system.generate_batch_files(remd=remd)
         run_lines.append(f'# {folder}')
         run_lines.append(f'cd {system.fe_folder}\n\n')
         # first check eq_stage

@@ -1,0 +1,104 @@
+#!/bin/bash
+
+#SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
+#SBATCH --partition=PARTITIONNAME
+#SBATCH --open-mode=append
+#SBATCH --output=STAGE-POSE-%j.out
+#SBATCH --error=STAGE-POSE-%j.err
+#SBATCH --cpus-per-task=1
+#SBATCH -t 16:00:00
+#SBATCH -d singleton
+#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
+#SBATCH --nodes=NNODES
+#SBATCH --gpus=NGPUS
+#SBATCH --gpu_cmode="shared"
+#SBATCH --mem=64G
+
+
+scontrol show job $SLURM_JOB_ID
+# start time
+echo "Job started at $(date)"
+
+export OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
+export PFOLDER="PFOLDERXXX"
+export CFOLDER="CFOLDERXXX"
+export COMP="COMPXXX"
+export NWINDOWS="NWINDOWSXXX"
+export REMD="REMDXXX"
+
+echo "OVERWRITE: $OVERWRITE"
+echo "PFOLDER: $PFOLDER"
+echo "CFOLDER: $CFOLDER"
+echo "COMP: $COMP"
+echo "NWINDOWS: $NWINDOWS"
+echo "REMD: $REMD"
+
+# Set a path for the retry count file on a shared filesystem.
+# Change this path as needed.
+ATTEMPT_FILE="${PFOLDER}/${CFOLDER}/${COMP}_job_attempt.txt"
+
+# Initialize the attempt count file if it doesn't exist.
+if [ ! -f "$ATTEMPT_FILE" ]; then
+    echo "1" > "$ATTEMPT_FILE"
+fi
+
+# Read the current retry count.
+RETRY_COUNT=$(cat "$ATTEMPT_FILE")
+echo "Current attempt: $RETRY_COUNT"
+
+# Define the maximum number of attempts.
+MAX_ATTEMPTS=5
+
+source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
+
+# Run the simulation
+echo "Attempt $RETRY_COUNT to run simulations..."
+(
+    source batch_run/run-local-batch.bash
+)
+error_code=$?
+
+if [ $error_code -eq 0 ]; then
+    echo "Simulation completed successfully on attempt $RETRY_COUNT."
+else
+    echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
+
+    if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
+        NEXT_RETRY=$((RETRY_COUNT + 1))
+        # Update the file with the new retry count.
+        echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
+        echo "Requeuing the job for attempt $NEXT_RETRY..."
+        # Requeue the same job (retains the same job ID).
+        # Exclude the node where the job failed.
+        # wait for 0.5 min
+        sleep 30
+        bad_node=$(
+        scontrol show job $SLURM_JOB_ID |
+            grep -m1 '^[[:space:]]*NodeList=' |
+            awk -F= '{print $2}' |
+            tr -d '[:space:]'
+        )
+        #echo "$bad_node"
+        echo "Bad node: $bad_node"
+        if [ -z "$bad_node" ]; then
+            scontrol requeue "$SLURM_JOB_ID"
+        else
+            scontrol update JobId=$SLURM_JOB_ID ExcNodeList=="$bad_node"
+            scontrol requeue "$SLURM_JOB_ID"
+        fi
+        
+        exit 0
+    else
+        echo "FAILED" > "${PFOLDER}/${CFOLDER}/${COMP}_FAILED"
+        echo "Maximum attempts (${MAX_ATTEMPTS}) reached. Simulation failed."
+        exit 1
+    fi
+fi
+
+if [[ ! -f "${PFOLDER}/${CFOLDER}/${COMP}_FAILED ]]; then
+    echo "Simulation is not complete."
+    scontrol requeue $SLURM_JOB_ID
+    exit 0
+fi
+echo "Job completed at $(date)"
+exit 0

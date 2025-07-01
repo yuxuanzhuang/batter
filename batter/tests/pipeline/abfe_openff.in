@@ -139,19 +139,3 @@ cut = 9.0                  # cutoff for nonbonded interactions
 gamma_ln = 1.0             # collision frequency in ps^-1 for Langevin Dynamics (temperature control)
 barostat = 1               # type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)
 dt = 0.004                 # simulation time step in ps
-
-# Force field options for receptor and ligand
-
-# not sure other ff can work
-receptor_ff = protein.ff14SB   # Force field for receptor atoms
-
-ligand_ff = gaff2               # Force field for ligand atoms (gaff or gaff2 available)
-
-# not used from the input but should be input of create_system 
-ligand_ph = 7.0                # Choose pH for ligand protonation
-retain_lig_prot = yes
-ligand_charge = 1
-
-# new parameters to include lipids
-lipid_mol = [ POPC ]  # List of lipid molecules to be included in the simulations
-lipid_ff = lipid21 # Currently only lipid21 is available
