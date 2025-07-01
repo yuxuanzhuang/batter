@@ -89,7 +89,7 @@ def run_pipeline(input, param, ligand_ff, output_folder, overwrite, dry_run):
         input_file=param,
         dry_run=dry_run,
         extra_restraints=extra_restraints,
-        partition='rondror',
+        partition='owners',
     )
 
 if __name__ == '__main__':

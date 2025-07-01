@@ -994,7 +994,67 @@ class System:
         if batch_mode:
             if stage != 'fe':
                 raise NotImplementedError("Batch mode is only implemented for 'fe' stage")
-            raise NotImplementedError("Batch mode is not implemented yet")
+            # submit at fe folder
+            logger.info('Submit free energy stage in batch mode')
+            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
+            for i, pose in enumerate(self.bound_poses):
+                # only check for each pose to reduce frequently checking SLURM 
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
+                    time.sleep(120)
+                    pbar.set_description(f'Waiting to submit FE jobs')
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}'
+                    if os.path.exists(f"{folder_2_check}/{comp}_FINISHED") and not overwrite:
+                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}batch', None)
+                        logger.debug(f'FE for {pose}/{comp_folder}/{comp}batch has finished; add overwrite=True to re-run the simulation')
+                        continue
+                    if os.path.exists(f"{folder_2_check}/{comp}_FAILED") and not overwrite:
+                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}batch', None)
+                        logger.warning(f'FE for {pose}/{comp_folder}/{comp}batch has failed; add overwrite=True to re-run the simulation')
+                        continue
+                    if f'fe_{pose}_{comp_folder}_{comp}batch' in self._slurm_jobs:
+                        slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}batch']
+                        if not slurm_job.is_still_running():
+                            slurm_job.submit(
+                                requeue=True,
+                                time=time_limit,
+                            )
+                            continue
+                        elif overwrite:
+                            slurm_job.cancel()
+                            slurm_job.submit(overwrite=True,
+                                time=time_limit,
+                            )
+                            continue
+                        else:
+                            logger.debug(f'FE job for {pose}/{comp_folder}/{comp}batch is still running')
+                            continue
+
+                    if overwrite:
+                        # remove FINISHED and FAILED
+                        os.remove(f"{folder_2_check}/{comp}_FINISHED", ignore_errors=True)
+                        os.remove(f"{folder_2_check}/{comp}_FAILED", ignore_errors=True)
+
+                    slurm_job = SLURMJob(
+                                    filename=f'{self.fe_folder}/batch_run/SLURMM-run-{pose}-{comp}',
+                                    path=f'{self.fe_folder}',
+                                    partition=partition,
+                                    jobname=f'fep_{folder_2_check}_{comp}_fe',
+                                    )
+                    slurm_job.submit(overwrite=overwrite,
+                                time=time_limit,
+                    )
+
+                    pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}batch submitted')
+                    self._slurm_jobs.update(
+                        {f'fe_{pose}_{comp_folder}_{comp}batch': slurm_job}
+                    )
+                    self._save_state()
+                pbar.update(1)
+            pbar.close()
+
+            logger.info('Free energy systems have been submitted in batch for all poses listed in the input file.')
             return
 
         if stage == 'equil':
@@ -2375,6 +2435,7 @@ class System:
         #4.0, submit the free energy equilibration
 
         remd = self.sim_config.remd == 'yes'
+        self.batch_mode = remd
         num_fe_sim = self.sim_config.num_fe_range
 
         logger.info('Running equilibrations before final FE simulations')
@@ -2477,7 +2538,7 @@ class System:
                             'Skipping the free energy submission.')
                 return
             
-            if remd:
+            if self.batch_mode:
                 logger.info('Running free energy calculation with REMD in batch mode')
                 self.submit(
                     stage='fe',
@@ -2485,7 +2546,6 @@ class System:
                     partition=partition,
                     time_limit=time_limit,
                 )
-                
             else:
                 logger.info('Running free energy calculation without REMD')
                 self.submit(
@@ -2493,32 +2553,32 @@ class System:
                     partition=partition,
                     time_limit=time_limit,
                 )
-                logger.info('Free energy jobs submitted')
+            logger.info('Free energy jobs submitted')
                 
-                # Check the free energy calculation to finish
-                pbar = tqdm(
-                    desc="FE simsulations finished",
-                    unit="job"
-                )
-                while self._check_fe():
-                    # get finishd jobs
-                    n_finished = len([k for k, v in self._sim_finished.items() if v])
-                    pbar.update(n_finished - pbar.n)
-                    now = time.strftime("%m-%d %H:%M:%S")
-                    desc = f"{now} – FE simulations finished"
-                    pbar.set_description(desc)
-                    #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
-                    not_finished = [k for k, v in self._sim_finished.items() if not v]
-                    failed = [k for k, v in self._sim_failed.items() if v]
+            # Check the free energy calculation to finish
+            pbar = tqdm(
+                desc="FE simsulations finished",
+                unit="job"
+            )
+            while self._check_fe():
+                # get finishd jobs
+                n_finished = len([k for k, v in self._sim_finished.items() if v])
+                pbar.update(n_finished - pbar.n)
+                now = time.strftime("%m-%d %H:%M:%S")
+                desc = f"{now} – FE simulations finished"
+                pbar.set_description(desc)
+                #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                not_finished = [k for k, v in self._sim_finished.items() if not v]
+                failed = [k for k, v in self._sim_failed.items() if v]
 
-                    not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
-                    not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
-                    for job in not_finished_slurm_jobs:
-                        self._continue_job(self._slurm_jobs[job])
-                    time.sleep(10*60)
-                pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
-                pbar.set_description('FE calculation finished')
-                pbar.close()
+                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
+                for job in not_finished_slurm_jobs:
+                    self._continue_job(self._slurm_jobs[job])
+                time.sleep(10*60)
+            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.set_description('FE calculation finished')
+            pbar.close()
         else:
             logger.info('Free energy calculation is already finished')
             logger.info(f'If you want to have a fresh start, remove {self.fe_folder} manually')
@@ -2613,6 +2673,8 @@ class System:
         """
         Check if the free energy calculation is finished.
         """
+        if self.batch_mode:
+            return self._check_fe_batch()
         sim_finished = {}
         sim_failed = {}
         for pose in self.bound_poses:
@@ -2627,6 +2689,38 @@ class System:
                         sim_finished[f'fe_{pose}_{comp_folder}_{comp}{j:02d}'] = True
                     if os.path.exists(f"{folder_2_check}/FAILED"):
                         sim_failed[f'fe_{pose}_{comp_folder}_{comp}{j:02d}'] = True
+
+        self._sim_finished = sim_finished
+        self._sim_failed = sim_failed
+        # if all are finished, return False
+        if any(self._sim_failed.values()):
+            logger.error(f'Free energy calculation failed: {self._sim_failed}')
+            raise ValueError(f'Free energy calculation failed: {self._sim_failed}')
+        if all(self._sim_finished.values()):
+            logger.debug('Free energy calculation is finished')
+            return False
+        else:
+            not_finished = [k for k, v in self._sim_finished.items() if not v]
+            logger.debug(f'Not finished: {not_finished}')
+            return True
+
+    @save_state
+    def _check_fe_batch(self):
+        """
+        Check if the free energy calculation is finished in batch mode.
+        """
+        sim_finished = {}
+        sim_failed = {}
+        for pose in self.bound_poses:
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/'
+                if not os.path.exists(f"{folder_2_check}/{comp}_FINISHED"):
+                    sim_finished[f'fe_{pose}_{comp_folder}_{comp}batch'] = False
+                else:
+                    sim_finished[f'fe_{pose}_{comp_folder}_{comp}batch'] = True
+                if os.path.exists(f"{folder_2_check}/{comp}_FAILED"):
+                    sim_failed[f'fe_{pose}_{comp_folder}_{comp}batch'] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed

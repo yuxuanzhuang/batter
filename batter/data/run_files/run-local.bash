@@ -3,7 +3,7 @@
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
 log_file="run.log"
-INPCRD=${INPCRD:-full.inpcrd}
+INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
 
