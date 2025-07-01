@@ -24,7 +24,7 @@ if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
 else
     pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
-    if ! check_min_energy "mini.out" 0; then
+    if ! check_min_energy "mini.out" -10000; then
         echo "Minimization not passed with cuda; trying CPU"
         rm -f "$log_file"
         rm -f mini.rst7 mini.nc mini.out
@@ -34,7 +34,7 @@ else
             pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         fi
         check_sim_failure "Minimization" "$log_file"
-        if ! check_min_energy "mini.out" 0; then
+        if ! check_min_energy "mini.out" -10000; then
             echo "Minimization with CPU also failed, exiting."
             rm -f mini.rst7 mini.nc mini.out
             exit 1

@@ -306,6 +306,9 @@ class System:
                 box = np.array([float(x) for x in lines[-1].split()])
             self.system_dimensions = box
             u_sys.load_new(system_coordinate, format='INPCRD')
+        else:
+            self.system_dimensions = u_sys.dimensions[:3]
+
         if (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self.system_coordinate is None:
             raise ValueError(f"No dimension of the box was found in the system_topology or system_coordinate")
 
@@ -583,30 +586,24 @@ class System:
         memb_seg = u_sys.add_Segment(segid='MEMB')
         water_seg = u_sys.add_Segment(segid='WATR')
 
-        membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
-        membrane_ag.chainIDs = 'M'
-        membrane_ag.residues.segments = memb_seg
-        logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
-        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 15 (protein or resname POPC))')
-        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
-        # also include ions (in CHARMM name) to water_ag
-        ion_ag = u_sys.select_atoms('byres (resname SOD POT CLA and around 5 (protein))')
-        logger.debug(f'Number of ion molecules: {ion_ag.n_residues}')
-        # replace SOD with Na+ and POT with K+ and CLA with Cl-
-        ion_ag.select_atoms('resname SOD').names = 'Na+'
-        ion_ag.select_atoms('resname SOD').residues.resnames = 'Na+'
-        ion_ag.select_atoms('resname POT').names = 'K+'
-        ion_ag.select_atoms('resname POT').residues.resnames = 'K+'
-        ion_ag.select_atoms('resname CLA').names = 'Cl-'
-        ion_ag.select_atoms('resname CLA').residues.resnames = 'Cl-'
-
-        water_ag = water_ag + ion_ag
-        water_ag.chainIDs = 'W'
-        water_ag.residues.segments = water_seg
-
         # modify the chaininfo to be unique for each segment
-        current_chain = 66
+        current_chain = 65
         u_prot.atoms.tempfactors = 0
+
+        # read the validate the correct segments
+        # sometimes the segments can be messed up.
+        n_segments = len(u_sys.select_atoms('protein').segments)
+        n_segment_name = np.unique(u_sys.select_atoms('protein').segids)
+        if len(n_segment_name) != n_segments:
+            logger.warning(f"Number of segments in the system is {n_segments} "
+                                f"but the segment names are {n_segment_name}. "
+                                f"Setting all segments to 'A' for the protein."
+                                "If you want to use different segments, "
+                                "modify the segments column in the system_topology file manually."
+                                )
+            protein_seg = u_sys.add_Segment(segid='A')
+            u_sys.select_atoms('protein').residues.segments = protein_seg
+
         for segment in u_sys.select_atoms('protein').segments:
             resid_seg = segment.residues.resids
             resid_seq = " ".join([str(resid) for resid in resid_seg])
@@ -616,20 +613,76 @@ class System:
             current_chain += 1
         u_prot.atoms.chainIDs = [chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors]
 
+        comp_2_combined = []
+
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(f'segid {self.receptor_segment} and protein')
             protein_anchor.atoms.chainIDs = 'A'
             protein_anchor.atoms.tempfactors = 65
             other_protein = u_prot.select_atoms(f'not segid {self.receptor_segment} and protein')
-            u_merged = mda.Merge(protein_anchor,
-                                 other_protein,
-                                 membrane_ag,
-                                 water_ag)
+            
+            comp_2_combined.append(protein_anchor)
+            comp_2_combined.append(other_protein)
         else:
-            u_merged = mda.Merge(u_prot.select_atoms('protein'),
-                                 membrane_ag,
-                                 water_ag)
-        water = u_merged.select_atoms('resname TIP3')
+            comp_2_combined.append(u_prot.select_atoms('protein'))
+        
+
+        membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
+        if len(membrane_ag) == 0:
+            logger.warning(f"No membrane atoms found with resname {self.lipid_mol}. \n"
+                             f"Available resnames are {np.unique(u_sys.atoms.resnames)}"
+                             f"Please check the lipid_mol parameter.")
+        else:
+            MEMB_OPLS_2_CHARMM_DICT = {
+                'O1': 'O12',
+                'O2': 'O11',
+                'O3': 'O13',
+                'O4': 'O14',
+                'P1': 'P',
+            }
+            if np.any(membrane_ag.names == 'O1'):
+                if np.any(membrane_ag.resnames != 'POPC'):
+                    raise ValueError(f"Found OPLS lipid name {membrane_ag.residues.resnames}, only 'POPC' is supported. ")
+                # convert the lipid names to CHARMM names
+                membrane_ag.names = [MEMB_OPLS_2_CHARMM_DICT.get(name, name) for name in membrane_ag.names]
+                logger.info(f"Converting OPLS lipid names to CHARMM names.")
+            
+            membrane_ag.chainIDs = 'M'
+            membrane_ag.residues.segments = memb_seg
+            logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
+            comp_2_combined.append(membrane_ag)
+
+        water_ag = u_sys.select_atoms('byres ((resname SPC or water) and around 15 (protein or group memb))', memb=membrane_ag)
+        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
+        
+        # also include ions to water_ag
+        ion_ag = u_sys.select_atoms('byres (resname SOD POT CLA NA CL and around 5 (protein))')
+        logger.debug(f'Number of ion molecules: {ion_ag.n_residues}')
+        # replace SOD with Na+ and POT with K+ and CLA with Cl-
+        ion_ag.select_atoms('resname SOD').names = 'Na+'
+        ion_ag.select_atoms('resname SOD').residues.resnames = 'Na+'
+        ion_ag.select_atoms('resname Na').names = 'Na+'
+        ion_ag.select_atoms('resname Na').residues.resnames = 'Na+'
+        ion_ag.select_atoms('resname POT').names = 'K+'
+        ion_ag.select_atoms('resname POT').residues.resnames = 'K+'
+        ion_ag.select_atoms('resname CLA').names = 'Cl-'
+        ion_ag.select_atoms('resname CLA').residues.resnames = 'Cl-'
+        ion_ag.select_atoms('resname CL').names = 'Cl-'
+        ion_ag.select_atoms('resname CL').residues.resnames = 'Cl-'
+
+        water_ag = water_ag + ion_ag
+        water_ag.chainIDs = 'W'
+        water_ag.residues.segments = water_seg
+        if len(water_ag) == 0:
+            logger.warning(f"No water molecules found in the system. "
+                             f"Available resnames are {np.unique(u_sys.atoms.resnames)}"
+                             f"Please check the system_topology and system_coordinate files.")
+        else:
+            comp_2_combined.append(water_ag)
+
+        u_merged = mda.Merge(*comp_2_combined)
+
+        water = u_merged.select_atoms('water or resname SPC')
         logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
         logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
 

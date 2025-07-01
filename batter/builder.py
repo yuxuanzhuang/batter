@@ -1007,7 +1007,6 @@ class EquilibrationBuilder(SystemBuilder):
                                    .replace('MMM', f"\'{mol}\'"))
         run_with_log(f'{vmd} -dispdev text -e split.tcl', error_match='syntax error')
 
-        #shutil.copy('./protein.pdb', './protein_vmd.pdb')
         os.system(f'cp protein.pdb protein_vmd.pdb')
         run_with_log('pdb4amber -i protein_vmd.pdb -o protein.pdb -y')
         renum_txt = 'protein_renum.txt'
