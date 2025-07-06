@@ -658,8 +658,8 @@ class System:
         # replace SOD with Na+ and POT with K+ and CLA with Cl-
         ion_ag.select_atoms('resname SOD').names = 'Na+'
         ion_ag.select_atoms('resname SOD').residues.resnames = 'Na+'
-        ion_ag.select_atoms('resname Na').names = 'Na+'
-        ion_ag.select_atoms('resname Na').residues.resnames = 'Na+'
+        ion_ag.select_atoms('resname NA').names = 'Na+'
+        ion_ag.select_atoms('resname NA').residues.resnames = 'Na+'
         ion_ag.select_atoms('resname POT').names = 'K+'
         ion_ag.select_atoms('resname POT').residues.resnames = 'K+'
         ion_ag.select_atoms('resname CLA').names = 'Cl-'

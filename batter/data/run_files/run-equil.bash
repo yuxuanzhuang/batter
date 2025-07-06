@@ -22,7 +22,7 @@ source check_run.bash
 if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
     echo "Skipping EM steps." 
 else
-    pmemd.cuda -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
     if ! check_min_energy "mini.out" -10000; then
         echo "Minimization not passed with cuda; trying CPU"
@@ -49,6 +49,8 @@ else
     # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
     pmemd.cuda -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "NVT" "$log_file"
+    # check ligand entaglement
+    python check_penetration.py
 
     # Equilibration with protein and ligand restrained
     # this is to equilibrate the density of water

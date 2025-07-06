@@ -75,6 +75,7 @@ class SystemBuilder(ABC):
         self.sim_config = sim_config
         self.other_mol = self.sim_config.other_mol
         self.lipid_mol = self.system.lipid_mol
+        logger.debug(f'Builder with system: {self.system}, pose:{self.pose}, lipid_mol: {self.lipid_mol}, other_mol: {self.other_mol}')
 
         self.working_dir = working_dir
 
@@ -692,6 +693,10 @@ class SystemBuilder(ABC):
         # Find out how many cations/anions are needed for neutralization
         neu_cat = 0
         neu_ani = 0
+        
+        lig_cat = 0
+        lig_ani = 0
+
         # I. add protein charge
         f = open('tleap_prot.log', 'r')
         for line in f:
@@ -716,8 +721,6 @@ class SystemBuilder(ABC):
         f.close()
 
         # III. add ligands charge
-        lig_cat = 0
-        lig_ani = 0
         f = open('tleap_ligands.log', 'r')
         for line in f:
             if "The unperturbed charge of the unit" in line:
@@ -735,7 +738,7 @@ class SystemBuilder(ABC):
             lig_cat = lig_cat // 4
             lig_ani = lig_ani // 4
 
-        charge_neut = neu_cat - neu_ani - lig_cat + lig_ani
+        charge_neut = neu_cat - neu_ani + lig_cat - lig_ani
         neu_cat = 0
         neu_ani = 0
         if charge_neut > 0:
@@ -1872,6 +1875,10 @@ class EquilibrationBuilder(SystemBuilder):
             with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
+        with open (f'../{self.run_files_folder}/check_penetration.py', "rt") as fin:
+            with open("./check_penetration.py", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
         with open(f'../{self.run_files_folder}/run-equil.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
@@ -2005,11 +2012,15 @@ class FreeEnergyBuilder(SystemBuilder):
             residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
         if lipid_mol:
+            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
             prev_resid = 0
             for i, row in renum_data.iterrows():
+                # skip water and ions as they will not be present later
+                if row['old_resname'] in ['WAT', 'Na+', 'Cl-', 'K+']:
+                    continue
                 if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
                     revised_resids.append(resid_counter)
                     resid_counter += 1
@@ -2017,14 +2028,13 @@ class FreeEnergyBuilder(SystemBuilder):
                     revised_resids.append(resid_counter - 1)
                 prev_resid = row['old_resid']
             
-            renum_data['revised_resid'] = revised_resids
             revised_resids = np.array(revised_resids)
-            total_residues = u.atoms.residues.n_residues
+            total_residues = non_water_ag.residues.n_residues
             final_resids = np.zeros(total_residues, dtype=int)
             final_resids[:len(revised_resids)] = revised_resids
             next_resnum = revised_resids[-1] + 1
             final_resids[len(revised_resids):] = np.arange(next_resnum, total_residues - len(revised_resids) + next_resnum)
-            u.atoms.residues.resids = final_resids
+            non_water_ag.residues.resids = final_resids
 
         u.atoms.write('rec_file.pdb')
 
@@ -2099,28 +2109,8 @@ class FreeEnergyBuilder(SystemBuilder):
         # fix lipid resids
         if lipid_mol:
             u = mda.Universe('aligned_amber.pdb')
-            renum_txt = 'aligned_amber_renum.txt'
-            
-            renum_data = pd.read_csv(
-                    renum_txt,
-                    sep=r'\s+',
-                    header=None,
-                    names=['old_resname', 'old_resid',
-                        'new_resname', 'new_resid'])
-
-            revised_resids = []
-            resid_counter = 1
-            prev_resid = 0
-            for i, row in renum_data.iterrows():
-                if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
-                    revised_resids.append(resid_counter)
-                    resid_counter += 1
-                else:
-                    revised_resids.append(resid_counter - 1)
-                prev_resid = row['old_resid']
-            # set correct residue number
-            revised_resids = np.array(revised_resids)
-            u.atoms.residues.resids = final_resids[:len(revised_resids)]
+            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
+            non_water_ag.residues.resids = final_resids
 
             u.atoms.write('aligned_amber.pdb')
         
@@ -2395,20 +2385,22 @@ class FreeEnergyBuilder(SystemBuilder):
                     lig_atom += 1
                     total_atom += 1
                 elif (molecule == 'WAT') or (molecule in other_mol) or (molecule in ion_mol):
+                    offset_by_ligand = 2 if comp in ['v', 'o', 's'] else 4
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
                     oth_rsnmlist.append(molecule)
-                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom + offset_by_ligand - 1)
                     oth_chainlist.append(lines[i][21].strip())
                     oth_atom += 1
                     total_atom += 1
                 elif molecule in lipid_mol:
+                    offset_by_ligand = 2 if comp in ['v', 'o', 's'] else 4
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
                     oth_rsnmlist.append(molecule)
-                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    oth_rsidlist.append(float(lines[i][22:26].strip()) + offset_by_ligand + dum_atom - 1)
                     oth_chainlist.append(lines[i][21].strip())
                     oth_atom += 1
                     total_atom += 1
@@ -2512,7 +2504,6 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # Extra guests for decoupling
 
-        build_file = open('build.pdb', 'a')
         if (comp == 'e'):
             for i in range(0, lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
@@ -2606,44 +2597,6 @@ class FreeEnergyBuilder(SystemBuilder):
                 outfile.write(lines[i]+'\n')
 
         outfile.close()
-        
-        if (comp == 'f' or comp == 'w' or comp == 'c'):
-            # Create system with one or two ligands
-            build_file = open('build.pdb', 'w')
-            for i in range(0, lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                 ('ATOM', i+1, lig_atomlist[i], mol, chain_list[i], float(lig_resid)))
-                build_file.write('%8.3f%8.3f%8.3f' %
-                                 (float(lig_coords[i][0]), float(lig_coords[i][1]), float(lig_coords[i][2])))
-
-                build_file.write('%6.2f%6.2f\n' % (0, 0))
-            build_file.write('TER\n')
-            if comp == 'f':
-                for i in range(0, lig_atom):
-                    build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                     ('ATOM', i+1, lig_atomlist[i], mol, chain_list[i], float(lig_resid + 1)))
-                    build_file.write('%8.3f%8.3f%8.3f' %
-                                     (float(lig_coords[i][0]), float(lig_coords[i][1]), float(lig_coords[i][2])))
-
-                    build_file.write('%6.2f%6.2f\n' % (0, 0))
-                build_file.write('TER\n')
-            build_file.write('END\n')
-            build_file.close()
-            #shutil.copy('./build.pdb', './%s.pdb' % mol.lower())
-            os.system(f'cp ./build.pdb ./{mol.lower()}.pdb')
-            tleap_vac = open('tleap_vac.in', 'w')
-            tleap_vac.write(f'source leaprc.{ligand_ff}\n\n')
-            tleap_vac.write('# Load the ligand parameters\n')
-            tleap_vac.write(f'loadamberparams {mol.lower()}.frcmod\n')
-            tleap_vac.write(f'{mol.upper()} = loadmol2 {mol.lower()}.mol2\n\n')
-            tleap_vac.write(f'model = loadpdb {mol.lower()}.pdb\n\n')
-            tleap_vac.write('check model\n')
-            tleap_vac.write('savepdb model vac.pdb\n')
-            tleap_vac.write('saveamberparm model vac.prmtop vac.inpcrd\n')
-            tleap_vac.write('quit\n\n')
-            tleap_vac.close()
-
-            p = run_with_log(tleap + ' -s -f tleap_vac.in > tleap_vac.log')
         
     @log_info
     def _restraints(self):
