@@ -22,6 +22,7 @@ B2AR_CAU_INPUT = (_base_ref / '2RH1')
 LIGAND_FILES = (_base_ref / 'ligand_data')
 KW6356 = (LIGAND_FILES / 'KW6356.sdf')
 KW6356_H = (LIGAND_FILES / 'KW6356_h.sdf')
+g1i = (LIGAND_FILES / 'g1i.sdf')
 
 two_candidates = (LIGAND_FILES / '2_candidates.sdf')
 three_candidates = (LIGAND_FILES / '3_candidates.sdf')

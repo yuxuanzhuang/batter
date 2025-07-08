@@ -127,6 +127,6 @@ ENV/
 ._.DS_Store
 notincluded
 
-test_pipeline
+test_pipeline*
 test.ipynb
 tmp
