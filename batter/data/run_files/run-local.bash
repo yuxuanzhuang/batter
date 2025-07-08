@@ -71,37 +71,37 @@ if [[ $only_eq -eq 1 ]]; then
             pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> "$log_file" 2>&1
             check_sim_failure "Equilibration stage $step" "$log_file"
         done
+    fi
 
-        # run minimization for each windows at this stage
-        for i in $(seq 0 $((NWINDOWS - 1))); do
-            win_folder=$(printf "../COMPONENT%02d" $i)
-            if [[ -s $win_folder/mini.rst7 ]]; then
-                echo "Skipping minimization for window $i, already exists."
-            else
-                echo "Running minimization for window $i"
-                cd $win_folder
-                pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
+    # run minimization for each windows at this stage
+    for i in $(seq 0 $((NWINDOWS - 1))); do
+        win_folder=$(printf "../COMPONENT%02d" $i)
+        if [[ -s $win_folder/mini.rst7 ]]; then
+            echo "Skipping minimization for window $i, already exists."
+        else
+            echo "Running minimization for window $i"
+            cd $win_folder
+            pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
+            check_sim_failure "Minimization for window $i" "$log_file"
+            if ! check_min_energy "mini.in.out" -10000; then
+                echo "Minimization not passed with cuda; try CPU"
+                rm -f "$log_file"
+                rm -f mini.in.rst7 mini.in.nc mini.in.out
+                if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+                    mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
+                else
+                    pmemd -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
+                fi
                 check_sim_failure "Minimization for window $i" "$log_file"
                 if ! check_min_energy "mini.in.out" -10000; then
-                    echo "Minimization not passed with cuda; try CPU"
-                    rm -f "$log_file"
+                    echo "Minimization with CPU also failed for window $i, exiting."
                     rm -f mini.in.rst7 mini.in.nc mini.in.out
-                    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-                        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
-                    else
-                        pmemd -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
-                    fi
-                    check_sim_failure "Minimization for window $i" "$log_file"
-                    if ! check_min_energy "mini.in.out" -10000; then
-                        echo "Minimization with CPU also failed for window $i, exiting."
-                        rm -f mini.in.rst7 mini.in.nc mini.in.out
-                        exit 1
-                    fi
+                    exit 1
                 fi
-                cd ../COMPONENT-1
             fi
-        done
-    fi
+            cd ../COMPONENT-1
+        fi
+    done
 
     cpptraj -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> "$log_file" 2>&1
 
