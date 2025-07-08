@@ -88,6 +88,10 @@ def check_stage(pose, comp, n_windows, fe_folder):
                 type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
 @click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared batch files.')
 @click.option('--env_amber', '-env', default='/ccs/home/yuzhuang/env.amber', help='Path to the AMBER environment script to source.')
+@click.option('--max-runs', '-m', default=20, type=int,
+              help='Maximum number of times to resubmit the job script if resubmit is enabled. Default is 20.')
+@click.option('--current-run', '-c', default=0, type=int,
+              help='Current run number for resubmission. Used to avoid infinite loops in resubmission.')
 def run_in_batch(
         folders,
         resubmit,
@@ -97,8 +101,13 @@ def run_in_batch(
         lambda_schedule=None,
         overwrite=False,
         env_amber='/ccs/home/yuzhuang/env.amber',
+        max_runs=20,
+        current_run=0
         ):
 
+    if current_run >= max_runs:
+        logger.error(f'Maximum number of runs ({max_runs}) reached. Exiting to avoid infinite loop.')
+        return
     if not os.path.exists(env_amber):
         raise FileNotFoundError(f'AMBER environment script {env_amber} does not exist. Please provide a valid path.')
     total_num_nodes = 0
@@ -130,9 +139,9 @@ def run_in_batch(
         system = MABFESystem(folder)
         # copy the lambda schedule file to the fe_folder if it exists
         # first remove existing lambda.sch
-        if lambda_schedule is not None and os.path.exists(f'{system.fe_folder}/lambda.sch'):
-            os.remove(f'{system.fe_folder}/lambda.sch')
+        if lambda_schedule is not None:
             os.system(f'cp {lambda_schedule} {system.fe_folder}/lambda.sch')
+            logger.info(f'Copying {lambda_schedule} to {system.fe_folder}/lambda.sch')
         elif lambda_schedule is None:
             os.remove(f'{system.fe_folder}/lambda.sch')
         if window_json is not None:
@@ -315,7 +324,7 @@ def run_in_batch(
                     if last_rst7 <= len_md:
                         sim_to_run = True
                         next_rst7 = last_rst7 + 1
-                        logger.info(f'{pose} {comp} md {last_rst7}')
+                        logger.info(f'current: {pose} {comp} md {last_rst7}')
                         run_lines.append(f'# {pose} {comp} md {last_rst7}')
                         run_lines.append(
                                 f'latest_file=$(ls {pose}/*/{comp}00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)')
@@ -399,6 +408,8 @@ def run_in_batch(
             if window_json is not None:
                 command += f' -w {window_json}'
             command += f' --env_amber {env_amber}'
+            command += f' --max-runs {max_runs}'
+            command += f' --current-run {current_run + 1}'
             f.write(f'{command}\n')
         f.write('wait\n')
 
