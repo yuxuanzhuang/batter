@@ -680,8 +680,9 @@ class System:
         u_merged = mda.Merge(*comp_2_combined)
 
         water = u_merged.select_atoms('water or resname SPC')
-        logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
-        logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
+        if len(water) != 0:
+            logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
+            logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
 
         # Otherwise tleap cannot recognize the water molecules
         water.select_atoms('name OW').names = 'O'
@@ -1941,8 +1942,11 @@ class System:
             for pose in self.all_poses:
                 if self.fe_results[pose] is None:
                     unfinished_poses.append(pose)
+                elif self.fe_results[pose].fe == 'unbound':
+                    continue
                 elif np.isnan(self.fe_results[pose].fe):
                     unfinished_poses.append(pose)
+                    continue
         else:
             unfinished_poses = self.all_poses
         
@@ -2050,13 +2054,15 @@ class System:
     
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
             for i, (pose, fe) in enumerate(self.fe_results.items()):
-                if fe is None:
-                    logger.warning(f'FE for {pose} is None; skipping')
-                    continue
                 mol_name = self.mols[i]
                 ligand_name = self.pose_ligand_dict[pose]
-                logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
-                f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+                if fe is None:
+                    logger.warning(f'FE for {pose} is None; skipping')
+                elif fe.fe == 'unbound':
+                    f.write(f'{ligand_name}\t{mol_name}\t{pose}\tunbound\n')
+                else:
+                    logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                    f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
         logger.info(f'self.fe_results: {self.fe_results}')
             
     @safe_directory
@@ -2092,7 +2098,10 @@ class System:
             results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
             if os.path.exists(results_file):
                 self.fe_results[pose] = NewFEResult(results_file)
-                if np.isnan(self.fe_results[pose].fe):
+                if self.fe_results[pose].fe == 'unbound':
+                    logger.debug(f'FE for {pose} is unbound.')
+                    loaded_poses.append(pose)
+                elif np.isnan(self.fe_results[pose].fe):
                     logger.debug(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
                 else:
                     loaded_poses.append(pose)
@@ -2582,18 +2591,17 @@ class System:
 
         #5 analyze the results
         logger.info('Analyzing the results')
-        self.analysis_new(
+        self.analysis(
             load=True,
             check_finished=False,
         )
         logger.info(f'The results are in the {self.output_dir}')
         logger.info(f'Results')
-        logger.info(f'---------------------------------')
-        logger.info(f'Mol\tPose\tFree Energy (kcal/mol)')
-        logger.info(f'---------------------------------')
-        for i, (pose, fe) in enumerate(self.fe_results.items()):
-            mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
+        # print out self.output_dir/Results/Results.dat
+        with open(f'{self.output_dir}/Results/Results.dat', 'r') as f:
+            results = f.readlines()
+            for line in results:
+                logger.info(line.strip())
         logger.info('Pipeline finished')
         end_time = time.time()
         logger.info(f'End time: {time.ctime()}')

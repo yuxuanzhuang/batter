@@ -131,7 +131,7 @@ class NewFEResult(ComponentFEResult):
             self._results = {}
             
             for key in self._component_keys:
-                self._results[key] = (np.nan, np.nan)
+                self._results[key] = ('unbound', 'unbound')
             return
         
         results = {}
