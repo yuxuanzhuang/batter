@@ -468,7 +468,13 @@ class System:
             return {pose.split('/')[-1].split('.')[0]: ligand
                     for ligand, pose in self.ligand_list.items()}
 
-    
+    @property
+    def ligand_pose_dict(self):
+        """
+        A dictionary of poses with ligand names as keys.
+        """
+        return {v: k for k, v in self.pose_ligand_dict.items()}
+       
     @property
     def ligand_names(self):
         """
