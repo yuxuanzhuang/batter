@@ -290,13 +290,10 @@ def report_jobs(partition=None, detailed=False):
 
 
 @click.command()
-@click.option("--name", "-n", type=click.Path(exists=True), required=True, help="Path to the system to cancel jobs for.")
+@click.option("--name", "-n", required=True, help="Path to the system to cancel jobs for.")
 def cancel_jobs(name):
     """
     Cancel all SLURM jobs that include the given system path in their job name.
-    """
-    """
-    Cancel all SLURM jobs whose job name includes the given system path.
     """
     try:
         # Run the equivalent of: squeue -u $USER --format="%i %j"

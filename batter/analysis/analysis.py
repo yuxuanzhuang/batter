@@ -13,7 +13,7 @@ from alchemlyb.visualisation import (
             )
 
 from batter.utils import run_with_log, cpptraj
-
+from batter.analysis.utils import exclude_outliers
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -274,7 +274,8 @@ class MBARAnalysis(FEAnalysisBase):
             if os.path.exists(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out'):
                 md_sim_files.append(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out')
             else:
-                raise FileNotFoundError(f"Simulation file {comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out not found.")
+                #raise FileNotFoundError(f"Simulation file {comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out not found.")
+                logger.warning(f"Simulation file {comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out not found. Skipping this simulation.")
 
         if len(md_sim_files) == 0:
             # the simulation is done probably in older versions
@@ -305,6 +306,12 @@ class MBARAnalysis(FEAnalysisBase):
             df = df
             ref_col = df.iloc[:, win_i]
             df = df.subtract(ref_col, axis=0)
+            
+            # exclude outliers due to mixed precision in Amber GTI
+            # copied from fe-toolkit
+            # to handle very large positive outliers turn into
+            # large negative values
+            df = exclude_outliers(df, iclam=win_i)
         return df
 
     def _get_data_list(self):

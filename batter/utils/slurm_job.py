@@ -2,17 +2,23 @@ import os
 import subprocess
 from datetime import datetime
 from loguru import logger
-import time
+import time as time_m
 import getpass
 
 class SLURMJob:
-    def __init__(self, filename, partition=None, jobname=None, priority=None):
+    def __init__(self, filename, path=None, partition=None, jobname=None, priority=None):
         if not os.path.exists(filename):
             raise FileNotFoundError(f"{filename} does not exist")
 
         self.filename = filename
-        self.path = os.path.dirname(filename)
-        self.file_basename = os.path.basename(filename)
+
+        # if path is provided, use it; otherwise, use the directory of the filename
+        if path:
+            self.path = path
+        else:
+            self.path = os.path.dirname(filename)
+            
+        self.file_basename = os.path.relpath(self.filename, self.path)
         self.partition = partition
         self.jobname = jobname
         self.priority = priority
@@ -55,9 +61,9 @@ class SLURMJob:
             except RuntimeError as e:
                 err_msg = str(e)
                 logger.debug(f"Failed to submit job: {e}; retrying in 30 seconds")
-                time.sleep(30)
+                time_m.sleep(30)
         else:
-            raise RuntimeError("Failed to submit job after 5 attempts with error: {err_msg}")
+            raise RuntimeError(f"Failed to submit job after 5 attempts with error: {err_msg}")
 
     def _submit(self):
 
@@ -72,8 +78,8 @@ class SLURMJob:
             cmd.append(f"--partition={self.partition}")
         if self.jobname:
             cmd.append(f"--job-name={self.jobname}")
-        if self.priority:
-            cmd.append(f"--priority={self.priority}")
+        #if self.priority:
+        #    cmd.append(f"--priority={self.priority}")
         if self.time:
             cmd.append(f"--time={self.time}")
         cmd.append(self.file_basename)
