@@ -2789,6 +2789,7 @@ class System:
                             remd=False,
                             time_limit=50, # 50 minutes
                             num_fe_sim=10, # run each window for 10 times (restart).
+                            run_mcmd=False, # whether to run mcmd for water dynamics
                             ):
         """
         Generate the batch-run files for the system
@@ -2800,7 +2801,8 @@ class System:
         self._generate_batch_fe_equilibration()
         self._generate_batch_fe(remd=remd,
                                 time_limit=time_limit,
-                                num_fe_sim=num_fe_sim)
+                                num_fe_sim=num_fe_sim,
+                                run_mcmd=run_mcmd)
 
     def _generate_batch_equilibration(self):
         """
@@ -2821,13 +2823,21 @@ class System:
         components = self.sim_config.components
 
         sim_stages = [
-                'mini.in',
+                'mini_eq.in',
                 'eqnpt0.in',
                 'eqnpt.in_00',
                 'eqnpt.in_01', 'eqnpt.in_02',
                 'eqnpt.in_03', 'eqnpt.in_04',
         ]
-
+        file_name_map = {
+            'mini_eq.in': 'mini',
+            'eqnpt0.in': 'eqnpt_pre',
+            'eqnpt.in_00': 'eqnpt00',
+            'eqnpt.in_01': 'eqnpt01',
+            'eqnpt.in_02': 'eqnpt02',
+            'eqnpt.in_03': 'eqnpt03',
+            'eqnpt.in_04': 'eqnpt04',
+        }
         def write_2_pose(pose):
             """
             Write a groupfile for each component in the pose
@@ -2847,7 +2857,8 @@ class System:
                         sim_folder_temp = f'{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}'
                         win_eq_sim_folder_name = f'{sim_folder_temp}-1'
                         prmtop = f'{win_eq_sim_folder_name}/full.hmr.prmtop'
-                        mdinput = f'fe/{win_eq_sim_folder_name}/{stage.split("_")[0]}'
+                        stage_basename = stage.split('.')[0]
+                        mdinput = f'fe/{win_eq_sim_folder_name}/{stage_basename}.in'
                         with open(mdinput, 'r') as infile:
                             input_lines = infile.readlines()
                             new_mdinput = f'{mdinput}_batch'
@@ -2864,17 +2875,8 @@ class System:
                                         line = f"DISANG={win_eq_sim_folder_name}/{file_name}\n"
                                     outfile.write(line)
                             f.write(f'#fe_eq {component} {stage}\n')
-                            file_name_map = {
-                                'mini.in': 'mini',
-                                'eqnpt0.in': 'eqnpt_pre',
-                                'eqnpt.in_00': 'eqnpt00',
-                                'eqnpt.in_01': 'eqnpt01',
-                                'eqnpt.in_02': 'eqnpt02',
-                                'eqnpt.in_03': 'eqnpt03',
-                                'eqnpt.in_04': 'eqnpt04',
-                            }
                             f.write(
-                                f'-O -i {win_eq_sim_folder_name}/{stage.split("_")[0]}_batch -p {prmtop} -c {stage_previous} '
+                                f'-O -i {win_eq_sim_folder_name}/{stage_basename}.in_batch -p {prmtop} -c {stage_previous} '
                                 f'-o {win_eq_sim_folder_name}/{file_name_map[stage]}.out -r {win_eq_sim_folder_name}/{file_name_map[stage]}.rst7 -x {win_eq_sim_folder_name}/{file_name_map[stage]}.nc '
                                 f'-ref {stage_previous} -inf {win_eq_sim_folder_name}/{file_name_map[stage]}.mdinfo -l {win_eq_sim_folder_name}/{file_name_map[stage]}.log '
                                 f'-e {win_eq_sim_folder_name}/{file_name_map[stage]}.mden\n'
@@ -2896,11 +2898,14 @@ class System:
                            num_fe_sim: int = 10, # run each window for 10 times (restart).
                            num_gpus: int = 4, # number of GPUs per node to be used for REMD simulations
                            num_nodes: int = 1, # number of nodes to be used for REMD simulations
+                           run_mcmd: bool = False, # whether to run MC-MD water exchange
                            ):
         """
         Generate the batch files for the free energy calculation production stage.
         """
-        poses_def = self.bound_poses
+        if not remd and run_mcmd:
+            raise ValueError("MC-MD water exchange can only be used with REMD simulations.")
+        
         components = self.sim_config.components
 
         sim_stages = [
@@ -2915,7 +2920,7 @@ class System:
                 return 80 * n_gpus_per_job if n_atoms < 80000 else 40 * n_gpus_per_job
         
 
-        def write_2_pose(pose):
+        def write_2_pose(pose, mol):
             """
             Write a groupfile for each component in the pose
             """
@@ -2956,17 +2961,14 @@ class System:
                                     if 'imin' in line:
                                         # add MC-MD water exchange
                                         if stage == 'mdin.in' or stage == 'mdin.in.extend':
-                                            #if component in ['e', 'v',]:
-                                            # do not use MC-MD water exchange
-                                            if component in ['non']:
+                                            if run_mcmd:
                                                 outfile.write(
                                                     '  mcwat = 1,\n'
-                                                    '  nmd = 1000,\n'
+                                                    '  nmd = 100,\n'
                                                     '  nmc = 1000,\n'
-                                                    '  mcwatmask = ":1",\n'
-                                                    '  mcligshift = 20,\n'
+                                                    f"  mcwatmask = ':{mol}',\n"
+                                                    '  mcligshift = 30,\n'
                                                     '  mcresstr = "WAT",\n'
-                                                    #'  numexchg = 1000,\n'
                                                 )
                                         if component in COMPONENTS_DICT['dd'] and remd and stage != 'mini.in':
                                             outfile.write(
@@ -3063,8 +3065,8 @@ class System:
 
         with self._change_dir(self.output_dir):
             with ThreadPoolExecutor(max_workers=8) as executor:
-                results = list(tqdm(executor.map(write_2_pose, poses_def),
-                                    total=len(poses_def),
+                results = list(tqdm(executor.map(write_2_pose, self.bound_poses, self.bound_mols),
+                                    total=len(self.bound_poses),
                                     desc='Generating production groupfiles'))
                 all_replicates.extend(results)
 
@@ -3085,7 +3087,7 @@ class System:
                     fout.write(line.replace('FERANGE', str(num_fe_sim)))
             with open(f'{self.fe_folder}/batch_run/SLURMM-BATCH-Am', "rt") as f:
                 fin = f.readlines()
-            for pose in poses_def:
+            for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     num_windows = len(self.component_windows_dict.get(comp, []))
@@ -3104,7 +3106,7 @@ class System:
                                             'REMDXXX', '1' if remd else '0')
                             )
 
-            for pose in poses_def:
+            for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
             
