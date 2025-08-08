@@ -2960,7 +2960,8 @@ class System:
                                 for line in input_lines:
                                     if 'imin' in line:
                                         # add MC-MD water exchange
-                                        if stage == 'mdin.in' or stage == 'mdin.in.extend':
+                                        #if stage == 'mdin.in' or stage == 'mdin.in.extend':
+                                        if stage == 'mdin.in.extend':
                                             if run_mcmd:
                                                 outfile.write(
                                                     '  mcwat = 1,\n'
