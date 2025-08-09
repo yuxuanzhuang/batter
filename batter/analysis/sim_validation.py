@@ -317,7 +317,7 @@ class SimValidator:
         # Calculate the mode dihedral values
         feat_dihed = np.concatenate([sin_dihed, cos_dihed], axis=1)
 
-        mode_dihed = scipy.stats.mode(feat_dihed, axis=0, keepdims=True)
+        mode_dihed = scipy.stats.mode(feat_dihed, axis=0, keepdims=True).mode
         
         # Calculate the absolute difference between each snapshot's dihedral and the mode
         abs_diff = np.abs(feat_dihed - mode_dihed)
