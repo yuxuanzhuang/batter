@@ -2319,6 +2319,7 @@ class System:
                      partition: str = 'owners',
                      max_num_jobs: int = 2000,
                      time_limit: str = '6:00:00',
+                     fail_on_error: bool = False,
                      verbose: bool = False
                      ):
         """
@@ -2362,6 +2363,9 @@ class System:
         time_limit : str, optional
             The time limit for the job submission.
             Default is '6:00:00'.
+        fail_on_error : bool, optional
+            Whether to fail the pipeline on error during simulations.
+            Default is False with the failed simulations marked as 'FAILED'.
         verbose : bool, optional
             Whether to print the verbose output. Default is False.
         """
@@ -2373,6 +2377,7 @@ class System:
         logger.info('Running the pipeline')
         
         self._max_num_jobs = max_num_jobs
+        self._fail_on_error = fail_on_error
 
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')
@@ -2669,7 +2674,8 @@ class System:
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy EQ calculation failed: {self._sim_failed}')
-            raise ValueError(f'Free energy EQ calculation failed: {self._sim_failed}')
+            if self._fail_on_error:
+                raise
             
         if all(self._sim_finished.values()):
             logger.debug('Free energy EQ calculation is finished')
@@ -2706,7 +2712,8 @@ class System:
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
-            raise ValueError(f'Free energy calculation failed: {self._sim_failed}')
+            if self._fail_on_error:
+                raise
         if all(self._sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False
@@ -2738,7 +2745,8 @@ class System:
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
-            raise ValueError(f'Free energy calculation failed: {self._sim_failed}')
+            if self._fail_on_error:
+                raise
         if all(self._sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False
