@@ -88,7 +88,7 @@ m_steps1	=   50000    # Number of steps per window for component m (equilibrium)
 m_steps2	=  3000000    # Number of steps per window for component m (production)
 
 z_steps1   =   50000
-z_steps2   =   1000000
+z_steps2   =   300000
 
 # The other components are not tested and used
 a_steps1	=  100000    # Number of steps per window for component a (equilibrium)
@@ -121,9 +121,6 @@ bb_equil        = yes       # Keep this backbone section rigid during equilibrat
 
 # Ligand anchor search definitions
 # changed accordingly 
-l1_x            =  1.98   # X distance between P1 and center of L1 search range
-l1_y            =  -6.75     # Y distance between P1 and center of L1 search range  
-l1_z            =  4.06    # Z distance between P1 and center of L1 search range  
 
 l1_range        =  6.00     # search radius for the first ligand anchor L1 
 min_adis        =  3.00     # minimum distance between anchors
@@ -139,19 +136,3 @@ cut = 9.0                  # cutoff for nonbonded interactions
 gamma_ln = 1.0             # collision frequency in ps^-1 for Langevin Dynamics (temperature control)
 barostat = 1               # type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)
 dt = 0.004                 # simulation time step in ps
-
-# Force field options for receptor and ligand
-
-# not sure other ff can work
-receptor_ff = protein.ff14SB   # Force field for receptor atoms
-
-ligand_ff = gaff2               # Force field for ligand atoms (gaff or gaff2 available)
-
-# not used from the input but should be input of create_system 
-ligand_ph = 7.0                # Choose pH for ligand protonation
-retain_lig_prot = yes
-ligand_charge = 1
-
-# new parameters to include lipids
-lipid_mol = [ POPC ]  # List of lipid molecules to be included in the simulations
-lipid_ff = lipid21 # Currently only lipid21 is available

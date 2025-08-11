@@ -28,9 +28,9 @@ from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.results import FEResult, NewFEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
-from batter.data import frontier_files
 from batter.data import run_files as run_files_orig
 from batter.data import build_files as build_files_orig
+from batter.data import batch_files as batch_files_orig
 from batter.builder import BuilderFactory, get_ligand_candidates
 from batter.utils import (
     run_with_log,
@@ -125,12 +125,12 @@ class System:
 
         try:
             with open(system_file, 'rb') as f:
+
                 loaded_state = pickle.load(f)
                 # in case the folder is moved
                 loaded_state.output_dir = self.output_dir
                 # Update self with loaded attributes
                 self.__dict__.update(loaded_state.__dict__)
-                logger.add(f"{self.output_dir}/batter.log", level='INFO')
 
         except Exception as e:
             logger.error(f"Error loading the system: {e}")
@@ -157,6 +157,7 @@ class System:
                     receptor_segment: str = None,
                     system_coordinate: str = None,
                     protein_align: str = 'name CA and resid 60 to 250',
+                    receptor_ff: str = 'protein.ff14SB',
                     retain_lig_prot: bool = True,
                     ligand_ph: float = 7.4,
                     ligand_ff: str = 'gaff2',
@@ -215,14 +216,17 @@ class System:
         protein_align : str
             The selection string for aligning the protein to the system.
             Default is 'name CA and resid 60 to 250'.
+        receptor_ff: str
+            Force field for the protein atoms.
+            Default is 'protein.ff14SB'.
         retain_lig_prot : bool, optional
             Whether to retain hydrogens in the ligand. Default is True.
         ligand_ph : float, optional
             pH value for protonating the ligand. Default is 7.4.
         ligand_ff : str, optional
             Parameter set for the ligand. Default is 'gaff2'.
-            'gaff' is not supported yet.
-            Options are 'gaff' and 'gaff2'.
+            Options are 'gaff' and 'gaff2' and openff force fields.
+            See https://github.com/openforcefield/openff-forcefields for full list.
         lipid_mol : List[str], optional
             List of lipid molecules to be included in the simulations.
             Default is an empty list.
@@ -273,6 +277,7 @@ class System:
             self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
         self.receptor_segment = receptor_segment
         self._protein_align = protein_align
+        self.receptor_ff = receptor_ff
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ph = ligand_ph
         self.ligand_ff = ligand_ff
@@ -301,6 +306,9 @@ class System:
                 box = np.array([float(x) for x in lines[-1].split()])
             self.system_dimensions = box
             u_sys.load_new(system_coordinate, format='INPCRD')
+        else:
+            self.system_dimensions = u_sys.dimensions[:3]
+
         if (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self.system_coordinate is None:
             raise ValueError(f"No dimension of the box was found in the system_topology or system_coordinate")
 
@@ -313,11 +321,13 @@ class System:
         os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
         os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
 
-        if self.ligand_ff not in ['gaff', 'gaff2']:
-            raise ValueError(f"Invalid ligand_ff: {self.ligand_ff}"
-                             "Options are 'gaff' and 'gaff2'")
-        if self.ligand_ff == 'gaff':
-            raise NotImplementedError("gaff is not supported yet for dabble (maybe?)")
+        from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
+        available_amber_ff = ['gaff', 'gaff2']
+        available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
+        if ligand_ff not in available_amber_ff + available_openff_ff:
+            raise ValueError(f"Unsupported force field: {ligand_ff}. "
+                             f"Supported force fields are: {available_amber_ff + available_openff_ff}")
+
         self.lipid_mol = lipid_mol
         if not self.lipid_mol:
             self.membrane_simulation = False
@@ -458,7 +468,13 @@ class System:
             return {pose.split('/')[-1].split('.')[0]: ligand
                     for ligand, pose in self.ligand_list.items()}
 
-    
+    @property
+    def ligand_pose_dict(self):
+        """
+        A dictionary of poses with ligand names as keys.
+        """
+        return {v: k for k, v in self.pose_ligand_dict.items()}
+       
     @property
     def ligand_names(self):
         """
@@ -576,30 +592,24 @@ class System:
         memb_seg = u_sys.add_Segment(segid='MEMB')
         water_seg = u_sys.add_Segment(segid='WATR')
 
-        membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
-        membrane_ag.chainIDs = 'M'
-        membrane_ag.residues.segments = memb_seg
-        logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
-        water_ag = u_sys.select_atoms('byres (resname TIP3 and around 15 (protein or resname POPC))')
-        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
-        # also include ions (in CHARMM name) to water_ag
-        ion_ag = u_sys.select_atoms('byres (resname SOD POT CLA and around 5 (protein))')
-        logger.debug(f'Number of ion molecules: {ion_ag.n_residues}')
-        # replace SOD with Na+ and POT with K+ and CLA with Cl-
-        ion_ag.select_atoms('resname SOD').names = 'Na+'
-        ion_ag.select_atoms('resname SOD').residues.resnames = 'Na+'
-        ion_ag.select_atoms('resname POT').names = 'K+'
-        ion_ag.select_atoms('resname POT').residues.resnames = 'K+'
-        ion_ag.select_atoms('resname CLA').names = 'Cl-'
-        ion_ag.select_atoms('resname CLA').residues.resnames = 'Cl-'
-
-        water_ag = water_ag + ion_ag
-        water_ag.chainIDs = 'W'
-        water_ag.residues.segments = water_seg
-
         # modify the chaininfo to be unique for each segment
-        current_chain = 66
+        current_chain = 65
         u_prot.atoms.tempfactors = 0
+
+        # read the validate the correct segments
+        # sometimes the segments can be messed up.
+        n_segments = len(u_sys.select_atoms('protein').segments)
+        n_segment_name = np.unique(u_sys.select_atoms('protein').segids)
+        if len(n_segment_name) != n_segments:
+            logger.warning(f"Number of segments in the system is {n_segments} "
+                                f"but the segment names are {n_segment_name}. "
+                                f"Setting all segments to 'A' for the protein."
+                                "If you want to use different segments, "
+                                "modify the segments column in the system_topology file manually."
+                                )
+            protein_seg = u_sys.add_Segment(segid='A')
+            u_sys.select_atoms('protein').residues.segments = protein_seg
+
         for segment in u_sys.select_atoms('protein').segments:
             resid_seg = segment.residues.resids
             resid_seq = " ".join([str(resid) for resid in resid_seg])
@@ -609,22 +619,76 @@ class System:
             current_chain += 1
         u_prot.atoms.chainIDs = [chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors]
 
+        comp_2_combined = []
+
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(f'segid {self.receptor_segment} and protein')
             protein_anchor.atoms.chainIDs = 'A'
             protein_anchor.atoms.tempfactors = 65
             other_protein = u_prot.select_atoms(f'not segid {self.receptor_segment} and protein')
-            u_merged = mda.Merge(protein_anchor,
-                                 other_protein,
-                                 membrane_ag,
-                                 water_ag)
+            
+            comp_2_combined.append(protein_anchor)
+            comp_2_combined.append(other_protein)
         else:
-            u_merged = mda.Merge(u_prot.select_atoms('protein'),
-                                 membrane_ag,
-                                 water_ag)
-        water = u_merged.select_atoms('resname TIP3')
-        logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
-        logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
+            comp_2_combined.append(u_prot.select_atoms('protein'))
+        
+
+        membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
+        if len(membrane_ag) == 0:
+            logger.warning(f"No membrane atoms found with resname {self.lipid_mol}. \n"
+                             f"Available resnames are {np.unique(u_sys.atoms.resnames)}"
+                             f"Please check the lipid_mol parameter.")
+        else:
+            with open(f'{build_files_orig}/memb_opls2charmm.json', 'r') as f:
+                MEMB_OPLS_2_CHARMM_DICT = json.load(f)
+            if np.any(membrane_ag.names == 'O1'):
+                if np.any(membrane_ag.resnames != 'POPC'):
+                    raise ValueError(f"Found OPLS lipid name {membrane_ag.residues.resnames}, only 'POPC' is supported. ")
+                # convert the lipid names to CHARMM names
+                membrane_ag.names = [MEMB_OPLS_2_CHARMM_DICT.get(name, name) for name in membrane_ag.names]
+                logger.info(f"Converting OPLS lipid names to CHARMM names.")
+            
+            membrane_ag.chainIDs = 'M'
+            membrane_ag.residues.segments = memb_seg
+            logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
+            comp_2_combined.append(membrane_ag)
+
+        # maestro generated pdb doesn't have SPC water H and O in the same place.
+        # probably a potential bug
+        water_ag = u_sys.select_atoms('byres (((resname SPC and name O) or water) and around 15 (protein or group memb))', memb=membrane_ag)
+        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
+        
+        # also include ions to water_ag
+        ion_ag = u_sys.select_atoms('byres (resname SOD POT CLA NA CL and around 5 (protein))')
+        logger.debug(f'Number of ion molecules: {ion_ag.n_residues}')
+        # replace SOD with Na+ and POT with K+ and CLA with Cl-
+        ion_ag.select_atoms('resname SOD').names = 'Na+'
+        ion_ag.select_atoms('resname SOD').residues.resnames = 'Na+'
+        ion_ag.select_atoms('resname NA').names = 'Na+'
+        ion_ag.select_atoms('resname NA').residues.resnames = 'Na+'
+        ion_ag.select_atoms('resname POT').names = 'K+'
+        ion_ag.select_atoms('resname POT').residues.resnames = 'K+'
+        ion_ag.select_atoms('resname CLA').names = 'Cl-'
+        ion_ag.select_atoms('resname CLA').residues.resnames = 'Cl-'
+        ion_ag.select_atoms('resname CL').names = 'Cl-'
+        ion_ag.select_atoms('resname CL').residues.resnames = 'Cl-'
+
+        water_ag = water_ag + ion_ag
+        water_ag.chainIDs = 'W'
+        water_ag.residues.segments = water_seg
+        if len(water_ag) == 0:
+            logger.warning(f"No water molecules found in the system. "
+                             f"Available resnames are {np.unique(u_sys.atoms.resnames)}"
+                             f"Please check the system_topology and system_coordinate files.")
+        else:
+            comp_2_combined.append(water_ag)
+
+        u_merged = mda.Merge(*comp_2_combined)
+
+        water = u_merged.select_atoms('water or resname SPC')
+        if len(water) != 0:
+            logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
+            logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
 
         # Otherwise tleap cannot recognize the water molecules
         water.select_atoms('name OW').names = 'O'
@@ -726,17 +790,6 @@ class System:
         else:
             raise ValueError(f"Invalid input_file: {input_file}")
         logger.debug(f'Simulation configuration: {sim_config}')
-        if sim_config.lipid_ff != self.lipid_ff:
-            logger.warning(f"Different lipid_ff in the input: {sim_config.lipid_ff}\n"
-                             f"System is prepared with {self.lipid_ff}")
-        if sim_config.ligand_ff != self.ligand_ff:
-            logger.warning(f"Different ligand_ff in the input: {sim_config.ligand_ff}\n"
-                                f"System is prepared with {self.ligand_ff}")
-        sim_config_retain_lig_prot = sim_config.retain_lig_prot == 'yes'
-        if sim_config_retain_lig_prot != self.retain_lig_prot:
-            logger.warning(f"Different retain_lig_prot in the input: {sim_config.retain_lig_prot}\n"
-                            f"System is prepared with {self.retain_lig_prot}")
-        
         if sim_config.fe_type == 'relative' and not isinstance(self, RBFESystem):
             raise ValueError(f"Invalid fe_type: {sim_config.fe_type}, "
                  "should be 'relative' for RBFE system")
@@ -919,7 +972,7 @@ class System:
     @save_state
     def submit(self,
                stage: str,
-               cluster: str = 'slurm',
+               batch_mode: bool = False,
                partition=None,
                time_limit=None,
                overwrite: bool = False,
@@ -931,9 +984,8 @@ class System:
         ----------
         stage : str
             The stage of the simulation. Options are 'equil', 'fe', and 'fe_equil'.
-        cluster : str
-            The cluster to submit the simulation.
-            Options are 'slurm' and 'frontier'.
+        batch_mode : str
+            Whether to submit the job in batch mode or not.
         partition : str, optional
             The partition to submit the job. Default is None,
             which means the default partition during prepartiion
@@ -943,8 +995,70 @@ class System:
         overwrite : bool, optional
             Whether to overwrite and re-run all the existing simulations.
         """
-        if cluster == 'frontier':
-            raise NotImplementedError('run with `batter run-in-batch` instead')
+        if batch_mode:
+            if stage != 'fe':
+                raise NotImplementedError("Batch mode is only implemented for 'fe' stage")
+            # submit at fe folder
+            logger.info('Submit free energy stage in batch mode')
+            pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
+            for i, pose in enumerate(self.bound_poses):
+                # only check for each pose to reduce frequently checking SLURM 
+                while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
+                    time.sleep(120)
+                    pbar.set_description(f'Waiting to submit FE jobs')
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}'
+                    if os.path.exists(f"{folder_2_check}/{comp}_FINISHED") and not overwrite:
+                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}batch', None)
+                        logger.debug(f'FE for {pose}/{comp_folder}/{comp}batch has finished; add overwrite=True to re-run the simulation')
+                        continue
+                    if os.path.exists(f"{folder_2_check}/{comp}_FAILED") and not overwrite:
+                        self._slurm_jobs.pop(f'fe_{pose}_{comp_folder}_{comp}batch', None)
+                        logger.warning(f'FE for {pose}/{comp_folder}/{comp}batch has failed; add overwrite=True to re-run the simulation')
+                        continue
+                    if f'fe_{pose}_{comp_folder}_{comp}batch' in self._slurm_jobs:
+                        slurm_job = self._slurm_jobs[f'fe_{pose}_{comp_folder}_{comp}batch']
+                        if not slurm_job.is_still_running():
+                            slurm_job.submit(
+                                requeue=True,
+                                time=time_limit,
+                            )
+                            continue
+                        elif overwrite:
+                            slurm_job.cancel()
+                            slurm_job.submit(overwrite=True,
+                                time=time_limit,
+                            )
+                            continue
+                        else:
+                            logger.debug(f'FE job for {pose}/{comp_folder}/{comp}batch is still running')
+                            continue
+
+                    if overwrite:
+                        # remove FINISHED and FAILED
+                        os.remove(f"{folder_2_check}/{comp}_FINISHED", ignore_errors=True)
+                        os.remove(f"{folder_2_check}/{comp}_FAILED", ignore_errors=True)
+
+                    slurm_job = SLURMJob(
+                                    filename=f'{self.fe_folder}/batch_run/SLURMM-run-{pose}-{comp}',
+                                    path=f'{self.fe_folder}',
+                                    partition=partition,
+                                    jobname=f'fep_{folder_2_check}_{comp}_fe',
+                                    )
+                    slurm_job.submit(overwrite=overwrite,
+                                time=time_limit,
+                    )
+
+                    pbar.set_description(f'FE job for {pose}/{comp_folder}/{comp}batch submitted')
+                    self._slurm_jobs.update(
+                        {f'fe_{pose}_{comp_folder}_{comp}batch': slurm_job}
+                    )
+                    self._save_state()
+                pbar.update(1)
+            pbar.close()
+
+            logger.info('Free energy systems have been submitted in batch for all poses listed in the input file.')
             return
 
         if stage == 'equil':
@@ -1662,8 +1776,7 @@ class System:
         if stage == 'equil':
             # only need to do it once as all poses have the same protein
             ref_u = mda.Universe(
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+                    f"{self.equil_folder}/{self.all_poses[0]}/full.pdb")
             
             selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
             logger.debug(f"Selection: {selection} to be restrained")
@@ -1699,7 +1812,7 @@ class System:
             # only need to do it once as all poses have the same protein
             ref_u = mda.Universe(
                     f"{self.equil_folder}/{self.all_poses[0]}/full.pdb",
-                    f"{self.equil_folder}/{self.all_poses[0]}/full.inpcrd")
+            )
             
             selection = ref_u.select_atoms(f'({extra_restraints}) and name CA')
             logger.debug(f"Selection: {selection} to be restrained")
@@ -1835,8 +1948,11 @@ class System:
             for pose in self.all_poses:
                 if self.fe_results[pose] is None:
                     unfinished_poses.append(pose)
+                elif self.fe_results[pose].fe == 'unbound':
+                    continue
                 elif np.isnan(self.fe_results[pose].fe):
                     unfinished_poses.append(pose)
+                    continue
         else:
             unfinished_poses = self.all_poses
         
@@ -1944,13 +2060,15 @@ class System:
     
         with open(f'{self.output_dir}/Results/Results.dat', 'w') as f:
             for i, (pose, fe) in enumerate(self.fe_results.items()):
-                if fe is None:
-                    logger.warning(f'FE for {pose} is None; skipping')
-                    continue
                 mol_name = self.mols[i]
                 ligand_name = self.pose_ligand_dict[pose]
-                logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
-                f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
+                if fe is None:
+                    logger.warning(f'FE for {pose} is None; skipping')
+                elif fe.fe == 'unbound':
+                    f.write(f'{ligand_name}\t{mol_name}\t{pose}\tunbound\n')
+                else:
+                    logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
+                    f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
         logger.info(f'self.fe_results: {self.fe_results}')
             
     @safe_directory
@@ -1986,7 +2104,10 @@ class System:
             results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
             if os.path.exists(results_file):
                 self.fe_results[pose] = NewFEResult(results_file)
-                if np.isnan(self.fe_results[pose].fe):
+                if self.fe_results[pose].fe == 'unbound':
+                    logger.debug(f'FE for {pose} is unbound.')
+                    loaded_poses.append(pose)
+                elif np.isnan(self.fe_results[pose].fe):
                     logger.debug(f'FE for {pose} is invalid (None or NaN); rerun `analysis`.')
                 else:
                     loaded_poses.append(pose)
@@ -2198,6 +2319,7 @@ class System:
                      partition: str = 'owners',
                      max_num_jobs: int = 2000,
                      time_limit: str = '6:00:00',
+                     fail_on_error: bool = False,
                      verbose: bool = False
                      ):
         """
@@ -2241,6 +2363,9 @@ class System:
         time_limit : str, optional
             The time limit for the job submission.
             Default is '6:00:00'.
+        fail_on_error : bool, optional
+            Whether to fail the pipeline on error during simulations.
+            Default is False with the failed simulations marked as 'FAILED'.
         verbose : bool, optional
             Whether to print the verbose output. Default is False.
         """
@@ -2250,7 +2375,9 @@ class System:
             logger.add(f'{self.output_dir}/batter.log', level='DEBUG')
             logger.info('Verbose output is set to True')
         logger.info('Running the pipeline')
+        
         self._max_num_jobs = max_num_jobs
+        self._fail_on_error = fail_on_error
 
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')
@@ -2323,6 +2450,11 @@ class System:
             return
 
         #4.0, submit the free energy equilibration
+
+        remd = self.sim_config.remd == 'yes'
+        self.batch_mode = remd
+        num_fe_sim = self.sim_config.num_fe_range
+
         logger.info('Running equilibrations before final FE simulations')
         if self._check_fe_equil():
             #3 prepare the free energy calculation
@@ -2338,6 +2470,9 @@ class System:
                 extra_restraints=extra_restraints,
                 extra_restraints_fc=extra_restraints_fc
             )
+            if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+                logger.info('Generating batch run files...')
+                self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
 
             logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
             logger.info('Submitting the free energy equilibration')
@@ -2409,19 +2544,34 @@ class System:
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')
 
+        if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+            logger.info('Generating batch run files...')
+            self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
+
         if self._check_fe():
             logger.info('Submitting the free energy calculation')
             if dry_run:
                 logger.info('Dry run is set to True. '
                             'Skipping the free energy submission.')
                 return
-            self.submit(
-                stage='fe',
-                partition=partition,
-                time_limit=time_limit,
-            )
-            logger.info('Free energy jobs submitted')
             
+            if self.batch_mode:
+                logger.info('Running free energy calculation with REMD in batch mode')
+                self.submit(
+                    stage='fe',
+                    batch_mode=True,
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+            else:
+                logger.info('Running free energy calculation without REMD')
+                self.submit(
+                    stage='fe',
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+            logger.info('Free energy jobs submitted')
+                
             # Check the free energy calculation to finish
             pbar = tqdm(
                 desc="FE simsulations finished",
@@ -2452,18 +2602,17 @@ class System:
 
         #5 analyze the results
         logger.info('Analyzing the results')
-        self.analysis_new(
+        self.analysis(
             load=True,
             check_finished=False,
         )
         logger.info(f'The results are in the {self.output_dir}')
         logger.info(f'Results')
-        logger.info(f'---------------------------------')
-        logger.info(f'Mol\tPose\tFree Energy (kcal/mol)')
-        logger.info(f'---------------------------------')
-        for i, (pose, fe) in enumerate(self.fe_results.items()):
-            mol_name = self.mols[i]
-            logger.info(f'{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f}')
+        # print out self.output_dir/Results/Results.dat
+        with open(f'{self.output_dir}/Results/Results.dat', 'r') as f:
+            results = f.readlines()
+            for line in results:
+                logger.info(line.strip())
         logger.info('Pipeline finished')
         end_time = time.time()
         logger.info(f'End time: {time.ctime()}')
@@ -2525,7 +2674,8 @@ class System:
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy EQ calculation failed: {self._sim_failed}')
-            raise ValueError(f'Free energy EQ calculation failed: {self._sim_failed}')
+            if self._fail_on_error:
+                raise
             
         if all(self._sim_finished.values()):
             logger.debug('Free energy EQ calculation is finished')
@@ -2540,6 +2690,8 @@ class System:
         """
         Check if the free energy calculation is finished.
         """
+        if self.batch_mode:
+            return self._check_fe_batch()
         sim_finished = {}
         sim_failed = {}
         for pose in self.bound_poses:
@@ -2560,7 +2712,41 @@ class System:
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
-            raise ValueError(f'Free energy calculation failed: {self._sim_failed}')
+            if self._fail_on_error:
+                raise
+        if all(self._sim_finished.values()):
+            logger.debug('Free energy calculation is finished')
+            return False
+        else:
+            not_finished = [k for k, v in self._sim_finished.items() if not v]
+            logger.debug(f'Not finished: {not_finished}')
+            return True
+
+    @save_state
+    def _check_fe_batch(self):
+        """
+        Check if the free energy calculation is finished in batch mode.
+        """
+        sim_finished = {}
+        sim_failed = {}
+        for pose in self.bound_poses:
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/'
+                if not os.path.exists(f"{folder_2_check}/{comp}_FINISHED"):
+                    sim_finished[f'fe_{pose}_{comp_folder}_{comp}batch'] = False
+                else:
+                    sim_finished[f'fe_{pose}_{comp_folder}_{comp}batch'] = True
+                if os.path.exists(f"{folder_2_check}/{comp}_FAILED"):
+                    sim_failed[f'fe_{pose}_{comp_folder}_{comp}batch'] = True
+
+        self._sim_finished = sim_finished
+        self._sim_failed = sim_failed
+        # if all are finished, return False
+        if any(self._sim_failed.values()):
+            logger.error(f'Free energy calculation failed: {self._sim_failed}')
+            if self._fail_on_error:
+                raise
         if all(self._sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False
@@ -2607,45 +2793,59 @@ class System:
 
     @safe_directory
     @save_state
-    def generate_frontier_files(self,
-                                remd=False,
-                                version=24,
-                                ):
+    def generate_batch_files(self,
+                            remd=False,
+                            time_limit=50, # 50 minutes
+                            num_fe_sim=10, # run each window for 10 times (restart).
+                            run_mcmd=False, # whether to run mcmd for water dynamics
+                            ):
         """
-        Generate the frontier files for the system
-        to run them in a bundle.
-        """
-        self._generate_frontier_equilibration()
-        self._generate_frontier_fe_equilibration(version=version)
-        self._generate_frontier_fe(remd=remd, version=version)
+        Generate the batch-run files for the system
+        with the option to run them with ACES (H-REMD).
 
-    def _generate_frontier_equilibration(self):
+        Specially, it will generate input files so that they can
+        run from the fe folder.
         """
-        Generate the frontier files for the equilibration stage
+        self._generate_batch_fe_equilibration()
+        self._generate_batch_fe(remd=remd,
+                                time_limit=time_limit,
+                                num_fe_sim=num_fe_sim,
+                                run_mcmd=run_mcmd)
+
+    def _generate_batch_equilibration(self):
+        """
+        Generate the batch files for the equilibration stage
         to run them in a bundle.
         """
         # TODO: implement this function
         # The problem is that there's a time restriction of 2 hours
-        # to run jobs in Frontier.
+        # to run jobs in clusters e.g. Frontier.
         # Thus the equilibration need to be split into smaller jobs
         pass
 
-
-    def _generate_frontier_fe_equilibration(self, version=24):
+    def _generate_batch_fe_equilibration(self):
         """
-        Generate the frontier files for the free energy calculation equilibration stage.
+        Generate the batch files for the free energy calculation equilibration stage.
         """
         poses_def = self.bound_poses
         components = self.sim_config.components
 
         sim_stages = [
-                'mini.in',
+                'mini_eq.in',
                 'eqnpt0.in',
                 'eqnpt.in_00',
                 'eqnpt.in_01', 'eqnpt.in_02',
                 'eqnpt.in_03', 'eqnpt.in_04',
         ]
-
+        file_name_map = {
+            'mini_eq.in': 'mini',
+            'eqnpt0.in': 'eqnpt_pre',
+            'eqnpt.in_00': 'eqnpt00',
+            'eqnpt.in_01': 'eqnpt01',
+            'eqnpt.in_02': 'eqnpt02',
+            'eqnpt.in_03': 'eqnpt03',
+            'eqnpt.in_04': 'eqnpt04',
+        }
         def write_2_pose(pose):
             """
             Write a groupfile for each component in the pose
@@ -2665,10 +2865,11 @@ class System:
                         sim_folder_temp = f'{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}'
                         win_eq_sim_folder_name = f'{sim_folder_temp}-1'
                         prmtop = f'{win_eq_sim_folder_name}/full.hmr.prmtop'
-                        mdinput = f'fe/{win_eq_sim_folder_name}/{stage.split("_")[0]}'
+                        stage_basename = stage.split('.')[0]
+                        mdinput = f'fe/{win_eq_sim_folder_name}/{stage_basename}.in'
                         with open(mdinput, 'r') as infile:
                             input_lines = infile.readlines()
-                            new_mdinput = f'{mdinput}_frontier'
+                            new_mdinput = f'{mdinput}_batch'
                             with open(new_mdinput, 'w') as outfile:
                                 for line in input_lines:
                                     if 'cv_file' in line:
@@ -2682,17 +2883,8 @@ class System:
                                         line = f"DISANG={win_eq_sim_folder_name}/{file_name}\n"
                                     outfile.write(line)
                             f.write(f'#fe_eq {component} {stage}\n')
-                            file_name_map = {
-                                'mini.in': 'mini',
-                                'eqnpt0.in': 'eqnpt_pre',
-                                'eqnpt.in_00': 'eqnpt00',
-                                'eqnpt.in_01': 'eqnpt01',
-                                'eqnpt.in_02': 'eqnpt02',
-                                'eqnpt.in_03': 'eqnpt03',
-                                'eqnpt.in_04': 'eqnpt04',
-                            }
                             f.write(
-                                f'-O -i {win_eq_sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous} '
+                                f'-O -i {win_eq_sim_folder_name}/{stage_basename}.in_batch -p {prmtop} -c {stage_previous} '
                                 f'-o {win_eq_sim_folder_name}/{file_name_map[stage]}.out -r {win_eq_sim_folder_name}/{file_name_map[stage]}.rst7 -x {win_eq_sim_folder_name}/{file_name_map[stage]}.nc '
                                 f'-ref {stage_previous} -inf {win_eq_sim_folder_name}/{file_name_map[stage]}.mdinfo -l {win_eq_sim_folder_name}/{file_name_map[stage]}.log '
                                 f'-e {win_eq_sim_folder_name}/{file_name_map[stage]}.mden\n'
@@ -2705,21 +2897,23 @@ class System:
                     continue
                 write_2_pose(pose)
                 logger.debug(f'Generated groupfiles for {pose}')
-            # copy env.amber.24
-            env_amber_file = f'{frontier_files}/env.amber.{version}'
-            #shutil.copy(env_amber_file, 'fe/env.amber')
-            os.system(f'cp {env_amber_file} fe/env.amber')
             logger.info('FE EQ groupfiles generated for all poses')
 
 
-    def _generate_frontier_fe(self,
-                              remd=False,
-                              version=24,
-                              ):
+    def _generate_batch_fe(self,
+                           remd: bool = False,
+                           time_limit: int = 50, # 50 minutes
+                           num_fe_sim: int = 10, # run each window for 10 times (restart).
+                           num_gpus: int = 4, # number of GPUs per node to be used for REMD simulations
+                           num_nodes: int = 1, # number of nodes to be used for REMD simulations
+                           run_mcmd: bool = False, # whether to run MC-MD water exchange
+                           ):
         """
-        Generate the frontier files for the free energy calculation production stage.
+        Generate the batch files for the free energy calculation production stage.
         """
-        poses_def = self.bound_poses
+        if not remd and run_mcmd:
+            raise ValueError("MC-MD water exchange can only be used with REMD simulations.")
+        
         components = self.sim_config.components
 
         sim_stages = [
@@ -2727,14 +2921,14 @@ class System:
                 'mdin.in', 'mdin.in.extend'
         ]
         
-        def calculate_performance(n_atoms, comp):
+        def calculate_performance(n_atoms, comp, n_gpus_per_job):
             if comp not in COMPONENTS_DICT['dd']:
-                return 150 if n_atoms < 80000 else 80
+                return 150 * n_gpus_per_job if n_atoms < 80000 else 80 * n_gpus_per_job
             else:
-                return 80 if n_atoms < 80000 else 40
+                return 80 * n_gpus_per_job if n_atoms < 80000 else 40 * n_gpus_per_job
         
 
-        def write_2_pose(pose):
+        def write_2_pose(pose, mol):
             """
             Write a groupfile for each component in the pose
             """
@@ -2768,24 +2962,22 @@ class System:
                             with open(f'fe/{mdinput_path}', 'r') as infile:
                                 input_lines = infile.readlines()
 
-                            new_mdinput_path = f'fe/{sim_folder_name}/{stage.split("_")[0]}_frontier'
+                            new_mdinput_path = f'fe/{sim_folder_name}/{stage.split("_")[0]}_batch'
 
                             with open(new_mdinput_path, 'w') as outfile:
                                 for line in input_lines:
                                     if 'imin' in line:
                                         # add MC-MD water exchange
-                                        if stage == 'mdin.in' or stage == 'mdin.in.extend':
-                                            #if component in ['e', 'v',]:
-                                            # do not use MC-MD water exchange
-                                            if component in ['non']:
+                                        #if stage == 'mdin.in' or stage == 'mdin.in.extend':
+                                        if stage == 'mdin.in.extend':
+                                            if run_mcmd:
                                                 outfile.write(
                                                     '  mcwat = 1,\n'
-                                                    '  nmd = 1000,\n'
+                                                    '  nmd = 100,\n'
                                                     '  nmc = 1000,\n'
-                                                    '  mcwatmask = ":1",\n'
-                                                    '  mcligshift = 20,\n'
+                                                    f"  mcwatmask = ':{mol}',\n"
+                                                    '  mcligshift = 30,\n'
                                                     '  mcresstr = "WAT",\n'
-                                                    #'  numexchg = 1000,\n'
                                                 )
                                         if component in COMPONENTS_DICT['dd'] and remd and stage != 'mini.in':
                                             outfile.write(
@@ -2831,26 +3023,28 @@ class System:
                                             else:
                                                # hard estimation of the size to be 100000 atoms 
                                                 n_atoms = 100000
-                                                performance = calculate_performance(n_atoms, component)
-                                                n_steps = int(50 / 60 / 24 * performance * 1000 * 1000 / 4)
+                                                performance = calculate_performance(n_atoms, component, n_gpus_per_job=num_gpus / n_sims)
+                                                n_steps = int(time_limit / 60 / 24 * performance * 1000 * 1000 / 4)
                                                 n_steps = int(n_steps // 100000 * 100000)
+                                                if stage == 'mdin.in':
+                                                    n_steps = n_steps // 10
                                                 line = f'  nstlim = {n_steps},\n'
                                     outfile.write(line)
 
                             f.write(f'# {component} {i} {stage}\n')
                             if stage == 'mdin.in':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in_frontier -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in_batch -p {prmtop} -c {sim_folder_name}/mini.in.rst7 '
                                         f'-o {sim_folder_name}/mdin-00.out -r {sim_folder_name}/mdin-00.rst7 -x {sim_folder_name}/mdin-00.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-00.log '
                                         f'-e {sim_folder_name}/mdin-00.mden\n')
                             elif stage == 'mdin.in.extend':
-                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_frontier -p {prmtop} -c {sim_folder_name}/mdin-CURRNUM.rst7 '
+                                f.write(f'-O -i {sim_folder_name}/mdin.in.extend_batch -p {prmtop} -c {sim_folder_name}/mdin-CURRNUM.rst7 '
                                         f'-o {sim_folder_name}/mdin-NEXTNUM.out -r {sim_folder_name}/mdin-NEXTNUM.rst7 -x {sim_folder_name}/mdin-NEXTNUM.nc '
                                         f'-ref {sim_folder_name}/mini.in.rst7 -inf {sim_folder_name}/mdinfo -l {sim_folder_name}/mdin-NEXTNUM.log '
                                         f'-e {sim_folder_name}/mdin-NEXTNUM.mden\n')
                             else:
                                 f.write(
-                                    f'-O -i {sim_folder_name}/{stage.split("_")[0]}_frontier -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
+                                    f'-O -i {sim_folder_name}/{stage.split("_")[0]}_batch -p {prmtop} -c {stage_previous.replace("REPXXX", f"{i:02d}")} '
                                     f'-o {sim_folder_name}/{stage}.out -r {sim_folder_name}/{stage}.rst7 -x {sim_folder_name}/{stage}.nc '
                                     f'-ref {stage_previous.replace("REPXXX", f"{i:02d}")} -inf {sim_folder_name}/{stage}.mdinfo -l {sim_folder_name}/{stage}.log '
                                     f'-e {sim_folder_name}/{stage}.mden\n'
@@ -2858,33 +3052,78 @@ class System:
                             if stage == 'mdin.in':
                                 all_replicates[component].append(f'{sim_folder_name}')
                         stage_previous = f'{sim_folder_temp}REPXXX/{stage}.rst7'
-            #logger.debug(f'all_replicates: {all_replicates}')
+
+                # generate the mdin.in.extend groupfiles for num_fe_sim files
+                temp_file = f'{pose_name}/groupfiles/{component}_mdin.in.extend.groupfile'
+                with open(temp_file, 'r') as infile:
+                    input_lines = infile.readlines()
+                for i in range(num_fe_sim):
+                    # replace temp_file NEXTNUM to i+1
+                    # replace CURRNUM to i
+                    new_temp_file = f'{pose_name}/groupfiles/{component}_mdin.in.stage{i+1:02d}.groupfile'
+                    with open(new_temp_file, 'w') as outfile:
+                        for line in input_lines:
+                            if 'mdin-NEXTNUM' in line:
+                                line = line.replace('mdin-NEXTNUM', f'mdin-{i+1:02d}')
+                            if 'mdin-CURRNUM' in line:
+                                line = line.replace('mdin-CURRNUM', f'mdin-{i:02d}')
+                            outfile.write(line)
             return all_replicates
 
         all_replicates = []
 
         with self._change_dir(self.output_dir):
-            filtered_poses = [pose for pose in poses_def if not os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND")]
-
             with ThreadPoolExecutor(max_workers=8) as executor:
-                results = list(tqdm(executor.map(write_2_pose, filtered_poses),
-                                    total=len(filtered_poses),
+                results = list(tqdm(executor.map(write_2_pose, self.bound_poses, self.bound_mols),
+                                    total=len(self.bound_poses),
                                     desc='Generating production groupfiles'))
                 all_replicates.extend(results)
 
-        #with self._change_dir(self.output_dir):
-        #    for i, pose in tqdm(enumerate(poses_def),
-        #                        desc='Generating production groupfiles',
-        #                        total=len(poses_def)):
-        #        if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-        #            continue
-        #        all_replicates.append(write_2_pose(pose, components))
-        #        logger.debug(f'Generated groupfiles for {pose}')
             logger.debug(all_replicates)
-            # copy env.amber.24
-            env_amber_file = f'{frontier_files}/env.amber.{version}'
-            #shutil.copy(env_amber_file, 'fe/env.amber')
-            os.system(f'cp {env_amber_file} fe/env.amber')
+
+            # Write SLURM run files into FE folder
+            os.makedirs(f'{self.fe_folder}/batch_run', exist_ok=True)
+            shutil.copytree(
+                batch_files_orig,
+                f'{self.fe_folder}/batch_run',
+                dirs_exist_ok=True
+            )
+            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "rt") as f:
+                fin = f.readlines()
+            
+            with open(f'{self.fe_folder}/batch_run/run-local-batch.bash', "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('FERANGE', str(num_fe_sim)))
+            with open(f'{self.fe_folder}/batch_run/SLURMM-BATCH-Am', "rt") as f:
+                fin = f.readlines()
+            for pose in self.bound_poses:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    num_windows = len(self.component_windows_dict.get(comp, []))
+                    with open(f"{self.fe_folder}/batch_run/SLURMM-run-{pose}-{comp}", "wt") as fout:
+                        for line in fin:
+                            fout.write(line.replace('STAGE', 'fe').replace(
+                                            'SYSTEMNAME', self.system_name).replace(
+                                            'POSE', pose).replace(
+                                            'PARTITIONNAME', self.partition).replace(
+                                            'NGPUS', str(num_gpus)).replace(
+                                            'NNODES', str(num_nodes)).replace(
+                                            'PFOLDERXXX', pose).replace(
+                                            'CFOLDERXXX', comp_folder).replace(
+                                            'COMPXXX', comp).replace(
+                                            'NWINDOWSXXX', str(num_windows)).replace(
+                                            'REMDXXX', '1' if remd else '0')
+                            )
+
+            for pose in self.bound_poses:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+            
+            if 'z' in self.sim_config.components or 'o' in self.sim_config.components:
+                # add lambda.sch to the folder
+                with open(f'{self.fe_folder}/lambda.sch', 'w') as f:
+                    f.write('TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n')
+  
             logger.info('FE production groupfiles generated for all poses')
     
     def check_sim_stage(self, output='image', min_file_size=100, max_workers=16):
@@ -3025,7 +3264,7 @@ class System:
             sim_files = ['full.pdb', 'full.hmr.prmtop', 'full.inpcrd', 'vac.pdb',
                     'eqnpt04.rst7',
                     'mini.in', 'mdin-00', 'mdin-01', 'SLURMM-run', 'run-local.bash',
-                    'cv.in', 'disang.rest', 'restraints.in']
+                    'cv.in', 'disang.rest', 'restraints.in', 'mini.rst7']
 
             for pose in tqdm(self.all_poses, desc='Copying files'):
                 for comp in self.sim_config.components:
@@ -3239,6 +3478,9 @@ class RBFESystem(System):
     using the separated topology methodology in BAT.py.
     """
     def _process_ligands(self):
+        raise NotImplementedError(
+            'RBFESystem is not implemented yet. '
+        )
         self._unique_ligand_paths = {}
         for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names):
             if ligand_path not in self._unique_ligand_paths:

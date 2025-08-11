@@ -74,7 +74,8 @@ class SystemBuilder(ABC):
         self.pose = pose
         self.sim_config = sim_config
         self.other_mol = self.sim_config.other_mol
-        self.lipid_mol = self.sim_config.lipid_mol
+        self.lipid_mol = self.system.lipid_mol
+        logger.debug(f'Builder with system: {self.system}, pose:{self.pose}, lipid_mol: {self.lipid_mol}, other_mol: {self.other_mol}')
 
         self.working_dir = working_dir
 
@@ -160,10 +161,13 @@ class SystemBuilder(ABC):
             logger.warning('WARNING: Switch to Berendsen barostat')
             barostat = '1'
         
-        receptor_ff = self.sim_config.receptor_ff
-        ligand_ff = self.sim_config.ligand_ff
-        lipid_ff = self.sim_config.lipid_ff
-        lipid_mol = self.sim_config.lipid_mol
+        receptor_ff = self.system.receptor_ff
+        ligand_ff = self.system.ligand_ff
+        if ligand_ff not in ['gaff', 'gaff2']:
+            # if ligand_ff is set to openff, use gaff2 to build the system
+            ligand_ff = 'gaff2'
+        lipid_ff = self.system.lipid_ff
+        lipid_mol = self.system.lipid_mol
         if lipid_mol:
             p_coupling = self.p_coupling if hasattr(self, 'p_coupling') else '3'
             c_surften = self.c_surften if hasattr(self, 'c_surften') else '3'
@@ -281,6 +285,7 @@ class SystemBuilder(ABC):
         buffer_x = self.sim_config.buffer_x
         buffer_y = self.sim_config.buffer_y
         targeted_buffer_z = self.sim_config.buffer_z
+        tleap_remove = None
 
         # default to 25 A
         if targeted_buffer_z == 0:
@@ -289,6 +294,7 @@ class SystemBuilder(ABC):
         # to reach buffer_z angstroms on each side
         buffer_z = get_buffer_z('build.pdb', targeted_buf=targeted_buffer_z)
         #logger.info(f'Using buffer_z = {buffer_z} angstroms')
+        buff = buffer_z
 
         water_model = self.sim_config.water_model
         num_waters = self.sim_config.num_waters
@@ -315,105 +321,14 @@ class SystemBuilder(ABC):
         for file in glob.glob('../../ff/dum.*'):
             os.system(f'cp {file} ./')
         
+        os.system(f'cp {mol.lower()}.mol2 vac_ligand.mol2')
+        os.system(f'cp {mol.lower()}.sdf vac_ligand.sdf')
+        os.system(f'cp {mol.lower()}.prmtop vac_ligand.prmtop')
+        os.system(f'cp {mol.lower()}.pdb vac_ligand.pdb')
+        os.system(f'cp {mol.lower()}.inpcrd vac_ligand.inpcrd')
+
         # Copy tleap files that are used for restraint generation and analysis
-        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac.in')
-        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap_vac_ligand.in')
         os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap.in')
-
-        # Append tleap file for vacuum
-        with open('tleap_vac.in', 'a') as tleap_vac:
-            tleap_vac.write('# Load the necessary parameters\n')
-            for mol in other_mol:
-                tleap_vac.write(f'loadamberparams {mol.lower()}.frcmod\n')
-                tleap_vac.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n')
-            tleap_vac.write(f'loadamberparams {mol.lower()}.frcmod\n')
-            tleap_vac.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
-            if comp == 'x':
-                tleap_vac.write(f'loadamberparams {molr.lower()}.frcmod\n')
-                tleap_vac.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
-            tleap_vac.write('# Load the water parameters\n')
-            if water_model.lower() != 'tip3pf':
-                tleap_vac.write(f'source leaprc.water.{water_model.lower()}\n\n')
-            else:
-                tleap_vac.write('source leaprc.water.fb3\n\n')
-            tleap_vac.write('model = loadpdb build-dry.pdb\n\n')
-            tleap_vac.write('check model\n')
-            tleap_vac.write('savepdb model vac.pdb\n')
-            tleap_vac.write('saveamberparm model vac.prmtop vac.inpcrd\n')
-            tleap_vac.write('quit\n')
-
-        # Append tleap file for ligand only
-        tleap_vac_ligand = open('tleap_vac_ligand.in', 'a')
-        tleap_vac_ligand.write('# Load the ligand parameters\n')
-        tleap_vac_ligand.write(f'loadamberparams {mol.lower()}.frcmod\n')
-        tleap_vac_ligand.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
-        tleap_vac_ligand.write(f'model = loadpdb {mol.lower()}.pdb\n\n')
-        tleap_vac_ligand.write('check model\n')
-        tleap_vac_ligand.write('savepdb model vac_ligand.pdb\n')
-        tleap_vac_ligand.write('saveamberparm model vac_ligand.prmtop vac_ligand.inpcrd\n')
-        tleap_vac_ligand.write('quit\n')
-        tleap_vac_ligand.close()
-
-        # Generate complex in vacuum
-        p = run_with_log(f'{tleap} -s -f tleap_vac.in > tleap_vac.log')
-
-        # Generate ligand structure in vacuum
-        p = run_with_log(f'{tleap} -s -f tleap_vac_ligand.in > tleap_vac_ligand.log')
-
-        # Find out how many cations/anions are needed for neutralization
-        neu_cat = 0
-        neu_ani = 0
-        f = open('tleap_vac.log', 'r')
-        for line in f:
-            if "The unperturbed charge of the unit" in line:
-                splitline = line.split()
-                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
-                    neu_cat = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
-                    neu_ani = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-        f.close()
-
-        # Get ligand removed charge when doing LJ calculations
-        lig_cat = 0
-        lig_ani = 0
-        f = open('tleap_vac_ligand.log', 'r')
-        for line in f:
-            if "The unperturbed charge of the unit" in line:
-                splitline = line.split()
-                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
-                    lig_cat = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
-                    lig_ani = round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-        f.close()
-
-        # Adjust ions for LJ and electrostatic Calculations (avoid neutralizing plasma)
-        if (comp == 'v' and dec_method == 'sdr') or comp == 'x':
-            charge_neut = neu_cat - neu_ani - 2*lig_cat + 2*lig_ani
-            neu_cat = 0
-            neu_ani = 0
-            if charge_neut > 0:
-                neu_cat = abs(charge_neut)
-            if charge_neut < 0:
-                neu_ani = abs(charge_neut)
-        
-        # only one charged ligand present
-        if comp == 's' or comp == 'o' or comp == 'z':
-            charge_neut = neu_cat - neu_ani - 1*lig_cat + 1*lig_ani
-            neu_cat = 0
-            neu_ani = 0
-            if charge_neut > 0:
-                neu_cat = abs(charge_neut)
-            if charge_neut < 0:
-                neu_ani = abs(charge_neut)
-
-        if comp == 'e' and dec_method == 'sdr':
-            charge_neut = neu_cat - neu_ani - 3*lig_cat + 3*lig_ani
-            neu_cat = 0
-            neu_ani = 0
-            if charge_neut > 0:
-                neu_cat = abs(charge_neut)
-            if charge_neut < 0:
-                neu_ani = abs(charge_neut)
 
         # Define volume density for different water models
         ratio = 0.060
@@ -427,32 +342,6 @@ class SystemBuilder(ABC):
             water_box = water_model.upper()+'BOX'
         elif water_model == 'TIP3PF':
             water_box = water_model.upper()+'BOX'
-
-        # Fixed z buffer
-        if buffer_z != 0:
-            buff = buffer_z
-            tleap_remove = None
-            # Get box volume and number of added ions
-            scripts.write_tleap(mol, molr, comp, water_model, water_box, buff, buffer_x, buffer_y, other_mol)
-            box_volume = scripts.box_volume()
-            logger.debug(f'Box volume {box_volume}')
-            # box volume already takes into account system shrinking during equilibration
-            num_cations = round(ion_def[2]*6.02e23*box_volume*1e-27)
-
-            # A rough reduction of the number of cations
-            # for lipid systems
-            if lipid_mol:
-                num_cations = num_cations // 2
-            # Number of cations and anions
-            num_cat = num_cations
-            num_ani = num_cations - neu_cat + neu_ani
-            # If there are not enough chosen cations to neutralize the system
-            if num_ani < 0:
-                num_cat = neu_cat
-                num_cations = neu_cat
-                num_ani = 0
-            logger.debug(f'Number of cations: {num_cat}')
-            logger.debug(f'Number of anions: {num_ani}')
 
         # First round just solvate the system
         #shutil.copy('tleap.in', 'tleap_solvate_pre.in')
@@ -573,6 +462,7 @@ class SystemBuilder(ABC):
             logger.debug(f'Box dimensions after removing water: {system_dimensions}')
 
         logger.debug(f'Final system: {final_system.n_atoms} atoms')
+        logger.debug(f'Final box dimensions: {system_dimensions}')
 
         # set correct residue number
         revised_resids = np.array(revised_resids)
@@ -583,41 +473,32 @@ class SystemBuilder(ABC):
         final_resids[len(revised_resids):] = np.arange(next_resnum, total_residues - len(revised_resids) + next_resnum)
         final_system.residues.resids = final_resids
 
-        final_system_prot = final_system.select_atoms('protein')
+        # split the system into the following parts
+        # 1. DUM
+        # 2. protein
+        # 3. ligands
+        # 4. other molecules (including lipids)
+        # 5. water that is outside 6 A from the protein (for ionization)
+        # 6. water that is around 6 A from the protein
+
+        # 1
         final_system_dum = final_system.select_atoms('resname DUM')
+        # 2
+        final_system_prot = final_system.select_atoms('protein')
         final_system_others = final_system - final_system_prot - final_system_dum
+        # 3
+        final_system_ligands = final_system.select_atoms(f'resname {mol} or resname {molr}')
+        # 4
+        final_system_other_mol = final_system_others.select_atoms('not resname WAT') - final_system_ligands
+        final_system_water = final_system_others.select_atoms('resname WAT')
         # filter out the water that is not around protein for ionization
-        water_outside_prot = final_system.select_atoms(
+        # 5
+        final_system_water_notaround = final_system.select_atoms(
             f'byres (resname WAT and not (around 6 protein))')
-        final_system_others = final_system_others - water_outside_prot
+        # 6
+        final_system_water_around = final_system_water - final_system_water_notaround
 
-        for residue in u.select_atoms('protein').residues:
-            resid_str = residue.resid
-            resid_resname = residue.resname
-            if resid_resname in ['HIS', 'HIE', 'HIP', 'HID']:
-                # rename it to HIS
-                resid_resname = 'HIS'
-            residue.atoms.chainIDs = renum_data.query(
-                    f'old_resid == @resid_str').query(
-                        f'old_resname == @resid_resname').old_chain.values[0]
-
-        dum_lines = []
-        for chain_name in np.unique(final_system.select_atoms('protein').atoms.chainIDs):
-            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
-
-            prot_segment = final_system.select_atoms(f'chainID {chain_name}')
-
-            prot_segment.write(temp_pdb.name)
-            temp_pdb.close()
-
-            with open(temp_pdb.name, 'r') as f:
-                # store lines start with ATOM
-                dum_lines += [line for line in f.readlines() if line.startswith('ATOM')]
-            dum_lines.append('TER\n')
-
-        with open('solvate_pre_prot.pdb', 'w') as f:
-            f.writelines(dum_lines)
-
+        # write 1 to solvate_pre_dum.pdb
         dum_lines = []
         for residue in final_system_dum.residues:
             # create a temp pdb file in /tmp/
@@ -635,31 +516,79 @@ class SystemBuilder(ABC):
         with open('solvate_pre_dum.pdb', 'w') as f:
             f.writelines(dum_lines)
 
-        non_prot_lines = []
+        # write 2 to solvate_pre_prot.pdb
+        for residue in u.select_atoms('protein').residues:
+            resid_str = residue.resid
+            resid_resname = residue.resname
+            if resid_resname in ['HIS', 'HIE', 'HIP', 'HID']:
+                # rename it to HIS
+                resid_resname = 'HIS'
+            residue.atoms.chainIDs = renum_data.query(
+                    f'old_resid == @resid_str').query(
+                        f'old_resname == @resid_resname').old_chain.values[0]
 
-        prev_resid = final_system_others.residues.resids[0]
-        for residue in final_system_others.residues:
+        prot_lines = []
+        for chain_name in np.unique(final_system_prot.atoms.chainIDs):
+            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+
+            prot_segment = final_system.select_atoms(f'chainID {chain_name}')
+
+            prot_segment.write(temp_pdb.name)
+            temp_pdb.close()
+
+            with open(temp_pdb.name, 'r') as f:
+                # store lines start with ATOM
+                prot_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+            prot_lines.append('TER\n')
+
+        with open('solvate_pre_prot.pdb', 'w') as f:
+            f.writelines(prot_lines)
+
+        # write 3 to solvate_pre_ligands.pdb
+        lig_lines = []
+        prev_resid = final_system_ligands.residues.resids[0]
+        for residue in final_system_ligands.residues:
             if residue.resid != prev_resid:
-                non_prot_lines.append('TER\n')
+                lig_lines.append('TER\n')
             # create a temp pdb file in /tmp/
             # write the residue to the temp file
             temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
 
             residue.atoms.write(temp_pdb.name)
             temp_pdb.close()
-            # store atom lines into non_prot_lines
+            # store atom lines into lig_lines
             with open(temp_pdb.name, 'r') as f:
                 # store lines start with ATOM
-                non_prot_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+                lig_lines += [line for line in f.readlines() if line.startswith('ATOM')]
             prev_resid = residue.resid
-
-        with open('solvate_pre_others.pdb', 'w') as f:
-            f.writelines(non_prot_lines)
+        with open('solvate_pre_ligands.pdb', 'w') as f:
+            f.writelines(lig_lines)
         
+        # write 4 to solvate_pre_others.pdb
+        other_lines = []
+        prev_resid = final_system_other_mol.residues.resids[0]
+        for residue in final_system_other_mol.residues:
+            if residue.resid != prev_resid:
+                other_lines.append('TER\n')
+            # create a temp pdb file in /tmp/
+            # write the residue to the temp file
+            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+
+            residue.atoms.write(temp_pdb.name)
+            temp_pdb.close()
+            # store atom lines into other_lines
+            with open(temp_pdb.name, 'r') as f:
+                # store lines start with ATOM
+                other_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+            prev_resid = residue.resid
+        with open('solvate_pre_others.pdb', 'w') as f:
+            f.writelines(other_lines)
+
+        # write 5 to solvate_pre_outside_wat.pdb 
         outside_wat_lines = []
 
-        prev_resid = water_outside_prot.residues.resids[0]
-        for residue in water_outside_prot.residues:
+        prev_resid = final_system_water_notaround.residues.resids[0]
+        for residue in final_system_water_notaround.residues:
             if residue.resid != prev_resid:
                 outside_wat_lines.append('TER\n')
             # create a temp pdb file in /tmp/
@@ -673,76 +602,255 @@ class SystemBuilder(ABC):
                 # store lines start with ATOM
                 outside_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
             prev_resid = residue.resid
-
         with open('solvate_pre_outside_wat.pdb', 'w') as f:
             f.writelines(outside_wat_lines)
 
+        # write 6 to solvate_pre_around_water.pdb
+        around_wat_lines = []
+
+        prev_resid = final_system_water_around.residues.resids[0]
+        for residue in final_system_water_around.residues:
+            if residue.resid != prev_resid:
+                around_wat_lines.append('TER\n')
+            # create a temp pdb file in /tmp/
+            # write the residue to the temp file
+            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+
+            residue.atoms.write(temp_pdb.name)
+            temp_pdb.close()
+            # store atom lines into around_wat_lines
+            with open(temp_pdb.name, 'r') as f:
+                # store lines start with ATOM
+                around_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+            prev_resid = residue.resid
+        with open('solvate_pre_around_water.pdb', 'w') as f:
+            f.writelines(around_wat_lines)
         
-        logger.debug(f'Final box dimensions: {system_dimensions}')
-        # Write the final tleap file with the correct system size and removed water molecules
-        #shutil.copy('tleap.in', 'tleap_solvate.in')
-        os.system(f'cp tleap.in tleap_solvate.in')
-        tleap_solvate = open('tleap_solvate.in', 'a')
-        tleap_solvate.write('# Load the necessary parameters\n')
-        for i in range(0, len(other_mol)):
-            tleap_solvate.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
-            tleap_solvate.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
+        # Generate prmtop and inpcrd files for each part of the system
 
-        tleap_solvate.write(f'loadamberparams {mol.lower()}.frcmod\n')
-        tleap_solvate.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
+        # Note source leaprc.protein.ff14SB, leaprc.gaff2, leaprc.lipid21 is already included.
+        # 1. DUM
+        os.system(f'cp tleap.in tleap_solvate_dum.in')
+        tleap_dum = open('tleap_solvate_dum.in', 'a')
+        # already included
+        # tleap_dum.write('dum = loadmol2 dum.mol2\n\n')
+        # tleap_dum.write(f'loadamberparams dum.frcmod\n')
+        tleap_dum.write('dum = loadpdb solvate_pre_dum.pdb\n\n')
+        tleap_dum.write(f'set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_dum.write('savepdb dum solvate_dum.pdb\n')
+        tleap_dum.write('saveamberparm dum solvate_dum.prmtop solvate_dum.inpcrd\n')
+        tleap_dum.write('quit')
+        tleap_dum.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log')
 
+        # 2. protein
+        os.system(f'cp tleap.in tleap_solvate_prot.in')
+        tleap_prot = open('tleap_solvate_prot.in', 'a')
+        tleap_prot.write('prot = loadpdb solvate_pre_prot.pdb\n\n')
+        tleap_prot.write(f'set prot box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_prot.write('savepdb prot solvate_prot.pdb\n')
+        tleap_prot.write('saveamberparm prot solvate_prot.prmtop solvate_prot.inpcrd\n')
+        tleap_prot.write('quit')
+        tleap_prot.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_prot.in > tleap_prot.log')
+
+        # 3. ligands
+        os.system(f'cp tleap.in tleap_solvate_ligands.in')
+        tleap_ligands = open('tleap_solvate_ligands.in', 'a')
+        tleap_ligands.write('# Load the necessary parameters\n')
+        tleap_ligands.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_ligands.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
         if comp == 'x':
-            tleap_solvate.write(f'loadamberparams {molr.lower()}.frcmod\n')
-            tleap_solvate.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
+            tleap_ligands.write(f'loadamberparams {molr.lower()}.frcmod\n')
+            tleap_ligands.write(f'{molr} = loadmol2 {molr.lower()}.mol2\n\n')
+        tleap_ligands.write('ligands = loadpdb solvate_pre_ligands.pdb\n\n')
+        tleap_ligands.write(f'set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_ligands.write('savepdb ligands solvate_ligands.pdb\n')
+        tleap_ligands.write('saveamberparm ligands solvate_ligands.prmtop solvate_ligands.inpcrd\n')
+        tleap_ligands.write('quit')
+        tleap_ligands.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log')
 
-        tleap_solvate.write('# Load the water and jc ion parameters\n')
-
+        # 4. other molecules
+        os.system(f'cp tleap.in tleap_solvate_others.in')
+        tleap_others = open('tleap_solvate_others.in', 'a')
+        tleap_others.write('# Load the necessary parameters\n')
+        for i in range(0, len(other_mol)):
+            tleap_others.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
+            tleap_others.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
         if water_model.lower() != 'tip3pf':
-            tleap_solvate.write(f'source leaprc.water.{water_model.lower()}\n\n')
+            tleap_others.write(f'source leaprc.water.{water_model.lower()}\n\n')
         else:
-            tleap_solvate.write('source leaprc.water.fb3\n\n')
-        tleap_solvate.write('dum = loadpdb solvate_pre_dum.pdb\n\n')
-        tleap_solvate.write('prot = loadpdb solvate_pre_prot.pdb\n\n')
-        tleap_solvate.write('others = loadpdb solvate_pre_others.pdb\n\n')
-        tleap_solvate.write('outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n')
+            tleap_others.write('source leaprc.water.fb3\n\n')
+        tleap_others.write('others = loadpdb solvate_pre_others.pdb\n\n')
+        tleap_others.write(f'set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_others.write('savepdb others solvate_others.pdb\n')
+        tleap_others.write('saveamberparm others solvate_others.prmtop solvate_others.inpcrd\n')
+        tleap_others.write('quit')
+        tleap_others.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_others.in > tleap_others.log')
 
-        if (neut == 'no'):
-            tleap_solvate.write('# Add ions for neutralization/ionization\n')
-            tleap_solvate.write(f'addionsrand outside_wat {ion_def[0]} {num_cat}\n')
-            tleap_solvate.write(f'addionsrand outside_wat {ion_def[1]} {num_ani}\n')
-        elif (neut == 'yes'):
-            tleap_solvate.write('# Add ions for neutralization/ionization\n')
-            if neu_cat != 0:
-                tleap_solvate.write(f'addionsrand outside_wat {ion_def[0]} {neu_cat}\n')
-            if neu_ani != 0:
-                tleap_solvate.write(f'addionsrand outside_wat {ion_def[1]} {neu_ani}\n')
+        # Find out how many cations/anions are needed for neutralization
+        neu_cat = 0
+        neu_ani = 0
+        
+        lig_cat = 0
+        lig_ani = 0
 
-        tleap_solvate.write('model = combine {dum prot others outside_wat}\n\n')
-
-        tleap_solvate.write('\n')
-        tleap_solvate.write(f'set model box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
-        tleap_solvate.write('desc model\n')
-        tleap_solvate.write('savepdb model full.pdb\n')
-        tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
-        tleap_solvate.write('quit')
-        tleap_solvate.close()
-        p = run_with_log(f'{tleap} -s -f tleap_solvate.in > tleap_solvate.log')
-
-        f = open('tleap_solvate.log', 'r')
+        # I. add protein charge
+        f = open('tleap_prot.log', 'r')
         for line in f:
-            if "Could not open file" in line:
-                logger.error('Error!!!')
-                logger.error(line)
-                sys.exit(1)
-            if "WARNING: The unperturbed charge of the unit:" in line:
-                logger.warning(line)
-                logger.warning('The system is not neutralized properly after solvation')
-            if "addIonsRand: Argument #2 is type String must be of type: [unit]" in line:
-                logger.error('Aborted.The ion types specified in the input file could be wrong.')
-                logger.error('Please check the tleap_solvate.log file, and the ion types specified in the input file.\n')
-                sys.exit(1)
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    neu_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    neu_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+        f.close()
+        # II. add other molecules charge
+        
+        # Get ligand removed charge when doing LJ calculations
+        f = open('tleap_others.log', 'r')
+        for line in f:
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    neu_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    neu_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
         f.close()
 
+        # III. add ligands charge
+        f = open('tleap_ligands.log', 'r')
+        for line in f:
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    lig_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    lig_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+        f.close()
+        # adjust ligand charge for the case when there are two ligands
+        if comp in ['x', 'z', 'o', 's', 'v']:
+            lig_cat = lig_cat // 2
+            lig_ani = lig_ani // 2
+        if comp == 'e':
+            lig_cat = lig_cat // 4
+            lig_ani = lig_ani // 4
+
+        charge_neut = neu_cat - neu_ani + lig_cat - lig_ani
+        neu_cat = 0
+        neu_ani = 0
+        if charge_neut > 0:
+            neu_cat = abs(charge_neut)
+        if charge_neut < 0:
+            neu_ani = abs(charge_neut)
+
+        # Get box volume and number of added ions
+        box_volume = system_dimensions[0] * system_dimensions[1] * system_dimensions[2]
+        logger.debug(f'Box volume {box_volume}')
+        # box volume already takes into account system shrinking during equilibration
+        num_cations = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+
+        # A rough reduction of the number of cations
+        # for lipid systems
+        if lipid_mol:
+            num_cations = num_cations // 2
+        # Number of cations and anions
+        num_cat = num_cations
+        num_ani = num_cations - neu_cat + neu_ani
+        # If there are not enough chosen cations to neutralize the system
+        if num_ani < 0:
+            num_cat = neu_cat
+            num_cations = neu_cat
+            num_ani = 0
+        logger.debug(f'Number of cations: {num_cat}')
+        logger.debug(f'Number of anions: {num_ani}')
+
+        # 5. water that is outside 6 A from the protein
+        # add ionization
+        os.system(f'cp tleap.in tleap_solvate_outside_wat.in')
+        tleap_outside_wat = open('tleap_solvate_outside_wat.in', 'a')
+        if water_model.lower() != 'tip3pf':
+            tleap_outside_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
+        else:
+            tleap_outside_wat.write('source leaprc.water.fb3\n\n')
+        tleap_outside_wat.write('outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n')
+        if (neut == 'no'):
+            tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
+            tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {num_cat}\n')
+            tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {num_ani}\n')
+        elif (neut == 'yes'):
+            tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
+            if neu_cat != 0:
+                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {neu_cat}\n')
+            if neu_ani != 0:
+                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {neu_ani}\n')
+        tleap_outside_wat.write(f'set outside_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_outside_wat.write('savepdb outside_wat solvate_outside_wat.pdb\n')
+        tleap_outside_wat.write('saveamberparm outside_wat solvate_outside_wat.prmtop solvate_outside_wat.inpcrd\n')
+        tleap_outside_wat.write('quit')
+        tleap_outside_wat.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_outside_wat.in > tleap_outside_wat.log')
+
+        # 6. water that is around 6 A from the protein
+        os.system(f'cp tleap.in tleap_solvate_around_wat.in')
+        tleap_around_wat = open('tleap_solvate_around_wat.in', 'a')
+        if water_model.lower() != 'tip3pf':
+            tleap_around_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
+        else:
+            tleap_around_wat.write('source leaprc.water.fb3\n\n')
+        tleap_around_wat.write('around_wat = loadpdb solvate_pre_around_water.pdb\n\n')
+        tleap_around_wat.write(f'set around_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+        tleap_around_wat.write('savepdb around_wat solvate_around_wat.pdb\n')
+        tleap_around_wat.write('saveamberparm around_wat solvate_around_wat.prmtop solvate_around_wat.inpcrd\n')
+        tleap_around_wat.write('quit')
+        tleap_around_wat.close()
+        p = run_with_log(f'{tleap} -s -f tleap_solvate_around_wat.in > tleap_around_wat.log')
+
+        # use parmed to combine everything into one system
+
+        import parmed as pmd
+        
+        dum_p = pmd.load_file('solvate_dum.prmtop', 'solvate_dum.inpcrd')
+        prot_p = pmd.load_file('solvate_prot.prmtop', 'solvate_prot.inpcrd')
+        # note we will replace the ligand parameter with existing ones
+        # ligands_p = pmd.load_file('solvate_ligands.prmtop', 'solvate_ligands.inpcrd')
+        ligand_p_1 = pmd.load_file(f'{self.mol.lower()}.prmtop')
+        ligand_p_1.residues[0].name = self.mol.lower()
+        # equilibration
+        if comp in ['q']:
+            # one ligand in inpcrd
+            # set resname
+            ligands_p = ligand_p_1
+            ligands_p.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
+        elif comp in ['z', 'o', 's', 'v']:
+            # two ligands in inpcrd
+            ligands_p = ligand_p_1 + ligand_p_1
+        elif comp in ['e']:
+            # four ligands in inpcrd
+            ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1 + ligand_p_1
+        else:
+            raise ValueError(f'Not implemented comp type {comp} for writing custom ligand parameters.')
+
+        ligands_p.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
+
+        others_p = pmd.load_file('solvate_others.prmtop', 'solvate_others.inpcrd')
+        outside_wat_p = pmd.load_file('solvate_outside_wat.prmtop', 'solvate_outside_wat.inpcrd')
+        around_wat_p = pmd.load_file('solvate_around_wat.prmtop', 'solvate_around_wat.inpcrd')
+        
+        # combine all parts
+        combined = dum_p + prot_p + ligands_p + others_p + outside_wat_p + around_wat_p
+        combined.save('full.prmtop', overwrite=True)
+        combined.save('full.inpcrd', overwrite=True)
+        combined.save('full.pdb', overwrite=True)
+
+        # combine vac parts
+        vac = dum_p + prot_p + ligands_p + others_p
+        vac.save('vac.prmtop', overwrite=True)
+        vac.save('vac.inpcrd', overwrite=True)
+        vac.save('vac.pdb', overwrite=True)
+        
         u = mda.Universe('full.pdb')
         u_vac = mda.Universe('vac.pdb')
         # regenerate full.pdb resid indices
@@ -863,7 +971,7 @@ class EquilibrationBuilder(SystemBuilder):
         os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
 
         other_mol = self.sim_config.other_mol
-        lipid_mol = self.sim_config.lipid_mol
+        lipid_mol = self.system.lipid_mol
         solv_shell = self.sim_config.solv_shell
         mol_u = mda.Universe(f'{self.pose}.pdb')
         if len(set(mol_u.residues.resnames)) > 1:
@@ -902,7 +1010,6 @@ class EquilibrationBuilder(SystemBuilder):
                                    .replace('MMM', f"\'{mol}\'"))
         run_with_log(f'{vmd} -dispdev text -e split.tcl', error_match='syntax error')
 
-        #shutil.copy('./protein.pdb', './protein_vmd.pdb')
         os.system(f'cp protein.pdb protein_vmd.pdb')
         run_with_log('pdb4amber -i protein_vmd.pdb -o protein.pdb -y')
         renum_txt = 'protein_renum.txt'
@@ -1021,8 +1128,6 @@ class EquilibrationBuilder(SystemBuilder):
         lipid_mol = list(lipid_resnames)
         self.lipid_mol = lipid_mol
         logger.debug(f'Converting CHARMM lipids: {old_lipid_mol} to AMBER format: {lipid_mol}')
-
-
 
 
         # Create raw complex and clean it
@@ -1472,9 +1577,7 @@ class EquilibrationBuilder(SystemBuilder):
         ligand_atm_num = scripts.num_to_mask(ligand_pdb_file)
 
         # Get number of ligand atoms
-        with open('./vac_ligand.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = int(data[-3][6:11].strip())
+        vac_atoms = mda.Universe(ligand_pdb_file).atoms.n_atoms
 
         # Define anchor atom distance restraints on the protein
         rst.append(''+P1+' '+P2+'')
@@ -1728,9 +1831,7 @@ class EquilibrationBuilder(SystemBuilder):
             L3 = data[8].strip()
 
         # Get number of atoms in vacuum
-        with open('./vac.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = data[-3][6:11].strip()
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
 
         # Create minimization and NPT equilibration files for big box and small ligand box
         with open(f"{self.amber_files_folder}/mini.in", "rt") as fin:
@@ -1770,8 +1871,12 @@ class EquilibrationBuilder(SystemBuilder):
                                 '_num-atoms_', str(vac_atoms)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
                             
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
+                for line in fin:
+                    fout.write(line)
+        with open (f'../{self.run_files_folder}/check_penetration.py', "rt") as fin:
+            with open("./check_penetration.py", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-equil.bash', "rt") as fin:
@@ -1830,7 +1935,7 @@ class FreeEnergyBuilder(SystemBuilder):
         self.comp_folder = f"{COMPONENTS_FOLDER_DICT[component]}"
         self.window_folder = f"{self.comp}{self.win:02d}"
 
-        self.lipid_mol = self.sim_config.lipid_mol
+        self.lipid_mol = self.system.lipid_mol
         if self.lipid_mol:
             # This will not effect SDR/DD
             # because semi-isotropic barostat is not supported
@@ -1907,11 +2012,15 @@ class FreeEnergyBuilder(SystemBuilder):
             residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
         if lipid_mol:
+            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
             prev_resid = 0
             for i, row in renum_data.iterrows():
+                # skip water and ions as they will not be present later
+                if row['old_resname'] in ['WAT', 'Na+', 'Cl-', 'K+']:
+                    continue
                 if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
                     revised_resids.append(resid_counter)
                     resid_counter += 1
@@ -1919,14 +2028,13 @@ class FreeEnergyBuilder(SystemBuilder):
                     revised_resids.append(resid_counter - 1)
                 prev_resid = row['old_resid']
             
-            renum_data['revised_resid'] = revised_resids
             revised_resids = np.array(revised_resids)
-            total_residues = u.atoms.residues.n_residues
+            total_residues = non_water_ag.residues.n_residues
             final_resids = np.zeros(total_residues, dtype=int)
             final_resids[:len(revised_resids)] = revised_resids
             next_resnum = revised_resids[-1] + 1
             final_resids[len(revised_resids):] = np.arange(next_resnum, total_residues - len(revised_resids) + next_resnum)
-            u.atoms.residues.resids = final_resids
+            non_water_ag.residues.resids = final_resids
 
         u.atoms.write('rec_file.pdb')
 
@@ -2001,28 +2109,8 @@ class FreeEnergyBuilder(SystemBuilder):
         # fix lipid resids
         if lipid_mol:
             u = mda.Universe('aligned_amber.pdb')
-            renum_txt = 'aligned_amber_renum.txt'
-            
-            renum_data = pd.read_csv(
-                    renum_txt,
-                    sep=r'\s+',
-                    header=None,
-                    names=['old_resname', 'old_resid',
-                        'new_resname', 'new_resid'])
-
-            revised_resids = []
-            resid_counter = 1
-            prev_resid = 0
-            for i, row in renum_data.iterrows():
-                if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
-                    revised_resids.append(resid_counter)
-                    resid_counter += 1
-                else:
-                    revised_resids.append(resid_counter - 1)
-                prev_resid = row['old_resid']
-            # set correct residue number
-            revised_resids = np.array(revised_resids)
-            u.atoms.residues.resids = final_resids[:len(revised_resids)]
+            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
+            non_water_ag.residues.resids = final_resids
 
             u.atoms.write('aligned_amber.pdb')
         
@@ -2128,6 +2216,9 @@ class FreeEnergyBuilder(SystemBuilder):
     @log_info
     def _create_run_files(self):
         hmr = self.sim_config.hmr
+        comp = self.comp
+        num_sim = self.sim_config.num_fe_range
+        lambdas = self.system.component_windows_dict[comp]
 
         if os.path.exists(self.run_files_folder):
             shutil.rmtree(self.run_files_folder, ignore_errors=True)
@@ -2294,20 +2385,22 @@ class FreeEnergyBuilder(SystemBuilder):
                     lig_atom += 1
                     total_atom += 1
                 elif (molecule == 'WAT') or (molecule in other_mol) or (molecule in ion_mol):
+                    offset_by_ligand = 2 if comp in ['v', 'o', 's'] else 4
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
                     oth_rsnmlist.append(molecule)
-                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom + offset_by_ligand - 1)
                     oth_chainlist.append(lines[i][21].strip())
                     oth_atom += 1
                     total_atom += 1
                 elif molecule in lipid_mol:
+                    offset_by_ligand = 2 if comp in ['v', 'o', 's'] else 4
                     oth_coords.append((float(lines[i][30:38].strip()), float(
                         lines[i][38:46].strip()), float(lines[i][46:54].strip())))
                     oth_atomlist.append(lines[i][12:16].strip())
                     oth_rsnmlist.append(molecule)
-                    oth_rsidlist.append(float(lines[i][22:26].strip()) + dum_atom - 1)
+                    oth_rsidlist.append(float(lines[i][22:26].strip()) + offset_by_ligand + dum_atom - 1)
                     oth_chainlist.append(lines[i][21].strip())
                     oth_atom += 1
                     total_atom += 1
@@ -2411,7 +2504,6 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # Extra guests for decoupling
 
-        build_file = open('build.pdb', 'a')
         if (comp == 'e'):
             for i in range(0, lig_atom):
                 build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
@@ -2506,44 +2598,6 @@ class FreeEnergyBuilder(SystemBuilder):
 
         outfile.close()
         
-        if (comp == 'f' or comp == 'w' or comp == 'c'):
-            # Create system with one or two ligands
-            build_file = open('build.pdb', 'w')
-            for i in range(0, lig_atom):
-                build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                 ('ATOM', i+1, lig_atomlist[i], mol, chain_list[i], float(lig_resid)))
-                build_file.write('%8.3f%8.3f%8.3f' %
-                                 (float(lig_coords[i][0]), float(lig_coords[i][1]), float(lig_coords[i][2])))
-
-                build_file.write('%6.2f%6.2f\n' % (0, 0))
-            build_file.write('TER\n')
-            if comp == 'f':
-                for i in range(0, lig_atom):
-                    build_file.write('%-4s  %5s %-4s %3s %1s%4.0f    ' %
-                                     ('ATOM', i+1, lig_atomlist[i], mol, chain_list[i], float(lig_resid + 1)))
-                    build_file.write('%8.3f%8.3f%8.3f' %
-                                     (float(lig_coords[i][0]), float(lig_coords[i][1]), float(lig_coords[i][2])))
-
-                    build_file.write('%6.2f%6.2f\n' % (0, 0))
-                build_file.write('TER\n')
-            build_file.write('END\n')
-            build_file.close()
-            #shutil.copy('./build.pdb', './%s.pdb' % mol.lower())
-            os.system(f'cp ./build.pdb ./{mol.lower()}.pdb')
-            tleap_vac = open('tleap_vac.in', 'w')
-            tleap_vac.write('source leaprc.'+ligand_ff+'\n\n')
-            tleap_vac.write('# Load the ligand parameters\n')
-            tleap_vac.write('loadamberparams %s.frcmod\n' % (mol.lower()))
-            tleap_vac.write('%s = loadmol2 %s.mol2\n\n' % (mol.upper(), mol.lower()))
-            tleap_vac.write('model = loadpdb %s.pdb\n\n' % (mol.lower()))
-            tleap_vac.write('check model\n')
-            tleap_vac.write('savepdb model vac.pdb\n')
-            tleap_vac.write('saveamberparm model vac.prmtop vac.inpcrd\n')
-            tleap_vac.write('quit\n\n')
-            tleap_vac.close()
-
-            p = run_with_log(tleap + ' -s -f tleap_vac.in > tleap_vac.log')
-        
     @log_info
     def _restraints(self):
         # TODO: Refactor this method
@@ -2563,8 +2617,8 @@ class FreeEnergyBuilder(SystemBuilder):
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas_comp[self.win]
+        lambdas = self.system.component_windows_dict[comp]
+        weight = lambdas[self.win if self.win != -1 else 0]
 
         rst = []
         atm_num = []
@@ -2702,16 +2756,11 @@ class FreeEnergyBuilder(SystemBuilder):
         atm_num = scripts.num_to_mask(pdb_file)
         ligand_atm_num = scripts.num_to_mask(ligand_pdb_file)
 
-        # Get number of ligand atoms
-        with open('./vac_ligand.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = int(data[-3][6:11].strip())
+        vac_atoms = mda.Universe('./vac_ligand.pdb').atoms.n_atoms
 
         # Get number of reference ligand atoms
         if comp == 'x':
-            with open('./vac_reference.pdb') as myfile:
-                data = myfile.readlines()
-                ref_atoms = int(data[-3][6:11].strip())
+            ref_atoms = mda.Universe('./vac_reference.pdb').atoms.n_atoms
 
         # Define anchor atom distance restraints on the protein
 
@@ -3576,6 +3625,8 @@ class FreeEnergyBuilder(SystemBuilder):
         rng = self.sim_config.rng
         ntwx = self.sim_config.ntwx
         lipid_mol = self.lipid_mol
+        lambdas = self.system.component_windows_dict[comp]
+        weight = lambdas[self.win if self.win != -1 else 0]
 
         # Find anchors
         with open('disang.rest', 'r') as f:
@@ -3585,9 +3636,7 @@ class FreeEnergyBuilder(SystemBuilder):
             L3 = data[8].strip()
 
         # Get number of atoms in vacuum
-        with open('./vac.pdb') as myfile:
-            data = myfile.readlines()
-            vac_atoms = data[-3][6:11].strip()
+        vac_atoms = mda.Universe('vac.pdb').atoms.n_atoms
 
         # Create minimization and NPT equilibration files for big box and small ligand box
         if comp != 'c' and comp != 'r' and comp != 'n':
@@ -3732,14 +3781,18 @@ class FreeEnergyBuilder(SystemBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp).replace(
+                        )
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -3775,12 +3828,11 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
             data = f.readline().split()
             L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('vac.pdb').atoms.n_atoms
+
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -3917,14 +3969,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4061,14 +4116,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4124,14 +4182,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4186,14 +4247,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4322,14 +4386,17 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             '_lig_name_', mol))
 
             # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-                with open("./run_failures.bash", "wt") as fout:
+            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+                with open("./check_run.bash", "wt") as fout:
                     for line in fin:
                         fout.write(line)
             with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
                 with open("./run-local.bash", "wt") as fout:
                     for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)))
+                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                            'NWINDOWS', str(len(lambdas))).replace(
+                                'COMPONENT', self.comp)
+                        )
             with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
                 with open("./SLURMM-run", "wt") as fout:
                     for line in fin:
@@ -4609,12 +4676,10 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
             data = f.readline().split()
             L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read and parse 'vac.pdb' once to reduce repeated file reads
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get the number of atoms in vacuum (from the third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Find the last ligand residue number
         last_lig = None
@@ -4673,18 +4738,21 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
                             '_lig_name_', f'{mol},{molr}'))
+
         with open(f"../{self.amber_files_folder}/eqnpt0-ex.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                         'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
                             '_lig_name_', f'{mol},{molr}'))
+
         with open(f"../{self.amber_files_folder}/eqnpt-ex.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace('lbd_val', '%6.5f' % float(weight)).replace(
                         'mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)).replace(
                             '_lig_name_', f'{mol},{molr}'))
+                            
         with open(f"../{self.amber_files_folder}/heat-ex.in", "rt") as fin:
             with open("./heat.in", "wt") as fout:
                 for line in fin:
@@ -4694,14 +4762,17 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
 
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -4744,12 +4815,10 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -4805,10 +4874,18 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
+                    for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
+
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
@@ -4819,6 +4896,7 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
+
             with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
@@ -4831,14 +4909,17 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                                     '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -4876,12 +4957,10 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -4937,8 +5016,15 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/mini-unorest", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
+                        '_lig_name_', mol))
+
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
@@ -4963,14 +5049,17 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                                     '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -5518,8 +5607,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas_comp[self.win]
+        lambdas = self.system.component_windows_dict[comp]
+        win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
         u = mda.Universe(pdb_file)
@@ -5608,12 +5697,10 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -5652,7 +5739,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
-                mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                mdin.write(f'  mbar_states = {len(lambdas):02d}\n')
                 mdin.write('  mbar_lambda = ')
                 for i in range(0, len(lambdas)):
                     mdin.write(' %6.5f,' % (lambdas[i]))
@@ -5687,15 +5774,44 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
                         '_lig_name_', mol))
 
+            # mini and eq without TI
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+                with open("./eqnpt0.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        elif 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))
+            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+                with open("./eqnpt.in", "wt") as fout:
+                    for line in fin:
+                        if 'infe' in line:
+                            fout.write('  infe = 1,\n')
+                        elif 'mcwat' in line:
+                            fout.write('  mcwat = 0,\n')
+                        else:
+                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                    '_lig_name_', mol))                        
+
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:
@@ -6235,8 +6351,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         sdr_dist = 0
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas_comp = self.sim_config.dict()[COMPONENTS_LAMBDA_DICT[self.comp]]
-        weight = lambdas_comp[self.win]
+        lambdas = self.system.component_windows_dict[comp]
+        win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
         u = mda.Universe(pdb_file)
@@ -6326,12 +6442,10 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         #    data = f.readline().split()
         #    L1, L2, L3 = data[6].strip(), data[7].strip(), data[8].strip()
 
+        vac_atoms = mda.Universe('./vac.pdb').atoms.n_atoms
         # Read 'vac.pdb' once
         with open('./vac.pdb') as f:
             lines = f.readlines()
-
-        # Get number of atoms in vacuum (third-to-last line)
-        vac_atoms = lines[-3][6:11].strip()
 
         # Get the last ligand residue number
         last_lig = None
@@ -6386,8 +6500,15 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                 #mdin.write('DISANG=disang.rest\n')
                 #mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            # mini with TI
+            with open(f"../{self.amber_files_folder}/mini_uno.in", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_lig_name_', mol))
+
+            # mini and eq without TI
+            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+                with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
@@ -6412,14 +6533,17 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                                     '_lig_name_', mol))
 
         # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/run_failures.bash', "rt") as fin:
-            with open("./run_failures.bash", "wt") as fout:
+        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
+            with open("./check_run.bash", "wt") as fout:
                 for line in fin:
                     fout.write(line)
         with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
             with open("./run-local.bash", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)))
+                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
+                        'NWINDOWS', str(len(lambdas))).replace(
+                            'COMPONENT', self.comp)
+                    )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
                 for line in fin:

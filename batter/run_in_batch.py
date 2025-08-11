@@ -13,8 +13,32 @@ def hash_string_list(str_list):
     joined = '\n'.join(str_list)
     return hashlib.sha256(joined.encode('utf-8')).hexdigest()[:8]
 
+def parse_eamber(energy_file):
+    """Return the energy value from the EAMBER line in the energy file."""
+    in_block = False
+    with open(energy_file, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if not in_block:
+                if "FINAL RESULTS" in line:
+                    in_block = True
+                continue
+            # Once inside block, look for the first EAMBER line
+            if line.strip().startswith("EAMBER"):
+                parts = line.split()
+                if len(parts) >= 3:
+                    return float(parts[2])
+                else:
+                    return 10000  # Return a large value if the line is malformed
+        return 10000  # If no EAMBER line found, return a large value
+
 def check_eq_stage(pose, comps, fe_folder):
-    eq_stages = ['eq_mini', 'eqnpt_pre', 'eqnpt00', 'eqnpt01', 'eqnpt02', 'eqnpt03', 'eqnpt04']
+    """
+    Check the eq stage of the given pose and components.
+    Returns the stage name if not finished, or 'eq_finished' if all stages are completed.
+    """
+    # eq_mini_ener_fail indicates the eq_mini stage failed due to energy issues
+    # switch to pmemd (CPU) for minimization
+    eq_stages = ['eq_mini', 'eq_mini_ener_fail', 'eqnpt_pre', 'eqnpt00', 'eqnpt01', 'eqnpt02', 'eqnpt03', 'eqnpt04']
 
     min_stage = 1000
     for comp in comps:
@@ -22,23 +46,31 @@ def check_eq_stage(pose, comps, fe_folder):
 
         if not os.path.exists(f'{fe_folder}/{pose}/{sim_type}/{comp}-1'):
             return 'no_folder'
+        # mini.rst7
+        mini_file = f'{fe_folder}/{pose}/{sim_type}/{comp}-1/mini.rst7'
+        if not os.path.exists(mini_file) or os.path.getsize(mini_file) == 0:
+            logger.debug(f'{mini_file} does not exist')
+            min_stage = min(min_stage, 0)
         # mini.out
         mini_file = f'{fe_folder}/{pose}/{sim_type}/{comp}-1/mini.out'
         if not os.path.exists(mini_file) or os.path.getsize(mini_file) == 0:
             logger.debug(f'{mini_file} does not exist')
             min_stage = min(min_stage, 0)
+        # TODO: check energy
+        if parse_eamber(mini_file) > 0:
+            logger.warning(f'{mini_file} has positive energy')
+            min_stage = min(min_stage, 1)
         # eqnpt_pre.rst7
         eq_file = f'{fe_folder}/{pose}/{sim_type}/{comp}-1/eqnpt_pre.rst7'
         if not os.path.exists(eq_file) or os.path.getsize(eq_file) == 0:
             logger.debug(f'{eq_file} does not exist')
-            min_stage = min(min_stage, 1)
+            min_stage = min(min_stage, 2)
         # eqnpt00.rst7, eqnpt01.rst7, eqnpt02.rst7, eqnpt03.rst7, eqnpt04.rst7
         for eq_stage in range(5):
             eq_file = f'{fe_folder}/{pose}/{sim_type}/{comp}-1/eqnpt{eq_stage:02d}.rst7'
             if not os.path.exists(eq_file) or os.path.getsize(eq_file) == 0:
                 logger.debug(f'{eq_file} does not exist')
-                min_stage = min(min_stage, eq_stage + 2)
-                
+                min_stage = min(min_stage, eq_stage + 3)
     if min_stage == 1000:
         return 'eq_finished'
     else:
@@ -70,7 +102,7 @@ def check_stage(pose, comp, n_windows, fe_folder):
                 raise ValueError(f'Second last {last_mdin} is also empty, panicking...')
         return int(last_mdin.split('-')[-1].split('.')[0])
 
-@click.command(help='Run the simulations in batch in Frontier.')
+@click.command(help='Run the simulations in batch.')
 @click.option('--folders', '-f',
               multiple=True,
               help='Folders of the simulations to gather simulations from.',
@@ -86,8 +118,12 @@ def check_stage(pose, comp, n_windows, fe_folder):
 @click.option('--lambda_schedule', '-l', default=None,
                help='The lambda schedule file to use for the simulation.',
                 type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
-@click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared frontier files.')
+@click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared batch files.')
 @click.option('--env_amber', '-env', default='/ccs/home/yuzhuang/env.amber', help='Path to the AMBER environment script to source.')
+@click.option('--max-runs', '-m', default=20, type=int,
+              help='Maximum number of times to resubmit the job script if resubmit is enabled. Default is 20.')
+@click.option('--current-run', '-c', default=0, type=int,
+              help='Current run number for resubmission. Used to avoid infinite loops in resubmission.')
 def run_in_batch(
         folders,
         resubmit,
@@ -97,8 +133,13 @@ def run_in_batch(
         lambda_schedule=None,
         overwrite=False,
         env_amber='/ccs/home/yuzhuang/env.amber',
+        max_runs=20,
+        current_run=0
         ):
 
+    if current_run >= max_runs:
+        logger.error(f'Maximum number of runs ({max_runs}) reached. Exiting to avoid infinite loop.')
+        return
     if not os.path.exists(env_amber):
         raise FileNotFoundError(f'AMBER environment script {env_amber} does not exist. Please provide a valid path.')
     total_num_nodes = 0
@@ -115,20 +156,33 @@ def run_in_batch(
     if lambda_schedule is not None:
         # convert to absolute path
         lambda_schedule = os.path.abspath(lambda_schedule)
-        extra_flag = f'-lambda_sch {lambda_schedule}'
+        if not os.path.exists(lambda_schedule):
+            raise FileNotFoundError(f'Lambda schedule file {lambda_schedule} does not exist. Please provide a valid path.')
+        # when using pmemd.mpi, this flag actually need to be inside the groupfile
+        #extra_flag = f'-lambda_sch {lambda_schedule}'
+        extra_flag = ''
+        # so we copy this file into the fe_folder later
     else:
         extra_flag = ''
 
     for folder in folders:
+        logger.info(f'Processing folder: {folder}')
         eq_stage = False
 
         system = MABFESystem(folder)
+        # copy the lambda schedule file to the fe_folder if it exists
+        # first remove existing lambda.sch
+        if lambda_schedule is not None:
+            os.system(f'cp {lambda_schedule} {system.fe_folder}/lambda.sch')
+            logger.debug(f'Copying {lambda_schedule} to {system.fe_folder}/lambda.sch')
+        elif lambda_schedule is None:
+            os.remove(f'{system.fe_folder}/lambda.sch')
         if window_json is not None:
             system.load_window_json(window_json)
             overwrite = True
         if not os.path.exists(f'{system.fe_folder}/pose0/groupfiles') or overwrite:
             logger.info('Generating run files...')
-            system.generate_frontier_files(remd=remd)
+            system.generate_batch_files(remd=remd)
         run_lines.append(f'# {folder}')
         run_lines.append(f'cd {system.fe_folder}\n\n')
         # first check eq_stage
@@ -148,13 +202,28 @@ def run_in_batch(
                 n_windows = len(system.sim_config.components)
                 n_nodes = int(np.ceil(n_windows / 8))
                 if n_windows == 1:
-                    with open(f'{system.fe_folder}/{pose}/groupfiles/fe_eq_mini.in.groupfile', 'r') as f:
+                    with open(f'{system.fe_folder}/{pose}/groupfiles/fe_eq_mini_eq.in.groupfile', 'r') as f:
                         lines = f.readlines()
                     run_line = f'srun -N 1 -n 1 pmemd.hip_DPFP {lines[1].rstrip()} || echo "Error in {pose} eq_mini" &'
                 else:
-                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini.in.groupfile || echo "Error in {pose} eq_mini" &'
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini_eq.in.groupfile || echo "Error in {pose} eq_mini" &'
                 logger.info(f'{pose} eq_mini')
                 run_lines.append(f'# {pose}  eq_mini')
+                run_lines.append(run_line)
+                run_lines.append(f'sleep {job_sleep_interval}\n\n')
+            elif last_rst7 == 'eq_mini_ener_fail':
+                sim_to_run = True
+                eq_stage = True
+                n_windows = len(system.sim_config.components)
+                n_nodes = int(np.ceil(n_windows / 8))
+                if n_windows == 1:
+                    with open(f'{system.fe_folder}/{pose}/groupfiles/fe_eq_mini_eq.in.groupfile', 'r') as f:
+                        lines = f.readlines()
+                    run_line = f'srun -N 1 -n 4 pmemd.MPI {lines[1].rstrip()} || echo "Error in {pose} eq_mini with CPU" &'
+                else:
+                    run_line = f'srun -N {np.ceil(n_nodes):.0f} -n {n_windows * 4} pmemd.MPI -ng {n_windows} -groupfile {pose}/groupfiles/fe_eq_mini_eq.in.groupfile || echo "Error in {pose} eq_mini" &'
+                logger.info(f'{pose} eq_mini ener fail')
+                run_lines.append(f'# {pose}  eq_mini ener fail')
                 run_lines.append(run_line)
                 run_lines.append(f'sleep {job_sleep_interval}\n\n')
             elif last_rst7 == 'eqnpt_pre':
@@ -250,6 +319,8 @@ def run_in_batch(
             elif last_rst7 == 'eq_finished':
                 logger.debug(f'{pose} eq stage finished')
                 continue
+            else:
+                raise ValueError(f'{pose} {last_rst7} is not a valid eq stage')
             total_num_nodes += n_nodes
             total_num_jobs += n_windows
 
@@ -301,7 +372,7 @@ def run_in_batch(
                     if last_rst7 <= len_md:
                         sim_to_run = True
                         next_rst7 = last_rst7 + 1
-                        logger.info(f'{pose} {comp} md {last_rst7}')
+                        logger.info(f'current: {pose} {comp} md {last_rst7}')
                         run_lines.append(f'# {pose} {comp} md {last_rst7}')
                         run_lines.append(
                                 f'latest_file=$(ls {pose}/*/{comp}00/mdin-??.rst7 2>/dev/null | sort | tail -n 1)')
@@ -385,6 +456,8 @@ def run_in_batch(
             if window_json is not None:
                 command += f' -w {window_json}'
             command += f' --env_amber {env_amber}'
+            command += f' --max-runs {max_runs}'
+            command += f' --current-run {current_run + 1}'
             f.write(f'{command}\n')
         f.write('wait\n')
 

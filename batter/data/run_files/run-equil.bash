@@ -17,20 +17,31 @@ if [[ -f FAILED ]]; then
     rm FAILED
 fi
 
-source run_failures.bash
+source check_run.bash
 
 if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
     echo "Skipping EM steps." 
 else
-    # Minimization
-    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    else
-        pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    fi
+    pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
-fi
+    if ! check_min_energy "mini.out" -10000; then
+        echo "Minimization not passed with cuda; trying CPU"
+        rm -f "$log_file"
+        rm -f mini.rst7 mini.nc mini.out
+        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+            mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+        else
+            pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+        fi
+        check_sim_failure "Minimization" "$log_file"
+        if ! check_min_energy "mini.out" -10000; then
+            echo "Minimization with CPU also failed, exiting."
+            rm -f mini.rst7 mini.nc mini.out
+            exit 1
+        fi
+    fi
 
+fi
 if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping equilibration steps."
 else
@@ -38,6 +49,8 @@ else
     # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
     pmemd.cuda -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "NVT" "$log_file"
+    # check ligand entaglement
+    python check_penetration.py
 
     # Equilibration with protein and ligand restrained
     # this is to equilibrate the density of water
