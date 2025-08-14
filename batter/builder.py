@@ -3842,6 +3842,8 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         mol = self.mol
         comp = self.comp
         solv_shell = self.sim_config.solv_shell
+        ion_def = self.sim_config.ion_def
+        neut = self.sim_config.neut
         
         buff = 20
 
@@ -3872,6 +3874,54 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         elif water_model == 'TIP3PF':
             water_box = water_model.upper()+'BOX'
 
+        os.system(f'cp tleap.in tleap_ligands.in')
+        tleap_ligands = open('tleap_ligands.in', 'a')
+        tleap_ligands.write('# Load the necessary parameters\n')
+        tleap_ligands.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_ligands.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
+        tleap_ligands.write(f'ligands = loadpdb {mol.lower()}.pdb\n\n')
+        tleap_ligands.write('saveamberparm ligands vac.prmtop vac.inpcrd\n')
+        tleap_ligands.write('quit')
+        tleap_ligands.close()
+        p = run_with_log(f'{tleap} -s -f tleap_ligands.in > tleap_ligands.log')
+
+        # Find out how many cations/anions are needed for neutralization       
+        lig_cat = 0
+        lig_ani = 0
+
+        f = open('tleap_ligands.log', 'r')
+        for line in f:
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    lig_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    lig_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+        f.close()
+
+        charge_neut = lig_cat - lig_ani
+        neu_cat = 0
+        neu_ani = 0
+        if charge_neut > 0:
+            neu_cat = abs(charge_neut)
+        if charge_neut < 0:
+            neu_ani = abs(charge_neut)
+
+        # Get box volume and number of added ions
+        box_volume = (buff * 2) ** 3
+        logger.debug(f'Box volume {box_volume}')
+        num_cations = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+
+        # box volume already takes into account system shrinking during equilibration
+        num_cat = num_cations
+        num_ani = num_cations - neu_cat + neu_ani
+        if num_ani < 0:
+            num_cat = neu_cat
+            num_cations = neu_cat
+            num_ani = 0
+        logger.debug(f'Number of cations: {num_cat}')
+        logger.debug(f'Number of anions: {num_ani}')
+
         os.system(f'cp tleap.in tleap_solvate.in')
         tleap_solvate = open('tleap_solvate.in', 'a')
         tleap_solvate.write('# Load the necessary parameters\n')
@@ -3885,6 +3935,16 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         tleap_solvate.write('model = loadpdb build.pdb\n\n')
         tleap_solvate.write('# Create water box with chosen model\n')
         tleap_solvate.write(f'solvatebox model {water_box} {{ {buff} {buff} {buff} }} 1\n\n')
+        if (neut == 'no'):
+            tleap_solvate.write('# Add ions for neutralization/ionization\n')
+            tleap_solvate.write(f'addionsrand model {ion_def[0]} {num_cat}\n')
+            tleap_solvate.write(f'addionsrand model {ion_def[1]} {num_ani}\n')
+        elif (neut == 'yes'):
+            tleap_solvate.write('# Add ions for neutralization/ionization\n')
+            if neu_cat != 0:
+                tleap_solvate.write(f'addionsrand model {ion_def[0]} {neu_cat}\n')
+            if neu_ani != 0:
+                tleap_solvate.write(f'addionsrand model {ion_def[1]} {neu_ani}\n')
         tleap_solvate.write('desc model\n')
         tleap_solvate.write('savepdb model full.pdb\n')
         tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
