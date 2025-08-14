@@ -16,7 +16,7 @@ solv_shell = 15      # Water molecules around the protein that will be kept in t
 
 # For abfe, it's express
 # For rbfe, it's relative
-fe_type = uno_rest  # Type of free energy calculations (rest, dd, sdr, dd-rest, sdr-rest, custom, relative)
+fe_type = uno_dd  # Type of free energy calculations (rest, dd, sdr, dd-rest, sdr-rest, custom, relative)
 remd = no
 release_eq = [ 10.0 2.5 0.5 0.0 0.0 0.0 0.0 ]   # Equilibrium gradual release weights
 
@@ -89,6 +89,9 @@ m_steps2	=  3000000    # Number of steps per window for component m (production)
 
 z_steps1   =   50000
 z_steps2   =   300000
+
+y_steps1   =   50000
+y_steps2   =   300000
 
 # The other components are not tested and used
 a_steps1	=  100000    # Number of steps per window for component a (equilibrium)
