@@ -62,6 +62,7 @@ COMPONENT_DIRECTION_DICT = {
     'v': -1,
     'o': -1,
     'z': -1,
+    'y': 1,
     'Boresch': -1,
 }
 
@@ -1836,6 +1837,9 @@ class System:
                 new_mask_component = f'(:{formatted_resids}) & @CA'
 
                 for comp in self.sim_config.components:
+                    # only add to components containing protein
+                    if comp in ['y']:
+                        continue
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
                     files = ['eqnpt.in']
@@ -2676,6 +2680,10 @@ class System:
             logger.error(f'Free energy EQ calculation failed: {self._sim_failed}')
             if self._fail_on_error:
                 raise
+            else:
+                # add failed runs to finished runs
+                for k in self._sim_failed.keys():
+                    self._sim_finished[k] = True
             
         if all(self._sim_finished.values()):
             logger.debug('Free energy EQ calculation is finished')
@@ -2714,6 +2722,10 @@ class System:
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
             if self._fail_on_error:
                 raise
+            else:
+                # add failed runs to finished runs
+                for k in self._sim_failed.keys():
+                    self._sim_finished[k] = True
         if all(self._sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False

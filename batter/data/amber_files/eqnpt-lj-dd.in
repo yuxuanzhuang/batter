@@ -41,7 +41,7 @@ Equilibrate, NPT.
   crgmask = ':mk1',
   gti_chg_keep = 0,
   gti_add_sc = 1,
-  infe = 1,
+  infe = 0,
  /
  &pmd
  output_file = 'cmass.txt'

@@ -1,43 +1,34 @@
 *******************************************************
-*****************************       mdin
+*****************************       mini.in
 *******************************************************
-Production runs elec-LJ sdr
+Minimizing.
  &cntrl
-  imin = 0,
-  ntx = 5,
-  irest = 1,
-  ntpr = _ntpr_,
-  ntwr = _ntwr_,
-  ntwe = _ntwe_,
-  ntxo = 2,
-  ntwx = _ntwx_,
-  ntwprt = _num-atoms_,
-  ioutfm = 1,
-  iwrap = 1,
+  imin = 1,
+  ntx = 1, 
+  ntxo = 1,
+  ntpr = 50,
+  maxcyc = 2000,
+  ntwr = 50,
+  ncyc = 500,
+  irest = 0,
+  ntmin = 2,
   ntf = 1,
-  ntc = 2,
+  ntc = 1,
+  ntb = 1,
   cut = _cutoff_,
-  ntt = 3,
-  temp0 = _temperature_,
-  gamma_ln = _gamma_ln_,
-  ig = -1,
-  ntp = 0,
-  barostat = _barostat_,
-  nstlim = _num-steps_,
-  dt = _step_,
   nmropt = 1,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = ':2',
+  restraintmask = '(:_lig_name_) & !@H=',
+  infe = 1,
   icfe = 1,
   clambda = lbd_val,
   timask1 = ':mk1',
-  timask2 = ':mk2',
+  timask2 = '',
   ifsc=1,
   scmask1=':mk1',
-  scmask2=':mk2',
-  ifmbar = 1,
+  scmask2='',
   gti_cut   = 1,
   gti_output = 1,
   gti_add_sc = 25,
@@ -54,4 +45,10 @@ Production runs elec-LJ sdr
   gti_vdw_exp     = 2,
   gti_chg_keep    = 1,
   gti_bat_sc      = 1,
-  
+ /
+ &pmd
+ output_file = 'cmass.txt'
+ output_freq = 500
+ cv_file = 'cv.in'
+ /
+ &wt type = 'END', /

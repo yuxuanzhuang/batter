@@ -291,10 +291,13 @@ class SimulationConfig(BaseModel):
             case 'self':
                 self.components = ['s']
                 self.dec_method = 'sdr'
+            case 'uno_dd':
+                self.components = ['z', 'y']
+                self.dec_method = 'dd'
             case _:
                 raise ValueError(
                     f"Invalid fe_type: {self.fe_type}. Must be one of 'rest', 'dd', 'sdr', 'dd-rest', 'sdr-rest', "
-                    "'express', 'relative', 'uno', 'uno_com', 'uno_rest', 'self' or 'custom'."
+                    "'express', 'relative', 'uno', 'uno_com', 'uno_rest', 'self', 'uno_dd', or 'custom'."
                 )
 
         for comp in self.components:
@@ -325,21 +328,6 @@ class SimulationConfig(BaseModel):
         valid_types = {"dock", "rank", "crystal"}
         if value not in valid_types:
             raise ValueError(f"Invalid calc_type: {value}. Must be one of {valid_types}.")
-        return value
-
-    @field_validator("fe_type", mode="before")
-    def validate_fe_type(cls, value):
-        valid_types = {"rest", "dd",
-                       "sdr", "sdr-rest",
-                       "dd-rest",
-                       "express", "relative",
-                       "uno",
-                       "uno_com",
-                       "uno_rest",
-                       "self",
-                       "custom"}
-        if value not in valid_types:
-            raise ValueError(f"Invalid fe_type: {value}. Must be one of {valid_types}.")
         return value
 
     @field_validator("rec_bb", "neutralize_only", "hmr", "bb_equil", mode="before")

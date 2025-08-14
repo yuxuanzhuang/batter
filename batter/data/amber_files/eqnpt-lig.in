@@ -20,7 +20,6 @@ Equilibrate, NPT.
   gamma_ln = _gamma_ln_,
   ig = -1,
   ntp = 1,
-  csurften = _c_surften_,
   barostat = 1,
   nstlim = 50000,
   dt = 0.001,
