@@ -8,6 +8,7 @@ import glob
 import pandas as pd
 import numpy as np
 import MDAnalysis as mda
+from MDAnalysis.analysis.distances import distance_array
 from contextlib import contextmanager
 import tempfile
 import warnings
@@ -22,12 +23,9 @@ from batter.bat_lib import setup, scripts
 
 from batter.utils import (
     run_with_log,
-    antechamber,
     tleap,
     cpptraj,
-    parmchk2,
     charmmlipid2amber,
-    obabel,
     vmd,
     log_info,
     COMPONENTS_LAMBDA_DICT,
@@ -96,7 +94,6 @@ class SystemBuilder(ABC):
 
     @builder_fail_report
     def build(self):
-    
         with self._change_dir(self.working_dir):
             logger.debug(f'Building {self.pose}...')
 
@@ -130,7 +127,10 @@ class SystemBuilder(ABC):
                         if self.win == -1:
                             self._create_box()
                         self._restraints()
+                        if self.win == -1:
+                            self._pre_sim_files()
                         self._sim_files()
+                        self._run_files()
         return self
 
     @abstractmethod
@@ -139,9 +139,8 @@ class SystemBuilder(ABC):
         Build the complex.
         It involves 
         1. Cleanup the system.
-        2. Set the parameters of the ligand (TODO: has it been done already?)
-        3. Find anchor atoms.
-        4. Add dummy atoms
+        2. Find anchor atoms.
+        3. Add dummy atoms
         It should return True if the anchor atoms are found,
         False otherwise.
         """
@@ -264,8 +263,7 @@ class SystemBuilder(ABC):
     @log_info
     def _create_box(self):
         """
-        Create the box.
-        It involves
+        Create the box. It involves
         1. Add ligand (that differs for different systems)
         2. Solvate the system.
         3. Add ions.
@@ -730,6 +728,9 @@ class SystemBuilder(ABC):
                 elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
                     lig_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
         f.close()
+        
+        self._ligand_charge = lig_ani - lig_cat
+
         # adjust ligand charge for the case when there are two ligands
         if comp in ['x', 'z', 'o', 's', 'v']:
             lig_cat = lig_cat // 2
@@ -905,10 +906,24 @@ class SystemBuilder(ABC):
         """
         raise NotImplementedError()
 
+    def _pre_sim_files(self):
+        """
+        Preprocess simulation files, e.g. add TI specific lines.
+        only runs for windows -1.
+        """
+        pass
+
     @abstractmethod
     def _sim_files(self):
         """
         Create simulation files, e.g. input files form AMBER.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def _run_files(self):
+        """
+        Create run files, e.g. SLURM scripts.
         """
         raise NotImplementedError()
 
@@ -1870,7 +1885,13 @@ class EquilibrationBuilder(SystemBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
-                            
+
+    @log_info             
+    def _run_files(self):
+        stage = self.stage
+        pose = self.pose
+        rng = self.sim_config.rng
+
         with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
             with open("./check_run.bash", "wt") as fout:
                 for line in fin:
@@ -3768,6 +3789,13 @@ class FreeEnergyBuilder(SystemBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
+    def _run_files(self):
+        num_sim = self.sim_config.num_fe_range
+        lambdas = self.system.component_windows_dict[self.comp]
+        pose = self.pose
+        comp = self.comp
+        win = self.win if self.win != -1 else 0
+
         with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
             with open("./check_run.bash", "wt") as fout:
                 for line in fin:
@@ -3825,7 +3853,6 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
 
         os.system(f'cp ../{self.build_file_folder}/{pose}.pdb ./{mol.lower()}.pdb')
         os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
-        os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./build.pdb')
 
         for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
@@ -3834,6 +3861,22 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
 
+        # write build.pdb with dum atom + ligand
+        # the position of the DUM atom is the center of mass of the ligand
+        u_lig = mda.Universe(f'{mol.lower()}.pdb')
+        com = u_lig.atoms.center_of_mass()
+        u_dum = mda.Universe.empty(1,
+                         n_residues=1,
+                         atom_resindex=[0],
+                         residue_segindex=[0],
+                         trajectory=True)
+        u_dum.add_TopologyAttr('name', ['Pb'])
+        u_dum.add_TopologyAttr('resname', ['DUM'])
+        u_dum.atoms.positions = np.array([com])
+        with mda.Writer('build.pdb', multiframe=False) as W:
+            W.write(u_dum)
+            W.write(u_lig)
+            
     @log_info
     def _create_box(self):
         """
@@ -3900,25 +3943,16 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         f.close()
 
         charge_neut = lig_cat - lig_ani
-        neu_cat = 0
-        neu_ani = 0
-        if charge_neut > 0:
-            neu_cat = abs(charge_neut)
-        if charge_neut < 0:
-            neu_ani = abs(charge_neut)
+        self._ligand_charge = -charge_neut
 
         # Get box volume and number of added ions
         box_volume = (buff * 2) ** 3
         logger.debug(f'Box volume {box_volume}')
-        num_cations = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+        num_ions = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
 
         # box volume already takes into account system shrinking during equilibration
-        num_cat = num_cations
-        num_ani = num_cations - neu_cat + neu_ani
-        if num_ani < 0:
-            num_cat = neu_cat
-            num_cations = neu_cat
-            num_ani = 0
+        num_cat = num_ions
+        num_ani = num_ions
         logger.debug(f'Number of cations: {num_cat}')
         logger.debug(f'Number of anions: {num_ani}')
 
@@ -3935,16 +3969,11 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         tleap_solvate.write('model = loadpdb build.pdb\n\n')
         tleap_solvate.write('# Create water box with chosen model\n')
         tleap_solvate.write(f'solvatebox model {water_box} {{ {buff} {buff} {buff} }} 1\n\n')
-        if (neut == 'no'):
-            tleap_solvate.write('# Add ions for neutralization/ionization\n')
-            tleap_solvate.write(f'addionsrand model {ion_def[0]} {num_cat}\n')
-            tleap_solvate.write(f'addionsrand model {ion_def[1]} {num_ani}\n')
-        elif (neut == 'yes'):
-            tleap_solvate.write('# Add ions for neutralization/ionization\n')
-            if neu_cat != 0:
-                tleap_solvate.write(f'addionsrand model {ion_def[0]} {neu_cat}\n')
-            if neu_ani != 0:
-                tleap_solvate.write(f'addionsrand model {ion_def[1]} {neu_ani}\n')
+        # set equal amount of cations and anions
+        # later we will convert them into TI ions based on the net charge of the system
+        tleap_solvate.write('# Add ions for neutralization/ionization\n')
+        tleap_solvate.write(f'addionsrand model {ion_def[0]} {num_cat}\n')
+        tleap_solvate.write(f'addionsrand model {ion_def[1]} {num_ani}\n')
         tleap_solvate.write('desc model\n')
         tleap_solvate.write('savepdb model full.pdb\n')
         tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
@@ -3983,6 +4012,27 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
 
             os.system(f'cp disang.rest disang{relase_eq_i:02d}.rest')
 
+        u_lig = mda.Universe('vac.pdb')
+        lig_atoms = u_lig.select_atoms(f'resname {mol} and not name H*')
+        hvy_g = list(str(a.index+1) for a in lig_atoms) # Get heavy atom indices (1-based for AMBER)
+
+        lcom = rest[6]
+
+        cv_file = open('cv.in', 'w')
+        cv_file.write('cv_file \n')
+        cv_file.write('&colvar \n')
+        cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+        cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_g)+2))
+        for i in range(0, len(hvy_g)):
+            cv_file.write(hvy_g[i])
+            cv_file.write(',')
+        cv_file.write('\n')
+        cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                    (float(0.0), float(0.0), float(0.0), float(999.0)))
+        cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (lcom, lcom))
+        cv_file.write('/ \n')
+
+
     @log_info
     def _sim_files(self):
         hmr = self.sim_config.hmr
@@ -4001,7 +4051,7 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
-        mk1 = 1
+        mk1 = 2
         with open(f"../{self.amber_files_folder}/mini-unorest-lig", "rt") as fin:
             with open("./mini.in", "wt") as fout:
                 for line in fin:
@@ -4015,11 +4065,13 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         with open(f"../{self.amber_files_folder}/eqnpt-lig.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_temperature_', str(temperature)))
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         with open(f"../{self.amber_files_folder}/eqnpt0-lig.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('_temperature_', str(temperature)))
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
         for i in range(0, num_sim+1):
             with open(f'../{self.amber_files_folder}/mdin-unorest-lig', "rt") as fin:
                 with open("./mdin-%02d" % int(i), "wt") as fout:
@@ -4034,38 +4086,113 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
                                 line = 'dt = 0.001, \n'
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
                             '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace(
-                                'mk1', str(mk1)).replace('disang_file', 'disang'))
+                                'mk1', str(mk1)).replace('disang_file', 'disang').replace(
+                            '_lig_name_', mol))
             mdin = open("./mdin-%02d" % int(i), "a")
             mdin.write('  mbar_states = %d\n' % len(lambdas))
             mdin.write('  mbar_lambda = ')
             for i in range(0, len(lambdas)):
                 mdin.write(' %6.5f,' % (lambdas[i]))
             mdin.write('\n')
+            mdin.write('  infe = 1,\n')
+            mdin.write(' /\n')
+            mdin.write(' &pmd \n')
+            mdin.write(' output_file = \'cmass.txt\' \n')
+            mdin.write(' output_freq = %02d \n' % int(ntwx))
+            mdin.write(' cv_file = \'cv.in\' \n')
             mdin.write(' /\n')
             mdin.write(' &wt type = \'END\' , /\n')
-            mdin.write('\n')
+            mdin.write('DISANG=disang.rest\n')
+            mdin.write('LISTOUT=POUT\n')
 
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
+    @log_info
+    def _pre_sim_files(self):
+        """Preprocess simulation files needed for ligand-only simulations. It involves adding co-decoupling ions to keep the system neutral."""
+        mol = self.mol
+        total_charge = self._ligand_charge
+        universe = mda.Universe('full.pdb')
+        selected_ion_indices = select_ions_away_from_complex(universe, total_charge=total_charge, mol=mol)
+
+        if selected_ion_indices is None:
+            logger.debug('No ions need to be added for ligand decoupling.')
+            return
+        # add ion indices to 
+        files_to_be_modified = ['mini-unorest-lig', 'mdin-unorest-lig']
+        for file in files_to_be_modified:
+            # timask2 need to be modified to include the selected ions
+            # restraintmask need to be modified to include the selected ions
+            with open(f'../{self.amber_files_folder}/{file}', 'r') as fin:
+                lines = fin.readlines()
+            with open(f'../{self.amber_files_folder}/{file}', 'w') as fout:
+                for line in lines:
+                    if 'timask2' in line:
+                        # modify this line to include the selected ions
+                        timask2_part = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        timask2_part += f'@{selected_ion_indices[0] +1}' if timask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            timask2_part += f' | @{ion_idx+1}'
+                        line = f"timask2 = '{timask2_part}' \n"
+                    elif 'scmask2' in line:
+                        # modify this line to include the selected ions
+                        scmask2_part =  line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        scmask2_part += f'@{selected_ion_indices[0] +1}' if scmask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            scmask2_part += f' | @{ion_idx+1}'
+                        line = f"scmask2 = '{scmask2_part}' \n"
+                    elif 'restraintmask' in line:
+                        restraintmask_part = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        restraintmask_part += f'@{selected_ion_indices[0] +1}' if restraintmask_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            restraintmask_part += f' | @{ion_idx+1}'
+                        line = f"restraintmask = '{restraintmask_part}' \n"
                     fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace(
-                                    'POSE', '%s%02d' % (comp, int(win))).replace(
-                                        'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
 
 
-class SDRFreeEnergyBuilder(FreeEnergyBuilder):
+class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
+    def _pre_sim_files(self):
+        """
+        Add co-decoupling ions to the mdin and mini files for complex and receptor decoupling.
+        """
+        if self.dec_method != 'dd':
+            return
+        
+        mol = self.mol
+        total_charge = self._ligand_charge
+        universe = mda.Universe('full.pdb')
+
+        selected_ion_indices = select_ions_away_from_complex(universe, total_charge=total_charge, mol=mol)
+        if selected_ion_indices is None:
+            logger.debug('No ions need to be added for complex/receptor decoupling.')
+            return
+        files_to_be_modified = ['mdin-unorest-dd', 'mini-unorest-dd']
+        for file in files_to_be_modified:
+            # add ion indices to timask2 and restraintmask
+            with open(f'../{self.amber_files_folder}/{file}', 'r') as fin:
+                lines = fin.readlines()
+            with open(f'../{self.amber_files_folder}/{file}', 'w') as fout:
+                for line in lines:
+                    if 'timask2' in line:
+                        # modify this line to include the selected ions
+                        timask2_part =  line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        timask2_part += f'@{selected_ion_indices[0] +1}' if timask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            timask2_part += f' | @{ion_idx+1}'
+                        line = f"timask2 = '{timask2_part}' \n"
+                    elif 'scmask2' in line:
+                        # modify this line to include the selected ions
+                        scmask2_part =  line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        scmask2_part += f'@{selected_ion_indices[0] +1}' if scmask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            scmask2_part += f' | @{ion_idx+1}'
+                        line = f"scmask2 = '{scmask2_part}' \n"
+                    elif 'restraintmask' in line:
+                        restraintmask_part = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        restraintmask_part += f'@{selected_ion_indices[0] +1}' if restraintmask_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            restraintmask_part += f' | @{ion_idx+1}'
+                        line = f"restraintmask = '{restraintmask_part}' \n"
+                    fout.write(line)
+
     def _sim_files(self):
         
         dec_method = self.dec_method
@@ -4084,7 +4211,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         ntwx = self.sim_config.ntwx
         lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
-
 
         # Read 'disang.rest' and extract L1, L2, L3
         with open('disang.rest', 'r') as f:
@@ -4231,25 +4357,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
         if (comp == 'e'):
             # Create simulation files for charge decoupling
             if (dec_method == 'sdr') or (dec_method == 'exchange'):
@@ -4378,25 +4485,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
         if (comp == 'f'):
             mk1 = '1'
             mk2 = '2'
@@ -4444,25 +4532,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
         if (comp == 'w'):
             for i in range(0, num_sim+1):
                 mk1 = '1'
@@ -4508,25 +4577,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
                             'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
                             '_lig_name_', mol))
-
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
 
         if (comp == 'o' or comp == 'z'):
             # Create simulation files for elec+vdw decoupling
@@ -4648,27 +4698,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
 
-
-class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
+class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
     @log_info
     def _build_complex(self):
         """
@@ -5024,32 +5055,12 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                             '_lig_name_', f'{mol},{molr}'))
 
 
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
-
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):
     """
     Builder for restrain free energy calculations system
     """
 
-class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
+class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
     """
     Builder for vdw + elec single decoupling free energy calculations system
     """
@@ -5170,25 +5181,6 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
-
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
 
 
 class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
@@ -5364,25 +5356,6 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                     else:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_lig_name_', mol))
-
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
 
         # add lambda.sch to the folder
         with open("./lambda.sch", "wt") as fout:
@@ -6118,25 +6091,6 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))                        
 
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
-
 
 class ACESEquilibrationBuilder(FreeEnergyBuilder):
     """
@@ -6847,25 +6801,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
 
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
-
 
 class BuilderFactory:
     @staticmethod
@@ -6900,7 +6835,7 @@ class BuilderFactory:
                 poser=poser,
             )
             case 'e' | 'v':
-                return SDRFreeEnergyBuilder(
+                return AlChemicalFreeEnergyBuilder(
                 system=system,
                 pose=pose,
                 sim_config=sim_config,
@@ -7067,3 +7002,32 @@ def get_ligand_candidates(ligand_sdf):
         logger.warning("No suitable three ligand anchor candidates found. Use all non-Hligand atoms as candidates.")
         anchor_candidates = n_h_candidates
     return anchor_candidates
+
+
+def select_ions_away_from_complex(universe, total_charge, mol):
+    if total_charge > 0:
+        ion_type = 'Na+'
+    elif total_charge < 0:
+        ion_type = 'Cl-'
+    else:
+        return None  # No ions needed for neutral systems
+    
+    n_ions = abs(total_charge)
+    complex_sys = universe.select_atoms(f'protein or resname {mol}')
+    ions = universe.select_atoms(f'resname {ion_type}')
+    if len(ions) < n_ions:
+        raise ValueError(f'Not enough {ion_type} ions in the system to neutralize the charge.')
+    sel_ion_indexs = []
+    for ion in ions:
+        # get minimum distance to the complex
+        dist_2_protein = distance_array(ion.position, complex_sys.positions,
+                                        box=universe.dimensions
+                                         ).min()
+        if dist_2_protein > 20.0:
+            n_ions -= 1
+            sel_ion_indexs.append(ion.index)
+        if n_ions == 0:
+            break
+    if n_ions > 0:
+        raise ValueError(f'Not enough {ion_type} ions found that are at least 15 Å away from the complex.')
+    return sel_ion_indexs
