@@ -1868,6 +1868,7 @@ class System:
                     pose: str = None,
                     sim_range: Optional[Tuple[int, int]] = None,
                     raise_on_error: bool = True,
+                    mol: str = 'LIG',
                     n_workers: int = 4):
         """
         Analyze the free energy results for one pose
@@ -1880,6 +1881,9 @@ class System:
             If files are missing from the range, the analysis will fail.
         raise_on_error : bool
             Whether to raise an error if the analysis fails.
+        mol : str
+            The molecule to analyze. Default is 'LIG'.
+            This is used to set the legend of the plot.
         n_workers : int
             The number of workers to use for parallel processing.
             Default is 4.
@@ -1896,6 +1900,7 @@ class System:
         }
         analyze_pose_task(
             pose=pose,
+            mol=mol,
             **input_dict
         )
         
@@ -2037,10 +2042,12 @@ class System:
                 'n_workers': slurm_kwargs['cores'],
             }
             for pose in unfinished_poses:
+                mol = self.pose_ligand_dict.get(pose, 'LIG')
                 logger.debug(f'Submitting analysis for pose: {pose}')
                 fut = client.submit(
                     analyze_single_pose_dask_wrapper,
                     pose,
+                    mol,
                     input_dict,
                     pure=True,
                     resources={'analysis': 1},
@@ -2062,11 +2069,13 @@ class System:
                 desc='Analyzing FE for poses',
             )
             for pose in unfinished_poses:
+                mol = self.pose_ligand_dict.get(pose, 'LIG')
                 pbar.set_postfix(pose=pose)
                 self.analyze_pose(
                     pose=pose,
                     sim_range=sim_range,
                     raise_on_error=raise_on_error,
+                    mol=mol,
                     n_workers=self.n_workers
                 )
     
@@ -2085,7 +2094,8 @@ class System:
                     logger.debug(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol')
                     f.write(f'{ligand_name}\t{mol_name}\t{pose}\t{fe.fe:.2f} ± {fe.fe_std:.2f} kcal/mol\n')
         logger.info(f'self.fe_results: {self.fe_results}')
-            
+
+
     @safe_directory
     @save_state
     def analysis_new(
@@ -2132,7 +2142,7 @@ class System:
                 self.fe_results[pose] = None
         if not self.fe_results:
             raise ValueError('No results found in the output directory. Please run the analysis first.')
-        logger.info(f'Results for {loaded_poses} loaded successfully')
+        logger.debug(f'Results for {loaded_poses} loaded successfully')
         
 
     def _generate_aligned_pdbs(self):
@@ -2630,9 +2640,13 @@ class System:
 
         #5 analyze the results
         logger.info('Analyzing the results')
+        num_sim = self.sim_config.num_fe_range
+        # exclude the first few simulations for analysis
+        start_sim = 3 if num_sim >= 6 else 1
         self.analysis(
             load=True,
             check_finished=False,
+            sim_range=(start_sim, num_sim + 1),
         )
         logger.info(f'The results are in the {self.output_dir}')
         logger.info(f'Results')
@@ -3492,9 +3506,9 @@ class System:
         """
         Get the pose failures status.
         """
-        if not hasattr(self, '_pose_failures'):
-            self.pose_failed = {}
-        return self.pose_failed
+        if not hasattr(self, '_pose_failed'):
+            self._pose_failed = {}
+        return self._pose_failed
 
 
 
@@ -3639,7 +3653,7 @@ def format_ranges(numbers):
     return ','.join(ranges)
 
 
-def analyze_single_pose_dask_wrapper(pose, input_dict):
+def analyze_single_pose_dask_wrapper(pose, mol, input_dict):
     from distributed import get_worker
     logger.info(f"Running on worker: {get_worker().name}")
     logger.info(f'Analyzing pose: {pose}')
@@ -3662,6 +3676,7 @@ def analyze_single_pose_dask_wrapper(pose, input_dict):
         component_windows_dict=component_windows_dict,
         sim_range=sim_range,
         raise_on_error=raise_on_error,
+        mol=mol,
         n_workers=n_workers
     )
     logger.info(f'Finished analyzing pose: {pose}')
@@ -3677,6 +3692,7 @@ def analyze_pose_task(
                 component_windows_dict: "ComponentWindowsDict",
                 sim_range: Tuple[int, int] = None,
                 raise_on_error: bool = True,
+                mol: str = 'LIG',
                 n_workers: int = 4):
     """
     Analyze the free energy results for one pose as an independent task.
@@ -3699,6 +3715,8 @@ def analyze_pose_task(
         If files are missing from the range, the analysis will fail.
     raise_on_error : bool
         Whether to raise an error if the analysis fails.
+    mol : str
+        The name of the ligand molecule.
     n_workers : int
         The number of workers to use for parallel processing.
         Default is 4.
@@ -3709,10 +3727,12 @@ def analyze_pose_task(
     os.makedirs(f'{pose_path}/Results', exist_ok=True)
     
     results_entries = []
+    LEN_FE_TIMESERIES = 10
     try:
 
         fe_values = []
         fe_stds = []
+        fe_timeseries = {}
 
         # first get analytical results from Boresch restraint
 
@@ -3734,6 +3754,10 @@ def analyze_pose_task(
         bor_ana.run_analysis()
         fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
         fe_stds.append(bor_ana.results['fe_error'])
+
+        # constant Boresch restraint value
+        fe_timeseries['Boresch'] = np.asarray([bor_ana.results['fe'], 0])
+
         results_entries.append(
             f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
         )
@@ -3761,11 +3785,13 @@ def analyze_pose_task(
                 )
                 mbar_ana.run_analysis()
                 mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
-                                        title=f'Convergence for {comp} {pose}',
+                                        title=f'Convergence for {comp} {mol}',
                 )
 
                 fe_values.append(COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results['fe'])
                 fe_stds.append(mbar_ana.results['fe_error'])
+                fe_timeseries[comp] = mbar_ana.results['fe_timeseries']
+
                 results_entries.append(
                     f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * mbar_ana.results["fe"]:.2f}\t{mbar_ana.results["fe_error"]:.2f}'
                 )
@@ -3781,11 +3807,13 @@ def analyze_pose_task(
                 )
                 rest_mbar_ana.run_analysis()
                 rest_mbar_ana.plot_convergence(save_path=f'{pose_path}/Results/{comp}_convergence.png',
-                                        title=f'Convergence for {comp} {pose}',
+                                        title=f'Convergence for {comp} {mol}',
                 )
 
-                fe_values.append(COMPONENT_DIRECTION_DICT[comp] *rest_mbar_ana.results['fe'])
+                fe_values.append(COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results['fe'])
                 fe_stds.append(rest_mbar_ana.results['fe_error'])
+                fe_timeseries[comp] = rest_mbar_ana.results['fe_timeseries']
+
                 results_entries.append(
                     f'{comp}\t{COMPONENT_DIRECTION_DICT[comp] * rest_mbar_ana.results["fe"]:.2f}\t{rest_mbar_ana.results["fe_error"]:.2f}'
                 )
@@ -3793,12 +3821,29 @@ def analyze_pose_task(
         # calculate total free energy
         fe_value = np.sum(fe_values)
         fe_std = np.sqrt(np.sum(np.array(fe_stds)**2))
+        # get the time series for the total free energy
+
+        fe_timeseries_fe_value = np.zeros(LEN_FE_TIMESERIES)
+        fe_timeseries_std = np.zeros(LEN_FE_TIMESERIES)
+        for comp, timeseries in fe_timeseries.items():
+            direction = COMPONENT_DIRECTION_DICT[comp]
+            if timeseries.ndim == 1:
+                fe_timeseries_fe_value += timeseries[0] * direction
+                fe_timeseries_std += np.zeros(LEN_FE_TIMESERIES)
+            else:
+                fe_timeseries_fe_value += timeseries[:, 0] * direction
+                fe_timeseries_std += timeseries[:, 1] ** 2
+
+        fe_timeseries_std = np.sqrt(fe_timeseries_std)
+
     except Exception as e:
         logger.error(f'Error during FE analysis for {pose}: {e}')
         if raise_on_error:
             raise e
         fe_value = np.nan
         fe_std = np.nan
+        fe_timeseries_fe_value = np.zeros(LEN_FE_TIMESERIES) * np.nan
+        fe_timeseries_std = np.zeros(LEN_FE_TIMESERIES) * np.nan
 
     results_entries.append(
         f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
@@ -3806,5 +3851,37 @@ def analyze_pose_task(
     with open(f'{fe_folder}/{pose}/Results/Results.dat', 'w') as f:
         f.write('\n'.join(results_entries))
     
+    with open(f'{fe_folder}/{pose}/Results/fe_timeseries.json', 'w') as f:
+        json.dump({
+            'fe_value': fe_timeseries_fe_value.tolist(),
+            'fe_std': fe_timeseries_std.tolist(),
+        }, f)
+    
+    # plot fe_timeseries
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    sns.set(style='whitegrid')
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.errorbar(
+        np.arange(1, LEN_FE_TIMESERIES + 1) / LEN_FE_TIMESERIES * 100,
+        fe_timeseries_fe_value,
+        yerr=fe_timeseries_std,
+        fmt='-o',
+        capsize=5,
+    )
+    # plot horizontal line at fe_value with shaded area for 1 kcal/mol
+    ax.axhline(fe_value, color='red', linestyle='--', label='FE value (±1 kcal/mol)')
+    ax.fill_between(
+            x=np.arange(1, LEN_FE_TIMESERIES + 1) / LEN_FE_TIMESERIES * 100,
+            y1=fe_value - 1.0,
+            y2=fe_value + 1.0,
+            color='red',
+            alpha=0.2,
+        )
+    ax.set_xlabel('Simulation Progress (%)')
+    ax.set_ylabel('Free Energy (kcal/mol)')
+    ax.set_title(f'Free Energy Timeseries for {mol}')
+    ax.legend(loc='upper right')
+    plt.tight_layout()
+    plt.savefig(f'{fe_folder}/{pose}/Results/fe_timeseries.png')
     return
-            

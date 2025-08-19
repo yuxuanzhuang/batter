@@ -18,6 +18,7 @@ from batter.analysis.utils import exclude_outliers
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
+import json
 
 from abc import ABC, abstractmethod
 from loguru import logger
@@ -33,10 +34,18 @@ class FEAnalysisBase(ABC):
     Abstract base class for analysis of each component.
     """
     def __init__(self):
+        """
+        The results dictionary will contain:
+        - 'fe': Free energy results.
+        - 'fe_error': Free energy error from bootstrapping.
+        - 'convergence': Dictionary containing convergence results.
+        - 'fe_timeseries': Free energy timeseries (in percentage of total time).
+        """
         self.results = {
             'fe': None,
             'fe_error': None,
-            'convergence': {}
+            'convergence': {},
+            'fe_timeseries': None,
         }
 
     @abstractmethod
@@ -66,6 +75,32 @@ class FEAnalysisBase(ABC):
         Get the free energy error from bootstrapping.
         """
         return self.results['fe_error']
+    
+    @property
+    def convergence(self):
+        """
+        Get the convergence results.
+        """
+        return self.results['convergence']
+
+    @property
+    def fe_timeseries(self):
+        """
+        Get the free energy timeseries.
+        """
+        return self.results['fe_timeseries']
+    
+    def dump(self, filename='results.json'):
+        """
+        Store the results in a json file without the convergence data.
+        """
+        with open(filename, 'w') as f:
+            json.dump({
+                'fe': self.fe.tolist(),
+                'fe_error': self.fe_error.tolist(),
+                'fe_timeseries': self.fe_timeseries.tolist(),
+            }, f, indent=4)
+
 
 class MBARAnalysis(FEAnalysisBase):
     def __init__(self,
@@ -195,10 +230,10 @@ class MBARAnalysis(FEAnalysisBase):
                 for series in self.timeseries]
                 for fraction in self.results['convergence']['time_convergence']['data_fraction']
             ]
-            forward_FE = self.results['convergence']['time_convergence'].Forward.values
-            forward_FE_err = self.results['convergence']['time_convergence'].Forward_Error.values
-            backward_FE = self.results['convergence']['time_convergence'].Backward.values
-            backward_FE_err = self.results['convergence']['time_convergence'].Backward_Error.values
+            forward_FE = self.results['convergence']['time_convergence'].Forward.values * self.kT
+            forward_FE_err = self.results['convergence']['time_convergence'].Forward_Error.values * self.kT
+            backward_FE = self.results['convergence']['time_convergence'].Backward.values * self.kT
+            backward_FE_err = self.results['convergence']['time_convergence'].Backward_Error.values * self.kT
 
             forward_end_time_tuples = [tuple(times) for times in forward_end_time]
             backward_start_time_tuples = [tuple(times) for times in backward_start_time]
@@ -209,6 +244,10 @@ class MBARAnalysis(FEAnalysisBase):
                                                 names=[f"time_{i}" for i in range(len(forward_end_time_tuples[0]))]),
                 columns=['FE', 'FE_Error']
             )
+
+            # the first dim is the fe results; the second row is the fe error
+            self.results['fe_timeseries'] = np.column_stack([forward_FE, forward_FE_err])
+
             self.results['convergence']['backward_timeseries'] = pd.DataFrame(
                 np.column_stack([backward_FE, backward_FE_err]),
                 index=pd.MultiIndex.from_tuples(backward_start_time_tuples,
@@ -223,8 +262,8 @@ class MBARAnalysis(FEAnalysisBase):
                                                                              num=num_blocks,
                                                                              method='default')
 
-            block_FE = self.results['convergence']['block_convergence'].FE.values
-            block_FE_err = self.results['convergence']['block_convergence'].FE_Error.values
+            block_FE = self.results['convergence']['block_convergence'].FE.values * self.kT
+            block_FE_err = self.results['convergence']['block_convergence'].FE_Error.values * self.kT
             fractions = np.linspace(0, 1, num_blocks)
             block_start_time = [
                 [series[int(len(series) * fraction)]
@@ -256,6 +295,9 @@ class MBARAnalysis(FEAnalysisBase):
         # Save the results
         with open(f'{self.result_folder}/{self.component}_results.pickle', 'wb') as f:
             pickle.dump(self.results, f)
+
+        self.dump(f'{self.result_folder}/{self.component}_results.json')
+        logger.debug(f"Results for {self.component} saved to {self.result_folder}/{self.component}_results.json")
 
     @staticmethod
     def _extract_all_for_window(win_i, comp_folder, component, temperature,
