@@ -102,6 +102,7 @@ class System:
         self._slurm_jobs = {}
         self._sim_finished = {}
         self._sim_failed = {}
+        self._pose_failed = {}
         self._eq_prepared = False
         self._fe_prepared = False
         self._fe_results = {}
@@ -1003,6 +1004,9 @@ class System:
             logger.info('Submit free energy stage in batch mode')
             pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
             for i, pose in enumerate(self.bound_poses):
+                if self.pose_failed.get(pose, False):
+                    logger.warning(f"Pose {pose} has failed in previous runs. Skipping submission.")
+                    continue
                 # only check for each pose to reduce frequently checking SLURM 
                 while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                     time.sleep(120)
@@ -1121,6 +1125,9 @@ class System:
             logger.info('Submit NPT equilibration part of free energy stage')
             pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy equilibration jobs')
             for pose in self.bound_poses:
+                if self.pose_failed.get(pose, False):
+                    logger.warning(f"Pose {pose} has failed in previous runs. Skipping submission.")
+                    continue
                 # only check for each pose to reduce frequently checking SLURM 
                 while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                     time.sleep(120)
@@ -1199,6 +1206,9 @@ class System:
             pbar = tqdm(total=len(self.bound_poses), desc='Submitting free energy jobs')
             priorities = np.arange(1, len(self.bound_poses) + 1)[::-1] * 10000
             for i, pose in enumerate(self.bound_poses):
+                if self.pose_failed.get(pose, False):
+                    logger.warning(f"Pose {pose} has failed in previous runs. Skipping submission.")
+                    continue
                 # set gradually lower priority for jobs
                 priority = priorities[i]
                 # only check for each pose to reduce frequently checking SLURM 
@@ -2426,14 +2436,14 @@ class System:
                         desc="Equilibration sims finished",
                         unit="job")
             while self._check_equilibration():
-                n_finished = len([k for k, v in self._sim_finished.items() if v])
-                #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
+                n_finished = len([k for k, v in self.sim_finished.items() if v])
+                #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self.sim_finished)}')
                 pbar.update(n_finished - pbar.n)
                 now = time.strftime("%m-%d %H:%M:%S")
                 desc = f"{now} – Equilibration sims finished"
                 pbar.set_description(desc)
 
-                not_finished = [k for k, v in self._sim_finished.items() if not v]
+                not_finished = [k for k, v in self.sim_finished.items() if not v]
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
@@ -2455,6 +2465,15 @@ class System:
             return
 
         #4.0, submit the free energy equilibration
+        # check if all poses failed or unbound
+        if len(self.bound_poses) == 0:
+            logger.warning('No bound poses found after equilibration. '
+                           'Please check the equilibration results.')
+            return
+        if all([self.pose_failed.get(pose, False) for pose in self.bound_poses]):
+            logger.warning('All bound poses failed in equilibration. '
+                           'Please check the equilibration results.')
+            return
 
         remd = self.sim_config.remd == 'yes'
         self.batch_mode = remd
@@ -2498,14 +2517,14 @@ class System:
                         unit="job")
             while self._check_fe_equil():
                 # get finishd jobs
-                n_finished = len([k for k, v in self._sim_finished.items() if v])
+                n_finished = len([k for k, v in self.sim_finished.items() if v])
                 pbar.update(n_finished - pbar.n)
                 now = time.strftime("%m-%d %H:%M:%S")
                 desc = f"{now} – FE Equilibration sims finished"
                 pbar.set_description(desc)
 
-                #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self._sim_finished)}')
-                not_finished = [k for k, v in self._sim_finished.items() if not v]
+                #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self.sim_finished)}')
+                not_finished = [k for k, v in self.sim_finished.items() if not v]
                 failed = [k for k, v in self._sim_failed.items() if v]
                 # name f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}
 
@@ -2549,6 +2568,10 @@ class System:
         #4, submit the free energy calculation
         logger.info('Running free energy calculation')
 
+        if all([self.pose_failed.get(pose, False) for pose in self.bound_poses]):
+            logger.warning('All bound poses failed in FE equilibration. '
+                           'Please check the FE equilibration results.')
+            return
         if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
             logger.info('Generating batch run files...')
             self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
@@ -2584,13 +2607,13 @@ class System:
             )
             while self._check_fe():
                 # get finishd jobs
-                n_finished = len([k for k, v in self._sim_finished.items() if v])
+                n_finished = len([k for k, v in self.sim_finished.items() if v])
                 pbar.update(n_finished - pbar.n)
                 now = time.strftime("%m-%d %H:%M:%S")
                 desc = f"{now} – FE simulations finished"
                 pbar.set_description(desc)
-                #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self._sim_finished)}')
-                not_finished = [k for k, v in self._sim_finished.items() if not v]
+                #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self.sim_finished)}')
+                not_finished = [k for k, v in self.sim_finished.items() if not v]
                 failed = [k for k, v in self._sim_failed.items() if v]
 
                 not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
@@ -2631,6 +2654,7 @@ class System:
         """
         sim_finished = {}
         sim_failed = {}
+        pose_failed = {}
         for pose in self.all_poses:
             if not os.path.exists(f"{self.equil_folder}/{pose}/FINISHED"):
                 sim_finished[f'eq_{pose}'] = False
@@ -2638,9 +2662,11 @@ class System:
                 sim_finished[f'eq_{pose}'] = True
             if os.path.exists(f"{self.equil_folder}/{pose}/FAILED"):
                 sim_failed[f'eq_{pose}'] = True
+                pose_failed[pose] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed
+        self._pose_failed = pose_failed
 
         if any(self._sim_failed.values()):
             logger.error(f'Equilibration failed: {self._sim_failed}')
@@ -2661,6 +2687,7 @@ class System:
         """
         sim_finished = {}
         sim_failed = {}
+        pose_failed = {}
         for pose in self.bound_poses:
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
@@ -2673,14 +2700,16 @@ class System:
                     sim_finished[f'fe_{pose}_{comp_folder}_{comp}{win:02d}'] = True
                 if os.path.exists(f"{folder_2_check}/FAILED"):
                     sim_failed[f'fe_{pose}_{comp_folder}_{comp}{win:02d}'] = True
+                    pose_failed[pose] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed
+        self._pose_failed = pose_failed
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy EQ calculation failed: {self._sim_failed}')
             if self._fail_on_error:
-                raise
+                raise RuntimeError(f'Free energy EQ calculation failed in pose {self._pose_failed}')
             else:
                 # add failed runs to finished runs
                 for k in self._sim_failed.keys():
@@ -2703,6 +2732,7 @@ class System:
             return self._check_fe_batch()
         sim_finished = {}
         sim_failed = {}
+        pose_failed = {}
         for pose in self.bound_poses:
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
@@ -2715,14 +2745,16 @@ class System:
                         sim_finished[f'fe_{pose}_{comp_folder}_{comp}{j:02d}'] = True
                     if os.path.exists(f"{folder_2_check}/FAILED"):
                         sim_failed[f'fe_{pose}_{comp_folder}_{comp}{j:02d}'] = True
+                        pose_failed[pose] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed
+        self._pose_failed = pose_failed
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
             if self._fail_on_error:
-                raise
+                raise RuntimeError(f'Free energy calculation failed in pose {self._pose_failed}')
             else:
                 # add failed runs to finished runs
                 for k in self._sim_failed.keys():
@@ -2742,6 +2774,7 @@ class System:
         """
         sim_finished = {}
         sim_failed = {}
+        pose_failed = {}
         for pose in self.bound_poses:
             for comp in self.sim_config.components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
@@ -2752,14 +2785,16 @@ class System:
                     sim_finished[f'fe_{pose}_{comp_folder}_{comp}batch'] = True
                 if os.path.exists(f"{folder_2_check}/{comp}_FAILED"):
                     sim_failed[f'fe_{pose}_{comp_folder}_{comp}batch'] = True
+                    pose_failed[pose] = True
 
         self._sim_finished = sim_finished
         self._sim_failed = sim_failed
+        self._pose_failed = pose_failed
         # if all are finished, return False
         if any(self._sim_failed.values()):
             logger.error(f'Free energy calculation failed: {self._sim_failed}')
             if self._fail_on_error:
-                raise
+                raise RuntimeError(f'Free energy calculation failed in pose {self._pose_failed}')
         if all(self._sim_finished.values()):
             logger.debug('Free energy calculation is finished')
             return False
@@ -2791,7 +2826,7 @@ class System:
             if self._check_fe():
                 logger.info('Free energy calculation is still running')
         
-        not_finished = [k for k, v in self._sim_finished.items() if not v]
+        not_finished = [k for k, v in self.sim_finished.items() if not v]
 
         if len(not_finished) == 0:
             logger.info('All jobs are finished')
@@ -3433,6 +3468,34 @@ class System:
             return self._max_num_jobs
         except AttributeError:
             return 2000
+        
+    @property
+    def sim_finished(self):
+        """
+        Get the simulation finished status.
+        """
+        if not hasattr(self, '_sim_finished'):
+            self._sim_finished = {}
+        return self._sim_finished
+    
+    @property
+    def sim_failed(self):
+        """
+        Get the simulation failures status.
+        """
+        if not hasattr(self, '_sim_failed'):
+            self._sim_failed = {}
+        return self._sim_failed
+    
+    @property
+    def pose_failed(self):
+        """
+        Get the pose failures status.
+        """
+        if not hasattr(self, '_pose_failures'):
+            self.pose_failed = {}
+        return self.pose_failed
+
 
 
 class ABFESystem(System):
