@@ -947,6 +947,32 @@ class EquilibrationBuilder(SystemBuilder):
     sdr_dist = 0
     dec_method = ''
 
+    def __init__(self,
+                 system: 'batter.System',
+                 pose: str,
+                 sim_config: SimulationConfig,
+                 working_dir: str,
+                 infe: bool = False,
+                 ):
+        """
+        The base class for all system builders.
+
+        Parameters
+        ----------
+        system : batter.System
+            The system to build.
+        pose : str
+            The name of the pose
+        sim_config : batter.input_process.SimulationConfig
+            The simulation configuration.
+        working_dir : str
+            The working directory.
+        infe: bool
+            Whether add infe for protein conformation.
+        """
+        self.infe = infe
+        super().__init__(system, pose, sim_config, working_dir)
+
     @property
     def build_file_folder(self):
         return 'build_files'
@@ -1869,6 +1895,7 @@ class EquilibrationBuilder(SystemBuilder):
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
 
+        infe = 1 if self.infe else 0
         # Create gradual release files for equilibrium
         for i in range(0, num_sim):
             with open(f'{self.amber_files_folder}/mdin-equil', "rt") as fin:
@@ -1878,12 +1905,17 @@ class EquilibrationBuilder(SystemBuilder):
                     if self.sim_config.release_eq[i] == 0:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_num-atoms_', str(vac_atoms)).replace(
+                                '_enable_infe_', str(infe)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps2)).replace('disang_file', f'disang{i:02d}'))
                     else:
                         for line in fin:
+                            if i == 0:
+                                if 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'ntx' in line:
+                                    line = 'ntx = 1, \n'
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_num-atoms_', str(vac_atoms)).replace(
+                                '_enable_infe_', str(infe)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
 
     @log_info             
@@ -1932,11 +1964,16 @@ class FreeEnergyBuilder(SystemBuilder):
                  sim_config: SimulationConfig,
                  working_dir: str,
                  molr: str,
-                 poser: str,):
+                 poser: str,
+                 infe: bool = False,
+                 ):
         self.win = win
         self.comp = component
         self.molr = molr
         self.poser = poser
+
+        # whether to enable infe for protein restraint.
+        self.infe = infe
 
         super().__init__(system, pose, sim_config, working_dir)
 
@@ -4117,7 +4154,9 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
             logger.debug('No ions need to be added for ligand decoupling.')
             return
         # add ion indices to 
-        files_to_be_modified = ['mini-unorest-lig', 'mdin-unorest-lig']
+        files_to_be_modified = ['mini-unorest-lig', 'mdin-unorest-lig',
+                                'eqnpt0-lig.in', 'eqnpt-lig.in',
+        ]
         for file in files_to_be_modified:
             # timask2 need to be modified to include the selected ions
             # restraintmask need to be modified to include the selected ions
@@ -4164,7 +4203,10 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
         if selected_ion_indices is None:
             logger.debug('No ions need to be added for complex/receptor decoupling.')
             return
-        files_to_be_modified = ['mdin-unorest-dd', 'mini-unorest-dd']
+        files_to_be_modified = ['mdin-unorest-dd', 'mini-unorest-dd',
+                                'eqnpt.in', 'eqnpt0.in',
+        ]
+
         for file in files_to_be_modified:
             # add ion indices to timask2 and restraintmask
             with open(f'../{self.amber_files_folder}/{file}', 'r') as fin:
@@ -4576,126 +4618,6 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                     for line in fin:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
                             'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
-                            '_lig_name_', mol))
-
-        if (comp == 'o' or comp == 'z'):
-            # Create simulation files for elec+vdw decoupling
-            if (dec_method == 'sdr'):
-                # Simulation files for simultaneous decoupling
-                with open('./vac.pdb') as myfile:
-                    data = myfile.readlines()
-                    mk2 = int(last_lig)
-                    mk1 = int(mk2 - 1)
-                for i in range(0, num_sim+1):
-                    with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
-                        with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(steps1) if i == 0 else str(steps2)
-                            for line in fin:
-                                if i == 0:
-                                    if 'ntx = 5' in line:
-                                        line = 'ntx = 1, \n'
-                                    elif 'irest' in line:
-                                        line = 'irest = 0, \n'
-                                    elif 'dt = ' in line:
-                                        line = 'dt = 0.001, \n'
-                                    elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                                        if restraint_mask == '':
-                                            line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
-                                        else:
-                                            line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                    '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                    mdin = open("./mdin-%02d" % int(i), 'a')
-                    mdin.write('  mbar_states = %02d\n' % len(lambdas))
-                    mdin.write('  mbar_lambda = ')
-                    for i in range(0, len(lambdas)):
-                        mdin.write(' %6.5f,' % (lambdas[i]))
-                    mdin.write('\n')
-                    mdin.write('  infe = 1,\n')
-                    mdin.write(' /\n')
-                    mdin.write(' &pmd \n')
-                    mdin.write(' output_file = \'cmass.txt\' \n')
-                    mdin.write(' output_freq = %02d \n' % int(ntwx))
-                    mdin.write(' cv_file = \'cv.in\' \n')
-                    mdin.write(' /\n')
-                    mdin.write(' &wt type = \'END\' , /\n')
-                    mdin.write('DISANG=disang.rest\n')
-                    mdin.write('LISTOUT=POUT\n')
-
-                with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
-                    with open("./eqnpt0.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                            '_lig_name_', mol))
-                with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
-                    with open("./eqnpt.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                            '_lig_name_', mol))
-                with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
-                    with open("./mini.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                            '_lig_name_', mol))
-
-            # Simulation files for double decoupling
-            elif (dec_method == 'dd'):
-                raise ValueError("Double decoupling not implemented for elec+vdw decoupling")
-                with open('./vac.pdb') as myfile:
-                    data = myfile.readlines()
-                    mk1 = int(last_lig)
-                for i in range(0, num_sim+1):
-                    with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
-                        with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(steps1) if i == 0 else str(steps2)
-                            for line in fin:
-                                if i == 0:
-                                    if 'ntx = 5' in line:
-                                        line = 'ntx = 1, \n'
-                                    elif 'irest' in line:
-                                        line = 'irest = 0, \n'
-                                    elif 'dt = ' in line:
-                                        line = 'dt = 0.001, \n'
-                                    elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                                        if restraint_mask == '':
-                                            line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
-                                        else:
-                                            line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                        '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
-                    mdin = open("./mdin-%02d" % int(i), 'a')
-                    mdin.write('  mbar_states = %02d\n' % len(lambdas))
-                    mdin.write('  mbar_lambda = ')
-                    for i in range(0, len(lambdas)):
-                        mdin.write(' %6.5f,' % (lambdas[i]))
-                    mdin.write('\n')
-                    mdin.write('  infe = 1,\n')
-                    mdin.write(' /\n')
-                    mdin.write(' &pmd \n')
-                    mdin.write(' output_file = \'cmass.txt\' \n')
-                    mdin.write(' output_freq = %02d \n' % int(ntwx))
-                    mdin.write(' cv_file = \'cv.in\' \n')
-                    mdin.write(' /\n')
-                    mdin.write(' &wt type = \'END\' , /\n')
-                    mdin.write('DISANG=disang.rest\n')
-                    mdin.write('LISTOUT=POUT\n')
-
-                with open(f"../{self.amber_files_folder}/eqnpt-lj-dd.in", "rt") as fin:
-                    with open("./eqnpt.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
-                            '_lig_name_', mol))
-                with open(f"../{self.amber_files_folder}/heat-lj-dd.in", "rt") as fin:
-                    with open("./heat.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
                             '_lig_name_', mol))
 
 
@@ -5336,22 +5258,18 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
             with open("./mini_eq.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_lig_name_', mol))
-        with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+        with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
-                    if dec_method == 'sdr' and 'infe' in line:
-                        fout.write('  infe = 1,\n')
-                    elif 'mcwat' in line:
+                    if 'mcwat' in line:
                         fout.write('  mcwat = 0,\n')
                     else:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_lig_name_', mol))
-        with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+        with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
-                    if dec_method == 'sdr' and 'infe' in line:
-                        fout.write('  infe = 1,\n')
-                    elif 'mcwat' in line:
+                    if 'mcwat' in line:
                         fout.write('  mcwat = 0,\n')
                     else:
                         fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -6046,18 +5964,6 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                 #mdin.write('DISANG=disang.rest\n')
                 #mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
-                with open("./eqnpt0.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
@@ -6070,22 +5976,18 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                 with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        if 'infe' in line:
-                            fout.write('  infe = 1,\n')
-                        elif 'mcwat' in line:
+                        if 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        if 'infe' in line:
-                            fout.write('  infe = 1,\n')
-                        elif 'mcwat' in line:
+                        if 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -6813,6 +6715,7 @@ class BuilderFactory:
                     component='q',
                     molr=None,
                     poser=None,
+                    infe=False
     ):
         if stage == 'equil':
             return EquilibrationBuilder(
@@ -6820,6 +6723,7 @@ class BuilderFactory:
                 pose=pose,
                 sim_config=sim_config,
                 working_dir=working_dir,
+                infe=infe,
             )
         
         match component:
@@ -6833,6 +6737,7 @@ class BuilderFactory:
                 component=component,
                 molr=molr,
                 poser=poser,
+                infe=infe,
             )
             case 'e' | 'v':
                 return AlChemicalFreeEnergyBuilder(
@@ -6844,6 +6749,7 @@ class BuilderFactory:
                 component=component,
                 molr=molr,
                 poser=poser,
+                infe=infe,
             )
             case 'x':
                 return EXFreeEnergyBuilder(
@@ -6855,6 +6761,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case 'o':
                 return UNOFreeEnergyBuilder(
@@ -6866,6 +6773,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case 'z':
                 return UNORESTFreeEnergyBuilder(
@@ -6877,6 +6785,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case 's':
                 return ACESEquilibrationBuilder(
@@ -6888,6 +6797,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case 'y':
                 return LIGANDFreeEnergyBuilder(
@@ -6899,6 +6809,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case _:
                 raise ValueError(f"Invalid component: {component} for now")
@@ -7013,7 +6924,7 @@ def select_ions_away_from_complex(universe, total_charge, mol):
         return None  # No ions needed for neutral systems
     
     n_ions = abs(total_charge)
-    complex_sys = universe.select_atoms(f'protein or resname {mol}')
+    complex_sys = universe.select_atoms(f'protein or resname {mol} or name P31')
     ions = universe.select_atoms(f'resname {ion_type}')
     if len(ions) < n_ions:
         raise ValueError(f'Not enough {ion_type} ions in the system to neutralize the charge.')

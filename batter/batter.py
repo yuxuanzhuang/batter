@@ -849,11 +849,11 @@ class System:
         self.partition = partition
         self._n_workers = n_workers
         if avg_struc is not None and rmsf_file is not None:
-            rmsf_restraints = True
+            self.rmsf_restraints = True
         elif avg_struc is not None or rmsf_file is not None:
             raise ValueError("Both avg_struc and rmsf_file should be provided")
         else:
-            rmsf_restraints = False
+            self.rmsf_restraints = False
         
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -893,7 +893,7 @@ class System:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
             
             self._prepare_equil_system()
-            if rmsf_restraints:
+            if self.rmsf_restraints:
                 self.add_rmsf_restraints(
                         stage='equil',
                         avg_struc=avg_struc,
@@ -954,7 +954,7 @@ class System:
             self._check_equilbration_binding()
             self._find_new_anchor_atoms()
             self._prepare_fe_system()
-            if rmsf_restraints:
+            if self.rmsf_restraints:
                 self.add_rmsf_restraints(
                         stage='fe',
                         avg_struc=avg_struc,
@@ -1342,7 +1342,8 @@ class System:
                 system=self,
                 pose=pose,
                 sim_config=sim_config,
-                working_dir=f'{self.equil_folder}'
+                working_dir=f'{self.equil_folder}',
+                infe=self.rmsf_restraints,
             )
             builders.append(equil_builder)
 
@@ -1681,11 +1682,11 @@ class System:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     u_ref = mda.Universe(
-                            f"{folder_comp}/{comp}00/full.pdb",
-                            f"{folder_comp}/{comp}00/full.inpcrd")
+                            f"{folder_comp}/{comp}-1/full.pdb",
+                            f"{folder_comp}/{comp}-1/full.inpcrd")
                     windows = self.component_windows_dict[comp]
                     cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
-                        for j in range(0, len(windows))]
+                        for j in range(-1, len(windows))]
                     
                     write_colvar_block(u_ref, cv_files)
                     

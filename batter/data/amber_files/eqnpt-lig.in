@@ -28,7 +28,7 @@ Equilibrate, NPT.
   ntr = 1,
   restraint_wt = 50.0,
   restraintmask = '(:_lig_name_) & !@H=',
-  infe = 0,
+  infe = 1,
  /
  &pmd
  output_file = 'cmass.txt'
