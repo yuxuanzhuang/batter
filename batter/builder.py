@@ -1377,6 +1377,8 @@ class EquilibrationBuilder(SystemBuilder):
         os.system(f'cp {self.build_file_folder}/{mol.lower()}-noh.pdb ./{mol.lower()}.pdb')
         #shutil.copy(f'{self.build_file_folder}/anchors-{pose}.txt', './anchors.txt')
         os.system(f'cp {self.build_file_folder}/anchors-{pose}.txt ./anchors.txt')
+        os.system(f'cp {self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp {self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         # Read coordinates for dummy atoms
         for i in range(1, 2):
@@ -2361,6 +2363,8 @@ class FreeEnergyBuilder(SystemBuilder):
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
         os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
+        os.system(f'cp ../{self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp ../{self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
@@ -5630,6 +5634,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
         os.system(f'cp ../{self.build_file_folder}/anchors-{pose}.txt ./')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
+        os.system(f'cp ../{self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp ../{self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
@@ -6341,7 +6347,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
         os.system(f'cp ../{self.build_file_folder}/anchors-{pose}.txt ./')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
-
+        os.system(f'cp ../{self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp ../{self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')

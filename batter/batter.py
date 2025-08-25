@@ -1567,7 +1567,7 @@ class System:
             n_atoms = ref_pos.shape[0]
             all_ps = []
             for atm in range(n_atoms):
-                dum_p = pmd.load_file(f'{pose_folder}/solvate_dum.prmtop', f'{pose_folder}/solvate_dum.inpcrd')
+                dum_p = pmd.load_file(f'{pose_folder}/dum.prmtop', f'{pose_folder}/dum.inpcrd')
                 dum_p.coordinates = ref_pos[atm]
                 all_ps.append(dum_p)
             
@@ -1590,7 +1590,7 @@ class System:
             else:
                 combined.save(f"{pose_folder}/full.prmtop", overwrite=True)
 
-        def write_colvar_block(ref_u, avg_u, cv_files):
+        def write_colvar_block(ref_u, avg_u, cv_files, pose_folder):
             n_atoms = ref_u.atoms.n_atoms
             gpcr_sel = 'protein and name CA'
 
@@ -1622,8 +1622,8 @@ class System:
                         dis_cutoff=rmsf_val[0],
                         force_constant=force_constant
                 ))
-            add_dum_atoms(f"{self.equil_folder}/{pose}",
-                            ref_pos)
+            add_dum_atoms(pose_folder,
+                          ref_pos)
             
             for cv_file in cv_files:
                 
@@ -1669,7 +1669,8 @@ class System:
                 cv_files = [f"{self.equil_folder}/{pose}/cv.in"]
                 avg_u = mda.Universe(avg_struc)
 
-                write_colvar_block(u_ref, avg_u, cv_files)
+                write_colvar_block(u_ref, avg_u, cv_files,
+                                  f"{self.equil_folder}/{pose}")
                 n_atoms_before = u_ref.atoms.n_atoms
                 n_dums = avg_u.atoms.n_atoms
                 new_mask_component = f'@{n_atoms_before + 1}-{n_atoms_before + n_dums + 1}'
@@ -1752,7 +1753,8 @@ class System:
                         for j in range(-1, len(windows))]
                     n_atoms_before = u_ref.atoms.n_atoms
                     n_dums = avg_u.atoms.n_atoms
-                    write_colvar_block(u_ref, avg_u, cv_files)
+                    write_colvar_block(u_ref, avg_u, cv_files,
+                                        f"{folder_comp}/{comp}-1")
                     
                     eq_in_files = glob.glob(f"{folder_comp}/*/eqnpt0.in")
                     for eq_in_file in eq_in_files:
