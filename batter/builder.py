@@ -2024,6 +2024,7 @@ class FreeEnergyBuilder(SystemBuilder):
         pose = self.pose
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -2057,7 +2058,11 @@ class FreeEnergyBuilder(SystemBuilder):
         os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.mol2 ./')
         os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.pdb ./')
 
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -2070,7 +2075,8 @@ class FreeEnergyBuilder(SystemBuilder):
             residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
         if lipid_mol:
-            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
+            # also skip ANC, which is a anchored dummy atom for rmsf restraint
+            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+ ANC')
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
@@ -4648,6 +4654,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         poser = self.poser
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -4670,7 +4677,11 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         for file in glob.glob(f'../../../../equil/{poser.lower()}/vac*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
 
         # restore resid index
         
@@ -5293,6 +5304,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         pose = self.pose
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -5328,8 +5340,11 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         
         mol = mda.Universe(f'{pose}.pdb').residues[0].resname
         self.mol = mol
-
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -6006,6 +6021,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         pose = self.pose
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -6046,7 +6062,11 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         mol = mda.Universe(f'{pose}.pdb').residues[0].resname
         self.mol = mol
 
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',

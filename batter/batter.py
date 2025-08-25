@@ -895,7 +895,7 @@ class System:
             
             self._prepare_equil_system()
             if self.rmsf_restraints:
-                self.add_rmsf_restraints(
+                self.add_rmsf_restraints_new(
                         stage='equil',
                         avg_struc=avg_struc,
                         rmsf_file=rmsf_file
@@ -947,8 +947,6 @@ class System:
                 for file in os.listdir(self.ligandff_folder):
                     os.system(f"cp {self.ligandff_folder}/{file} {self.fe_folder}/ff/{file}")
 
-
-            
             with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
 
@@ -956,7 +954,7 @@ class System:
             self._find_new_anchor_atoms()
             self._prepare_fe_system()
             if self.rmsf_restraints:
-                self.add_rmsf_restraints(
+                self.add_rmsf_restraints_new(
                         stage='fe',
                         avg_struc=avg_struc,
                         rmsf_file=rmsf_file
@@ -1492,6 +1490,314 @@ class System:
         self._prepare_fe_windows()
         logger.info('Free energy systems have been created for all poses listed in the input file.')
 
+    def add_rmsf_restraints_new(
+                            self,
+                            stage: str,
+                            avg_struc: str,
+                            rmsf_file: str,
+                            force_constant: float = 100):
+        """
+        Add RMSF restraints to the system.
+        Similar to https://pubs.acs.org/doi/10.1021/acs.jctc.3c00899?ref=pdf
+
+        The restraint is added by adding extra dummy atoms representing the
+        center of restraints for each C-alpha atom in the protein.
+        The restraints are added to the cv.in file in the form of
+        ```bash
+        &colvar
+         cv_type = 'DISTANCE'
+         cv_ni = 2, cv_i = index_ca_i, index_dum_i,
+         anchor_position = 0, 0, rmsf_val, 999
+         anchror_strength = force_constant, force_constant
+        /
+        ```
+        where index_ca_i is the index of the C-alpha atom in the protein,
+        index_dum_i is the index of the dummy atom representing the center
+        of the restraint, rmsf_val is the RMSF value of the residue, and
+        force_constant is the force constant of the restraint.
+
+        """
+        logger.debug('Adding RMSF restraints')
+
+        def generate_colvar_block(atm_index,
+                                  dum_index,
+                                  dis_cutoff,
+                                  force_constant=100):
+            colvar_block = "&colvar\n"
+            colvar_block += " cv_type = 'DISTANCE'\n"
+            colvar_block += f" cv_ni = 2, cv_i = {atm_index},{dum_index}\n"
+            colvar_block += f" anchor_position = 0, 0, {dis_cutoff}, 999\n"
+            colvar_block += f" anchor_strength = {force_constant:2f}, {force_constant:2f}\n"
+            colvar_block += "/\n"
+            return colvar_block
+
+        def add_dum_atoms(pose_folder, ref_pos):
+            """
+            Files to be modified:
+            - full.pdb
+            - full.inpcrd
+            - full.prmtop
+            - full.hmr.prmtop
+            with parmed
+            dum atom prmtop: solvate_dum.prmtop
+            """
+            import parmed as pmd
+            
+            # move old full.pdb and full.inpcrd to full_old.pdb and full_old.inpcrd
+            if os.path.exists(f"{pose_folder}/full.pdb.bak"):
+                os.system(f'cp {pose_folder}/full.pdb.bak {pose_folder}/full.pdb')
+            else:
+                os.system(f'cp {pose_folder}/full.pdb {pose_folder}/full.pdb.bak')
+            if os.path.exists(f"{pose_folder}/full.inpcrd.bak"):
+                os.system(f'cp {pose_folder}/full.inpcrd.bak {pose_folder}/full.inpcrd')
+            else:
+                os.system(f'cp {pose_folder}/full.inpcrd {pose_folder}/full.inpcrd.bak')
+            if os.path.exists(f"{pose_folder}/full.hmr.prmtop.bak"):
+                os.system(f'cp {pose_folder}/full.hmr.prmtop.bak {pose_folder}/full.hmr.prmtop')
+            else:
+                os.system(f'cp {pose_folder}/full.hmr.prmtop {pose_folder}/full.hmr.prmtop.bak')
+            if os.path.exists(f"{pose_folder}/full.prmtop.bak"):
+                os.system(f'cp {pose_folder}/full.prmtop.bak {pose_folder}/full.prmtop')
+            else:
+                os.system(f'cp {pose_folder}/full.prmtop {pose_folder}/full.prmtop.bak')
+            
+            
+            full_prmtop = f"{pose_folder}/full.hmr.prmtop" if self.sim_config.hmr == 'yes' else f"{pose_folder}/full.prmtop"
+            combined = pmd.load_file(full_prmtop, f"{pose_folder}/full.inpcrd")
+            n_atoms = ref_pos.shape[0]
+            all_ps = []
+            for atm in range(n_atoms):
+                dum_p = pmd.load_file(f'{pose_folder}/solvate_dum.prmtop', f'{pose_folder}/solvate_dum.inpcrd')
+                dum_p.coordinates = ref_pos[atm]
+                all_ps.append(dum_p)
+            
+            all_dums = all_ps[0]
+            for dum in all_ps[1:]:
+                all_dums += dum
+            combined += all_dums
+
+            # set dum_p resname ANC
+            # can only do it after merging
+            # becasue the modification on dum_p will not be reflected
+            # for some reason??
+            for res in combined.residues[-len(all_dums.residues):]:
+                res.name = 'ANC'
+            
+            combined.save(f"{pose_folder}/full.pdb", overwrite=True)
+            combined.save(f"{pose_folder}/full.inpcrd", overwrite=True)
+            if self.sim_config.hmr == 'yes':
+                combined.save(f"{pose_folder}/full.hmr.prmtop", overwrite=True)
+            else:
+                combined.save(f"{pose_folder}/full.prmtop", overwrite=True)
+
+        def write_colvar_block(ref_u, avg_u, cv_files):
+            n_atoms = ref_u.atoms.n_atoms
+            gpcr_sel = 'protein and name CA'
+
+            aligner = align.AlignTraj(
+                        avg_u, ref_u,
+                        select=gpcr_sel,
+                        match_atoms=False,
+                        in_memory=True).run()
+
+            ref_pos = np.zeros([avg_u.atoms.n_atoms, 3])
+
+            rmsf_values = np.loadtxt(rmsf_file)
+            gpcr_ref = ref_u.select_atoms(gpcr_sel)
+
+            cv_lines = []
+            for i, atm in enumerate(avg_u.atoms):
+                # new DUM atom added to the system
+                dum_index = n_atoms + i + 1
+                ref_pos[i] = atm.position
+                resid_i = atm.resid
+                rmsf_val = rmsf_values[rmsf_values[:, 0] == resid_i, 1]
+                if len(rmsf_val) == 0:
+                    logger.warning(f"resid: {resid_i} not found in rmsf file")
+                    continue
+                atm_index = gpcr_ref[i].index + 1
+                cv_lines.append(generate_colvar_block(
+                        atm_index=atm_index,
+                        dum_index=dum_index,
+                        dis_cutoff=rmsf_val[0],
+                        force_constant=force_constant
+                ))
+            add_dum_atoms(f"{self.equil_folder}/{pose}",
+                            ref_pos)
+            
+            for cv_file in cv_files:
+                
+                # if .bak exists, to avoid multiple appending
+                # first copy the original cv file to the backup
+                if os.path.exists(cv_file + '.bak'):
+                    os.system(f"cp {cv_file}.bak {cv_file}")
+                else:
+                    # copy original cv file for backup
+                    os.system(f"cp {cv_file} {cv_file}.bak")
+                
+                with open(cv_file, 'r') as f:
+                    lines = f.readlines()
+
+                with open(f'{cv_file}.eq0', 'w') as f:
+                    for line in lines:
+                        f.write(line)
+                    f.write("\n")
+                    for line in cv_lines:
+                        f.write(line)
+                
+                for i, line in enumerate(lines):
+                    if 'anchor_strength' in line:
+                        lines[i] = line.replace('anchor_strength =    10.0000,    10.0000,',
+                                    f'anchor_strength =    0,   0,')
+                        break
+                    
+                with open(cv_file, 'w') as f:
+                    for line in lines:
+                        f.write(line)
+                    f.write("\n")
+                    for line in cv_lines:
+                        f.write(line)
+                
+                
+        logger.info(f'Adding RMSF restraints for {stage} stage')
+        if stage == 'equil':
+            for pose in self.all_poses:
+                u_ref = mda.Universe(
+                        f"{self.equil_folder}/{pose}/full.pdb",
+                        f"{self.equil_folder}/{pose}/full.inpcrd")
+
+                cv_files = [f"{self.equil_folder}/{pose}/cv.in"]
+                avg_u = mda.Universe(avg_struc)
+
+                write_colvar_block(u_ref, avg_u, cv_files)
+                n_atoms_before = u_ref.atoms.n_atoms
+                n_dums = avg_u.atoms.n_atoms
+                new_mask_component = f'@{n_atoms_before + 1}-{n_atoms_before + n_dums + 1}'
+                
+
+                eqnvt = f"{self.equil_folder}/{pose}/eqnvt.in"
+                
+                with open(eqnvt, 'r') as f:
+                    lines = f.readlines()
+                with open(eqnvt, 'w') as f:
+                    for line in lines:
+                        if 'restraintmask' in line:
+                            line = modify_restraint_mask(line, new_mask_component)
+                        elif 'ntr = ' in line:
+                            line = ' ntr = 1,\n'
+                        elif 'cv.in' in line and 'cv.in.eq0' not in line:
+                            line = line.replace('cv.in', 'cv.in.eq0')
+                        f.write(line)
+
+                eqnpt0 = f"{self.equil_folder}/{pose}/eqnpt0.in"
+                
+                with open(eqnpt0, 'r') as f:
+                    lines = f.readlines()
+                with open(eqnpt0, 'w') as f:
+                    for line in lines:
+                        if 'restraintmask' in line:
+                            line = modify_restraint_mask(line, new_mask_component)
+                        elif 'ntr = ' in line:
+                            line = ' ntr = 1,\n'
+                        elif 'cv.in' in line and 'cv.in.eq0' not in line:
+                            line = line.replace('cv.in', 'cv.in.eq0')
+                        f.write(line)
+                
+                eqnpt = f"{self.equil_folder}/{pose}/eqnpt.in"
+                
+                with open(eqnpt, 'r') as f:
+                    lines = f.readlines()
+                with open(eqnpt, 'w') as f:
+                    for line in lines:
+                        if 'restraintmask' in line:
+                            line = modify_restraint_mask(line, new_mask_component)
+                        elif 'ntr = ' in line:
+                            line = ' ntr = 1,\n'
+                        if 'cv.in' in line and 'cv.in.bak' not in line:
+                            line = line.replace('cv.in', 'cv.in.bak')
+                        f.write(line)
+                
+                md_in_files = glob.glob(f"{self.equil_folder}/{pose}/mdin-*")
+                for md_in_file in md_in_files:
+                    with open(md_in_file, 'r') as f:
+                        lines = f.readlines()
+                    with open(md_in_file, 'w') as f:
+                        for line in lines:
+                            if 'restraintmask' in line:
+                                line = modify_restraint_mask(line, new_mask_component)
+                            elif 'barostat' in line:
+                                # bug when using Berendesen barostat
+                                # with NFE module
+                                # https://github.com/yuxuanzhuang/nfe_berendsen
+                                # need to switch to Monte Carlo barostat
+                                line = 'barostat = 2,\n'
+                            elif 'ntr = ' in line:
+                                line = ' ntr = 1,\n'
+                            f.write(line)
+
+
+        elif stage == 'fe':
+            # this should be done after fe_equil
+            for pose in self.bound_poses:
+                avg_u = mda.Universe(avg_struc)
+
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    u_ref = mda.Universe(
+                            f"{folder_comp}/{comp}-1/full.pdb",
+                    )
+                    windows = self.component_windows_dict[comp]
+                    cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
+                        for j in range(-1, len(windows))]
+                    n_atoms_before = u_ref.atoms.n_atoms
+                    n_dums = avg_u.atoms.n_atoms
+                    write_colvar_block(u_ref, avg_u, cv_files)
+                    
+                    eq_in_files = glob.glob(f"{folder_comp}/*/eqnpt0.in")
+                    for eq_in_file in eq_in_files:
+                        with open(eq_in_file, 'r') as f:
+                            lines = f.readlines()
+                        with open(eq_in_file, 'w') as f:
+                            for line in lines:
+                                if 'restraintmask' in line:
+                                    new_mask_component = f'@{n_atoms_before + 1}-{n_atoms_before + n_dums + 1}'
+                                    line = modify_restraint_mask(line, new_mask_component)
+                                if 'cv.in' in line and 'cv.in.eq0' not in line:
+                                    f.write(line.replace('cv.in', 'cv.in.eq0'))
+                                else:
+                                    f.write(line)
+                    
+                    eq_in_files = glob.glob(f"{folder_comp}/*/eqnpt.in")
+                    for eq_in_file in eq_in_files:
+                        with open(eq_in_file, 'r') as f:
+                            lines = f.readlines()
+                        with open(eq_in_file, 'w') as f:
+                            for line in lines:
+                                if 'restraintmask' in line:
+                                    new_mask_component = f'@{n_atoms_before + 1}-{n_atoms_before + n_dums + 1}'
+                                    line = modify_restraint_mask(line, new_mask_component)
+                                if 'cv.in' in line and 'cv.in.bak' not in line:
+                                    f.write(line.replace('cv.in', 'cv.in.bak'))
+                                else:
+                                    f.write(line)
+                    
+                    md_in_files = glob.glob(f"{folder_comp}/*/mdin-*")
+                    for md_in_file in md_in_files:
+                        with open(md_in_file, 'r') as f:
+                            lines = f.readlines()
+                        with open(md_in_file, 'w') as f:
+                            for line in lines:
+                                if 'restraintmask' in line:
+                                    new_mask_component = f'@{n_atoms_before + 1}-{n_atoms_before + n_dums + 1}'
+                                    line = modify_restraint_mask(line, new_mask_component)
+                                if 'ntr = ' in line:
+                                    line = ' ntr = 1,\n'
+                                f.write(line)
+        else:
+            raise ValueError(f"Invalid stage: {stage}")
+        logger.debug('RMSF restraints added')
+
 
     def add_rmsf_restraints(self,
                             stage: str,
@@ -1624,17 +1930,15 @@ class System:
                 # if .bak exists, to avoid multiple appending
                 # first copy the original cv file to the backup
                 if os.path.exists(cv_file + '.bak'):
-                    #shutil.copy(cv_file + '.bak', cv_file)
-                    os.system(f"cp {cv_file} {cv_file}.bak")
+                    os.system(f"cp {cv_file}.bak {cv_file}")
                 else:
                     # copy original cv file for backup
-                    #shutil.copy(cv_file, cv_file + '.bak')
                     os.system(f"cp {cv_file} {cv_file}.bak")
                 
                 with open(cv_file, 'r') as f:
                     lines = f.readlines()
 
-                with open(cv_file + '.eq0', 'w') as f:
+                with open(f'{cv_file}.eq0', 'w') as f:
                     for line in lines:
                         f.write(line)
                     f.write("\n")
@@ -1687,13 +1991,14 @@ class System:
                             f.write(line)
 
         elif stage == 'fe':
+            # this should be done after fe_equil
             for pose in self.bound_poses:
                 for comp in self.sim_config.components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     u_ref = mda.Universe(
                             f"{folder_comp}/{comp}-1/full.pdb",
-                            f"{folder_comp}/{comp}-1/full.inpcrd")
+                    )
                     windows = self.component_windows_dict[comp]
                     cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
                         for j in range(-1, len(windows))]
@@ -1759,7 +2064,7 @@ class System:
                 
                 with open(f'{folder_2_write}/{file}', 'w') as f:
                     for line in lines:
-                        if 'ntr' in line and 'cntr' not in line:
+                        if 'ntr =' in line:
                             line = '  ntr = 1,\n'
                         elif 'restraintmask' in line:
                             current_mask = re.search(r'restraintmask\s*=\s*["\']([^"\']*)["\']', line)
@@ -2160,7 +2465,7 @@ class System:
                           u_ref,
                           select=f'(({self.protein_align}) and not resname NME ACE and protein)',
                           weights="mass")
-            saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- and not resname {" ".join(self.lipid_mol)}')
+            saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- ANC and not resname {" ".join(self.lipid_mol)}')
             saved_ag.write(f'{self.output_dir}/Results/protein_{pose}.pdb')
 
             initial_pose = f'{self.poses_folder}/{pose}.pdb'
@@ -2280,7 +2585,11 @@ class System:
                     rep_snapshot = sim_val.find_representative_snapshot()
                     logger.debug(f"Representative snapshot: {rep_snapshot}")
                     
-                    cpptraj_command = "cpptraj -p full.prmtop <<EOF\n"
+                    if self.sim_config.hmr == 'no':
+                        prmtop_f = 'full.prmtop'
+                    else:
+                        prmtop_f = 'full.hmr.prmtop'
+                    cpptraj_command = f"cpptraj -p {prmtop_f} <<EOF\n"
                     for i in range(1, num_eq_sims):
                         cpptraj_command += f"trajin md-{i:02d}.nc\n"
                     cpptraj_command += f"trajout representative.pdb pdb onlyframes {rep_snapshot+1}\n"
@@ -2463,7 +2772,6 @@ class System:
             pbar.set_description('Equilibration finished')
             pbar.close()
             
-            self._generate_aligned_pdbs()
 
         else:
             logger.info('Equilibration simulations are already finished')
@@ -2640,6 +2948,8 @@ class System:
 
         #5 analyze the results
         logger.info('Analyzing the results')
+        self._generate_aligned_pdbs()
+
         num_sim = self.sim_config.num_fe_range
         # exclude the first few simulations for analysis
         start_sim = 3 if num_sim >= 6 else 1
@@ -3885,3 +4195,23 @@ def analyze_pose_task(
     plt.tight_layout()
     plt.savefig(f'{fe_folder}/{pose}/Results/fe_timeseries.png')
     return
+
+
+def modify_restraint_mask(line, new_mask_component):
+    current_mask = re.search(r'restraintmask\s*=\s*["\']([^"\']*)["\']', line)
+    if current_mask:
+        base_mask = current_mask.group(1).strip().rstrip(',')
+        # Remove previously appended CA-residue parts if present
+        base_mask = re.sub(r'\|\s*\(\(:.*?\)&\s*@CA\)', '', base_mask).strip()
+    else:
+        base_mask = ""
+    
+    if base_mask != "":
+        restraint_mask = f'({base_mask}) | ({new_mask_component})'
+    else:
+        restraint_mask = new_mask_component
+
+    line = f'  restraintmask = "{restraint_mask}",\n'
+    if len(restraint_mask) > 256:
+        raise ValueError(f"Restraint mask is too long (>256 characters): {restraint_mask}")
+    return line
