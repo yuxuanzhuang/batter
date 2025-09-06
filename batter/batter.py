@@ -821,6 +821,7 @@ class System:
             rmsf_file: str = None,
             extra_restraints: str = None,
             extra_restraints_fc: float = 10,
+            extra_conformation_restraints: str = None,
             ):
         """
         Prepare the system for the FEP simulation.
@@ -844,6 +845,21 @@ class System:
             {
                 'e': [0, 0.5, 1.0],
             }
+        avg_struc : str, optional
+            The average structure file for adding RMSF restraints.
+            Default is None, which means no RMSF restraints will be added.
+        rmsf_file : str, optional
+            The RMSF file for adding RMSF restraints.
+            Default is None, which means no RMSF restraints will be added.
+        extra_restraints : str, optional
+            The extra restraints file for adding extra restraints.
+            Default is None, which means no extra restraints will be added.
+        extra_restraints_fc : float, optional
+            The force constant for the extra restraints.
+            Default is 10 kcal/mol/A^2.
+        extra_conformation_restraints : str, optional
+            The extra conformation restraints file for adding extra conformation restraints.
+            Default is None, which means no extra conformation restraints will be added.
         """
         logger.debug('Preparing the system')
         self.overwrite = overwrite
@@ -855,6 +871,11 @@ class System:
             raise ValueError("Both avg_struc and rmsf_file should be provided")
         else:
             self.rmsf_restraints = False
+        if extra_conformation_restraints is not None and not os.path.exists(extra_conformation_restraints):
+            raise FileNotFoundError(f"Extra conformation restraints file not found: {extra_conformation_restraints}")
+        if extra_restraints is not None and not os.path.exists(extra_restraints):
+            raise FileNotFoundError(f"Extra restraints file not found: {extra_restraints}")
+        self.extra_conformation_restraints = True if extra_conformation_restraints is not None else False
         
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -905,6 +926,11 @@ class System:
                         stage='equil',
                         extra_restraints=extra_restraints,
                         extra_restraints_fc=extra_restraints_fc
+                    )
+            if extra_conformation_restraints is not None:
+                self.add_extra_conformation_restraints(
+                        stage='equil',
+                        extra_conformation_restraints=extra_conformation_restraints,
                     )
             logger.info('Equil System prepared')
             self._eq_prepared = True
@@ -964,6 +990,11 @@ class System:
                         stage='fe',
                         extra_restraints=extra_restraints,
                         extra_restraints_fc=extra_restraints_fc
+                    )
+            if extra_conformation_restraints is not None:
+                self.add_extra_conformation_restraints(
+                        stage='fe',
+                        extra_conformation_restraints=extra_conformation_restraints,
                     )
             logger.info('FE System prepared')
             self._fe_prepared = True
@@ -1351,7 +1382,7 @@ class System:
                 pose=pose,
                 sim_config=sim_config,
                 working_dir=f'{self.equil_folder}',
-                infe=self.rmsf_restraints,
+                infe=self.rmsf_restraints | self.extra_conformation_restraints
             )
             builders.append(equil_builder)
 
@@ -1489,6 +1520,110 @@ class System:
         logger.info('Prepare FE windows')
         self._prepare_fe_windows()
         logger.info('Free energy systems have been created for all poses listed in the input file.')
+
+
+    def add_extra_conformation_restraints(
+                            self,
+                            stage: str,
+                            extra_conformation_restraints: str,
+                            ):
+        """
+        Additional distance restraints to be added to the system.
+
+        Parameters
+        ----------
+        stage : str
+            The stage of the simulation. Options are 'equil' and 'fe'.
+        extra_conformation_restraints : str
+            The json file containing the extra distance restraints.
+            The file should be in the format of:
+            direction, res1, res2, cutoff, force_constant
+        """
+        def generate_restraint_to_cv(pose_folder, restraints):
+            colvar_block_all = []
+            for restraint in restraints:
+                direction, res1, res2, cutoff, force_constant = restraint
+                u = mda.Universe(f'{pose_folder}/full.pdb')
+                atom1 = u.select_atoms(f'resid {res1} and name CA')[0].index + 1
+                atom2 = u.select_atoms(f'resid {res2} and name CA')[0].index + 1
+                colvar_block = "&colvar\n"
+                colvar_block += " cv_type = 'DISTANCE'\n"
+                colvar_block += f" cv_ni = 2, cv_i = {atom1},{atom2}\n"
+                if direction == '>=':
+                    cutoff_2 = cutoff - 0.3
+                    colvar_block += f" anchor_position = {cutoff_2:03f}, {cutoff:03f}, 999, 999\n"
+                elif direction == '<=':
+                    cutoff_2 = cutoff + 0.3
+                    colvar_block += f" anchor_position = 0, 0, {cutoff:03f}, {cutoff_2:03f}\n"
+                else:
+                    raise ValueError(f"Invalid direction: {direction}")
+                colvar_block += f" anchor_strength = {force_constant:2f}, {force_constant:2f}\n"
+                colvar_block += "/\n"
+                colvar_block_all.extend(colvar_block)
+            return colvar_block_all
+
+        with open(extra_conformation_restraints, 'r') as f:
+            extra_restraints = json.load(f)
+        
+        logger.debug(f'Adding extra conformation restraints from {extra_conformation_restraints}')
+        if stage == 'equil':
+            pose_folder_base = self.equil_folder
+            poses = self.all_poses
+            # The colvar block is the same for all poses in equilibration
+            colvar_block_all = generate_restraint_to_cv(f"{pose_folder_base}/{poses[0]}", extra_restraints)
+            for pose in poses:
+                # modify cv.in file in each pose folder
+                cv_file = f"{pose_folder_base}/{pose}/cv.in"
+                # if .bak exists, to avoid multiple appending
+                # first copy the original cv file to the backup
+                if os.path.exists(cv_file + '.bak'):
+                    os.system(f"cp {cv_file}.bak {cv_file}")
+                else:
+                    # copy original cv file for backup
+                    os.system(f"cp {cv_file} {cv_file}.bak")
+                
+                with open(cv_file, 'r') as f:
+                    lines = f.readlines()
+
+                with open(cv_file, 'w') as f:
+                    for line in lines:
+                        f.write(line)
+                    f.write("\n")
+                    for line in colvar_block_all:
+                        f.write(line)
+                        
+        elif stage == 'fe':
+            pose_folder_base = self.fe_folder
+            poses = self.bound_poses
+            for pose in self.bound_poses:
+                for comp in self.sim_config.components:
+                    comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                    folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                    colvar_block = generate_restraint_to_cv(f"{folder_comp}/{comp}-1", extra_restraints)
+                    windows = self.component_windows_dict[comp]
+                    cv_files = [f"{folder_comp}/{comp}{j:02d}/cv.in"
+                        for j in range(-1, len(windows))]
+                    for cv_file in cv_files:
+                        # if .bak exists, to avoid multiple appending
+                        # first copy the original cv file to the backup
+                        if os.path.exists(cv_file + '.bak'):
+                            os.system(f"cp {cv_file}.bak {cv_file}")
+                        else:
+                            # copy original cv file for backup
+                            os.system(f"cp {cv_file} {cv_file}.bak")
+                        
+                        with open(cv_file, 'r') as f:
+                            lines = f.readlines()
+
+                        with open(cv_file, 'w') as f:
+                            for line in lines:
+                                f.write(line)
+                            f.write("\n")
+                            for line in colvar_block:
+                                f.write(line)
+        else:
+            raise ValueError(f"Invalid stage: {stage}")
+
 
     def add_rmsf_restraints_new(
                             self,
@@ -1645,12 +1780,6 @@ class System:
                     for line in cv_lines:
                         f.write(line)
                 
-                for i, line in enumerate(lines):
-                    if 'anchor_strength' in line:
-                        lines[i] = line.replace('anchor_strength =    10.0000,    10.0000,',
-                                    f'anchor_strength =    0,   0,')
-                        break
-                    
                 with open(cv_file, 'w') as f:
                     for line in lines:
                         f.write(line)
@@ -2652,6 +2781,7 @@ class System:
                      dry_run: bool = False,
                      extra_restraints: str = None,
                      extra_restraints_fc: float = 10,
+                     extra_conformation_restraints: str = None,
                      partition: str = 'owners',
                      max_num_jobs: int = 2000,
                      time_limit: str = '6:00:00',
@@ -2690,6 +2820,8 @@ class System:
             Default is None, which means no extra restraints are added.
         extra_restraints_fc : float, optional
             The force constant for the extra position restraints.
+        extra_conformation_restraints: str, optional
+            The extra conformation restraints json file to be read from
         partition : str, optional
             The partition to submit the job.
             Default is 'rondror'.
@@ -2736,7 +2868,8 @@ class System:
                 avg_struc=avg_struc,
                 rmsf_file=rmsf_file,
                 extra_restraints=extra_restraints,
-                extra_restraints_fc=extra_restraints_fc
+                extra_restraints_fc=extra_restraints_fc,
+                extra_conformation_restraints=extra_conformation_restraints,
             )
             logger.info(f'Equilibration folder: {self.equil_folder} prepared for equilibration')
             logger.info('Submitting the equilibration')
@@ -2812,7 +2945,8 @@ class System:
                 avg_struc=avg_struc,
                 rmsf_file=rmsf_file,
                 extra_restraints=extra_restraints,
-                extra_restraints_fc=extra_restraints_fc
+                extra_restraints_fc=extra_restraints_fc,
+                extra_conformation_restraints=extra_conformation_restraints,
             )
             if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
                 logger.info('Generating batch run files...')
