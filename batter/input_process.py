@@ -335,6 +335,9 @@ class SimulationConfig(BaseModel):
         if value.lower() not in {"yes", "no"}:
             raise ValueError(f"Invalid value: {value}. Must be 'yes' or 'no'.")
         return value.lower()
+    
+    def to_dict(self):
+        return self.model_dump()
 
 
 def parse_input_file(input_file: str) -> dict:

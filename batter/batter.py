@@ -24,8 +24,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Union
 from loguru import logger
 from collections import defaultdict
+from batter import __version__
 from batter.input_process import SimulationConfig, get_configure_from_file
-from batter.results import FEResult, NewFEResult
+from batter.analysis.results import FEResult
 from batter.utils.utils import tqdm_joblib
 from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
 from batter.data import run_files as run_files_orig
@@ -2591,7 +2592,7 @@ class System:
         for pose in self.all_poses:
             results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
             if os.path.exists(results_file):
-                self.fe_results[pose] = NewFEResult(results_file)
+                self.fe_results[pose] = FEResult(results_file)
                 if self.fe_results[pose].fe == 'unbound':
                     logger.debug(f'FE for {pose} is unbound.')
                     loaded_poses.append(pose)
@@ -3982,8 +3983,30 @@ class System:
         if not hasattr(self, '_pose_failed'):
             self._pose_failed = {}
         return self._pose_failed
-
-
+    
+    def dump(self, location=None):
+        """
+        Dump the system information to a json file.
+        It includes
+        - batter version
+        - system info (protein and ligand)
+        - simulation config
+        - results
+        """
+        json_dict = {}
+        json_dict['batter_version'] = __version__
+        json_dict['system_name'] = self.system_name
+        json_dict['protein_input'] = self.protein_input
+        json_dict['pose_ligand_dict'] = self.pose_ligand_dict
+        json_dict['output_dir'] = self.output_dir
+        json_dict['sim_config'] = self.sim_config.to_dict()
+        json_dict['fe_results'] = {name: result.to_dict() for name, result in self.fe_results.items()}
+        output_dir = self.output_dir if location is None else location
+        if location is not None:
+            os.makedirs(location, exist_ok=True)
+        logger.info(f'Dumping system information to {output_dir}/system.json')
+        with open(f'{output_dir}/system.json', 'w') as f:
+            json.dump(json_dict, f, indent=4)
 
 class ABFESystem(System):
     """

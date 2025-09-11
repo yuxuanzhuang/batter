@@ -26,6 +26,7 @@ _mbar_log.addFilter(_mute_jax_2)
 
 # Add imports here
 from .batter import ABFESystem, MABFESystem, RBFESystem
+from .analysis import results
 
 logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')
