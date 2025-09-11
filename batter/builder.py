@@ -6961,11 +6961,24 @@ def select_ions_away_from_complex(universe, total_charge, mol):
         dist_2_protein = distance_array(ion.position, complex_sys.positions,
                                         box=universe.dimensions
                                          ).min()
-        if dist_2_protein > 20.0:
+        if dist_2_protein > 15.0:
             n_ions -= 1
             sel_ion_indexs.append(ion.index)
         if n_ions == 0:
             break
     if n_ions > 0:
-        raise ValueError(f'Not enough {ion_type} ions found that are at least 15 Å away from the complex.')
+        logger.warning(f'Not enough {ion_type} ions found that are at least 15 Å away from the complex. Try 10 Å instead.')
+        for ion in ions:
+            if ion.index in sel_ion_indexs:
+                continue
+            dist_2_protein = distance_array(ion.position, complex_sys.positions,
+                                             box=universe.dimensions
+                                             ).min()
+            if dist_2_protein > 10.0:
+                n_ions -= 1
+                sel_ion_indexs.append(ion.index)
+            if n_ions == 0:
+                break
+        if n_ions > 0:
+            raise ValueError(f'Not enough {ion_type} ions found that are at least 10 Å away from the complex. Found only {len(sel_ion_indexs)} ions.')
     return sel_ion_indexs
