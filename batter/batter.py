@@ -293,7 +293,7 @@ class System:
         for ligand_path in self.ligand_paths:
             if not os.path.exists(ligand_path):
                 raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
-        
+                
         logger.info(f"{len(self.ligand_paths)} ligands to be simulated.")
         self._process_ligands()
 
@@ -344,6 +344,7 @@ class System:
         if self.membrane_simulation:
             self._prepare_membrane()
 
+        self._process_protein()
         self._get_alignment()
 
         if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
@@ -526,6 +527,31 @@ class System:
         """
         raise NotImplementedError("This method should be implemented in the subclass")
 
+    def _process_protein(self):
+        """
+        Process the protein input file to fix issues so that it can be processed
+        by AMBER; it includes 
+        - removing capping groups
+        - renaming ILE CD to CD1
+        # - removing alternate locations?
+        - unset segid (if any)
+        """
+        u = mda.Universe(self.protein_input)
+        # remove capping groups
+        saved_atoms = u.atoms
+        cap_resnames = ['ACE', 'NME', 'NMA', 'CT3', 'CT2', 'CT1', 'NH2', 'NH3']
+        cap_atoms = u.select_atoms(f'resname {" ".join(cap_resnames)}')
+        if len(cap_atoms) > 0:
+            logger.debug(f"Removing capping groups: {cap_resnames}")
+            saved_atoms -= cap_atoms
+        # rename ILE CD to CD1
+        ile_cd = saved_atoms.select_atoms('resname ILE and name CD')
+        ile_cd.names = 'CD1'
+        # unset segid
+        saved_atoms.segments.segids = 'A'
+        saved_atoms.write(f"{self.poses_folder}/protein_processed.pdb")
+        self._protein_input = "all-poses/protein_processed.pdb"    
+
     def _get_alignment(self):
         """
         Prepare for the alignment of the protein and ligand to the system.
@@ -584,6 +610,7 @@ class System:
         properly positioned.
         """
         logger.debug('Processing the system')
+
         u_prot = mda.Universe(self._protein_aligned_pdb)
         u_sys = mda.Universe(self._system_aligned_pdb, format='XPDB')
         try:
