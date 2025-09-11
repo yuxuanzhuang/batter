@@ -98,6 +98,21 @@ class FEResult(ComponentFEResult):
                 results[comp] = (float(energy), float(std))
         self._results = results
 
+    def to_dict(self):
+        json_dict = {}
+        for key in self._component_keys:
+            if key in self._results:
+                json_dict[key] = {
+                    'value': self._results[key][0],
+                    'std': self._results[key][1]
+                }
+            else:
+                json_dict[key] = {
+                    'value': None,
+                    'std': None
+                }
+        return json_dict
+
 
 class NewFEResult(ComponentFEResult):
     """
