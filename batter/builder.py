@@ -6928,6 +6928,9 @@ def get_ligand_candidates(ligand_sdf):
         # no H
         if atom.GetAtomicNum() == 1:
             continue
+        # avoid sp-carbon
+        if atom.GetHybridization() == Chem.rdchem.HybridizationType.SP:
+            continue
         heavy_neighbors = 0
         for neighbor in atom.GetNeighbors():
             if neighbor.GetAtomicNum() != 1:
