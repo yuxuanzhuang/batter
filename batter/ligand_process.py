@@ -41,24 +41,23 @@ def _stable_hash_int(s: str) -> int:
 
 def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_names: set[str]) -> str:
     """
-    Convert a molecule name to a unique identifier of exactly 3 lowercase letters,
-    as required. Deterministic across runs.
+    Convert a molecule name to a unique identifier of exactly 3 characters
+    (letters or digits), deterministic across runs.
 
     Strategy:
-      1) Normalize name -> keep letters only, lowercase, take up to 3.
-      2) If <3 letters, pad with base-26 letters from `ind`.
+      1) Normalize name -> keep letters and digits only, lowercase, take up to 3.
+      2) If <3 chars, pad with base-26 letters from `ind`.
       3) If collision, fall back to deterministic hash of SMILES, then perturb.
     """
-    # 1) normalize to letters only (lowercase), take at most 3
-    base = re.sub(r'[^a-zA-Z]', '', mol_name or '').lower()[:3]
+    # 1) normalize to letters and digits only (lowercase), take at most 3
+    base = re.sub(r'[^a-zA-Z0-9]', '', mol_name or '').lower()[:3]
 
     # 2) pad with letters from index if shorter
     if len(base) < 3:
-        # use base-26 encoding of ind to fill remaining chars
         pad = _base26_triplet(ind)
         base = (base + pad)[:3]
 
-    # If still somehow empty (e.g., mol_name had no letters), synthesize from index
+    # If still somehow empty, synthesize from index
     if not base:
         base = _base26_triplet(ind)
 
@@ -75,7 +74,7 @@ def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_
             return candidate
         attempt += 1
 
-    # Extremely unlikely; last resort: use index-perturbed triplet
+    # Last resort: index-perturbed triplet
     return _base26_triplet(ind + attempt)
 
 class LigandProcessing(ABC):
