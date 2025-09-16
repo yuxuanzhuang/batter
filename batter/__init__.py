@@ -35,6 +35,12 @@ logger.add(sys.stderr, format=logger_format, level="INFO")
 
 
 import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="MDAnalysis.coordinates.PDB"
+)
+
 try:
     from Bio import BiopythonDeprecationWarning
 

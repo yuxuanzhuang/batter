@@ -920,8 +920,6 @@ class System:
             raise ValueError("Both avg_struc and rmsf_file should be provided")
         if extra_conformation_restraints is not None and not os.path.exists(extra_conformation_restraints):
             raise FileNotFoundError(f"Extra conformation restraints file not found: {extra_conformation_restraints}")
-        if extra_restraints is not None and not os.path.exists(extra_restraints):
-            raise FileNotFoundError(f"Extra restraints file not found: {extra_restraints}")
         
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -4049,7 +4047,7 @@ class System:
         if self.rmsf_restraints is not None:
             json_dict['rmsf_restraints'] = {name: rest.to_dict() for name, rest in self.rmsf_restraints.items()}
         if self.extra_restraints is not None:
-            json_dict['extra_restraints'] = {name: rest.to_dict() for name, rest in self.extra_restraints.items()}
+            json_dict['extra_restraints'] = self.extra_restraints
         if self.extra_conformation_restraints is not None:
             json_dict['extra_conformation_restraints'] = {name: rest.to_dict() for name, rest in self.extra_conformation_restraints.items()}
 

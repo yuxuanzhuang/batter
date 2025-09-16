@@ -41,7 +41,6 @@ def test_processligand_H(ligand_ff):
     ligand.prepare_ligand_parameters()
     
     # check prmtop is created
-    print(os.listdir(output_dir))
     assert os.path.exists(f'{output_dir}/{ligand_name}.prmtop')
     assert os.path.exists(f'{output_dir}/{ligand_name}.sdf')
 
