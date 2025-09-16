@@ -106,6 +106,7 @@ class System:
         self._pose_failed = {}
         self._eq_prepared = False
         self._fe_prepared = False
+        self._ligand_objects = {}
         self._fe_results = {}
         self.mols = []
 
@@ -295,7 +296,7 @@ class System:
             if not os.path.exists(ligand_path):
                 raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
                 
-        logger.info(f"{len(self.ligand_paths)} ligands to be simulated.")
+        logger.info(f"# {len(self.ligand_paths)} ligands.")
         self._process_ligands()
 
         if system_coordinate is not None and not os.path.exists(system_coordinate):
@@ -376,6 +377,7 @@ class System:
                     ligand_ff=self.ligand_ff,
                     unique_mol_names=self.unique_mol_names
             )
+            self._ligand_objects[ligand_name] = ligand
 
             mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
@@ -434,6 +436,26 @@ class System:
     def protein_align(self, value):
         self._protein_align = value
 
+    @property
+    def extra_restraints(self):
+        try:
+            return self._extra_restraints
+        except AttributeError:
+            return None
+
+    @property
+    def extra_conformation_restraints(self):
+        try:
+            return self._extra_conformation_restraints
+        except AttributeError:
+            return None
+
+    @property
+    def rmsf_restraints(self):
+        try:
+            return self._rmsf_restraints
+        except AttributeError:
+            return None
 
     @property
     def protein_input(self):
@@ -893,17 +915,13 @@ class System:
         self.overwrite = overwrite
         self.partition = partition
         self._n_workers = n_workers
-        if avg_struc is not None and rmsf_file is not None:
-            self.rmsf_restraints = True
-        elif avg_struc is not None or rmsf_file is not None:
+
+        if avg_struc is not None or rmsf_file is not None:
             raise ValueError("Both avg_struc and rmsf_file should be provided")
-        else:
-            self.rmsf_restraints = False
         if extra_conformation_restraints is not None and not os.path.exists(extra_conformation_restraints):
             raise FileNotFoundError(f"Extra conformation restraints file not found: {extra_conformation_restraints}")
         if extra_restraints is not None and not os.path.exists(extra_restraints):
             raise FileNotFoundError(f"Extra restraints file not found: {extra_restraints}")
-        self.extra_conformation_restraints = True if extra_conformation_restraints is not None else False
         
         if input_file is not None:
             self._get_sim_config(input_file)
@@ -943,19 +961,25 @@ class System:
                 json.dump(self.sim_config.model_dump(), f, indent=2)
             
             self._prepare_equil_system()
-            if self.rmsf_restraints:
+            if rmsf_file is not None:
+                self._rmsf_restraints = {
+                    'avg_struc': avg_struc,
+                    'rmsf_file': rmsf_file
+                }
                 self.add_rmsf_restraints_new(
                         stage='equil',
                         avg_struc=avg_struc,
                         rmsf_file=rmsf_file
                     )
             if extra_restraints is not None:
+                self._extra_restraints = extra_restraints
                 self.add_extra_restraints(
                         stage='equil',
                         extra_restraints=extra_restraints,
                         extra_restraints_fc=extra_restraints_fc
                     )
             if extra_conformation_restraints is not None:
+                self._extra_conformation_restraints = extra_conformation_restraints
                 self.add_extra_conformation_restraints(
                         stage='equil',
                         extra_conformation_restraints=extra_conformation_restraints,
@@ -1007,19 +1031,25 @@ class System:
             self._check_equilbration_binding()
             self._find_new_anchor_atoms()
             self._prepare_fe_system()
-            if self.rmsf_restraints:
+            if rmsf_file is not None:
+                self._rmsf_restraints = {
+                    'avg_struc': avg_struc,
+                    'rmsf_file': rmsf_file
+                }
                 self.add_rmsf_restraints_new(
                         stage='fe',
                         avg_struc=avg_struc,
                         rmsf_file=rmsf_file
                     )
             if extra_restraints is not None:
+                self._extra_restraints = extra_restraints
                 self.add_extra_restraints(
                         stage='fe',
                         extra_restraints=extra_restraints,
                         extra_restraints_fc=extra_restraints_fc
                     )
             if extra_conformation_restraints is not None:
+                self._extra_conformation_restraints = extra_conformation_restraints
                 self.add_extra_conformation_restraints(
                         stage='fe',
                         extra_conformation_restraints=extra_conformation_restraints,
@@ -1410,7 +1440,7 @@ class System:
                 pose=pose,
                 sim_config=sim_config,
                 working_dir=f'{self.equil_folder}',
-                infe=self.rmsf_restraints | self.extra_conformation_restraints
+                infe = (self.rmsf_restraints is not None) or (self.extra_conformation_restraints is not None)
             )
             builders.append(equil_builder)
 
@@ -2677,11 +2707,14 @@ class System:
         """
 
         u_merge = mda.Merge(u_prot.atoms, u_lig.atoms)
+
         P1_atom = u_merge.select_atoms(anchor_atoms[0])
         P2_atom = u_merge.select_atoms(anchor_atoms[1])
         P3_atom = u_merge.select_atoms(anchor_atoms[2])
         if P1_atom.n_atoms == 0 or P2_atom.n_atoms == 0 or P3_atom.n_atoms == 0:
-            raise ValueError('Error: anchor atom not found')
+            raise ValueError('Error: anchor atom not found with the provided selection string'
+                             f'p1: {anchor_atoms[0]}, p2: {anchor_atoms[1]}, p3: {anchor_atoms[2]}'
+                             f'P1_atom.n_atoms: {P1_atom.n_atoms}, P2_atom.n_atoms: {P2_atom.n_atoms}, P3_atom.n_atoms: {P3_atom.n_atoms}')
         if P1_atom.n_atoms != 1 or P2_atom.n_atoms != 1 or P3_atom.n_atoms != 1:
             raise ValueError('Error: more than one atom selected in the anchor atoms')
         
@@ -2785,6 +2818,9 @@ class System:
         for i, pose in enumerate(self.bound_poses):
             u_sys = mda.Universe(f'{self.equil_folder}/{pose}/representative.pdb')
             u_lig = u_sys.select_atoms(f'resname {self.bound_mols[i]}')
+            if u_lig.n_atoms == 0:
+                raise ValueError(f'Ligand {self.bound_mols[i]} not found in the system for pose {pose}'
+                f'all resnames: {np.unique(u_sys.atoms.resnames)}')
             lig_sdf = f'{self.ligandff_folder}/{self.bound_mols[i]}.sdf'
 
             ligand_anchor_atom = self.ligand_anchor_atom
@@ -3137,6 +3173,9 @@ class System:
         logger.info(f'End time: {time.ctime()}')
         total_time = end_time - start_time
         logger.info(f'Total time: {total_time:.2f} seconds')
+        # dump the state at the end of the pipeline
+        # to the system folder
+        self.dump()
 
     @save_state
     def _check_equilibration(self):
@@ -3998,18 +4037,27 @@ class System:
         - results
         """
         json_dict = {}
+        json_dict['fe_results'] = {name: result.to_dict() for name, result in self.fe_results.items()}
         json_dict['batter_version'] = __version__
         json_dict['system_name'] = self.system_name
         json_dict['protein_input'] = self.protein_input
         json_dict['pose_ligand_dict'] = self.pose_ligand_dict
+        json_dict['ligands_process'] = {name: ligand.to_dict() for name, ligand in self._ligand_objects.items()}
         json_dict['output_dir'] = self.output_dir
         json_dict['sim_config'] = self.sim_config.to_dict()
-        json_dict['fe_results'] = {name: result.to_dict() for name, result in self.fe_results.items()}
+        # dump restraints
+        if self.rmsf_restraints is not None:
+            json_dict['rmsf_restraints'] = {name: rest.to_dict() for name, rest in self.rmsf_restraints.items()}
+        if self.extra_restraints is not None:
+            json_dict['extra_restraints'] = {name: rest.to_dict() for name, rest in self.extra_restraints.items()}
+        if self.extra_conformation_restraints is not None:
+            json_dict['extra_conformation_restraints'] = {name: rest.to_dict() for name, rest in self.extra_conformation_restraints.items()}
+
         output_dir = self.output_dir if location is None else location
         if location is not None:
             os.makedirs(location, exist_ok=True)
-        logger.info(f'Dumping system information to {output_dir}/system.json')
-        with open(f'{output_dir}/system.json', 'w') as f:
+        logger.info(f'Dumping system information to {output_dir}/manifest.json')
+        with open(f'{output_dir}/manifest.json', 'w') as f:
             json.dump(json_dict, f, indent=4)
 
 class ABFESystem(System):

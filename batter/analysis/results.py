@@ -42,83 +42,6 @@ class FEResult(ComponentFEResult):
     Class to store the results of all the free energy calculations
     that are generated with the old analysis.
     """
-    def __init__(self, result_file):
-        """
-        Currently, the results are created from a file.
-        """
-        self.result_file = result_file
-        if not os.path.exists(self.result_file):
-            logger.error(f"File {self.result_file} does not exist")
-            return
-        self._results = {}
-
-        self._read_results()
-
-    def _read_results(self):
-        """
-        Read the results from the file
-        The results will be stored as dictionary
-        where the key is the component
-        and the value is the free energy tuple (mean, std)
-        """
-        with open(self.result_file, 'r') as f:
-            result_lines = f.readlines()
-        if 'FAILED' in result_lines[0]:
-            raise ValueError("Analysis failed")
-        elif 'UNBOUND' in result_lines[0]:
-            self._results = {}
-            self._results['fe'] = (np.nan, np.nan)
-            self._results['attach'] = (np.nan, np.nan)
-            self._results['elec'] = (np.nan, np.nan)
-            self._results['lj'] = (np.nan, np.nan)
-            self._results['release'] = (np.nan, np.nan)
-            return
-        
-        results = {}
-        for line in result_lines:
-            if line.startswith('Attach all'):
-                comp = 'attach'
-            elif line.startswith('Electrostatic'):
-                comp = 'elec'
-            elif line.startswith('Lennard-Jones'):
-                comp = 'lj'
-            elif line.startswith('LJ exchange'):
-                comp = 'lj'
-            elif line.startswith('Release all'):
-                comp = 'release'
-            elif line.startswith('Relative free energy'):
-                comp = 'fe'
-            elif line.startswith('Binding free energy'):
-                comp = 'fe'
-            else:
-                comp = None
-            if comp is not None:
-                energy = line.split()[-2][:-1]
-                std = line.split()[-1]
-                results[comp] = (float(energy), float(std))
-        self._results = results
-
-    def to_dict(self):
-        json_dict = {}
-        for key in self._component_keys:
-            if key in self._results:
-                json_dict[key] = {
-                    'value': self._results[key][0],
-                    'std': self._results[key][1]
-                }
-            else:
-                json_dict[key] = {
-                    'value': None,
-                    'std': None
-                }
-        return json_dict
-
-
-class NewFEResult(ComponentFEResult):
-    """
-    Class to store the results of all the free energy calculations
-    that are generated with the old analysis.
-    """
     def __init__(self, result_file, fe_timeseries=None):
         """
         Currently, the results are created from a file.
@@ -183,3 +106,18 @@ class NewFEResult(ComponentFEResult):
                 else:
                     results[comp] = (float(energy), float(std))
         self._results = results
+
+    def to_dict(self):
+        json_dict = {}
+        for key in self._component_keys:
+            if key in self._results:
+                json_dict[key] = {
+                    'value': self._results[key][0],
+                    'std': self._results[key][1]
+                }
+            else:
+                json_dict[key] = {
+                    'value': None,
+                    'std': None
+                }
+        return json_dict

@@ -32,3 +32,14 @@ logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')
 # format time to be human readable
 logger.add(sys.stderr, format=logger_format, level="INFO")
+
+
+import warnings
+try:
+    from Bio import BiopythonDeprecationWarning
+
+    warnings.filterwarnings(
+        "ignore", category=BiopythonDeprecationWarning, module="Bio.Application"
+    )
+except ImportError:
+    pass

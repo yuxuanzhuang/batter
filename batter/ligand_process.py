@@ -11,7 +11,6 @@ import tempfile
 import shutil
 from openfe import SmallMoleculeComponent
 
-
 from batter.utils import (
     run_with_log,
     save_state,
@@ -24,37 +23,60 @@ from batter.utils import (
     obabel,
     vmd)
 
+import hashlib
+import re
 
-def random_three_letter_name():
-    return ''.join(random.choices(string.ascii_lowercase, k=3))
+def _base26_triplet(n: int) -> str:
+    """Map nonnegative int -> 3 lowercase letters (base-26, a..z)."""
+    n = n % (26**3)
+    a = n // (26**2)
+    b = (n // 26) % 26
+    c = n % 26
+    return chr(a + 97) + chr(b + 97) + chr(c + 97)
 
-def _convert_mol_name_to_unique(mol_name, ind, exist_mol_names):
+def _stable_hash_int(s: str) -> int:
+    """Deterministic int from string (md5, not Python's salted hash)."""
+    h = hashlib.md5(s.encode("utf-8")).hexdigest()
+    return int(h, 16)
+
+def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_names: set[str]) -> str:
     """
-    Convert the molecule name to a unique name that is 
-    at most 3 lowercase characters, as required by AMBER.
+    Convert a molecule name to a unique identifier of exactly 3 lowercase letters,
+    as required. Deterministic across runs.
+
+    Strategy:
+      1) Normalize name -> keep letters only, lowercase, take up to 3.
+      2) If <3 letters, pad with base-26 letters from `ind`.
+      3) If collision, fall back to deterministic hash of SMILES, then perturb.
     """
-    # Ensure lowercase and truncate to 3 characters
-    mol_name = mol_name.lower()
-    
-    # Handle short names
-    if len(mol_name) == 1:
-        mol_name = f"{mol_name}{ind:02d}"[:3]  # Ensure at most 3 chars
-    elif len(mol_name) == 2:
-        mol_name = f"{mol_name}{ind}"[:3]  # Ensure at most 3 chars
-    else:
-        mol_name = mol_name[:3]  # Truncate longer names
+    # 1) normalize to letters only (lowercase), take at most 3
+    base = re.sub(r'[^a-zA-Z]', '', mol_name or '').lower()[:3]
 
-    # Ensure uniqueness
-    if mol_name in exist_mol_names:
-        for _ in range(100):  # Try up to 100 times
-            new_name = random_three_letter_name()
-            if new_name not in exist_mol_names:
-                mol_name = new_name
-                break
-        else:
-            raise ValueError("Failed to generate a unique 3-letter name after 100 tries.")
+    # 2) pad with letters from index if shorter
+    if len(base) < 3:
+        # use base-26 encoding of ind to fill remaining chars
+        pad = _base26_triplet(ind)
+        base = (base + pad)[:3]
 
-    return mol_name
+    # If still somehow empty (e.g., mol_name had no letters), synthesize from index
+    if not base:
+        base = _base26_triplet(ind)
+
+    # 3) ensure uniqueness
+    if base not in exist_mol_names:
+        return base
+
+    # Collision: derive from SMILES hash; if still collides, perturb deterministically
+    seed = _stable_hash_int(smiles) if smiles else _stable_hash_int(base)
+    attempt = 0
+    while attempt < 200:
+        candidate = _base26_triplet(seed + attempt)
+        if candidate not in exist_mol_names:
+            return candidate
+        attempt += 1
+
+    # Extremely unlikely; last resort: use index-perturbed triplet
+    return _base26_triplet(ind + attempt)
 
 class LigandProcessing(ABC):
     """
@@ -113,6 +135,7 @@ class LigandProcessing(ABC):
 
         self.unique_mol_names = unique_mol_names
         ligand_rdkit = self._load_ligand()
+        self._cano_smiles = Chem.MolToSmiles(ligand_rdkit, canonical=True)
         
         if ligand_name is None:
             ligand = SmallMoleculeComponent(ligand_rdkit)
@@ -128,6 +151,7 @@ class LigandProcessing(ABC):
         self._name = _convert_mol_name_to_unique(
             self._name,
             self.index,
+            self.smiles,
             self.unique_mol_names
         )
         logger.debug(f'Ligand {self.index}: {self.name}')
@@ -139,6 +163,15 @@ class LigandProcessing(ABC):
 
         self.openff_molecule.to_file(self.ligand_sdf_path, file_format='sdf')
     
+    def to_dict(self):
+        return {
+            'ligand_file': self.ligand_file,
+            'charge_type': self.charge,
+            'smiles': self.smiles,
+            'ligand_sdf_path': self.ligand_sdf_path,
+            'ligand_charge': getattr(self, 'ligand_charge', None),
+        }
+
     @abstractmethod
     def _load_ligand(self):
         raise NotImplementedError("Subclasses must implement _load_ligand method")
@@ -157,6 +190,10 @@ class LigandProcessing(ABC):
         return self._name
 
     @property
+    def smiles(self):
+        return self._cano_smiles
+
+    @property
     def ligand_sdf_path(self):
         return os.path.join(self.output_dir, f'{self.name}.sdf')
 
@@ -168,9 +205,9 @@ class LigandProcessing(ABC):
         and antechamber will use bcc method to calculate the partial charges.
         """
         molecule = self.openff_molecule
+        charge_method = self.charge if self.force_field == 'openff' else 'gasteiger'
         molecule.assign_partial_charges(
-            #partial_charge_method=self.charge,
-            partial_charge_method='gasteiger',
+            partial_charge_method=charge_method
         )
         ligand_charge = np.round(np.sum([charge._magnitude
             for charge in molecule.partial_charges]))
@@ -195,10 +232,11 @@ class LigandProcessing(ABC):
         # First prepare the ligand parameters with AMBER force field
         # this is for building the system with tleap
         # as openff doesn't generate frcmod file for the ligand
+        # we are using a fast charge method 'gas' to calculate the partial charges
         
         ligand_ff_openff = self.ligand_ff
         self.ligand_ff = 'gaff2'
-        self.prepare_ligand_parameters_amberff()
+        self.prepare_ligand_parameters_amberff(charge_method='gas')
         self.ligand_ff = ligand_ff_openff
 
         from openff.toolkit import ForceField, Molecule, Topology
@@ -211,7 +249,8 @@ class LigandProcessing(ABC):
         topology = Topology()
         topology.add_molecule(self.openff_molecule)
 
-        interchange = openff_ff.create_interchange(topology)
+        interchange = openff_ff.create_interchange(topology,
+                            charge_from_molecules=[self.openff_molecule])
 
         # somehow topology doesn't capture the residue info of openff_molecule
         for residue in interchange.topology.hierarchy_iterator("residues"):
@@ -223,7 +262,7 @@ class LigandProcessing(ABC):
         interchange.to_prmtop(f"{self.output_dir}/{mol}.prmtop")
         logger.info(f'Ligand {mol} OpenFF parameters prepared: {self.output_dir}/{mol}.prmtop')
         
-    def prepare_ligand_parameters_amberff(self):
+    def prepare_ligand_parameters_amberff(self, charge_method='bcc'):
         """
         Prepare ligand parameters using AMBER force field (GAFF or GAFF2).
         It will generate the ligand topology with tleap and antechamber.
@@ -234,7 +273,7 @@ class LigandProcessing(ABC):
         self._calculate_partial_charge()
         abspath_sdf = os.path.abspath(self.ligand_sdf_path)
 
-        antechamber_command = f'{antechamber} -i {abspath_sdf} -fi sdf -o {self.output_dir}/{mol}_ante.mol2 -fo mol2 -c bcc -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol} -dr no'
+        antechamber_command = f'{antechamber} -i {abspath_sdf} -fi sdf -o {self.output_dir}/{mol}_ante.mol2 -fo mol2 -c {charge_method} -s 2 -at {self.ligand_ff} -nc {self.ligand_charge} -rn {mol} -dr no'
 
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(antechamber_command, working_dir=tmpdir)
