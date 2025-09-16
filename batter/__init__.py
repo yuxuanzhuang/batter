@@ -26,8 +26,26 @@ _mbar_log.addFilter(_mute_jax_2)
 
 # Add imports here
 from .batter import ABFESystem, MABFESystem, RBFESystem
+from .analysis import results
 
 logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')
 # format time to be human readable
 logger.add(sys.stderr, format=logger_format, level="INFO")
+
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="MDAnalysis.coordinates.PDB"
+)
+
+try:
+    from Bio import BiopythonDeprecationWarning
+
+    warnings.filterwarnings(
+        "ignore", category=BiopythonDeprecationWarning, module="Bio.Application"
+    )
+except ImportError:
+    pass

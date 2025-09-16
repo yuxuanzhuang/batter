@@ -56,8 +56,7 @@ def check_eq_stage(pose, comps, fe_folder):
         if not os.path.exists(mini_file) or os.path.getsize(mini_file) == 0:
             logger.debug(f'{mini_file} does not exist')
             min_stage = min(min_stage, 0)
-        # TODO: check energy
-        if parse_eamber(mini_file) > 0:
+        elif parse_eamber(mini_file) > 0:
             logger.warning(f'{mini_file} has positive energy')
             min_stage = min(min_stage, 1)
         # eqnpt_pre.rst7
@@ -118,7 +117,6 @@ def check_stage(pose, comp, n_windows, fe_folder):
 @click.option('--lambda_schedule', '-l', default=None,
                help='The lambda schedule file to use for the simulation.',
                 type=click.Path(exists=True, file_okay=True, dir_okay=False, resolve_path=True))
-@click.option('--overwrite', is_flag=True, help='Whether to overwrite the existing prepared batch files.')
 @click.option('--env_amber', '-env', default='/ccs/home/yuzhuang/env.amber', help='Path to the AMBER environment script to source.')
 @click.option('--max-runs', '-m', default=20, type=int,
               help='Maximum number of times to resubmit the job script if resubmit is enabled. Default is 20.')
@@ -131,7 +129,6 @@ def run_in_batch(
         nrestarts,
         window_json=None,
         lambda_schedule=None,
-        overwrite=False,
         env_amber='/ccs/home/yuzhuang/env.amber',
         max_runs=20,
         current_run=0
@@ -177,12 +174,8 @@ def run_in_batch(
             logger.debug(f'Copying {lambda_schedule} to {system.fe_folder}/lambda.sch')
         elif lambda_schedule is None:
             os.remove(f'{system.fe_folder}/lambda.sch')
-        if window_json is not None:
-            system.load_window_json(window_json)
-            overwrite = True
-        if not os.path.exists(f'{system.fe_folder}/pose0/groupfiles') or overwrite:
-            logger.info('Generating run files...')
-            system.generate_batch_files(remd=remd)
+        # always regenerate batch files
+        system.generate_batch_files(remd=remd)
         run_lines.append(f'# {folder}')
         run_lines.append(f'cd {system.fe_folder}\n\n')
         # first check eq_stage

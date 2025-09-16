@@ -8,6 +8,7 @@ import glob
 import pandas as pd
 import numpy as np
 import MDAnalysis as mda
+from MDAnalysis.analysis.distances import distance_array
 from contextlib import contextmanager
 import tempfile
 import warnings
@@ -22,12 +23,9 @@ from batter.bat_lib import setup, scripts
 
 from batter.utils import (
     run_with_log,
-    antechamber,
     tleap,
     cpptraj,
-    parmchk2,
     charmmlipid2amber,
-    obabel,
     vmd,
     log_info,
     COMPONENTS_LAMBDA_DICT,
@@ -96,7 +94,6 @@ class SystemBuilder(ABC):
 
     @builder_fail_report
     def build(self):
-    
         with self._change_dir(self.working_dir):
             logger.debug(f'Building {self.pose}...')
 
@@ -130,7 +127,10 @@ class SystemBuilder(ABC):
                         if self.win == -1:
                             self._create_box()
                         self._restraints()
+                        if self.win == -1:
+                            self._pre_sim_files()
                         self._sim_files()
+                        self._run_files()
         return self
 
     @abstractmethod
@@ -139,9 +139,8 @@ class SystemBuilder(ABC):
         Build the complex.
         It involves 
         1. Cleanup the system.
-        2. Set the parameters of the ligand (TODO: has it been done already?)
-        3. Find anchor atoms.
-        4. Add dummy atoms
+        2. Find anchor atoms.
+        3. Add dummy atoms
         It should return True if the anchor atoms are found,
         False otherwise.
         """
@@ -264,8 +263,7 @@ class SystemBuilder(ABC):
     @log_info
     def _create_box(self):
         """
-        Create the box.
-        It involves
+        Create the box. It involves
         1. Add ligand (that differs for different systems)
         2. Solvate the system.
         3. Add ions.
@@ -730,6 +728,9 @@ class SystemBuilder(ABC):
                 elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
                     lig_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
         f.close()
+        
+        self._ligand_charge = lig_ani - lig_cat
+
         # adjust ligand charge for the case when there are two ligands
         if comp in ['x', 'z', 'o', 's', 'v']:
             lig_cat = lig_cat // 2
@@ -818,20 +819,20 @@ class SystemBuilder(ABC):
         # ligands_p = pmd.load_file('solvate_ligands.prmtop', 'solvate_ligands.inpcrd')
         ligand_p_1 = pmd.load_file(f'{self.mol.lower()}.prmtop')
         ligand_p_1.residues[0].name = self.mol.lower()
-        # equilibration
-        if comp in ['q']:
+        # equilibration or dd method.
+        if self.dec_method == 'dd' or comp == 'q':
             # one ligand in inpcrd
             # set resname
             ligands_p = ligand_p_1
             ligands_p.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
-        elif comp in ['z', 'o', 's', 'v']:
+        elif comp in ['z', 'o', 's', 'v'] and self.dec_method == 'sdr':
             # two ligands in inpcrd
             ligands_p = ligand_p_1 + ligand_p_1
-        elif comp in ['e']:
+        elif comp in ['e'] and self.dec_method == 'sdr':
             # four ligands in inpcrd
             ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1 + ligand_p_1
         else:
-            raise ValueError(f'Not implemented comp type {comp} for writing custom ligand parameters.')
+            raise ValueError(f'Not implemented comp type {comp} with dec {self.dec_method} for writing custom ligand parameters.')
 
         ligands_p.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
 
@@ -905,10 +906,24 @@ class SystemBuilder(ABC):
         """
         raise NotImplementedError()
 
+    def _pre_sim_files(self):
+        """
+        Preprocess simulation files, e.g. add TI specific lines.
+        only runs for windows -1.
+        """
+        pass
+
     @abstractmethod
     def _sim_files(self):
         """
         Create simulation files, e.g. input files form AMBER.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def _run_files(self):
+        """
+        Create run files, e.g. SLURM scripts.
         """
         raise NotImplementedError()
 
@@ -931,6 +946,32 @@ class EquilibrationBuilder(SystemBuilder):
     comp_folder = '.'
     sdr_dist = 0
     dec_method = ''
+
+    def __init__(self,
+                 system: 'batter.System',
+                 pose: str,
+                 sim_config: SimulationConfig,
+                 working_dir: str,
+                 infe: bool = False,
+                 ):
+        """
+        The base class for all system builders.
+
+        Parameters
+        ----------
+        system : batter.System
+            The system to build.
+        pose : str
+            The name of the pose
+        sim_config : batter.input_process.SimulationConfig
+            The simulation configuration.
+        working_dir : str
+            The working directory.
+        infe: bool
+            Whether add infe for protein conformation.
+        """
+        self.infe = infe
+        super().__init__(system, pose, sim_config, working_dir)
 
     @property
     def build_file_folder(self):
@@ -1336,6 +1377,8 @@ class EquilibrationBuilder(SystemBuilder):
         os.system(f'cp {self.build_file_folder}/{mol.lower()}-noh.pdb ./{mol.lower()}.pdb')
         #shutil.copy(f'{self.build_file_folder}/anchors-{pose}.txt', './anchors.txt')
         os.system(f'cp {self.build_file_folder}/anchors-{pose}.txt ./anchors.txt')
+        os.system(f'cp {self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp {self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         # Read coordinates for dummy atoms
         for i in range(1, 2):
@@ -1854,6 +1897,7 @@ class EquilibrationBuilder(SystemBuilder):
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
 
+        infe = 1 if self.infe else 0
         # Create gradual release files for equilibrium
         for i in range(0, num_sim):
             with open(f'{self.amber_files_folder}/mdin-equil', "rt") as fin:
@@ -1863,14 +1907,25 @@ class EquilibrationBuilder(SystemBuilder):
                     if self.sim_config.release_eq[i] == 0:
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_num-atoms_', str(vac_atoms)).replace(
+                                '_enable_infe_', str(infe)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps2)).replace('disang_file', f'disang{i:02d}'))
                     else:
                         for line in fin:
+                            if i == 0:
+                                if 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'ntx' in line:
+                                    line = 'ntx = 1, \n'
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                '_num-atoms_', str(vac_atoms)).replace(
+                                '_enable_infe_', str(infe)).replace(
                             '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
-                            
+
+    @log_info             
+    def _run_files(self):
+        stage = self.stage
+        pose = self.pose
+        rng = self.sim_config.rng
+
         with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
             with open("./check_run.bash", "wt") as fout:
                 for line in fin:
@@ -1911,11 +1966,16 @@ class FreeEnergyBuilder(SystemBuilder):
                  sim_config: SimulationConfig,
                  working_dir: str,
                  molr: str,
-                 poser: str,):
+                 poser: str,
+                 infe: bool = False,
+                 ):
         self.win = win
         self.comp = component
         self.molr = molr
         self.poser = poser
+
+        # whether to enable infe for protein restraint.
+        self.infe = infe
 
         super().__init__(system, pose, sim_config, working_dir)
 
@@ -1923,7 +1983,7 @@ class FreeEnergyBuilder(SystemBuilder):
         if component == 'n':
             dec_method = 'sdr'
 
-        if component in ['a', 'l', 't', 'm', 'c', 'r']:
+        if component in ['a', 'l', 't', 'm', 'c', 'r', 'y']:
             dec_method = 'dd'
 
         if component == 'x':
@@ -1966,6 +2026,7 @@ class FreeEnergyBuilder(SystemBuilder):
         pose = self.pose
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -1999,7 +2060,11 @@ class FreeEnergyBuilder(SystemBuilder):
         os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.mol2 ./')
         os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.pdb ./')
 
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -2012,7 +2077,8 @@ class FreeEnergyBuilder(SystemBuilder):
             residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
         if lipid_mol:
-            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
+            # also skip ANC, which is a anchored dummy atom for rmsf restraint
+            non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+ ANC')
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
@@ -2297,6 +2363,8 @@ class FreeEnergyBuilder(SystemBuilder):
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
         os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
+        os.system(f'cp ../{self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp ../{self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
@@ -2662,95 +2730,86 @@ class FreeEnergyBuilder(SystemBuilder):
             recep_last = data[9].strip()
 
         # Get backbone atoms and adjust anchors
-        if (comp != 'c' and comp != 'r' and comp != 'f' and comp != 'w'):
 
-            # Get protein backbone atoms
+        # Get protein backbone atoms
+        with open('./vac.pdb') as f_in:
+            lines = (line.rstrip() for line in f_in)
+            lines = list(line for line in lines if line)  # Non-blank lines in a list
+            for i in range(0, len(lines)):
+                if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                    if int(lines[i][22:26].strip()) >= 2 and int(lines[i][22:26].strip()) < int(lig_res):
+                        data = lines[i][12:16].strip()
+                        if data == 'CA' or data == 'N' or data == 'C' or data == 'O':
+                            hvy_h.append(lines[i][6:11].strip())
+
+        if dec_method == 'sdr' or dec_method == 'exchange':
+            rec_res = int(recep_last) + 2
+            lig_res = str((int(lig_res) + 1))
+            L1 = ':'+lig_res+'@'+l1_atom
+            L2 = ':'+lig_res+'@'+l2_atom
+            L3 = ':'+lig_res+'@'+l3_atom
+            hvy_h = []
+            hvy_g = []
+
+            # Adjust anchors
+            # For sdr and exchange, the protein residues are shifted by +1
+            p1_resid = str(int(p1_res) + 1)
+            p2_resid = str(int(p2_res) + 1)
+            p3_resid = str(int(p3_res) + 1)
+
+            P1 = ":"+p1_resid+"@"+p1_atom
+            P2 = ":"+p2_resid+"@"+p2_atom
+            P3 = ":"+p3_resid+"@"+p3_atom
+
+            # Get receptor heavy atoms
             with open('./vac.pdb') as f_in:
                 lines = (line.rstrip() for line in f_in)
                 lines = list(line for line in lines if line)  # Non-blank lines in a list
                 for i in range(0, len(lines)):
                     if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
-                        if int(lines[i][22:26].strip()) >= 2 and int(lines[i][22:26].strip()) < int(lig_res):
+                        if int(lines[i][22:26].strip()) >= 3 and int(lines[i][22:26].strip()) <= rec_res:
                             data = lines[i][12:16].strip()
                             if data == 'CA' or data == 'N' or data == 'C' or data == 'O':
                                 hvy_h.append(lines[i][6:11].strip())
 
-            if dec_method == 'sdr' or dec_method == 'exchange':
-                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z'):
-
-                    rec_res = int(recep_last) + 2
-                    lig_res = str((int(lig_res) + 1))
-                    L1 = ':'+lig_res+'@'+l1_atom
-                    L2 = ':'+lig_res+'@'+l2_atom
-                    L3 = ':'+lig_res+'@'+l3_atom
-                    hvy_h = []
-                    hvy_g = []
-
-                    # Adjust anchors
-
-                    p1_resid = str(int(p1_res) + 1)
-                    p2_resid = str(int(p2_res) + 1)
-                    p3_resid = str(int(p3_res) + 1)
-
-                    P1 = ":"+p1_resid+"@"+p1_atom
-                    P2 = ":"+p2_resid+"@"+p2_atom
-                    P3 = ":"+p3_resid+"@"+p3_atom
-
-                    # Get receptor heavy atoms
-                    with open('./vac.pdb') as f_in:
-                        lines = (line.rstrip() for line in f_in)
-                        lines = list(line for line in lines if line)  # Non-blank lines in a list
-                        for i in range(0, len(lines)):
-                            if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
-                                if int(lines[i][22:26].strip()) >= 3 and int(lines[i][22:26].strip()) <= rec_res:
-                                    data = lines[i][12:16].strip()
-                                    if data == 'CA' or data == 'N' or data == 'C' or data == 'O':
-                                        hvy_h.append(lines[i][6:11].strip())
-
-                    # Get bulk ligand heavy atoms
-                    with open('./vac.pdb') as f_in:
-                        lines = (line.rstrip() for line in f_in)
-                        lines = list(line for line in lines if line)  # Non-blank lines in a list
-                        if comp == 'x':
-                            for i in range(0, len(lines)):
-                                if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
-                                    if lines[i][22:26].strip() == str(int(lig_res) + 3):
-                                        data = lines[i][12:16].strip()
-                                        if data[0] != 'H':
-                                            hvy_g.append(lines[i][6:11].strip())
-                            for i in range(0, len(lines)):
-                                if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
-                                    if lines[i][22:26].strip() == str(int(lig_res) + 1):
-                                        data = lines[i][12:16].strip()
-                                        if data[0] != 'H':
-                                            hvy_g2.append(lines[i][6:11].strip())
-                        if comp == 'e':
-                            for i in range(0, len(lines)):
-                                if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
-                                    if lines[i][22:26].strip() == str(int(lig_res) + 2):
-                                        data = lines[i][12:16].strip()
-                                        if data[0] != 'H':
-                                            hvy_g.append(lines[i][6:11].strip())
-                        if comp == 'v' or comp == 'o' or comp == 'z':
-                            for i in range(0, len(lines)):
-                                if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
-                                    if lines[i][22:26].strip() == str(int(lig_res) + 1):
-                                        data = lines[i][12:16].strip()
-                                        if data[0] != 'H':
-                                            hvy_g.append(lines[i][6:11].strip())
-                        if comp == 'n':
-                            for i in range(0, len(lines)):
-                                if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
-                                    if lines[i][22:26].strip() == str(int(lig_res)):
-                                        data = lines[i][12:16].strip()
-                                        if data[0] != 'H':
-                                            hvy_g.append(lines[i][6:11].strip())
-
-        # Adjust anchors for ligand only
-        if (comp == 'c' or comp == 'w' or comp == 'f'):
-            L1 = L1.replace(':'+lig_res, ':1')
-            L2 = L2.replace(':'+lig_res, ':1')
-            L3 = L3.replace(':'+lig_res, ':1')
+            # Get bulk ligand heavy atoms
+            with open('./vac.pdb') as f_in:
+                lines = (line.rstrip() for line in f_in)
+                lines = list(line for line in lines if line)  # Non-blank lines in a list
+                if comp == 'x':
+                    for i in range(0, len(lines)):
+                        if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                            if lines[i][22:26].strip() == str(int(lig_res) + 3):
+                                data = lines[i][12:16].strip()
+                                if data[0] != 'H':
+                                    hvy_g.append(lines[i][6:11].strip())
+                    for i in range(0, len(lines)):
+                        if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                            if lines[i][22:26].strip() == str(int(lig_res) + 1):
+                                data = lines[i][12:16].strip()
+                                if data[0] != 'H':
+                                    hvy_g2.append(lines[i][6:11].strip())
+                if comp == 'e':
+                    for i in range(0, len(lines)):
+                        if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                            if lines[i][22:26].strip() == str(int(lig_res) + 2):
+                                data = lines[i][12:16].strip()
+                                if data[0] != 'H':
+                                    hvy_g.append(lines[i][6:11].strip())
+                if comp == 'v' or comp == 'o' or comp == 'z':
+                    for i in range(0, len(lines)):
+                        if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                            if lines[i][22:26].strip() == str(int(lig_res) + 1):
+                                data = lines[i][12:16].strip()
+                                if data[0] != 'H':
+                                    hvy_g.append(lines[i][6:11].strip())
+                if comp == 'n':
+                    for i in range(0, len(lines)):
+                        if (lines[i][0:6].strip() == 'ATOM') or (lines[i][0:6].strip() == 'HETATM'):
+                            if lines[i][22:26].strip() == str(int(lig_res)):
+                                data = lines[i][12:16].strip()
+                                if data[0] != 'H':
+                                    hvy_g.append(lines[i][6:11].strip())
 
         # Get a relation between atom number and masks
         atm_num = scripts.num_to_mask(pdb_file)
@@ -2773,10 +2832,9 @@ class FreeEnergyBuilder(SystemBuilder):
         for i in range(0, len(bb_start)):
             beg = bb_start[i] - int(first_res) + 2
             end = bb_end[i] - int(first_res) + 2
-            if dec_method == 'sdr' or dec_method == 'exchange':
-                if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z'):
-                    beg = bb_start[i] - int(first_res) + 3
-                    end = bb_end[i] - int(first_res) + 3
+            if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z'):
+                beg = bb_start[i] - int(first_res) + 3
+                end = bb_end[i] - int(first_res) + 3
             for i in range(beg, end):
                 j = i+1
                 psi1 = ':'+str(i)+'@N'
@@ -2802,10 +2860,6 @@ class FreeEnergyBuilder(SystemBuilder):
         rst.append(''+P1+' '+L1+' '+L2+'')
         rst.append(''+P2+' '+P1+' '+L1+' '+L2+'')
         rst.append(''+P1+' '+L1+' '+L2+' '+L3+'')
-
-        # New restraints for ligand only
-        if (comp == 'c' or comp == 'w' or comp == 'f'):
-            rst = []
 
         # Get ligand dihedral restraints from ligand parameter/pdb file
 
@@ -2860,7 +2914,7 @@ class FreeEnergyBuilder(SystemBuilder):
         for i in range(0, len(mat)):
             msk[mat[i]] = ''
 
-        if (comp != 'c' and comp != 'w' and comp != 'f'):
+        if (comp != 'c' and comp != 'w' and comp != 'f' and comp != 'y'):
             msk = list(filter(None, msk))
             msk = [m.replace(':1', ':'+lig_res) for m in msk]
         else:
@@ -3134,6 +3188,7 @@ class FreeEnergyBuilder(SystemBuilder):
             rcom = 0
             cv_file = open('cv.in', 'w')
             cv_file.write('cv_file \n')
+            # error https://github.com/yuxuanzhuang/nfe_berendsen
             if False:
                 cv_file.write('&colvar \n')
                 cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
@@ -3781,6 +3836,13 @@ class FreeEnergyBuilder(SystemBuilder):
                 mdin.write('DISANG=disang.rest\n')
                 mdin.write('LISTOUT=POUT\n')
 
+    def _run_files(self):
+        num_sim = self.sim_config.num_fe_range
+        lambdas = self.system.component_windows_dict[self.comp]
+        pose = self.pose
+        comp = self.comp
+        win = self.win if self.win != -1 else 0
+
         with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
             with open("./check_run.bash", "wt") as fout:
                 for line in fin:
@@ -3790,8 +3852,7 @@ class FreeEnergyBuilder(SystemBuilder):
                 for line in fin:
                     fout.write(line.replace('FERANGE', str(num_sim)).replace(
                         'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp).replace(
-                        )
+                            'COMPONENT', self.comp)
                     )
         with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
             with open("./SLURMM-run", "wt") as fout:
@@ -3802,7 +3863,388 @@ class FreeEnergyBuilder(SystemBuilder):
                                     'PARTITIONNAME', self.system.partition))
 
 
-class SDRFreeEnergyBuilder(FreeEnergyBuilder):
+class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
+    """
+    Build ligand-only simulation to estimate ligand decoupling free energy.
+    """
+    def _build_complex(self):
+        """No complex needed to be built."""
+        pose = self.pose
+        os.system(f'cp ../../../../equil/{pose}/build_files/{pose}.pdb ./')
+        
+        mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
+        self.mol = mol
+        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.sdf ./')
+        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.mol2 ./')
+        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.pdb ./')
+
+        self.corrected_sdr_dist = 0
+        return True
+
+    @log_info
+    def _create_simulation_dir(self):
+        mol = self.mol
+        pose = self.pose
+        resname_lig = mol
+        comp = self.comp
+
+        dec_method = self.dec_method
+
+        if os.path.exists(self.amber_files_folder) or os.path.islink(self.amber_files_folder):
+            os.remove(self.amber_files_folder)
+
+        os.symlink(f'../{self.amber_files_folder}', self.amber_files_folder)
+
+        for file in glob.glob(f'../{self.build_file_folder}/vac_ligand*'):
+            os.system(f'cp {file} ./')
+
+        os.system(f'cp ../{self.build_file_folder}/{pose}.pdb ./{mol.lower()}.pdb')
+        os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
+
+        for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
+        for file in glob.glob('../../../ff/dum.*'):
+            #shutil.copy(file, './')
+            os.system(f'cp {file} ./')
+
+        # write build.pdb with dum atom + ligand
+        # the position of the DUM atom is the center of mass of the ligand
+        u_lig = mda.Universe(f'{mol.lower()}.pdb')
+        com = u_lig.atoms.center_of_mass()
+        u_dum = mda.Universe.empty(1,
+                         n_residues=1,
+                         atom_resindex=[0],
+                         residue_segindex=[0],
+                         trajectory=True)
+        u_dum.add_TopologyAttr('name', ['Pb'])
+        u_dum.add_TopologyAttr('resname', ['DUM'])
+        u_dum.atoms.positions = np.array([com])
+        with mda.Writer('build.pdb', multiframe=False) as W:
+            W.write(u_dum)
+            W.write(u_lig)
+            
+    @log_info
+    def _create_box(self):
+        """
+        Create the box for ligand-only system.
+        """
+        mol = self.mol
+        comp = self.comp
+        solv_shell = self.sim_config.solv_shell
+        ion_def = self.sim_config.ion_def
+        neut = self.sim_config.neut
+        
+        buff = 20
+
+        water_model = self.sim_config.water_model
+        neut = self.sim_config.neut
+        dec_method = self.sim_config.dec_method
+
+        os.system(f'cp {mol.lower()}.mol2 vac_ligand.mol2')
+        os.system(f'cp {mol.lower()}.sdf vac_ligand.sdf')
+        os.system(f'cp {mol.lower()}.prmtop vac_ligand.prmtop')
+        os.system(f'cp {mol.lower()}.pdb vac_ligand.pdb')
+        os.system(f'cp {mol.lower()}.pdb vac.pdb')
+        os.system(f'cp {mol.lower()}.inpcrd vac_ligand.inpcrd')
+
+        # Copy tleap files that are used for restraint generation and analysis
+        os.system(f'cp {self.amber_files_folder}/tleap.in.amber16 tleap.in')
+
+        # Define volume density for different water models
+        ratio = 0.060
+        if water_model == 'TIP3P':
+            water_box = water_model.upper()+'BOX'
+        elif water_model == 'SPCE':
+            water_box = 'SPCBOX'
+        elif water_model == 'TIP4PEW':
+            water_box = water_model.upper()+'BOX'
+        elif water_model == 'OPC':
+            water_box = water_model.upper()+'BOX'
+        elif water_model == 'TIP3PF':
+            water_box = water_model.upper()+'BOX'
+
+        os.system(f'cp tleap.in tleap_ligands.in')
+        tleap_ligands = open('tleap_ligands.in', 'a')
+        tleap_ligands.write('# Load the necessary parameters\n')
+        tleap_ligands.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_ligands.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
+        tleap_ligands.write(f'ligands = loadpdb {mol.lower()}.pdb\n\n')
+        tleap_ligands.write('saveamberparm ligands vac.prmtop vac.inpcrd\n')
+        tleap_ligands.write('quit')
+        tleap_ligands.close()
+        p = run_with_log(f'{tleap} -s -f tleap_ligands.in > tleap_ligands.log')
+
+        # Find out how many cations/anions are needed for neutralization       
+        lig_cat = 0
+        lig_ani = 0
+
+        f = open('tleap_ligands.log', 'r')
+        for line in f:
+            if "The unperturbed charge of the unit" in line:
+                splitline = line.split()
+                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                    lig_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                    lig_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+        f.close()
+
+        charge_neut = lig_cat - lig_ani
+        self._ligand_charge = -charge_neut
+
+        # Get box volume and number of added ions
+        box_volume = (buff * 2) ** 3
+        logger.debug(f'Box volume {box_volume}')
+        num_ions = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+
+        # box volume already takes into account system shrinking during equilibration
+        num_cat = num_ions
+        num_ani = num_ions
+        logger.debug(f'Number of cations: {num_cat}')
+        logger.debug(f'Number of anions: {num_ani}')
+
+        os.system(f'cp tleap.in tleap_solvate.in')
+        tleap_solvate = open('tleap_solvate.in', 'a')
+        tleap_solvate.write('# Load the necessary parameters\n')
+        tleap_solvate.write(f'loadamberparams {mol.lower()}.frcmod\n')
+        tleap_solvate.write(f'{mol} = loadmol2 {mol.lower()}.mol2\n\n')
+        tleap_solvate.write('# Load the water and jc ion parameters\n')
+        if water_model.lower() != 'tip3pf':
+            tleap_solvate.write(f'source leaprc.water.{water_model.lower()}\n\n')
+        else:
+            tleap_solvate.write('source leaprc.water.fb3\n\n')
+        tleap_solvate.write('model = loadpdb build.pdb\n\n')
+        tleap_solvate.write('# Create water box with chosen model\n')
+        tleap_solvate.write(f'solvatebox model {water_box} {{ {buff} {buff} {buff} }} 1\n\n')
+        # set equal amount of cations and anions
+        # later we will convert them into TI ions based on the net charge of the system
+        tleap_solvate.write('# Add ions for neutralization/ionization\n')
+        tleap_solvate.write(f'addionsrand model {ion_def[0]} {num_cat}\n')
+        tleap_solvate.write(f'addionsrand model {ion_def[1]} {num_ani}\n')
+        tleap_solvate.write('desc model\n')
+        tleap_solvate.write('savepdb model full.pdb\n')
+        tleap_solvate.write('saveamberparm model full.prmtop full.inpcrd\n')
+        tleap_solvate.write('quit')
+        tleap_solvate.close()
+        p = run_with_log(tleap + ' -s -f tleap_solvate.in > tleap_solvate.log')
+
+        # Apply hydrogen mass repartitioning
+        os.system(f'cp {self.amber_files_folder}/parmed-hmr.in ./')
+        run_with_log('parmed -O -n -i parmed-hmr.in > parmed-hmr.log')
+
+    @log_info
+    def _restraints(self):
+        pose = self.pose
+        rest = self.sim_config.rest
+        bb_start = self.sim_config.bb_start
+        bb_end = self.sim_config.bb_end
+        stage = self.stage
+        mol = self.mol
+        comp = self.comp
+        molr = self.mol
+
+        bb_equil = self.sim_config.bb_equil
+        dec_method = self.dec_method
+
+        other_mol = self.other_mol
+
+        release_eq = self.sim_config.release_eq
+        logger.debug('Equil release weights:')
+        for relase_eq_i in range(0, len(release_eq)):
+            # Write AMBER restraint file for the full system
+            disang_file = open('disang.rest', 'w')
+     
+            disang_file.write('\n')
+            disang_file.close()
+
+            os.system(f'cp disang.rest disang{relase_eq_i:02d}.rest')
+
+        u_lig = mda.Universe('vac.pdb')
+        lig_atoms = u_lig.select_atoms(f'resname {mol} and not name H*')
+        hvy_g = list(str(a.index+1) for a in lig_atoms) # Get heavy atom indices (1-based for AMBER)
+
+        lcom = rest[6]
+
+        cv_file = open('cv.in', 'w')
+        cv_file.write('cv_file \n')
+        cv_file.write('&colvar \n')
+        cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+        cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_g)+2))
+        for i in range(0, len(hvy_g)):
+            cv_file.write(hvy_g[i])
+            cv_file.write(',')
+        cv_file.write('\n')
+        cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                    (float(0.0), float(0.0), float(0.0), float(999.0)))
+        cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (lcom, lcom))
+        cv_file.write('/ \n')
+
+
+    @log_info
+    def _sim_files(self):
+        hmr = self.sim_config.hmr
+        temperature = self.sim_config.temperature
+        mol = self.mol
+        num_sim = self.sim_config.num_fe_range
+        pose = self.pose
+        comp = self.comp
+        win = self.win
+        stage = self.stage
+        steps1 = self.sim_config.dic_steps1[comp]
+        steps2 = self.sim_config.dic_steps2[comp]
+        rng = self.sim_config.rng
+        ntwx = self.sim_config.ntwx
+        lipid_mol = self.lipid_mol
+        lambdas = self.system.component_windows_dict[comp]
+        weight = lambdas[self.win if self.win != -1 else 0]
+
+        mk1 = 2
+        with open(f"../{self.amber_files_folder}/mini-unorest-lig", "rt") as fin:
+            with open("./mini.in", "wt") as fout:
+                for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                        '_lig_name_', mol))
+        with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            with open("./mini_eq.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_lig_name_', mol))
+        with open(f"../{self.amber_files_folder}/eqnpt-lig.in", "rt") as fin:
+            with open("./eqnpt.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
+        with open(f"../{self.amber_files_folder}/eqnpt0-lig.in", "rt") as fin:
+            with open("./eqnpt0.in", "wt") as fout:
+                for line in fin:
+                    fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_lig_name_', mol))
+        for i in range(0, num_sim+1):
+            with open(f'../{self.amber_files_folder}/mdin-unorest-lig', "rt") as fin:
+                with open("./mdin-%02d" % int(i), "wt") as fout:
+                    n_steps_run = str(steps1) if i == 0 else str(steps2)
+                    for line in fin:
+                        if i == 0:
+                            if 'ntx = 5' in line:
+                                line = 'ntx = 1, \n'
+                            elif 'irest' in line:
+                                line = 'irest = 0, \n'
+                            elif 'dt = ' in line:
+                                line = 'dt = 0.001, \n'
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace(
+                                'mk1', str(mk1)).replace('disang_file', 'disang').replace(
+                            '_lig_name_', mol))
+            mdin = open("./mdin-%02d" % int(i), "a")
+            mdin.write('  mbar_states = %d\n' % len(lambdas))
+            mdin.write('  mbar_lambda = ')
+            for i in range(0, len(lambdas)):
+                mdin.write(' %6.5f,' % (lambdas[i]))
+            mdin.write('\n')
+            mdin.write('  infe = 1,\n')
+            mdin.write(' /\n')
+            mdin.write(' &pmd \n')
+            mdin.write(' output_file = \'cmass.txt\' \n')
+            mdin.write(' output_freq = %02d \n' % int(ntwx))
+            mdin.write(' cv_file = \'cv.in\' \n')
+            mdin.write(' /\n')
+            mdin.write(' &wt type = \'END\' , /\n')
+            mdin.write('DISANG=disang.rest\n')
+            mdin.write('LISTOUT=POUT\n')
+
+    @log_info
+    def _pre_sim_files(self):
+        """Preprocess simulation files needed for ligand-only simulations. It involves adding co-decoupling ions to keep the system neutral."""
+        mol = self.mol
+        total_charge = self._ligand_charge
+        universe = mda.Universe('full.pdb')
+        selected_ion_indices = select_ions_away_from_complex(universe, total_charge=total_charge, mol=mol)
+
+        if selected_ion_indices is None:
+            logger.debug('No ions need to be added for ligand decoupling.')
+            return
+        # add ion indices to 
+        files_to_be_modified = ['mini-unorest-lig', 'mdin-unorest-lig',
+                                'eqnpt0-lig.in', 'eqnpt-lig.in',
+        ]
+        for file in files_to_be_modified:
+            # timask2 need to be modified to include the selected ions
+            # restraintmask need to be modified to include the selected ions
+            with open(f'../{self.amber_files_folder}/{file}', 'r') as fin:
+                lines = fin.readlines()
+            with open(f'../{self.amber_files_folder}/{file}', 'w') as fout:
+                for line in lines:
+                    if 'timask2' in line:
+                        # modify this line to include the selected ions
+                        timask2_part = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        timask2_part += f'@{selected_ion_indices[0] +1}' if timask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            timask2_part += f' | @{ion_idx+1}'
+                        line = f"timask2 = '{timask2_part}' \n"
+                    elif 'scmask2' in line:
+                        # modify this line to include the selected ions
+                        scmask2_part =  line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        scmask2_part += f'@{selected_ion_indices[0] +1}' if scmask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            scmask2_part += f' | @{ion_idx+1}'
+                        line = f"scmask2 = '{scmask2_part}' \n"
+                    elif 'restraintmask' in line:
+                        restraintmask_part = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        restraintmask_part += f'@{selected_ion_indices[0] +1}' if restraintmask_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            restraintmask_part += f' | @{ion_idx+1}'
+                        line = f"restraintmask = '{restraintmask_part}' \n"
+                    fout.write(line)
+
+
+class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
+    def _pre_sim_files(self):
+        """
+        Add co-decoupling ions to the mdin and mini files for complex and receptor decoupling.
+        """
+        if self.dec_method != 'dd':
+            return
+        
+        mol = self.mol
+        total_charge = self._ligand_charge
+        universe = mda.Universe('full.pdb')
+
+        selected_ion_indices = select_ions_away_from_complex(universe, total_charge=total_charge, mol=mol)
+        if selected_ion_indices is None:
+            logger.debug('No ions need to be added for complex/receptor decoupling.')
+            return
+        files_to_be_modified = ['mdin-unorest-dd', 'mini-unorest-dd',
+                                'eqnpt.in', 'eqnpt0.in',
+        ]
+
+        for file in files_to_be_modified:
+            # add ion indices to timask2 and restraintmask
+            with open(f'../{self.amber_files_folder}/{file}', 'r') as fin:
+                lines = fin.readlines()
+            with open(f'../{self.amber_files_folder}/{file}', 'w') as fout:
+                for line in lines:
+                    if 'timask2' in line:
+                        # modify this line to include the selected ions
+                        timask2_part =  line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        timask2_part += f'@{selected_ion_indices[0] +1}' if timask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            timask2_part += f' | @{ion_idx+1}'
+                        line = f"timask2 = '{timask2_part}' \n"
+                    elif 'scmask2' in line:
+                        # modify this line to include the selected ions
+                        scmask2_part =  line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        scmask2_part += f'@{selected_ion_indices[0] +1}' if scmask2_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            scmask2_part += f' | @{ion_idx+1}'
+                        line = f"scmask2 = '{scmask2_part}' \n"
+                    elif 'restraintmask' in line:
+                        restraintmask_part = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                        restraintmask_part += f'@{selected_ion_indices[0] +1}' if restraintmask_part == '' else f' | @{selected_ion_indices[0] +1}'
+                        for ion_idx in selected_ion_indices[1:]:
+                            restraintmask_part += f' | @{ion_idx+1}'
+                        line = f"restraintmask = '{restraintmask_part}' \n"
+                    fout.write(line)
+
     def _sim_files(self):
         
         dec_method = self.dec_method
@@ -3821,7 +4263,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
         ntwx = self.sim_config.ntwx
         lambdas = self.system.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
-
 
         # Read 'disang.rest' and extract L1, L2, L3
         with open('disang.rest', 'r') as f:
@@ -3968,25 +4409,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
         if (comp == 'e'):
             # Create simulation files for charge decoupling
             if (dec_method == 'sdr') or (dec_method == 'exchange'):
@@ -4115,25 +4537,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
         if (comp == 'f'):
             mk1 = '1'
             mk2 = '2'
@@ -4181,25 +4584,6 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                                 float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
         if (comp == 'w'):
             for i in range(0, num_sim+1):
                 mk1 = '1'
@@ -4246,166 +4630,8 @@ class SDRFreeEnergyBuilder(FreeEnergyBuilder):
                             'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
                             '_lig_name_', mol))
 
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
 
-        if (comp == 'o' or comp == 'z'):
-            # Create simulation files for elec+vdw decoupling
-            if (dec_method == 'sdr'):
-                # Simulation files for simultaneous decoupling
-                with open('./vac.pdb') as myfile:
-                    data = myfile.readlines()
-                    mk2 = int(last_lig)
-                    mk1 = int(mk2 - 1)
-                for i in range(0, num_sim+1):
-                    with open(f'../{self.amber_files_folder}/mdin-uno', "rt") as fin:
-                        with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(steps1) if i == 0 else str(steps2)
-                            for line in fin:
-                                if i == 0:
-                                    if 'ntx = 5' in line:
-                                        line = 'ntx = 1, \n'
-                                    elif 'irest' in line:
-                                        line = 'irest = 0, \n'
-                                    elif 'dt = ' in line:
-                                        line = 'dt = 0.001, \n'
-                                    elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                                        if restraint_mask == '':
-                                            line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
-                                        else:
-                                            line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
-                                    '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
-                    mdin = open("./mdin-%02d" % int(i), 'a')
-                    mdin.write('  mbar_states = %02d\n' % len(lambdas))
-                    mdin.write('  mbar_lambda = ')
-                    for i in range(0, len(lambdas)):
-                        mdin.write(' %6.5f,' % (lambdas[i]))
-                    mdin.write('\n')
-                    mdin.write('  infe = 1,\n')
-                    mdin.write(' /\n')
-                    mdin.write(' &pmd \n')
-                    mdin.write(' output_file = \'cmass.txt\' \n')
-                    mdin.write(' output_freq = %02d \n' % int(ntwx))
-                    mdin.write(' cv_file = \'cv.in\' \n')
-                    mdin.write(' /\n')
-                    mdin.write(' &wt type = \'END\' , /\n')
-                    mdin.write('DISANG=disang.rest\n')
-                    mdin.write('LISTOUT=POUT\n')
-
-                with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
-                    with open("./eqnpt0.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                            '_lig_name_', mol))
-                with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
-                    with open("./eqnpt.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                            '_lig_name_', mol))
-                with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
-                    with open("./mini.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                            '_lig_name_', mol))
-
-            # Simulation files for double decoupling
-            elif (dec_method == 'dd'):
-                raise ValueError("Double decoupling not implemented for elec+vdw decoupling")
-                with open('./vac.pdb') as myfile:
-                    data = myfile.readlines()
-                    mk1 = int(last_lig)
-                for i in range(0, num_sim+1):
-                    with open(f'../{self.amber_files_folder}/mdin-lj-dd', "rt") as fin:
-                        with open("./mdin-%02d" % int(i), "wt") as fout:
-                            n_steps_run = str(steps1) if i == 0 else str(steps2)
-                            for line in fin:
-                                if i == 0:
-                                    if 'ntx = 5' in line:
-                                        line = 'ntx = 1, \n'
-                                    elif 'irest' in line:
-                                        line = 'irest = 0, \n'
-                                    elif 'dt = ' in line:
-                                        line = 'dt = 0.001, \n'
-                                    elif 'restraintmask' in line:
-                                        restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
-                                        if restraint_mask == '':
-                                            line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
-                                        else:
-                                            line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                        '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
-                    mdin = open("./mdin-%02d" % int(i), 'a')
-                    mdin.write('  mbar_states = %02d\n' % len(lambdas))
-                    mdin.write('  mbar_lambda = ')
-                    for i in range(0, len(lambdas)):
-                        mdin.write(' %6.5f,' % (lambdas[i]))
-                    mdin.write('\n')
-                    mdin.write('  infe = 1,\n')
-                    mdin.write(' /\n')
-                    mdin.write(' &pmd \n')
-                    mdin.write(' output_file = \'cmass.txt\' \n')
-                    mdin.write(' output_freq = %02d \n' % int(ntwx))
-                    mdin.write(' cv_file = \'cv.in\' \n')
-                    mdin.write(' /\n')
-                    mdin.write(' &wt type = \'END\' , /\n')
-                    mdin.write('DISANG=disang.rest\n')
-                    mdin.write('LISTOUT=POUT\n')
-
-                with open(f"../{self.amber_files_folder}/eqnpt-lj-dd.in", "rt") as fin:
-                    with open("./eqnpt.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
-                            '_lig_name_', mol))
-                with open(f"../{self.amber_files_folder}/heat-lj-dd.in", "rt") as fin:
-                    with open("./heat.in", "wt") as fout:
-                        for line in fin:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
-                            '_lig_name_', mol))
-
-            # Create running scripts for local and server
-            with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-                with open("./check_run.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line)
-            with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-                with open("./run-local.bash", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                            'NWINDOWS', str(len(lambdas))).replace(
-                                'COMPONENT', self.comp)
-                        )
-            with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-                with open("./SLURMM-run", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
-
-class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
+class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
     @log_info
     def _build_complex(self):
         """
@@ -4432,6 +4658,7 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         poser = self.poser
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -4454,7 +4681,11 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
         for file in glob.glob(f'../../../../equil/{poser.lower()}/vac*'):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
 
         # restore resid index
         
@@ -4761,32 +4992,12 @@ class EXFreeEnergyBuilder(SDRFreeEnergyBuilder):
                             '_lig_name_', f'{mol},{molr}'))
 
 
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
-
-
 class RESTFreeEnergyBuilder(FreeEnergyBuilder):
     """
     Builder for restrain free energy calculations system
     """
 
-class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
+class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
     """
     Builder for vdw + elec single decoupling free energy calculations system
     """
@@ -4908,25 +5119,6 @@ class UNOFreeEnergyBuilder(SDRFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
 
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
-
 
 class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
     """
@@ -5023,49 +5215,80 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                             'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
                         '_lig_name_', mol))
 
-            with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
-                with open("./mini_eq.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
-                with open("./eqnpt0.in", "wt") as fout:
-                    for line in fin:
-                        if 'infe' in line:
-                            fout.write('  infe = 1,\n')
-                        elif 'mcwat' in line:
-                            fout.write('  mcwat = 0,\n')
-                        else:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        if 'infe' in line:
-                            fout.write('  infe = 1,\n')
-                        elif 'mcwat' in line:
-                            fout.write('  mcwat = 0,\n')
-                        else:
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
-                                    '_lig_name_', mol))
+        elif dec_method == 'dd':
+            # Simulation files for dd
+            with open('./vac.pdb') as myfile:
+                data = myfile.readlines()
+                mk1 = int(last_lig)
 
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
+            for i in range(0, num_sim+1):
+                with open(f'../{self.amber_files_folder}/mdin-unorest-dd', "rt") as fin:
+                    with open("./mdin-%02d" % int(i), "wt") as fout:
+                        n_steps_run = str(steps1) if i == 0 else str(steps2)
+                        for line in fin:
+                            if i == 0:
+                                if 'ntx = 5' in line:
+                                    line = 'ntx = 1, \n'
+                                elif 'irest' in line:
+                                    line = 'irest = 0, \n'
+                                elif 'dt = ' in line:
+                                    line = 'dt = 0.001, \n'
+                                elif 'restraintmask' in line:
+                                    restraint_mask = line.split('=')[1].strip().replace("'", "").rstrip(',')
+                                    if restraint_mask == '':
+                                        line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
+                                    else:
+                                        line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
+                mdin = open("./mdin-%02d" % int(i), 'a')
+                mdin.write('  mbar_states = %02d\n' % len(lambdas))
+                mdin.write('  mbar_lambda = ')
+                for i in range(0, len(lambdas)):
+                    mdin.write(' %6.5f,' % (lambdas[i]))
+                mdin.write('\n')
+                mdin.write('  infe = 0,\n')
+                mdin.write(' /\n')
+                mdin.write(' &pmd \n')
+                mdin.write(' output_file = \'cmass.txt\' \n')
+                mdin.write(' output_freq = %02d \n' % int(ntwx))
+                mdin.write(' cv_file = \'cv.in\' \n')
+                mdin.write(' /\n')
+                mdin.write(' &wt type = \'END\' , /\n')
+                mdin.write('DISANG=disang.rest\n')
+                mdin.write('LISTOUT=POUT\n')
+
+            with open(f"../{self.amber_files_folder}/mini-unorest-dd", "rt") as fin:
+                with open("./mini.in", "wt") as fout:
+                    for line in fin:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace(
+                        '_lig_name_', mol))
+
+        else:
+            raise ValueError(f"Decoupling method '{dec_method}' not recognized. Use 'sdr' or 'dd'.")
+        
+        # other input file for equilibration
+        with open(f"../{self.amber_files_folder}/mini.in", "rt") as fin:
+            with open("./mini_eq.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
+                    fout.write(line.replace('_lig_name_', mol))
+        with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
+            with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
+                    if 'mcwat' in line:
+                        fout.write('  mcwat = 0,\n')
+                    else:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                '_lig_name_', mol))
+        with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
+            with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
+                    if 'mcwat' in line:
+                        fout.write('  mcwat = 0,\n')
+                    else:
+                        fout.write(line.replace('_temperature_', str(temperature)).replace(
+                                '_lig_name_', mol))
 
         # add lambda.sch to the folder
         with open("./lambda.sch", "wt") as fout:
@@ -5085,6 +5308,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         pose = self.pose
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -5100,7 +5324,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
         #shutil.copy(f'../../../../equil/{pose}/build_files/{self.pose}.pdb', './')
-        os.system(f'cp ../../../../equil/{pose}/build_files/{self.pose}.pdb ./')
+        os.system(f'cp ../../../../equil/{pose}/build_files/{pose}.pdb ./')
         # Get last state from equilibrium simulations
         #shutil.copy(f'../../../../equil/{pose}/representative.rst7', './')
         os.system(f'cp ../../../../equil/{pose}representative.rst7 ./')
@@ -5118,10 +5342,13 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
             #shutil.copy(file, './')
             os.system(f'cp {file} ./')
         
-        mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
+        mol = mda.Universe(f'{pose}.pdb').residues[0].resname
         self.mol = mol
-
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -5382,6 +5609,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         oth_atom = 0
         total_atom = 0
         resid_lig = 0
+        pose = self.pose
         mol = self.mol
         molr = self.molr
         poser = self.poser
@@ -5404,8 +5632,10 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
-        os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
+        os.system(f'cp ../{self.build_file_folder}/anchors-{pose}.txt ./')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
+        os.system(f'cp ../{self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp ../{self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
@@ -5755,18 +5985,6 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                 #mdin.write('DISANG=disang.rest\n')
                 #mdin.write('LISTOUT=POUT\n')
 
-            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
-                with open("./eqnpt0.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
-                with open("./eqnpt.in", "wt") as fout:
-                    for line in fin:
-                        fout.write(line.replace('_temperature_', str(temperature)).replace(
-                            'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace(
-                        '_lig_name_', mol))
             with open(f"../{self.amber_files_folder}/mini-uno", "rt") as fin:
                 with open("./mini.in", "wt") as fout:
                     for line in fin:
@@ -5779,45 +5997,22 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                 with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt0-uno.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
-                        if 'infe' in line:
-                            fout.write('  infe = 1,\n')
-                        elif 'mcwat' in line:
+                        if 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt-uno.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
-                        if 'infe' in line:
-                            fout.write('  infe = 1,\n')
-                        elif 'mcwat' in line:
+                        if 'mcwat' in line:
                             fout.write('  mcwat = 0,\n')
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))                        
-
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
 
 
 class ACESEquilibrationBuilder(FreeEnergyBuilder):
@@ -5832,6 +6027,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         pose = self.pose
         lipid_mol = self.lipid_mol
         other_mol = self.other_mol
+        hmr = self.sim_config.hmr
         
         # sim config values
         solv_shell = self.sim_config.solv_shell
@@ -5845,38 +6041,38 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
-        #shutil.copy(f'../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb', './')
-        os.system(f'cp ../../../equil/{pose}/{self.build_file_folder}/{self.pose}.pdb ./')
+        os.system(f'cp ../../../../equil/{pose}/build_files/{pose}.pdb ./')
         # Get last state from equilibrium simulations
-        #shutil.copy(f'../../../equil/{pose}/representative.rst7', './')
-        os.system(f'cp ../../../equil/{pose}/representative.rst7 ./')
-        #shutil.copy(f'../../../equil/{pose}/representative.pdb', './aligned-nc.pdb')
-        os.system(f'cp ../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
-        #shutil.copy(f'../../../equil/{pose}/build_amber_renum.txt', './')
-        os.system(f'cp ../../../equil/{pose}/build_amber_renum.txt ./')
-        os.system(f'cp ../../../equil/{pose}/build_files/protein_renum.txt ./')
+        os.system(f'cp ../../../../equil/{pose}/representative.rst7 ./')
+        os.system(f'cp ../../../../equil/{pose}/representative.pdb ./aligned-nc.pdb')
+        os.system(f'cp ../../../../equil/{pose}/build_amber_renum.txt ./')
+        os.system(f'cp ../../../../equil/{pose}/build_files/protein_renum.txt ./')
         if not os.path.exists('protein_renum.txt'):
             raise FileNotFoundError(f'protein_renum.txt not found in {os.getcwd()}')
 
 
         # Lustre has a problem with copy
         # https://confluence.ecmwf.int/display/UDOC/HPC2020%3A+Python+known+issues
-        for file in glob.glob(f'../../../equil/{pose}/full*.prmtop'):
+        for file in glob.glob(f'../../../../equil/{pose}/full*.prmtop'):
             run_with_log(f'cp {file} .')
             #base_name = os.path.basename(file)
             #os.copy(file, f'./{base_name}')
             #os.symlink(file, f'./{base_name}')
-        for file in glob.glob(f'../../../equil/{pose}/vac*'):
+        for file in glob.glob(f'../../../../equil/{pose}/vac*'):
             run_with_log(f'cp {file} .')
 
             #base_name = os.path.basename(file)
             #shutil.copyfile(file, f'./{base_name}')
             #os.symlink(file, f'./{base_name}')
         
-        mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
+        mol = mda.Universe(f'{pose}.pdb').residues[0].resname
         self.mol = mol
 
-        run_with_log(f'{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb')
+        if hmr == 'no':
+            prmtop_f = 'full.prmtop'
+        else:
+            prmtop_f = 'full.hmr.prmtop'
+        run_with_log(f'{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb')
         renum_data = pd.read_csv('build_amber_renum.txt', sep=r'\s+',
                 header=None, names=['old_resname',
                                     'old_chain',
@@ -6128,6 +6324,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         resid_lig = 0
         mol = self.mol
         molr = self.molr
+        pose = self.pose
         poser = self.poser
         resname_lig = mol
         other_mol = self.other_mol
@@ -6148,9 +6345,10 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         os.system(f'cp ../{self.build_file_folder}/{mol.lower()}.pdb ./')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./build-ini.pdb')
         os.system(f'cp ../{self.build_file_folder}/fe-{mol.lower()}.pdb ./')
-        os.system(f'cp ../{self.build_file_folder}/anchors-{self.pose}.txt ./')
+        os.system(f'cp ../{self.build_file_folder}/anchors-{pose}.txt ./')
         os.system(f'cp ../{self.build_file_folder}/equil-reference.pdb ./')
-
+        os.system(f'cp ../{self.build_file_folder}/dum.inpcrd ./dum.inpcrd')
+        os.system(f'cp ../{self.build_file_folder}/dum.prmtop ./dum.prmtop')
 
         for file in glob.glob(f'../../../ff/{mol.lower()}.*'):
             #shutil.copy(file, './')
@@ -6532,25 +6730,6 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
 
-        # Create running scripts for local and server
-        with open(f'../{self.run_files_folder}/check_run.bash', "rt") as fin:
-            with open("./check_run.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line)
-        with open(f'../{self.run_files_folder}/run-local.bash', "rt") as fin:
-            with open("./run-local.bash", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('FERANGE', str(num_sim)).replace(
-                        'NWINDOWS', str(len(lambdas))).replace(
-                            'COMPONENT', self.comp)
-                    )
-        with open(f'../{self.run_files_folder}/SLURMM-Am', "rt") as fin:
-            with open("./SLURMM-run", "wt") as fout:
-                for line in fin:
-                    fout.write(line.replace('STAGE', pose).replace('POSE', '%s%02d' % (comp, int(win))).replace(
-                            'SYSTEMNAME', self.system.system_name).replace(
-                                'PARTITIONNAME', self.system.partition))
-
 
 class BuilderFactory:
     @staticmethod
@@ -6563,6 +6742,7 @@ class BuilderFactory:
                     component='q',
                     molr=None,
                     poser=None,
+                    infe=False
     ):
         if stage == 'equil':
             return EquilibrationBuilder(
@@ -6570,6 +6750,7 @@ class BuilderFactory:
                 pose=pose,
                 sim_config=sim_config,
                 working_dir=working_dir,
+                infe=infe,
             )
         
         match component:
@@ -6583,9 +6764,10 @@ class BuilderFactory:
                 component=component,
                 molr=molr,
                 poser=poser,
+                infe=infe,
             )
             case 'e' | 'v':
-                return SDRFreeEnergyBuilder(
+                return AlChemicalFreeEnergyBuilder(
                 system=system,
                 pose=pose,
                 sim_config=sim_config,
@@ -6594,6 +6776,7 @@ class BuilderFactory:
                 component=component,
                 molr=molr,
                 poser=poser,
+                infe=infe,
             )
             case 'x':
                 return EXFreeEnergyBuilder(
@@ -6605,6 +6788,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case 'o':
                 return UNOFreeEnergyBuilder(
@@ -6616,6 +6800,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case 'z':
                 return UNORESTFreeEnergyBuilder(
@@ -6627,6 +6812,7 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
                 )
             case 's':
                 return ACESEquilibrationBuilder(
@@ -6638,6 +6824,19 @@ class BuilderFactory:
                     component=component,
                     molr=molr,
                     poser=poser,
+                    infe=infe,
+                )
+            case 'y':
+                return LIGANDFreeEnergyBuilder(
+                    system=system,
+                    pose=pose,
+                    sim_config=sim_config,
+                    working_dir=working_dir,
+                    win=win,
+                    component=component,
+                    molr=molr,
+                    poser=poser,
+                    infe=infe,
                 )
             case _:
                 raise ValueError(f"Invalid component: {component} for now")
@@ -6729,6 +6928,9 @@ def get_ligand_candidates(ligand_sdf):
         # no H
         if atom.GetAtomicNum() == 1:
             continue
+        # avoid sp-carbon
+        if atom.GetHybridization() == Chem.rdchem.HybridizationType.SP:
+            continue
         heavy_neighbors = 0
         for neighbor in atom.GetNeighbors():
             if neighbor.GetAtomicNum() != 1:
@@ -6741,3 +6943,45 @@ def get_ligand_candidates(ligand_sdf):
         logger.warning("No suitable three ligand anchor candidates found. Use all non-Hligand atoms as candidates.")
         anchor_candidates = n_h_candidates
     return anchor_candidates
+
+
+def select_ions_away_from_complex(universe, total_charge, mol):
+    if total_charge > 0:
+        ion_type = 'Na+'
+    elif total_charge < 0:
+        ion_type = 'Cl-'
+    else:
+        return None  # No ions needed for neutral systems
+    
+    n_ions = abs(total_charge)
+    complex_sys = universe.select_atoms(f'protein or resname {mol} or name P31')
+    ions = universe.select_atoms(f'resname {ion_type}')
+    if len(ions) < n_ions:
+        raise ValueError(f'Not enough {ion_type} ions in the system to neutralize the charge.')
+    sel_ion_indexs = []
+    for ion in ions:
+        # get minimum distance to the complex
+        dist_2_protein = distance_array(ion.position, complex_sys.positions,
+                                        box=universe.dimensions
+                                         ).min()
+        if dist_2_protein > 15.0:
+            n_ions -= 1
+            sel_ion_indexs.append(ion.index)
+        if n_ions == 0:
+            break
+    if n_ions > 0:
+        logger.warning(f'Not enough {ion_type} ions found that are at least 15 Å away from the complex. Try 10 Å instead.')
+        for ion in ions:
+            if ion.index in sel_ion_indexs:
+                continue
+            dist_2_protein = distance_array(ion.position, complex_sys.positions,
+                                             box=universe.dimensions
+                                             ).min()
+            if dist_2_protein > 10.0:
+                n_ions -= 1
+                sel_ion_indexs.append(ion.index)
+            if n_ions == 0:
+                break
+        if n_ions > 0:
+            raise ValueError(f'Not enough {ion_type} ions found that are at least 10 Å away from the complex. Found only {len(sel_ion_indexs)} ions.')
+    return sel_ion_indexs

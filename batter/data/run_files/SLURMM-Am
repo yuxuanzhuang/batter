@@ -8,7 +8,7 @@
 #SBATCH --error=STAGE-POSE-%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=2
 #SBATCH -t 16:00:00
 #SBATCH -d singleton
 #SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"

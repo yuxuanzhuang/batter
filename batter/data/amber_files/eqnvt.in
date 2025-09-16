@@ -30,7 +30,6 @@ Equilibrate, NPT.
   restraint_wt = 50.0,
   restraintmask = '(@CA,C,N,P31 | :_lig_name_) & !@H=',
   infe = 0,
-  infe = 0,
   clambda  = 0,
   icfe     = 1,
   timask1 = '',
