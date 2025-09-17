@@ -108,7 +108,6 @@ class System:
         self._fe_prepared = False
         self._ligand_objects = {}
         self._fe_results = {}
-        self.mols = []
 
         if not os.path.exists(self.output_dir):
             logger.info(f"Creating a new system: {self.output_dir}")
@@ -263,6 +262,11 @@ class System:
         for arg in args:
             logger.info(f"{arg}: {values[arg]}")
 
+        if self._eq_prepared or self._fe_prepared:
+            if not overwrite:
+                raise ValueError("The system has been prepared for equilibration or free energy simulations. "
+                                 "Set overwrite=True to overwrite the existing system or skip `create_system` step.")
+                                                 
         self.system_name = system_name
         self._protein_input = self._convert_2_relative_path(protein_input)
         self._system_topology = self._convert_2_relative_path(system_topology)
@@ -390,7 +394,11 @@ class System:
         logger.debug('updating the ligand paths')
         logger.debug(self.ligand_list)
 
-        self.mols = mols
+        self._mols = mols
+        # update self.mols to output_dir/mols.txt
+        with open(f"{self.output_dir}/mols.txt", 'w') as f:
+            for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items()):
+                f.write(f"pose{ind}\t{self._mols[ind]}\t{ligand_path}\t{ligand_names}\n")
         self._prepare_ligand_poses()
 
         # always get the anchor atoms from the first pose
@@ -3976,6 +3984,18 @@ class System:
     @property
     def ligand_poses(self):
         return self.ligand_paths
+    
+    @property
+    def mols(self):
+        try:
+            return self._mols
+        except AttributeError:
+            mols = []
+            with open(f'{self.output_dir}/mols.txt', 'r') as f:
+                for line in f:
+                    mols.append(line.strip().split('\t')[1])
+            self._mols = mols
+            return self._mols
     
     @contextmanager
     def _change_dir(self, new_dir):
