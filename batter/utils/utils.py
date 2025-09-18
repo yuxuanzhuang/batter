@@ -21,15 +21,11 @@ import importlib.resources as pkg_resources
 
 usalign = str(pkg_resources.files("batter") / "utils" / "USalign")
 
-obabel = '/home/groups/rondror/software/openbabel/bin/obabel'
-if not os.path.exists(obabel):
-    obabel = 'obabel'
+#obabel = '/home/groups/rondror/software/openbabel/bin/obabel'
+obabel = 'obabel'
     
-vmd = '/home/groups/rondror/software/vmd-1.9.4/bin/vmd'
-if not os.path.exists(vmd):
-    vmd = '/lustre/orion/proj-shared/bip152/vmd/vmd_LINUXAMD64'
-    if not os.path.exists(vmd):
-        vmd = 'vmd'
+#vmd = '/home/groups/rondror/software/vmd-1.9.4/bin/vmd'
+vmd = 'vmd'
 
 DEC_FOLDER_DICT = {
     'dd': 'dd',
