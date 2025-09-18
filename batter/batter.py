@@ -603,8 +603,13 @@ class System:
 
         if mobile.n_atoms != ref.n_atoms:
             raise ValueError(f"Number of atoms in the alignment selection is different: protein_input: "
-            f"{mobile.n_atoms} and system_input {ref.n_atoms} "
-            f"The selection string is {self.protein_align} and name CA and not resname NMA ACE")
+            f"{mobile.n_atoms} and system_input {ref.n_atoms} \n"
+            f"The selection string is {self.protein_align} and name CA and not resname NMA ACE\n"
+            f"protein selected resids: {mobile.residues.resids}\n"
+            f"system selected resids: {ref.residues.resids}\n"
+            "set `protein_align` to a selection string that has the same number of atoms in both files"
+            "when running `create_system`."
+            )
         mobile_com = mobile.center(weights=None)
         ref_com = ref.center(weights=None)
         mobile_coord = mobile.positions - mobile_com

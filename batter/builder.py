@@ -4797,7 +4797,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         # get ligand candidates for inclusion in Boresch restraints
         sdf_file = f'{mol.lower()}.sdf'
         candidates_indices = get_ligand_candidates(sdf_file)
-        pdb_file = f'aligned-nc.pdb'
+        pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
         lig_names = u.select_atoms(f'resname {mol.lower()}').names
         lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
@@ -5494,7 +5494,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         # get ligand candidates for inclusion in Boresch restraints
         sdf_file = f'{mol.lower()}.sdf'
         candidates_indices = get_ligand_candidates(sdf_file)
-        pdb_file = f'aligned-nc.pdb'
+        pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
         lig_names = u.select_atoms(f'resname {mol.lower()}').names
         lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
@@ -6206,7 +6206,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         # get ligand candidates for inclusion in Boresch restraints
         sdf_file = f'{mol.lower()}.sdf'
         candidates_indices = get_ligand_candidates(sdf_file)
-        pdb_file = f'aligned-nc.pdb'
+        pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
         lig_names = u.select_atoms(f'resname {mol.lower()}').names
         lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
@@ -6895,7 +6895,7 @@ def get_sdr_dist(protein_file,
     return sdr_dist
 
 
-def get_ligand_candidates(ligand_sdf):
+def get_ligand_candidates(ligand_sdf, removeHs=True):
     """
     Get the ligand candidates for Boresch restraints from a sdf file.
 
@@ -6907,6 +6907,8 @@ def get_ligand_candidates(ligand_sdf):
     ----------
     ligand_sdf : str
         Path to the ligand sdf file.
+    removeHs : bool, optional
+        Whether to remove hydrogens from the molecule, by default True.
 
     Returns
     -------
@@ -6919,7 +6921,7 @@ def get_ligand_candidates(ligand_sdf):
     # selected as candidate atoms for the ligand's restraint component
     from rdkit import Chem
     
-    supplier = Chem.SDMolSupplier(ligand_sdf, removeHs=False)
+    supplier = Chem.SDMolSupplier(ligand_sdf, removeHs=removeHs)
     mol = [s for s in supplier if s is not None][0]
 
     anchor_candidates = []
