@@ -40,12 +40,3 @@ warnings.filterwarnings(
     category=UserWarning,
     module="MDAnalysis.coordinates.PDB"
 )
-
-try:
-    from Bio import BiopythonDeprecationWarning
-
-    warnings.filterwarnings(
-        "ignore", category=BiopythonDeprecationWarning, module="Bio.Application"
-    )
-except ImportError:
-    pass

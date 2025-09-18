@@ -10,7 +10,7 @@ dependencies:
   - prettypyplot
   - seaborn
   - loguru
-  - pydantic
+  - pydantic>=2.11.7
   - click
   - pandas
   - alchemlyb
