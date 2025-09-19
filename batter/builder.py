@@ -14,7 +14,7 @@ import tempfile
 import warnings
 from typing import Union
 
-
+import batter
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.data import build_files as build_files_orig
 from batter.data import amber_files as amber_files_orig
@@ -26,7 +26,6 @@ from batter.utils import (
     tleap,
     cpptraj,
     charmmlipid2amber,
-    vmd,
     log_info,
     COMPONENTS_LAMBDA_DICT,
     COMPONENTS_FOLDER_DICT,
@@ -1049,7 +1048,8 @@ class EquilibrationBuilder(SystemBuilder):
                                    .replace('OTHRS', str(other_mol_vmd))
                                    .replace('LIPIDS', str(lipid_mol_vmd))
                                    .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl', error_match='syntax error')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', error_match='syntax error', shell=False)
 
         os.system(f'cp protein.pdb protein_vmd.pdb')
         run_with_log('pdb4amber -i protein_vmd.pdb -o protein.pdb -y')
@@ -1188,10 +1188,11 @@ class EquilibrationBuilder(SystemBuilder):
                     newfile.write(line)
 
         # New work around to avoid chain swapping during alignment
+        vmd=batter.utils.vmd
         run_with_log('pdb4amber -i reference.pdb -o reference_amber.pdb -y')
-        run_with_log(f'{vmd} -dispdev text -e nochain.tcl')
+        run_with_log(f'{vmd} -dispdev text -e nochain.tcl', shell=False)
         run_with_log('./USalign complex-nc.pdb reference_amber-nc.pdb -mm 0 -ter 2 -o aligned-nc')
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -1268,7 +1269,8 @@ class EquilibrationBuilder(SystemBuilder):
                                .replace('LIGANDNAME', lig_name_str)
                                )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -1295,7 +1297,8 @@ class EquilibrationBuilder(SystemBuilder):
                                 .replace('LIPIDS', str(lipid_mol_vmd))
                                 .replace('LIGANDNAME', lig_name_str)
                                 )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
 
 
@@ -2125,7 +2128,8 @@ class FreeEnergyBuilder(SystemBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -2162,7 +2166,8 @@ class FreeEnergyBuilder(SystemBuilder):
         # Align to reference (equilibrium) structure using VMD's measure fit
         # For FE, to avoid membrane rotation inside the box
         # due to alignment, we just use ues the input structure as the reference
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -2220,7 +2225,8 @@ class FreeEnergyBuilder(SystemBuilder):
                         .replace('LIGANDNAME', lig_name_str)
                         )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -2246,7 +2252,8 @@ class FreeEnergyBuilder(SystemBuilder):
                             .replace('LIPIDS', str(lipid_mol_vmd))
                             .replace('LIGANDNAME', lig_name_str)
                             )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
         # Check size of anchor file
         anchor_file = 'anchors.txt'
@@ -4710,7 +4717,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', molr.lower())
                     .replace('MMM', f"\'{molr.lower()}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -4758,7 +4766,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
 
 
         # Align to reference (equilibrium) structure using VMD's measure fit
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -4823,7 +4832,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                     .replace('LIGANDNAME', lig_name_str)
                     )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -4849,7 +4859,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                         .replace('LIPIDS', str(lipid_mol_vmd))
                         .replace('LIGANDNAME', lig_name_str)
                         )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
 
         # Check size of anchor file
@@ -5406,7 +5417,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -5453,7 +5465,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
 
 
         # Align to reference (equilibrium) structure using VMD's measure fit
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -5521,7 +5534,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                         .replace('LIGANDNAME', lig_name_str)
                         )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -5548,7 +5562,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             .replace('LIPIDS', str(lipid_mol_vmd))
                             .replace('LIGANDNAME', lig_name_str)
                             )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
         # Check size of anchor file
         anchor_file = 'anchors.txt'
@@ -6130,7 +6145,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -6165,7 +6181,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         p1_vmd = p1_resid
 
         # Align to reference (equilibrium) structure using VMD's measure fit
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -6233,7 +6250,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                         .replace('LIGANDNAME', lig_name_str)
                         )  
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -6260,7 +6278,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                             .replace('LIPIDS', str(lipid_mol_vmd))
                             .replace('LIGANDNAME', lig_name_str)
                             ) 
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
 
         # Check size of anchor file

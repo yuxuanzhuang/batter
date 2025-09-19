@@ -1457,7 +1457,8 @@ class System:
 
         # run builders.build in parallel
         logger.info(f'Building equilibration systems for {len(builders)} poses')
-        Parallel(n_jobs=self.n_workers, backend='loky')(
+        n_workers = min(self.n_workers, len(builders))
+        Parallel(n_jobs=n_workers, backend='loky')(
             delayed(builder.build)() for builder in builders
         )
         
@@ -1525,7 +1526,8 @@ class System:
             total=len(builders),
             desc="Preparing FE equilibration",
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
-            Parallel(n_jobs=self.n_workers, backend='loky')(
+            n_workers = min(self.n_workers, len(builders))
+            Parallel(n_jobs=n_workers, backend='loky')(
                 delayed(builder.build)() for builder in builders
         )
             
@@ -1574,7 +1576,8 @@ class System:
             total=len(builders),
             desc="Preparing FE windows",
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
-            Parallel(n_jobs=self.n_workers, backend='loky')(
+            n_workers = min(self.n_workers, len(builders))
+            Parallel(n_jobs=n_workers, backend='loky')(
                 delayed(builder.build)() for builder in builders
             )
 
@@ -2864,6 +2867,7 @@ class System:
                      max_num_jobs: int = 2000,
                      time_limit: str = '6:00:00',
                      fail_on_error: bool = False,
+                     vmd: str = None,
                      verbose: bool = False
                      ):
         """
@@ -2912,6 +2916,9 @@ class System:
         fail_on_error : bool, optional
             Whether to fail the pipeline on error during simulations.
             Default is False with the failed simulations marked as 'FAILED'.
+        vmd : str, optional
+            The path to the VMD executable. If not provided,
+            the code will use `vmd`.
         verbose : bool, optional
             Whether to print the verbose output. Default is False.
         """
@@ -2933,6 +2940,13 @@ class System:
             if not hasattr(self, 'sim_config'):
                 raise ValueError('Input file is not provided and sim_config is not set.')
         self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        if vmd:
+            if not os.path.exists(vmd):
+                raise FileNotFoundError(f'VMD executable {vmd} not found')
+            # set batter.utils.vmd to the provided path
+            import batter.utils
+            batter.utils.vmd = vmd
+            logger.info(f'Setting VMD path to {vmd}')
 
         if self._check_equilibration():
             #1 prepare the system
@@ -3827,6 +3841,7 @@ class System:
 
         with self._change_dir(folder_name):
             os.system(f'cp {self.output_dir}/system.pkl .')
+            os.system(f'cp {self.output_dir}/mols.txt .')
         
             all_pose_folder = os.path.relpath(self.poses_folder, os.getcwd())
             os.system(f'{cp_cmd} {all_pose_folder} .')
@@ -4060,7 +4075,7 @@ class System:
         - results
         """
         json_dict = {}
-        json_dict['fe_results'] = {name: result.to_dict() for name, result in self.fe_results.items()}
+        json_dict['fe_results'] = {name: result.to_dict() if result is not None else None for name, result in self.fe_results.items()}
         json_dict['batter_version'] = __version__
         json_dict['system_name'] = self.system_name
         json_dict['protein_input'] = self.protein_input
@@ -4074,7 +4089,7 @@ class System:
         if self.extra_restraints is not None:
             json_dict['extra_restraints'] = self.extra_restraints
         if self.extra_conformation_restraints is not None:
-            json_dict['extra_conformation_restraints'] = {name: rest.to_dict() for name, rest in self.extra_conformation_restraints.items()}
+            json_dict['extra_conformation_restraints'] = self.extra_conformation_restraints
 
         output_dir = self.output_dir if location is None else location
         if location is not None:

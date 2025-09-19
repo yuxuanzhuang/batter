@@ -6,6 +6,22 @@ __author__ = """Yuxuan Zhuang"""
 __email__ = 'yuxuan.zhuang@stanford.edu'
 __version__ = __version__
 
+
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="MDAnalysis.coordinates.PDB"
+)
+
+try:
+    from Bio.Application import BiopythonDeprecationWarning
+except ImportError:
+    BiopythonDeprecationWarning = None
+
+if BiopythonDeprecationWarning is not None:
+    warnings.filterwarnings("ignore", category=BiopythonDeprecationWarning)
+    
 from loguru import logger
 import sys
 
@@ -32,11 +48,3 @@ logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')
 # format time to be human readable
 logger.add(sys.stderr, format=logger_format, level="INFO")
-
-
-import warnings
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    module="MDAnalysis.coordinates.PDB"
-)

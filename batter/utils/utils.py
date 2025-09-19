@@ -3,6 +3,8 @@ import subprocess as sp
 import os
 import pickle
 from functools import wraps
+import shlex
+import signal
 
 import contextlib
 import joblib
@@ -79,37 +81,34 @@ COMPONENTS_DICT = {
 
 
 def run_with_log(command, level='debug', working_dir=None,
-                 error_match=None):
+                 error_match=None, timeout=None, shell=True, env=None):
     """
     Run a subprocess command and log its output using loguru logger.
 
     Parameters
     ----------
-    command : str
-        The command to execute.
-    level : str, optional
-        The log level for logging the command output.
-        Default is 'debug'.
-    working_dir : str, optional
-        The working directory for the command. Default is
-        the current working directory.
-    error_match : str, optional
-        If provided, the command stdout and stderr 
-        will be checked for this string.
-        If the string is found,
-        a subprocess.CalledProcessError will be
-        raised. Default is None.
+    command : str | list[str]
+        The command to execute. If str and shell=False, it will be shlex.split().
+    level : {'debug','info','warning','error','critical'}
+        Log level for command output.
+    working_dir : str | None
+        Working directory for the command.
+    error_match : str | None
+        If provided, stdout/stderr are searched for this string; if found, error is raised.
+    timeout : float | None
+        Seconds before forcibly timing out the process.
+    shell : bool
+        Whether to execute via shell. Default True.
+    env : dict | None
+        Extra environment variables.
 
     Raises
     ------
-    ValueError
-        If an invalid log level is provided.
-    subprocess.CalledProcessError
-        If the command exits with a non-zero status.
+    RuntimeError on failure, segfault, matched error string, or timeout.
     """
     if working_dir is None:
         working_dir = os.getcwd()
-    # Map log level to loguru logger methods
+
     log_methods = {
         'debug': logger.debug,
         'info': logger.info,
@@ -117,63 +116,80 @@ def run_with_log(command, level='debug', working_dir=None,
         'error': logger.error,
         'critical': logger.critical
     }
-
     log = log_methods.get(level)
     if log is None:
         raise ValueError(f"Invalid log level: {level}")
 
-    logger.debug(f"Running command: {command}")
+    # Normalize command
+    if isinstance(command, str) and not shell:
+        cmd = shlex.split(command)
+    else:
+        cmd = command
+
+    logger.debug(f"Running command: {command!r}")
     logger.debug(f"Working directory: {working_dir}")
+
     try:
-        # Run the command and capture output
         result = sp.run(
-            command,
-            shell=True,
+            cmd,
+            shell=shell,
             stdout=sp.PIPE,
             stderr=sp.PIPE,
             text=True,
-            check=True,
-            cwd=working_dir
+            check=False,
+            cwd=working_dir,
+            timeout=timeout,
+            env=(None if env is None else {**os.environ, **env}),
         )
-
-        if error_match:
-            if error_match in result.stdout or error_match in result.stderr:
-                logger.info(f"Command failed with matched error: "
-                            f"{error_match}")
-                logger.info(f"Command output: {result.stdout}")
-                logger.info(f"Command errors: {result.stderr}")
-                raise sp.CalledProcessError(
-                    returncode=1,
-                    cmd=command,
-                    output=result.stdout,
-                    stderr=result.stderr
-                )
-                
-        # Log stdout and stderr line by line
-        if result.stdout:
-            log("Command output:")
-            for line in result.stdout.splitlines():
-                log(line)
-
-        if result.stderr:
-            log("Command errors:")
-            for line in result.stderr.splitlines():
-                log(line)
-
-    except sp.CalledProcessError as e:
-        logger.info(f"Command failed with return code {e.returncode}")
-        if e.stdout:
-            log("Command output before failure:")
-            for line in e.stdout.splitlines():
+    except sp.TimeoutExpired as e:
+        logger.info(f"Command timed out after {timeout}s: {command!r}")
+        # e.output / e.stderr may be None if the proc was killed mid-flight
+        if e.output:
+            log("Command output before timeout:")
+            for line in e.output.splitlines():
                 log(line)
         if e.stderr:
-            log("Command error output:")
+            log("Command error output before timeout:")
             for line in e.stderr.splitlines():
                 log(line)
+        raise RuntimeError(f"Command timed out after {timeout}s: {command!r}") from e
+
+    # Log outputs regardless of success
+    if result.stdout:
+        log("Command output:")
+        for line in result.stdout.splitlines():
+            log(line)
+    if result.stderr:
+        log("Command errors:")
+        for line in result.stderr.splitlines():
+            log(line)
+
+    # Optional content-based failure
+    if error_match and (error_match in result.stdout or error_match in result.stderr):
         raise RuntimeError(
-            f"Command '{command}' failed with return code {e.returncode}. "
-            f"Check logs for details."
-        ) from e
+            f"Command {command!r} reported an error matching {error_match!r}."
+        )
+
+    # Check exit status
+    rc = result.returncode
+    if rc == 0:
+        return result
+
+    # If terminated by signal, returncode is negative
+    if rc < 0:
+        sig = -rc
+        try:
+            sig_name = signal.Signals(sig).name
+        except ValueError:
+            sig_name = f"SIG{sig}"
+        raise RuntimeError(
+            f"Command {command!r} died with signal {sig_name} ({sig})."
+        )
+
+    # Non-zero exit code (regular failure)
+    raise RuntimeError(
+        f"Command {command!r} failed with return code {rc}."
+    )
 
 
 def log_info(func):
