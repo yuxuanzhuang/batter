@@ -42,12 +42,7 @@ def _stable_hash_int(s: str) -> int:
 def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_names: set[str]) -> str:
     """
     Convert a molecule name to a unique identifier of exactly 3 characters
-    (letters or digits), deterministic across runs.
-
-    Strategy:
-      1) Normalize name -> keep letters and digits only, lowercase, take up to 3.
-      2) If <3 chars, pad with base-26 letters from `ind`.
-      3) If collision, fall back to deterministic hash of SMILES, then perturb.
+    (letters or digits), deterministic across runs, and never all digits.
     """
     # 1) normalize to letters and digits only (lowercase), take at most 3
     base = re.sub(r'[^a-zA-Z0-9]', '', mol_name or '').lower()[:3]
@@ -57,9 +52,13 @@ def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_
         pad = _base26_triplet(ind)
         base = (base + pad)[:3]
 
-    # If still somehow empty, synthesize from index
+    # If still somehow empty, synthesize from index (letters only)
     if not base:
         base = _base26_triplet(ind)
+
+    # 2.5) enforce: cannot be all digits
+    if len(base) == 3 and base.isdigit():
+        base = 'l' + base[:2]
 
     # 3) ensure uniqueness
     if base not in exist_mol_names:
@@ -69,12 +68,12 @@ def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_
     seed = _stable_hash_int(smiles) if smiles else _stable_hash_int(base)
     attempt = 0
     while attempt < 200:
-        candidate = _base26_triplet(seed + attempt)
+        candidate = _base26_triplet(seed + attempt)  # letters only, so not all digits
         if candidate not in exist_mol_names:
             return candidate
         attempt += 1
 
-    # Last resort: index-perturbed triplet
+    # Last resort: index-perturbed triplet (letters only)
     return _base26_triplet(ind + attempt)
 
 class LigandProcessing(ABC):
