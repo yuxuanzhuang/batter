@@ -4470,6 +4470,7 @@ def analyze_pose_task(
     ax.legend(loc='upper right')
     plt.tight_layout()
     plt.savefig(f'{fe_folder}/{pose}/Results/fe_timeseries.png')
+    plt.close(fig)
     return
 
 
