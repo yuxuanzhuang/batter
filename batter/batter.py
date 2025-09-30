@@ -364,7 +364,7 @@ class System:
         # for ABFESystem, it will be a single ligand
         # for MBABFE and RBFE, it will be multiple ligands
         for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
-            logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
+            logger.info(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
             # first if self.mols is not empty, then use it as the ligand name
             try:
                 ligand_name = self.mols[ind-1]
@@ -1522,6 +1522,9 @@ class System:
                     poser=poser
                 )
                 builders.append(fe_eq_builder)
+        if len(builders) == 0:
+            logger.info('No new FE equilibration systems to build.')
+            return
         with tqdm_joblib(tqdm(
             total=len(builders),
             desc="Preparing FE equilibration",
@@ -1572,6 +1575,9 @@ class System:
                     )
                     builders.append(fe_builder)
 
+        if len(builders) == 0:
+            logger.info('No new FE window systems to build.')
+            return
         with tqdm_joblib(tqdm(
             total=len(builders),
             desc="Preparing FE windows",
@@ -1611,6 +1617,7 @@ class System:
             The file should be in the format of:
             direction, res1, res2, cutoff, force_constant
         """
+        COMP_MODIFIED = ['z', 'o']
         def generate_restraint_to_cv(pose_folder, restraints):
             colvar_block_all = []
             for restraint in restraints:
@@ -1669,6 +1676,8 @@ class System:
             poses = self.bound_poses
             for pose in self.bound_poses:
                 for comp in self.sim_config.components:
+                    if comp not in COMP_MODIFIED:
+                        continue
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     colvar_block = generate_restraint_to_cv(f"{folder_comp}/{comp}-1", extra_restraints)
@@ -1725,6 +1734,7 @@ class System:
 
         """
         logger.debug('Adding RMSF restraints')
+        COMP_MODIFIED = ['z', 'o']
 
         def generate_colvar_block(atm_index,
                                   dum_index,
@@ -1944,6 +1954,8 @@ class System:
                 avg_u = mda.Universe(avg_struc)
 
                 for comp in self.sim_config.components:
+                    if comp not in COMP_MODIFIED:
+                        continue
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     u_ref = mda.Universe(
