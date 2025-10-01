@@ -167,8 +167,7 @@ class SystemBuilder(ABC):
             # if ligand_ff is set to openff, use gaff2 to build the system
             ligand_ff = 'gaff2'
         lipid_ff = self.system.lipid_ff
-        lipid_mol = self.system.lipid_mol
-        if lipid_mol:
+        if self.membrane_builder:
             p_coupling = self.p_coupling if hasattr(self, 'p_coupling') else '3'
             c_surften = self.c_surften if hasattr(self, 'c_surften') else '3'
         else:
@@ -1225,7 +1224,7 @@ class EquilibrationBuilder(SystemBuilder):
         # add box info back if lipid is present
         # also renumber the residue number
         # so that PA, PC, OL (for POPC) are in the same residue number
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             box_origin = u_original.dimensions
             u.dimensions = box_origin
@@ -1904,12 +1903,12 @@ class EquilibrationBuilder(SystemBuilder):
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
-        with open(f"{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+        with open(f"{self.amber_files_folder}/eqnpt0{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
-        with open(f"{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+        with open(f"{self.amber_files_folder}/eqnpt{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -2014,7 +2013,7 @@ class FreeEnergyBuilder(SystemBuilder):
         self.window_folder = f"{self.comp}{self.win:02d}"
 
         self.lipid_mol = self.system.lipid_mol
-        if self.lipid_mol:
+        if self.membrane_builder:
             # This will not effect SDR/DD
             # because semi-isotropic barostat is not supported
             # with TI simulations
@@ -2094,7 +2093,7 @@ class FreeEnergyBuilder(SystemBuilder):
             resid_str = residue.resid
             residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
-        if lipid_mol:
+        if self.membrane_builder:
             # also skip ANC, which is a anchored dummy atom for rmsf restraint
             non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+ ANC')
             # fix lipid resids
@@ -2193,7 +2192,7 @@ class FreeEnergyBuilder(SystemBuilder):
         run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
 
         # fix lipid resids
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
             non_water_ag.residues.resids = final_resids
@@ -4794,7 +4793,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
 
         u = mda.Universe('aligned_amber.pdb')
         # Fix lipid
-        if lipid_mol:
+        if self.membrane_builder:
             renum_txt = 'aligned_amber_renum.txt'
             
             renum_data = pd.read_csv(
@@ -5123,7 +5122,7 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
 
-            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt0{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
@@ -5134,7 +5133,7 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
 
-            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
@@ -5386,7 +5385,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
             resid_str = residue.resid
             residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
 
-        if lipid_mol:
+        if self.membrane_builder:
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
@@ -5492,7 +5491,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
 
         # fix lipid resids
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             renum_txt = 'aligned_amber_renum.txt'
             
@@ -6114,7 +6113,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
             resid_str = residue.resid
             residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
 
-        if lipid_mol:
+        if self.membrane_builder:
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
@@ -6208,7 +6207,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
 
         # fix lipid resids
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             renum_txt = 'aligned_amber_renum.txt'
             
@@ -6743,7 +6742,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                 with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt0{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
@@ -6753,7 +6752,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
