@@ -149,6 +149,305 @@ class System:
 
     @safe_directory
     @save_state
+    def create_non_membrane_system(
+                    self,
+                    system_name: str,
+                    protein_input: str,
+                    system_topology: str,
+                    ligand_paths: Union[List[str], dict[str, str]],
+                    anchor_atoms: List[str],
+                    ligand_anchor_atom: str = None,
+                    receptor_segment: str = None,
+                    system_coordinate: str = None,
+                    protein_align: str = 'name CA and resid 60 to 250',
+                    receptor_ff: str = 'protein.ff14SB',
+                    retain_lig_prot: bool = True,
+                    ligand_ph: float = 7.4,
+                    ligand_ff: str = 'gaff2',
+                    lipid_mol: List[str] = [],
+                    lipid_ff: str = 'lipid21',
+                    overwrite: bool = False,
+                    verbose: bool = False,
+                    ):
+        """
+        Create a new single-ligand single-receptor system.
+
+        Parameters
+        ----------
+        protein_input : str
+            Path to the protein file in PDB format.
+            It should be exported from Maestro,
+            which means the protonation states of the protein are assigned.
+            Water and ligand can be present in the file,
+            but they will be removed during preparation.
+        system_topology : str
+            PDB file of a prepared simulation system with `dabble`.
+            The ligand does not need to be present.
+        system_coordinate : str
+            The coordinate file for the system.
+            The coordiantes and box dimensions will be used for the system.
+            It can be an INPCRD file prepared from `dabble` or
+            it can be a snapshot of the equilibrated system.
+            If it is not provided, the coordinates from the system_topology
+            will be used if available.
+        ligand_paths : List[str] or Dict[str, str]
+            List of ligand files. It can be either PDB, mol2, or sdf format.
+            It will be stored in the `all-poses` folder as `pose0.pdb`,
+            `pose1.pdb`, etc.
+            If it's a dictionary, the keys will be used as the ligand names
+            and the values will be the ligand files.
+        anchor_atoms : List[str], optional
+            The list of three protein anchor atoms (selection strings)
+            used to restrain ligand.
+            It will also be used to set l1x, l1y, l1z values that defines
+            the binding pocket.
+        ligand_anchor_atom : str, optional
+            The ligand anchor atom (selection string) used as a potential
+            ligand anchor atom.
+            Default is None and will use the atom that is closest to the
+            center of mass of the ligand.
+            Note only the first ligand in the ligand_paths will be used
+            to create the binding pocket.
+        receptor_segment : str
+            The segment of the receptor in the system_topology.
+            It will be used to set the protein anchor for the ligand.
+            Default is None, which means all protein atoms will be used.
+            Warning: if the protein for acnhoring
+            is not the first protein entry of the system_topology,
+            it will cause problems when bat.py is trying to 
+            get the protein anchor.
+        protein_align : str
+            The selection string for aligning the protein to the system.
+            Default is 'name CA and resid 60 to 250'.
+        receptor_ff: str
+            Force field for the protein atoms.
+            Default is 'protein.ff14SB'.
+        retain_lig_prot : bool, optional
+            Whether to retain hydrogens in the ligand. Default is True.
+        ligand_ph : float, optional
+            pH value for protonating the ligand. Default is 7.4.
+        ligand_ff : str, optional
+            Parameter set for the ligand. Default is 'gaff2'.
+            Options are 'gaff' and 'gaff2' and openff force fields.
+            See https://github.com/openforcefield/openff-forcefields for full list.
+        lipid_mol : List[str], optional
+            List of lipid molecules to be included in the simulations.
+            Default is an empty list.
+        lipid_ff : str, optional
+            Force field for lipid atoms. Default is 'lipid21'.
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
+        verbose : bool, optional
+            The verbosity of the output. If True, it will print the debug messages.
+            Default is False.
+        """
+        # fail late on import openff
+        try:
+            from openff.toolkit import Molecule
+        except:
+            raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
+
+        # Log every argument
+        if verbose:
+            logger.remove()
+            logger.add(sys.stdout, level='DEBUG')
+            logger.add(f"{self.output_dir}/batter.log", level='DEBUG')
+            logger.debug('Verbose mode is on')
+            logger.debug('Creating a new system')
+
+        self.verbose = verbose
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        
+        for arg in args:
+            logger.info(f"{arg}: {values[arg]}")
+
+        if self._eq_prepared or self._fe_prepared:
+            if not overwrite:
+                raise ValueError("The system has been prepared for equilibration or free energy simulations. "
+                                 "Set overwrite=True to overwrite the existing system or skip `create_system` step.")
+                                                 
+        self.system_name = system_name
+        self._protein_input = self._convert_2_relative_path(protein_input)
+        self._system_topology = self._convert_2_relative_path(system_topology)
+        if system_coordinate is not None:
+            self._system_coordinate = self._convert_2_relative_path(system_coordinate)
+        else:
+            self._system_coordinate = None
+        
+        # always store a unique identifier for the ligand
+        if isinstance(ligand_paths, list):
+            self._ligand_list = {
+                f'lig{i}': self._convert_2_relative_path(path)
+                for i, path in enumerate(ligand_paths)
+            }
+        elif isinstance(ligand_paths, dict):
+            self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
+        self.receptor_segment = receptor_segment
+        self._protein_align = protein_align
+        self.receptor_ff = receptor_ff
+        self.retain_lig_prot = retain_lig_prot
+        self.ligand_ph = ligand_ph
+        self.ligand_ff = ligand_ff
+        self.overwrite = overwrite
+
+        self.lipid_mol = lipid_mol
+        if not self.lipid_mol:
+            self._membrane_simulation = False
+        else:
+            self._membrane_simulation = True
+
+        # check input existence
+        if not os.path.exists(self.protein_input):
+            raise FileNotFoundError(f"Protein input file not found: {protein_input}")
+        if not os.path.exists(self.system_topology):
+            raise FileNotFoundError(f"System input file not found: {system_topology}")
+        for ligand_path in self.ligand_paths:
+            if not os.path.exists(ligand_path):
+                raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
+                
+        logger.info(f"# {len(self.ligand_paths)} ligands.")
+        self._process_ligands()
+
+        if system_coordinate is not None and not os.path.exists(system_coordinate):
+            raise FileNotFoundError(f"System coordinate file not found: {system_coordinate}")
+        
+        u_sys = mda.Universe(self.system_topology, format='XPDB')
+        if system_coordinate is not None:
+            # read last line of inpcrd file to get dimensions
+            with open(system_coordinate) as f:
+                lines = f.readlines()
+                box = np.array([float(x) for x in lines[-1].split()])
+            self.system_dimensions = box
+            u_sys.load_new(system_coordinate, format='INPCRD')
+        else:
+            try:
+                self.system_dimensions = u_sys.dimensions[:3]
+            except TypeError:
+                if self.membrane_simulation:
+                    raise ValueError("No box dimensions found in the system_topology. "
+                                     "For membrane systems, the box dimensions must be provided.")
+                else:
+                    # set a suitable box with padding of 10 A
+                    protein = u_sys.select_atoms('protein')
+                    padding = 10.0
+                    box_x = protein.positions[:,0].max() - protein.positions[:,0].min() + 2 * padding
+                    box_y = protein.positions[:,1].max() - protein.positions[:,1].min() + 2 * padding
+                    box_z = protein.positions[:,2].max() - protein.positions[:,2].min() + 2 * padding
+                    self.system_dimensions = np.array([box_x, box_y, box_z])
+
+                    logger.warning("No box dimensions found in the system_topology. "
+                                   "Setting a default box with 10 A padding around the protein. "
+                                   f"Box dimensions: {self.system_dimensions}"
+                                   )
+        if (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self.system_coordinate is None:
+            raise ValueError(f"No dimension of the box was found in the system_topology or system_coordinate")
+
+        os.makedirs(f"{self.poses_folder}", exist_ok=True)
+        u_sys.atoms.write(f"{self.poses_folder}/system_input.pdb")
+        self._system_input_pdb = f"{self.poses_folder}/system_input.pdb"
+        os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
+        
+        # copy dummy atom parameters to the ligandff folder
+        os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
+        os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
+
+        from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
+        available_amber_ff = ['gaff', 'gaff2']
+        available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
+        if ligand_ff not in available_amber_ff + available_openff_ff:
+            raise ValueError(f"Unsupported force field: {ligand_ff}. "
+                             f"Supported force fields are: {available_amber_ff + available_openff_ff}")
+
+        self.lipid_ff = lipid_ff
+        if self.lipid_ff != 'lipid21':
+            raise ValueError(f"Invalid lipid_ff: {self.lipid_ff}"
+                             "Only 'lipid21' is available")
+
+        # Prepare the membrane parameters
+        if self.membrane_simulation:
+            self._prepare_membrane()
+
+        self._process_protein()
+        self._get_alignment()
+
+        if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
+            self._process_system()
+        
+        from batter.ligand_process import LigandFactory
+        
+        self.unique_mol_names = []
+        mols = []
+        # only process the unique ligand paths
+        # for ABFESystem, it will be a single ligand
+        # for MBABFE and RBFE, it will be multiple ligands
+        for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
+            logger.info(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
+            # first if self.mols is not empty, then use it as the ligand name
+            try:
+                ligand_name = self.mols[ind-1]
+            except:
+                ligand_name = ligand_names[0]
+
+            ligand_factory = LigandFactory()
+            ligand = ligand_factory.create_ligand(
+                    ligand_file=ligand_path,
+                    index=ind,
+                    output_dir=self.ligandff_folder,
+                    ligand_name=ligand_name,
+                    retain_lig_prot=self.retain_lig_prot,
+                    ligand_ff=self.ligand_ff,
+                    unique_mol_names=self.unique_mol_names
+            )
+            self._ligand_objects[ligand_name] = ligand
+
+            mols.append(ligand.name)
+            self.unique_mol_names.append(ligand.name)
+            if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
+                ligand.prepare_ligand_parameters()
+            for ligand_name in ligand_names:
+                self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
+
+        logger.debug( f"Unique ligand names: {self.unique_mol_names} ")
+        logger.debug('updating the ligand paths')
+        logger.debug(self.ligand_list)
+
+        self._mols = mols
+        # update self.mols to output_dir/mols.txt
+        with open(f"{self.output_dir}/mols.txt", 'w') as f:
+            for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items()):
+                f.write(f"pose{ind}\t{self._mols[ind]}\t{ligand_path}\t{ligand_names}\n")
+        self._prepare_ligand_poses()
+
+        # always get the anchor atoms from the first pose
+        u_prot = mda.Universe(f'{self.output_dir}/all-poses/reference.pdb')
+        u_lig = mda.Universe(f'{self.output_dir}/all-poses/pose0.pdb')
+        lig_sdf = f'{self.ligandff_folder}/{self.mols[0]}.sdf'
+        l1_x, l1_y, l1_z, p1, p2, p3, l1_range = self._find_anchor_atoms(
+                    u_prot,
+                    u_lig,
+                    lig_sdf,
+                    anchor_atoms,
+                    ligand_anchor_atom)
+
+        self.anchor_atoms = anchor_atoms
+        self.ligand_anchor_atom = ligand_anchor_atom
+
+        self.l1_x = l1_x
+        self.l1_y = l1_y
+        self.l1_z = l1_z
+
+        self.p1 = p1
+        self.p2 = p2
+        self.p3 = p3
+
+        self.l1_range = l1_range
+        
+        logger.info('System loaded and prepared')
+
+
+    @safe_directory
+    @save_state
     def create_system(
                     self,
                     system_name: str,
@@ -549,6 +848,17 @@ class System:
         except AttributeError:
             self._check_equilbration_binding()
             return self._bound_mols
+        
+    @property
+    def membrane_simulation(self):
+        """
+        Whether the system is a membrane simulation.
+        Default to True
+        """
+        try:
+            return self._membrane_simulation
+        except AttributeError:
+            return True
 
     def _process_ligands(self):
         """
@@ -698,25 +1008,29 @@ class System:
             comp_2_combined.append(u_prot.select_atoms('protein'))
         
 
-        membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
-        if len(membrane_ag) == 0:
-            logger.warning(f"No membrane atoms found with resname {self.lipid_mol}. \n"
-                             f"Available resnames are {np.unique(u_sys.atoms.resnames)}"
-                             f"Please check the lipid_mol parameter.")
+        if self.membrane_simulation:
+            membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
+            if len(membrane_ag) == 0:
+                logger.warning(f"No membrane atoms found with resname {self.lipid_mol}. \n"
+                                f"Available resnames are {np.unique(u_sys.atoms.resnames)}"
+                                f"Please check the lipid_mol parameter.")
+            else:
+                with open(f'{build_files_orig}/memb_opls2charmm.json', 'r') as f:
+                    MEMB_OPLS_2_CHARMM_DICT = json.load(f)
+                if np.any(membrane_ag.names == 'O1'):
+                    if np.any(membrane_ag.resnames != 'POPC'):
+                        raise ValueError(f"Found OPLS lipid name {membrane_ag.residues.resnames}, only 'POPC' is supported. ")
+                    # convert the lipid names to CHARMM names
+                    membrane_ag.names = [MEMB_OPLS_2_CHARMM_DICT.get(name, name) for name in membrane_ag.names]
+                    logger.info(f"Converting OPLS lipid names to CHARMM names.")
+                
+                membrane_ag.chainIDs = 'M'
+                membrane_ag.residues.segments = memb_seg
+                logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
+                comp_2_combined.append(membrane_ag)
         else:
-            with open(f'{build_files_orig}/memb_opls2charmm.json', 'r') as f:
-                MEMB_OPLS_2_CHARMM_DICT = json.load(f)
-            if np.any(membrane_ag.names == 'O1'):
-                if np.any(membrane_ag.resnames != 'POPC'):
-                    raise ValueError(f"Found OPLS lipid name {membrane_ag.residues.resnames}, only 'POPC' is supported. ")
-                # convert the lipid names to CHARMM names
-                membrane_ag.names = [MEMB_OPLS_2_CHARMM_DICT.get(name, name) for name in membrane_ag.names]
-                logger.info(f"Converting OPLS lipid names to CHARMM names.")
-            
-            membrane_ag.chainIDs = 'M'
-            membrane_ag.residues.segments = memb_seg
-            logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
-            comp_2_combined.append(membrane_ag)
+            # empty selection
+            membrane_ag = u_sys.atoms[[]]
 
         # maestro generated pdb doesn't have SPC water H and O in the same place.
         # probably a potential bug
@@ -1015,7 +1329,6 @@ class System:
                 orig = {k: sim_config.model_dump().get(k) for k in diff.keys()}
                 logger.warning(f"Original configuration: {orig}")
 
-            #self._fe_prepared = False
             if self.overwrite:
                 logger.debug(f'Overwriting {self.fe_folder}')
                 shutil.rmtree(self.fe_folder, ignore_errors=True)
@@ -2738,9 +3051,9 @@ class System:
         P2_atom = u_merge.select_atoms(anchor_atoms[1])
         P3_atom = u_merge.select_atoms(anchor_atoms[2])
         if P1_atom.n_atoms == 0 or P2_atom.n_atoms == 0 or P3_atom.n_atoms == 0:
-            raise ValueError('Error: anchor atom not found with the provided selection string'
-                             f'p1: {anchor_atoms[0]}, p2: {anchor_atoms[1]}, p3: {anchor_atoms[2]}'
-                             f'P1_atom.n_atoms: {P1_atom.n_atoms}, P2_atom.n_atoms: {P2_atom.n_atoms}, P3_atom.n_atoms: {P3_atom.n_atoms}')
+            raise ValueError('Error: anchor atom not found with the provided selection string.\n'
+                             f'p1: {anchor_atoms[0]}, p2: {anchor_atoms[1]}, p3: {anchor_atoms[2]}\n'
+                             f'P1_atom.n_atoms: {P1_atom.n_atoms}, \n P2_atom.n_atoms: {P2_atom.n_atoms}, \n P3_atom.n_atoms: {P3_atom.n_atoms}')
         if P1_atom.n_atoms != 1 or P2_atom.n_atoms != 1 or P3_atom.n_atoms != 1:
             raise ValueError('Error: more than one atom selected in the anchor atoms')
         

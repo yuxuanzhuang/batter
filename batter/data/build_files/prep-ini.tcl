@@ -14,7 +14,7 @@ set sdr_dist SDRD
 set lig_site LIGSITE
 
 set pr [atomselect 0 "(not resname MMM) and (resid FIRST to LAST and name CA C N O)"]
-set all [atomselect 0 "(resid FIRST to LAST and not water and not resname MMM and noh) or (resname MMM) or (resname OTHRS WAT) or (resname LIPIDS) or (resname 'Na+' 'Cl-' 'K+')"]
+set all [atomselect 0 "(resid FIRST to LAST and not water and not resname MMM and noh) or (resname MMM OTHRS WAT LIPIDS) or (resname 'Na+' 'Cl-' 'K+')"]
 $all moveby [vecinvert [measure center $pr weight mass]]
 $all writepdb $filini
 mol delete all
