@@ -27,7 +27,7 @@ Production runs elec-LJ sdr
   dt = _step_,
   nmropt = 1,
   pencut = -1,
-  ntr = 1,
+  ntr = 0,
   restraint_wt = 50.0,
   restraintmask = '',
   icfe = 1,

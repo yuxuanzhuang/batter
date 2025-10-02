@@ -413,7 +413,6 @@ class SystemBuilder(ABC):
         final_system = u.atoms
 
         system_dimensions = u.dimensions[:3]
-        box_xy = [u.dimensions[0], u.dimensions[1]]
 
         if self.membrane_builder:
             # adjust system dimensions based on membrane
@@ -434,7 +433,9 @@ class SystemBuilder(ABC):
             # water that is within the membrane
             water_in_mem = u.select_atoms(
                 f'byres (resname WAT and prop z > {membrane_region_z_min} and prop z < {membrane_region_z_max})')
-            final_system = u.atoms - water_in_mem
+            final_system = final_system - water_in_mem
+            
+        box_xy = [u.dimensions[0], u.dimensions[1]]
 
         #water_around_prot = u.select_atoms('byres (resname WAT and around 5 protein)')
         
@@ -442,21 +443,22 @@ class SystemBuilder(ABC):
 
         final_system = final_system | water_around_prot
 
-        # get WAT that is out of the box
-        outside_wat = final_system.select_atoms(
-            f'byres (resname WAT and ((prop x > {box_xy[0] / 2}) or (prop x < -{box_xy[0] / 2}) or (prop y > {box_xy[1] / 2}) or (prop y < -{box_xy[1] / 2})))')
-        final_system = final_system - outside_wat
+        if self.membrane_builder:
+            # get WAT that is out of the box
+            outside_wat = final_system.select_atoms(
+                f'byres (resname WAT and ((prop x > {box_xy[0] / 2}) or (prop x < -{box_xy[0] / 2}) or (prop y > {box_xy[1] / 2}) or (prop y < -{box_xy[1] / 2})))')
+            final_system = final_system - outside_wat
 
-        if comp in ['e', 'v', 'o', 'z']:
-            # remove the water along z that is outside buffer z
-            protein_region_z_max = u.select_atoms('protein').positions[:, 2].max()
-            protein_region_z_min = u.select_atoms('protein').positions[:, 2].min()
-            outside_wat_z = final_system.select_atoms(
-                f'byres (resname WAT and ((prop z > {protein_region_z_max + targeted_buffer_z}) or (prop z < {protein_region_z_min - targeted_buffer_z})))')
-            final_system = final_system - outside_wat_z
-            logger.debug(f'Box dimensions before removing water: {system_dimensions}')
-            system_dimensions[2] = protein_region_z_max - protein_region_z_min + 2 * targeted_buffer_z
-            logger.debug(f'Box dimensions after removing water: {system_dimensions}')
+            if comp in ['e', 'v', 'o', 'z']:
+                # remove the water along z that is outside buffer z
+                protein_region_z_max = u.select_atoms('protein').positions[:, 2].max()
+                protein_region_z_min = u.select_atoms('protein').positions[:, 2].min()
+                outside_wat_z = final_system.select_atoms(
+                    f'byres (resname WAT and ((prop z > {protein_region_z_max + targeted_buffer_z}) or (prop z < {protein_region_z_min - targeted_buffer_z})))')
+                final_system = final_system - outside_wat_z
+                logger.debug(f'Box dimensions before removing water: {system_dimensions}')
+                system_dimensions[2] = protein_region_z_max - protein_region_z_min + 2 * targeted_buffer_z
+                logger.debug(f'Box dimensions after removing water: {system_dimensions}')
 
         logger.debug(f'Final system: {final_system.n_atoms} atoms')
         logger.debug(f'Final box dimensions: {system_dimensions}')
@@ -4264,6 +4266,9 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                         for ion_idx in selected_ion_indices[1:]:
                             restraintmask_part += f' | @{ion_idx+1}'
                         line = f"restraintmask = '{restraintmask_part}' \n"
+                    # enable ntr
+                    elif 'ntr =' in line:
+                        line = 'ntr = 1, \n'
                     fout.write(line)
 
     def _sim_files(self):
@@ -5242,6 +5247,8 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
 
         elif dec_method == 'dd':
             # Simulation files for dd
+            infe = 1 if self.infe else 0
+
             with open('./vac.pdb') as myfile:
                 data = myfile.readlines()
                 mk1 = int(last_lig)
@@ -5272,7 +5279,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                 for i in range(0, len(lambdas)):
                     mdin.write(' %6.5f,' % (lambdas[i]))
                 mdin.write('\n')
-                mdin.write('  infe = 0,\n')
+                mdin.write(f'  infe = {infe},\n')
                 mdin.write(' /\n')
                 mdin.write(' &pmd \n')
                 mdin.write(' output_file = \'cmass.txt\' \n')

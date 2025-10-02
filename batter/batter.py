@@ -1279,6 +1279,7 @@ class System:
             elif self._eq_prepared and os.path.exists(f"{self.equil_folder}"):
                 logger.info('Equilibration already prepared')
                 return
+            self._eq_prepared = False
             self._slurm_jobs = {}
             # save the input file to the equil directory
             os.makedirs(f"{self.equil_folder}", exist_ok=True)
@@ -1832,7 +1833,8 @@ class System:
                     sim_config=sim_config_pose,
                     working_dir=f'{self.fe_folder}',
                     molr=molr,
-                    poser=poser
+                    poser=poser,
+                    infe = (self.rmsf_restraints is not None) or (self.extra_conformation_restraints is not None)
                 )
                 builders.append(fe_eq_builder)
         if len(builders) == 0:
@@ -1884,7 +1886,8 @@ class System:
                         sim_config=sim_config,
                         working_dir=f'{self.fe_folder}',
                         molr=molr,
-                        poser=poser
+                        poser=poser,
+                        infe = (self.rmsf_restraints is not None) or (self.extra_conformation_restraints is not None)
                     )
                     builders.append(fe_builder)
 
@@ -3509,7 +3512,7 @@ class System:
         self.analysis(
             load=True,
             check_finished=False,
-            sim_range=(start_sim, num_sim + 1),
+            sim_range=(start_sim, -1),
         )
         logger.info(f'The results are in the {self.output_dir}')
         logger.info(f'Results')
