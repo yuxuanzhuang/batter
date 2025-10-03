@@ -10,6 +10,7 @@ import string
 import tempfile
 import shutil
 from openfe import SmallMoleculeComponent
+from typing import List, Union
 
 from batter.utils import (
     run_with_log,
@@ -351,6 +352,7 @@ class SDF_LigandProcessing(LigandProcessing):
         else:
             if ligand_rdkit.GetNumAtoms() == ligand_rdkit.GetNumHeavyAtoms():
                 logger.warning(f"Probabaly no explicit hydrogens in {self.ligand_file}."
+                                f"smiles: {Chem.MolToSmiles(ligand_rdkit)}."
                                 " But `retain_lig_prot` is set to True. "
                                 "This may cause issues in the ligand parameterization.")
         if ligand_rdkit is None:
@@ -457,3 +459,198 @@ class LigandFactory:
             )
         else:
             raise ValueError(f"Unsupported ligand file format: {ligand_file}")
+
+
+def batch_ligand_process(
+    ligand_paths: Union[List[str], dict[str, str]],
+    output_path: str,
+    retain_lig_prot: bool = True,
+    ligand_ph: float = 7.0,
+    ligand_ff: str = 'gaff2',
+    overwrite: bool = False,
+    run_with_slurm: bool = False,
+    max_slurm_jobs: int = 100,
+    run_with_slurm_kwargs: dict = None,
+    job_extra_directives: list = None,
+):
+    """
+    Batch process ligands from a list of ligand files.
+    It takes either a list of ligand files or a directory containing ligand files.
+    
+    Parameters
+    ----------
+    ligand_paths : list or dict
+        A list of ligand file paths or a dictionary mapping ligand names to file paths.
+    output_path : str
+        The output directory to store the processed ligand files.
+    retain_lig_prot : bool, optional
+        Whether to retain the ligand hydrogen atoms.
+        Default is True.
+    ligand_ph : float, optional
+        The pH value to protonate the ligand.
+        Default is 7.0.
+    ligand_ff : str, optional
+        The ligand force field. Default is ``"gaff2"``.
+    overwrite : bool, optional
+        Whether to overwrite existing ligand files.
+        Default is False.
+    run_with_slurm : bool, optional
+        Whether to run the ligand processing with SLURM.
+        Default is False.
+    max_slurm_jobs : int, optional
+        The maximum number of SLURM jobs to submit.
+        Default is 100.
+    run_with_slurm_kwargs : dict, optional
+        The keyword arguments for the SLURM job submission.
+        Default is None.
+    job_extra_directives : list, optional
+        Extra directives to add to the SLURM job script.
+        Default is None.
+    """
+     # always store a unique identifier for the ligand
+    if isinstance(ligand_paths, list):
+        ligand_list = {
+            f'lig{i}': path
+            for i, path in enumerate(ligand_paths)
+        }
+    else:
+        #ligand_list = {ligand_name: os.path.relpath(ligand_path, output_path) for ligand_name, ligand_path in ligand_paths.items()}
+        ligand_list = ligand_paths
+        
+    for ligand_path in ligand_list.values():
+        if not os.path.exists(ligand_path):
+            raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
+    
+    ligand_names = list(ligand_list.keys())
+    logger.info(f"# {len(ligand_paths)} ligands.")
+
+    os.makedirs(output_path, exist_ok=True)
+    ligandff_folder=output_path
+
+    from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
+    available_amber_ff = ['gaff', 'gaff2']
+    available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
+    if ligand_ff not in available_amber_ff + available_openff_ff:
+        raise ValueError(f"Unsupported force field: {ligand_ff}. "
+                            f"Supported force fields are: {available_amber_ff + available_openff_ff}")
+
+    unique_ligand_paths = {}
+    for ligand_path, ligand_name in zip(ligand_paths.values(), ligand_names):
+        if ligand_path not in unique_ligand_paths:
+            unique_ligand_paths[ligand_path] = []
+        unique_ligand_paths[ligand_path].append(ligand_name)
+    logger.debug(f' Unique ligand paths: {unique_ligand_paths}')
+    
+    unique_mol_names = []
+
+    mols = []
+    ligands_to_be_prepared = []
+    # only process the unique ligand paths
+    # for ABFESystem, it will be a single ligand
+    # for MBABFE and RBFE, it will be multiple ligands
+    for ind, (ligand_path, ligand_names) in enumerate(unique_ligand_paths.items(), start=1):
+        logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
+        # first if self.mols is not empty, then use it as the ligand name
+        try:
+            ligand_name = mols[ind-1]
+        except:
+            ligand_name = ligand_names[0]
+
+        ligand_factory = LigandFactory()
+        ligand = ligand_factory.create_ligand(
+                ligand_file=ligand_path,
+                index=ind,
+                output_dir=ligandff_folder,
+                ligand_name=ligand_name,
+                retain_lig_prot=retain_lig_prot,
+                ligand_ff=ligand_ff,
+                unique_mol_names=unique_mol_names
+        )
+
+        mols.append(ligand.name)
+        unique_mol_names.append(ligand.name)
+        if overwrite or not os.path.exists(f"{ligandff_folder}/{ligand.name}.frcmod"):
+            #ligand.prepare_ligand_parameters()
+            ligands_to_be_prepared.append(ligand)
+    
+    if len(ligands_to_be_prepared) == 0:
+        logger.info("All ligands have been processed. Skip ligand parameterization.")
+        return mols
+        
+    if run_with_slurm and len(ligands_to_be_prepared) > 0:
+        logger.info('Running ligand preparation with SLURM Cluster')
+        from dask_jobqueue import SLURMCluster
+        from dask.distributed import Client
+        from distributed.utils import TimeoutError
+
+        log_dir = os.path.expanduser('~/.batter_jobs')
+        os.makedirs(log_dir, exist_ok=True)
+        n_workers = min(len(ligands_to_be_prepared), max_slurm_jobs)
+        slurm_kwargs = {
+            # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
+            'n_workers': n_workers,
+            'queue': 'owners',
+            'cores': 1,
+            'memory': '5GB',
+            'walltime': '00:30:00',
+            'processes': 1,
+            'nanny': False,
+            'job_extra_directives': [
+                '--job-name=batter-lig-prep',
+                f'--output={log_dir}/dask-%j.out',
+                f'--error={log_dir}/dask-%j.err',
+            ],
+            'worker_extra_args': [
+                "--no-dashboard",
+                "--resources prepare=1"
+            ],
+            # 'account': 'your_slurm_account',
+        }
+        if run_with_slurm_kwargs is not None:
+            slurm_kwargs.update(run_with_slurm_kwargs)
+        if job_extra_directives is not None:
+            slurm_kwargs['job_extra_directives'].extend(job_extra_directives)
+
+        cluster = SLURMCluster(
+            **slurm_kwargs,
+        )
+        logger.info(f'SLURM Cluster created.')
+
+        client = Client(cluster)
+        logger.info(f'Dask Dashboard Link: {client.dashboard_link}')
+        # Wait for all expected workers
+        try:
+            logger.info(f'Waiting for {slurm_kwargs['n_workers']} workers to start...')
+            client.wait_for_workers(n_workers=n_workers, timeout=200)
+        except TimeoutError:
+            logger.warning(f"Timeout: Only {len(client.scheduler_info()['workers'])} workers started.")
+            # scale down the cluster to the number of available workers
+            if len(client.scheduler_info()['workers']) == 0:
+                client.close()
+                cluster.close()
+                
+                raise TimeoutError("No workers started in 200 sec. Check SLURM job status or run without SLURM.")
+            cluster.scale(jobs=len(client.scheduler_info()['workers']))
+
+        futures = []
+        for ligand in ligands_to_be_prepared:
+            logger.debug(f'Submitting lig preparation for {ligand.name}')
+            fut = client.submit(
+                ligand.prepare_ligand_parameters,
+                pure=True,
+                resources={'prepare': 1},
+                key=f'prepare_{ligand.name}',
+                retries=3,
+            )
+            futures.append(fut)
+        
+        logger.info(f'{len(futures)} parametrization jobs submitted to SLURM Cluster')
+        logger.info('Waiting for parametrization jobs to complete...')
+        _ = client.gather(futures, errors='skip')
+        
+        logger.info('Ligand parametrization with SLURM Cluster completed')
+        client.close()
+        cluster.close()
+
+
+    logger.info(f"Preparing parameters for {len(ligands_to_be_prepared)} ligands with {ligand_ff} force field.")
