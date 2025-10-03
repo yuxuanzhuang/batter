@@ -3207,12 +3207,10 @@ class FreeEnergyBuilder(SystemBuilder):
                                     float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, ldhf, ldhf, lign_d))
 
             # COM restraints
-            # TODO: why rcom leads to a crash?
-            rcom = 0
             cv_file = open('cv.in', 'w')
             cv_file.write('cv_file \n')
             # error https://github.com/yuxuanzhuang/nfe_berendsen
-            if False:
+            if True:
                 cv_file.write('&colvar \n')
                 cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
                 cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
@@ -5885,17 +5883,18 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         cv_file = open('cv.in', 'w')
         cv_file.write('cv_file \n')
         # ignore protein COM restraints
-        #cv_file.write('&colvar \n')
-        #cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-        #cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
-        #for i in range(0, len(hvy_h)):
-        #    cv_file.write(hvy_h[i])
-        #    cv_file.write(',')
-        #cv_file.write('\n')
-        #cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
-        #            (float(0.0), float(0.0), float(0.0), float(999.0)))
-        #cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
-        #cv_file.write('/ \n')
+        if True:
+            cv_file.write('&colvar \n')
+            cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+            cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
+            for i in range(0, len(hvy_h)):
+                cv_file.write(hvy_h[i])
+                cv_file.write(',')
+            cv_file.write('\n')
+            cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                        (float(0.0), float(0.0), float(0.0), float(999.0)))
+            cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
+            cv_file.write('/ \n')
 
         # Ligand solvent COM restraints
         lig_solv = ligand_residues[1].atoms
@@ -6601,17 +6600,18 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         cv_file = open('cv.in', 'w')
         cv_file.write('cv_file \n')
         # ignore protein COM restraints
-        #cv_file.write('&colvar \n')
-        #cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-        #cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
-        #for i in range(0, len(hvy_h)):
-        #    cv_file.write(hvy_h[i])
-        #    cv_file.write(',')
-        #cv_file.write('\n')
-        #cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
-        #            (float(0.0), float(0.0), float(0.0), float(999.0)))
-        #cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
-        #cv_file.write('/ \n')
+        if True:
+            cv_file.write('&colvar \n')
+            cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+            cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
+            for i in range(0, len(hvy_h)):
+                cv_file.write(hvy_h[i])
+                cv_file.write(',')
+            cv_file.write('\n')
+            cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                        (float(0.0), float(0.0), float(0.0), float(999.0)))
+            cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
+            cv_file.write('/ \n')
 
         # Ligand COM restraints
         lig_solv = ligand_residues[1].atoms
