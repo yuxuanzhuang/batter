@@ -3966,8 +3966,9 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         neut = self.sim_config.neut
         
         buff = solv_shell
-        if buff < 2:
-            raise ValueError('Buffer size (`solv_shell`) is set tot too small. It should be at least 2 A.')
+        if buff < 10:
+            raise ValueError('Buffer size (`solv_shell`) is set tot too small. It should be at least 10 A. '
+                             'otherwise GPU simulations will crash.')
 
         water_model = self.sim_config.water_model
         neut = self.sim_config.neut
