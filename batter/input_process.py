@@ -30,7 +30,8 @@ class SimulationConfig(BaseModel):
     solv_shell: Optional[float] = Field(
         None, description="Water molecules around the protein that will be kept in the initial structure (in angstroms)"
     )
-
+    # whether to use rocklin correction for charged ligands when running dd
+    rocklin_correction: str = Field(default="no", description="Apply Rocklin correction for charged ligands (yes or no)")
     # Variables for setting up equilibrium and free energy calculations, also used on analysis
     fe_type: str = Field(..., description="Free energy type (rest, dd, sdr, etc.)")
     remd: Optional[str] = Field('no', description="H-REMD (yes or no)")
@@ -272,6 +273,9 @@ class SimulationConfig(BaseModel):
             case 'uno_dd':
                 self.components = ['z', 'y']
                 self.dec_method = 'dd'
+            case 'asfe':
+                # only solvation free energy
+                self.components = ['y']
             case _:
                 raise ValueError(
                     "Invalid fe_type: {self.fe_type}. Must be one of "

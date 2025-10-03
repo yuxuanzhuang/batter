@@ -637,9 +637,9 @@ class System:
 
         self.lipid_mol = lipid_mol
         if not self.lipid_mol:
-            self.membrane_simulation = False
+            self._membrane_simulation = False
         else:
-            self.membrane_simulation = True
+            self._membrane_simulation = True
         self.lipid_ff = lipid_ff
         if self.lipid_ff != 'lipid21':
             raise ValueError(f"Invalid lipid_ff: {self.lipid_ff}"
@@ -1173,15 +1173,18 @@ class System:
             raise ValueError(f"Invalid fe_type: {sim_config.fe_type}, "
                  "should be 'relative' for RBFE system")
         
-        # overwride l1_x, l1_y, l1_z
-        sim_config.l1_x = self.l1_x
-        sim_config.l1_y = self.l1_y
-        sim_config.l1_z = self.l1_z
+        try:
+            # overwride l1_x, l1_y, l1_z
+            sim_config.l1_x = self.l1_x
+            sim_config.l1_y = self.l1_y
+            sim_config.l1_z = self.l1_z
 
-        # override the p1, p2, p3
-        sim_config.p1 = self.p1
-        sim_config.p2 = self.p2
-        sim_config.p3 = self.p3
+            # override the p1, p2, p3
+            sim_config.p1 = self.p1
+            sim_config.p2 = self.p2
+            sim_config.p3 = self.p3
+        except:
+            logger.debug('cannot set l1_x, l1_y, l1_z, p1, p2, p3 in sim_config')
                  
         self.sim_config = sim_config
 
@@ -1857,9 +1860,6 @@ class System:
         builders = []
         builders_factory = BuilderFactory()
         for pose in self.bound_poses:
-            if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
-                continue
-
             for component in sim_config.components:
                 if regenerate:
                     # delete existing windows
@@ -4496,6 +4496,580 @@ class RBFESystem(System):
                              "for the relative binding free energy calculation")
         logger.info(f'Reference ligand: {self._unique_ligand_paths.keys()[0]}')
 
+
+class MASFESystem(System):
+    """
+    A class to represent and process an Absolute solvation free energy (ASFE) system
+    It doesn't include equil stage and no input of protein.
+    """
+    def _process_ligands(self):
+        self._unique_ligand_paths = {}
+        for ligand_path, ligand_name in zip(self.ligand_paths, self.ligand_names):
+            if ligand_path not in self._unique_ligand_paths:
+                self._unique_ligand_paths[ligand_path] = []
+            self._unique_ligand_paths[ligand_path].append(ligand_name)
+        logger.debug(f' Unique ligand paths: {self._unique_ligand_paths}')
+
+    @safe_directory
+    @save_state
+    def create_system(
+                    self,
+                    system_name: str,
+                    ligand_paths: Union[List[str], dict[str, str]],
+                    retain_lig_prot: bool = True,
+                    ligand_ph: float = 7.4,
+                    ligand_ff: str = 'gaff2',
+                    overwrite: bool = False,
+                    verbose: bool = False,
+                    ):
+        """
+        Create a new single-ligand single-receptor system.
+
+        Parameters
+        ----------
+        system_name : str
+            The name of the system. It will be used to name the output folder.
+        ligand_paths : List[str] or Dict[str, str]
+            List of ligand files. It can be either PDB, mol2, or sdf format.
+            It will be stored in the `all-poses` folder as `pose0.pdb`,
+            `pose1.pdb`, etc.
+            If it's a dictionary, the keys will be used as the ligand names
+            and the values will be the ligand files.
+        retain_lig_prot : bool, optional
+            Whether to retain hydrogens in the ligand. Default is True.
+        ligand_ph : float, optional
+            pH value for protonating the ligand. Default is 7.4.
+        ligand_ff : str, optional
+            Parameter set for the ligand. Default is 'gaff2'.
+            Options are 'gaff' and 'gaff2' and openff force fields.
+            See https://github.com/openforcefield/openff-forcefields for full list.
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
+        verbose : bool, optional
+            The verbosity of the output. If True, it will print the debug messages.
+            Default is False.
+        """
+        self._eq_prepared = True
+        # fail late on import openff
+        try:
+            from openff.toolkit import Molecule
+        except:
+            raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
+
+        # Log every argument
+        if verbose:
+            logger.remove()
+            logger.add(sys.stdout, level='DEBUG')
+            logger.add(f"{self.output_dir}/batter.log", level='DEBUG')
+            logger.debug('Verbose mode is on')
+            logger.debug('Creating a new system')
+
+        self.verbose = verbose
+        frame = inspect.currentframe()
+        args, _, _, values = inspect.getargvalues(frame)
+        
+        for arg in args:
+            logger.info(f"{arg}: {values[arg]}")
+
+        if self._fe_prepared:
+            if not overwrite:
+                raise ValueError("The system has been prepared for equilibration or free energy simulations. "
+                                 "Set overwrite=True to overwrite the existing system or skip `create_system` step.")
+                                                 
+        self.system_name = system_name
+        
+        # always store a unique identifier for the ligand
+        if isinstance(ligand_paths, list):
+            self._ligand_list = {
+                f'lig{i}': self._convert_2_relative_path(path)
+                for i, path in enumerate(ligand_paths)
+            }
+        elif isinstance(ligand_paths, dict):
+            self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
+        self.retain_lig_prot = retain_lig_prot
+        self.ligand_ph = ligand_ph
+        self.ligand_ff = ligand_ff
+        self.overwrite = overwrite
+
+        self._membrane_simulation = False
+
+        for ligand_path in self.ligand_paths:
+            if not os.path.exists(ligand_path):
+                raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
+                
+        logger.info(f"# {len(self.ligand_paths)} ligands.")
+        self._process_ligands()
+
+        os.makedirs(f"{self.poses_folder}", exist_ok=True)
+        os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
+        
+        # copy dummy atom parameters to the ligandff folder
+        os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
+        os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
+
+        from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
+        available_amber_ff = ['gaff', 'gaff2']
+        available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
+        if ligand_ff not in available_amber_ff + available_openff_ff:
+            raise ValueError(f"Unsupported force field: {ligand_ff}. "
+                             f"Supported force fields are: {available_amber_ff + available_openff_ff}")
+
+        from batter.ligand_process import LigandFactory
+        
+        self.unique_mol_names = []
+        mols = []
+        # only process the unique ligand paths
+        # for ABFESystem, it will be a single ligand
+        # for MBABFE and RBFE, it will be multiple ligands
+        for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
+            logger.info(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
+            # first if self.mols is not empty, then use it as the ligand name
+            try:
+                ligand_name = self.mols[ind-1]
+            except:
+                ligand_name = ligand_names[0]
+
+            ligand_factory = LigandFactory()
+            ligand = ligand_factory.create_ligand(
+                    ligand_file=ligand_path,
+                    index=ind,
+                    output_dir=self.ligandff_folder,
+                    ligand_name=ligand_name,
+                    retain_lig_prot=self.retain_lig_prot,
+                    ligand_ff=self.ligand_ff,
+                    unique_mol_names=self.unique_mol_names
+            )
+            self._ligand_objects[ligand_name] = ligand
+
+            mols.append(ligand.name)
+            self.unique_mol_names.append(ligand.name)
+            if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
+                ligand.prepare_ligand_parameters()
+            for ligand_name in ligand_names:
+                self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
+
+        logger.debug( f"Unique ligand names: {self.unique_mol_names} ")
+        logger.debug('updating the ligand paths')
+        logger.debug(self.ligand_list)
+
+        self._mols = mols
+        # update self.mols to output_dir/mols.txt
+        with open(f"{self.output_dir}/mols.txt", 'w') as f:
+            for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items()):
+                f.write(f"pose{ind}\t{self._mols[ind]}\t{ligand_path}\t{ligand_names}\n")
+        
+        # mock alignment to the 0,0,0
+        self.mobile_coord = np.array([0.0, 0.0, 0.0])
+        self.ref_coord = np.array([0.0, 0.0, 0.0])
+        self.mobile_com = np.array([0.0, 0.0, 0.0])
+        self.ref_com = np.array([0.0, 0.0, 0.0])
+        self.translation = np.array([0.0, 0.0, 0.0])
+        self._prepare_ligand_poses()
+
+        self.lipid_mol = []
+        self.receptor_ff = 'protein.ff14SB'
+        self.lipid_ff = 'lipid21' 
+        logger.info('System loaded and prepared')
+
+    @safe_directory
+    @save_state
+    def run_pipeline(self,
+                     input_file: Union[str, Path, SimulationConfig] = None,
+                     overwrite: bool = False,              
+                     only_fe_preparation: bool = False,
+                     dry_run: bool = False,
+                     partition: str = 'owners',
+                     max_num_jobs: int = 2000,
+                     time_limit: str = '6:00:00',
+                     fail_on_error: bool = False,
+                     vmd: str = None,
+                     verbose: bool = False
+                     ):
+        """
+        Run the whole pipeline for calculating the binding free energy
+        after you `create_system`.
+
+        Parameters
+        ----------
+        input_file : str or SimulationConfig
+            The input file for the simulation
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
+        only_fe_preparation : bool, optional
+            Whether to prepare the files for the production stage
+            without running the production stage.
+            Default is False.
+        dry_run : bool, optional
+            Whether to run the pipeline until performing any
+            simulation submissions. Default is False.
+        partition : str, optional
+            The partition to submit the job.
+            Default is 'rondror'.
+        max_num_jobs : int, optional
+            The maximum number of jobs to submit at a time.
+            Default is 2000.
+        time_limit : str, optional
+            The time limit for the job submission.
+            Default is '6:00:00'.
+        fail_on_error : bool, optional
+            Whether to fail the pipeline on error during simulations.
+            Default is False with the failed simulations marked as 'FAILED'.
+        vmd : str, optional
+            The path to the VMD executable. If not provided,
+            the code will use `vmd`.
+        verbose : bool, optional
+            Whether to print the verbose output. Default is False.
+        """
+        if verbose:
+            logger.remove()
+            logger.add(sys.stdout, level='DEBUG')
+            logger.add(f'{self.output_dir}/batter.log', level='DEBUG')
+            logger.info('Verbose output is set to True')
+        logger.info('Running the pipeline')
+        
+        self._max_num_jobs = max_num_jobs
+        self._fail_on_error = fail_on_error
+
+        start_time = time.time()
+        logger.info(f'Start time: {time.ctime()}')
+        if input_file is not None:
+            self._get_sim_config(input_file)
+        else:
+            if not hasattr(self, 'sim_config'):
+                raise ValueError('Input file is not provided and sim_config is not set.')
+        self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        if vmd:
+            if not os.path.exists(vmd):
+                raise FileNotFoundError(f'VMD executable {vmd} not found')
+            # set batter.utils.vmd to the provided path
+            import batter.utils
+            batter.utils.vmd = vmd
+            logger.info(f'Setting VMD path to {vmd}')
+
+        self._bound_poses = self._all_poses
+        self._bound_mols = self.mols
+
+        #4.0, submit the free energy equilibration
+
+        remd = self.sim_config.remd == 'yes'
+        self.batch_mode = remd
+        num_fe_sim = self.sim_config.num_fe_range
+
+        logger.info('Running equilibrations before final FE simulations')
+        if self._check_fe_equil():
+            #3 prepare the free energy calculation
+            logger.info('Preparing the free energy equilibration stage')
+            logger.info('If you want to have a fresh start, set overwrite=True')
+            self.prepare(
+                stage='fe',
+                input_file=self.sim_config,
+                overwrite=overwrite,
+                partition=partition,
+            )
+            if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+                logger.info('Generating batch run files...')
+                self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
+
+            logger.info(f'Free energy folder: {self.fe_folder} prepared for free energy equilibration')
+            logger.info('Submitting the free energy equilibration')
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the free energy equilibration submission.')
+                return
+            self.submit(
+                stage='fe_equil',
+                partition=partition,
+                time_limit=time_limit,
+                )
+            logger.info('Free energy equilibration jobs submitted')
+
+            # Check the free energy eq calculation to finish
+            pbar = tqdm(total=len(self.bound_poses) * len(self.sim_config.components),
+                        desc="FE Equilibration sims finished",
+                        unit="job")
+            while self._check_fe_equil():
+                # get finishd jobs
+                n_finished = len([k for k, v in self.sim_finished.items() if v])
+                pbar.update(n_finished - pbar.n)
+                now = time.strftime("%m-%d %H:%M:%S")
+                desc = f"{now} – FE Equilibration sims finished"
+                pbar.set_description(desc)
+
+                #logger.info(f'{time.ctime()} - Finished jobs: {n_finished} / {len(self.sim_finished)}')
+                not_finished = [k for k, v in self.sim_finished.items() if not v]
+                failed = [k for k, v in self._sim_failed.items() if v]
+                # name f'{self.fe_folder}/{pose}/{comp_folder}/{comp}{j:02d}
+
+                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                # exclude the failed jobs
+                not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
+                for job in not_finished_slurm_jobs:
+                    self._continue_job(self._slurm_jobs[job])
+                time.sleep(5*60)
+            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.set_description('FE equilibration finished')
+            pbar.close()
+
+        else:
+            logger.info('Free energy equilibration simulations are already finished')
+            logger.info(f'If you want to have a fresh start, remove {self.fe_folder} manually')
+
+        # copy last equilibration snapshot to the free energy folder
+        for pose in self.bound_poses:
+            for comp in self.sim_config.components:
+                comp_folder = COMPONENTS_FOLDER_DICT[comp]
+                folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
+                eq_rst7 = f'{folder_comp}/{comp}-1/eqnpt04.rst7'
+                
+                windows = self.component_windows_dict[comp]
+                for j in range(0, len(windows)):
+                    if os.path.exists(f'{folder_comp}/{comp}{j:02d}/eqnpt04.rst7'):
+                        continue
+                    #os.system(f'cp {eq_rst7} {folder_comp}/{comp}{j:02d}/eqnpt04.rst7')
+                    # get relative path of eq_rst7
+                    eq_rst7_rel = os.path.relpath(eq_rst7, start=f'{folder_comp}/{comp}{j:02d}')
+                    os.system(f'ln -s {eq_rst7_rel} {folder_comp}/{comp}{j:02d}/eqnpt04.rst7')
+
+
+        if only_fe_preparation:
+            logger.info('only_fe_preparation is set to True. '
+                        'Skipping the free energy calculation.')
+            logger.info('Move the prepared and equilibrated system to HPC center for further simulations')
+            return
+
+        #4, submit the free energy calculation
+        logger.info('Running free energy calculation')
+
+        if all([self.pose_failed.get(pose, False) for pose in self.bound_poses]):
+            logger.warning('All bound poses failed in FE equilibration. '
+                           'Please check the FE equilibration results.')
+            return
+        if not os.path.exists(f'{self.fe_folder}/pose0/groupfiles') or overwrite:
+            logger.info('Generating batch run files...')
+            self.generate_batch_files(remd=remd, num_fe_sim=num_fe_sim)
+
+        if self._check_fe():
+            logger.info('Submitting the free energy calculation')
+            if dry_run:
+                logger.info('Dry run is set to True. '
+                            'Skipping the free energy submission.')
+                return
+            
+            if self.batch_mode:
+                logger.info('Running free energy calculation with REMD in batch mode')
+                self.submit(
+                    stage='fe',
+                    batch_mode=True,
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+            else:
+                logger.info('Running free energy calculation without REMD')
+                self.submit(
+                    stage='fe',
+                    partition=partition,
+                    time_limit=time_limit,
+                )
+            logger.info('Free energy jobs submitted')
+                
+            # Check the free energy calculation to finish
+            pbar = tqdm(
+                desc="FE simsulations finished",
+                unit="job"
+            )
+            while self._check_fe():
+                # get finishd jobs
+                n_finished = len([k for k, v in self.sim_finished.items() if v])
+                pbar.update(n_finished - pbar.n)
+                now = time.strftime("%m-%d %H:%M:%S")
+                desc = f"{now} – FE simulations finished"
+                pbar.set_description(desc)
+                #logger.info(f'{time.ctime()} Finished jobs: {n_finished} / {len(self.sim_finished)}')
+                not_finished = [k for k, v in self.sim_finished.items() if not v]
+                failed = [k for k, v in self._sim_failed.items() if v]
+
+                not_finished_slurm_jobs = [job for job in self._slurm_jobs.keys() if job in not_finished]
+                not_finished_slurm_jobs = [job for job in not_finished_slurm_jobs if job not in failed]
+                for job in not_finished_slurm_jobs:
+                    self._continue_job(self._slurm_jobs[job])
+                time.sleep(10*60)
+            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.set_description('FE calculation finished')
+            pbar.close()
+        else:
+            logger.info('Free energy calculation is already finished')
+            logger.info(f'If you want to have a fresh start, remove {self.fe_folder} manually')
+
+        #5 analyze the results
+        logger.info('Analyzing the results')
+        self._generate_aligned_pdbs()
+
+        num_sim = self.sim_config.num_fe_range
+        # exclude the first few simulations for analysis
+        start_sim = 3 if num_sim >= 6 else 1
+        self.analysis(
+            load=True,
+            check_finished=False,
+            sim_range=(start_sim, -1),
+        )
+        logger.info(f'The results are in the {self.output_dir}')
+        logger.info(f'Results')
+        # print out self.output_dir/Results/Results.dat
+        with open(f'{self.output_dir}/Results/Results.dat', 'r') as f:
+            results = f.readlines()
+            for line in results:
+                logger.info(line.strip())
+        logger.info('Pipeline finished')
+        end_time = time.time()
+        logger.info(f'End time: {time.ctime()}')
+        total_time = end_time - start_time
+        logger.info(f'Total time: {total_time:.2f} seconds')
+        # dump the state at the end of the pipeline
+        # to the system folder
+        self.dump()
+
+    @safe_directory
+    @save_state
+    def prepare(self,
+            stage: str,
+            input_file: Union[str, Path, SimulationConfig] = None,
+            overwrite: bool = False,
+            partition: str = 'rondror',
+            n_workers: int = 12,
+            win_info_dict: dict = None,
+            ):
+        """
+        Prepare the system for the FEP simulation.
+
+        Parameters
+        ----------
+        stage : str
+            The stage of the simulation. Options are 'equil' and 'fe'.
+        input_file : str
+            Path to the input file for the simulation. If None,
+            the loaded SimulationConfig will be used.
+        overwrite : bool, optional
+            Whether to overwrite the existing files. Default is False.
+        partition : str, optional
+            The partition to submit the job. Default is 'rondror'.
+        n_workers : int, optional
+            The number of workers to use for the simulation. Default is 6.
+        win_info_dict : dict, optional
+            The lambda / restraint values for components.
+            It should be in a format of e.g. for `e` component:
+            {
+                'e': [0, 0.5, 1.0],
+            }
+        """
+        logger.debug('Preparing the system')
+        self.overwrite = overwrite
+        self.partition = partition
+        self._n_workers = n_workers
+
+        if input_file is not None:
+            self._get_sim_config(input_file)
+            self._component_windows_dict = ComponentWindowsDict(self)
+        
+        try:
+            sim_config = self.sim_config
+        except AttributeError:
+            raise ValueError("Simulation configuration is not set. "
+                             "Please provide an input file")
+        if win_info_dict is not None:
+            for key, value in win_info_dict.items():
+                if key not in self._component_windows_dict:
+                    raise ValueError(f"Invalid component: {key}. Available components are: {self._component_windows_dict.keys()}")
+                self._component_windows_dict[key] = value
+        
+        if len(self.sim_config.poses_def) != len(self.ligand_paths):
+            logger.debug(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
+                           f"does not match the number of ligands: {len(self.ligand_paths)}")
+            logger.debug("Using the ligand paths for the poses")
+        self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
+        self._pose_ligand_dict = {pose: ligand for pose, ligand in zip(self._all_poses, self.ligand_names)}
+        self.sim_config.poses_def = self._all_poses 
+
+        if stage == 'equil':
+            raise ValueError("Equilibration stage is not needed for ASFE system.")
+        if stage == 'fe':
+            if self.overwrite:
+                logger.debug(f'Overwriting {self.fe_folder}')
+                shutil.rmtree(self.fe_folder, ignore_errors=True)
+                self._fe_prepared = False
+            elif self._fe_prepared and os.path.exists(f"{self.fe_folder}"):
+                logger.info('Free energy already prepared')
+                return
+            self._slurm_jobs = {}
+            self._fe_prepared = False
+            os.makedirs(f"{self.fe_folder}", exist_ok=True)
+            
+            if not os.path.exists(f"{self.fe_folder}/ff"):
+                logger.debug(f'Copying ff folder from {self.ligandff_folder} to {self.fe_folder}/ff')
+                # shutil.copytree(self.ligandff_folder,
+                #             f"{self.fe_folder}/ff")
+                # use os.copy instead
+                os.makedirs(f"{self.fe_folder}/ff", exist_ok=True)
+                for file in os.listdir(self.ligandff_folder):
+                    os.system(f"cp {self.ligandff_folder}/{file} {self.fe_folder}/ff/{file}")
+
+            with open(f"{self.fe_folder}/sim_config.json", 'w') as f:
+                json.dump(self.sim_config.model_dump(), f, indent=2)
+
+            self._prepare_fe_system()
+            logger.info('FE System prepared')
+            self._fe_prepared = True
+    
+    def _prepare_fe_equil_system(self):
+
+        # molr (molecule reference) and poser (pose reference)
+        # are used for exchange FE simulations.
+        sim_config = self.sim_config
+        molr = self.mols[0]
+        poser = self.bound_poses[0]
+        builders = []
+        builders_factory = BuilderFactory()
+        for pose in sim_config.poses_def:
+            logger.debug(f'Preparing pose: {pose}')
+            
+            sim_config_pose = sim_config.copy(deep=True)
+            os.makedirs(f"{self.fe_folder}/{pose}/ff", exist_ok=True)
+            for file in os.listdir(self.ligandff_folder):
+                shutil.copy(f"{self.ligandff_folder}/{file}",
+                            f"{self.fe_folder}/{pose}/ff/{file}")
+            
+            for component in sim_config.components:
+                logger.debug(f'Preparing component: {component}')
+                lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
+                n_sims = len(lambdas_comp)
+                logger.debug(f'Number of simulations: {n_sims}')
+                cv_path = f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}-1/cv.in"
+                if os.path.exists(cv_path) and not self.overwrite:
+                    logger.info(f"Component {component} for pose {pose} already exists; add overwrite=True to re-build the component")
+                    continue
+                fe_eq_builder = builders_factory.get_builder(
+                    stage='fe',
+                    win=-1,
+                    component=component,
+                    system=self,
+                    pose=pose,
+                    sim_config=sim_config_pose,
+                    working_dir=f'{self.fe_folder}',
+                    molr=molr,
+                    poser=poser,
+                    infe = (self.rmsf_restraints is not None) or (self.extra_conformation_restraints is not None)
+                )
+                builders.append(fe_eq_builder)
+        if len(builders) == 0:
+            logger.info('No new FE equilibration systems to build.')
+            return
+        with tqdm_joblib(tqdm(
+            total=len(builders),
+            desc="Preparing FE equilibration",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
+            n_workers = min(self.n_workers, len(builders))
+            Parallel(n_jobs=n_workers, backend='loky')(
+                delayed(builder.build)() for builder in builders
+        )
 
 class ComponentWindowsDict(MutableMapping):
     def __init__(self, system):

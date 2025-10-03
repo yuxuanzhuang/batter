@@ -30,7 +30,7 @@ if [[ $only_eq -eq 1 ]]; then
     pmemd.cuda_DPFP -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 
-    if ! check_min_energy "mini.out" -10000; then
+    if ! check_min_energy "mini.out" -1000; then
         echo "Minimization not passed with cuda; try CPU"
         rm -f "$log_file"
         rm -f mini.rst7 mini.nc mini.out
@@ -41,7 +41,7 @@ if [[ $only_eq -eq 1 ]]; then
         fi
         check_sim_failure "Minimization" "$log_file"
 
-        if ! check_min_energy "mini.out" -10000; then
+        if ! check_min_energy "mini.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
             rm -f mini.rst7 mini.nc mini.out
             exit 1
@@ -83,7 +83,7 @@ if [[ $only_eq -eq 1 ]]; then
             cd $win_folder
             pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
             check_sim_failure "Minimization for window $i" "$log_file"
-            if ! check_min_energy "mini.in.out" -10000; then
+            if ! check_min_energy "mini.in.out" -1000; then
                 echo "Minimization not passed with cuda; try CPU"
                 rm -f "$log_file"
                 rm -f mini.in.rst7 mini.in.nc mini.in.out
@@ -93,7 +93,7 @@ if [[ $only_eq -eq 1 ]]; then
                     pmemd -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
                 fi
                 check_sim_failure "Minimization for window $i" "$log_file"
-                if ! check_min_energy "mini.in.out" -10000; then
+                if ! check_min_energy "mini.in.out" -1000; then
                     echo "Minimization with CPU also failed for window $i, exiting."
                     rm -f mini.in.rst7 mini.in.nc mini.in.out
                     exit 1

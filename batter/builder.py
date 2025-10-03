@@ -72,7 +72,10 @@ class SystemBuilder(ABC):
         self.pose = pose
         self.sim_config = sim_config
         self.other_mol = self.sim_config.other_mol
-        self.lipid_mol = self.system.lipid_mol
+        try:
+            self.lipid_mol = self.system.lipid_mol
+        except AttributeError:
+            self.lipid_mol = []
         logger.debug(f'Builder with {'membrane' if self.membrane_builder else 'water'} system: \n'
                     f'{self.system}, \n pose:{self.pose}, \n lipid_mol: {self.lipid_mol}, \n other_mol: {self.other_mol}')
 
@@ -1039,11 +1042,12 @@ class EquilibrationBuilder(SystemBuilder):
 
         os.system(f'cp ../../ff/{mol.lower()}.mol2 .')
         os.system(f'cp ../../ff/{mol.lower()}.sdf .')
-
-        ante_mol = mda.Universe(f'{mol.lower()}.mol2')
-        mol_u.atoms.names = ante_mol.atoms.names
-        mol_u.atoms.residues.resnames = mol
-        mol_u.atoms.write(f'{mol.lower()}.pdb')
+        os.system(f'cp ../../ff/{mol.lower()}.pdb .')
+        
+        #ante_mol = mda.Universe(f'{mol.lower()}.mol2')
+        #mol_u.atoms.names = ante_mol.atoms.names
+        #mol_u.atoms.residues.resnames = mol
+        #mol_u.atoms.write(f'{mol.lower()}.pdb')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
@@ -2014,7 +2018,10 @@ class FreeEnergyBuilder(SystemBuilder):
         self.comp_folder = f"{COMPONENTS_FOLDER_DICT[component]}"
         self.window_folder = f"{self.comp}{self.win:02d}"
 
-        self.lipid_mol = self.system.lipid_mol
+        try:
+            self.lipid_mol = self.system.lipid_mol
+        except AttributeError:
+            self.lipid_mol = []
         if self.membrane_builder:
             # This will not effect SDR/DD
             # because semi-isotropic barostat is not supported
@@ -3890,14 +3897,16 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     """
     def _build_complex(self):
         """No complex needed to be built."""
+        all_pose_folder = self.system.poses_folder
+
         pose = self.pose
-        os.system(f'cp ../../../../equil/{pose}/build_files/{pose}.pdb ./')
+        os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
         
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
-        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.sdf ./')
-        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.mol2 ./')
-        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.pdb ./')
+        os.system(f'cp ../../ff/{mol.lower()}.mol2 ./')
+        os.system(f'cp ../../ff/{mol.lower()}.sdf ./')
+        os.system(f'cp ../../ff/{mol.lower()}.pdb ./')
 
         self.corrected_sdr_dist = 0
         return True
@@ -3956,7 +3965,9 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         ion_def = self.sim_config.ion_def
         neut = self.sim_config.neut
         
-        buff = 20
+        buff = solv_shell
+        if buff < 2:
+            raise ValueError('Buffer size (`solv_shell`) is set tot too small. It should be at least 2 A.')
 
         water_model = self.sim_config.water_model
         neut = self.sim_config.neut
@@ -4176,6 +4187,9 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     @log_info
     def _pre_sim_files(self):
         """Preprocess simulation files needed for ligand-only simulations. It involves adding co-decoupling ions to keep the system neutral."""
+        if self.sim_config.rocklin_correction == 'yes':
+            logger.info('Rocklin correction is turned on for ligand decoupling.')
+            return
         mol = self.mol
         total_charge = self._ligand_charge
         universe = mda.Universe('full.pdb')

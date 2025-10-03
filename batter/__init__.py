@@ -41,7 +41,7 @@ _mbar_log.addFilter(_mute_jax)
 _mbar_log.addFilter(_mute_jax_2)
 
 # Add imports here
-from .batter import ABFESystem, MABFESystem, RBFESystem
+from .batter import ABFESystem, MABFESystem, RBFESystem, MASFESystem
 from .analysis import results
 
 logger.remove()
