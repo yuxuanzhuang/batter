@@ -382,7 +382,7 @@ class System:
         # for ABFESystem, it will be a single ligand
         # for MBABFE and RBFE, it will be multiple ligands
         for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
-            logger.info(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
+            logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
             # first if self.mols is not empty, then use it as the ligand name
             try:
                 ligand_name = self.mols[ind-1]
@@ -663,7 +663,7 @@ class System:
         # for ABFESystem, it will be a single ligand
         # for MBABFE and RBFE, it will be multiple ligands
         for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
-            logger.info(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
+            logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
             # first if self.mols is not empty, then use it as the ligand name
             try:
                 ligand_name = self.mols[ind-1]
@@ -685,6 +685,7 @@ class System:
             mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
+                logger.info(f'Preparing parameters for ligand {ligand.name}')
                 ligand.prepare_ligand_parameters()
             for ligand_name in ligand_names:
                 self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
@@ -4519,6 +4520,7 @@ class MASFESystem(System):
                     retain_lig_prot: bool = True,
                     ligand_ph: float = 7.4,
                     ligand_ff: str = 'gaff2',
+                    existing_ligand_db: Optional[str] = None,
                     overwrite: bool = False,
                     verbose: bool = False,
                     ):
@@ -4543,6 +4545,9 @@ class MASFESystem(System):
             Parameter set for the ligand. Default is 'gaff2'.
             Options are 'gaff' and 'gaff2' and openff force fields.
             See https://github.com/openforcefield/openff-forcefields for full list.
+        existing_ligand_db : str, optional
+            The path to an existing ligand database to directly fetch
+            ligand parameters. Default is None.
         overwrite : bool, optional
             Whether to overwrite the existing files. Default is False.
         verbose : bool, optional
@@ -4622,7 +4627,7 @@ class MASFESystem(System):
         # for ABFESystem, it will be a single ligand
         # for MBABFE and RBFE, it will be multiple ligands
         for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
-            logger.info(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
+            logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
             # first if self.mols is not empty, then use it as the ligand name
             try:
                 ligand_name = self.mols[ind-1]
@@ -4644,6 +4649,15 @@ class MASFESystem(System):
             mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
+                # try to fetch from existing ligand db
+                if existing_ligand_db is not None:
+                    fetched = ligand.fetch_from_existing_db(existing_ligand_db)
+                    if fetched:
+                        logger.info(f"Fetched parameters for {ligand.name} from existing ligand database {existing_ligand_db}")
+                        continue
+                    else:
+                        logger.info(f"No parameters found for {ligand.name} in existing ligand database {existing_ligand_db}. Generating new parameters.")
+                logger.info(f"Generating parameters for {ligand.name} using {self.ligand_ff} force field.")
                 ligand.prepare_ligand_parameters()
             for ligand_name in ligand_names:
                 self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
@@ -5032,10 +5046,15 @@ class MASFESystem(System):
             logger.debug(f'Preparing pose: {pose}')
             
             sim_config_pose = sim_config.copy(deep=True)
-            os.makedirs(f"{self.fe_folder}/{pose}/ff", exist_ok=True)
-            for file in os.listdir(self.ligandff_folder):
-                shutil.copy(f"{self.ligandff_folder}/{file}",
-                            f"{self.fe_folder}/{pose}/ff/{file}")
+            os.makedirs(f"{self.fe_folder}/{pose}", exist_ok=True)
+            #os.makedirs(f"{self.fe_folder}/{pose}/ff", exist_ok=True)
+            #for file in os.listdir(self.ligandff_folder):
+            #    shutil.copy(f"{self.ligandff_folder}/{file}",
+            #                f"{self.fe_folder}/{pose}/ff/{file}")
+            # create softlink to the ff folder
+            if not os.path.exists(f"{self.fe_folder}/{pose}/ff"):
+                os.symlink(f"{self.fe_folder}/ff",
+                           f"{self.fe_folder}/{pose}/ff")
             
             for component in sim_config.components:
                 logger.debug(f'Preparing component: {component}')

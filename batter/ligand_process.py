@@ -26,6 +26,11 @@ from batter.utils import (
 
 import hashlib
 import re
+import json
+
+FORBIDDEN_MOL_NAMES = {
+    'add', 'all', 'and', 'any'
+}
 
 def _base26_triplet(n: int) -> str:
     """Map nonnegative int -> 3 lowercase letters (base-26, a..z)."""
@@ -62,7 +67,7 @@ def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_
         base = 'l' + base[:2]
 
     # 3) ensure uniqueness
-    if base not in exist_mol_names:
+    if base not in exist_mol_names and base not in FORBIDDEN_MOL_NAMES:
         return base
 
     # Collision: derive from SMILES hash; if still collides, perturb deterministically
@@ -70,13 +75,19 @@ def _convert_mol_name_to_unique(mol_name: str, ind: int, smiles: str, exist_mol_
     attempt = 0
     while attempt < 200:
         candidate = _base26_triplet(seed + attempt)  # letters only, so not all digits
-        if candidate not in exist_mol_names:
+        if candidate not in exist_mol_names and candidate not in FORBIDDEN_MOL_NAMES:
             return candidate
         attempt += 1
 
     # Last resort: index-perturbed triplet (letters only)
-    return _base26_triplet(ind + attempt)
-
+    attempt = 0
+    while attempt < 200:
+        triplet = _base26_triplet(ind + attempt)
+        if triplet not in exist_mol_names and triplet not in FORBIDDEN_MOL_NAMES:
+            return triplet
+        attempt += 1
+    raise ValueError(f"Could not derive unique 3-char name for molecule {mol_name} (smiles: {smiles})")
+    
 class LigandProcessing(ABC):
     """
     Base class for ligand processing.
@@ -104,13 +115,7 @@ class LigandProcessing(ABC):
                 retain_lig_prot=True,
                 ligand_ff='gaff2',
                 unique_mol_names=[],
-                database=None,
                 ):
-
-        if database is not None:
-            self.database = database
-            self.search_for_ligand()
-
         self.ligand_file = ligand_file
         self.index = index
         os.makedirs(output_dir, exist_ok=True)
@@ -169,6 +174,9 @@ class LigandProcessing(ABC):
             'smiles': self.smiles,
             'ligand_sdf_path': self.ligand_sdf_path,
             'ligand_charge': getattr(self, 'ligand_charge', None),
+            'ligand_ff': self.ligand_ff,
+            'ligand_name': self.name,
+            'retain_lig_prot': self.retain_lig_prot,
         }
 
     @abstractmethod
@@ -221,6 +229,9 @@ class LigandProcessing(ABC):
         else:
             raise ValueError(f"Unsupported force field: {self.force_field}. "
                              f"Supported force fields are: amber, openff")
+        # save a json file with ligand info
+        with open(f"{self.output_dir}/{self.name}.json", 'w') as f:
+            json.dump(self.to_dict(), f, indent=4)
 
     def prepare_ligand_parameters_openff(self):
         """
@@ -313,12 +324,49 @@ class LigandProcessing(ABC):
 
         logger.info(f'Ligand {mol} AMBER parameters prepared: {self.output_dir}/{mol}.lib')
 
-    def search_for_ligand(self):
+    def fetch_from_existing_db(self, database):
         """
         Search for the ligand in the database.
+
+        The database is a directory containing ligand files in SDF or MOL2 format.
         """
-        database = self.database
-        raise NotImplementedError("Not implemented yet")
+        # first try to find name match
+        db_files = [f for f in os.listdir(database) if f.endswith(('.frcmod'))]
+        db_names = [os.path.splitext(f)[0] for f in db_files]
+        if self.name in db_names:
+            ligand_info = json.load(open(f"{database}/{self.name}.json"))
+            # check if these matches
+            # 1) charge type
+            # 2) ligand ff
+            if ligand_info['charge_type'] != self.charge:
+                logger.warning(f"Ligand {self.name} found in database {database}, but charge type mismatch: {ligand_info['charge_type']} vs {self.charge}. Will re-parameterize.")
+                return False
+            if ligand_info['ligand_ff'] != self.ligand_ff:
+                logger.warning(f"Ligand {self.name} found in database {database}, but ligand ff mismatch: {ligand_info['ligand_ff']} vs {self.ligand_ff}. Will re-parameterize.")
+                return False
+            # check if smiles
+            if ligand_info['smiles'] != self.smiles:
+                logger.warning(f"Ligand {self.name} found in database {database}, but smiles mismatch: {ligand_info['smiles']} vs {self.smiles}. Will re-parameterize.")
+                return False
+            if not self.retain_lig_prot and ligand_info['retain_lig_prot']:
+                logger.warning(f"Ligand {self.name} found in database {database}, but retain_lig_prot mismatch: {ligand_info['retain_lig_prot']} vs {self.retain_lig_prot}. Will re-parameterize.")
+                return False
+            # check if SDF atom order matches
+            # TODO
+            suffixes = ['frcmod', 'lib', 'prmtop', 'inpcrd', 'mol2', 'pdb', 'json', 'sdf']
+            for suffix in suffixes:
+                if not os.path.exists(f"{database}/{self.name}.{suffix}"):
+                    logger.warning(f"Ligand {self.name} found in database {database}, but {self.name}.{suffix} not found. Will re-parameterize.")
+                    return False
+            for suffix in suffixes:
+                shutil.copy(f"{database}/{self.name}.{suffix}", f"{self.output_dir}/{self.name}.{suffix}")
+            logger.info(f"Ligand {self.name} found in database {database}. Files copied to {self.output_dir}.")
+            return True
+        return False
+            
+
+
+    
 
 class PDB_LigandProcessing(LigandProcessing):
     def _load_ligand(self):
@@ -384,7 +432,6 @@ class LigandFactory:
                       retain_lig_prot=True,
                       ligand_ff='gaff2',
                       unique_mol_names=[],
-                      database=None,
                     ):
         """
         Create a ligand object based on the ligand file format.
@@ -416,9 +463,6 @@ class LigandFactory:
         unique_mol_names : list, optional
             The list of unique molecule names to avoid name conflicts.
             Default is an empty list.
-        database : str, optional
-            The ligand database. Default is None.
-            If provided, the ligand will be searched in the database.
         """
         if ligand_file.lower().endswith('.pdb'):
             raise ValueError("PDB file format is not supported. Please use SDF or MOL2 format.")
@@ -431,7 +475,6 @@ class LigandFactory:
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
                 unique_mol_names=unique_mol_names,
-                database=database,
             )
         elif ligand_file.lower().endswith('.sdf'):
             return SDF_LigandProcessing(
@@ -443,7 +486,6 @@ class LigandFactory:
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
                 unique_mol_names=unique_mol_names,
-                database=database,
             )
         elif ligand_file.lower().endswith('.mol2'):
             return MOL2_LigandProcessing(
@@ -455,7 +497,6 @@ class LigandFactory:
                 retain_lig_prot=retain_lig_prot,
                 ligand_ff=ligand_ff,
                 unique_mol_names=unique_mol_names,
-                database=database,
             )
         else:
             raise ValueError(f"Unsupported ligand file format: {ligand_file}")
@@ -570,8 +611,11 @@ def batch_ligand_process(
         mols.append(ligand.name)
         unique_mol_names.append(ligand.name)
         if overwrite or not os.path.exists(f"{ligandff_folder}/{ligand.name}.frcmod"):
-            #ligand.prepare_ligand_parameters()
             ligands_to_be_prepared.append(ligand)
+        else:
+            with open(f"{ligand.output_dir}/{ligand.name}.json", 'w') as f:
+                json.dump(ligand.to_dict(), f, indent=4)
+
     
     if len(ligands_to_be_prepared) == 0:
         logger.info("All ligands have been processed. Skip ligand parameterization.")
@@ -651,6 +695,9 @@ def batch_ligand_process(
         logger.info('Ligand parametrization with SLURM Cluster completed')
         client.close()
         cluster.close()
-
+    else:
+        for ligand in ligands_to_be_prepared:
+            logger.debug(f'Preparing ligand {ligand.name} parameters locally.')
+            ligand.prepare_ligand_parameters()
 
     logger.info(f"Preparing parameters for {len(ligands_to_be_prepared)} ligands with {ligand_ff} force field.")
