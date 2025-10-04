@@ -313,10 +313,11 @@ class LigandProcessing(ABC):
 
         quit
         """
-        with open(f"{self.output_dir}/tleap.in", 'w') as f:
-            f.write(tleap_script)
-        run_with_log(f"{tleap} -f tleap.in",
-                        working_dir=self.output_dir)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(f"{tmpdir}/tleap.in", 'w') as f:
+                f.write(tleap_script)
+            run_with_log(f"{tleap} -f tleap.in",
+                            working_dir=tmpdir)
         
         # save ligand atomnames from pdb file for future reference 
         lig_u = mda.Universe(f"{self.output_dir}/{mol}.pdb")
@@ -510,7 +511,7 @@ def batch_ligand_process(
     ligand_ff: str = 'gaff2',
     overwrite: bool = False,
     run_with_slurm: bool = False,
-    max_slurm_jobs: int = 100,
+    max_slurm_jobs: int = 50,
     run_with_slurm_kwargs: dict = None,
     job_extra_directives: list = None,
 ):
@@ -540,7 +541,7 @@ def batch_ligand_process(
         Default is False.
     max_slurm_jobs : int, optional
         The maximum number of SLURM jobs to submit.
-        Default is 100.
+        Default is 50.
     run_with_slurm_kwargs : dict, optional
         The keyword arguments for the SLURM job submission.
         Default is None.
@@ -634,8 +635,8 @@ def batch_ligand_process(
             # https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.SLURMCluster.html
             'n_workers': n_workers,
             'queue': 'owners',
-            'cores': 1,
-            'memory': '5GB',
+            'cores': 2,
+            'memory': '10GB',
             'walltime': '00:30:00',
             'processes': 1,
             'nanny': False,
@@ -690,7 +691,7 @@ def batch_ligand_process(
         
         logger.info(f'{len(futures)} parametrization jobs submitted to SLURM Cluster')
         logger.info('Waiting for parametrization jobs to complete...')
-        _ = client.gather(futures, errors='skip')
+        _ = client.gather(futures, errors='raise')
         
         logger.info('Ligand parametrization with SLURM Cluster completed')
         client.close()

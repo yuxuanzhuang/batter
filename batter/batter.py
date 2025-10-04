@@ -1101,7 +1101,6 @@ class System:
                 else:
                     mol_name = self.unique_mol_names[0]
                 # align to the system
-
                 u = mda.Universe(pose)
 
                 try:
@@ -1895,14 +1894,18 @@ class System:
         if len(builders) == 0:
             logger.info('No new FE window systems to build.')
             return
-        with tqdm_joblib(tqdm(
-            total=len(builders),
-            desc="Preparing FE windows",
-            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
-            n_workers = min(self.n_workers, len(builders))
-            Parallel(n_jobs=n_workers, backend='loky')(
-                delayed(builder.build)() for builder in builders
-            )
+        if True:
+            with tqdm_joblib(tqdm(
+                total=len(builders),
+                desc="Preparing FE windows",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]")) as pbar:
+                n_workers = min(self.n_workers, len(builders))
+                Parallel(n_jobs=n_workers, backend='loky')(
+                    delayed(builder.build)() for builder in builders
+                )
+        else:
+            for builder in tqdm(builders, desc="Preparing FE windows"):
+                builder.build()
 
     def _prepare_fe_system(self):
         """
