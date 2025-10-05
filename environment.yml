@@ -15,6 +15,7 @@ dependencies:
   - pandas
   - alchemlyb
   - vmd
+  - apbs
   # dask distributed for analysis
   - dask
   - dask-jobqueue

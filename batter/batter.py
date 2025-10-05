@@ -37,8 +37,7 @@ from batter.utils import (
     run_with_log,
     save_state,
     safe_directory,
-    natural_keys
-
+    natural_keys,
 )
 
 from batter.utils import (
@@ -2453,8 +2452,9 @@ class System:
                     pose: str = None,
                     sim_range: Optional[Tuple[int, int]] = None,
                     raise_on_error: bool = True,
-                    mol: str = 'LIG',
-                    n_workers: int = 4):
+                    mol: str = 'lig',
+                    n_workers: int = 4,
+                    input_dict: dict = None):
         """
         Analyze the free energy results for one pose
         Parameters
@@ -2467,13 +2467,13 @@ class System:
         raise_on_error : bool
             Whether to raise an error if the analysis fails.
         mol : str
-            The molecule to analyze. Default is 'LIG'.
+            The molecule to analyze. Default is 'lig'.
             This is used to set the legend of the plot.
         n_workers : int
             The number of workers to use for parallel processing.
             Default is 4.
         """
-        input_dict = {
+        input_dict_pose = {
             'fe_folder': self.fe_folder,
             'components': self.sim_config.components,
             'rest': self.sim_config.rest,
@@ -2483,10 +2483,12 @@ class System:
             'raise_on_error': raise_on_error,
             'n_workers': n_workers,
         }
+        if input_dict is not None:
+            input_dict_pose.update(input_dict)
         analyze_pose_task(
             pose=pose,
             mol=mol,
-            **input_dict
+            **input_dict_pose
         )
         
                 
@@ -2560,7 +2562,19 @@ class System:
                     continue
         else:
             unfinished_poses = self.all_poses
-        
+
+        input_dict = {
+            'fe_folder': self.fe_folder,
+            'components': self.sim_config.components,
+            'rest': self.sim_config.rest,
+            'temperature': self.sim_config.temperature,
+            'water_model': self.sim_config.water_model,
+            'rocklin_correction': self.sim_config.rocklin_correction,
+            'component_windows_dict': self.component_windows_dict,
+            'sim_range': sim_range,
+            'raise_on_error': raise_on_error,
+        }
+
         if run_with_slurm and len(unfinished_poses) > 0:
             logger.info('Running analysis with SLURM Cluster')
             from dask_jobqueue import SLURMCluster
@@ -2589,6 +2603,7 @@ class System:
                 ],
                 # 'account': 'your_slurm_account',
             }
+            input_dict['n_workers'] = slurm_kwargs['cores']
             if run_with_slurm_kwargs is not None:
                 slurm_kwargs.update(run_with_slurm_kwargs)
             if job_extra_directives is not None:
@@ -2616,18 +2631,9 @@ class System:
                 cluster.scale(jobs=len(client.scheduler_info()['workers']))
 
             futures = []
-            input_dict = {
-                'fe_folder': self.fe_folder,
-                'components': self.sim_config.components,
-                'rest': self.sim_config.rest,
-                'temperature': self.sim_config.temperature,
-                'component_windows_dict': self.component_windows_dict,
-                'sim_range': sim_range,
-                'raise_on_error': raise_on_error,
-                'n_workers': slurm_kwargs['cores'],
-            }
             for pose in unfinished_poses:
-                mol = self.pose_ligand_dict.get(pose, 'LIG')
+                bound_ind = self.bound_poses.index(pose)
+                mol = self.bound_mols[bound_ind]
                 logger.debug(f'Submitting analysis for pose: {pose}')
                 fut = client.submit(
                     analyze_single_pose_dask_wrapper,
@@ -2654,14 +2660,16 @@ class System:
                 desc='Analyzing FE for poses',
             )
             for pose in unfinished_poses:
-                mol = self.pose_ligand_dict.get(pose, 'LIG')
+                bound_ind = self.bound_poses.index(pose)
+                mol = self.bound_mols[bound_ind]
                 pbar.set_postfix(pose=pose)
                 self.analyze_pose(
                     pose=pose,
+                    mol=mol,
                     sim_range=sim_range,
                     raise_on_error=raise_on_error,
-                    mol=mol,
-                    n_workers=self.n_workers
+                    n_workers=self.n_workers,
+                    input_dict=input_dict
                 )
     
         # sort self.fe_sults by pose
@@ -4927,6 +4935,8 @@ def analyze_single_pose_dask_wrapper(pose, mol, input_dict):
     components = input_dict.get('components')
     rest = input_dict.get('rest')
     temperature = input_dict.get('temperature')
+    water_model = input_dict.get('water_model')
+    rocklin_correction = input_dict.get('rocklin_correction', False)
     component_windows_dict = input_dict.get('component_windows_dict')
     sim_range = input_dict.get('sim_range', None)
     raise_on_error = input_dict.get('raise_on_error', True)
@@ -4938,6 +4948,8 @@ def analyze_single_pose_dask_wrapper(pose, mol, input_dict):
         components=components,
         rest=rest,
         temperature=temperature,
+        water_model=water_model,
+        rocklin_correction=rocklin_correction,
         component_windows_dict=component_windows_dict,
         sim_range=sim_range,
         raise_on_error=raise_on_error,
@@ -4954,7 +4966,9 @@ def analyze_pose_task(
                 components: List[str],
                 rest: Tuple[float, float, float, float, float],
                 temperature: float,
+                water_model: str,
                 component_windows_dict: "ComponentWindowsDict",
+                rocklin_correction: bool = False,
                 sim_range: Tuple[int, int] = None,
                 raise_on_error: bool = True,
                 mol: str = 'LIG',
@@ -4975,6 +4989,8 @@ def analyze_pose_task(
         The restraint values for the pose.
     temperature : float
         The temperature of the simulation in Kelvin.
+    rocklin_correction : bool
+        Whether to apply the Rocklin correction for charged ligands.
     sim_range : tuple
         The range of simulations to analyze.
         If files are missing from the range, the analysis will fail.
@@ -5111,6 +5127,41 @@ def analyze_pose_task(
         fe_std = np.nan
         fe_timeseries_fe_value = np.zeros(LEN_FE_TIMESERIES) * np.nan
         fe_timeseries_std = np.zeros(LEN_FE_TIMESERIES) * np.nan
+
+    if rocklin_correction == 'yes':
+        from batter.analysis.rocklin import run_rocklin_correction
+        # only implement for single charged ligand system
+        # in component `y`
+        if 'y' not in components:
+            raise ValueError('Rocklin correction is only implemented for single charged ligand system in component `y`')
+        
+        universe = mda.Universe(
+            f'{fe_folder}/{pose}/sdr/y-1/full.prmtop',
+            f'{fe_folder}/{pose}/sdr/y-1/eq_output.pdb'
+        )
+        box = universe.dimensions[:3]
+        lig_ag = universe.select_atoms(f'resname {mol}')
+        if len(lig_ag) == 0:
+            raise ValueError(f'No ligand atoms found in the system for Rocklin correction with resname {mol}')
+        lig_netq = int(round(lig_ag.total_charge()))
+        other_ag = universe.atoms - lig_ag
+        other_netq = int(round(other_ag.total_charge()))
+        if lig_netq == 0:
+            logger.info('Neutral ligand found; skipping Rocklin correction.')
+        else:
+            corr = run_rocklin_correction(
+                universe=universe,
+                mol_name=mol,
+                box=box,
+                lig_netq=lig_netq,
+                other_netq=other_netq,
+                temp=temperature,
+                water_model=water_model
+            )
+            # fe_value is negative of solvation free energy
+            fe_value += corr
+            results_entries.append(f'Rocklin\t{corr:.2f}\t0.00')
+            fe_timeseries_fe_value += corr
 
     results_entries.append(
         f'Total\t{fe_value:.2f}\t{fe_std:.2f}'
