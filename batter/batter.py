@@ -1072,6 +1072,7 @@ class System:
                 raise FileNotFoundError("Equilibration not finished yet. First run the equilibration.")
                 
             sim_config_eq = json.load(open(f"{self.equil_folder}/sim_config.json"))
+            sim_config = self.sim_config
             if sim_config_eq != sim_config.model_dump():
             # raise ValueError(f"Equilibration and free energy simulation configurations are different")
                 warnings.warn("Equilibration and free energy simulation configurations are different")
