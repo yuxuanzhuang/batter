@@ -25,15 +25,15 @@ class SimulationConfig(BaseModel):
     p2: str = Field("", description="Protein anchor P2")
     p3: str = Field("", description="Protein anchor P3")
 
-    ligand_list: List[str] = Field(default_factory=list, description="List of ligands")
     other_mol: List[str] = Field(default_factory=list, description="Other co-binding molecules")
+    lipid_mol: List[str] = Field(default_factory=list, description="Lipid molecules")
     solv_shell: Optional[float] = Field(
         None, description="Water molecules around the protein that will be kept in the initial structure (in angstroms)"
     )
     # whether to use rocklin correction for charged ligands when running dd
     rocklin_correction: str = Field(default="no", description="Apply Rocklin correction for charged ligands (yes or no)")
     # Variables for setting up equilibrium and free energy calculations, also used on analysis
-    fe_type: str = Field(..., description="Free energy type (rest, dd, sdr, etc.)")
+    fe_type: str = Field('uno_rest', description="Free energy type (rest, dd, sdr, etc.)")
     remd: Optional[str] = Field('no', description="H-REMD (yes or no)")
     components: List[str] = Field(
         default_factory=list,
@@ -88,19 +88,19 @@ class SimulationConfig(BaseModel):
 
     # Simulation parameters
     hmr: str = Field("no", description="Apply hydorgen mass repartitioning (yes/no)")
-    temperature: float = Field(..., description="Simulation temperature")
+    temperature: float = Field(310, description="Simulation temperature")
     # n_steps
-    eq_steps1: int = Field(0, description="Number of steps for equilibration stage 1")
-    eq_steps2: int = Field(0, description="Number of steps for equilibration stage 2")
+    eq_steps1: int = Field(500000, description="Number of steps for equilibration stage 1")
+    eq_steps2: int = Field(1000000, description="Number of steps for equilibration stage 2")
     n_steps_dict: Dict[str, int] = Field(
         default_factory=lambda: {
-            f"{comp}_steps{ind}": 0 for comp in FEP_COMPONENTS for ind in ["1", "2"]
+            f"{comp}_steps{ind}": 50000 if ind == "1" else 1000000 for comp in FEP_COMPONENTS for ind in ["1", "2"]
         },
         description="Number of steps for each stage in AMBER and eq"
     )
     n_iter_dict: Dict[str, int] = Field(
         default_factory=lambda: {
-            f"{comp}_itera{ind}": 0 for comp in FEP_COMPONENTS for ind in ["1", "2"]
+            f"{comp}_itera{ind}": 50000 if ind == "1" else 1000000 for comp in FEP_COMPONENTS for ind in ["1", "2"]
         },
         description="Number of steps for each stage in OpenMM"
     )
@@ -138,13 +138,22 @@ class SimulationConfig(BaseModel):
     barostat: str = Field('2', description="type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)")
     dt: str = Field('0.004', description="time step in ps")
     num_fe_range: int = Field(10, description="Number of free energy simulations restarts to run for each lambda; total simulation steps will be num_fe_range * n_steps")
+    
 
     # OpenMM specific options for production simulations
     itcheck: str = Field('100', description="write checkpoint file every itcheck iterations")
 
+    # simulation related
+    receptor_ff: str = Field("ff14SB", description="Force field for the receptor")
+    ligand_ff: str = Field("gaff2", description="Force field for the ligand")
+    lipid_ff: str = Field("lipid21", description="Force field for the lipids")
+
+
     # Internal usage
+    system_name: str = Field("system", description="System name")
+    partition: str = Field("general", description="Partition to use")
+    ligand_dict: Dict[str, Any] = Field(default_factory=dict, description="Ligand dictionary")
     weights: List[float] = Field(default_factory=list, description="Gaussian quadrature weights for TI")
-    mols: List[str] = Field(default_factory=list, description="Molecules")
     rng: int = Field(0, description="Range of release_eq")
     ion_def: List[Any] = Field(default_factory=list, description="Ion definition")
     poses_def: List[str] = Field(default_factory=list, description="Poses definition")
@@ -155,6 +164,10 @@ class SimulationConfig(BaseModel):
     rest: List[float] = Field(default_factory=list, description="Rest definition")
     celp_st: Union[List[str], str] = Field(default_factory=list, description="Choose CELPP receptor in upper case or pdb code in lower case")
     neut: str = Field("", description="Neutralize")
+    membrane_simulation: bool = Field(True, description="Is this a membrane simulation?")
+    protein_align: str = Field("name CA", description="Protein used for alignment")
+    receptor_segment: Optional[str] = Field(None, description="Receptor segment for protein to be embedded in the membrane")
+
 
     # Number of simulations, 1 equilibrium and 1 production
     apr_sim: int = Field(2, description="Number of simulations")
@@ -199,10 +212,12 @@ class SimulationConfig(BaseModel):
         # (Deprecated CELPP logic omitted as in original)
 
         for comp in FEP_COMPONENTS:
-            self.dic_steps1.update({f'{comp}': self.n_steps_dict[f'{comp}_steps1']})
-            self.dic_steps2.update({f'{comp}': self.n_steps_dict[f'{comp}_steps2']})
-            self.dic_itera1.update({f'{comp}': self.n_iter_dict[f'{comp}_itera1']})
-            self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
+            if f'{comp}_steps1' in self.n_steps_dict:
+                self.dic_steps1.update({f'{comp}': self.n_steps_dict[f'{comp}_steps1']})
+                self.dic_steps2.update({f'{comp}': self.n_steps_dict[f'{comp}_steps2']})
+            if f'{comp}_itera1' in self.n_iter_dict:
+                self.dic_itera1.update({f'{comp}': self.n_iter_dict[f'{comp}_itera1']})
+                self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
 
         self.rest = [
             self.rec_dihcf_force,
@@ -280,7 +295,8 @@ class SimulationConfig(BaseModel):
                 raise ValueError(
                     "Invalid fe_type: {self.fe_type}. Must be one of "
                     "'rest', 'dd', 'sdr', 'dd-rest', 'sdr-rest', "
-                    "'express', 'relative', 'uno', 'uno_com', 'uno_rest', 'self', 'uno_dd', or 'custom'."
+                    "'express', 'relative', 'uno', 'uno_com', 'uno_rest', 'self', 'uno_dd',"
+                    "'asfe' or 'custom'."
                 )
 
         for comp in self.components:
@@ -299,8 +315,6 @@ class SimulationConfig(BaseModel):
         
         logger.debug('------------------ Simulation Configuration ------------------')
         logger.debug(f'Software: {self.software}')
-        logger.debug(f'Receptor/complex structures: {self.celp_st}')
-        logger.debug(f'Ligand names: {self.mols}')
         logger.debug(f'Cobinders names: {self.other_mol}')
         logger.debug('--------------------------------------------------------------')
         logger.debug('Finished initializing simulation configuration.')

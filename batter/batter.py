@@ -67,6 +67,30 @@ COMPONENT_DIRECTION_DICT = {
     'Boresch': -1,
 }
 
+class ProxyAttr:
+    """Descriptor that proxies attribute access to obj.<target>.<name>."""
+    def __init__(self, target: str, name: str):
+        self.target = target
+        self.name = name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return getattr(getattr(obj, self.target), self.name)
+
+    def __set__(self, obj, value):
+        setattr(getattr(obj, self.target), self.name, value)
+
+
+def proxy_to(target: str, names: list[str]):
+    """Class decorator to add ProxyAttr descriptors for each name."""
+    def deco(cls):
+        for n in names:
+            setattr(cls, n, ProxyAttr(target, n))
+        return cls
+    return deco
+
+@proxy_to('sim_config', SimulationConfig.__annotations__.keys())
 class System:
     """
     A class to represent and process a Free Energy Perturbation (FEP) system.
@@ -149,7 +173,7 @@ class System:
 
     @safe_directory
     @save_state
-    def create_non_membrane_system(
+    def create_system(
                     self,
                     system_name: str,
                     protein_input: str,
@@ -164,6 +188,7 @@ class System:
                     retain_lig_prot: bool = True,
                     ligand_ph: float = 7.4,
                     ligand_ff: str = 'gaff2',
+                    existing_ligand_db: str = None,
                     lipid_mol: List[str] = [],
                     lipid_ff: str = 'lipid21',
                     overwrite: bool = False,
@@ -230,6 +255,8 @@ class System:
             Parameter set for the ligand. Default is 'gaff2'.
             Options are 'gaff' and 'gaff2' and openff force fields.
             See https://github.com/openforcefield/openff-forcefields for full list.
+        existing_ligand_db : str, optional
+            Path to an existing ligand database to fetch parameters.
         lipid_mol : List[str], optional
             List of lipid molecules to be included in the simulations.
             Default is an empty list.
@@ -277,14 +304,16 @@ class System:
         
         # always store a unique identifier for the ligand
         if isinstance(ligand_paths, list):
-            self._ligand_list = {
+            self.ligand_dict = {
                 f'lig{i}': self._convert_2_relative_path(path)
                 for i, path in enumerate(ligand_paths)
             }
         elif isinstance(ligand_paths, dict):
-            self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
+            self.ligand_dict = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
+        else:
+            raise ValueError("ligand_paths must be a list or a dictionary")
         self.receptor_segment = receptor_segment
-        self._protein_align = protein_align
+        self.protein_align = protein_align
         self.receptor_ff = receptor_ff
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ph = ligand_ph
@@ -293,9 +322,9 @@ class System:
 
         self.lipid_mol = lipid_mol
         if not self.lipid_mol:
-            self._membrane_simulation = False
+            self.membrane_simulation = False
         else:
-            self._membrane_simulation = True
+            self.membrane_simulation = True
 
         # check input existence
         if not os.path.exists(self.protein_input):
@@ -404,295 +433,23 @@ class System:
             mols.append(ligand.name)
             self.unique_mol_names.append(ligand.name)
             if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
-                ligand.prepare_ligand_parameters()
+                # try to fetch from existing ligand db
+                if existing_ligand_db is not None:
+                    fetched = ligand.fetch_from_existing_db(existing_ligand_db)
+                    if fetched:
+                        logger.info(f"Fetched parameters for {ligand.name} from existing ligand database {existing_ligand_db}")
+                    else:
+                        logger.info(f"No parameters found for {ligand.name} in existing ligand database {existing_ligand_db}. Generating new parameters.")
+                        ligand.prepare_ligand_parameters()
+                else:
+                    logger.info(f"Generating parameters for {ligand.name} using {self.ligand_ff} force field.")
+                    ligand.prepare_ligand_parameters()
             for ligand_name in ligand_names:
-                self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
+                self.ligand_dict[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
 
         logger.debug( f"Unique ligand names: {self.unique_mol_names} ")
         logger.debug('updating the ligand paths')
-        logger.debug(self.ligand_list)
-
-        self._mols = mols
-        # update self.mols to output_dir/mols.txt
-        with open(f"{self.output_dir}/mols.txt", 'w') as f:
-            for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items()):
-                f.write(f"pose{ind}\t{self._mols[ind]}\t{ligand_path}\t{ligand_names}\n")
-        self._prepare_ligand_poses()
-
-        # always get the anchor atoms from the first pose
-        u_prot = mda.Universe(f'{self.output_dir}/all-poses/reference.pdb')
-        u_lig = mda.Universe(f'{self.output_dir}/all-poses/pose0.pdb')
-        lig_sdf = f'{self.ligandff_folder}/{self.mols[0]}.sdf'
-        l1_x, l1_y, l1_z, p1, p2, p3, l1_range = self._find_anchor_atoms(
-                    u_prot,
-                    u_lig,
-                    lig_sdf,
-                    anchor_atoms,
-                    ligand_anchor_atom)
-
-        self.anchor_atoms = anchor_atoms
-        self.ligand_anchor_atom = ligand_anchor_atom
-
-        self.l1_x = l1_x
-        self.l1_y = l1_y
-        self.l1_z = l1_z
-
-        self.p1 = p1
-        self.p2 = p2
-        self.p3 = p3
-
-        self.l1_range = l1_range
-        
-        logger.info('System loaded and prepared')
-
-
-    @safe_directory
-    @save_state
-    def create_system(
-                    self,
-                    system_name: str,
-                    protein_input: str,
-                    system_topology: str,
-                    ligand_paths: Union[List[str], dict[str, str]],
-                    anchor_atoms: List[str],
-                    ligand_anchor_atom: str = None,
-                    receptor_segment: str = None,
-                    system_coordinate: str = None,
-                    protein_align: str = 'name CA and resid 60 to 250',
-                    receptor_ff: str = 'protein.ff14SB',
-                    retain_lig_prot: bool = True,
-                    ligand_ph: float = 7.4,
-                    ligand_ff: str = 'gaff2',
-                    lipid_mol: List[str] = [],
-                    lipid_ff: str = 'lipid21',
-                    overwrite: bool = False,
-                    verbose: bool = False,
-                    ):
-        """
-        Create a new single-ligand single-receptor system.
-
-        Parameters
-        ----------
-        protein_input : str
-            Path to the protein file in PDB format.
-            It should be exported from Maestro,
-            which means the protonation states of the protein are assigned.
-            Water and ligand can be present in the file,
-            but they will be removed during preparation.
-        system_topology : str
-            PDB file of a prepared simulation system with `dabble`.
-            The ligand does not need to be present.
-        system_coordinate : str
-            The coordinate file for the system.
-            The coordiantes and box dimensions will be used for the system.
-            It can be an INPCRD file prepared from `dabble` or
-            it can be a snapshot of the equilibrated system.
-            If it is not provided, the coordinates from the system_topology
-            will be used if available.
-        ligand_paths : List[str] or Dict[str, str]
-            List of ligand files. It can be either PDB, mol2, or sdf format.
-            It will be stored in the `all-poses` folder as `pose0.pdb`,
-            `pose1.pdb`, etc.
-            If it's a dictionary, the keys will be used as the ligand names
-            and the values will be the ligand files.
-        anchor_atoms : List[str], optional
-            The list of three protein anchor atoms (selection strings)
-            used to restrain ligand.
-            It will also be used to set l1x, l1y, l1z values that defines
-            the binding pocket.
-        ligand_anchor_atom : str, optional
-            The ligand anchor atom (selection string) used as a potential
-            ligand anchor atom.
-            Default is None and will use the atom that is closest to the
-            center of mass of the ligand.
-            Note only the first ligand in the ligand_paths will be used
-            to create the binding pocket.
-        receptor_segment : str
-            The segment of the receptor in the system_topology.
-            It will be used to set the protein anchor for the ligand.
-            Default is None, which means all protein atoms will be used.
-            Warning: if the protein for acnhoring
-            is not the first protein entry of the system_topology,
-            it will cause problems when bat.py is trying to 
-            get the protein anchor.
-        protein_align : str
-            The selection string for aligning the protein to the system.
-            Default is 'name CA and resid 60 to 250'.
-        receptor_ff: str
-            Force field for the protein atoms.
-            Default is 'protein.ff14SB'.
-        retain_lig_prot : bool, optional
-            Whether to retain hydrogens in the ligand. Default is True.
-        ligand_ph : float, optional
-            pH value for protonating the ligand. Default is 7.4.
-        ligand_ff : str, optional
-            Parameter set for the ligand. Default is 'gaff2'.
-            Options are 'gaff' and 'gaff2' and openff force fields.
-            See https://github.com/openforcefield/openff-forcefields for full list.
-        lipid_mol : List[str], optional
-            List of lipid molecules to be included in the simulations.
-            Default is an empty list.
-        lipid_ff : str, optional
-            Force field for lipid atoms. Default is 'lipid21'.
-        overwrite : bool, optional
-            Whether to overwrite the existing files. Default is False.
-        verbose : bool, optional
-            The verbosity of the output. If True, it will print the debug messages.
-            Default is False.
-        """
-        # fail late on import openff
-        try:
-            from openff.toolkit import Molecule
-        except:
-            raise ImportError("OpenFF toolkit is not installed. Please install it with `conda install -c conda-forge openff-toolkit-base`")
-
-        # Log every argument
-        if verbose:
-            logger.remove()
-            logger.add(sys.stdout, level='DEBUG')
-            logger.add(f"{self.output_dir}/batter.log", level='DEBUG')
-            logger.debug('Verbose mode is on')
-            logger.debug('Creating a new system')
-
-        self.verbose = verbose
-        frame = inspect.currentframe()
-        args, _, _, values = inspect.getargvalues(frame)
-        
-        for arg in args:
-            logger.info(f"{arg}: {values[arg]}")
-
-        if self._eq_prepared or self._fe_prepared:
-            if not overwrite:
-                raise ValueError("The system has been prepared for equilibration or free energy simulations. "
-                                 "Set overwrite=True to overwrite the existing system or skip `create_system` step.")
-                                                 
-        self.system_name = system_name
-        self._protein_input = self._convert_2_relative_path(protein_input)
-        self._system_topology = self._convert_2_relative_path(system_topology)
-        if system_coordinate is not None:
-            self._system_coordinate = self._convert_2_relative_path(system_coordinate)
-        else:
-            self._system_coordinate = None
-        
-        # always store a unique identifier for the ligand
-        if isinstance(ligand_paths, list):
-            self._ligand_list = {
-                f'lig{i}': self._convert_2_relative_path(path)
-                for i, path in enumerate(ligand_paths)
-            }
-        elif isinstance(ligand_paths, dict):
-            self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
-        self.receptor_segment = receptor_segment
-        self._protein_align = protein_align
-        self.receptor_ff = receptor_ff
-        self.retain_lig_prot = retain_lig_prot
-        self.ligand_ph = ligand_ph
-        self.ligand_ff = ligand_ff
-        self.overwrite = overwrite
-
-        # check input existence
-        if not os.path.exists(self.protein_input):
-            raise FileNotFoundError(f"Protein input file not found: {protein_input}")
-        if not os.path.exists(self.system_topology):
-            raise FileNotFoundError(f"System input file not found: {system_topology}")
-        for ligand_path in self.ligand_paths:
-            if not os.path.exists(ligand_path):
-                raise FileNotFoundError(f"Ligand file not found: {ligand_path}")
-                
-        logger.info(f"# {len(self.ligand_paths)} ligands.")
-        self._process_ligands()
-
-        if system_coordinate is not None and not os.path.exists(system_coordinate):
-            raise FileNotFoundError(f"System coordinate file not found: {system_coordinate}")
-        
-        u_sys = mda.Universe(self.system_topology, format='XPDB')
-        if system_coordinate is not None:
-            # read last line of inpcrd file to get dimensions
-            with open(system_coordinate) as f:
-                lines = f.readlines()
-                box = np.array([float(x) for x in lines[-1].split()])
-            self.system_dimensions = box
-            u_sys.load_new(system_coordinate, format='INPCRD')
-        else:
-            self.system_dimensions = u_sys.dimensions[:3]
-
-        if (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self.system_coordinate is None:
-            raise ValueError(f"No dimension of the box was found in the system_topology or system_coordinate")
-
-        os.makedirs(f"{self.poses_folder}", exist_ok=True)
-        u_sys.atoms.write(f"{self.poses_folder}/system_input.pdb")
-        self._system_input_pdb = f"{self.poses_folder}/system_input.pdb"
-        os.makedirs(f"{self.ligandff_folder}", exist_ok=True)
-        
-        # copy dummy atom parameters to the ligandff folder
-        os.system(f"cp {build_files_orig}/dum.mol2 {self.ligandff_folder}")
-        os.system(f"cp {build_files_orig}/dum.frcmod {self.ligandff_folder}")
-
-        from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
-        available_amber_ff = ['gaff', 'gaff2']
-        available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if 'openff' in ff]
-        if ligand_ff not in available_amber_ff + available_openff_ff:
-            raise ValueError(f"Unsupported force field: {ligand_ff}. "
-                             f"Supported force fields are: {available_amber_ff + available_openff_ff}")
-
-        self.lipid_mol = lipid_mol
-        if not self.lipid_mol:
-            self._membrane_simulation = False
-        else:
-            self._membrane_simulation = True
-        self.lipid_ff = lipid_ff
-        if self.lipid_ff != 'lipid21':
-            raise ValueError(f"Invalid lipid_ff: {self.lipid_ff}"
-                             "Only 'lipid21' is available")
-
-        # Prepare the membrane parameters
-        if self.membrane_simulation:
-            self._prepare_membrane()
-
-        self._process_protein()
-        self._get_alignment()
-
-        if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
-            self._process_system()
-        
-        from batter.ligand_process import LigandFactory
-        
-        self.unique_mol_names = []
-        mols = []
-        # only process the unique ligand paths
-        # for ABFESystem, it will be a single ligand
-        # for MBABFE and RBFE, it will be multiple ligands
-        for ind, (ligand_path, ligand_names) in enumerate(self._unique_ligand_paths.items(), start=1):
-            logger.debug(f'Processing ligand {ind}: {ligand_path} for {ligand_names}')
-            # first if self.mols is not empty, then use it as the ligand name
-            try:
-                ligand_name = self.mols[ind-1]
-            except:
-                ligand_name = ligand_names[0]
-
-            ligand_factory = LigandFactory()
-            ligand = ligand_factory.create_ligand(
-                    ligand_file=ligand_path,
-                    index=ind,
-                    output_dir=self.ligandff_folder,
-                    ligand_name=ligand_name,
-                    retain_lig_prot=self.retain_lig_prot,
-                    ligand_ff=self.ligand_ff,
-                    unique_mol_names=self.unique_mol_names
-            )
-            self._ligand_objects[ligand_name] = ligand
-
-            mols.append(ligand.name)
-            self.unique_mol_names.append(ligand.name)
-            if self.overwrite or not os.path.exists(f"{self.ligandff_folder}/{ligand.name}.frcmod"):
-                logger.info(f'Preparing parameters for ligand {ligand.name}')
-                ligand.prepare_ligand_parameters()
-            for ligand_name in ligand_names:
-                self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
-
-        logger.debug( f"Unique ligand names: {self.unique_mol_names} ")
-        logger.debug('updating the ligand paths')
-        logger.debug(self.ligand_list)
+        logger.debug(self.ligand_dict)
 
         self._mols = mols
         # update self.mols to output_dir/mols.txt
@@ -734,15 +491,18 @@ class System:
         return os.path.relpath(path, self.output_dir)
 
     @property
-    def protein_align(self):
+    def sim_config(self):
         try:
-            return self._protein_align
+            return self._sim_config
         except AttributeError:
-            return 'name CA'
+            self._sim_config = SimulationConfig()
+            return self._sim_config
     
-    @protein_align.setter
-    def protein_align(self, value):
-        self._protein_align = value
+    @sim_config.setter
+    def sim_config(self, config: SimulationConfig):
+        if not isinstance(config, SimulationConfig):
+            raise ValueError("sim_config must be an instance of SimulationConfig")
+        self._sim_config = config    
 
     @property
     def extra_restraints(self):
@@ -782,14 +542,7 @@ class System:
         """
         The paths to the ligand files.
         """
-        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self._ligand_list.values()]
-    
-    @property
-    def ligand_list(self):
-        """
-        A dictionary of ligands.
-        """
-        return self._ligand_list
+        return [f"{self.output_dir}/{ligand_path}" for ligand_path in self.ligand_dict.values()]
     
     @property
     def pose_ligand_dict(self):
@@ -800,7 +553,7 @@ class System:
             return self._pose_ligand_dict
         except AttributeError:
             return {pose.split('/')[-1].split('.')[0]: ligand
-                    for ligand, pose in self.ligand_list.items()}
+                    for ligand, pose in self.ligand_dict.items()}
 
     @property
     def ligand_pose_dict(self):
@@ -814,7 +567,7 @@ class System:
         """
         The names of the ligands.
         """
-        return list(self._ligand_list.keys())
+        return list(self.ligand_dict.keys())
     
     @property
     def all_poses(self):
@@ -850,17 +603,6 @@ class System:
             self._check_equilbration_binding()
             return self._bound_mols
         
-    @property
-    def membrane_simulation(self):
-        """
-        Whether the system is a membrane simulation.
-        Default to True
-        """
-        try:
-            return self._membrane_simulation
-        except AttributeError:
-            return True
-
     def _process_ligands(self):
         """
         Process the ligands to get the ligand paths.
@@ -1094,8 +836,8 @@ class System:
         """
         logger.debug('prepare ligand poses')
         with self._change_dir(self.output_dir):
-            new_ligand_list = {}
-            for i, (name, pose) in enumerate(self.ligand_list.items()):
+            new_ligand_dict = {}
+            for i, (name, pose) in enumerate(self.ligand_dict.items()):
                 if len(self.unique_mol_names) > 1:
                     mol_name = self.unique_mol_names[i]
                 else:
@@ -1120,8 +862,8 @@ class System:
                 if not os.path.exists(f"{self.poses_folder}/pose{i}.pdb"):
                     shutil.copy(pose, f"{self.poses_folder}/pose{i}.pdb")
 
-                new_ligand_list[name] = pose
-            self._ligand_list = new_ligand_list
+                new_ligand_dict[name] = pose
+            self.ligand_dict = new_ligand_dict
 
     def _align_2_system(self, mobile_atoms):
 
@@ -1185,6 +927,17 @@ class System:
             sim_config.p3 = self.p3
         except:
             logger.debug('cannot set l1_x, l1_y, l1_z, p1, p2, p3 in sim_config')
+        
+        sim_config.system_name = self.system_name
+        sim_config.ligand_dict = self.ligand_dict
+        sim_config.membrane_simulation = self.membrane_simulation
+        sim_config.protein_align = self.protein_align
+        sim_config.receptor_segment = self.receptor_segment
+        sim_config.receptor_ff = self.receptor_ff
+        sim_config.lipid_ff = self.lipid_ff
+        sim_config.ligand_ff = self.ligand_ff
+        sim_config.lipid_mol = self.lipid_mol
+        sim_config.poses_list = self.poses_list
                  
         self.sim_config = sim_config
 
@@ -1255,11 +1008,6 @@ class System:
             self._get_sim_config(input_file)
             self._component_windows_dict = ComponentWindowsDict(self)
         
-        try:
-            sim_config = self.sim_config
-        except AttributeError:
-            raise ValueError("Simulation configuration is not set. "
-                             "Please provide an input file")
         if win_info_dict is not None:
             for key, value in win_info_dict.items():
                 if key not in self._component_windows_dict:
@@ -1764,9 +1512,9 @@ class System:
                 continue
             equil_builder = builders_factory.get_builder(
                 stage='equil',
-                system=self,
                 pose=pose,
                 sim_config=sim_config,
+                component_windows_dict=self.component_windows_dict,
                 working_dir=f'{self.equil_folder}',
                 infe = (self.rmsf_restraints is not None) or (self.extra_conformation_restraints is not None)
             )
@@ -1831,9 +1579,9 @@ class System:
                     stage='fe',
                     win=-1,
                     component=component,
-                    system=self,
                     pose=pose,
                     sim_config=sim_config_pose,
+                    component_windows_dict=self.component_windows_dict,
                     working_dir=f'{self.fe_folder}',
                     molr=molr,
                     poser=poser,
@@ -1881,9 +1629,9 @@ class System:
                         stage='fe',
                         win=i,
                         component=component,
-                        system=self,
                         pose=pose,
                         sim_config=sim_config,
+                        component_windows_dict=self.component_windows_dict,
                         working_dir=f'{self.fe_folder}',
                         molr=molr,
                         poser=poser,
@@ -2454,10 +2202,7 @@ class System:
                 if len(rmsf_val) == 0:
                     logger.warning(f"resid: {resid_i} not found in rmsf file")
                     continue
-                # print(f"resid: {resid_i}, rmsf: {rmsf_val[0]} Å")
-                # print(f"ref_pos: {ref_pos[i]}")
                 atm_index = gpcr_ref[i].index + 1
-        #        print(generate_colvar_block(atm_index, rmsf_val[0], ref_pos[i]))
                 cv_lines.append(generate_colvar_block(atm_index, rmsf_val[0], ref_pos[i]))
             
             for cv_file in cv_files:
@@ -4588,18 +4333,18 @@ class MASFESystem(System):
         
         # always store a unique identifier for the ligand
         if isinstance(ligand_paths, list):
-            self._ligand_list = {
+            self.ligand_dict = {
                 f'lig{i}': self._convert_2_relative_path(path)
                 for i, path in enumerate(ligand_paths)
             }
         elif isinstance(ligand_paths, dict):
-            self._ligand_list = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
+            self.ligand_dict = {ligand_name: self._convert_2_relative_path(ligand_path) for ligand_name, ligand_path in ligand_paths.items()}
         self.retain_lig_prot = retain_lig_prot
         self.ligand_ph = ligand_ph
         self.ligand_ff = ligand_ff
         self.overwrite = overwrite
 
-        self._membrane_simulation = False
+        self.membrane_simulation = False
 
         for ligand_path in self.ligand_paths:
             if not os.path.exists(ligand_path):
@@ -4657,17 +4402,18 @@ class MASFESystem(System):
                     fetched = ligand.fetch_from_existing_db(existing_ligand_db)
                     if fetched:
                         logger.info(f"Fetched parameters for {ligand.name} from existing ligand database {existing_ligand_db}")
-                        continue
                     else:
                         logger.info(f"No parameters found for {ligand.name} in existing ligand database {existing_ligand_db}. Generating new parameters.")
-                logger.info(f"Generating parameters for {ligand.name} using {self.ligand_ff} force field.")
-                ligand.prepare_ligand_parameters()
+                        ligand.prepare_ligand_parameters()
+                else:
+                    logger.info(f"Generating parameters for {ligand.name} using {self.ligand_ff} force field.")
+                    ligand.prepare_ligand_parameters()
             for ligand_name in ligand_names:
-                self.ligand_list[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
+                self.ligand_dict[ligand_name] = self._convert_2_relative_path(f'{self.ligandff_folder}/{ligand.name}.pdb')
 
         logger.debug( f"Unique ligand names: {self.unique_mol_names} ")
         logger.debug('updating the ligand paths')
-        logger.debug(self.ligand_list)
+        logger.debug(self.ligand_dict)
 
         self._mols = mols
         # update self.mols to output_dir/mols.txt
@@ -5072,9 +4818,9 @@ class MASFESystem(System):
                     stage='fe',
                     win=-1,
                     component=component,
-                    system=self,
                     pose=pose,
                     sim_config=sim_config_pose,
+                    component_windows_dict=self.component_windows_dict,
                     working_dir=f'{self.fe_folder}',
                     molr=molr,
                     poser=poser,
@@ -5092,6 +4838,14 @@ class MASFESystem(System):
             Parallel(n_jobs=n_workers, backend='loky')(
                 delayed(builder.build)() for builder in builders
         )
+
+    def _generate_aligned_pdbs(self):
+        os.makedirs(f'{self.output_dir}/Results', exist_ok=True)
+
+        for pose in tqdm(self.bound_poses, desc='Generating aligned pdbs'):
+            initial_pose = f'{self.poses_folder}/{pose}.pdb'
+            os.system(f'cp {initial_pose} {self.output_dir}/Results/init_{pose}.pdb')
+            
 
 class ComponentWindowsDict(MutableMapping):
     def __init__(self, system):
@@ -5137,8 +4891,9 @@ class ComponentWindowsDict(MutableMapping):
         """
         Set the simulation configuration for the component windows.
         """
-        self._sim_config = sim_config
+        self._get_sim_config(sim_config)
     
+
 def format_ranges(numbers):
     """
     Convert a list of numbers into a string of ranges.
@@ -5245,32 +5000,34 @@ def analyze_pose_task(
         fe_timeseries = {}
 
         # first get analytical results from Boresch restraint
+        try:
+            if 'v' in components:
+                disangfile = f'{fe_folder}/{pose}/sdr/v-1/disang.rest'
+            elif 'o' in components:
+                disangfile = f'{fe_folder}/{pose}/sdr/o-1/disang.rest'
+            elif 'z' in components:
+                disangfile = f'{fe_folder}/{pose}/sdr/z-1/disang.rest'
+            else:
+                raise ValueError('No Boresch needed')
 
-        if 'v' in components:
-            disangfile = f'{fe_folder}/{pose}/sdr/v-1/disang.rest'
-        elif 'o' in components:
-            disangfile = f'{fe_folder}/{pose}/sdr/o-1/disang.rest'
-        elif 'z' in components:
-            disangfile = f'{fe_folder}/{pose}/sdr/z-1/disang.rest'
-        else:
-            raise ValueError("No valid disangfile found for Boresch analysis")
+            k_r = rest[2]
+            k_a = rest[3]
+            bor_ana = BoreschAnalysis(
+                                disangfile=disangfile,
+                                k_r=k_r, k_a=k_a,
+                                temperature=temperature)
+            bor_ana.run_analysis()
+            fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
+            fe_stds.append(bor_ana.results['fe_error'])
 
-        k_r = rest[2]
-        k_a = rest[3]
-        bor_ana = BoreschAnalysis(
-                            disangfile=disangfile,
-                            k_r=k_r, k_a=k_a,
-                            temperature=temperature)
-        bor_ana.run_analysis()
-        fe_values.append(COMPONENT_DIRECTION_DICT['Boresch'] * bor_ana.results['fe'])
-        fe_stds.append(bor_ana.results['fe_error'])
+            # constant Boresch restraint value
+            fe_timeseries['Boresch'] = np.asarray([bor_ana.results['fe'], 0])
 
-        # constant Boresch restraint value
-        fe_timeseries['Boresch'] = np.asarray([bor_ana.results['fe'], 0])
-
-        results_entries.append(
-            f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
-        )
+            results_entries.append(
+                f'Boresch\t{COMPONENT_DIRECTION_DICT["Boresch"] * bor_ana.results["fe"]:.2f}\t{bor_ana.results["fe_error"]:.2f}'
+            )
+        except ValueError as e:
+            pass
         
         for comp in components:
             comp_folder = COMPONENTS_FOLDER_DICT[comp]

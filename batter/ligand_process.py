@@ -28,8 +28,10 @@ import hashlib
 import re
 import json
 
+# forbidden molecule names in MDA selection language
+# and in AMBER residue names
 FORBIDDEN_MOL_NAMES = {
-    'add', 'all', 'and', 'any'
+    'add', 'all', 'and', 'any', 'not',
 }
 
 def _base26_triplet(n: int) -> str:

@@ -48,9 +48,9 @@ class SystemBuilder(ABC):
     stage = None
 
     def __init__(self,
-                 system: 'batter.System',
                  pose: str,
                  sim_config: SimulationConfig,
+                 component_windows_dict: 'ComponentWindowsDict',
                  working_dir: str,
                  ):
         """
@@ -58,8 +58,6 @@ class SystemBuilder(ABC):
 
         Parameters
         ----------
-        system : batter.System
-            The system to build.
         pose : str
             The name of the pose
         sim_config : batter.input_process.SimulationConfig
@@ -67,17 +65,19 @@ class SystemBuilder(ABC):
         working_dir : str
             The working directory.
         """
-        self.system = system
-        self.membrane_builder = self.system.membrane_simulation
         self.pose = pose
         self.sim_config = sim_config
+        self.component_windows_dict = component_windows_dict
         self.other_mol = self.sim_config.other_mol
         try:
-            self.lipid_mol = self.system.lipid_mol
+            self.lipid_mol = self.sim_config.lipid_mol
         except AttributeError:
             self.lipid_mol = []
-        logger.debug(f'Builder with {'membrane' if self.membrane_builder else 'water'} system: \n'
-                    f'{self.system}, \n pose:{self.pose}, \n lipid_mol: {self.lipid_mol}, \n other_mol: {self.other_mol}')
+        self.membrane_builder = self.sim_config.membrane_simulation
+        if self.membrane_builder and len(self.lipid_mol) == 0:
+            raise ValueError('For membrane simulations, lipid_mol must be specified.')
+        logger.debug(f'Builder with {'membrane' if self.membrane_builder else 'water'} \n'
+                    f'pose:{self.pose}, \n lipid_mol: {self.lipid_mol}, \n other_mol: {self.other_mol}')
 
         self.working_dir = working_dir
 
@@ -164,12 +164,12 @@ class SystemBuilder(ABC):
             logger.warning('WARNING: Switch to Berendsen barostat')
             barostat = '1'
         
-        receptor_ff = self.system.receptor_ff
-        ligand_ff = self.system.ligand_ff
+        receptor_ff = self.sim_config.receptor_ff
+        ligand_ff = self.sim_config.ligand_ff
         if ligand_ff not in ['gaff', 'gaff2']:
             # if ligand_ff is set to openff, use gaff2 to build the system
             ligand_ff = 'gaff2'
-        lipid_ff = self.system.lipid_ff
+        lipid_ff = self.sim_config.lipid_ff
         if self.membrane_builder:
             p_coupling = self.p_coupling if hasattr(self, 'p_coupling') else '3'
             c_surften = self.c_surften if hasattr(self, 'c_surften') else '3'
@@ -964,9 +964,9 @@ class EquilibrationBuilder(SystemBuilder):
     dec_method = ''
 
     def __init__(self,
-                 system: 'batter.System',
                  pose: str,
                  sim_config: SimulationConfig,
+                 component_windows_dict: 'ComponentWindowsDict',
                  working_dir: str,
                  infe: bool = False,
                  ):
@@ -975,19 +975,23 @@ class EquilibrationBuilder(SystemBuilder):
 
         Parameters
         ----------
-        system : batter.System
-            The system to build.
         pose : str
             The name of the pose
         sim_config : batter.input_process.SimulationConfig
             The simulation configuration.
+        component_windows_dict : ComponentWindowsDict
+            The component windows dictionary.
         working_dir : str
             The working directory.
         infe: bool
             Whether add infe for protein conformation.
         """
         self.infe = infe
-        super().__init__(system, pose, sim_config, working_dir)
+        super().__init__(
+            pose=pose,
+            sim_config=sim_config,
+            component_windows_dict=component_windows_dict,
+            working_dir=working_dir)
 
     @property
     def build_file_folder(self):
@@ -1020,15 +1024,15 @@ class EquilibrationBuilder(SystemBuilder):
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
-        all_pose_folder = self.system.poses_folder
-        system_name = self.system.system_name
+        all_pose_folder = f'../../../all-poses'
+        system_name = self.sim_config.system_name
 
         os.system(f'cp {all_pose_folder}/reference.pdb reference.pdb')
         os.system(f'cp {all_pose_folder}/{system_name}_docked.pdb rec_file.pdb')
         os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
 
         other_mol = self.sim_config.other_mol
-        lipid_mol = self.system.lipid_mol
+        lipid_mol = self.sim_config.lipid_mol
         solv_shell = self.sim_config.solv_shell
         mol_u = mda.Universe(f'{self.pose}.pdb')
         if len(set(mol_u.residues.resnames)) > 1:
@@ -1967,8 +1971,8 @@ class EquilibrationBuilder(SystemBuilder):
                     fout.write(line.replace(
                         'STAGE', stage).replace(
                             'POSE', pose).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
+                                'SYSTEMNAME', self.sim_config.system_name).replace(
+                                    'PARTITIONNAME', self.sim_config.partition))
     
     def _find_anchor(self):
         """
@@ -1984,9 +1988,9 @@ class FreeEnergyBuilder(SystemBuilder):
     def __init__(self,
                  win: Union[int, str],
                  component: str,
-                 system: "batter.System",
                  pose: str,
                  sim_config: SimulationConfig,
+                 component_windows_dict: 'ComponentWindowsDict',
                  working_dir: str,
                  molr: str,
                  poser: str,
@@ -2000,7 +2004,11 @@ class FreeEnergyBuilder(SystemBuilder):
         # whether to enable infe for protein restraint.
         self.infe = infe
 
-        super().__init__(system, pose, sim_config, working_dir)
+        super().__init__(
+            pose=pose,
+            sim_config=sim_config,
+            component_windows_dict=component_windows_dict,
+            working_dir=working_dir)
 
         dec_method = self.sim_config.dec_method
         if component == 'n':
@@ -2019,7 +2027,7 @@ class FreeEnergyBuilder(SystemBuilder):
         self.window_folder = f"{self.comp}{self.win:02d}"
 
         try:
-            self.lipid_mol = self.system.lipid_mol
+            self.lipid_mol = self.sim_config.lipid_mol
         except AttributeError:
             self.lipid_mol = []
         if self.membrane_builder:
@@ -2314,7 +2322,7 @@ class FreeEnergyBuilder(SystemBuilder):
         hmr = self.sim_config.hmr
         comp = self.comp
         num_sim = self.sim_config.num_fe_range
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
 
         if os.path.exists(self.run_files_folder):
             shutil.rmtree(self.run_files_folder, ignore_errors=True)
@@ -2715,7 +2723,7 @@ class FreeEnergyBuilder(SystemBuilder):
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         rst = []
@@ -3708,7 +3716,7 @@ class FreeEnergyBuilder(SystemBuilder):
         rng = self.sim_config.rng
         ntwx = self.sim_config.ntwx
         lipid_mol = self.lipid_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Find anchors
@@ -3866,7 +3874,7 @@ class FreeEnergyBuilder(SystemBuilder):
 
     def _run_files(self):
         num_sim = self.sim_config.num_fe_range
-        lambdas = self.system.component_windows_dict[self.comp]
+        lambdas = self.component_windows_dict[self.comp]
         pose = self.pose
         comp = self.comp
         win = self.win if self.win != -1 else 0
@@ -3887,8 +3895,8 @@ class FreeEnergyBuilder(SystemBuilder):
                 for line in fin:
                     fout.write(line.replace('STAGE', pose).replace(
                                     'POSE', '%s%02d' % (comp, int(win))).replace(
-                                        'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
+                                        'SYSTEMNAME', self.sim_config.system_name).replace(
+                                    'PARTITIONNAME', self.sim_config.partition))
 
 
 class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
@@ -3897,7 +3905,7 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     """
     def _build_complex(self):
         """No complex needed to be built."""
-        all_pose_folder = self.system.poses_folder
+        all_pose_folder = '../../../../all-poses'
 
         pose = self.pose
         os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
@@ -4128,7 +4136,7 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         ntwx = self.sim_config.ntwx
         lipid_mol = self.lipid_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         mk1 = 2
@@ -4189,7 +4197,7 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     def _pre_sim_files(self):
         """Preprocess simulation files needed for ligand-only simulations. It involves adding co-decoupling ions to keep the system neutral."""
         if self.sim_config.rocklin_correction == 'yes':
-            logger.info('Rocklin correction is turned on for ligand decoupling.')
+            logger.debug('Rocklin correction is turned on for ligand decoupling.')
             return
         mol = self.mol
         total_charge = self._ligand_charge
@@ -4300,7 +4308,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -4942,7 +4950,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         steps2 = self.sim_config.dic_steps2[comp]
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
         ntwx = self.sim_config.ntwx
 
@@ -5061,7 +5069,7 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -5184,7 +5192,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -5886,7 +5894,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
@@ -5969,7 +5977,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -6603,7 +6611,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         sdr_dist = 0
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
@@ -6687,7 +6695,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -6789,9 +6797,9 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
 class BuilderFactory:
     @staticmethod
     def get_builder(stage,
-                    system,
                     pose,
                     sim_config,
+                    component_windows_dict,
                     working_dir,
                     win=0,
                     component='q',
@@ -6801,9 +6809,9 @@ class BuilderFactory:
     ):
         if stage == 'equil':
             return EquilibrationBuilder(
-                system=system,
                 pose=pose,
                 sim_config=sim_config,
+                component_windows_dict=component_windows_dict,
                 working_dir=working_dir,
                 infe=infe,
             )
@@ -6811,9 +6819,9 @@ class BuilderFactory:
         match component:
             case 'n' | 'm':
                 return RESTFreeEnergyBuilder(
-                system=system,
                 pose=pose,
                 sim_config=sim_config,
+                component_windows_dict=component_windows_dict,
                 working_dir=working_dir,
                 win=win,
                 component=component,
@@ -6823,9 +6831,9 @@ class BuilderFactory:
             )
             case 'e' | 'v':
                 return AlChemicalFreeEnergyBuilder(
-                system=system,
                 pose=pose,
                 sim_config=sim_config,
+                component_windows_dict=component_windows_dict,
                 working_dir=working_dir,
                 win=win,
                 component=component,
@@ -6835,9 +6843,9 @@ class BuilderFactory:
             )
             case 'x':
                 return EXFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6847,9 +6855,9 @@ class BuilderFactory:
                 )
             case 'o':
                 return UNOFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6859,9 +6867,9 @@ class BuilderFactory:
                 )
             case 'z':
                 return UNORESTFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6871,9 +6879,9 @@ class BuilderFactory:
                 )
             case 's':
                 return ACESEquilibrationBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6883,9 +6891,9 @@ class BuilderFactory:
                 )
             case 'y':
                 return LIGANDFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
