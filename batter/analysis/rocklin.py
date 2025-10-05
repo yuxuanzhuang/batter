@@ -4,69 +4,70 @@ import rocklinc
 import shutil
 import subprocess
 import os
-import sys
 from contextlib import contextmanager
 import tempfile
+from pathlib import Path
 
 @contextmanager
-def suppress_output():
-    with open(os.devnull, "w") as devnull:
-        old_stdout, old_stderr = sys.stdout, sys.stderr
-        sys.stdout, sys.stderr = devnull, devnull
-        try:
-            yield
-        finally:
-            sys.stdout, sys.stderr = old_stdout, old_stderr
-
+def suppress_output_fds(stderr=False):
+    """
+    Silence OS-level stdout (and optionally stderr) so child processes are quiet.
+    """
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    saved_out = os.dup(1)
+    saved_err = os.dup(2) if stderr else None
+    try:
+        os.dup2(devnull_fd, 1)     # stdout -> /dev/null
+        if stderr:
+            os.dup2(devnull_fd, 2) # stderr -> /dev/null
+        yield
+    finally:
+        os.dup2(saved_out, 1)
+        os.close(saved_out)
+        if stderr:
+            os.dup2(saved_err, 2)
+            os.close(saved_err)
+        os.close(devnull_fd)
 
 def run_rocklin_correction(universe, mol_name, box, lig_netq, other_netq, temp, water_model):
     """
-    Run Rocklin correction for a given system.
-
-    Parameters
-    ----------
-    universe : MDAnalysis Universe
-        The MDAnalysis universe containing the system.
-    mol_name : str
-        The residue name of the ligand.
-    box : array-like
-        The average simulation box dimensions.
-    lig_netq : float
-        The net charge of the ligand.
-    other_netq : float
-        The net charge of the rest of the system.
-    temp : float
-        The temperature in Kelvin.
-    water_model : str
-        The water model used ('TIP3P' or 'TIP4P').
-
-    Returns
-    -------
-    float
-        The Rocklin correction in kcal/mol.
+    Compute Rocklin finite-size correction for solvation FE (kcal/mol).
     """
     apbs_exe = shutil.which("apbs")
     if apbs_exe is None:
-        raise RuntimeError("APBS executable not found in PATH"
-                            "Please install APBS and ensure it is in your PATH.")
+        raise RuntimeError(
+            "APBS executable not found in PATH. "
+            "Install it (e.g., `conda install -c conda-forge apbs`) or set $APBS."
+        )
 
-    if water_model == 'TIP3P':
-        water = rocklinc.waters.TIP3P
-    elif water_model == 'TIP4P':
-        water = rocklinc.waters.TIP4P
-    else:
+    water_map = {
+        "TIP3P": rocklinc.waters.TIP3P,
+        "TIP4P": rocklinc.waters.TIP4P,
+    }
+    try:
+        water = water_map[water_model.upper()]
+    except KeyError:
         raise ValueError("Unsupported water model. Use 'TIP3P' or 'TIP4P'.")
 
-    rc = rocklinc.RocklinCorrection(box, lig_netq, other_netq, temp,
-                                water)
-    with tempfile.TemporaryDirectory() as tmpdir, suppress_output():
-        os.chdir(tmpdir)
-        rc.make_APBS_input(universe, f'resname {mol_name}')
-        rc.run_APBS(
-            apbs_exe=apbs_exe,
-            #apbs_exe='/scratch/users/yuzhuang/miniforge3_0808/envs/batter_dev/bin/apbs'
-        )
-        rc.read_APBS()
-        result = rc.compute()
-        # return kcal/mol
-    return result.magnitude / 1000
+    rc = rocklinc.RocklinCorrection(box, lig_netq, other_netq, temp, water)
+
+    old_cwd = Path.cwd()
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            # Build APBS input for the ligand selection
+            rc.make_APBS_input(universe, f"resname {mol_name}")
+
+            # Run APBS quietly (stdout+stderr). Use stderr=False if you want to see errors.
+            with suppress_output_fds(stderr=True):
+                rc.run_APBS(apbs_exe=apbs_exe)
+
+            # Parse and compute correction
+            rc.read_APBS()
+            q = rc.compute()  # typically a pint Quantity in J/mol
+    finally:
+        os.chdir(old_cwd)
+
+    # Convert cal/mol -> kcal/mol
+    j_per_kcal = 1000.0
+    return float(q.magnitude) / j_per_kcal

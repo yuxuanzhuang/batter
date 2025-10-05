@@ -899,6 +899,7 @@ class System:
         self.lipid_mol = lipid_mol
         logger.debug(f'New lipid_mol list: {self.lipid_mol}')
 
+    @save_state
     def _get_sim_config(self,
                        input_file: Union[str, Path, SimulationConfig]
     ):
