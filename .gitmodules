@@ -8,4 +8,4 @@
 	url = git@github.com:yuxuanzhuang/alchemlyb.git
 [submodule "extern/rocklinc"]
 	path = extern/rocklinc
-	url = git@github.com:xiki-tempula/rocklinc.git
+	url = git@github.com:yuxuanzhuang/rocklinc.git
