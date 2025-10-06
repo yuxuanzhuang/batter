@@ -4355,6 +4355,7 @@ class MASFESystem(System):
         self.overwrite = overwrite
 
         self.membrane_simulation = False
+        self._protein_input = 'no_protein'
 
         for ligand_path in self.ligand_paths:
             if not os.path.exists(ligand_path):
