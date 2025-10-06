@@ -7,6 +7,7 @@ import os
 from contextlib import contextmanager
 import tempfile
 from pathlib import Path
+from loguru import logger
 
 @contextmanager
 def suppress_output_fds(stderr=False):
@@ -62,12 +63,12 @@ def run_rocklin_correction(universe, mol_name, box, lig_netq, other_netq, temp, 
             with suppress_output_fds(stderr=True):
                 rc.run_APBS(apbs_exe=apbs_exe)
 
-            # Parse and compute correction
             rc.read_APBS()
-            q = rc.compute()  # typically a pint Quantity in J/mol
+            q = rc.compute()
     finally:
         os.chdir(old_cwd)
 
     # Convert cal/mol -> kcal/mol
     j_per_kcal = 1000.0
+    logger.debug(f"Rocklin correction: {q}")
     return float(q.magnitude) / j_per_kcal

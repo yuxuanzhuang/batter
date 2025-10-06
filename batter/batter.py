@@ -2758,7 +2758,10 @@ class System:
                           u_ref,
                           select=f'(({self.protein_align}) and not resname NME ACE and protein)',
                           weights="mass")
-            saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- ANC and not resname {" ".join(self.lipid_mol)}')
+            if len(self.lipid_mol) > 0:
+                saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- ANC and not resname {" ".join(self.lipid_mol)}')
+            else:
+                saved_ag = u.select_atoms(f'not resname WAT DUM Na+ Cl- ANC')
             saved_ag.write(f'{self.output_dir}/Results/protein_{pose}.pdb')
 
             initial_pose = f'{self.poses_folder}/{pose}.pdb'
@@ -4992,6 +4995,8 @@ def analyze_pose_task(
         The restraint values for the pose.
     temperature : float
         The temperature of the simulation in Kelvin.
+    water_model : str
+        The water model used in the simulation.
     rocklin_correction : bool
         Whether to apply the Rocklin correction for charged ligands.
     sim_range : tuple
