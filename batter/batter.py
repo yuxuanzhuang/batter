@@ -1175,7 +1175,7 @@ class System:
                 while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                     time.sleep(120)
                     pbar.set_description(f'Waiting to submit FE jobs')
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}'
                     if os.path.exists(f"{folder_2_check}/{comp}_FINISHED") and not overwrite:
@@ -1296,7 +1296,7 @@ class System:
                 while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                     time.sleep(120)
                     pbar.set_description(f'Waiting to submit FE equilibration jobs')
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     # only run for window -1 (eq)
@@ -1379,7 +1379,7 @@ class System:
                 while get_squeue_job_count(partition=partition) >= self.max_num_jobs:
                     time.sleep(120)
                     pbar.set_description(f'Waiting to submit FE jobs')
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     windows = self.component_windows_dict[comp]
@@ -1567,7 +1567,7 @@ class System:
                 shutil.copy(f"{self.ligandff_folder}/{file}",
                             f"{self.fe_folder}/{pose}/ff/{file}")
             
-            for component in sim_config.components:
+            for component in sim_config._components:
                 logger.debug(f'Preparing component: {component}')
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
                 n_sims = len(lambdas_comp)
@@ -1609,7 +1609,7 @@ class System:
         builders = []
         builders_factory = BuilderFactory()
         for pose in self.bound_poses:
-            for component in sim_config.components:
+            for component in sim_config._components:
                 if regenerate:
                     # delete existing windows
                     windows = glob.glob(f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}[0-9][0-9]")
@@ -1744,7 +1744,7 @@ class System:
             pose_folder_base = self.fe_folder
             poses = self.bound_poses
             for pose in self.bound_poses:
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     if comp not in COMP_MODIFIED:
                         continue
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
@@ -2022,7 +2022,7 @@ class System:
             for pose in self.bound_poses:
                 avg_u = mda.Universe(avg_struc)
 
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     if comp not in COMP_MODIFIED:
                         continue
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
@@ -2274,7 +2274,7 @@ class System:
         elif stage == 'fe':
             # this should be done after fe_equil
             for pose in self.bound_poses:
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                     u_ref = mda.Universe(
@@ -2433,7 +2433,7 @@ class System:
                 logger.debug(f"Restraint atoms in amber format: {formatted_resids}")
                 new_mask_component = f'(:{formatted_resids}) & @CA'
 
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     # only add to components containing protein
                     if comp in ['y']:
                         continue
@@ -2477,7 +2477,7 @@ class System:
         """
         input_dict_pose = {
             'fe_folder': self.fe_folder,
-            'components': self.sim_config.components,
+            'components': self.sim_config._components,
             'rest': self.sim_config.rest,
             'temperature': self.sim_config.temperature,
             'component_windows_dict': self.component_windows_dict,
@@ -2567,7 +2567,7 @@ class System:
 
         input_dict = {
             'fe_folder': self.fe_folder,
-            'components': self.sim_config.components,
+            'components': self.sim_config._components,
             'rest': self.sim_config.rest,
             'temperature': self.sim_config.temperature,
             'water_model': self.sim_config.water_model,
@@ -3148,7 +3148,7 @@ class System:
             logger.info('Free energy equilibration jobs submitted')
 
             # Check the free energy eq calculation to finish
-            pbar = tqdm(total=len(self.bound_poses) * len(self.sim_config.components),
+            pbar = tqdm(total=len(self.bound_poses) * len(self.sim_config._components),
                         desc="FE Equilibration sims finished",
                         unit="job")
             while self._check_fe_equil():
@@ -3170,7 +3170,7 @@ class System:
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(5*60)
-            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.update(len(self.bound_poses) * len(self.sim_config._components) - pbar.n)  # update to total
             pbar.set_description('FE equilibration finished')
             pbar.close()
 
@@ -3180,7 +3180,7 @@ class System:
 
         # copy last equilibration snapshot to the free energy folder
         for pose in self.bound_poses:
-            for comp in self.sim_config.components:
+            for comp in self.sim_config._components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
                 folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                 eq_rst7 = f'{folder_comp}/{comp}-1/eqnpt04.rst7'
@@ -3257,7 +3257,7 @@ class System:
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(10*60)
-            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.update(len(self.bound_poses) * len(self.sim_config._components) - pbar.n)  # update to total
             pbar.set_description('FE calculation finished')
             pbar.close()
         else:
@@ -3334,7 +3334,7 @@ class System:
         sim_failed = {}
         pose_failed = {}
         for pose in self.bound_poses:
-            for comp in self.sim_config.components:
+            for comp in self.sim_config._components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
 
                 win = -1
@@ -3379,7 +3379,7 @@ class System:
         sim_failed = {}
         pose_failed = {}
         for pose in self.bound_poses:
-            for comp in self.sim_config.components:
+            for comp in self.sim_config._components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
                 windows = self.component_windows_dict[comp]
                 for j in range(0, len(windows)):
@@ -3421,7 +3421,7 @@ class System:
         sim_failed = {}
         pose_failed = {}
         for pose in self.bound_poses:
-            for comp in self.sim_config.components:
+            for comp in self.sim_config._components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
                 folder_2_check = f'{self.fe_folder}/{pose}/{comp_folder}/'
                 if not os.path.exists(f"{folder_2_check}/{comp}_FINISHED"):
@@ -3521,7 +3521,7 @@ class System:
         Generate the batch files for the free energy calculation equilibration stage.
         """
         poses_def = self.bound_poses
-        components = self.sim_config.components
+        components = self.sim_config._components
 
         sim_stages = [
                 'mini_eq.in',
@@ -3607,7 +3607,7 @@ class System:
         if not remd and run_mcmd:
             raise ValueError("MC-MD water exchange can only be used with REMD simulations.")
         
-        components = self.sim_config.components
+        components = self.sim_config._components
 
         sim_stages = [
                 'mini.in',
@@ -3791,7 +3791,7 @@ class System:
             with open(f'{self.fe_folder}/batch_run/SLURMM-BATCH-Am', "rt") as f:
                 fin = f.readlines()
             for pose in self.bound_poses:
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
                     num_windows = len(self.component_windows_dict.get(comp, []))
                     with open(f"{self.fe_folder}/batch_run/SLURMM-run-{pose}-{comp}", "wt") as fout:
@@ -3810,10 +3810,10 @@ class System:
                             )
 
             for pose in self.bound_poses:
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
             
-            if 'z' in self.sim_config.components or 'o' in self.sim_config.components:
+            if 'z' in self.sim_config._components or 'o' in self.sim_config._components:
                 # add lambda.sch to the folder
                 with open(f'{self.fe_folder}/lambda.sch', 'w') as f:
                     f.write('TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n')
@@ -3860,7 +3860,7 @@ class System:
 
         comp_type = {
             comp: ('rest' if comp in ['m', 'n'] else 'sdr')
-            for comp in self.sim_config.components
+            for comp in self.sim_config._components
             if comp in ['m', 'n'] or comp in COMPONENTS_DICT['dd']
         }
 
@@ -3962,7 +3962,7 @@ class System:
                     'cv.in', 'disang.rest', 'restraints.in', 'mini.rst7']
 
             for pose in tqdm(self.all_poses, desc='Copying files'):
-                for comp in self.sim_config.components:
+                for comp in self.sim_config._components:
                     comp_folder = COMPONENTS_FOLDER_DICT[comp]
 
                     win_folder = f'{self.fe_folder}/{pose}/{comp_folder}/{comp}'
@@ -4561,7 +4561,7 @@ class MASFESystem(System):
             logger.info('Free energy equilibration jobs submitted')
 
             # Check the free energy eq calculation to finish
-            pbar = tqdm(total=len(self.bound_poses) * len(self.sim_config.components),
+            pbar = tqdm(total=len(self.bound_poses) * len(self.sim_config._components),
                         desc="FE Equilibration sims finished",
                         unit="job")
             while self._check_fe_equil():
@@ -4583,7 +4583,7 @@ class MASFESystem(System):
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(5*60)
-            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.update(len(self.bound_poses) * len(self.sim_config._components) - pbar.n)  # update to total
             pbar.set_description('FE equilibration finished')
             pbar.close()
 
@@ -4593,7 +4593,7 @@ class MASFESystem(System):
 
         # copy last equilibration snapshot to the free energy folder
         for pose in self.bound_poses:
-            for comp in self.sim_config.components:
+            for comp in self.sim_config._components:
                 comp_folder = COMPONENTS_FOLDER_DICT[comp]
                 folder_comp = f'{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[comp]}'
                 eq_rst7 = f'{folder_comp}/{comp}-1/eqnpt04.rst7'
@@ -4670,7 +4670,7 @@ class MASFESystem(System):
                 for job in not_finished_slurm_jobs:
                     self._continue_job(self._slurm_jobs[job])
                 time.sleep(10*60)
-            pbar.update(len(self.bound_poses) * len(self.sim_config.components) - pbar.n)  # update to total
+            pbar.update(len(self.bound_poses) * len(self.sim_config._components) - pbar.n)  # update to total
             pbar.set_description('FE calculation finished')
             pbar.close()
         else:
@@ -4819,7 +4819,7 @@ class MASFESystem(System):
                 os.symlink(f"{self.fe_folder}/ff",
                            f"{self.fe_folder}/{pose}/ff")
             
-            for component in sim_config.components:
+            for component in sim_config._components:
                 logger.debug(f'Preparing component: {component}')
                 lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
                 n_sims = len(lambdas_comp)

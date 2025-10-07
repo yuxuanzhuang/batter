@@ -1,3 +1,8 @@
+"""
+Simulation classes for each kind of component
+
+Currently not implemented
+"""
 from abc import ABC, abstractmethod
 
 class FEPSimulation(ABC):

@@ -1,401 +1,344 @@
-from pydantic import BaseModel, Field, model_validator, field_validator
+from __future__ import annotations
 
-import sys
-from typing import List, Optional, Dict, Union, Any
+from pydantic import (
+    BaseModel,
+    Field,
+    model_validator,
+    field_validator,
+    ConfigDict,
+    PrivateAttr,
+)
+from typing import List, Optional, Dict, Union, Any, Literal, Sequence
+import re
 import numpy as np
 from loguru import logger
-import pandas as pd
-from batter.data import charmmlipid2amber
 from batter.utils import COMPONENTS_LAMBDA_DICT
 
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 
-class SimulationConfig(BaseModel):
-    software: str = Field("amber", description="Software to use (amber, openmm)")
-    
-    # all deprecated
-    # Calculation definitions
-    calc_type: Optional[str] = None
-    celpp_receptor: Optional[str] = None
-    poses_list: Optional[List[str]] = None
+_ANCHOR_RE = re.compile(r"^\d+@[A-Za-z0-9]+$")
 
-    # Molecular definitions
-    # Protein anchor
-    p1: str = Field("", description="Protein anchor P1")
-    p2: str = Field("", description="Protein anchor P2")
-    p3: str = Field("", description="Protein anchor P3")
+
+class SimulationConfig(BaseModel):
+    """
+    Configuration for a molecular simulation.
+
+    Notes
+    -----
+    - Internal fields like :pyattr:`components` are computed and read-only.
+    - Boolean flags accept ``'yes'/'no'`` *or* YAML booleans (``true``/``false``).
+    - ``num_waters`` is deprecated and must remain 0.
+    """
+    model_config = ConfigDict(
+        extra="ignore",
+        populate_by_name=True,
+        validate_default=True,
+    )
+
+    # --- Required ---
+    system_name: str = Field(..., description="System name (required)")
+    fe_type: Literal[
+        "custom", "rest", "sdr", "dd", "sdr-rest", "express", "relative",
+        "uno", "uno_com", "uno_rest", "self", "uno_dd", "dd-rest", "asfe"
+    ] = Field(..., description="Free energy type")
+
+    # --- Global switches ---
+    dec_int: Literal["mbar", "ti"] = Field("mbar", description="Free-energy integration method (mbar/ti)")
+    remd: Literal["yes", "no"] = Field("no", description="H-REMD (yes/no)")
+    partition: str = Field("owners", description="Cluster partition/queue to submit jobs")
+
+    # --- Molecular definitions ---
+    p1: str = Field("", description='Protein anchor P1 (format "RESID@ATOM", e.g., "85@CA")')
+    p2: str = Field("", description='Protein anchor P2 (format "RESID@ATOM")')
+    p3: str = Field("", description='Protein anchor P3 (format "RESID@ATOM")')
 
     other_mol: List[str] = Field(default_factory=list, description="Other co-binding molecules")
     lipid_mol: List[str] = Field(default_factory=list, description="Lipid molecules")
     solv_shell: Optional[float] = Field(
-        None, description="Water molecules around the protein that will be kept in the initial structure (in angstroms)"
+        15.0,
+        description="Keep solvent within this Å of the protein in the initial structure (None disables)"
     )
-    # whether to use rocklin correction for charged ligands when running dd
-    rocklin_correction: str = Field(default="no", description="Apply Rocklin correction for charged ligands (yes or no)")
-    # Variables for setting up equilibrium and free energy calculations, also used on analysis
-    fe_type: str = Field('uno_rest', description="Free energy type (rest, dd, sdr, etc.)")
-    remd: Optional[str] = Field('no', description="H-REMD (yes or no)")
-    components: List[str] = Field(
-        default_factory=list,
-        description="Used with custom option for fe_type. Do not include b component here."
-    )
-    release_eq: List[float] = Field(default_factory=list, description="Short attach/release weights")
-    attach_rest: List[float] = Field(default_factory=list, description="Short attach/release weights")
-    ti_points: Optional[int] = Field(0, description="# of TI points for Gaussian quadrature")
-    lambdas: List[float] = Field(default_factory=list, description="Lambda values for TI")
-    sdr_dist: Optional[float] = Field(0, description="SDR distance to place the ligand")
-    dec_method: Optional[str] = Field(None, description="Decoupling method, can be `dd` or `sdr`")
+    rocklin_correction: str = Field("no", description="Apply Rocklin correction for charged ligands (yes/no)")
 
-    # Additional variables for analysis
-    dec_int: Optional[str] = Field("mbar", description="Decoupling integration method (mbar/ti)")
-    blocks: Optional[int] = Field(0, description="Number of blocks for MBAR")
+    # --- FE controls / analysis ---
+    release_eq: List[float] = Field(default_factory=list, description="Attach/release weights (short)")
+    attach_rest: List[float] = Field(default_factory=list, description="Attach/restraint weights (short)")
+    ti_points: Optional[int] = Field(0, description="# of TI quadrature points (if dec_int='ti')")
+    lambdas: List[float] = Field(default_factory=list, description="Lambda values (filled when TI is implemented)")
+    sdr_dist: Optional[float] = Field(0.0, description="SDR placement distance (Å)")
+    # user may specify dec_method ONLY for fe_type='custom'
+    dec_method: Optional[Literal["dd", "sdr", "exchange"]] = Field(
+        None, description="Decoupling method; only user-settable when fe_type='custom'"
+    )
+    blocks: int = Field(0, description="Number of blocks for MBAR")
 
-    # Force constants
-    rec_dihcf_force: float = Field(
-        0.0, description="Protein conformational dihedral spring constant - kcal/mol/rad**2"
-    )
-    rec_discf_force: float = Field(
-        0.0, description="Protein conformational distance spring constant - kcal/mol/Angstrom**2"
-    )
-    lig_distance_force: float = Field(
-        0.0, description="Guest pulling distance spring constant kcal/mol/Angstrom**2"
-    )
-    lig_angle_force: float = Field(0.0, description="Guest angle/dihedral spring constant - kcal/mol/rad**2")
-    lig_dihcf_force: float = Field(
-        0.0, description="Guest conformational dihedral spring constant - kcal/mol/rad**2"
-    )
-    rec_com_force: float = Field(0.0, description="Protein COM spring constant")
-    lig_com_force: float = Field(0.0, description="Guest COM spring constant for simultaneous decoupling")
+    # --- Force constants ---
+    rec_dihcf_force: float = Field(0.0, description="Protein dihedral spring (kcal/mol/rad^2)")
+    rec_discf_force: float = Field(0.0, description="Protein distance spring (kcal/mol/Å^2)")
+    lig_distance_force: float = Field(0.0, description="Ligand COM distance spring (kcal/mol/Å^2)")
+    lig_angle_force: float = Field(0.0, description="Ligand angle/dihedral spring (kcal/mol/rad^2)")
+    lig_dihcf_force: float = Field(0.0, description="Ligand dihedral spring (kcal/mol/rad^2)")
+    rec_com_force: float = Field(0.0, description="Protein COM spring")
+    lig_com_force: float = Field(0.0, description="Ligand COM spring (for simultaneous decoupling)")
 
-    # Water model, number and box size in the x and y direction
-    water_model: str = Field("TIP3P", description="Water model (SPCE, TIP4PEW, TIP3P, TIP3PF or OPC)")
-    num_waters: Optional[int] = Field(0, description="Number of water molecules in the system")
-    
-    buffer_x: Optional[float] = Field(
-        0, description="Buffer size along X-axis; this will be omitted in membrane simulations"
+    # --- Solvent / box ---
+    water_model: Literal["SPCE", "TIP4PEW", "TIP3P", "TIP3PF", "OPC"] = Field(
+        "TIP3P", description="Water model"
     )
-    buffer_y: Optional[float] = Field(
-        0, description="Buffer size along Y-axis; this will be omitted in membrane simulations"
-    )
-    buffer_z: Optional[float] = Field(0, description="Buffer size along Z-axis")
-    lig_buffer: Optional[float] = Field(0, description="Buffer size around the ligand box")
+    num_waters: int = Field(0, description="[DEPRECATED] Must remain 0 (automatic sizing used)")
+    buffer_x: float = Field(0.0, description="Box buffer (Å) along X (ignored for membranes)")
+    buffer_y: float = Field(0.0, description="Box buffer (Å) along Y (ignored for membranes)")
+    buffer_z: float = Field(0.0, description="Box buffer (Å) along Z")
+    lig_buffer: float = Field(0.0, description="Buffer around ligand box (Å)")
 
-    # Counterions
-    neutralize_only: str = Field("no", description="Neutralize only or also ionize (yes or no)")
-    cation: str = Field("Na+", description="Cation")
-    anion: str = Field("Cl-", description="Anion")
-    ion_conc: Optional[float] = Field(0.15, description="Ionic concentration")
+    # --- Ions ---
+    neutralize_only: str = Field("no", description="Neutralize only, or also ionize to target concentration (yes/no)")
+    cation: str = Field("Na+", description="Cation species")
+    anion: str = Field("Cl-", description="Anion species")
+    ion_conc: float = Field(0.15, description="Target salt concentration (M)")
 
-    # Simulation parameters
-    hmr: str = Field("no", description="Apply hydorgen mass repartitioning (yes/no)")
-    temperature: float = Field(310, description="Simulation temperature")
-    # n_steps
-    eq_steps1: int = Field(500000, description="Number of steps for equilibration stage 1")
-    eq_steps2: int = Field(1000000, description="Number of steps for equilibration stage 2")
+    # --- Simulation params ---
+    hmr: str = Field("no", description="Hydrogen mass repartitioning (yes/no)")
+    temperature: float = Field(310.0, description="Temperature (K)")
+    eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps")
+    eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps")
     n_steps_dict: Dict[str, int] = Field(
         default_factory=lambda: {
-            f"{comp}_steps{ind}": 50000 if ind == "1" else 1000000 for comp in FEP_COMPONENTS for ind in ["1", "2"]
+            f"{comp}_steps{ind}": 50_000 if ind == "1" else 1_000_000
+            for comp in FEP_COMPONENTS for ind in ("1", "2")
         },
-        description="Number of steps for each stage in AMBER and eq"
-    )
-    n_iter_dict: Dict[str, int] = Field(
-        default_factory=lambda: {
-            f"{comp}_itera{ind}": 50000 if ind == "1" else 1000000 for comp in FEP_COMPONENTS for ind in ["1", "2"]
-        },
-        description="Number of steps for each stage in OpenMM"
+        description="Per-component steps (AMBER/eq), keys: '{comp}_steps1|2'"
     )
 
-    # Conformational restraints on the protein backbone
-    rec_bb: str = Field("no", description="Use protein backbone dihedrals conformational restraints")
-    bb_start: Optional[Union[List[int], int]] = Field(
-        0,
-        description="Start of the backbone section to restrain; can be a list or a comma-separated string"
+    # --- Ligand anchor search ---
+    l1_x: Optional[float] = Field(None, description="L1 search center offset X (Å)")
+    l1_y: Optional[float] = Field(None, description="L1 search center offset Y (Å)")
+    l1_z: Optional[float] = Field(None, description="L1 search center offset Z (Å)")
+    l1_range: Optional[float] = Field(None, description="L1 search radius (Å)")
+    min_adis: Optional[float] = Field(None, description="Minimum anchor distance (Å)")
+    max_adis: Optional[float] = Field(None, description="Maximum anchor distance (Å)")
+    dlambda: float = Field(0.001, description="Δλ to split initial λ into two close windows")
+
+    # --- Amber i/o ---
+    ntpr: int = Field(1000, description="Print energy every ntpr steps")
+    ntwr: int = Field(10_000, description="Write restart every ntwr steps")
+    ntwe: int = Field(0, description="Write energy every ntwe steps")
+    ntwx: int = Field(2500, description="Write trajectory every ntwx steps")
+    cut: float = Field(9.0, description="Nonbonded cutoff (Å)")
+    gamma_ln: float = Field(1.0, description="Langevin γ (ps^-1)")
+    barostat: Literal[1, 2] = Field(2, description="1=Berendsen, 2=MC barostat")
+    dt: float = Field(0.004, description="Time step (ps)")
+    num_fe_range: int = Field(
+        10,
+        description="# restarts per λ; total steps = num_fe_range × n_steps"
     )
-    bb_end: Optional[Union[List[int], int]] = Field(
-        1,
-        description="End of the backbone section to restrain; can be a list or a comma-separated string"
-    )
-    bb_equil: str = Field("no", description="Keep this backbone section rigid during equilibration")
 
-    # Ligand anchor search definitions
-    l1_x: Optional[float] = Field(None, description="X distance between P1 and center of L1 search range")
-    l1_y: Optional[float] = Field(None, description="Y distance between P1 and center of L1 search range")
-    l1_z: Optional[float] = Field(None, description="Z distance between P1 and center of L1 search range")
-    l1_range: Optional[float] = Field(None, description="search radius for the first ligand anchor L1 ")
-    min_adis: Optional[float] = Field(None, description="minimum distance between anchors")
-    max_adis: Optional[float] = Field(None, description="maximum distance between anchors")
-    dlambda: Optional[float] = Field(
-        0.001, description="lambda width for splitting initial lambda into two close windows"
-    )
+    # --- Force fields ---
+    receptor_ff: str = Field("ff14SB", description="Receptor force field")
+    ligand_ff: str = Field("gaff2", description="Ligand force field")
+    lipid_ff: str = Field("lipid21", description="Lipid force field")
 
-    # Amber options for production simulations
-    ntpr: str = Field('1000', description="print energy every ntpr steps to output file (controls DD output)")
-    ntwr: str = Field('10000', description="write the restart file every ntwr steps")
-    ntwe: str = Field('0', description="write the energy file every ntwe steps")
-    ntwx: str = Field('2500', description="write the trajectory file every ntwx steps")
-    cut: str = Field('9.0', description="nonbonded cutoff in Angstroms")
-    gamma_ln: str = Field('1.0', description="collision frequency in ps^-1 for Langevin Dynamics (temperature control)")
-    barostat: str = Field('2', description="type of barostat to keep the pressure constant (1 = Berendsen-default /2 - Monte Carlo)")
-    dt: str = Field('0.004', description="time step in ps")
-    num_fe_range: int = Field(10, description="Number of free energy simulations restarts to run for each lambda; total simulation steps will be num_fe_range * n_steps")
-    
-
-    # OpenMM specific options for production simulations
-    itcheck: str = Field('100', description="write checkpoint file every itcheck iterations")
-
-    # simulation related
-    receptor_ff: str = Field("ff14SB", description="Force field for the receptor")
-    ligand_ff: str = Field("gaff2", description="Force field for the ligand")
-    lipid_ff: str = Field("lipid21", description="Force field for the lipids")
-
-
-    # Internal usage
-    system_name: str = Field("system", description="System name")
-    partition: str = Field("general", description="Partition to use")
+    # --- Internal / derived (public state) ---
     ligand_dict: Dict[str, Any] = Field(default_factory=dict, description="Ligand dictionary")
-    weights: List[float] = Field(default_factory=list, description="Gaussian quadrature weights for TI")
     rng: int = Field(0, description="Range of release_eq")
-    ion_def: List[Any] = Field(default_factory=list, description="Ion definition")
-    poses_def: List[str] = Field(default_factory=list, description="Poses definition")
-    dic_steps1: Dict[str, int] = Field(default_factory=dict, description="Steps dictionary for stage 1")
-    dic_steps2: Dict[str, int] = Field(default_factory=dict, description="Steps dictionary for stage 2")
-    dic_itera1: Dict[str, int] = Field(default_factory=dict, description="Iterations dictionary for stage 1")
-    dic_itera2: Dict[str, int] = Field(default_factory=dict, description="Iterations dictionary for stage 2")
-    rest: List[float] = Field(default_factory=list, description="Rest definition")
-    celp_st: Union[List[str], str] = Field(default_factory=list, description="Choose CELPP receptor in upper case or pdb code in lower case")
-    neut: str = Field("", description="Neutralize")
-    membrane_simulation: bool = Field(True, description="Is this a membrane simulation?")
-    protein_align: str = Field("name CA", description="Protein used for alignment")
-    receptor_segment: Optional[str] = Field(None, description="Receptor segment for protein to be embedded in the membrane")
+    ion_def: List[Any] = Field(default_factory=list, description="Ion tuple [cation, anion, conc]")
+    dic_steps1: Dict[str, int] = Field(default_factory=dict, description="Steps for stage 1 per component")
+    dic_steps2: Dict[str, int] = Field(default_factory=dict, description="Steps for stage 2 per component")
+    rest: List[float] = Field(default_factory=list, description="Restraint constants packing list")
+    neut: str = Field("", description="Alias of neutralize_only (for legacy paths)")
+    protein_align: str = Field("name CA", description="Selection used for alignment")
+    receptor_segment: Optional[str] = Field(None, description="Segment to embed in membrane")
 
+    # --- Internal-only runtime/private ---
+    _components: List[str] = PrivateAttr(default_factory=list)
+    _membrane_simulation: bool = PrivateAttr(True)
 
-    # Number of simulations, 1 equilibrium and 1 production
-    apr_sim: int = Field(2, description="Number of simulations")
+    # ------------------- Read-only facade -------------------
 
     @property
-    def H1(self):
-        return self.p1
-    
-    @property
-    def H2(self):
-        return self.p2
+    def components(self) -> tuple[str, ...]:
+        """Computed component list (read-only)."""
+        return tuple(self._components)
 
     @property
-    def H3(self):
-        return self.p3
+    def H1(self) -> str: return self.p1
+    @property
+    def H2(self) -> str: return self.p2
+    @property
+    def H3(self) -> str: return self.p3
+
+    # ------------------- Validators -------------------
+
+    @field_validator("neutralize_only", "hmr", "rocklin_correction", mode="before")
+    @classmethod
+    def _coerce_yes_no(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        if isinstance(value, (int, float)):
+            return "yes" if value else "no"
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in {"yes", "no"}: return v
+            if v in {"true", "t", "1"}: return "yes"
+            if v in {"false", "f", "0"}: return "no"
+        raise ValueError(f"Invalid value: {value}. Must be 'yes' or 'no'.")
+
+    @field_validator("p1", "p2", "p3")
+    @classmethod
+    def _validate_anchor(cls, v: str) -> str:
+        # allow empty string (not all protocols need anchors)
+        if not v:
+            return v
+        if not _ANCHOR_RE.match(v):
+            raise ValueError(f"Anchor must look like '85@CA' (got {v!r})")
+        return v
+
+    @field_validator("dec_method", mode="before")
+    @classmethod
+    def _gate_dec_method(cls, v: Optional[str], info) -> Optional[str]:
+        # Allow user to pass dec_method only if fe_type is 'custom' (checked after init).
+        # We can't see fe_type here reliably; the after-model validator enforces it.
+        return v
+
+    # ------------------- Post-init normalization -------------------
 
     @model_validator(mode="after")
-    def initialize_ti(self) -> "SimulationConfig":
-        """
-        Calculate lambdas and weights dynamically.
-        """
-        dec_int = self.dec_int
-        ti_points = self.ti_points
+    def _finalize(self) -> "SimulationConfig":
+        # 1) TI handling
+        if self.dec_int == "ti":
+            raise NotImplementedError("TI integration scheme is not implemented yet; use 'mbar'.")
 
-        if dec_int == "ti":
-            if ti_points and ti_points > 0:
-                x, y = np.polynomial.legendre.leggauss(ti_points)
-                lambdas = [(xi + 1) / 2 for xi in x]  # Adjust Gaussian lambdas
-                weights = [wi / 2 for wi in y]       # Adjust Gaussian weights
-                logger.debug(f"Lambda values: {lambdas}")
-                logger.debug(f"Gaussian weights: {weights}")
-                self.lambdas = lambdas
-                self.weights = weights
-            else:
-                raise ValueError(
-                    "Invalid input! ti_points must be a positive integer for the TI-GQ method."
-                )
-
+        # 2) Derived small fields
         self.rng = len(self.release_eq) - 1
         self.ion_def = [self.cation, self.anion, self.ion_conc]
-
-        # (Deprecated CELPP logic omitted as in original)
-
-        for comp in FEP_COMPONENTS:
-            if f'{comp}_steps1' in self.n_steps_dict:
-                self.dic_steps1.update({f'{comp}': self.n_steps_dict[f'{comp}_steps1']})
-                self.dic_steps2.update({f'{comp}': self.n_steps_dict[f'{comp}_steps2']})
-            if f'{comp}_itera1' in self.n_iter_dict:
-                self.dic_itera1.update({f'{comp}': self.n_iter_dict[f'{comp}_itera1']})
-                self.dic_itera2.update({f'{comp}': self.n_iter_dict[f'{comp}_itera2']})
-
-        self.rest = [
-            self.rec_dihcf_force,
-            self.rec_discf_force,
-            self.lig_distance_force,
-            self.lig_angle_force,
-            self.lig_dihcf_force,
-            self.rec_com_force,
-            self.lig_com_force
-        ]
-        if self.buffer_z == 0:
-            logger.info('Buffer size along Z-axis is set to 0; an automatic buffer will be applied.')
-
-        if self.num_waters != 0:
-            raise ValueError("'num_waters' is removed")
-
-        if self.rec_bb == 'no':
-            self.bb_start = [1]
-            self.bb_end = [0]
-            self.bb_equil = 'no'
-            logger.debug("No backbone dihedral restraints")
-        else:
-            if isinstance(self.bb_start, int):
-                self.bb_start = [self.bb_start]
-            if isinstance(self.bb_end, int):
-                self.bb_end = [self.bb_end]
         self.neut = self.neutralize_only
 
-        match self.fe_type:
-            case 'custom':
-                if self.dec_method is None:
-                    logger.error('Wrong input! Please choose a decoupling method'
-                                 '(dd, sdr or exchange) when using the custom option.')
-                    sys.exit(1)
-            case 'rest':
-                self.components = ['c', 'a', 'l', 't', 'r']
-                self.dec_method = 'dd'
-            case 'sdr':
-                self.components = ['e', 'v']
-                self.dec_method = 'sdr'
-            case 'dd':
-                self.components = ['e', 'v', 'f', 'w']
-                self.dec_method = 'dd'
-            case 'sdr-rest':
-                self.components = ['c', 'a', 'l', 't', 'r', 'e', 'v']
-                self.dec_method = 'sdr'
-            case 'express':
-                self.components = ['m', 'n', 'e', 'v']
-                self.dec_method = 'sdr'
-            case 'dd-rest':
-                self.components = ['c', 'a', 'l', 't', 'r', 'e', 'v', 'f', 'w']
-                self.dec_method = 'dd'
-            case 'relative':
-                self.components = ['x', 'e', 'n', 'm']
-                self.dec_method = 'exchange'
-            case 'uno':
-                self.components = ['m', 'n', 'o']
-                self.dec_method = 'sdr'
-            case 'uno_rest':
-                self.components = ['z']
-                self.dec_method = 'sdr'
-            case 'uno_com':
-                self.components = ['o']
-                self.dec_method = 'sdr'
-            case 'self':
-                self.components = ['s']
-                self.dec_method = 'sdr'
-            case 'uno_dd':
-                self.components = ['z', 'y']
-                self.dec_method = 'dd'
-            case 'asfe':
-                # only solvation free energy
-                self.components = ['y']
-            case _:
-                raise ValueError(
-                    "Invalid fe_type: {self.fe_type}. Must be one of "
-                    "'rest', 'dd', 'sdr', 'dd-rest', 'sdr-rest', "
-                    "'express', 'relative', 'uno', 'uno_com', 'uno_rest', 'self', 'uno_dd',"
-                    "'asfe' or 'custom'."
-                )
+        # 3) Copy n_steps_dict into stage dicts (ensure keys exist)
+        for comp in FEP_COMPONENTS:
+            s1 = self.n_steps_dict.get(f"{comp}_steps1", 0)
+            s2 = self.n_steps_dict.get(f"{comp}_steps2", 0)
+            self.dic_steps1[comp] = s1
+            self.dic_steps2[comp] = s2
 
-        for comp in self.components:
-            logger.debug(f'Using component: {comp}')
-            logger.debug(f'Steps for stage 1: {self.dic_steps1[comp]}')
-            logger.debug(f'Steps for stage 2: {self.dic_steps2[comp]}')
-            if self.dic_steps1[comp] == 0:
-                raise ValueError(
-                    f"Invalid input! {comp} steps for stage 1 must be greater than 0 with {comp}_steps1."
-                )
-            if self.dic_steps2[comp] == 0:
-                raise ValueError(
-                    f"Invalid input! {comp} steps for stage 2 must be greater than 0 with {comp}_steps2."
-                )
-        self.remd = self.remd
-        
-        logger.debug('------------------ Simulation Configuration ------------------')
-        logger.debug(f'Software: {self.software}')
-        logger.debug(f'Cobinders names: {self.other_mol}')
-        logger.debug('--------------------------------------------------------------')
-        logger.debug('Finished initializing simulation configuration.')
+        # 4) Pack restraint constants
+        self.rest = [
+            self.rec_dihcf_force, self.rec_discf_force,
+            self.lig_distance_force, self.lig_angle_force, self.lig_dihcf_force,
+            self.rec_com_force, self.lig_com_force,
+        ]
+
+        # 5) Hints and deprecations
+        if self.buffer_z == 0:
+            logger.info("buffer_z is 0; automatic buffer will be applied (membrane setups handle Z).")
+        if self.num_waters != 0:
+            raise ValueError("'num_waters' is deprecated and must remain 0 (automatic solvent sizing).")
+
+        # 6) Resolve components + dec_method by fe_type
+        if self.fe_type != "custom" and self.dec_method is not None:
+            raise ValueError("`dec_method` may only be set by users when fe_type='custom'.")
+
+        match self.fe_type:
+            case "custom":
+                if self.dec_method is None:
+                    raise ValueError("For fe_type='custom' please set dec_method to one of: dd, sdr, exchange.")
+                # For 'custom' you may optionally pre-populate _components elsewhere.
+                # If you still want to force a set, do it here.
+                if not self._components:
+                    logger.warning("fe_type='custom' with empty components; set internally before running.")
+            case "rest":
+                self._components, self.dec_method = ['c', 'a', 'l', 't', 'r'], "dd"
+            case "sdr":
+                self._components, self.dec_method = ['e', 'v'], "sdr"
+            case "dd":
+                self._components, self.dec_method = ['e', 'v', 'f', 'w'], "dd"
+            case "sdr-rest":
+                self._components, self.dec_method = ['c', 'a', 'l', 't', 'r', 'e', 'v'], "sdr"
+            case "express":
+                self._components, self.dec_method = ['m', 'n', 'e', 'v'], "sdr"
+            case "dd-rest":
+                self._components, self.dec_method = ['c', 'a', 'l', 't', 'r', 'e', 'v', 'f', 'w'], "dd"
+            case "relative":
+                self._components, self.dec_method = ['x', 'e', 'n', 'm'], "exchange"
+            case "uno":
+                self._components, self.dec_method = ['m', 'n', 'o'], "sdr"
+            case "uno_rest":
+                self._components, self.dec_method = ['z'], "sdr"
+            case "uno_com":
+                self._components, self.dec_method = ['o'], "sdr"
+            case "self":
+                self._components, self.dec_method = ['s'], "sdr"
+            case "uno_dd":
+                self._components, self.dec_method = ['z', 'y'], "dd"
+            case "asfe":
+                self._components, self.dec_method = ['y'], "sdr"  # dec_method not used, default to sdr
+
+        # 7) Sanity checks for active components
+        for comp in self._components:
+            s1 = self.dic_steps1.get(comp, 0)
+            s2 = self.dic_steps2.get(comp, 0)
+            logger.debug(f"Using component {comp}: stage1={s1}, stage2={s2}")
+            if s1 <= 0:
+                raise ValueError(f"{comp}: steps for stage 1 must be > 0 (key '{comp}_steps1').")
+            if s2 <= 0:
+                raise ValueError(f"{comp}: steps for stage 2 must be > 0 (key '{comp}_steps2').")
+
         return self
 
-    @field_validator("calc_type", mode="before")
-    def validate_calc_type(cls, value):
-        if value is None:
-            return value
-        valid_types = {"dock", "rank", "crystal"}
-        if value not in valid_types:
-            raise ValueError(f"Invalid calc_type: {value}. Must be one of {valid_types}.")
-        return value
+    # ------------------- Utilities -------------------
 
-    @field_validator("rec_bb", "neutralize_only", "hmr", "bb_equil", mode="before")
-    def validate_yes_no(cls, value):
-        if value is None:
-            return value
-        if isinstance(value, str) and value.lower() in {"yes", "no"}:
-            return value.lower()
-        raise ValueError(f"Invalid value: {value}. Must be 'yes' or 'no'.")
-    
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize config to a plain dict (private attrs excluded)."""
         return self.model_dump()
 
 
+# ------------------- Legacy parser (deprecated) -------------------
+
 def parse_input_file(input_file: str) -> dict:
     """
-    Parses an input file to extract parameters as a dictionary.
+    DEPRECATED: Use YAML with a proper loader. This parser supports a simple
+    'key = value' format and folds '*_steps{1,2}' into 'n_steps_dict'.
     """
     parameters: Dict[str, Any] = {}
 
     with open(input_file) as f_in:
-        # Remove spaces, tabs, and blank lines
         lines = (line.strip(' \t\n\r') for line in f_in)
         lines = [line for line in lines if line and not line.startswith('#')]
 
         for line in lines:
-            if '=' in line:
-                key_value = line.split('#')[0].split('=')
-                if len(key_value) == 2:
-                    key = key_value[0].strip().lower()
-                    value = key_value[1].strip()
-                    # if the value is a list, split it by commas
-                    if '[' in value and ']' in value:
-                        value = value.strip('\'\"-,.:;#()][')
-                        if key in ['poses_list', 'ligand_list', 'other_mol',
-                                   'celpp_receptor', 'ligand_name',
-                                   'bb_start', 'bb_end']:
-                            split_sep = ','
-                        else:
-                            split_sep = None
-                        try:
-                            value = [v.strip() for v in value.split(split_sep)]
-                        except ValueError:
-                            pass
-                    parameters[key] = value
-                else:
-                    raise ValueError(f"Invalid line: {line}")
+            if '=' not in line:
+                raise ValueError(f"Invalid line: {line}")
+            key, value = line.split('#')[0].split('=', 1)
+            key = key.strip().lower()
+            value = value.strip()
 
-    # merge FEP_COMPONENTS into a dict
+            if '[' in value and ']' in value:
+                value = value.strip('\'\"-,.:;#()][')
+                split_sep = ',' if key in {
+                    'poses_list', 'ligand_list', 'other_mol', 'celpp_receptor', 'ligand_name', 'bb_start', 'bb_end'
+                } else None
+                try:
+                    value = [v.strip() for v in (value.split(split_sep) if split_sep else value.split())]
+                except Exception:
+                    pass
+            parameters[key] = value
+
+    # merge FEP_COMPONENTS into dict
     n_steps_dict: Dict[str, int] = {}
-    n_iter_dict: Dict[str, int] = {}
-
     for comp in FEP_COMPONENTS:
-        for ind in ['1', '2']:
-            key = f'{comp}_steps{ind}'
-            n_steps_dict[key] = int(parameters[key]) if key in parameters else 0
-            key2 = f'{comp}_itera{ind}'
-            n_iter_dict[key2] = int(parameters[key2]) if key2 in parameters else 0
-
+        for ind in ('1', '2'):
+            k = f'{comp}_steps{ind}'
+            n_steps_dict[k] = int(parameters[k]) if k in parameters else 0
     parameters['n_steps_dict'] = n_steps_dict
-    parameters['n_iter_dict'] = n_iter_dict
 
     return parameters
 
 
-def get_configure_from_file(file_path: str) -> Dict:
+def get_configure_from_file(file_path: str) -> SimulationConfig:
     """
-    Parse the input file, validate parameters, and return a simulation configuration.
+    Parse a legacy text file and return a validated configuration.
+    Prefer the YAML loader in new workflows.
     """
     raw_params = parse_input_file(file_path)
-    config = SimulationConfig(**raw_params)
-    return config
+    return SimulationConfig(**raw_params)
