@@ -1046,12 +1046,11 @@ class EquilibrationBuilder(SystemBuilder):
 
         os.system(f'cp ../../ff/{mol.lower()}.mol2 .')
         os.system(f'cp ../../ff/{mol.lower()}.sdf .')
-        os.system(f'cp ../../ff/{mol.lower()}.pdb .')
         
-        #ante_mol = mda.Universe(f'{mol.lower()}.mol2')
-        #mol_u.atoms.names = ante_mol.atoms.names
-        #mol_u.atoms.residues.resnames = mol
-        #mol_u.atoms.write(f'{mol.lower()}.pdb')
+        ante_mol = mda.Universe(f'{mol.lower()}.mol2')
+        mol_u.atoms.names = ante_mol.atoms.names
+        mol_u.atoms.residues.resnames = mol
+        mol_u.atoms.write(f'{mol.lower()}.pdb')
 
         # Split initial receptor file
         with open("split-ini.tcl", "rt") as fin:
