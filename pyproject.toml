@@ -28,7 +28,8 @@ dependencies = [
 ]
 
 [project.scripts]
-batter = "batter.cli:main"
+batter = "batter.old_cli:main"
+new_batter = "batter.cli.run:cli"
 
 # Update the urls once the hosting is set up.
 #[project.urls]
