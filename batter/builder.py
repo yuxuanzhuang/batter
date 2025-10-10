@@ -73,7 +73,7 @@ class SystemBuilder(ABC):
             self.lipid_mol = self.sim_config.lipid_mol
         except AttributeError:
             self.lipid_mol = []
-        self.membrane_builder = self.sim_config.membrane_simulation
+        self.membrane_builder = self.sim_config._membrane_simulation
         if self.membrane_builder and len(self.lipid_mol) == 0:
             raise ValueError('For membrane simulations, lipid_mol must be specified.')
         logger.debug(f'Builder with {'membrane' if self.membrane_builder else 'water'} \n'
@@ -195,19 +195,19 @@ class SystemBuilder(ABC):
                 with open(fpath) as f:
                     s = f.read()
                     s = (s
-                         .replace('_step_', dt)
-                         .replace('_ntpr_', ntpr)
-                         .replace('_ntwr_', ntwr)
-                         .replace('_ntwe_', ntwe)
-                         .replace('_ntwx_', ntwx)
-                         .replace('_cutoff_', cut)
-                         .replace('_gamma_ln_', gamma_ln)
-                         .replace('_barostat_', barostat)
+                         .replace('_step_', str(dt))
+                         .replace('_ntpr_', str(ntpr))
+                         .replace('_ntwr_', str(ntwr))
+                         .replace('_ntwe_', str(ntwe))
+                         .replace('_ntwx_', str(ntwx))
+                         .replace('_cutoff_', str(cut))
+                         .replace('_gamma_ln_', str(gamma_ln))
+                         .replace('_barostat_', str(barostat))
                          .replace('_receptor_ff_', receptor_ff)
                          .replace('_ligand_ff_', ligand_ff)
                          .replace('_lipid_ff_', lipid_ff)
-                         .replace('_p_coupling_', p_coupling)
-                         .replace('_c_surften_', c_surften)
+                         .replace('_p_coupling_', str(p_coupling))
+                         .replace('_c_surften_', str(c_surften))
                          )
                 with open(fpath, "w") as f:
                     f.write(s)
@@ -1574,14 +1574,11 @@ class EquilibrationBuilder(SystemBuilder):
     def _restraints(self):
         pose = self.pose
         rest = self.sim_config.rest
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         comp = self.comp
         molr = self.mol
 
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = self.sim_config.sdr_dist
         dec_method = self.dec_method
 
@@ -1652,28 +1649,6 @@ class EquilibrationBuilder(SystemBuilder):
         rst.append(''+P1+' '+P2+'')
         rst.append(''+P2+' '+P3+'')
         rst.append(''+P3+' '+P1+'')
-
-        # Define protein dihedral restraints in the given range
-        nd = 0
-        for i in range(0, len(bb_start)):
-            beg = bb_start[i] - int(first_res) + 2
-            end = bb_end[i] - int(first_res) + 2
-            for i in range(beg, end):
-                j = i+1
-                psi1 = ':'+str(i)+'@N'
-                psi2 = ':'+str(i)+'@CA'
-                psi3 = ':'+str(i)+'@C'
-                psi4 = ':'+str(j)+'@N'
-                psit = '%s %s %s %s' % (psi1, psi2, psi3, psi4)
-                rst.append(psit)
-                nd += 1
-                phi1 = ':'+str(i)+'@C'
-                phi2 = ':'+str(j)+'@N'
-                phi3 = ':'+str(j)+'@CA'
-                phi4 = ':'+str(j)+'@C'
-                phit = '%s %s %s %s' % (phi1, phi2, phi3, phi4)
-                rst.append(phit)
-                nd += 1
 
         # Define translational/rotational and anchor atom distance restraints on the ligand
 
@@ -1796,11 +1771,6 @@ class EquilibrationBuilder(SystemBuilder):
             weight = release_eq[relase_eq_i]
             logger.debug('%s' % str(weight))
 
-            # Define spring constants based on stage and weight
-            if bb_equil == 'yes':
-                rdhf = rest[0]
-            else:
-                rdhf = 0
             rdsf = rest[1]
             ldf = weight*rest[2]/100
             laf = weight*rest[3]/100
@@ -1820,16 +1790,8 @@ class EquilibrationBuilder(SystemBuilder):
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(0.0), float(vals[i]), float(vals[i]), float(999.0), rdsf, rdsf, recep_c))
-                # Protein conformation (backbone restraints)
-                elif i >= 3 and i < 3+nd:
-                    if len(data) == 4:
-                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
-                            ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
-                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
-                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
-                            float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, rdhf, rdhf, recep_d))
                 # Ligand translational/rotational restraints
-                elif i >= 3+nd and i < 9+nd and comp != 'a':
+                elif i >= 3 and i < 9 and comp != 'a':
                     if len(data) == 2:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+','
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
@@ -1848,7 +1810,7 @@ class EquilibrationBuilder(SystemBuilder):
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
                 # Ligand conformation (non-hydrogen dihedrals)
-                elif i >= 9+nd and comp != 'a':
+                elif i >= 9 and comp != 'a':
                     if len(data) == 4:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
                             ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
@@ -2712,13 +2674,10 @@ class FreeEnergyBuilder(SystemBuilder):
             return
         pose = self.pose
         rest = self.sim_config.rest
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         molr = self.molr
         comp = self.comp
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
@@ -2864,31 +2823,6 @@ class FreeEnergyBuilder(SystemBuilder):
         rst.append(''+P2+' '+P3+'')
         rst.append(''+P3+' '+P1+'')
 
-        # Define protein dihedral restraints in the given range
-        nd = 0
-        for i in range(0, len(bb_start)):
-            beg = bb_start[i] - int(first_res) + 2
-            end = bb_end[i] - int(first_res) + 2
-            if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z'):
-                beg = bb_start[i] - int(first_res) + 3
-                end = bb_end[i] - int(first_res) + 3
-            for i in range(beg, end):
-                j = i+1
-                psi1 = ':'+str(i)+'@N'
-                psi2 = ':'+str(i)+'@CA'
-                psi3 = ':'+str(i)+'@C'
-                psi4 = ':'+str(j)+'@N'
-                psit = '%s %s %s %s' % (psi1, psi2, psi3, psi4)
-                rst.append(psit)
-                nd += 1
-                phi1 = ':'+str(i)+'@C'
-                phi2 = ':'+str(j)+'@N'
-                phi3 = ':'+str(j)+'@CA'
-                phi4 = ':'+str(j)+'@C'
-                phit = '%s %s %s %s' % (phi1, phi2, phi3, phi4)
-                rst.append(phit)
-                nd += 1
-
         # Define translational/rotational and anchor atom distance restraints on the ligand
 
         rst.append(''+P1+' '+L1+'')
@@ -3031,12 +2965,7 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # If chosen, apply initial reference for the protein backbone restraints
         if (stage == 'fe' and comp != 'c' and comp != 'w' and comp != 'f'):
-            if (bb_equil == 'yes'):
-                #shutil.copy('../../../../equil/'+pose+'/assign.dat', './assign-eq.dat')
-                os.system(f'cp ../../../../equil/{pose}/assign.dat ./assign-eq.dat')
-            else:
-                #shutil.copy('./assign.dat', './assign-eq.dat')
-                os.system(f'cp ./assign.dat ./assign-eq.dat')
+            os.system(f'cp ./assign.dat ./assign-eq.dat')
             with open('./assign-eq.dat') as fin:
                 lines = (line.rstrip() for line in fin)
                 lines = list(line for line in lines if line)  # Non-blank lines in a list
@@ -3111,24 +3040,8 @@ class FreeEnergyBuilder(SystemBuilder):
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(999.0), rdsf, rdsf, recep_c))
-                # Protein conformation (backbone restraints)
-                elif i >= 3 and i < 3+nd:
-                    if (stage != 'equil'):
-                        if len(data) == 4:
-                            nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
-                                ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
-                            disang_file.write('%s %-23s ' % ('&rst iat=', nums))
-                            disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
-                                float(valse[i]) - 180, float(valse[i]), float(valse[i]), float(valse[i]) + 180, rdhf, rdhf, recep_d))
-                    else:
-                        if len(data) == 4:
-                            nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
-                                ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
-                            disang_file.write('%s %-23s ' % ('&rst iat=', nums))
-                            disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
-                                float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, rdhf, rdhf, recep_d))
                 # Ligand translational/rotational restraints
-                elif i >= 3+nd and i < 9+nd and comp != 'a':
+                elif i >= 3 and i < 9 and comp != 'a':
                     if len(data) == 2:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+','
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
@@ -3147,43 +3060,43 @@ class FreeEnergyBuilder(SystemBuilder):
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
                     if comp == 'e':
-                        if i == (3+nd):
+                        if i == (3):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(999.0), ldf, ldf, lign_tr))
-                        if i == (4+nd):
+                        if i == (4):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])
                                                                         )+','+str(atm_num.index(data[2])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(180.0), laf, laf, lign_tr))
-                        if i == (5+nd):
+                        if i == (5):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+',' + \
                                 str(atm_num.index(data[2]))+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
-                        if i == (6+nd):
+                        if i == (6):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]) +
                                                                         vac_atoms)+','+str(atm_num.index(data[2])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(180.0), laf, laf, lign_tr))
-                        if i == (7+nd):
+                        if i == (7):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+',' + \
                                 str(atm_num.index(data[2])+vac_atoms)+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
-                        if i == (8+nd):
+                        if i == (8):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])+vac_atoms)+',' + \
                                 str(atm_num.index(data[2])+vac_atoms)+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
                 # Ligand conformation (non-hydrogen dihedrals)
-                elif i >= 9+nd and comp != 'a':
+                elif i >= 9 and comp != 'a':
                     if len(data) == 4:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
                             ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
@@ -3277,7 +3190,7 @@ class FreeEnergyBuilder(SystemBuilder):
                     restraints_file.write('trajin md%02.0f.nc\n' % i)
          #            for i in range(1, 11):
          #               restraints_file.write('trajin mdin-%02.0f.nc\n' % i)
-                for i in range(3+nd, 9+nd):
+                for i in range(3, 9):
                     arr = rst[i].split()
                     if len(arr) == 2:
                         restraints_file.write('%s %s %s' % ('distance d'+str(i), rst[i], 'noimage out restraints.dat\n'))
@@ -3293,7 +3206,7 @@ class FreeEnergyBuilder(SystemBuilder):
                 restraints_file.write('parm vac.prmtop\n')
                 for i in range(2, 11):
                     restraints_file.write('trajin md%02.0f.nc\n' % i)
-                for i in range(0, 3+nd):
+                for i in range(0, 3):
                     arr = rst[i].split()
                     if len(arr) == 2:
                         restraints_file.write('%s %s %s' % ('distance d'+str(i), rst[i], 'noimage out restraints.dat\n'))
@@ -3309,7 +3222,7 @@ class FreeEnergyBuilder(SystemBuilder):
                 restraints_file.write('parm vac.prmtop\n')
                 for i in range(2, 11):
                     restraints_file.write('trajin md%02.0f.nc\n' % i)
-                for i in range(9+nd, len(rst)):
+                for i in range(9, len(rst)):
                     arr = rst[i].split()
                     if len(arr) == 2:
                         restraints_file.write('%s %s %s' % ('distance d'+str(i), rst[i], 'noimage out restraints.dat\n'))
@@ -4076,14 +3989,11 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     def _restraints(self):
         pose = self.pose
         rest = self.sim_config.rest
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         comp = self.comp
         molr = self.mol
 
-        bb_equil = self.sim_config.bb_equil
         dec_method = self.dec_method
 
         other_mol = self.other_mol
@@ -5883,13 +5793,10 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         rest = self.sim_config.rest
         lcom = rest[6]
 
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         molr = self.molr
         comp = self.comp
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
@@ -6600,13 +6507,10 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         rest = self.sim_config.rest
         lcom = rest[6]
 
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         molr = self.molr
         comp = self.comp
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = 0
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol

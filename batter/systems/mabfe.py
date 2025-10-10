@@ -90,7 +90,7 @@ class MABFEBuilder(SystemBuilder):
         staged_protein = self._stage_optional(inputs_dir, args.protein_input, "protein.pdb")
         staged_top = self._stage_optional(inputs_dir, args.system_input, "input.prmtop")
         staged_coord = self._stage_optional(inputs_dir, args.system_coordinate, "input.rst7")
-        staged_ligs = self._stage_many(inputs_dir, args.ligand_paths, "ligand_{i}.sdf")
+        staged_ligs = self._stage_many(inputs_dir, args.ligand_paths.values(), "ligand_{i}.sdf")
 
         # Produce canonical shared artifacts (if provided)
         final_top = self._copy_optional(artifacts_dir, staged_top, "system.prmtop")

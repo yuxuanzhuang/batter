@@ -6,9 +6,6 @@ This module exposes a small, stable interface for:
 - Orchestrating runs from a top-level YAML
 - Managing portable artifacts and FE results
 
-The goal is to keep user code importing ONLY from :mod:`batter.api`.
-Everything else inside the package may change without breaking users.
-
 Examples
 --------
 Run from a top-level YAML::
@@ -30,8 +27,10 @@ Inspect FE results in a work directory (portable across clusters)::
     rec = load_fe_run("work/at1r_aai", run_id=idx.iloc[-1]["run_id"])
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Union
+from typing import Union, TYPE_CHECKING
 
 from ._version import __version__  # semantic version string
 
@@ -48,8 +47,10 @@ from .runtime.portable import ArtifactStore
 from .runtime.fe_repo import FEResultsRepository, FERecord, WindowResult
 
 # --- System descriptor (read-only for users) ---
-from .systems.core import SimSystem  # exposed for typing/provenance, not required for basic use
+from .systems.core import SimSystem  # exposed for typing/provenance
 
+if TYPE_CHECKING:
+    import pandas as pd  # for type hints only
 
 __all__ = [
     # version
@@ -77,7 +78,7 @@ __all__ = [
 # ---------------------- Convenience helpers ----------------------
 
 
-def list_fe_runs(work_dir: Union[str, Path]) -> "object":
+def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
     """
     List FE runs in a work directory.
 
@@ -95,7 +96,6 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "object":
         ``components``, ``created_at``.
     """
     store = ArtifactStore(Path(work_dir))
-    # ok if manifest doesn't exist yet; FE repo index is independent
     repo = FEResultsRepository(store)
     return repo.index()
 

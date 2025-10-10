@@ -12,7 +12,7 @@ single param job ("param_ligands") → per-ligand pipelines → FE record save.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 from datetime import datetime, timezone
 import json
 import shutil
@@ -25,11 +25,11 @@ from batter.systems.core import SimSystem
 from batter.systems.mabfe import MABFEBuilder
 from batter.exec.local import LocalBackend
 from batter.exec.slurm import SlurmBackend
+
 from batter.pipeline.factory import make_abfe_pipeline, make_asfe_pipeline
 from batter.pipeline.pipeline import Pipeline
 from batter.pipeline.step import Step, ExecResult
 
-from batter.param.ligand import batch_ligand_process
 from batter.runtime.portable import ArtifactStore
 from batter.runtime.fe_repo import FEResultsRepository, FERecord
 
@@ -38,12 +38,21 @@ from batter.runtime.fe_repo import FEResultsRepository, FERecord
 # Pipeline utilities
 # -----------------------------------------------------------------------------
 
-def _select_pipeline(protocol: str, sim_cfg, only_fe_prep: bool) -> Pipeline:
+def _select_pipeline(
+    protocol: str,
+    sim_cfg,
+    only_fe_prep: bool,
+    sys_params: dict | None = None,
+) -> Pipeline:
     p = (protocol or "abfe").lower()
     if p == "abfe":
-        return make_abfe_pipeline(sim_cfg, only_fe_prep)
+        return make_abfe_pipeline(
+            sim_cfg,
+            sys_params=sys_params or {},
+            only_fe_preparation=only_fe_prep,
+        )
     if p == "asfe":
-        return make_asfe_pipeline(sim_cfg, only_fe_prep)
+        return make_asfe_pipeline(sim_cfg, only_fe_preparation=only_fe_prep)
     if p == "rbfe":
         raise NotImplementedError("RBFE protocol is not yet implemented.")
     raise ValueError(f"Unsupported protocol: {protocol!r}")
@@ -71,10 +80,7 @@ def _gen_run_id(protocol: str, ligand: str) -> str:
 
 
 def resolve_placeholders(text: str, sys: SimSystem) -> str:
-    return (
-        text.replace("{WORK}", str(sys.root))
-            .replace("{SYSTEM}", sys.name)
-    )
+    return text.replace("{WORK}", str(sys.root)).replace("{SYSTEM}", sys.name)
 
 
 # -----------------------------------------------------------------------------
@@ -134,73 +140,11 @@ def _resolve_ligand_map(rc, yaml_dir: Path) -> dict[str, Path]:
 
 def _register_local_handlers(backend: LocalBackend) -> None:
     from batter.systems.core import SimSystem
+    from batter.exec.handlers.system_prep import system_prep as _system_prep
+    from batter.exec.handlers.param_ligands import param_ligands as _param_ligands
+    from batter.exec.handlers.prepare_equil import prepare_equil_handler as _prepare_equil_handler
+
     from pathlib import Path
-    import shutil, json
-
-    # reuse helpers from content-addressed ligand store
-    from batter.param.ligand import _rdkit_load, _canonical_payload, _hash_id, batch_ligand_process
-
-    def _param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-        lig_root = system.root / "ligands"
-        if not lig_root.exists():
-            raise FileNotFoundError(f"[param_ligands] No 'ligands/' at {system.root}. Did staging run?")
-
-        staged = [d for d in sorted(lig_root.glob("*")) if (d / "inputs" / "ligand.sdf").exists()]
-        if not staged:
-            raise FileNotFoundError(f"[param_ligands] No staged ligands found under {lig_root}.")
-
-        outdir = Path(resolve_placeholders(params["outdir"], system)).expanduser().resolve()
-        charge = params.get("charge", "am1bcc")  # fixed typo
-        ligand_ff = params.get("ligand_ff", "openff-2.2.1")
-        retain = bool(params.get("retain_lig_prot", True))
-
-        lig_map: Dict[str, str] = {d.name: (d / "inputs" / "ligand.sdf").as_posix() for d in staged}
-
-        outdir.mkdir(parents=True, exist_ok=True)
-        logger.info(
-            f"[LOCAL] parameterizing {len(lig_map)} ligands → {outdir} (charge={charge}, ff={ligand_ff}, retain={retain})"
-        )
-
-        hashes = batch_ligand_process(
-            ligand_paths=lig_map,
-            output_path=outdir,
-            retain_lig_prot=retain,
-            ligand_ff=ligand_ff,
-            overwrite=False,
-            run_with_slurm=False,
-        )
-        if not hashes:
-            raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
-
-        linked = []
-        for d in staged:
-            sdf = d / "inputs" / "ligand.sdf"
-            mol = _rdkit_load(sdf, retain_h=retain)
-            smi = _canonical_payload(mol)
-            hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
-
-            src_dir = outdir / hid
-            meta = src_dir / "metadata.json"
-            if not src_dir.exists() or not meta.exists():
-                raise FileNotFoundError(
-                    f"[param_ligands] Missing params for staged ligand {d.name}: expected {src_dir}"
-                )
-
-            child_params = d / "params"
-            child_params.mkdir(parents=True, exist_ok=True)
-
-            for src in sorted(src_dir.glob("*")):
-                dst = child_params / src.name
-                if not dst.exists():
-                    try:
-                        rel = os.path.relpath(src, start=child_params)
-                        dst.symlink_to(rel)  # relative link for portability
-                    except Exception:
-                        shutil.copy2(src, dst)
-            linked.append((d.name, hid))
-
-        logger.info(f"[LOCAL] Linked params for staged ligands: {linked}")
-        return ExecResult([], {"param_store": outdir, "hashes": hashes})
 
     def _touch_artifact(system: SimSystem, subdir: str, fname: str, content: str = "ok\n") -> Path:
         d = system.root / "artifacts" / subdir
@@ -208,10 +152,6 @@ def _register_local_handlers(backend: LocalBackend) -> None:
         p = d / fname
         p.write_text(content)
         return p
-
-    def _prepare_equil(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-        marker = _touch_artifact(system, "prepare_equil", "prepare_equil.ok")
-        return ExecResult([], {"prepare_equil": marker})
 
     def _equil(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
         rst = _touch_artifact(system, "equil", "equil.rst7", "dummy-eq\n")
@@ -230,7 +170,6 @@ def _register_local_handlers(backend: LocalBackend) -> None:
         return ExecResult([], {"fe_equil_rst": rst})
 
     def _fe(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-        # write inside artifacts/fe/windows.json (matches reader below)
         summ = _touch_artifact(system, "fe", "windows.json", '{"total_dG": -7.1, "total_se": 0.3}\n')
         return ExecResult([], {"summary": summ})
 
@@ -238,8 +177,9 @@ def _register_local_handlers(backend: LocalBackend) -> None:
         ok = _touch_artifact(system, "analyze", "analyze.ok")
         return ExecResult([], {"analysis": ok})
 
+    backend.register("system_prep", _system_prep)
     backend.register("param_ligands", _param_ligands)
-    backend.register("prepare_equil", _prepare_equil)
+    backend.register("prepare_equil", _prepare_equil_handler)
     backend.register("equil", _equil)
     backend.register("prepare_fe", _prepare_fe)
     backend.register("prepare_fe_windows", _prepare_fe_windows)
@@ -264,24 +204,39 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     2. Choose backend (local/slurm)
     3. Build shared system once
     4. Stage **all ligands at once** under <work>/ligands/<NAME>/
-    5. Run **param_ligands** ONCE at the parent root (single job)
+    5. Run **system_prep** and **param_ligands** ONCE at the parent root
     6. For each ligand, run the rest of the pipeline on its child system
     7. Save one FE record per ligand
-
-    Parameters
-    ----------
-    path
-        Path to the top-level YAML configuration.
-    on_failure
-        Failure policy for per-ligand pipelines:
-        - "prune": skip a ligand if any step fails and continue with others.
-        - "raise": immediately raise the error and abort the whole run.
     """
     path = Path(path)
     logger.info(f"Starting BATTER run from {path}")
 
     # Configs
     rc = RunConfig.load(path)
+    yaml_path = Path(path)
+    yaml_dir = yaml_path.parent
+
+    # lf ligand_input load json and set ligand_paths 
+    lig_map = _resolve_ligand_map(rc, yaml_dir)
+    rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
+
+    # Build system-prep params exactly once
+    sys_params = {
+        "system_name": rc.create.system_name,
+        "protein_input": str(rc.create.protein_input),
+        "system_input": str(rc.create.system_input),
+        "system_coordinate": (str(rc.create.system_coordinate) if rc.create.system_coordinate else None),
+        "ligand_paths": rc.create.ligand_paths,
+        "anchor_atoms": list(rc.create.anchor_atoms or []),
+        "protein_align": str(rc.create.protein_align),
+        "lipid_mol": list(rc.create.lipid_mol or []),
+        "other_mol": list(rc.create.other_mol or []),
+        "ligand_ff": rc.create.ligand_ff,
+        "retain_lig_prot": bool(rc.create.retain_lig_prot),
+        "yaml_dir": str(yaml_dir),
+    }
+
+
     sim_cfg = rc.resolved_sim_config()
     logger.info(f"Loaded simulation config for system: {sim_cfg.system_name}")
 
@@ -300,10 +255,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     sys = SimSystem(name=rc.create.system_name, root=rc.system.output_folder)
     sys = builder.build(sys, rc.create)
 
-    # Stage ligands
-    yaml_dir = path.parent
-    lig_map = _resolve_ligand_map(rc, yaml_dir)  # raises on 0 ligands or missing files
-
     lig_root = sys.root / "ligands"
     lig_root.mkdir(parents=True, exist_ok=True)
 
@@ -313,24 +264,68 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     logger.info(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
     logger.info(f"System built successfully in {sys.root}")
 
-    # Pipeline template
-    tpl = _select_pipeline(rc.protocol, sim_cfg, rc.run.only_fe_preparation)
+    # Build pipeline with explicit sys_params
+    tpl = _select_pipeline(
+        rc.protocol,
+        sim_cfg,
+        rc.run.only_fe_preparation,
+        sys_params=sys_params,
+    )
 
-    # 5) Run param_ligands ONCE at parent
-    parent_only = Pipeline([s for s in tpl.ordered_steps() if s.name == "param_ligands"])
+    # Run parent-only steps (system_prep, param_ligands) at system root
+    parent_only = Pipeline([s for s in tpl.ordered_steps() if s.name in {"system_prep", "param_ligands"}])
     if parent_only.ordered_steps():
-        logger.info(f"Executing single param_ligands job at {sys.root}")
+        names = [s.name for s in parent_only.ordered_steps()]
+        logger.info(f"Executing parent-only steps at {sys.root}: {names}")
         parent_only.run(backend, sys)
+    
+    # Locate sim_overrides from system_prep
+    overrides_path = sys.root / "artifacts" / "config" / "sim_overrides.json"
+    sim_cfg_updated = sim_cfg
+    if overrides_path.exists():
+        import json
+        upd = json.loads(overrides_path.read_text()) or {}
+        sim_cfg_updated = sim_cfg.model_copy(update={k: v for k, v in upd.items() if v is not None})
 
-    # 6) Per-ligand: remove the step and its dependency before running
-    per_lig = _pipeline_prune_requires(tpl, {"param_ligands"})
+        from batter.config.io import write_yaml_config
+        (sys.root / "artifacts" / "config").mkdir(parents=True, exist_ok=True)
+        write_yaml_config(sim_cfg_updated, sys.root / "artifacts" / "config" / "sim.resolved.yaml")
 
-    # 7) Run remaining steps per ligand child system
+    # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
+    removed = {"system_prep", "param_ligands"}
+
+    per_lig_steps: List[Step] = []
+    for s in tpl.ordered_steps():
+        if s.name in removed:
+            continue
+        p = dict(s.params)
+        if "sim" in p:
+            p["sim"] = sim_cfg_updated.model_dump()
+        per_lig_steps.append(
+            Step(
+                name=s.name,
+                requires=[r for r in s.requires if r not in removed],
+                params=p,
+            )
+        )
+
+    per_lig = Pipeline(per_lig_steps)
+
+    # IMPORTANT: also update the `sim` param on each remaining step
+    new_steps = []
+    for s in per_lig.ordered_steps():
+        p = dict(s.params)
+        if "sim" in p:
+            p["sim"] = sim_cfg_updated.model_dump()
+        new_steps.append(Step(name=s.name, requires=s.requires, params=p))
+    per_lig = Pipeline(new_steps)
+
+    # Run remaining steps per ligand child system
     store = ArtifactStore(sys.root)
     repo = FEResultsRepository(store)
 
     child_dirs = sorted([d for d in (sys.root / "ligands").glob("*") if d.is_dir()])
-    
+
     failures: list[tuple[str, str]] = []  # [(lig_name, str(error))]
     for d in child_dirs:
         lig_name = d.name
@@ -342,6 +337,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
             coordinates=sys.coordinates,
             ligands=tuple([d / "inputs" / "ligand.sdf"]),
             lipid_mol=sys.lipid_mol,
+            other_mol=sys.other_mol,
             anchors=sys.anchors,
             meta={**(sys.meta or {}), "ligand": lig_name},
         )
@@ -354,11 +350,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
             msg = f"{type(e).__name__}: {e}"
             if on_failure == "prune":
                 logger.error(f"Ligand {lig_name} failed; pruning this ligand. Error: {msg}")
-                # leave a marker so users can see which ligand was skipped
                 (child.root / "artifacts" / "FAILED.txt").write_text(f"{msg}\n")
                 failures.append((lig_name, msg))
                 continue
-            # on_failure == "raise"
             logger.error(f"Ligand {lig_name} failed; aborting entire run due to --on-failure=raise. Error: {msg}")
             raise
 
@@ -382,20 +376,20 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
         try:
             rec = FERecord(
                 run_id=run_id,
-                system_name=sim_cfg.system_name,
-                fe_type=sim_cfg.fe_type,
-                temperature=sim_cfg.temperature,
-                method=sim_cfg.dec_int,
+                system_name=sim_cfg_updated.system_name,
+                fe_type=sim_cfg_updated.fe_type,
+                temperature=sim_cfg_updated.temperature,
+                method=sim_cfg_updated.dec_int,
                 total_dG=total_dG,
                 total_se=total_se,
-                components=list(sim_cfg.components),
+                components=list(sim_cfg_updated.components),
                 windows=[],
             )
             repo.save(rec)
             logger.info(f"Saved FE record for ligand {lig_name} under {sys.root}")
         except Exception as e:
             logger.warning(f"Could not save FE record for {lig_name}: {e}")
-    
+
     if failures:
         failed = ", ".join([f"{n} ({m})" for n, m in failures])
         logger.warning(f"{len(failures)} ligand(s) were pruned due to failures: {failed}")

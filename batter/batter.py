@@ -293,7 +293,7 @@ class System:
                 raise ValueError("The system has been prepared for equilibration or free energy simulations. "
                                  "Set overwrite=True to overwrite the existing system or skip `create_system` step.")
                                                  
-        self.system_name = system_name
+        self._system_name = system_name
         self._protein_input = self._convert_2_relative_path(protein_input)
         self._system_topology = self._convert_2_relative_path(system_topology)
         if system_coordinate is not None:
@@ -321,9 +321,9 @@ class System:
 
         self.lipid_mol = lipid_mol
         if not self.lipid_mol:
-            self.membrane_simulation = False
+            self._membrane_simulation = False
         else:
-            self.membrane_simulation = True
+            self._membrane_simulation = True
 
         # check input existence
         if not os.path.exists(self.protein_input):
@@ -494,7 +494,8 @@ class System:
         try:
             return self._sim_config
         except AttributeError:
-            self._sim_config = SimulationConfig()
+            self._sim_config = SimulationConfig(system_name=self._system_name,
+                            fe_type='uno_rest')
             return self._sim_config
     
     @sim_config.setter
@@ -601,6 +602,17 @@ class System:
         except AttributeError:
             self._check_equilbration_binding()
             return self._bound_mols
+        
+    @property
+    def membrane_simulation(self):
+        try:
+            return self._membrane_simulation
+        except (AttributeError, TypeError):
+            if not self.lipid_mol:
+                return False
+            else:
+                return True
+
         
     def _process_ligands(self):
         """
@@ -930,14 +942,14 @@ class System:
         
         sim_config.system_name = self.system_name
         sim_config.ligand_dict = self.ligand_dict
-        sim_config.membrane_simulation = self.membrane_simulation
+        sim_config._membrane_simulation = self.membrane_simulation
         sim_config.protein_align = self.protein_align
         sim_config.receptor_segment = self.receptor_segment
         sim_config.receptor_ff = self.receptor_ff
         sim_config.lipid_ff = self.lipid_ff
         sim_config.ligand_ff = self.ligand_ff
         sim_config.lipid_mol = self.lipid_mol
-        sim_config.poses_list = self.poses_list
+        sim_config.poses_list = self.all_poses
                  
         self.sim_config = sim_config
 
@@ -1014,13 +1026,9 @@ class System:
                     raise ValueError(f"Invalid component: {key}. Available components are: {self._component_windows_dict.keys()}")
                 self._component_windows_dict[key] = value
         
-        if len(self.sim_config.poses_def) != len(self.ligand_paths):
-            logger.debug(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
-                           f"does not match the number of ligands: {len(self.ligand_paths)}")
-            logger.debug("Using the ligand paths for the poses")
         self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
         self._pose_ligand_dict = {pose: ligand for pose, ligand in zip(self._all_poses, self.ligand_names)}
-        self.sim_config.poses_def = self._all_poses 
+        self.sim_config.poses_list = self._all_poses 
 
         if stage == 'equil':
             if self.overwrite:
@@ -1539,7 +1547,7 @@ class System:
         poser = self.bound_poses[0]
         builders = []
         builders_factory = BuilderFactory()
-        for pose in sim_config.poses_def:
+        for pose in sim_config.poses_list:
             # if "UNBOUND" found in equilibration, skip
             if os.path.exists(f"{self.equil_folder}/{pose}/UNBOUND"):
                 logger.info(f"Pose {pose} is UNBOUND in equilibration; skipping FE")
@@ -4342,7 +4350,7 @@ class MASFESystem(System):
                 raise ValueError("The system has been prepared for equilibration or free energy simulations. "
                                  "Set overwrite=True to overwrite the existing system or skip `create_system` step.")
                                                  
-        self.system_name = system_name
+        self._system_name = system_name
         
         # always store a unique identifier for the ligand
         if isinstance(ligand_paths, list):
@@ -4357,7 +4365,7 @@ class MASFESystem(System):
         self.ligand_ff = ligand_ff
         self.overwrite = overwrite
 
-        self.membrane_simulation = False
+        self._membrane_simulation = False
         self._protein_input = 'no_protein'
 
         for ligand_path in self.ligand_paths:
@@ -4758,13 +4766,9 @@ class MASFESystem(System):
                     raise ValueError(f"Invalid component: {key}. Available components are: {self._component_windows_dict.keys()}")
                 self._component_windows_dict[key] = value
         
-        if len(self.sim_config.poses_def) != len(self.ligand_paths):
-            logger.debug(f"Number of poses in the input file: {len(self.sim_config.poses_def)} "
-                           f"does not match the number of ligands: {len(self.ligand_paths)}")
-            logger.debug("Using the ligand paths for the poses")
         self._all_poses = [f'pose{i}' for i in range(len(self.ligand_paths))]
         self._pose_ligand_dict = {pose: ligand for pose, ligand in zip(self._all_poses, self.ligand_names)}
-        self.sim_config.poses_def = self._all_poses 
+        self.sim_config.poses_list = self._all_poses 
 
         if stage == 'equil':
             raise ValueError("Equilibration stage is not needed for ASFE system.")
@@ -4805,7 +4809,7 @@ class MASFESystem(System):
         poser = self.bound_poses[0]
         builders = []
         builders_factory = BuilderFactory()
-        for pose in sim_config.poses_def:
+        for pose in sim_config.poses_list:
             logger.debug(f'Preparing pose: {pose}')
             
             sim_config_pose = sim_config.copy(deep=True)

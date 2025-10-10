@@ -35,6 +35,8 @@ class SimSystem:
         One or more ligand structure files.
     lipid_mol : tuple[str, ...]
         Lipid names present in the system (e.g., ``("POPC",)``).
+    other_mol : tuple[str, ...]
+        Other cofactor present in the system``).
     anchors : tuple[str, ...]
         Anchor atoms in the form ``"RESID@ATOM"`` (e.g., ``"85@CA"``).
     meta : dict
@@ -47,6 +49,7 @@ class SimSystem:
     protein: Optional[Path] = None
     ligands: Tuple[Path, ...] = ()
     lipid_mol: Tuple[str, ...] = ()
+    other_mol: Tuple[str, ...] = ()
     anchors: Tuple[str, ...] = ()
     meta: Dict[str, str] = None
 
@@ -81,6 +84,7 @@ class CreateSystemLike(Protocol):
     overwrite: bool
     retain_lig_prot: bool
     lipid_mol: Sequence[str]
+    other_mol: Sequence[str]
     anchor_atoms: Sequence[str]
 
 

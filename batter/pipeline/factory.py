@@ -13,22 +13,35 @@ def _step(name: str, requires: List[str] | None = None, **params) -> Step:
     return Step(name=name, requires=requires or [], params=params)
 
 
-def make_abfe_pipeline(sim: SimulationConfig, only_fe_preparation: bool = False) -> Pipeline:
+def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparation: bool = False) -> Pipeline:
     """
     ABFE pipeline (expanded):
 
-    param_ligands → prepare_equil → equil → prepare_fe → prepare_fe_windows → fe_equil → fe → analyze
+    system_prep → param_ligands → prepare_equil → equil
+    → prepare_fe → prepare_fe_windows → fe_equil → fe → analyze
     """
     steps: List[Step] = []
 
-    # 0) single parent job; run once at system-root (orchestrate/run.py handles that)
+    # 0) system prep — runs once at system root
     steps.append(
-        _step(
-            "param_ligands",
-            outdir="{WORK}/ligand_params",   # replaced in run.py
-            charge="am1bcc",
-            ligand_ff=sim.ligand_ff,
-            retain_lig_prot=True,
+        Step(
+            name="system_prep",
+            requires=[],
+            params={"sim": sim.model_dump(), **sys_params},
+        )
+    )
+
+    # 0) single parent job
+    steps.append(
+        Step(
+            name="param_ligands",
+            requires=[],
+            params=dict(
+                outdir="{WORK}/ligand_params",
+                charge="am1bcc",
+                ligand_ff=sim.ligand_ff,
+                retain_lig_prot=True,
+            ),
         )
     )
 

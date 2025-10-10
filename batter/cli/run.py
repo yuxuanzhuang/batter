@@ -53,9 +53,7 @@ def cmd_run(yaml_path: Path, on_failure: str) -> None:
     yaml_path
         Path to a top-level run YAML (includes system/create/run/simulation).
     """
-    logger.info("Starting BATTER run from {}", yaml_path)
     run_from_yaml(yaml_path, on_failure=on_failure.lower())
-    logger.success("Run completed for {}", yaml_path)
 
 
 # ------------------------------- config --------------------------------

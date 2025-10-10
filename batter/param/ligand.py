@@ -110,6 +110,27 @@ def _convert_mol_name_to_unique(
     )
 
 
+def _ensure_sdf_internal_name(sdf_path: Union[str, Path], name: str) -> None:
+    """
+    Ensure the SDF header (_Name property) equals `name`. Overwrites the file in-place.
+    """
+    p = str(sdf_path)
+    suppl = Chem.SDMolSupplier(p, removeHs=False)
+    mols = [m for m in suppl if m is not None]
+    if not mols:
+        logger.warning(f"[ligand] Could not read SDF to set name: {p}")
+        return
+    mol = mols[0]
+    try:
+        mol.SetProp("_Name", name)
+    except Exception as e:
+        logger.warning(f"[ligand] Could not set _Name for {p}: {e}")
+        return
+    w = Chem.SDWriter(p)
+    w.write(mol)
+    w.close()
+    logger.debug(f"[ligand] Set SDF _Name to '{name}' in {Path(p).name}")
+
 def _rdkit_load(path: Union[str, Path], retain_h: bool) -> Chem.Mol:
     """
     Load a ligand file with RDKit (SDF/MOL2). Raise on failure.
@@ -665,6 +686,7 @@ def batch_ligand_process(
     retain_lig_prot: bool = True,
     ligand_ph: float = 7.0,  # reserved for future use
     ligand_ff: str = "gaff2",
+    charge_method: str = "am1bcc",
     overwrite: bool = False,
     run_with_slurm: bool = False,
     max_slurm_jobs: int = 50,
@@ -692,6 +714,8 @@ def batch_ligand_process(
         Target protonation pH (not applied here; reserved).
     ligand_ff
         Force field ('gaff'/'gaff2' or a valid OpenFF release name).
+    charge_method
+        Charge method for ligand.
     overwrite
         If True, re-parameterize even if <hash_id> already exists.
     run_with_slurm
@@ -736,15 +760,19 @@ def batch_ligand_process(
     # order by first appearance of path in input list (stable)
     ordered_paths = []
     seen = set()
-    for _, p in lig_map.items():
+    ligand_names = []
+    for name, p in lig_map.items():
         if p not in seen:
             ordered_paths.append(p)
+            ligand_names.append(name)
             seen.add(p)
 
     hash_order: List[str] = [unique[p][0] for p in ordered_paths]
 
     # --- build LigandProcessing objects for each unique hash ---
     to_prepare: List[Tuple[str, "LigandProcessing"]] = []
+    unique_mol_names = []
+
     factory = LigandFactory()
 
     for idx, p in enumerate(ordered_paths, start=1):
@@ -752,21 +780,17 @@ def batch_ligand_process(
         target_dir = out_root / hid
         target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Heuristic prepared base name: keep stable but human-friendly (e.g., first alias or file stem)
-        # The LigandProcessing class still writes files like <name>.mol2 etc INSIDE target_dir/
-        first_alias = next(name for name, path in lig_map.items() if path == p)
-        prepared_base = Path(p).stem.lower()  # a safe default; not used for lookups anymore
-
         lig = factory.create_ligand(
             ligand_file=p,
             index=idx,
             output_dir=target_dir.as_posix(),
-            ligand_name=prepared_base,
+            ligand_name=ligand_names[idx - 1],
             retain_lig_prot=retain_lig_prot,
+            charge=charge_method,
             ligand_ff=ligand_ff,
-            unique_mol_names=[],  # uniqueness now scoped per-hash dir
+            unique_mol_names=unique_mol_names,
         )
-
+        unique_mol_names.append(lig.name)
         # Dump metadata for traceability
         meta = {
             "hash_id": hid,
@@ -775,7 +799,7 @@ def batch_ligand_process(
             "canonical_smiles": smi,
             "retain_lig_prot": bool(retain_lig_prot),
             "ligand_ff": ligand_ff,
-            "prepared_base": lig.name,  # whatever the factory settled on
+            "prepared_base": lig.name,
         }
         (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
@@ -800,4 +824,4 @@ def batch_ligand_process(
                 lig.prepare_ligand_parameters()
 
     logger.info("Prepared {} unique ligands into {}", len(hash_order), out_root)
-    return hash_order
+    return hash_order, unique_mol_names
