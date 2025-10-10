@@ -6,14 +6,7 @@
 
 # Calculation definitions
 
-calc_type = dock                                # docked or crystal structure
-celpp_receptor = 7T2G                # Choose CELPP receptor in upper case or pdb code in lower case
-poses_list = [0]                   # List of poses for docked calculations, called pose0.pdb, pose1.pdb, pose2.pdb, etc. 
-
-# Protein anchors, using original protein sequence 
-P1 = :147@CA
-P2 = :117@CA
-P3 = :326@CA
+system_name = test       # Name of the system, used to name folders and files
 
 # Molecules other than receptor and ligand 
 

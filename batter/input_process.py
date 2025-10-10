@@ -186,16 +186,6 @@ class SimulationConfig(BaseModel):
             if v in {"false", "f", "0"}: return "no"
         raise ValueError(f"Invalid value: {value}. Must be 'yes' or 'no'.")
 
-    @field_validator("p1", "p2", "p3")
-    @classmethod
-    def _validate_anchor(cls, v: str) -> str:
-        # allow empty string (not all protocols need anchors)
-        if not v:
-            return v
-        if not _ANCHOR_RE.match(v):
-            raise ValueError(f"Anchor must look like '85@CA' (got {v!r})")
-        return v
-
     @field_validator("dec_method", mode="before")
     @classmethod
     def _gate_dec_method(cls, v: Optional[str], info) -> Optional[str]:
