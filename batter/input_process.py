@@ -126,7 +126,7 @@ class SimulationConfig(BaseModel):
     ntwx: int = Field(2500, description="Write trajectory every ntwx steps")
     cut: float = Field(9.0, description="Nonbonded cutoff (Å)")
     gamma_ln: float = Field(1.0, description="Langevin γ (ps^-1)")
-    barostat: Literal[1, 2] = Field(2, description="1=Berendsen, 2=MC barostat")
+    barostat: int = Field(2, description="1=Berendsen, 2=MC barostat")
     dt: float = Field(0.004, description="Time step (ps)")
     num_fe_range: int = Field(
         10,
@@ -148,6 +148,7 @@ class SimulationConfig(BaseModel):
     neut: str = Field("", description="Alias of neutralize_only (for legacy paths)")
     protein_align: str = Field("name CA", description="Selection used for alignment")
     receptor_segment: Optional[str] = Field(None, description="Segment to embed in membrane")
+    poses_list: List[str] = Field(default_factory=list, description="Segment to embed in membrane")
 
     # --- Internal-only runtime/private ---
     _components: List[str] = PrivateAttr(default_factory=list)
