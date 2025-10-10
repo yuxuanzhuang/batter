@@ -564,6 +564,8 @@ class SchedInfo(object):
         msg += "Std Value:  %.4f\n"%(self.std)
         msg += "Max Value:  %.4f\n"%(self.maxval)
         msg += "Min Value:  %.4f\n"%(self.minval)
+        # string to be copied into input file
+        msg += f"lambdas = [{' '.join(f'{lam:.8f}' for lam in self.lams)}]"
         return msg
 
             

@@ -120,6 +120,12 @@ def test_determinism_same_inputs():
     assert out1 == out2
 
 
+def test_no_three_digits():
+    args = dict(mol_name="129", ind=1, smiles="CC(=O)C")
+    out = _convert_mol_name_to_unique(exist_mol_names=[], **args)
+    assert out == 'l12'
+
+
 def test_uniqueness_when_base_is_empty_and_conflict():
     exist = set()
     out1 = _convert_mol_name_to_unique("###", ind=0, smiles="S", exist_mol_names=exist)

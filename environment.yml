@@ -10,11 +10,12 @@ dependencies:
   - prettypyplot
   - seaborn
   - loguru
-  - pydantic
+  - pydantic>=2.11.7
   - click
   - pandas
   - alchemlyb
   - vmd
+  - apbs
   # dask distributed for analysis
   - dask
   - dask-jobqueue
@@ -24,5 +25,6 @@ dependencies:
   - pytest-xdist
   - pytest-cov
   - pytest-snapshot
-  # - pip:
-  #  - git+https://github.com/yuxuanzhuang/mdanalysis.git@unwrap_enhancement
+  
+  - pip:
+    - nglview  

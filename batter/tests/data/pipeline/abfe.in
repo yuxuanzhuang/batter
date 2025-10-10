@@ -8,6 +8,7 @@
 # Calculation definitions
 
 # Molecules other than receptor and ligand 
+system_name = test
 #other_mol = [ ]     # List of extra residues names that will be included in the simulations
 
 solv_shell = 15      # Water molecules around the protein that will be kept in the initial structure (in angstroms)

@@ -46,6 +46,10 @@ def check_eq_stage(pose, comps, fe_folder):
 
         if not os.path.exists(f'{fe_folder}/{pose}/{sim_type}/{comp}-1'):
             return 'no_folder'
+        # FAILED
+        if os.path.exists(f'{fe_folder}/{pose}/{sim_type}/{comp}-1/FAILED'):
+            logger.debug(f'{fe_folder}/{pose}/{sim_type}/{comp}-1/FAILED exists')
+            return 'FAILED'
         # mini.rst7
         mini_file = f'{fe_folder}/{pose}/{sim_type}/{comp}-1/mini.rst7'
         if not os.path.exists(mini_file) or os.path.getsize(mini_file) == 0:
@@ -188,6 +192,9 @@ def run_in_batch(
             last_rst7 = check_eq_stage(pose, components, fe_folder=system.fe_folder)
             if last_rst7 == 'no_folder':
                 logger.warning(f'{pose} no folder')
+                continue
+            if last_rst7 == 'FAILED':
+                logger.warning(f'{pose} eq stage FAILED, please check {system.fe_folder}/{pose}/*/FAILED')
                 continue
             if last_rst7 == 'eq_mini':
                 sim_to_run = True

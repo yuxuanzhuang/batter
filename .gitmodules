@@ -1,8 +1,11 @@
 [submodule "extern/openfe"]
 	path = extern/openfe
-	url = git@github.com:OpenFreeEnergy/openfe.git
+	url = git@github.com:yuxuanzhuang/openfe.git
 [submodule "extern/alchemlyb"]
 	path = extern/alchemlyb
 	#url = git@github.com:alchemistry/alchemlyb.git
 	# https://github.com/yuxuanzhuang/alchemlyb/tree/reduce
 	url = git@github.com:yuxuanzhuang/alchemlyb.git
+[submodule "extern/rocklinc"]
+	path = extern/rocklinc
+	url = git@github.com:yuxuanzhuang/rocklinc.git

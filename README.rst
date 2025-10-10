@@ -32,6 +32,7 @@ To install, first clone the repository and then run the following command:
     
     pip install -e ./extern/alchemlyb
     pip install -e ./extern/openfe
+    pip install -e ./extern/rocklinc
     pip install -e .
 
 This will install the package in editable mode, so you can make changes to the code and see the changes reflected in the package.

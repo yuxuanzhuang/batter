@@ -14,7 +14,7 @@ import tempfile
 import warnings
 from typing import Union
 
-
+import batter
 from batter.input_process import SimulationConfig, get_configure_from_file
 from batter.data import build_files as build_files_orig
 from batter.data import amber_files as amber_files_orig
@@ -26,7 +26,6 @@ from batter.utils import (
     tleap,
     cpptraj,
     charmmlipid2amber,
-    vmd,
     log_info,
     COMPONENTS_LAMBDA_DICT,
     COMPONENTS_FOLDER_DICT,
@@ -49,9 +48,9 @@ class SystemBuilder(ABC):
     stage = None
 
     def __init__(self,
-                 system: 'batter.System',
                  pose: str,
                  sim_config: SimulationConfig,
+                 component_windows_dict: 'ComponentWindowsDict',
                  working_dir: str,
                  ):
         """
@@ -59,8 +58,6 @@ class SystemBuilder(ABC):
 
         Parameters
         ----------
-        system : batter.System
-            The system to build.
         pose : str
             The name of the pose
         sim_config : batter.input_process.SimulationConfig
@@ -68,12 +65,19 @@ class SystemBuilder(ABC):
         working_dir : str
             The working directory.
         """
-        self.system = system
         self.pose = pose
         self.sim_config = sim_config
+        self.component_windows_dict = component_windows_dict
         self.other_mol = self.sim_config.other_mol
-        self.lipid_mol = self.system.lipid_mol
-        logger.debug(f'Builder with system: {self.system}, pose:{self.pose}, lipid_mol: {self.lipid_mol}, other_mol: {self.other_mol}')
+        try:
+            self.lipid_mol = self.sim_config.lipid_mol
+        except AttributeError:
+            self.lipid_mol = []
+        self.membrane_builder = self.sim_config._membrane_simulation
+        if self.membrane_builder and len(self.lipid_mol) == 0:
+            raise ValueError('For membrane simulations, lipid_mol must be specified.')
+        logger.debug(f'Builder with {'membrane' if self.membrane_builder else 'water'} \n'
+                    f'pose:{self.pose}, \n lipid_mol: {self.lipid_mol}, \n other_mol: {self.other_mol}')
 
         self.working_dir = working_dir
 
@@ -160,14 +164,13 @@ class SystemBuilder(ABC):
             logger.warning('WARNING: Switch to Berendsen barostat')
             barostat = '1'
         
-        receptor_ff = self.system.receptor_ff
-        ligand_ff = self.system.ligand_ff
+        receptor_ff = self.sim_config.receptor_ff
+        ligand_ff = self.sim_config.ligand_ff
         if ligand_ff not in ['gaff', 'gaff2']:
             # if ligand_ff is set to openff, use gaff2 to build the system
             ligand_ff = 'gaff2'
-        lipid_ff = self.system.lipid_ff
-        lipid_mol = self.system.lipid_mol
-        if lipid_mol:
+        lipid_ff = self.sim_config.lipid_ff
+        if self.membrane_builder:
             p_coupling = self.p_coupling if hasattr(self, 'p_coupling') else '3'
             c_surften = self.c_surften if hasattr(self, 'c_surften') else '3'
         else:
@@ -192,19 +195,19 @@ class SystemBuilder(ABC):
                 with open(fpath) as f:
                     s = f.read()
                     s = (s
-                         .replace('_step_', dt)
-                         .replace('_ntpr_', ntpr)
-                         .replace('_ntwr_', ntwr)
-                         .replace('_ntwe_', ntwe)
-                         .replace('_ntwx_', ntwx)
-                         .replace('_cutoff_', cut)
-                         .replace('_gamma_ln_', gamma_ln)
-                         .replace('_barostat_', barostat)
+                         .replace('_step_', str(dt))
+                         .replace('_ntpr_', str(ntpr))
+                         .replace('_ntwr_', str(ntwr))
+                         .replace('_ntwe_', str(ntwe))
+                         .replace('_ntwx_', str(ntwx))
+                         .replace('_cutoff_', str(cut))
+                         .replace('_gamma_ln_', str(gamma_ln))
+                         .replace('_barostat_', str(barostat))
                          .replace('_receptor_ff_', receptor_ff)
                          .replace('_ligand_ff_', ligand_ff)
                          .replace('_lipid_ff_', lipid_ff)
-                         .replace('_p_coupling_', p_coupling)
-                         .replace('_c_surften_', c_surften)
+                         .replace('_p_coupling_', str(p_coupling))
+                         .replace('_c_surften_', str(c_surften))
                          )
                 with open(fpath, "w") as f:
                     f.write(s)
@@ -282,17 +285,23 @@ class SystemBuilder(ABC):
             poser = self.pose
         buffer_x = self.sim_config.buffer_x
         buffer_y = self.sim_config.buffer_y
-        targeted_buffer_z = self.sim_config.buffer_z
-        tleap_remove = None
+        buffer_z = self.sim_config.buffer_z
+        if not self.membrane_builder and (buffer_x < 5 or buffer_y < 5 or buffer_z < 5):
+            logger.error('For water systems, buffer_x and buffer_y and buffer_z were set to less than 5 A. ')
+            raise
+        if self.membrane_builder:
+            targeted_buffer_z = self.sim_config.buffer_z
 
-        # default to 25 A
-        if targeted_buffer_z == 0:
-            targeted_buffer_z = 25
-        # decide based on existing water shell
-        # to reach buffer_z angstroms on each side
-        buffer_z = get_buffer_z('build.pdb', targeted_buf=targeted_buffer_z)
-        #logger.info(f'Using buffer_z = {buffer_z} angstroms')
-        buff = buffer_z
+            # default to 25 A
+            if targeted_buffer_z == 0:
+                targeted_buffer_z = 25
+            # decide based on existing water shell
+            # to reach buffer_z angstroms on each side
+            buffer_z = get_buffer_z('build.pdb', targeted_buf=targeted_buffer_z)
+            # use x, y box dimensions from the lipid system
+            buffer_x = 0
+            buffer_y = 0
+            #logger.info(f'Using buffer_z = {buffer_z} angstroms')
 
         water_model = self.sim_config.water_model
         num_waters = self.sim_config.num_waters
@@ -305,12 +314,6 @@ class SystemBuilder(ABC):
         neut = self.sim_config.neut
         dec_method = self.sim_config.dec_method
 
-        # if building a lipid system
-        # use x, y box dimensions from the lipid system
-        if lipid_mol:
-            buffer_x = 0
-            buffer_y = 0
-        
         for file in glob.glob(f'../../ff/{mol.lower()}.*'):
             os.system(f'cp {file} ./')
         if mol != molr:
@@ -362,12 +365,7 @@ class SystemBuilder(ABC):
             tleap_solvate.write('source leaprc.water.fb3\n\n')
         tleap_solvate.write('model = loadpdb build.pdb\n\n')
         tleap_solvate.write('# Create water box with chosen model\n')
-        tleap_solvate.write(f'solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buff} }} 1\n\n')
-        if tleap_remove is not None:
-            tleap_solvate.write('# Remove a few waters manually\n')
-            for water in tleap_remove:
-                tleap_solvate.write(f'remove model model.{water}\n')
-            tleap_solvate.write('\n')
+        tleap_solvate.write(f'solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z} }} 1\n\n')
         tleap_solvate.write('desc model\n')
         tleap_solvate.write('savepdb model full_pre.pdb\n')
         tleap_solvate.write('quit')
@@ -415,49 +413,55 @@ class SystemBuilder(ABC):
                              'tleap write incorrect PDB when '
                              'residue exceed 100,000.'
                              'I am not sure how to fix it yet.')
+        final_system = u.atoms
+
         system_dimensions = u.dimensions[:3]
 
-        u_orig = mda.Universe('equil-reference.pdb')
+        if self.membrane_builder:
+            # adjust system dimensions based on membrane
+            u_orig = mda.Universe('equil-reference.pdb')
 
-        u.dimensions[0] = u_orig.dimensions[0]
-        u.dimensions[1] = u_orig.dimensions[1]
-        
-        # reduce the box size on the z axis by 3 angstrom
-        # to account for the void space at the boundaries
-        u.dimensions[2] = u.dimensions[2] - 3
-        u.atoms.positions[:, 2] = u.atoms.positions[:, 2] - 3
+            u.dimensions[0] = u_orig.dimensions[0]
+            u.dimensions[1] = u_orig.dimensions[1]
+            
+            # reduce the box size on the z axis by 3 angstrom
+            # to account for the void space at the boundaries
+            u.dimensions[2] = u.dimensions[2] - 3
+            u.atoms.positions[:, 2] = u.atoms.positions[:, 2] - 3
 
+            membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
+            # get memb boundries
+            membrane_region_z_max = membrane_region.select_atoms('type P').positions[:, 2].max() - 10
+            membrane_region_z_min = membrane_region.select_atoms('type P').positions[:, 2].min() + 10
+            # water that is within the membrane
+            water_in_mem = u.select_atoms(
+                f'byres (resname WAT and prop z > {membrane_region_z_min} and prop z < {membrane_region_z_max})')
+            final_system = final_system - water_in_mem
+            
         box_xy = [u.dimensions[0], u.dimensions[1]]
-        membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
-        # get memb boundries
-        membrane_region_z_max = membrane_region.select_atoms('type P').positions[:, 2].max() - 10
-        membrane_region_z_min = membrane_region.select_atoms('type P').positions[:, 2].min() + 10
-        # water that is within the membrane
-        water = u.select_atoms(
-            f'byres (resname WAT and prop z > {membrane_region_z_min} and prop z < {membrane_region_z_max})')
 
         #water_around_prot = u.select_atoms('byres (resname WAT and around 5 protein)')
         
         water_around_prot = u.select_atoms('resname WAT').residues[:num_waters].atoms
 
-        final_system = u.atoms - water
         final_system = final_system | water_around_prot
 
-        # get WAT that is out of the box
-        outside_wat = final_system.select_atoms(
-            f'byres (resname WAT and ((prop x > {box_xy[0] / 2}) or (prop x < -{box_xy[0] / 2}) or (prop y > {box_xy[1] / 2}) or (prop y < -{box_xy[1] / 2})))')
-        final_system = final_system - outside_wat
+        if self.membrane_builder:
+            # get WAT that is out of the box
+            outside_wat = final_system.select_atoms(
+                f'byres (resname WAT and ((prop x > {box_xy[0] / 2}) or (prop x < -{box_xy[0] / 2}) or (prop y > {box_xy[1] / 2}) or (prop y < -{box_xy[1] / 2})))')
+            final_system = final_system - outside_wat
 
-        if comp in ['e', 'v', 'o', 'z']:
-            # remove the water along z that is outside buffer z
-            protein_region_z_max = u.select_atoms('protein').positions[:, 2].max()
-            protein_region_z_min = u.select_atoms('protein').positions[:, 2].min()
-            outside_wat_z = final_system.select_atoms(
-                f'byres (resname WAT and ((prop z > {protein_region_z_max + targeted_buffer_z}) or (prop z < {protein_region_z_min - targeted_buffer_z})))')
-            final_system = final_system - outside_wat_z
-            logger.debug(f'Box dimensions before removing water: {system_dimensions}')
-            system_dimensions[2] = protein_region_z_max - protein_region_z_min + 2 * targeted_buffer_z
-            logger.debug(f'Box dimensions after removing water: {system_dimensions}')
+            if comp in ['e', 'v', 'o', 'z']:
+                # remove the water along z that is outside buffer z
+                protein_region_z_max = u.select_atoms('protein').positions[:, 2].max()
+                protein_region_z_min = u.select_atoms('protein').positions[:, 2].min()
+                outside_wat_z = final_system.select_atoms(
+                    f'byres (resname WAT and ((prop z > {protein_region_z_max + targeted_buffer_z}) or (prop z < {protein_region_z_min - targeted_buffer_z})))')
+                final_system = final_system - outside_wat_z
+                logger.debug(f'Box dimensions before removing water: {system_dimensions}')
+                system_dimensions[2] = protein_region_z_max - protein_region_z_min + 2 * targeted_buffer_z
+                logger.debug(f'Box dimensions after removing water: {system_dimensions}')
 
         logger.debug(f'Final system: {final_system.n_atoms} atoms')
         logger.debug(f'Final box dimensions: {system_dimensions}')
@@ -564,65 +568,66 @@ class SystemBuilder(ABC):
         
         # write 4 to solvate_pre_others.pdb
         other_lines = []
-        prev_resid = final_system_other_mol.residues.resids[0]
-        for residue in final_system_other_mol.residues:
-            if residue.resid != prev_resid:
-                other_lines.append('TER\n')
-            # create a temp pdb file in /tmp/
-            # write the residue to the temp file
-            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
+        if len(final_system_other_mol.residues) != 0:
+            prev_resid = final_system_other_mol.residues.resids[0]
+            for residue in final_system_other_mol.residues:
+                if residue.resid != prev_resid:
+                    other_lines.append('TER\n')
+                # create a temp pdb file in /tmp/
+                # write the residue to the temp file
+                temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
 
-            residue.atoms.write(temp_pdb.name)
-            temp_pdb.close()
-            # store atom lines into other_lines
-            with open(temp_pdb.name, 'r') as f:
-                # store lines start with ATOM
-                other_lines += [line for line in f.readlines() if line.startswith('ATOM')]
-            prev_resid = residue.resid
-        with open('solvate_pre_others.pdb', 'w') as f:
-            f.writelines(other_lines)
+                residue.atoms.write(temp_pdb.name)
+                temp_pdb.close()
+                # store atom lines into other_lines
+                with open(temp_pdb.name, 'r') as f:
+                    # store lines start with ATOM
+                    other_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+                prev_resid = residue.resid
+            with open('solvate_pre_others.pdb', 'w') as f:
+                f.writelines(other_lines)
 
         # write 5 to solvate_pre_outside_wat.pdb 
         outside_wat_lines = []
+        if len(final_system_water_notaround.residues) != 0:
+            prev_resid = final_system_water_notaround.residues.resids[0]
+            for residue in final_system_water_notaround.residues:
+                if residue.resid != prev_resid:
+                    outside_wat_lines.append('TER\n')
+                # create a temp pdb file in /tmp/
+                # write the residue to the temp file
+                temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
 
-        prev_resid = final_system_water_notaround.residues.resids[0]
-        for residue in final_system_water_notaround.residues:
-            if residue.resid != prev_resid:
-                outside_wat_lines.append('TER\n')
-            # create a temp pdb file in /tmp/
-            # write the residue to the temp file
-            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
-
-            residue.atoms.write(temp_pdb.name)
-            temp_pdb.close()
-            # store atom lines into outside_wat_lines
-            with open(temp_pdb.name, 'r') as f:
-                # store lines start with ATOM
-                outside_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
-            prev_resid = residue.resid
-        with open('solvate_pre_outside_wat.pdb', 'w') as f:
-            f.writelines(outside_wat_lines)
+                residue.atoms.write(temp_pdb.name)
+                temp_pdb.close()
+                # store atom lines into outside_wat_lines
+                with open(temp_pdb.name, 'r') as f:
+                    # store lines start with ATOM
+                    outside_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+                prev_resid = residue.resid
+            with open('solvate_pre_outside_wat.pdb', 'w') as f:
+                f.writelines(outside_wat_lines)
 
         # write 6 to solvate_pre_around_water.pdb
         around_wat_lines = []
+        if len(final_system_water_around.residues) != 0:
+            prev_resid = final_system_water_around.residues.resids[0]
+            for residue in final_system_water_around.residues:
+                if residue.resid != prev_resid:
+                    around_wat_lines.append('TER\n')
+                # create a temp pdb file in /tmp/
+                # write the residue to the temp file
+                temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
 
-        prev_resid = final_system_water_around.residues.resids[0]
-        for residue in final_system_water_around.residues:
-            if residue.resid != prev_resid:
-                around_wat_lines.append('TER\n')
-            # create a temp pdb file in /tmp/
-            # write the residue to the temp file
-            temp_pdb = tempfile.NamedTemporaryFile(delete=False, dir='/tmp/', suffix='.pdb')
-
-            residue.atoms.write(temp_pdb.name)
-            temp_pdb.close()
-            # store atom lines into around_wat_lines
-            with open(temp_pdb.name, 'r') as f:
-                # store lines start with ATOM
-                around_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
-            prev_resid = residue.resid
-        with open('solvate_pre_around_water.pdb', 'w') as f:
-            f.writelines(around_wat_lines)
+                residue.atoms.write(temp_pdb.name)
+                temp_pdb.close()
+                # store atom lines into around_wat_lines
+                with open(temp_pdb.name, 'r') as f:
+                    # store lines start with ATOM
+                    around_wat_lines += [line for line in f.readlines() if line.startswith('ATOM')]
+                prev_resid = residue.resid
+            with open('solvate_pre_around_water.pdb', 'w') as f:
+                f.writelines(around_wat_lines)
         
         # Generate prmtop and inpcrd files for each part of the system
 
@@ -670,23 +675,24 @@ class SystemBuilder(ABC):
         p = run_with_log(f'{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log')
 
         # 4. other molecules
-        os.system(f'cp tleap.in tleap_solvate_others.in')
-        tleap_others = open('tleap_solvate_others.in', 'a')
-        tleap_others.write('# Load the necessary parameters\n')
-        for i in range(0, len(other_mol)):
-            tleap_others.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
-            tleap_others.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
-        if water_model.lower() != 'tip3pf':
-            tleap_others.write(f'source leaprc.water.{water_model.lower()}\n\n')
-        else:
-            tleap_others.write('source leaprc.water.fb3\n\n')
-        tleap_others.write('others = loadpdb solvate_pre_others.pdb\n\n')
-        tleap_others.write(f'set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
-        tleap_others.write('savepdb others solvate_others.pdb\n')
-        tleap_others.write('saveamberparm others solvate_others.prmtop solvate_others.inpcrd\n')
-        tleap_others.write('quit')
-        tleap_others.close()
-        p = run_with_log(f'{tleap} -s -f tleap_solvate_others.in > tleap_others.log')
+        if other_lines != []:
+            os.system(f'cp tleap.in tleap_solvate_others.in')
+            tleap_others = open('tleap_solvate_others.in', 'a')
+            tleap_others.write('# Load the necessary parameters\n')
+            for i in range(0, len(other_mol)):
+                tleap_others.write(f'loadamberparams {other_mol[i].lower()}.frcmod\n')
+                tleap_others.write(f'{other_mol[i]} = loadmol2 {other_mol[i].lower()}.mol2\n')
+            if water_model.lower() != 'tip3pf':
+                tleap_others.write(f'source leaprc.water.{water_model.lower()}\n\n')
+            else:
+                tleap_others.write('source leaprc.water.fb3\n\n')
+            tleap_others.write('others = loadpdb solvate_pre_others.pdb\n\n')
+            tleap_others.write(f'set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+            tleap_others.write('savepdb others solvate_others.pdb\n')
+            tleap_others.write('saveamberparm others solvate_others.prmtop solvate_others.inpcrd\n')
+            tleap_others.write('quit')
+            tleap_others.close()
+            p = run_with_log(f'{tleap} -s -f tleap_solvate_others.in > tleap_others.log')
 
         # Find out how many cations/anions are needed for neutralization
         neu_cat = 0
@@ -707,16 +713,17 @@ class SystemBuilder(ABC):
         f.close()
         # II. add other molecules charge
         
-        # Get ligand removed charge when doing LJ calculations
-        f = open('tleap_others.log', 'r')
-        for line in f:
-            if "The unperturbed charge of the unit" in line:
-                splitline = line.split()
-                if float(splitline[6].strip('\'\",.:;#()][')) < 0:
-                    neu_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-                elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
-                    neu_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
-        f.close()
+        if other_lines != []:
+            # Get ligand removed charge when doing LJ calculations
+            f = open('tleap_others.log', 'r')
+            for line in f:
+                if "The unperturbed charge of the unit" in line:
+                    splitline = line.split()
+                    if float(splitline[6].strip('\'\",.:;#()][')) < 0:
+                        neu_cat += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+                    elif float(splitline[6].strip('\'\",.:;#()][')) > 0:
+                        neu_ani += round(float(re.sub('[+-]', '', splitline[6].strip('\'\"-,.:;#()]['))))
+            f.close()
 
         # III. add ligands charge
         f = open('tleap_ligands.log', 'r')
@@ -755,7 +762,7 @@ class SystemBuilder(ABC):
 
         # A rough reduction of the number of cations
         # for lipid systems
-        if lipid_mol:
+        if self.membrane_builder:
             num_cations = num_cations // 2
         # Number of cations and anions
         num_cat = num_cations
@@ -770,44 +777,46 @@ class SystemBuilder(ABC):
 
         # 5. water that is outside 6 A from the protein
         # add ionization
-        os.system(f'cp tleap.in tleap_solvate_outside_wat.in')
-        tleap_outside_wat = open('tleap_solvate_outside_wat.in', 'a')
-        if water_model.lower() != 'tip3pf':
-            tleap_outside_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
-        else:
-            tleap_outside_wat.write('source leaprc.water.fb3\n\n')
-        tleap_outside_wat.write('outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n')
-        if (neut == 'no'):
-            tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
-            tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {num_cat}\n')
-            tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {num_ani}\n')
-        elif (neut == 'yes'):
-            tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
-            if neu_cat != 0:
-                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {neu_cat}\n')
-            if neu_ani != 0:
-                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {neu_ani}\n')
-        tleap_outside_wat.write(f'set outside_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
-        tleap_outside_wat.write('savepdb outside_wat solvate_outside_wat.pdb\n')
-        tleap_outside_wat.write('saveamberparm outside_wat solvate_outside_wat.prmtop solvate_outside_wat.inpcrd\n')
-        tleap_outside_wat.write('quit')
-        tleap_outside_wat.close()
-        p = run_with_log(f'{tleap} -s -f tleap_solvate_outside_wat.in > tleap_outside_wat.log')
+        if outside_wat_lines != []:
+            os.system(f'cp tleap.in tleap_solvate_outside_wat.in')
+            tleap_outside_wat = open('tleap_solvate_outside_wat.in', 'a')
+            if water_model.lower() != 'tip3pf':
+                tleap_outside_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
+            else:
+                tleap_outside_wat.write('source leaprc.water.fb3\n\n')
+            tleap_outside_wat.write('outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n')
+            if (neut == 'no'):
+                tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
+                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {num_cat}\n')
+                tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {num_ani}\n')
+            elif (neut == 'yes'):
+                tleap_outside_wat.write('# Add ions for neutralization/ionization\n')
+                if neu_cat != 0:
+                    tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[0]} {neu_cat}\n')
+                if neu_ani != 0:
+                    tleap_outside_wat.write(f'addionsrand outside_wat {ion_def[1]} {neu_ani}\n')
+            tleap_outside_wat.write(f'set outside_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+            tleap_outside_wat.write('savepdb outside_wat solvate_outside_wat.pdb\n')
+            tleap_outside_wat.write('saveamberparm outside_wat solvate_outside_wat.prmtop solvate_outside_wat.inpcrd\n')
+            tleap_outside_wat.write('quit')
+            tleap_outside_wat.close()
+            p = run_with_log(f'{tleap} -s -f tleap_solvate_outside_wat.in > tleap_outside_wat.log')
 
         # 6. water that is around 6 A from the protein
-        os.system(f'cp tleap.in tleap_solvate_around_wat.in')
-        tleap_around_wat = open('tleap_solvate_around_wat.in', 'a')
-        if water_model.lower() != 'tip3pf':
-            tleap_around_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
-        else:
-            tleap_around_wat.write('source leaprc.water.fb3\n\n')
-        tleap_around_wat.write('around_wat = loadpdb solvate_pre_around_water.pdb\n\n')
-        tleap_around_wat.write(f'set around_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
-        tleap_around_wat.write('savepdb around_wat solvate_around_wat.pdb\n')
-        tleap_around_wat.write('saveamberparm around_wat solvate_around_wat.prmtop solvate_around_wat.inpcrd\n')
-        tleap_around_wat.write('quit')
-        tleap_around_wat.close()
-        p = run_with_log(f'{tleap} -s -f tleap_solvate_around_wat.in > tleap_around_wat.log')
+        if around_wat_lines != []:
+            os.system(f'cp tleap.in tleap_solvate_around_wat.in')
+            tleap_around_wat = open('tleap_solvate_around_wat.in', 'a')
+            if water_model.lower() != 'tip3pf':
+                tleap_around_wat.write(f'source leaprc.water.{water_model.lower()}\n\n')
+            else:
+                tleap_around_wat.write('source leaprc.water.fb3\n\n')
+            tleap_around_wat.write('around_wat = loadpdb solvate_pre_around_water.pdb\n\n')
+            tleap_around_wat.write(f'set around_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n')
+            tleap_around_wat.write('savepdb around_wat solvate_around_wat.pdb\n')
+            tleap_around_wat.write('saveamberparm around_wat solvate_around_wat.prmtop solvate_around_wat.inpcrd\n')
+            tleap_around_wat.write('quit')
+            tleap_around_wat.close()
+            p = run_with_log(f'{tleap} -s -f tleap_solvate_around_wat.in > tleap_around_wat.log')
 
         # use parmed to combine everything into one system
 
@@ -836,18 +845,25 @@ class SystemBuilder(ABC):
 
         ligands_p.coordinates = pmd.load_file('solvate_ligands.inpcrd').coordinates
 
-        others_p = pmd.load_file('solvate_others.prmtop', 'solvate_others.inpcrd')
-        outside_wat_p = pmd.load_file('solvate_outside_wat.prmtop', 'solvate_outside_wat.inpcrd')
-        around_wat_p = pmd.load_file('solvate_around_wat.prmtop', 'solvate_around_wat.inpcrd')
+        combined = dum_p + prot_p + ligands_p
+        vac = dum_p + prot_p + ligands_p
         
-        # combine all parts
-        combined = dum_p + prot_p + ligands_p + others_p + outside_wat_p + around_wat_p
+        if other_lines != []:
+            others_p = pmd.load_file('solvate_others.prmtop', 'solvate_others.inpcrd')
+            combined += others_p
+            vac += others_p
+        if outside_wat_lines != []:
+            outside_wat_p = pmd.load_file('solvate_outside_wat.prmtop', 'solvate_outside_wat.inpcrd')
+            combined += outside_wat_p
+        if around_wat_lines != []:
+            around_wat_p = pmd.load_file('solvate_around_wat.prmtop', 'solvate_around_wat.inpcrd')
+            combined += around_wat_p
+        
         combined.save('full.prmtop', overwrite=True)
         combined.save('full.inpcrd', overwrite=True)
         combined.save('full.pdb', overwrite=True)
 
         # combine vac parts
-        vac = dum_p + prot_p + ligands_p + others_p
         vac.save('vac.prmtop', overwrite=True)
         vac.save('vac.inpcrd', overwrite=True)
         vac.save('vac.pdb', overwrite=True)
@@ -948,9 +964,9 @@ class EquilibrationBuilder(SystemBuilder):
     dec_method = ''
 
     def __init__(self,
-                 system: 'batter.System',
                  pose: str,
                  sim_config: SimulationConfig,
+                 component_windows_dict: 'ComponentWindowsDict',
                  working_dir: str,
                  infe: bool = False,
                  ):
@@ -959,19 +975,23 @@ class EquilibrationBuilder(SystemBuilder):
 
         Parameters
         ----------
-        system : batter.System
-            The system to build.
         pose : str
             The name of the pose
         sim_config : batter.input_process.SimulationConfig
             The simulation configuration.
+        component_windows_dict : ComponentWindowsDict
+            The component windows dictionary.
         working_dir : str
             The working directory.
         infe: bool
             Whether add infe for protein conformation.
         """
         self.infe = infe
-        super().__init__(system, pose, sim_config, working_dir)
+        super().__init__(
+            pose=pose,
+            sim_config=sim_config,
+            component_windows_dict=component_windows_dict,
+            working_dir=working_dir)
 
     @property
     def build_file_folder(self):
@@ -1004,15 +1024,15 @@ class EquilibrationBuilder(SystemBuilder):
 
         shutil.copytree(build_files_orig, '.', dirs_exist_ok=True)
 
-        all_pose_folder = self.system.poses_folder
-        system_name = self.system.system_name
+        all_pose_folder = f'../../../all-poses'
+        system_name = self.sim_config.system_name
 
         os.system(f'cp {all_pose_folder}/reference.pdb reference.pdb')
         os.system(f'cp {all_pose_folder}/{system_name}_docked.pdb rec_file.pdb')
         os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
 
         other_mol = self.sim_config.other_mol
-        lipid_mol = self.system.lipid_mol
+        lipid_mol = self.sim_config.lipid_mol
         solv_shell = self.sim_config.solv_shell
         mol_u = mda.Universe(f'{self.pose}.pdb')
         if len(set(mol_u.residues.resnames)) > 1:
@@ -1026,7 +1046,7 @@ class EquilibrationBuilder(SystemBuilder):
 
         os.system(f'cp ../../ff/{mol.lower()}.mol2 .')
         os.system(f'cp ../../ff/{mol.lower()}.sdf .')
-
+        
         ante_mol = mda.Universe(f'{mol.lower()}.mol2')
         mol_u.atoms.names = ante_mol.atoms.names
         mol_u.atoms.residues.resnames = mol
@@ -1049,7 +1069,8 @@ class EquilibrationBuilder(SystemBuilder):
                                    .replace('OTHRS', str(other_mol_vmd))
                                    .replace('LIPIDS', str(lipid_mol_vmd))
                                    .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl', error_match='syntax error')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', error_match='syntax error', shell=False)
 
         os.system(f'cp protein.pdb protein_vmd.pdb')
         run_with_log('pdb4amber -i protein_vmd.pdb -o protein.pdb -y')
@@ -1155,28 +1176,30 @@ class EquilibrationBuilder(SystemBuilder):
             other_mol = [mol[:3] for mol in other_mol]
         self.other_mol = other_mol
 
-        if any(mol[:3] != mol for mol in lipid_mol):
-            logger.debug(
-                'The residue names of the lipids are four-letter names.'
-                'They were truncated to three-letter names'
-                'for compatibility with AMBER.')
-        self.lipid_mol = [mol[:3] for mol in lipid_mol]
-        # Convert CHARMM lipid into lipid21
-        run_with_log(f'{charmmlipid2amber} -i lipids.pdb -o lipids_amber.pdb')
-        u = mda.Universe('lipids_amber.pdb')
-        lipid_resnames = set([resname for resname in u.residues.resnames])
-        old_lipid_mol = list(lipid_mol)
-        lipid_mol = list(lipid_resnames)
-        self.lipid_mol = lipid_mol
-        logger.debug(f'Converting CHARMM lipids: {old_lipid_mol} to AMBER format: {lipid_mol}')
+        if self.membrane_builder:
+            if any(mol[:3] != mol for mol in lipid_mol):
+                logger.debug(
+                    'The residue names of the lipids are four-letter names.'
+                    'They were truncated to three-letter names'
+                    'for compatibility with AMBER.')
+            self.lipid_mol = [mol[:3] for mol in lipid_mol]
+            # Convert CHARMM lipid into lipid21
+            run_with_log(f'{charmmlipid2amber} -i lipids.pdb -o lipids_amber.pdb')
+            u = mda.Universe('lipids_amber.pdb')
+            lipid_resnames = set([resname for resname in u.residues.resnames])
+            old_lipid_mol = list(lipid_mol)
+            lipid_mol = list(lipid_resnames)
+            self.lipid_mol = lipid_mol
+            logger.debug(f'Converting CHARMM lipids: {old_lipid_mol} to AMBER format: {lipid_mol}')
 
 
         # Create raw complex and clean it
         filenames = ['protein.pdb',
                      '%s.pdb' % mol.lower(),
-                     'others.pdb',
-                     'lipids_amber.pdb',
-                     'crystalwat.pdb']
+                     'others.pdb']
+        if self.membrane_builder:
+            filenames += ['lipids_amber.pdb']
+        filenames += ['crystalwat.pdb']
         with open('./complex-merge.pdb', 'w') as outfile:
             for fname in filenames:
                 with open(fname) as infile:
@@ -1188,10 +1211,11 @@ class EquilibrationBuilder(SystemBuilder):
                     newfile.write(line)
 
         # New work around to avoid chain swapping during alignment
+        vmd=batter.utils.vmd
         run_with_log('pdb4amber -i reference.pdb -o reference_amber.pdb -y')
-        run_with_log(f'{vmd} -dispdev text -e nochain.tcl')
+        run_with_log(f'{vmd} -dispdev text -e nochain.tcl', shell=False)
         run_with_log('./USalign complex-nc.pdb reference_amber-nc.pdb -mm 0 -ter 2 -o aligned-nc')
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -1209,7 +1233,7 @@ class EquilibrationBuilder(SystemBuilder):
         # add box info back if lipid is present
         # also renumber the residue number
         # so that PA, PC, OL (for POPC) are in the same residue number
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             box_origin = u_original.dimensions
             u.dimensions = box_origin
@@ -1268,7 +1292,8 @@ class EquilibrationBuilder(SystemBuilder):
                                .replace('LIGANDNAME', lig_name_str)
                                )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -1295,7 +1320,8 @@ class EquilibrationBuilder(SystemBuilder):
                                 .replace('LIPIDS', str(lipid_mol_vmd))
                                 .replace('LIGANDNAME', lig_name_str)
                                 )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
 
 
@@ -1548,14 +1574,11 @@ class EquilibrationBuilder(SystemBuilder):
     def _restraints(self):
         pose = self.pose
         rest = self.sim_config.rest
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         comp = self.comp
         molr = self.mol
 
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = self.sim_config.sdr_dist
         dec_method = self.dec_method
 
@@ -1626,28 +1649,6 @@ class EquilibrationBuilder(SystemBuilder):
         rst.append(''+P1+' '+P2+'')
         rst.append(''+P2+' '+P3+'')
         rst.append(''+P3+' '+P1+'')
-
-        # Define protein dihedral restraints in the given range
-        nd = 0
-        for i in range(0, len(bb_start)):
-            beg = bb_start[i] - int(first_res) + 2
-            end = bb_end[i] - int(first_res) + 2
-            for i in range(beg, end):
-                j = i+1
-                psi1 = ':'+str(i)+'@N'
-                psi2 = ':'+str(i)+'@CA'
-                psi3 = ':'+str(i)+'@C'
-                psi4 = ':'+str(j)+'@N'
-                psit = '%s %s %s %s' % (psi1, psi2, psi3, psi4)
-                rst.append(psit)
-                nd += 1
-                phi1 = ':'+str(i)+'@C'
-                phi2 = ':'+str(j)+'@N'
-                phi3 = ':'+str(j)+'@CA'
-                phi4 = ':'+str(j)+'@C'
-                phit = '%s %s %s %s' % (phi1, phi2, phi3, phi4)
-                rst.append(phit)
-                nd += 1
 
         # Define translational/rotational and anchor atom distance restraints on the ligand
 
@@ -1770,11 +1771,6 @@ class EquilibrationBuilder(SystemBuilder):
             weight = release_eq[relase_eq_i]
             logger.debug('%s' % str(weight))
 
-            # Define spring constants based on stage and weight
-            if bb_equil == 'yes':
-                rdhf = rest[0]
-            else:
-                rdhf = 0
             rdsf = rest[1]
             ldf = weight*rest[2]/100
             laf = weight*rest[3]/100
@@ -1794,16 +1790,8 @@ class EquilibrationBuilder(SystemBuilder):
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(0.0), float(vals[i]), float(vals[i]), float(999.0), rdsf, rdsf, recep_c))
-                # Protein conformation (backbone restraints)
-                elif i >= 3 and i < 3+nd:
-                    if len(data) == 4:
-                        nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
-                            ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
-                        disang_file.write('%s %-23s ' % ('&rst iat=', nums))
-                        disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
-                            float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, rdhf, rdhf, recep_d))
                 # Ligand translational/rotational restraints
-                elif i >= 3+nd and i < 9+nd and comp != 'a':
+                elif i >= 3 and i < 9 and comp != 'a':
                     if len(data) == 2:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+','
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
@@ -1822,7 +1810,7 @@ class EquilibrationBuilder(SystemBuilder):
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
                 # Ligand conformation (non-hydrogen dihedrals)
-                elif i >= 9+nd and comp != 'a':
+                elif i >= 9 and comp != 'a':
                     if len(data) == 4:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
                             ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
@@ -1886,12 +1874,12 @@ class EquilibrationBuilder(SystemBuilder):
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
-        with open(f"{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+        with open(f"{self.amber_files_folder}/eqnpt0{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
             with open("./eqnpt0.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
                             '_lig_name_', mol))
-        with open(f"{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+        with open(f"{self.amber_files_folder}/eqnpt{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
             with open("./eqnpt.in", "wt") as fout:
                 for line in fin:
                     fout.write(line.replace('_temperature_', str(temperature)).replace(
@@ -1944,8 +1932,8 @@ class EquilibrationBuilder(SystemBuilder):
                     fout.write(line.replace(
                         'STAGE', stage).replace(
                             'POSE', pose).replace(
-                                'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
+                                'SYSTEMNAME', self.sim_config.system_name).replace(
+                                    'PARTITIONNAME', self.sim_config.partition))
     
     def _find_anchor(self):
         """
@@ -1961,9 +1949,9 @@ class FreeEnergyBuilder(SystemBuilder):
     def __init__(self,
                  win: Union[int, str],
                  component: str,
-                 system: "batter.System",
                  pose: str,
                  sim_config: SimulationConfig,
+                 component_windows_dict: 'ComponentWindowsDict',
                  working_dir: str,
                  molr: str,
                  poser: str,
@@ -1977,7 +1965,11 @@ class FreeEnergyBuilder(SystemBuilder):
         # whether to enable infe for protein restraint.
         self.infe = infe
 
-        super().__init__(system, pose, sim_config, working_dir)
+        super().__init__(
+            pose=pose,
+            sim_config=sim_config,
+            component_windows_dict=component_windows_dict,
+            working_dir=working_dir)
 
         dec_method = self.sim_config.dec_method
         if component == 'n':
@@ -1995,8 +1987,11 @@ class FreeEnergyBuilder(SystemBuilder):
         self.comp_folder = f"{COMPONENTS_FOLDER_DICT[component]}"
         self.window_folder = f"{self.comp}{self.win:02d}"
 
-        self.lipid_mol = self.system.lipid_mol
-        if self.lipid_mol:
+        try:
+            self.lipid_mol = self.sim_config.lipid_mol
+        except AttributeError:
+            self.lipid_mol = []
+        if self.membrane_builder:
             # This will not effect SDR/DD
             # because semi-isotropic barostat is not supported
             # with TI simulations
@@ -2076,7 +2071,7 @@ class FreeEnergyBuilder(SystemBuilder):
             resid_str = residue.resid
             residue.atoms.chainIDs = renum_data.query('old_resid == @resid_str').old_chain.values[0]
 
-        if lipid_mol:
+        if self.membrane_builder:
             # also skip ANC, which is a anchored dummy atom for rmsf restraint
             non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+ ANC')
             # fix lipid resids
@@ -2125,7 +2120,8 @@ class FreeEnergyBuilder(SystemBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -2162,7 +2158,8 @@ class FreeEnergyBuilder(SystemBuilder):
         # Align to reference (equilibrium) structure using VMD's measure fit
         # For FE, to avoid membrane rotation inside the box
         # due to alignment, we just use ues the input structure as the reference
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -2173,7 +2170,7 @@ class FreeEnergyBuilder(SystemBuilder):
         run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
 
         # fix lipid resids
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             non_water_ag = u.select_atoms('not resname WAT Na+ Cl- K+')
             non_water_ag.residues.resids = final_resids
@@ -2220,7 +2217,8 @@ class FreeEnergyBuilder(SystemBuilder):
                         .replace('LIGANDNAME', lig_name_str)
                         )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -2246,7 +2244,8 @@ class FreeEnergyBuilder(SystemBuilder):
                             .replace('LIPIDS', str(lipid_mol_vmd))
                             .replace('LIGANDNAME', lig_name_str)
                             )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
         # Check size of anchor file
         anchor_file = 'anchors.txt'
@@ -2284,7 +2283,7 @@ class FreeEnergyBuilder(SystemBuilder):
         hmr = self.sim_config.hmr
         comp = self.comp
         num_sim = self.sim_config.num_fe_range
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
 
         if os.path.exists(self.run_files_folder):
             shutil.rmtree(self.run_files_folder, ignore_errors=True)
@@ -2675,17 +2674,14 @@ class FreeEnergyBuilder(SystemBuilder):
             return
         pose = self.pose
         rest = self.sim_config.rest
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         molr = self.molr
         comp = self.comp
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         rst = []
@@ -2826,31 +2822,6 @@ class FreeEnergyBuilder(SystemBuilder):
         rst.append(''+P1+' '+P2+'')
         rst.append(''+P2+' '+P3+'')
         rst.append(''+P3+' '+P1+'')
-
-        # Define protein dihedral restraints in the given range
-        nd = 0
-        for i in range(0, len(bb_start)):
-            beg = bb_start[i] - int(first_res) + 2
-            end = bb_end[i] - int(first_res) + 2
-            if (comp == 'e' or comp == 'v' or comp == 'n' or comp == 'x' or comp == 'o' or comp == 'z'):
-                beg = bb_start[i] - int(first_res) + 3
-                end = bb_end[i] - int(first_res) + 3
-            for i in range(beg, end):
-                j = i+1
-                psi1 = ':'+str(i)+'@N'
-                psi2 = ':'+str(i)+'@CA'
-                psi3 = ':'+str(i)+'@C'
-                psi4 = ':'+str(j)+'@N'
-                psit = '%s %s %s %s' % (psi1, psi2, psi3, psi4)
-                rst.append(psit)
-                nd += 1
-                phi1 = ':'+str(i)+'@C'
-                phi2 = ':'+str(j)+'@N'
-                phi3 = ':'+str(j)+'@CA'
-                phi4 = ':'+str(j)+'@C'
-                phit = '%s %s %s %s' % (phi1, phi2, phi3, phi4)
-                rst.append(phit)
-                nd += 1
 
         # Define translational/rotational and anchor atom distance restraints on the ligand
 
@@ -2994,12 +2965,7 @@ class FreeEnergyBuilder(SystemBuilder):
 
         # If chosen, apply initial reference for the protein backbone restraints
         if (stage == 'fe' and comp != 'c' and comp != 'w' and comp != 'f'):
-            if (bb_equil == 'yes'):
-                #shutil.copy('../../../../equil/'+pose+'/assign.dat', './assign-eq.dat')
-                os.system(f'cp ../../../../equil/{pose}/assign.dat ./assign-eq.dat')
-            else:
-                #shutil.copy('./assign.dat', './assign-eq.dat')
-                os.system(f'cp ./assign.dat ./assign-eq.dat')
+            os.system(f'cp ./assign.dat ./assign-eq.dat')
             with open('./assign-eq.dat') as fin:
                 lines = (line.rstrip() for line in fin)
                 lines = list(line for line in lines if line)  # Non-blank lines in a list
@@ -3074,24 +3040,8 @@ class FreeEnergyBuilder(SystemBuilder):
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(999.0), rdsf, rdsf, recep_c))
-                # Protein conformation (backbone restraints)
-                elif i >= 3 and i < 3+nd:
-                    if (stage != 'equil'):
-                        if len(data) == 4:
-                            nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
-                                ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
-                            disang_file.write('%s %-23s ' % ('&rst iat=', nums))
-                            disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
-                                float(valse[i]) - 180, float(valse[i]), float(valse[i]), float(valse[i]) + 180, rdhf, rdhf, recep_d))
-                    else:
-                        if len(data) == 4:
-                            nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
-                                ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
-                            disang_file.write('%s %-23s ' % ('&rst iat=', nums))
-                            disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
-                                float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, rdhf, rdhf, recep_d))
                 # Ligand translational/rotational restraints
-                elif i >= 3+nd and i < 9+nd and comp != 'a':
+                elif i >= 3 and i < 9 and comp != 'a':
                     if len(data) == 2:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+','
                         disang_file.write('%s %-23s ' % ('&rst iat=', nums))
@@ -3110,43 +3060,43 @@ class FreeEnergyBuilder(SystemBuilder):
                         disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                             float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
                     if comp == 'e':
-                        if i == (3+nd):
+                        if i == (3):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(999.0), ldf, ldf, lign_tr))
-                        if i == (4+nd):
+                        if i == (4):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])
                                                                         )+','+str(atm_num.index(data[2])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(180.0), laf, laf, lign_tr))
-                        if i == (5+nd):
+                        if i == (5):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+',' + \
                                 str(atm_num.index(data[2]))+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
-                        if i == (6+nd):
+                        if i == (6):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]) +
                                                                         vac_atoms)+','+str(atm_num.index(data[2])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(0.0), float(vals[i]), float(vals[i]), float(180.0), laf, laf, lign_tr))
-                        if i == (7+nd):
+                        if i == (7):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1]))+',' + \
                                 str(atm_num.index(data[2])+vac_atoms)+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
-                        if i == (8+nd):
+                        if i == (8):
                             nums2 = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])+vac_atoms)+',' + \
                                 str(atm_num.index(data[2])+vac_atoms)+','+str(atm_num.index(data[3])+vac_atoms)+','
                             disang_file.write('%s %-23s ' % ('&rst iat=', nums2))
                             disang_file.write('r1= %10.4f, r2= %10.4f, r3= %10.4f, r4= %10.4f, rk2= %11.7f, rk3= %11.7f, &end %s \n' % (
                                 float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, laf, laf, lign_tr))
                 # Ligand conformation (non-hydrogen dihedrals)
-                elif i >= 9+nd and comp != 'a':
+                elif i >= 9 and comp != 'a':
                     if len(data) == 4:
                         nums = str(atm_num.index(data[0]))+','+str(atm_num.index(data[1])) + \
                             ','+str(atm_num.index(data[2]))+','+str(atm_num.index(data[3]))+','
@@ -3184,12 +3134,10 @@ class FreeEnergyBuilder(SystemBuilder):
                                     float(vals[i]) - 180, float(vals[i]), float(vals[i]), float(vals[i]) + 180, ldhf, ldhf, lign_d))
 
             # COM restraints
-            # TODO: why rcom leads to a crash?
-            rcom = 0
             cv_file = open('cv.in', 'w')
             cv_file.write('cv_file \n')
             # error https://github.com/yuxuanzhuang/nfe_berendsen
-            if False:
+            if True:
                 cv_file.write('&colvar \n')
                 cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
                 cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
@@ -3242,7 +3190,7 @@ class FreeEnergyBuilder(SystemBuilder):
                     restraints_file.write('trajin md%02.0f.nc\n' % i)
          #            for i in range(1, 11):
          #               restraints_file.write('trajin mdin-%02.0f.nc\n' % i)
-                for i in range(3+nd, 9+nd):
+                for i in range(3, 9):
                     arr = rst[i].split()
                     if len(arr) == 2:
                         restraints_file.write('%s %s %s' % ('distance d'+str(i), rst[i], 'noimage out restraints.dat\n'))
@@ -3258,7 +3206,7 @@ class FreeEnergyBuilder(SystemBuilder):
                 restraints_file.write('parm vac.prmtop\n')
                 for i in range(2, 11):
                     restraints_file.write('trajin md%02.0f.nc\n' % i)
-                for i in range(0, 3+nd):
+                for i in range(0, 3):
                     arr = rst[i].split()
                     if len(arr) == 2:
                         restraints_file.write('%s %s %s' % ('distance d'+str(i), rst[i], 'noimage out restraints.dat\n'))
@@ -3274,7 +3222,7 @@ class FreeEnergyBuilder(SystemBuilder):
                 restraints_file.write('parm vac.prmtop\n')
                 for i in range(2, 11):
                     restraints_file.write('trajin md%02.0f.nc\n' % i)
-                for i in range(9+nd, len(rst)):
+                for i in range(9, len(rst)):
                     arr = rst[i].split()
                     if len(arr) == 2:
                         restraints_file.write('%s %s %s' % ('distance d'+str(i), rst[i], 'noimage out restraints.dat\n'))
@@ -3680,7 +3628,7 @@ class FreeEnergyBuilder(SystemBuilder):
         rng = self.sim_config.rng
         ntwx = self.sim_config.ntwx
         lipid_mol = self.lipid_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Find anchors
@@ -3838,7 +3786,7 @@ class FreeEnergyBuilder(SystemBuilder):
 
     def _run_files(self):
         num_sim = self.sim_config.num_fe_range
-        lambdas = self.system.component_windows_dict[self.comp]
+        lambdas = self.component_windows_dict[self.comp]
         pose = self.pose
         comp = self.comp
         win = self.win if self.win != -1 else 0
@@ -3859,8 +3807,8 @@ class FreeEnergyBuilder(SystemBuilder):
                 for line in fin:
                     fout.write(line.replace('STAGE', pose).replace(
                                     'POSE', '%s%02d' % (comp, int(win))).replace(
-                                        'SYSTEMNAME', self.system.system_name).replace(
-                                    'PARTITIONNAME', self.system.partition))
+                                        'SYSTEMNAME', self.sim_config.system_name).replace(
+                                    'PARTITIONNAME', self.sim_config.partition))
 
 
 class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
@@ -3869,14 +3817,16 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     """
     def _build_complex(self):
         """No complex needed to be built."""
+        all_pose_folder = '../../../../all-poses'
+
         pose = self.pose
-        os.system(f'cp ../../../../equil/{pose}/build_files/{pose}.pdb ./')
+        os.system(f'cp {all_pose_folder}/{self.pose}.pdb .')
         
         mol = mda.Universe(f'{self.pose}.pdb').residues[0].resname
         self.mol = mol
-        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.sdf ./')
-        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.mol2 ./')
-        os.system(f'cp ../../../../equil/{pose}/{mol.lower()}.pdb ./')
+        os.system(f'cp ../../ff/{mol.lower()}.mol2 ./')
+        os.system(f'cp ../../ff/{mol.lower()}.sdf ./')
+        os.system(f'cp ../../ff/{mol.lower()}.pdb ./')
 
         self.corrected_sdr_dist = 0
         return True
@@ -3935,7 +3885,10 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         ion_def = self.sim_config.ion_def
         neut = self.sim_config.neut
         
-        buff = 20
+        buff = solv_shell
+        if buff < 10:
+            raise ValueError('Buffer size (`solv_shell`) is set tot too small. It should be at least 10 A. '
+                             'otherwise GPU simulations will crash.')
 
         water_model = self.sim_config.water_model
         neut = self.sim_config.neut
@@ -4036,14 +3989,11 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     def _restraints(self):
         pose = self.pose
         rest = self.sim_config.rest
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         comp = self.comp
         molr = self.mol
 
-        bb_equil = self.sim_config.bb_equil
         dec_method = self.dec_method
 
         other_mol = self.other_mol
@@ -4095,7 +4045,7 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         ntwx = self.sim_config.ntwx
         lipid_mol = self.lipid_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         mk1 = 2
@@ -4155,6 +4105,9 @@ class LIGANDFreeEnergyBuilder(FreeEnergyBuilder):
     @log_info
     def _pre_sim_files(self):
         """Preprocess simulation files needed for ligand-only simulations. It involves adding co-decoupling ions to keep the system neutral."""
+        if self.sim_config.rocklin_correction == 'yes':
+            logger.debug('Rocklin correction is turned on for ligand decoupling.')
+            return
         mol = self.mol
         total_charge = self._ligand_charge
         universe = mda.Universe('full.pdb')
@@ -4243,6 +4196,9 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                         for ion_idx in selected_ion_indices[1:]:
                             restraintmask_part += f' | @{ion_idx+1}'
                         line = f"restraintmask = '{restraintmask_part}' \n"
+                    # enable ntr
+                    elif 'ntr =' in line:
+                        line = 'ntr = 1, \n'
                     fout.write(line)
 
     def _sim_files(self):
@@ -4261,7 +4217,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -4710,7 +4666,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', molr.lower())
                     .replace('MMM', f"\'{molr.lower()}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -4758,7 +4715,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
 
 
         # Align to reference (equilibrium) structure using VMD's measure fit
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -4770,7 +4728,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
 
         u = mda.Universe('aligned_amber.pdb')
         # Fix lipid
-        if lipid_mol:
+        if self.membrane_builder:
             renum_txt = 'aligned_amber_renum.txt'
             
             renum_data = pd.read_csv(
@@ -4797,7 +4755,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         # get ligand candidates for inclusion in Boresch restraints
         sdf_file = f'{mol.lower()}.sdf'
         candidates_indices = get_ligand_candidates(sdf_file)
-        pdb_file = f'aligned-nc.pdb'
+        pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
         lig_names = u.select_atoms(f'resname {mol.lower()}').names
         lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
@@ -4823,7 +4781,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                     .replace('LIGANDNAME', lig_name_str)
                     )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -4849,7 +4808,8 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                         .replace('LIPIDS', str(lipid_mol_vmd))
                         .replace('LIGANDNAME', lig_name_str)
                         )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
 
         # Check size of anchor file
@@ -4899,7 +4859,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         steps2 = self.sim_config.dic_steps2[comp]
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
         ntwx = self.sim_config.ntwx
 
@@ -5018,7 +4978,7 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -5097,7 +5057,7 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
 
-            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt0{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
@@ -5108,7 +5068,7 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
 
-            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
@@ -5141,7 +5101,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -5217,6 +5177,8 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
 
         elif dec_method == 'dd':
             # Simulation files for dd
+            infe = 1 if self.infe else 0
+
             with open('./vac.pdb') as myfile:
                 data = myfile.readlines()
                 mk1 = int(last_lig)
@@ -5247,7 +5209,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                 for i in range(0, len(lambdas)):
                     mdin.write(' %6.5f,' % (lambdas[i]))
                 mdin.write('\n')
-                mdin.write('  infe = 0,\n')
+                mdin.write(f'  infe = {infe},\n')
                 mdin.write(' /\n')
                 mdin.write(' &pmd \n')
                 mdin.write(' output_file = \'cmass.txt\' \n')
@@ -5360,7 +5322,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
             resid_str = residue.resid
             residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
 
-        if lipid_mol:
+        if self.membrane_builder:
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
@@ -5406,7 +5368,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -5453,7 +5416,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
 
 
         # Align to reference (equilibrium) structure using VMD's measure fit
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -5464,7 +5428,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
 
         # fix lipid resids
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             renum_txt = 'aligned_amber_renum.txt'
             
@@ -5494,7 +5458,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         # get ligand candidates for inclusion in Boresch restraints
         sdf_file = f'{mol.lower()}.sdf'
         candidates_indices = get_ligand_candidates(sdf_file)
-        pdb_file = f'aligned-nc.pdb'
+        pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
         lig_names = u.select_atoms(f'resname {mol.lower()}').names
         lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
@@ -5521,7 +5485,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                         .replace('LIGANDNAME', lig_name_str)
                         )
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -5548,7 +5513,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                             .replace('LIPIDS', str(lipid_mol_vmd))
                             .replace('LIGANDNAME', lig_name_str)
                             )
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
         # Check size of anchor file
         anchor_file = 'anchors.txt'
@@ -5827,17 +5793,14 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         rest = self.sim_config.rest
         lcom = rest[6]
 
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         molr = self.molr
         comp = self.comp
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = self.corrected_sdr_dist
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
@@ -5849,17 +5812,18 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         cv_file = open('cv.in', 'w')
         cv_file.write('cv_file \n')
         # ignore protein COM restraints
-        #cv_file.write('&colvar \n')
-        #cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-        #cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
-        #for i in range(0, len(hvy_h)):
-        #    cv_file.write(hvy_h[i])
-        #    cv_file.write(',')
-        #cv_file.write('\n')
-        #cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
-        #            (float(0.0), float(0.0), float(0.0), float(999.0)))
-        #cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
-        #cv_file.write('/ \n')
+        if True:
+            cv_file.write('&colvar \n')
+            cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+            cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
+            for i in range(0, len(hvy_h)):
+                cv_file.write(hvy_h[i])
+                cv_file.write(',')
+            cv_file.write('\n')
+            cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                        (float(0.0), float(0.0), float(0.0), float(999.0)))
+            cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
+            cv_file.write('/ \n')
 
         # Ligand solvent COM restraints
         lig_solv = ligand_residues[1].atoms
@@ -5919,7 +5883,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -6084,7 +6048,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
             resid_str = residue.resid
             residue.atoms.chainIDs = renum_data.query(f'old_resid == @resid_str').old_chain.values[0]
 
-        if lipid_mol:
+        if self.membrane_builder:
             # fix lipid resids
             revised_resids = []
             resid_counter = 1
@@ -6130,7 +6094,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                     .replace('LIPIDS', str(lipid_mol_vmd))
                     .replace('mmm', mol.lower())
                     .replace('MMM', f"\'{mol}\'"))
-        run_with_log(f'{vmd} -dispdev text -e split.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e split.tcl', shell=False)
 
         # Create raw complex and clean it
         filenames = ['dummy.pdb',
@@ -6165,7 +6130,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         p1_vmd = p1_resid
 
         # Align to reference (equilibrium) structure using VMD's measure fit
-        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl')
+        vmd=batter.utils.vmd
+        run_with_log(f'{vmd} -dispdev text -e measure-fit.tcl', shell=False)
 
         # Put in AMBER format and find ligand anchor atoms
         with open('aligned.pdb', 'r') as oldfile, open('aligned-clean.pdb', 'w') as newfile:
@@ -6176,7 +6142,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         run_with_log('pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y')
 
         # fix lipid resids
-        if lipid_mol:
+        if self.membrane_builder:
             u = mda.Universe('aligned_amber.pdb')
             renum_txt = 'aligned_amber_renum.txt'
             
@@ -6206,7 +6172,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         # get ligand candidates for inclusion in Boresch restraints
         sdf_file = f'{mol.lower()}.sdf'
         candidates_indices = get_ligand_candidates(sdf_file)
-        pdb_file = f'aligned-nc.pdb'
+        pdb_file = f'aligned_amber.pdb'
         u = mda.Universe(pdb_file)
         lig_names = u.select_atoms(f'resname {mol.lower()}').names
         lig_name_str = ' '.join([str(i) for i in lig_names[candidates_indices]])
@@ -6233,7 +6199,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                         .replace('LIGANDNAME', lig_name_str)
                         )  
         try:
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
         except RuntimeError:
             logger.info('Failed to find anchors with the current parameters.' \
             ' Trying to find anchors with the default parameters.')
@@ -6260,7 +6227,8 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                             .replace('LIPIDS', str(lipid_mol_vmd))
                             .replace('LIGANDNAME', lig_name_str)
                             ) 
-            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found')
+            vmd=batter.utils.vmd
+            run_with_log(f'{vmd} -dispdev text -e prep.tcl', error_match='anchor not found', shell=False)
 
 
         # Check size of anchor file
@@ -6539,17 +6507,14 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         rest = self.sim_config.rest
         lcom = rest[6]
 
-        bb_start = self.sim_config.bb_start
-        bb_end = self.sim_config.bb_end
         stage = self.stage
         mol = self.mol
         molr = self.molr
         comp = self.comp
-        bb_equil = self.sim_config.bb_equil
         sdr_dist = 0
         dec_method = self.sim_config.dec_method
         other_mol = self.other_mol
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         win = self.win if self.win != -1 else 0
 
         pdb_file = 'vac.pdb'
@@ -6561,17 +6526,18 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         cv_file = open('cv.in', 'w')
         cv_file.write('cv_file \n')
         # ignore protein COM restraints
-        #cv_file.write('&colvar \n')
-        #cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
-        #cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
-        #for i in range(0, len(hvy_h)):
-        #    cv_file.write(hvy_h[i])
-        #    cv_file.write(',')
-        #cv_file.write('\n')
-        #cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
-        #            (float(0.0), float(0.0), float(0.0), float(999.0)))
-        #cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
-        #cv_file.write('/ \n')
+        if True:
+            cv_file.write('&colvar \n')
+            cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
+            cv_file.write(' cv_ni = %s, cv_i = 1,0,' % str(len(hvy_h)+2))
+            for i in range(0, len(hvy_h)):
+                cv_file.write(hvy_h[i])
+                cv_file.write(',')
+            cv_file.write('\n')
+            cv_file.write(' anchor_position = %10.4f, %10.4f, %10.4f, %10.4f \n' %
+                        (float(0.0), float(0.0), float(0.0), float(999.0)))
+            cv_file.write(' anchor_strength = %10.4f, %10.4f, \n' % (rcom, rcom))
+            cv_file.write('/ \n')
 
         # Ligand COM restraints
         lig_solv = ligand_residues[1].atoms
@@ -6632,7 +6598,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
         ntwx = self.sim_config.ntwx
-        lambdas = self.system.component_windows_dict[comp]
+        lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
 
         # Read 'disang.rest' and extract L1, L2, L3
@@ -6709,7 +6675,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                 with open("./mini_eq.in", "wt") as fout:
                     for line in fin:
                         fout.write(line.replace('_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt0.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt0{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt0.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
@@ -6719,7 +6685,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                         else:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                     '_lig_name_', mol))
-            with open(f"../{self.amber_files_folder}/eqnpt.in", "rt") as fin:
+            with open(f"../{self.amber_files_folder}/eqnpt{'' if self.membrane_builder else '-water'}.in", "rt") as fin:
                 with open("./eqnpt.in", "wt") as fout:
                     for line in fin:
                         if 'infe' in line:
@@ -6734,9 +6700,9 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
 class BuilderFactory:
     @staticmethod
     def get_builder(stage,
-                    system,
                     pose,
                     sim_config,
+                    component_windows_dict,
                     working_dir,
                     win=0,
                     component='q',
@@ -6746,9 +6712,9 @@ class BuilderFactory:
     ):
         if stage == 'equil':
             return EquilibrationBuilder(
-                system=system,
                 pose=pose,
                 sim_config=sim_config,
+                component_windows_dict=component_windows_dict,
                 working_dir=working_dir,
                 infe=infe,
             )
@@ -6756,9 +6722,9 @@ class BuilderFactory:
         match component:
             case 'n' | 'm':
                 return RESTFreeEnergyBuilder(
-                system=system,
                 pose=pose,
                 sim_config=sim_config,
+                component_windows_dict=component_windows_dict,
                 working_dir=working_dir,
                 win=win,
                 component=component,
@@ -6768,9 +6734,9 @@ class BuilderFactory:
             )
             case 'e' | 'v':
                 return AlChemicalFreeEnergyBuilder(
-                system=system,
                 pose=pose,
                 sim_config=sim_config,
+                component_windows_dict=component_windows_dict,
                 working_dir=working_dir,
                 win=win,
                 component=component,
@@ -6780,9 +6746,9 @@ class BuilderFactory:
             )
             case 'x':
                 return EXFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6792,9 +6758,9 @@ class BuilderFactory:
                 )
             case 'o':
                 return UNOFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6804,9 +6770,9 @@ class BuilderFactory:
                 )
             case 'z':
                 return UNORESTFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6816,9 +6782,9 @@ class BuilderFactory:
                 )
             case 's':
                 return ACESEquilibrationBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6828,9 +6794,9 @@ class BuilderFactory:
                 )
             case 'y':
                 return LIGANDFreeEnergyBuilder(
-                    system=system,
                     pose=pose,
                     sim_config=sim_config,
+                    component_windows_dict=component_windows_dict,
                     working_dir=working_dir,
                     win=win,
                     component=component,
@@ -6895,7 +6861,7 @@ def get_sdr_dist(protein_file,
     return sdr_dist
 
 
-def get_ligand_candidates(ligand_sdf):
+def get_ligand_candidates(ligand_sdf, removeHs=True):
     """
     Get the ligand candidates for Boresch restraints from a sdf file.
 
@@ -6907,6 +6873,8 @@ def get_ligand_candidates(ligand_sdf):
     ----------
     ligand_sdf : str
         Path to the ligand sdf file.
+    removeHs : bool, optional
+        Whether to remove hydrogens from the molecule, by default True.
 
     Returns
     -------
@@ -6919,7 +6887,7 @@ def get_ligand_candidates(ligand_sdf):
     # selected as candidate atoms for the ligand's restraint component
     from rdkit import Chem
     
-    supplier = Chem.SDMolSupplier(ligand_sdf, removeHs=False)
+    supplier = Chem.SDMolSupplier(ligand_sdf, removeHs=removeHs)
     mol = [s for s in supplier if s is not None][0]
 
     anchor_candidates = []

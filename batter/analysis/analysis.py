@@ -163,9 +163,7 @@ class MBARAnalysis(FEAnalysisBase):
                 raise ValueError("sim_range must be a list or tuple of integers.")
             if len(sim_range) != 2:
                 raise ValueError("sim_range must be a list or tuple of exactly two integers.")
-            self.sim_range = range(sim_range[0], sim_range[1])
-        else:
-            self.sim_range = sim_range
+        self.sim_range = sim_range
         self.detect_equil = detect_equil
         self.n_bootstraps = n_bootstraps
         self.n_jobs = n_jobs
@@ -305,14 +303,19 @@ class MBARAnalysis(FEAnalysisBase):
         """
         Return a dataframe with the energy in kT units for the given window.
         """
-        if sim_range is None:
-            n_sims = len(glob.glob(f'{comp_folder}/{component}{win_i:02d}/mdin-*.out'))
-            sim_range = range(n_sims)
-        logger.debug(f"Extracting data for {component}{win_i:02d} with {len(sim_range)} simulations...")
+        n_sims = len(glob.glob(f'{comp_folder}/{component}{win_i:02d}/mdin-*.out'))
+        all_sim_range = range(n_sims)
+        logger.debug(f"Extracting data for {component}{win_i:02d} with {len(all_sim_range)} simulations...")
 
 
         md_sim_files = []
-        for i in sim_range:
+        start_range = sim_range[0] if sim_range is not None else 0
+        if start_range > n_sims:
+            raise ValueError(f"sim_range start {start_range} exceeds number of simulations {n_sims}.")
+        end_range = sim_range[1] if sim_range is not None else n_sims
+        if end_range > n_sims:
+            logger.warning(f"sim_range end {end_range} exceeds number of simulations {n_sims}.")
+        for i in all_sim_range[start_range:end_range]:
             if os.path.exists(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out'):
                 md_sim_files.append(f'{comp_folder}/{component}{win_i:02d}/mdin-{i:02d}.out')
             else:
@@ -602,13 +605,19 @@ class RESTMBARAnalysis(MBARAnalysis):
         kT = 0.0019872041 * temperature
         os.chdir(f'{comp_folder}/{component}{win_i:02d}')
 
-        if sim_range is None:
-            n_sims = len(glob.glob(f'mdin-*.nc'))
-            sim_range = range(n_sims)
-        logger.debug(f"Extracting data for {component}{win_i:02d} with {len(sim_range)} simulations...")
+        n_sims = len(glob.glob(f'mdin-*.nc'))
+        all_sim_range = range(n_sims)
+        logger.debug(f"Extracting data for {component}{win_i:02d} with {len(all_sim_range)} simulations...")
 
+        start_sim_range = sim_range[0] if sim_range is not None else 0
+        if start_sim_range > n_sims:
+            raise ValueError(f"sim_range start {start_sim_range} exceeds number of simulations {n_sims}.")
+        end_sim_range = sim_range[1] if sim_range is not None else n_sims
+        if end_sim_range > n_sims:
+            logger.warning(f"sim_range end {end_sim_range} exceeds number of simulations {n_sims}.")
+            
         md_sim_files = []
-        for i in sim_range:
+        for i in all_sim_range[start_sim_range:end_sim_range]:
             if os.path.exists(f'mdin-{i:02d}.nc'):
                 md_sim_files.append(f'mdin-{i:02d}.nc')
             else:

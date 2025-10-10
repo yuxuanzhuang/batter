@@ -5,22 +5,8 @@
 #############################################################################################################
 
 
-# Calculation definitions
+system_name = test
 
-# only use dock in batter
-calc_type = dock                  
-
-# adapted to the system_name above             
-celpp_receptor = A2A
-
-# not used in batter, all the poses/ligands in ligand_files will be added to the list
-poses_list = [0,1,2,3,4]
-
-# Protein anchors, using original protein sequence
-# change accordingly
-P1 = :149@CA
-P2 = :119@CA
-P3 = :328@CA
 
 # Molecules other than receptor and ligand 
 #other_mol = [ ]     # List of extra residues names that will be included in the simulations

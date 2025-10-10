@@ -1,5 +1,7 @@
 """
 Classes that represent various types of input files
+
+Currently not implemented
 """
 class AmberMdin:
     def __init__(self, cut=9.0, ioutfm=1, ntb=1, ntxo=2):
@@ -104,7 +106,7 @@ def apply_membrane_npt(mdin: AmberMdin, temp=310, steps=50000, barostat=2, dt=0.
     mdin.override_block("cntrl", {
         "ntp": 3,
         "barostat": barostat,
-        "csurften": 3
+        "csurften": 3,
         # langevin thermostat
         "ntt": 3,
         "temp0": temp,
