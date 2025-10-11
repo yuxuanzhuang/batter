@@ -89,6 +89,7 @@ class BaseBuilder(ABC):
             anchor_ok = self._build_complex()
             if not anchor_ok:
                 raise ValueError(f"anchors not found for ligand={self.ctx.ligand}.")
+            self._create_amber_files()
 
         # 2) create / copy simulation dir
         self.window_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +115,11 @@ class BaseBuilder(ABC):
     @abstractmethod
     def _build_complex(self) -> bool:
         """Return True if anchors found/placed; False to prune."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _create_amber_files(self) -> None:
+        """Create AMBER templates in build_dir."""
         raise NotImplementedError
 
     @abstractmethod

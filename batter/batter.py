@@ -2732,8 +2732,12 @@ class System:
             results_file = f'{self.fe_folder}/{pose}/Results/Results.dat'
             fe_timeseries_file = f'{self.fe_folder}/{pose}/Results/fe_timeseries.json'
             if os.path.exists(results_file):
-                with open(fe_timeseries_file) as f:
-                    fe_timeseries = json.load(f)
+                try:
+                    with open(fe_timeseries_file) as f:
+                        fe_timeseries = json.load(f)
+                # when unbound
+                except FileNotFoundError:
+                    fe_timeseries = None
                 self.fe_results[pose] = FEResult(results_file, fe_timeseries)
                 if self.fe_results[pose].fe == 'unbound':
                     logger.debug(f'FE for {pose} is unbound.')

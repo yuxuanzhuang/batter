@@ -46,7 +46,7 @@ def write_run_files(
         sh.chmod(0o755)
     except Exception as e:
         logger.debug(f"chmod +x failed for {sh}: {e}")
-    logger.info(f"[RunFiles] Created run script for {comp} window {win}: {sh}")
+    logger.debug(f"[RunFiles] Created run script for {comp} window {win}: {sh}")
 
 
 def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
@@ -62,7 +62,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     run_dir = work / "run_files"
     run_dir.mkdir(exist_ok=True, parents=True)
 
-    logger.info(f"[Equil] Creating run scripts in {run_dir}")
+    logger.debug(f"[Equil] Creating run scripts in {run_dir}")
 
     # Copy templates from internal RUN_FILES_DIR
     for template_name in ["check_run.bash", "check_penetration.py", "run-equil.bash", "SLURMM-Am"]:
@@ -94,4 +94,4 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         except Exception as e:
             logger.debug(f"chmod +x failed for {dst}: {e}")
 
-    logger.info(f"[Equil] Run scripts ready at {run_dir}")
+    logger.debug(f"[Equil] Run scripts ready at {run_dir}")

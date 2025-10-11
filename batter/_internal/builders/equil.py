@@ -69,17 +69,21 @@ class PrepareEquilBuilder(BaseBuilder):
         logger.debug(f"[prepare_equil] Building complex for {self.ctx.ligand}")
         return equil_ops.build_complex(self.ctx, infe=self.infe)
 
-    def _create_box(self) -> None:
-        """Render AMBER templates and build solvated/ionized system."""
+    def _create_amber_files(self) -> None:
+        """Render AMBER templates for the system."""
+        
         work = self.ctx.working_dir
         amber_dir = work / "amber_files"
-
         amber.write_amber_templates(
             out_dir=amber_dir,
             sim=self.ctx.sim,
             membrane=self.ctx.sim._membrane_simulation,
             production=False,
         )
+        logger.debug(f"[prepare_equil] Created amber files for {self.ctx.ligand}")
+
+    def _create_box(self) -> None:
+        """Render AMBER templates and build solvated/ionized system."""
 
         box.create_box(self.ctx)
         logger.debug(f"[prepare_equil] Created box for {self.ctx.ligand}")
@@ -87,7 +91,7 @@ class PrepareEquilBuilder(BaseBuilder):
     def _restraints(self) -> None:
         """Write equilibrium restraints (disang.rest, cv.in)."""
         restraints.write_equil_restraints(self.ctx)
-        logger.info(f"[prepare_equil] Wrote restraints for {self.ctx.ligand}")
+        logger.debug(f"[prepare_equil] Wrote restraints for {self.ctx.ligand}")
 
     def _sim_files(self) -> None:
         """Write equilibration input decks: mini.in, eqnvt.in, eqnpt*.in, etc."""

@@ -22,9 +22,6 @@ from batter.utils import (
     vmd,
 )
 
-# Context class (provided by your new BaseBuilder layer)
-# It should expose: ligand (str), sim (SimulationConfig), working_dir (Path),
-# component (str), win (int), etc.
 from batter._internal.builders.base import BuildContext
 
 from batter._internal.ops.helpers import (
@@ -35,8 +32,6 @@ from batter._internal.ops.helpers import (
 )
 
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # type: ignore
-from batter._internal.templates import AMBER_FILES_DIR as amber_files_orig  # type: ignore
-
 
 # ---------------------------------------------------------------------------
 # build_complex
@@ -311,8 +306,6 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
 def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     """
-    Port of EquilibrationBuilder._sim_files()
-
     Writes minimization/NVT/NPT inputs and mdin-XX files based on
     release schedule; fills in temperature, restraint file names, etc.
     """
@@ -320,10 +313,9 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     work = ctx.working_dir
 
     amber_dir = work / "amber_files"
-    os.makedirs(amber_dir, exist_ok=True)
 
     temperature = sim.temperature
-    mol = mda.Universe(str(work / "vac.pdb")).residues.resnames[0] if (work / "vac.pdb").exists() else "lig"
+    mol = ctx.residue_name
     num_sim = len(sim.release_eq)
 
     # Parse anchors from disang.rest (first line, as in legacy)
@@ -334,9 +326,6 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         L2 = parts[7].strip()
         L3 = parts[8].strip()
 
-    # Copy AMBER templates from your template dir (amber_files_orig) and substitute
-    shutil.copytree(amber_files_orig, amber_dir, dirs_exist_ok=True)
-
     # Generate template-based files
     def _sub_write(src: Path, dst: Path, repl: dict[str, str]) -> None:
         text = Path(src).read_text()
@@ -346,20 +335,20 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
     # mini.in
     _sub_write(
-        Path(amber_files_orig) / "mini.in",
+        Path(amber_dir) / "mini.in",
         work / "mini.in",
         {"_lig_name_": mol},
     )
 
     # eqnvt.in
     _sub_write(
-        Path(amber_files_orig) / "eqnvt.in",
+        Path(amber_dir) / "eqnvt.in",
         work / "eqnvt.in",
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
     )
 
     # eqnpt0.in (membrane vs water variant)
-    eqnpt0_src = Path(amber_files_orig) / ( "eqnpt0.in" if sim._membrane_simulation else "eqnpt0-water.in" )
+    eqnpt0_src = Path(amber_dir) / ( "eqnpt0.in" if sim._membrane_simulation else "eqnpt0-water.in" )
     _sub_write(
         eqnpt0_src,
         work / "eqnpt0.in",
@@ -367,7 +356,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     )
 
     # eqnpt.in
-    eqnpt_src = Path(amber_files_orig) / ( "eqnpt.in" if sim._membrane_simulation else "eqnpt-water.in" )
+    eqnpt_src = Path(amber_dir) / ( "eqnpt.in" if sim._membrane_simulation else "eqnpt-water.in" )
     _sub_write(
         eqnpt_src,
         work / "eqnpt.in",
@@ -380,7 +369,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     infe_flag = "1" if infe else "0"
 
     for i, weight in enumerate(sim.release_eq):
-        mdin_src = Path(amber_files_orig) / "mdin-equil"
+        mdin_src = Path(amber_dir) / "mdin-equil"
         dst = work / f"mdin-{i:02d}"
         text = mdin_src.read_text()
         # First stage (i==0) needs irest/ntx reset

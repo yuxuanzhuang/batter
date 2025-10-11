@@ -461,6 +461,9 @@ class _SystemPrepRunner:
         if self._system_coordinate and not Path(self._system_coordinate).exists():
             raise FileNotFoundError(f"System coordinate file not found: {system_coordinate}")
 
+        # Directories
+        self.ligands_folder.mkdir(parents=True, exist_ok=True)
+
         # Box dimensions
         u_sys = mda.Universe(self._system_topology, format="XPDB")
         if self._system_coordinate:
@@ -489,9 +492,6 @@ class _SystemPrepRunner:
             raise ValueError("No box dimensions found in system_topology or system_coordinate.")
         u_sys.atoms.write(f"{self.ligands_folder}/system_input.pdb")
         self._system_input_pdb = f"{self.ligands_folder}/system_input.pdb"
-
-        # Directories
-        self.ligands_folder.mkdir(parents=True, exist_ok=True)
 
         # membrane remapping (if any)
         if self.membrane_simulation:
@@ -532,7 +532,7 @@ class _SystemPrepRunner:
             "membrane": {"lipid_mol": self.lipid_mol, "lipid_ff": self.lipid_ff} if self.membrane_simulation else None,
         }
         (self.ligands_folder / "manifest.json").write_text(json.dumps(manifest, indent=2))
-        logger.info("System loaded and prepared (no ligand parameterization).")
+        logger.debug("System loaded and prepared.")
         return manifest
 
 

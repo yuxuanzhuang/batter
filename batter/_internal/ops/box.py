@@ -31,7 +31,7 @@ def _write(path: Path, text: str) -> None:
 
 def create_box(ctx: BuildContext) -> None:
     """
-    Same behavior as before but NO cwd changes—everything is path-scoped to `window_dir`.
+    Create the solvated box for the given component and window.
     """
     work = ctx.working_dir
     sim = ctx.sim
@@ -44,9 +44,9 @@ def create_box(ctx: BuildContext) -> None:
     amber_dir = work / "amber_files"
     window_dir.mkdir(parents=True, exist_ok=True)
 
-    membrane_builder = bool(getattr(sim, "_membrane_simulation", False))
-    lipid_mol = list(getattr(sim, "lipid_mol", []) or [])
-    other_mol = list(getattr(sim, "other_mol", []) or [])
+    membrane_builder = sim._membrane_simulation
+    lipid_mol = sim.lipid_mol
+    other_mol = sim.other_mol
 
     mol = ctx.residue_name
 
@@ -167,7 +167,7 @@ def create_box(ctx: BuildContext) -> None:
     # MDAnalysis universes
     u = mda.Universe(str(window_dir / "full_pre.pdb"))
     final_system = u.atoms
-    system_dimensions = u.dimensions[:3].copy()
+    system_dimensions = u.dimensions[:3]
 
     if membrane_builder:
         u_ref = mda.Universe(str(window_dir / "equil-reference.pdb"))

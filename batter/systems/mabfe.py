@@ -28,7 +28,7 @@ class MABFEBuilder(SystemBuilder):
     ----------------------------------------------
     inputs/           # canonical copies of user-provided inputs
     artifacts/        # files produced by builders (e.g., PRMTOP, RST7)
-    ligands/
+    simulations/
       <LIG1>/inputs/ligand.sdf
               artifacts/
       <LIG2>/inputs/ligand.sdf
@@ -90,7 +90,7 @@ class MABFEBuilder(SystemBuilder):
         staged_protein = self._stage_optional(inputs_dir, args.protein_input, "protein.pdb")
         staged_top = self._stage_optional(inputs_dir, args.system_input, "input.prmtop")
         staged_coord = self._stage_optional(inputs_dir, args.system_coordinate, "input.rst7")
-        staged_ligs = self._stage_many(inputs_dir, args.ligand_paths.values(), "ligand_{i}.sdf")
+        staged_ligs = self._stage_ligands_named(inputs_dir, args.ligand_paths)
 
         # Produce canonical shared artifacts (if provided)
         final_top = self._copy_optional(artifacts_dir, staged_top, "system.prmtop")
@@ -108,9 +108,9 @@ class MABFEBuilder(SystemBuilder):
             meta={"ligand_ff": getattr(args, "ligand_ff", "gaff2")},
         )
         logger.info(
-            "Prepared MABFE system '{}' at {} (ligands: {}, lipid_mol: {}, anchors: {})",
-            updated.name, updated.root, len(updated.ligands), updated.lipid_mol, updated.anchors,
-        )
+            f"Prepared MABFE system '{updated.name}' at {updated.root} (ligands: {len(updated.ligands)}")
+        logger.info("  Protein:    {}", updated.protein)
+        logger.info("  Ligands:    {}", ", ".join(l.stem for l in updated.ligands))
         return updated
 
     def build_all_ligands(
@@ -120,7 +120,7 @@ class MABFEBuilder(SystemBuilder):
         overwrite: bool = False,
     ) -> Dict[str, SimSystem]:
         """
-        Stage **all ligands at once** under ``parent.root/ligands/<NAME>/...``.
+        Stage **all ligands at once** under ``parent.root/simulations/<NAME>/...``.
 
         Parameters
         ----------
@@ -142,7 +142,7 @@ class MABFEBuilder(SystemBuilder):
         Child systems reuse parent protein/topology/coordinates by reference to
         keep the store portable and avoid duplication.
         """
-        lig_dir = parent.root / "ligands"
+        lig_dir = parent.root / "simulations"
         lig_dir.mkdir(parents=True, exist_ok=True)
 
         children: Dict[str, SimSystem] = {}
@@ -177,7 +177,7 @@ class MABFEBuilder(SystemBuilder):
             )
             children[name] = child
 
-        logger.info("Staged {} ligand subsystems under {}", len(children), lig_dir)
+        logger.debug("Staged {} ligand subsystems under {}", len(children), lig_dir)
         return children
 
     # ------------------ convenience helpers ------------------
@@ -185,7 +185,7 @@ class MABFEBuilder(SystemBuilder):
     @staticmethod
     def make_child_for_ligand(parent: SimSystem, lig_name: str, lig_src: Path) -> SimSystem:
         """
-        Create a single per-ligand child system under ``ligands/<NAME>/``.
+        Create a single per-ligand child system under ``simulations/<NAME>/``.
 
         Parameters
         ----------
@@ -201,7 +201,7 @@ class MABFEBuilder(SystemBuilder):
         SimSystem
             Child system descriptor.
         """
-        lig_dir = parent.root / "ligands" / lig_name
+        lig_dir = parent.root / "simulations" / lig_name
         (lig_dir / "inputs").mkdir(parents=True, exist_ok=True)
         (lig_dir / "artifacts").mkdir(parents=True, exist_ok=True)
 
@@ -258,6 +258,29 @@ class MABFEBuilder(SystemBuilder):
         return staged
 
     @staticmethod
+    def _stage_ligands_named(dst_dir: Path, lig_map: Mapping[str, Path]) -> List[Path]:
+        """
+        Copy ligand files into dst_dir as <LIG_NAME>.sdf using the keys of lig_map.
+
+        Parameters
+        ----------
+        lig_map : Mapping[str, Path]
+            Mapping of ligand name -> source path.
+
+        Returns
+        -------
+        list[Path]
+            Paths of staged ligand files (sorted by ligand name).
+        """
+        staged: List[Path] = []
+        for name, src in sorted(lig_map.items(), key=lambda kv: kv[0]):
+            dst = dst_dir / f"{name}.sdf"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(Path(src), dst)
+            staged.append(dst)
+        return staged
+
+    @staticmethod
     def _copy_optional(dst_dir: Path, maybe_src: Optional[Path], filename: str) -> Optional[Path]:
         if maybe_src is None:
             return None
@@ -282,7 +305,7 @@ class MABFEBuilder(SystemBuilder):
         protein = self._first_existing([artifacts_dir / "system.pdb", inputs_dir / "protein.pdb"])
         topology = self._first_existing([artifacts_dir / "system.prmtop", inputs_dir / "input.prmtop"])
         coordinates = self._first_existing([artifacts_dir / "system.rst7", inputs_dir / "input.rst7"])
-        ligands = sorted(inputs_dir.glob("ligand_*.sdf"))
+        ligands = inputs_dir.glob("*.sdf")
         return system.with_artifacts(
             protein=protein,
             topology=topology,

@@ -246,6 +246,9 @@ class SimulationConfig(BaseModel):
             if s2 <= 0:
                 raise ValueError(f"{comp}: stage 2 steps must be > 0 (key '{comp}_steps2').")
 
+        # membrane simulation if lipids defined
+        self._membrane_simulation = len(self.lipid_mol) > 0
+
         return self
 
     # convenience

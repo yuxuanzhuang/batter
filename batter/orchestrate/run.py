@@ -16,7 +16,8 @@ from typing import Any, Dict, List, Literal
 from datetime import datetime, timezone
 import json
 import shutil
-import os  # needed for relative symlinks
+import re
+import os
 
 from loguru import logger
 
@@ -92,7 +93,19 @@ def _resolve_ligand_map(rc, yaml_dir: Path) -> dict[str, Path]:
     Resolve ligands from either `create.ligand_paths` (list) or
     `create.ligand_input` (JSON file; can be dict or list).
     Returns {LIG_NAME: absolute Path}.
+
+    Ligand names are sanitized to be uppercase alphanumeric/underscore only.
     """
+    def _sanitize_name(name: str) -> str:
+        """
+        Make ligand name safe for filesystem usage:
+            - Uppercase
+            - Replace unsafe chars (non-alphanumeric/underscore) with '_'
+            - Trim trailing underscores
+        """
+        safe = re.sub(r"[^A-Za-z0-9_]+", "_", name.strip())
+        return safe.strip("_").upper()
+
     lig_map: dict[str, Path] = {}
 
     # Case A: explicit list in YAML
@@ -100,7 +113,8 @@ def _resolve_ligand_map(rc, yaml_dir: Path) -> dict[str, Path]:
     for p in paths:
         p = Path(p)
         p = p if p.is_absolute() else (yaml_dir / p)
-        lig_map[p.stem.upper()] = p.resolve()
+        name = _sanitize_name(p.stem)
+        lig_map[name] = p.resolve()
 
     # Case B: JSON file mapping
     lig_json = getattr(rc.create, "ligand_input", None)
@@ -113,12 +127,14 @@ def _resolve_ligand_map(rc, yaml_dir: Path) -> dict[str, Path]:
             for name, p in data.items():
                 p = Path(p)
                 p = p if p.is_absolute() else (jpath.parent / p)
-                lig_map[name.upper()] = p.resolve()
+                name = _sanitize_name(name)
+                lig_map[name] = p.resolve()
         elif isinstance(data, list):
             for p in data:
                 p = Path(p)
                 p = p if p.is_absolute() else (jpath.parent / p)
-                lig_map[p.stem.upper()] = p.resolve()
+                name = _sanitize_name(p.stem)
+                lig_map[name] = p.resolve()
         else:
             raise TypeError(f"{jpath} must be a dict or list, got {type(data).__name__}")
 
@@ -187,7 +203,7 @@ def _register_local_handlers(backend: LocalBackend) -> None:
     backend.register("fe", _fe)
     backend.register("analyze", _analyze)
 
-    logger.info(f"Registered LOCAL handlers: {list(backend._handlers.keys())}")
+    logger.debug(f"Registered LOCAL handlers: {list(backend._handlers.keys())}")
 
 
 # -----------------------------------------------------------------------------
@@ -255,14 +271,13 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     sys = SimSystem(name=rc.create.system_name, root=rc.system.output_folder)
     sys = builder.build(sys, rc.create)
 
-    lig_root = sys.root / "ligands"
+    lig_root = sys.root / "simulations"
     lig_root.mkdir(parents=True, exist_ok=True)
 
     for lig_name, lig_path in lig_map.items():
         builder.make_child_for_ligand(sys, lig_name, lig_path)
 
     logger.info(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
-    logger.info(f"System built successfully in {sys.root}")
 
     # Build pipeline with explicit sys_params
     tpl = _select_pipeline(
@@ -276,7 +291,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     parent_only = Pipeline([s for s in tpl.ordered_steps() if s.name in {"system_prep", "param_ligands"}])
     if parent_only.ordered_steps():
         names = [s.name for s in parent_only.ordered_steps()]
-        logger.info(f"Executing parent-only steps at {sys.root}: {names}")
+        logger.debug(f"Executing parent-only steps at {sys.root}: {names}")
         parent_only.run(backend, sys)
     
     # Locate sim_overrides from system_prep
@@ -299,8 +314,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
         if s.name in removed:
             continue
         p = dict(s.params)
-        if "sim" in p:
-            p["sim"] = sim_cfg_updated.model_dump()
         per_lig_steps.append(
             Step(
                 name=s.name,
@@ -308,54 +321,166 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
                 params=p,
             )
         )
-
     per_lig = Pipeline(per_lig_steps)
 
     # IMPORTANT: also update the `sim` param on each remaining step
-    new_steps = []
+    patched = []
     for s in per_lig.ordered_steps():
         p = dict(s.params)
         if "sim" in p:
             p["sim"] = sim_cfg_updated.model_dump()
-        new_steps.append(Step(name=s.name, requires=s.requires, params=p))
-    per_lig = Pipeline(new_steps)
+        patched.append(Step(name=s.name, requires=s.requires, params=p))
+    per_lig = Pipeline(patched)
 
-    # Run remaining steps per ligand child system
+    # --- define phases explicitly ---
+    PH_PREPARE_EQUIL = {"prepare_equil"}
+    PH_EQUIL         = {"equil"}
+    PH_PREPARE_FE    = {"prepare_fe", "prepare_fe_windows"}
+    PH_FE_EQUIL      = {"fe_equil"}
+    PH_FE            = {"fe"}
+    PH_ANALYZE       = {"analyze"}
+
+    def _phase(names: set[str]) -> Pipeline:
+        """
+        Build a sub-pipeline containing only steps in `names`,
+        with `requires` pruned to dependencies that are also in `names`.
+        """
+        selected = [s for s in per_lig.ordered_steps() if s.name in names]
+        selected_names = {s.name for s in selected}
+        pruned = [
+            Step(
+                name=s.name,
+                requires=[r for r in s.requires if r in selected_names],
+                params=dict(s.params),
+            )
+            for s in selected
+        ]
+        return Pipeline(pruned)
+
+    phase_prepare_equil = _phase(PH_PREPARE_EQUIL)
+    phase_equil         = _phase(PH_EQUIL)
+    phase_prepare_fe    = _phase(PH_PREPARE_FE)
+    phase_fe_equil      = _phase(PH_FE_EQUIL)
+    phase_fe            = _phase(PH_FE)
+    phase_analyze       = _phase(PH_ANALYZE)
+
+    # --- build SimSystem children (attach param_dir_dict once) ---
+    param_idx_path = sys.root / "artifacts" / "ligand_params" / "index.json"
+    if not param_idx_path.exists():
+        raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
+    param_index = json.loads(param_idx_path.read_text())
+    param_dir_dict = {e["residue_name"]: e["store_dir"] for e in param_index["ligands"]}
+
+    children: List[SimSystem] = []
+    for d in sorted([p for p in (sys.root / "simulations").glob("*") if p.is_dir()]):
+        lig_name = d.name
+        children.append(
+            SimSystem(
+                name=f"{sys.name}:{lig_name}",
+                root=d,
+                protein=sys.protein,
+                topology=sys.topology,
+                coordinates=sys.coordinates,
+                ligands=tuple([d / "inputs" / "ligand.sdf"]),
+                lipid_mol=sys.lipid_mol,
+                other_mol=sys.other_mol,
+                anchors=sys.anchors,
+                meta={**(sys.meta or {}), "ligand": lig_name, "param_dir_dict": param_dir_dict},
+            )
+        )
+
+    # --- helpers: submit phase and wait for markers ---
+    def _run_phase_for_all(phase: Pipeline, systems: List[SimSystem], phase_name: str):
+        if not phase.ordered_steps():
+            return
+        logger.info(f"Phase: {phase_name} → { [s.name for s in phase.ordered_steps()] }")
+        for child in systems:
+            logger.info(f"[{phase_name}] start {child.meta['ligand']}")
+            phase.run(backend, child)  # SLURM: submit; Local: execute inline
+
+    def _wait_for_markers(systems: List[SimSystem], rel_marker: str,
+                          timeout_s: int = 0, poll_s: float = 15.0) -> List[SimSystem]:
+        """
+        Block until each system has the marker (relative path under child.root).
+        Returns the list of systems that satisfied the barrier.
+        If timeout_s == 0 → wait indefinitely.
+        """
+        import time
+        start = time.time()
+        pending = {s.meta["ligand"]: s for s in systems}
+        done: dict[str, SimSystem] = {}
+        while pending:
+            found = []
+            for lig, s in pending.items():
+                if (s.root / rel_marker).exists():
+                    logger.info(f"[barrier] {lig}: found {rel_marker}")
+                    found.append(lig)
+            for lig in found:
+                done[lig] = pending.pop(lig)
+            if not pending:
+                break
+            if timeout_s and (time.time() - start) > timeout_s:
+                missing = ", ".join(pending.keys())
+                raise TimeoutError(f"Timed out waiting for {rel_marker} for: {missing}")
+            time.sleep(poll_s)
+        return list(done.values())
+
+    # --------------------
+    # PHASE 1: prepare_equil (parallel)
+    # --------------------
+    _run_phase_for_all(phase_prepare_equil, children, "prepare_equil")
+    # If your handler writes a prep sentinel, wait for it here; otherwise skip.
+    # Example (uncomment/adjust if available):
+    # children = _wait_for_markers(children, "equil/build_files/equil-reference.pdb")
+
+    # --------------------
+    # PHASE 2: equil (parallel) → must COMPLETE for all ligands
+    # --------------------
+    _run_phase_for_all(phase_equil, children, "equil")
+    children = _wait_for_markers(children, "artifacts/equil/equil.rst7")
+
+    # Optional prune: drop ligands that failed to produce marker
+    # (Already handled by wait returning only completed ones.)
+    if not children:
+        raise RuntimeError("All ligands failed during equilibration barrier.")
+
+    # --------------------
+    # PHASE 3: prepare_fe (parallel)
+    # --------------------
+    _run_phase_for_all(phase_prepare_fe, children, "prepare_fe")
+    # Optional: wait for prep sentinel
+    # children = _wait_for_markers(children, "artifacts/prepare_fe/prepare_fe.ok")
+
+    # --------------------
+    # PHASE 4: fe_equil (parallel; if present)
+    # --------------------
+    _run_phase_for_all(phase_fe_equil, children, "fe_equil")
+    # Optional: wait
+    # children = _wait_for_markers(children, "artifacts/fe_equil/fe_equil.rst7")
+
+    # --------------------
+    # PHASE 5: fe (parallel)
+    # --------------------
+    _run_phase_for_all(phase_fe, children, "fe")
+    # Optional: wait for completion of FE windows across ligands
+    # children = _wait_for_markers(children, "artifacts/fe/windows.json")
+
+    # --------------------
+    # PHASE 6: analyze (parallel)
+    # --------------------
+    _run_phase_for_all(phase_analyze, children, "analyze")
+    # Optional: wait
+    # children = _wait_for_markers(children, "artifacts/analyze/analyze.ok")
+
+    # --------------------
+    # FE record save (no re-running the pipeline)
+    # --------------------
     store = ArtifactStore(sys.root)
     repo = FEResultsRepository(store)
 
-    child_dirs = sorted([d for d in (sys.root / "ligands").glob("*") if d.is_dir()])
-
-    failures: list[tuple[str, str]] = []  # [(lig_name, str(error))]
-    for d in child_dirs:
-        lig_name = d.name
-        child = SimSystem(
-            name=f"{sys.name}:{lig_name}",
-            root=d,
-            protein=sys.protein,
-            topology=sys.topology,
-            coordinates=sys.coordinates,
-            ligands=tuple([d / "inputs" / "ligand.sdf"]),
-            lipid_mol=sys.lipid_mol,
-            other_mol=sys.other_mol,
-            anchors=sys.anchors,
-            meta={**(sys.meta or {}), "ligand": lig_name},
-        )
-
-        logger.info(f"=== Ligand {lig_name} === root: {child.root}")
-        try:
-            results = per_lig.run(backend, child)
-            logger.success(f"Completed ligand {lig_name}. Steps: {list(results)}")
-        except Exception as e:
-            msg = f"{type(e).__name__}: {e}"
-            if on_failure == "prune":
-                logger.error(f"Ligand {lig_name} failed; pruning this ligand. Error: {msg}")
-                (child.root / "artifacts" / "FAILED.txt").write_text(f"{msg}\n")
-                failures.append((lig_name, msg))
-                continue
-            logger.error(f"Ligand {lig_name} failed; aborting entire run due to --on-failure=raise. Error: {msg}")
-            raise
-
+    failures: list[tuple[str, str]] = []
+    for child in children:
+        lig_name = child.meta["ligand"]
         # Try to read totals from windows.json (prefer artifacts/fe/windows.json)
         total_dG, total_se = -7.1, 0.3
         wjson = child.root / "artifacts" / "fe" / "windows.json"
@@ -389,8 +514,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
             logger.info(f"Saved FE record for ligand {lig_name} under {sys.root}")
         except Exception as e:
             logger.warning(f"Could not save FE record for {lig_name}: {e}")
+            failures.append((lig_name, f"save_failed: {e}"))
 
     if failures:
         failed = ", ".join([f"{n} ({m})" for n, m in failures])
-        logger.warning(f"{len(failures)} ligand(s) were pruned due to failures: {failed}")
-    logger.success(f"All ligands completed. FE results written under {sys.root}")
+        logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
+    logger.success(f"All phases completed. FE results written under {sys.root}")
