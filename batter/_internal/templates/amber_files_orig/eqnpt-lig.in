@@ -20,6 +20,10 @@ Equilibrate, NPT.
   gamma_ln = _gamma_ln_,
   ig = -1,
   ntp = 1,
+<<<<<<<< HEAD:batter/_internal/templates/amber_files_orig/eqnpt-lig.in
+========
+  csurften = 0,
+>>>>>>>> main:batter/data/amber_files/eqnpt-water.in
   barostat = 1,
   nstlim = 20000,
   dt = 0.001,
@@ -27,8 +31,19 @@ Equilibrate, NPT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
+<<<<<<<< HEAD:batter/_internal/templates/amber_files_orig/eqnpt-lig.in
   restraintmask = '(:_lig_name_) & !@H=',
   infe = 1,
+========
+  restraintmask = '(@CA | :_lig_name_) & !@H=',
+  infe = 0,
+  mcwat = 1,
+  nmd = 100,
+  nmc = 1000,
+  mcwatmask = ":_lig_name_",
+  mcligshift = 40,
+  mcresstr = "WAT",
+>>>>>>>> main:batter/data/amber_files/eqnpt-water.in
  /
  &pmd
  output_file = 'cmass.txt'
