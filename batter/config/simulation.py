@@ -201,7 +201,7 @@ class SimulationConfig(BaseModel):
 
         # friendly notices
         if self.buffer_z == 0:
-            logger.info("buffer_z=0; automatic Z buffer will be applied for membranes.")
+            logger.debug("buffer_z=0; automatic Z buffer will be applied for membranes.")
         if self.num_waters != 0:
             raise ValueError("'num_waters' is deprecated and must remain 0.")
 

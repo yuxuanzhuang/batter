@@ -108,7 +108,7 @@ class MABFEBuilder(SystemBuilder):
             meta={"ligand_ff": getattr(args, "ligand_ff", "gaff2")},
         )
         logger.info(
-            f"Prepared MABFE system '{updated.name}' at {updated.root} (ligands: {len(updated.ligands)}")
+            f"Prepared MABFE system '{updated.name}' at {updated.root} (ligands: {len(updated.ligands)})")
         logger.info("  Protein:    {}", updated.protein)
         logger.info("  Ligands:    {}", ", ".join(l.stem for l in updated.ligands))
         return updated

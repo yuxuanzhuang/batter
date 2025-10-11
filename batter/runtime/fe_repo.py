@@ -76,7 +76,7 @@ class FERecord(BaseModel):
     total_dG: float
     total_se: float = 0.0
     components: List[str] = Field(default_factory=list)
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(timespec="seconds") + "Z")
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     windows: List[WindowResult] = Field(default_factory=list)
 
 

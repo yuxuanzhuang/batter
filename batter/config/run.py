@@ -168,6 +168,11 @@ class FESimArgs(BaseModel):
 class RunSection(BaseModel):
     model_config = ConfigDict(extra="ignore")
     only_fe_preparation: bool = False
+    on_failure: str = Field("raise", description="Behavior on ligand failure: 'raise' or 'prune'")
+    max_workers: int | None = Field(
+        None,
+        description="Number of parallel workers for local backend (None = auto, 0 = serial)"
+    )
     dry_run: bool = False
     run_id: str = "auto"
     partition: Optional[str] = None

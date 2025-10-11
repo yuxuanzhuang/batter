@@ -210,7 +210,7 @@ def _register_local_handlers(backend: LocalBackend) -> None:
 # Main entry
 # -----------------------------------------------------------------------------
 
-def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "raise") -> None:
+def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None) -> None:
     """
     Run a full BATTER workflow from a YAML configuration.
 
@@ -235,6 +235,10 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     # lf ligand_input load json and set ligand_paths 
     lig_map = _resolve_ligand_map(rc, yaml_dir)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
+
+    # update on_failure
+    if on_failure:
+        rc.run.on_failure = on_failure
 
     # Build system-prep params exactly once
     sys_params = {
@@ -277,7 +281,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     for lig_name, lig_path in lig_map.items():
         builder.make_child_for_ligand(sys, lig_name, lig_path)
 
-    logger.info(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
+    logger.debug(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
 
     # Build pipeline with explicit sys_params
     tpl = _select_pipeline(
@@ -390,13 +394,11 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
         )
 
     # --- helpers: submit phase and wait for markers ---
-    def _run_phase_for_all(phase: Pipeline, systems: List[SimSystem], phase_name: str):
+    def _run_phase_for_all(phase: Pipeline, children: list[SimSystem], phase_name: str, backend: LocalBackend, max_workers: int | None = None):
         if not phase.ordered_steps():
             return
-        logger.info(f"Phase: {phase_name} → { [s.name for s in phase.ordered_steps()] }")
-        for child in systems:
-            logger.info(f"[{phase_name}] start {child.meta['ligand']}")
-            phase.run(backend, child)  # SLURM: submit; Local: execute inline
+        logger.debug(f"Phase: {phase_name} → steps={ [s.name for s in phase.ordered_steps()] }")
+        backend.run_parallel(phase, children, description=phase_name)
 
     def _wait_for_markers(systems: List[SimSystem], rel_marker: str,
                           timeout_s: int = 0, poll_s: float = 15.0) -> List[SimSystem]:
@@ -428,7 +430,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     # --------------------
     # PHASE 1: prepare_equil (parallel)
     # --------------------
-    _run_phase_for_all(phase_prepare_equil, children, "prepare_equil")
+    _run_phase_for_all(phase_prepare_equil, children, "prepare_equil", backend,  max_workers=rc.run.max_workers)
     # If your handler writes a prep sentinel, wait for it here; otherwise skip.
     # Example (uncomment/adjust if available):
     # children = _wait_for_markers(children, "equil/build_files/equil-reference.pdb")
@@ -436,7 +438,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    _run_phase_for_all(phase_equil, children, "equil")
+    _run_phase_for_all(phase_equil, children, "equil", backend)
     children = _wait_for_markers(children, "artifacts/equil/equil.rst7")
 
     # Optional prune: drop ligands that failed to produce marker
@@ -447,28 +449,28 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = "rai
     # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------
-    _run_phase_for_all(phase_prepare_fe, children, "prepare_fe")
+    _run_phase_for_all(phase_prepare_fe, children, "prepare_fe", backend, max_workers=rc.run.max_workers)
     # Optional: wait for prep sentinel
     # children = _wait_for_markers(children, "artifacts/prepare_fe/prepare_fe.ok")
 
     # --------------------
     # PHASE 4: fe_equil (parallel; if present)
     # --------------------
-    _run_phase_for_all(phase_fe_equil, children, "fe_equil")
+    _run_phase_for_all(phase_fe_equil, children, "fe_equil", backend)
     # Optional: wait
     # children = _wait_for_markers(children, "artifacts/fe_equil/fe_equil.rst7")
 
     # --------------------
     # PHASE 5: fe (parallel)
     # --------------------
-    _run_phase_for_all(phase_fe, children, "fe")
+    _run_phase_for_all(phase_fe, children, "fe", backend)
     # Optional: wait for completion of FE windows across ligands
     # children = _wait_for_markers(children, "artifacts/fe/windows.json")
 
     # --------------------
     # PHASE 6: analyze (parallel)
     # --------------------
-    _run_phase_for_all(phase_analyze, children, "analyze")
+    _run_phase_for_all(phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers)
     # Optional: wait
     # children = _wait_for_markers(children, "artifacts/analyze/analyze.ok")
 
