@@ -8,47 +8,6 @@ from batter.config.simulation import SimulationConfig
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
 
-
-def write_run_files(
-    window_dir: Path,
-    *,
-    sim: SimulationConfig,
-    comp: str,
-    win: int,
-) -> None:
-    """
-    Create run files (SLURM or local) for this window.
-
-    Parameters
-    ----------
-    window_dir : Path
-        Directory for this simulation window (e.g. work/.../fe/windows/001/).
-    sim : SimulationConfig
-        The simulation configuration.
-    comp : str
-        Component name (e.g. 'q', 'n', 'm', 'e').
-    win : int
-        Window index.
-    """
-    sh = window_dir / "run.sh"
-    lines = [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        f"# Component: {comp}  Window: {win}",
-        f"# Partition: {sim.partition}",
-        f"# Temperature: {sim.temperature}",
-        "",
-        "# Launch command (placeholder)",
-        f"pmemd.cuda -O -i mdin -p full.hmr.prmtop -c inpcrd -r out.rst7 -x traj.nc -o mdout.log",
-    ]
-    sh.write_text("\n".join(lines) + "\n")
-    try:
-        sh.chmod(0o755)
-    except Exception as e:
-        logger.debug(f"chmod +x failed for {sh}: {e}")
-    logger.debug(f"[RunFiles] Created run script for {comp} window {win}: {sh}")
-
-
 def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     """
     Port of `_run_files` for equilibration.
@@ -59,15 +18,14 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     sim = ctx.sim
     ligand_name = ctx.ligand
     work = Path(ctx.working_dir)
-    run_dir = work / "run_files"
-    run_dir.mkdir(exist_ok=True, parents=True)
+    hmr = ctx.sim.hmr
 
-    logger.debug(f"[Equil] Creating run scripts in {run_dir}")
+    logger.debug(f"[Equil] Creating run scripts in {work}")
 
     # Copy templates from internal RUN_FILES_DIR
     for template_name in ["check_run.bash", "check_penetration.py", "run-equil.bash", "SLURMM-Am"]:
         src = run_files_orig / template_name
-        dst = run_dir / (
+        dst = work / (
             "run-local.bash" if template_name == "run-equil.bash" else
             "SLURMM-run" if template_name == "SLURMM-Am" else
             template_name
@@ -78,15 +36,19 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         else:
             shutil.copy2(src, dst)
 
-        # Perform substitutions
         text = dst.read_text()
         text = (
             text.replace("RANGE", str(sim.rng))
-            .replace("STAGE", stage)
-            .replace("POSE", ligand_name)
-            .replace("SYSTEMNAME", sim.system_name)
-            .replace("PARTITIONNAME", sim.partition)
+                .replace("STAGE", stage)
+                .replace("POSE", ligand_name)
+                .replace("SYSTEMNAME", sim.system_name)
+                .replace("PARTITIONNAME", sim.partition)
         )
+
+        if hmr:
+            text = text.replace("full.prmtop', 'full.hmr.prmtop")
+        else:
+            text = text.replace("full.prmtop', 'full.prmtop")
         dst.write_text(text)
 
         try:
@@ -94,4 +56,4 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         except Exception as e:
             logger.debug(f"chmod +x failed for {dst}: {e}")
 
-    logger.debug(f"[Equil] Run scripts ready at {run_dir}")
+    logger.debug(f"[Equil] Run scripts ready at {work}")
