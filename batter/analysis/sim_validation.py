@@ -8,6 +8,8 @@ This scripts is used to run a simple simulation validation on
 Maybe in the future: the membrane properties
 """
 import numpy as np
+from pathlib import Path
+
 import scipy.stats
 import MDAnalysis as mda
 from loguru import logger
@@ -47,7 +49,7 @@ class SimValidator:
     plot_rmsf()
         Plot the RMSF of the protein
     """
-    def __init__(self, universe, ligand=None):
+    def __init__(self, universe, ligand=None, directory: str | Path = "."):
         """
         Parameters
         ----------
@@ -58,6 +60,7 @@ class SimValidator:
             If not provided, it will be guessed.
         """
         self.universe = universe
+        self.workdir = Path(directory).resolve()
         if ligand is not None:
             self.ligand = ligand
         else:
@@ -149,7 +152,7 @@ class SimValidator:
     
     def _ligand_dihedral(self):
         logger.debug('Calculating ligand dihedral')
-        dihed_ligands_file = 'assign.in'
+        dihed_ligands_file = self.workdir / 'assign.in'
         if not os.path.exists(dihed_ligands_file):
             raise FileNotFoundError(f'{dihed_ligands_file} not found')
         
@@ -230,7 +233,7 @@ class SimValidator:
         axes[2].legend()
         plt.tight_layout()
         if savefig:
-            plt.savefig('simulation_analysis.png')
+            plt.savefig(self.workdir / 'simulation_analysis.png')
         else:
             plt.show()
         plt.close(fig)
@@ -246,7 +249,7 @@ class SimValidator:
         ax.set_ylabel('Box size (Å)')
         ax.legend()
         if savefig:
-            plt.savefig('box_size.png')
+            plt.savefig(self.workdir / 'box_size.png')
         else:
             plt.show()
         plt.close(fig)
@@ -259,7 +262,7 @@ class SimValidator:
         ax.set_ylabel('RMSD (Å)')
         ax.legend()
         if savefig:
-            plt.savefig('ligand_bs.png')
+            plt.savefig(self.workdir / 'ligand_bs.png')
         else:
             plt.show()
         plt.close(fig)
@@ -273,7 +276,7 @@ class SimValidator:
         ax.set_ylabel('RMSD (Å)')
         ax.legend()
         if savefig:
-            plt.savefig('rmsd.png')
+            plt.savefig(self.workdir / 'rmsd.png')
         else:
             plt.show()
         plt.close(fig)
@@ -285,7 +288,7 @@ class SimValidator:
         ax.set_xlabel('Residue')
         ax.set_ylabel('RMSF (Å)')
         if savefig:
-            plt.savefig('rmsf.png')
+            plt.savefig(self.workdir / 'rmsf.png')
         else:
             plt.show()
         plt.close(fig)
@@ -335,7 +338,7 @@ class SimValidator:
                         color='r', linestyle='--', label='Representative')
         plt.tight_layout()
         if savefig:
-            plt.savefig('dihed_hist.png')
+            plt.savefig(self.workdir / 'dihed_hist.png')
         else:
             plt.show()
         plt.close(fig)

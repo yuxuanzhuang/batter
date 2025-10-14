@@ -12,17 +12,6 @@ from batter.config.simulation import SimulationConfig
 from batter._internal.builders.equil import PrepareEquilBuilder
 
 
-def _find_ligand_entry(ligand: str, index_json: Path) -> Optional[Dict[str, Any]]:
-    """Read artifacts/ligand_params/index.json and return matching ligand entry."""
-    if not index_json.exists():
-        raise FileNotFoundError(f"[prepare_equil] Missing ligand param index: {index_json}")
-    index = json.loads(index_json.read_text())
-    for entry in index.get("ligands", []):
-        if entry["ligand"] == ligand:
-            return entry
-    return None
-
-
 def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """
     Pipeline handler for the `prepare_equil` step.
@@ -35,7 +24,8 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     sim = SimulationConfig.model_validate(params["sim"])
 
     # 2) Resolve ligand name (e.g., folder name under ligands/)
-    ligand = system.meta.get("ligand", Path(system.root).name)
+    ligand = system.meta["ligand"]
+    residue_name = system.meta["residue_name"]
     working_dir: Path = system.root / "equil"
     comp_windows: dict = params.get("component_windows", {})
     infe: bool = bool(params.get("infe", False))
@@ -57,15 +47,6 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
             param_dir_dict[resn] = store_dir
     except Exception as e:
         raise RuntimeError(f"Failed to parse ligand param index {index_json}: {e}")
-
-    entry = _find_ligand_entry(ligand, index_json)
-    if entry is None:
-        raise FileNotFoundError(
-            f"[prepare_equil] Ligand '{ligand}' not found in {index_json}. "
-            "Ensure param_ligands ran successfully."
-        )
-
-    residue_name = entry.get("residue_name", ligand[:3])
 
     logger.info(
         f"[prepare_equil] start for ligand={ligand} "

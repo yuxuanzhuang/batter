@@ -84,6 +84,25 @@ def resolve_placeholders(text: str, sys: SimSystem) -> str:
     return text.replace("{WORK}", str(sys.root)).replace("{SYSTEM}", sys.name)
 
 
+def partition_children_by_status(
+    children: List[SimSystem],
+    phase: str,
+    finished_name: str = "FINISHED",
+    failed_name: str = "FAILED",
+) -> Tuple[List[SimSystem], List[SimSystem]]:
+    """Return (ok_children, failed_children) based on sentinel files under <child.root>/<phase>/."""
+    ok, bad = [], []
+    for child in children:
+        p = child.root / phase
+        if (p / finished_name).exists():
+            ok.append(child)
+        elif (p / failed_name).exists():
+            bad.append(child)
+        else:
+            # If neither exists, treat as failed (job manager should have resolved it already).
+            bad.append(child)
+    return ok, bad
+
 # -----------------------------------------------------------------------------
 # Ligand resolution
 # -----------------------------------------------------------------------------
@@ -159,8 +178,9 @@ def _register_local_handlers(backend: LocalBackend) -> None:
     from batter.exec.handlers.system_prep import system_prep as _system_prep
     from batter.exec.handlers.param_ligands import param_ligands as _param_ligands
     from batter.exec.handlers.prepare_equil import prepare_equil_handler as _prepare_equil_handler
+    from batter.exec.handlers.equil import equil_handler as _equil_handler
+    from batter.exec.handlers.equil_analysis import equil_analysis_handler as _equil_analysis
 
-    from pathlib import Path
 
     def _touch_artifact(system: SimSystem, subdir: str, fname: str, content: str = "ok\n") -> Path:
         d = system.root / "artifacts" / subdir
@@ -168,10 +188,6 @@ def _register_local_handlers(backend: LocalBackend) -> None:
         p = d / fname
         p.write_text(content)
         return p
-
-    def _equil(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-        rst = _touch_artifact(system, "equil", "equil.rst7", "dummy-eq\n")
-        return ExecResult([], {"rst7": rst})
 
     def _prepare_fe(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
         marker = _touch_artifact(system, "prepare_fe", "prepare_fe.ok")
@@ -196,7 +212,8 @@ def _register_local_handlers(backend: LocalBackend) -> None:
     backend.register("system_prep", _system_prep)
     backend.register("param_ligands", _param_ligands)
     backend.register("prepare_equil", _prepare_equil_handler)
-    backend.register("equil", _equil)
+    backend.register("equil", _equil_handler)
+    backend.register("equil_analysis", _equil_analysis)
     backend.register("prepare_fe", _prepare_fe)
     backend.register("prepare_fe_windows", _prepare_fe_windows)
     backend.register("fe_equil", _fe_equil)
@@ -205,10 +222,68 @@ def _register_local_handlers(backend: LocalBackend) -> None:
 
     logger.debug(f"Registered LOCAL handlers: {list(backend._handlers.keys())}")
 
+# --- phase skipping utilities -----------------------------------------------
+
+REQUIRED_MARKERS = {
+    "prepare_equil": [["equil/full.prmtop"]],                        # all-of single → must exist
+    "equil":         [["equil/FINISHED"], ["equil/FAILED"]],         # either/or
+    "equil_analysis":[["equil/representative.pdb"], ["equil/UNBOUND"]],
+    "prepare_fe":    [["artifacts/prepare_fe/prepare_fe.ok"]],
+    "fe_equil":      [["artifacts/fe_equil/fe_equil.rst7"]],
+    "fe":            [["artifacts/fe/windows.json"], ["artifacts/fe/FINISHED"]],
+    "analyze":       [["artifacts/analyze/analyze.ok"]],
+}
+
+def _is_done(system: SimSystem, marker_spec) -> bool:
+    """
+    marker_spec can be:
+      - list[str]          → ANY of these (backward-compat)
+      - list[list[str]]    → DNF: ANY group satisfied; each group is ALL-of
+    """
+    root = system.root
+    if not marker_spec:
+        return False
+
+    # Backward-compatible: flat list means ANY-of
+    if all(isinstance(m, str) for m in marker_spec):
+        return any((root / m).exists() for m in marker_spec)
+
+    # DNF: list of groups; a group is satisfied only if ALL paths in it exist
+    for group in marker_spec:
+        if all((root / p).exists() for p in group):
+            return True
+    return False
+
+def _filter_needing_phase(children: list[SimSystem], phase_name: str) -> list[SimSystem]:
+    marker_spec = REQUIRED_MARKERS.get(phase_name, [])
+    if not marker_spec:
+        return list(children)
+    need = [c for c in children if not _is_done(c, marker_spec)]
+    done = [c for c in children if c not in need]
+    if done:
+        names = ", ".join(c.meta.get("ligand", c.name) for c in done)
+        logger.info(f"[skip] {phase_name}: {len(done)} ligand(s) already complete → {names}")
+    return need
+
+def _run_phase_skipping_done(phase: Pipeline, children: list[SimSystem],
+                             phase_name: str, backend,
+                             max_workers: int | None = None
+                             ) -> list[SimSystem]:
+    """Run a phase only for ligands that still need it. Returns the original children list."""
+    todo = _filter_needing_phase(children, phase_name)
+    if not todo:
+        logger.info(f"[skip] {phase_name}: all ligands already complete.")
+        return children
+    logger.info(f"{phase_name}: {len(todo)} ligand(s) need work "
+                f"(of {len(children)} total). Submitting now.")
+    backend.run_parallel(phase, todo, description=phase_name, max_workers=max_workers)
+    return children
 
 # -----------------------------------------------------------------------------
 # Main entry
 # -----------------------------------------------------------------------------
+
+
 
 def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None) -> None:
     """
@@ -339,6 +414,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # --- define phases explicitly ---
     PH_PREPARE_EQUIL = {"prepare_equil"}
     PH_EQUIL         = {"equil"}
+    PH_EQUIL_ANALYSIS  = {"equil_analysis"}
     PH_PREPARE_FE    = {"prepare_fe", "prepare_fe_windows"}
     PH_FE_EQUIL      = {"fe_equil"}
     PH_FE            = {"fe"}
@@ -363,6 +439,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     phase_prepare_equil = _phase(PH_PREPARE_EQUIL)
     phase_equil         = _phase(PH_EQUIL)
+    phase_equil_analysis  = _phase(PH_EQUIL_ANALYSIS)
     phase_prepare_fe    = _phase(PH_PREPARE_FE)
     phase_fe_equil      = _phase(PH_FE_EQUIL)
     phase_fe            = _phase(PH_FE)
@@ -374,6 +451,14 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
     param_index = json.loads(param_idx_path.read_text())
     param_dir_dict = {e["residue_name"]: e["store_dir"] for e in param_index["ligands"]}
+
+    # get mapping of ligand name → residue name
+    lig_resname_map = {}
+    for entry in param_index.get("ligands", []):
+        lig = entry.get("ligand")
+        resn = entry.get("residue_name")
+        if lig and resn:
+            lig_resname_map[lig] = resn
 
     children: List[SimSystem] = []
     for d in sorted([p for p in (sys.root / "simulations").glob("*") if p.is_dir()]):
@@ -389,7 +474,10 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
                 lipid_mol=sys.lipid_mol,
                 other_mol=sys.other_mol,
                 anchors=sys.anchors,
-                meta={**(sys.meta or {}), "ligand": lig_name, "param_dir_dict": param_dir_dict},
+                meta={**(sys.meta or {}),
+                "ligand": lig_name,
+                "residue_name": lig_resname_map[lig_name],
+                "param_dir_dict": param_dir_dict},
             )
         )
 
@@ -400,56 +488,38 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         logger.debug(f"Phase: {phase_name} → steps={ [s.name for s in phase.ordered_steps()] }")
         backend.run_parallel(phase, children, description=phase_name)
 
-    def _wait_for_markers(systems: List[SimSystem], rel_marker: str,
-                          timeout_s: int = 0, poll_s: float = 15.0) -> List[SimSystem]:
-        """
-        Block until each system has the marker (relative path under child.root).
-        Returns the list of systems that satisfied the barrier.
-        If timeout_s == 0 → wait indefinitely.
-        """
-        import time
-        start = time.time()
-        pending = {s.meta["ligand"]: s for s in systems}
-        done: dict[str, SimSystem] = {}
-        while pending:
-            found = []
-            for lig, s in pending.items():
-                if (s.root / rel_marker).exists():
-                    logger.info(f"[barrier] {lig}: found {rel_marker}")
-                    found.append(lig)
-            for lig in found:
-                done[lig] = pending.pop(lig)
-            if not pending:
-                break
-            if timeout_s and (time.time() - start) > timeout_s:
-                missing = ", ".join(pending.keys())
-                raise TimeoutError(f"Timed out waiting for {rel_marker} for: {missing}")
-            time.sleep(poll_s)
-        return list(done.values())
-
     # --------------------
     # PHASE 1: prepare_equil (parallel)
     # --------------------
-    _run_phase_for_all(phase_prepare_equil, children, "prepare_equil", backend,  max_workers=rc.run.max_workers)
-    # If your handler writes a prep sentinel, wait for it here; otherwise skip.
-    # Example (uncomment/adjust if available):
-    # children = _wait_for_markers(children, "equil/build_files/equil-reference.pdb")
+    _run_phase_skipping_done(phase_prepare_equil, children, "prepare_equil", backend,  max_workers=rc.run.max_workers)
 
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    _run_phase_for_all(phase_equil, children, "equil", backend)
-    children = _wait_for_markers(children, "artifacts/equil/equil.rst7")
+    _run_phase_skipping_done(phase_equil, children, "equil", backend)
 
-    # Optional prune: drop ligands that failed to produce marker
-    # (Already handled by wait returning only completed ones.)
-    if not children:
-        raise RuntimeError("All ligands failed during equilibration barrier.")
+    # --------------------
+    # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
+    # --------------------
+    _run_phase_skipping_done(phase_equil_analysis, children, "equil_analysis", backend, max_workers=rc.run.max_workers)
+
+    # prune UNBOUND ligands before FE prep
+    def _filter_bound(children):
+        keep = []
+        for c in children:
+            if (c.root / "equil" / "UNBOUND").exists():
+                lig = (c.meta or {}).get("ligand", c.name)
+                logger.warning(f"Pruning UNBOUND ligand after equil: {lig}")
+                continue
+            keep.append(c)
+        return keep
+
+    children = _filter_bound(children)
 
     # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------
-    _run_phase_for_all(phase_prepare_fe, children, "prepare_fe", backend, max_workers=rc.run.max_workers)
+    _run_phase_skipping_done(phase_prepare_fe, children, "prepare_fe", backend, max_workers=rc.run.max_workers)
     # Optional: wait for prep sentinel
     # children = _wait_for_markers(children, "artifacts/prepare_fe/prepare_fe.ok")
 

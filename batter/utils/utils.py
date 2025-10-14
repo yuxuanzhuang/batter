@@ -79,7 +79,6 @@ COMPONENTS_DICT = {
     }
 
 
-
 def run_with_log(command, level='debug', working_dir=None,
                  error_match=None, timeout=None, shell=True, env=None):
     """

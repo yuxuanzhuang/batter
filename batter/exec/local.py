@@ -85,8 +85,7 @@ class LocalBackend(ExecBackend):
         if mw in (0, 1):
             # serial execution
             logger.info(
-                "LOCAL(parallel): running serially for %d system(s) (max_workers=%r) %s",
-                len(systems), mw, f"— {description}" if description else ""
+                f"LOCAL(parallel): running serially for {len(systems)} system(s) (max_workers={mw}) {'— {description}' if description else ''}",
             )
             out: Dict[str, Mapping[str, ExecResult]] = {}
             for sys in systems:

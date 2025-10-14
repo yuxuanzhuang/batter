@@ -17,7 +17,7 @@ def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparat
     """
     ABFE pipeline (expanded):
 
-    system_prep → param_ligands → prepare_equil → equil
+    system_prep → param_ligands → prepare_equil → equil → equil_analysis
     → prepare_fe → prepare_fe_windows → fe_equil → fe → analyze
     """
     steps: List[Step] = []
@@ -48,7 +48,8 @@ def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparat
     # Per-ligand steps
     steps.append(_step("prepare_equil", requires=["param_ligands"], sim=sim.model_dump()))
     steps.append(_step("equil", requires=["prepare_equil"], sim=sim.model_dump()))
-    steps.append(_step("prepare_fe", requires=["equil"], sim=sim.model_dump()))
+    steps.append(_step("equil_analysis", requires=["equil"], sim=sim.model_dump()))
+    steps.append(_step("prepare_fe", requires=["equil_analysis"], sim=sim.model_dump()))
     steps.append(_step("prepare_fe_windows", requires=["prepare_fe"], sim=sim.model_dump()))
     steps.append(_step("fe_equil", requires=["prepare_fe_windows"], sim=sim.model_dump()))
     steps.append(
