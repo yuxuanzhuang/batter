@@ -46,9 +46,9 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         )
 
         if hmr:
-            text = text.replace("full.prmtop', 'full.hmr.prmtop")
+            text = text.replace("full.prmtop", "full.hmr.prmtop")
         else:
-            text = text.replace("full.prmtop', 'full.prmtop")
+            text = text.replace("full.prmtop", "full.prmtop")
         dst.write_text(text)
 
         try:
