@@ -1853,6 +1853,7 @@ class EquilibrationBuilder(SystemBuilder):
         steps2 = self.sim_config.eq_steps2
         rng = self.sim_config.rng
         lipid_mol = self.lipid_mol
+        barostat = self.sim_config.barostat
         
         # Find anchors
         with open('disang.rest', 'r') as f:
@@ -1886,6 +1887,12 @@ class EquilibrationBuilder(SystemBuilder):
                             '_lig_name_', mol))
 
         infe = 1 if self.infe else 0
+        if infe == 1:
+            # bug when using Berendesen barostat
+            # with NFE module
+            # https://github.com/yuxuanzhuang/nfe_berendsen
+            # need to switch to Monte Carlo barostat
+            barostat = '2'
         # Create gradual release files for equilibrium
         for i in range(0, num_sim):
             with open(f'{self.amber_files_folder}/mdin-equil', "rt") as fin:
@@ -1896,7 +1903,7 @@ class EquilibrationBuilder(SystemBuilder):
                         for line in fin:
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_enable_infe_', str(infe)).replace(
-                            '_lig_name_', mol).replace('_num-steps_', str(steps2)).replace('disang_file', f'disang{i:02d}'))
+                            '_lig_name_', mol).replace('_num-steps_', str(steps2)).replace('disang_file', f'disang{i:02d}').replace('_barostat_', str(barostat)))
                     else:
                         for line in fin:
                             if i == 0:
@@ -1906,7 +1913,7 @@ class EquilibrationBuilder(SystemBuilder):
                                     line = 'ntx = 1, \n'
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_enable_infe_', str(infe)).replace(
-                            '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}'))
+                            '_lig_name_', mol).replace('_num-steps_', str(steps1)).replace('disang_file', f'disang{i:02d}').replace('_barostat_', str(barostat)))
 
     @log_info             
     def _run_files(self):

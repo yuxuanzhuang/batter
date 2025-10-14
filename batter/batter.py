@@ -2413,6 +2413,18 @@ class System:
                 write_restraint_block(
                                       files=files,
                                       folder_2_write=f'{self.equil_folder}/{pose}/')
+                
+                # use barostat Berendsen if there are position restraints
+                md_in_files = glob.glob(f"{self.equil_folder}/{pose}/mdin-*")
+                for md_in_file in md_in_files:
+                    with open(md_in_file, 'r') as f:
+                        lines = f.readlines()
+                    with open(md_in_file, 'w') as f:
+                        for line in lines:
+                            if 'barostat' in line:
+                                line = 'barostat = 1,\n'
+                            f.write(line)
+                                
 
         elif stage == 'fe':
             # only need to do it once as all poses have the same protein

@@ -115,7 +115,7 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
     sim_val.plot_analysis(savefig=True)
 
     # bound vs unbound
-    ligand_bs_last = float(sim_val.results["ligand_bs"][-1])
+    ligand_bs_last = float(np.asarray(sim_val.results["ligand_bs"][-1]).item())
     if ligand_bs_last > threshold:
         logger.warning(f"[equil_check:{lig}] UNBOUND (ligand_bs={ligand_bs_last:.2f} Å) > {threshold:.2f} Å")
         p["unbound"].write_text(f"UNBOUND with ligand_bs = {ligand_bs_last:.3f}\n")

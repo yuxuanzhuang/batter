@@ -180,6 +180,7 @@ def _register_local_handlers(backend: LocalBackend) -> None:
     from batter.exec.handlers.prepare_equil import prepare_equil_handler as _prepare_equil_handler
     from batter.exec.handlers.equil import equil_handler as _equil_handler
     from batter.exec.handlers.equil_analysis import equil_analysis_handler as _equil_analysis
+    from batter.exec.handlers.prepare_fe import prepare_fe_handler as _prepare_fe_handler
 
 
     def _touch_artifact(system: SimSystem, subdir: str, fname: str, content: str = "ok\n") -> Path:
