@@ -1,6 +1,6 @@
 # batter/_internal/ops/helpers.py
 from __future__ import annotations
-
+from dataclasses import asdict, dataclass 
 from pathlib import Path
 from typing import List, Optional
 
@@ -20,6 +20,25 @@ __all__ = [
     "get_ligand_candidates",
     "select_ions_away_from_complex",
 ]
+
+
+@dataclass(frozen=True)
+class Anchors:
+    P1: str; P2: str; P3: str; L1: str; L2: str; L3: str; lig_res: str
+
+def _anchors_path(working_dir: Path) -> Path:
+    # single source of truth for where we persist them
+    return working_dir / "anchors.json"
+
+def save_anchors(working_dir: Path, anchors: Anchors) -> None:
+    p = _anchors_path(working_dir)
+    p.write_text(json.dumps(asdict(anchors), indent=2))
+    logger.debug(f"[simprep] wrote anchors → {p}")
+
+def load_anchors(working_dir: Path) -> Anchors:
+    p = _anchors_path(working_dir)
+    data = json.loads(p.read_text())
+    return Anchors(**data)
 
 
 def get_buffer_z(protein_file: str | Path, targeted_buf: float = 20.0) -> float:

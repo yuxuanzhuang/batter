@@ -1,222 +1,221 @@
-# fe_ops.py
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
-
-import os
-import glob
 import shutil
+import glob
+import os
+import json
+
 import numpy as np
 import pandas as pd
 import MDAnalysis as mda
 from loguru import logger
 
-# Reuse your existing helpers/constants (assumed available in your tree)
-from batter.utils import run_with_log
-from batter._internal import scripts
-from batter.utils import vmd as VMD_BIN   # if you prefer, pass vmd path explicitly
-# from batter._internal.const import cpptraj  # prefer passing cpptraj explicitly
-
-# Your geometry helpers (must exist as before)
-from batter._internal.ops.geometry import get_sdr_dist, get_ligand_candidates
+from batter._internal.builders.fe_registry import register_build_complex, register_sim_files
+from batter.utils import (
+    run_with_log,
+    cpptraj,
+    vmd
+)
 
 
-@contextmanager
-def _pushd(path: Path):
-    prev = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(prev)
+def _copy_if_exists(src: Path, dst: Path) -> None:
+    if not src.exists():
+        raise FileNotFoundError(f"Missing required file: {src}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
 
 
-def build_complex_fe(
-    *,
-    build_dir: Path,
-    pose: str,
-    equil_dir: Path,          # path to the ligand’s equil folder (e.g. <...>/equil/<pose>)
-    cpptraj_bin: str,         # e.g. "cpptraj" or resolved path
-    vmd_bin: Optional[str] = None,  # if None, uses batter.utils.vmd
-    membrane_builder: bool,
-    lipid_mol: List[str],
-    other_mol: List[str],
-    hmr: str,                 # "yes" or "no"
-    # simulation config fields used by legacy code:
-    solv_shell: float,
-    l1_x: float,
-    l1_y: float,
-    l1_z: float,
-    l1_range: float,
-    max_adis: float,
-    min_adis: float,
-    buffer_z: float,
-    # paths to template trees the legacy code copies from:
-    build_files_orig: Path,   # directory containing original build files (legacy: build_files_orig)
-) -> Tuple[bool, Optional[str], str, float]:
+@register_build_complex("z")
+def build_complex_z(b) -> bool:
     """
-    Run the legacy FE 'build_complex' stage as a standalone op.
-
-    Returns
-    -------
-    (ok, code, mol, sdr_dist)
-      ok   : True if anchors found and files written; False if pruned/failed.
-      code : Optional short code for anchor failures ('anch1' or 'anch2'); None on success.
-      mol  : Detected ligand residue name (3-letter/legacy style).
-      sdr_dist : computed SDR distance (float).
+    Z-component _build_complex:
+    Copy/transform files from the per-ligand equil output, then detect/emit anchors.
+    Returns True on success, False to indicate pruning.
     """
-    vmd_exec = vmd_bin or VMD_BIN
+    # --- config / context ---
+    ligand = b.ctx.ligand
+    lipid_mol = b.ctx.lipid_mol
+    other_mol = b.ctx.other_mol
+    sim = b.ctx.sim
 
-    build_dir = Path(build_dir).resolve()
-    equil_dir = Path(equil_dir).resolve()
-    build_dir.mkdir(parents=True, exist_ok=True)
+    solv_shell   = sim.solv_shell
+    l1_x, l1_y, l1_z = sim.l1_x, sim.l1_y, sim.l1_z
+    l1_range    = sim.l1_range
+    max_adis    = sim.max_adis
+    min_adis    = sim.min_adis
+    buffer_z    = sim.buffer_z
+    hmr         = sim.hmr
 
-    with _pushd(build_dir):
-        # 1) seed the working folder with stage templates
-        shutil.copytree(build_files_orig, ".", dirs_exist_ok=True)
+    workdir   = b.build_dir; workdir.mkdir(parents=True, exist_ok=True)
+    child_root = b.ctx.working_dir                         # .../simulations/<LIG>/fe/...
+    sys_root   = b.ctx.system_root                         # .../work/<system>
+    equil_dir  = sys_root / "equilibration" / ligand  # .../work/<system>/equilibration/<LIG>
 
-        # 2) pull equilibrium artifacts for this pose
-        #    expects files: {pose}.pdb, representative.rst7/pdb, renum files, full*.prmtop, vac*
-        def cp(src: Path, dst: Path | None = None):
-            dst = dst or Path(".")
-            run_with_log(f"cp {src} {dst}")
+    # --- helpers to keep paths explicit ---
+    def _p(name: str) -> Path: return workdir / name
+    def _copy(src: Path, dst_name: str):
+        if src.exists():
+            shutil.copy2(src, _p(dst_name))
+        else:
+            logger.warning(f"[build_complex_z] missing: {src}")
 
-        cp(equil_dir / f"{pose}.pdb", Path("./"))
-        cp(equil_dir / "representative.rst7", Path("./"))
-        cp(equil_dir / "representative.pdb", Path("./aligned-nc.pdb"))
-        cp(equil_dir / "build_amber_renum.txt", Path("./"))
-        cp(equil_dir / "protein_renum.txt", Path("./"))
+    # 1) copy artifacts from equil
+    _copy(equil_dir / "build_files" / f"{ligand}.pdb",          f"{ligand}.pdb")
+    _copy(equil_dir / "representative.rst7",                    "representative.rst7")
+    _copy(equil_dir / "representative.pdb",                     "aligned-nc.pdb")
+    _copy(equil_dir / "build_amber_renum.txt",                  "build_amber_renum.txt")
+    _copy(equil_dir / "build_files" / "protein_renum.txt",      "protein_renum.txt")
 
-        if not Path("protein_renum.txt").exists():
-            raise FileNotFoundError(f"protein_renum.txt not found in {build_dir}")
+    for p in equil_dir.glob("full*.prmtop"): shutil.copy2(p, _p(p.name))
+    for p in equil_dir.glob("vac*"):          shutil.copy2(p, _p(p.name))
 
-        for f in glob.glob(str(equil_dir / "full*.prmtop")):
-            cp(Path(f), Path("./"))
-        for f in glob.glob(str(equil_dir / "vac*")):
-            cp(Path(f), Path("./"))
+    # 2) deduce ligand resname from copied ligand PDB
+    mol = mda.Universe(str(_p(f"{ligand}.pdb"))).residues[0].resname
+    b.mol = mol
 
-        # Detect ligand resname (first residue in {pose}.pdb)
-        mol = mda.Universe(f"{pose}.pdb").residues[0].resname
-        run_with_log(f"cp {equil_dir}/{mol.lower()}.sdf ./")
-        run_with_log(f"cp {equil_dir}/{mol.lower()}.mol2 ./")
-        run_with_log(f"cp {equil_dir}/{mol.lower()}.pdb ./")
+    prmtop_f = "full.prmtop" if str(hmr).lower() == "no" else "full.hmr.prmtop"
 
-        # 3) write receptor-only PDB from representative state
-        prmtop_f = "full.hmr.prmtop" if hmr == "yes" else "full.prmtop"
-        run_with_log(f"{cpptraj_bin} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb")
+    # 3) extract receptor-only PDB from representative.rst7
+    run_with_log(f"{cpptraj} -p {prmtop_f} -y {_p('representative.rst7')} -x {_p('rec_file.pdb')}")
 
-        # Fix chain IDs using build_amber_renum.txt
-        renum = pd.read_csv(
-            "build_amber_renum.txt",
-            sep=r"\s+",
-            header=None,
-            names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
-        )
-        u = mda.Universe("rec_file.pdb")
-        for residue in u.select_atoms("protein").residues:
-            resid_str = residue.resid
-            residue.atoms.chainIDs = renum.query("old_resid == @resid_str").old_chain.values[0]
+    # 4) reapply chain IDs from renum map; optional lipid resid compaction
+    renum = pd.read_csv(_p("build_amber_renum.txt"), sep=r"\s+", header=None,
+                        names=['old_resname','old_chain','old_resid','new_resname','new_resid'])
+    u = mda.Universe(str(_p("rec_file.pdb")))
+    for residue in u.select_atoms('protein').residues:
+        resid_str = residue.resid
+        chain = renum.query('old_resid == @resid_str').old_chain.values
+        if chain.size: residue.atoms.chainIDs = chain[0]
 
-        if membrane_builder:
-            # Re-pack residue IDs for lipids to ensure continuity
-            non_water_ag = u.select_atoms("not resname WAT Na+ Cl- K+ ANC")
-            revised_resids = []
-            resid_counter = 1
-            prev_resid = 0
-            for _, row in renum.iterrows():
-                if row["old_resname"] in ["WAT", "Na+", "Cl-", "K+"]:
-                    continue
-                if row["old_resid"] != prev_resid or row["old_resname"] not in lipid_mol:
-                    revised_resids.append(resid_counter)
-                    resid_counter += 1
-                else:
-                    revised_resids.append(resid_counter - 1)
-                prev_resid = row["old_resid"]
+    if b.membrane_builder:
+        revised, resid_counter, prev_resid = [], 1, None
+        for _, row in renum.iterrows():
+            if row['old_resid'] != prev_resid or row['old_resname'] not in lipid_mol:
+                revised.append(resid_counter); resid_counter += 1
+            else:
+                revised.append(resid_counter - 1)
+            prev_resid = row['old_resid']
+        revised = np.asarray(revised, dtype=int)
+        total = u.atoms.residues.n_residues
+        final_resids = np.zeros(total, dtype=int)
+        n = min(total, revised.size)
+        final_resids[:n] = revised[:n]
+        if n < total:
+            final_resids[n:] = np.arange(final_resids[n-1] + 1, final_resids[n-1] + 1 + (total - n))
+        u.atoms.residues.resids = final_resids
 
-            revised_resids = np.array(revised_resids)
-            total_res = non_water_ag.residues.n_residues
-            final_resids = np.zeros(total_res, dtype=int)
-            final_resids[: len(revised_resids)] = revised_resids
-            next_resnum = revised_resids[-1] + 1
-            final_resids[len(revised_resids) :] = np.arange(
-                next_resnum, total_res - len(revised_resids) + next_resnum
-            )
-            non_water_ag.residues.resids = final_resids
+    u.atoms.write(str(_p("rec_file.pdb")))
+    shutil.copy2(_p("rec_file.pdb"), _p("equil-reference.pdb"))
 
-        u.atoms.write("rec_file.pdb")
-        run_with_log("cp rec_file.pdb equil-reference.pdb")
-
-        # 4) split raw complex (VMD TCL)
-        with open("split-ini.tcl", "rt") as fin, open("split.tcl", "wt") as fout:
-            other_mol_vmd = " ".join(other_mol) if other_mol else "XXX"
-            lipid_mol_vmd = " ".join(lipid_mol) if lipid_mol else "XXX"
-            for line in fin:
-                fout.write(
-                    line.replace("SHLL", f"{solv_shell:4.2f}")
+    # 5) VMD split -> split.tcl generated under workdir
+    other_mol_vmd = " ".join(other_mol) if other_mol else "XXX"
+    lipid_mol_vmd = " ".join(lipid_mol) if lipid_mol else "XXX"
+    with open(_p("split-ini.tcl"), "rt") as fin, open(_p("split.tcl"), "wt") as fout:
+        for line in fin:
+            fout.write(
+                line.replace("SHLL", f"{solv_shell:4.2f}")
                     .replace("OTHRS", str(other_mol_vmd))
                     .replace("LIPIDS", str(lipid_mol_vmd))
                     .replace("mmm", mol.lower())
                     .replace("MMM", f"'{mol}'")
-                )
-        run_with_log(f"{vmd_exec} -dispdev text -e split.tcl", shell=False)
+            )
+    run_with_log(f"{vmd} -dispdev text -e {_p('split.tcl')}", shell=False)
 
-        # 5) merge + clean complex
-        with open("complex-merge.pdb", "w") as out:
-            for fname in ["dummy.pdb", "protein.pdb", f"{mol.lower()}.pdb", "lipids.pdb", "others.pdb", "crystalwat.pdb"]:
-                if Path(fname).exists():
-                    out.write(Path(fname).read_text())
-        with open("complex-merge.pdb") as fin, open("complex.pdb", "w") as fout:
+    # 6) merge -> complex.pdb (strip headers/CRYST1/CONECT/END)
+    pieces = ["dummy.pdb","protein.pdb",f"{mol.lower()}.pdb","lipids.pdb","others.pdb","crystalwat.pdb"]
+    (_p("complex-merge.pdb")).write_text(
+        "".join(((_p(f).read_text()) if _p(f).exists() else "") for f in pieces)
+    )
+    with open(_p("complex-merge.pdb")) as fin, open(_p("complex.pdb"), "wt") as fout:
+        for ln in fin:
+            if ("CRYST1" in ln) or ("CONECT" in ln) or ln.startswith("END"):
+                continue
+            fout.write(ln)
+
+    # 7) read anchors/meta from equil header
+    equil_info = equil_dir / f"equil-{mol.lower()}.pdb"
+    if not equil_info.exists():
+        raise FileNotFoundError(f"Missing {equil_info}")
+    with equil_info.open() as f:
+        data = f.readline().split()
+        P1, P2, P3 = data[2].strip(), data[3].strip(), data[4].strip()
+        first_res, recep_last = data[8].strip(), data[9].strip()
+    p1_resid = P1.split("@")[0][1:]; p1_atom = P1.split("@")[1]
+    rec_res = int(recep_last) + 1;   p1_vmd  = p1_resid
+
+    # 8) SDR distance
+    if not buffer_z: buffer_z = 25
+    sdr_dist = get_sdr_dist(str(_p("complex.pdb")), lig_resname=mol.lower(), buffer_z=buffer_z, extra_buffer=5)
+    logger.debug(f"SDR distance: {sdr_dist:.2f}")
+    b.corrected_sdr_dist = sdr_dist
+
+    # 9) align & pdb4amber
+    run_with_log(f"{vmd} -dispdev text -e {_p('measure-fit.tcl')}", shell=False)
+    with open(_p("aligned.pdb")) as fin, open(_p("aligned-clean.pdb"), "wt") as fout:
+        for ln in fin:
+            if len(ln.split()) > 3: fout.write(ln)
+    run_with_log(f"pdb4amber -i {_p('aligned-clean.pdb')} -o {_p('aligned_amber.pdb')} -y")
+
+    # optional lipid resid fix post-amber
+    if b.membrane_builder and _p("aligned_amber_renum.txt").exists():
+        u2 = mda.Universe(str(_p("aligned_amber.pdb")))
+        ren = pd.read_csv(_p("aligned_amber_renum.txt"), sep=r"\s+", header=None,
+                          names=["old_resname","old_resid","new_resname","new_resid"])
+        revised, resid_counter, prev_resid = [], 1, None
+        for _, row in ren.iterrows():
+            if row["old_resid"] != prev_resid or row["old_resname"] not in lipid_mol:
+                revised.append(resid_counter); resid_counter += 1
+            else:
+                revised.append(resid_counter - 1)
+            prev_resid = row["old_resid"]
+        revised = np.asarray(revised, dtype=int)
+        total = u2.atoms.residues.n_residues
+        final_resids = np.arange(1, total + 1, dtype=int)
+        n = min(total, revised.size)
+        final_resids[:n] = revised[:n]
+        u2.atoms.residues.resids = final_resids
+        u2.atoms.write(str(_p("aligned_amber.pdb")))
+
+    # 10) ligand candidates for Boresch
+    sdf_file = _p(f"{mol.lower()}.sdf")
+    candidates_indices = get_ligand_candidates(str(sdf_file))
+    u3 = mda.Universe(str(_p("aligned_amber.pdb")))
+    lig_names = u3.select_atoms(f"resname {mol.lower()}").names
+    lig_name_str = " ".join(str(x) for x in lig_names[candidates_indices])
+
+    # 11) prep.tcl
+    with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
+        for line in fin:
+            fout.write(
+                line.replace("MMM", f"'{mol}'")
+                    .replace("mmm", mol.lower())
+                    .replace("NN", p1_atom)
+                    .replace("P1A", p1_vmd)
+                    .replace("FIRST", "2")
+                    .replace("LAST", str(rec_res))
+                    .replace("STAGE", "fe")
+                    .replace("XDIS", f"{l1_x:4.2f}")
+                    .replace("YDIS", f"{l1_y:4.2f}")
+                    .replace("ZDIS", f"{l1_z:4.2f}")
+                    .replace("RANG", f"{l1_range:4.2f}")
+                    .replace("DMAX", f"{max_adis:4.2f}")
+                    .replace("DMIN", f"{min_adis:4.2f}")
+                    .replace("SDRD", f"{sdr_dist:4.2f}")
+                    .replace("LIGSITE", "1")
+                    .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
+                    .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
+                    .replace("LIGANDNAME", lig_name_str)
+            )
+    try:
+        run_with_log(f"{vmd} -dispdev text -e {_p('prep.tcl')}", error_match="anchor not found", shell=False)
+    except RuntimeError:
+        logger.info("Default candidates failed; retry with ALL ligand atoms.")
+        lig_name_str = " ".join(str(x) for x in lig_names)
+        with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
             for line in fin:
-                if "CRYST1" not in line and "CONECT" not in line and "END" not in line:
-                    fout.write(line)
-
-        # 6) read anchors & protein size from equil-{mol}.pdb
-        with open(equil_dir / f"equil-{mol.lower()}.pdb", "r") as f:
-            data = f.readline().split()
-            P1, P2, P3 = data[2].strip(), data[3].strip(), data[4].strip()
-            first_res, recep_last = data[8].strip(), data[9].strip()
-        p1_resid = P1.split("@")[0][1:]
-        p1_atom = P1.split("@")[1]
-        rec_res = int(recep_last) + 1
-        p1_vmd = p1_resid
-
-        # 7) align to reference (use input as reference for membranes)
-        run_with_log(f"{vmd_exec} -dispdev text -e measure-fit.tcl", shell=False)
-
-        # 8) AMBERize + (optionally) reapply lipid resids
-        with open("aligned.pdb", "r") as fin, open("aligned-clean.pdb", "w") as fout:
-            for line in fin:
-                if len(line.split()) > 3:
-                    fout.write(line)
-        run_with_log("pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y")
-        if membrane_builder:
-            u = mda.Universe("aligned_amber.pdb")
-            non_water_ag = u.select_atoms("not resname WAT Na+ Cl- K+")
-            non_water_ag.residues.resids = final_resids  # from earlier
-            u.atoms.write("aligned_amber.pdb")
-
-        # 9) compute SDR distance (default buffer_z=25 if 0)
-        if buffer_z == 0:
-            buffer_z = 25.0
-        sdr_dist = get_sdr_dist("complex.pdb", lig_resname=mol.lower(), buffer_z=buffer_z, extra_buffer=5)
-        logger.debug(f"SDR distance: {sdr_dist:.02f}")
-
-        # 10) VMD prep to pick ligand anchors (candidate atoms)
-        candidates_indices = get_ligand_candidates(f"{mol.lower()}.sdf")
-        pdb_file = "aligned_amber.pdb"
-        u2 = mda.Universe(pdb_file)
-        lig_names = u2.select_atoms(f"resname {mol.lower()}").names
-        lig_name_str = " ".join(str(i) for i in lig_names[candidates_indices])
-
-        def _render_prep_tcl(ligand_name_str: str) -> None:
-            lipid_mol_vmd = " ".join(lipid_mol) if lipid_mol else "XXX"
-            other_mol_vmd = " ".join(other_mol) if other_mol else "XXX"
-            with open("prep-ini.tcl", "rt") as fin, open("prep.tcl", "wt") as fout:
-                for line in fin:
-                    fout.write(
-                        line.replace("MMM", f"'{mol}'")
+                fout.write(
+                    line.replace("MMM", f"'{mol}'")
                         .replace("mmm", mol.lower())
                         .replace("NN", p1_atom)
                         .replace("P1A", p1_vmd)
@@ -230,55 +229,399 @@ def build_complex_fe(
                         .replace("DMAX", f"{max_adis:4.2f}")
                         .replace("DMIN", f"{min_adis:4.2f}")
                         .replace("SDRD", f"{sdr_dist:4.2f}")
-                        .replace("OTHRS", str(other_mol_vmd))
-                        .replace("LIPIDS", str(lipid_mol_vmd))
-                        .replace("LIGANDNAME", ligand_name_str)
+                        .replace("LIGSITE", "1")
+                        .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
+                        .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
+                        .replace("LIGANDNAME", lig_name_str)
+                )
+        run_with_log(f"{vmd} -dispdev text -e {_p('prep.tcl')}", error_match="anchor not found", shell=False)
+
+    # 12) anchors.txt -> validate, rename with ligand tag, write header into fe-<mol>.pdb
+    anchors_txt = _p("anchors.txt")
+    if (not anchors_txt.exists()) or (anchors_txt.stat().st_size == 0):
+        logger.warning("anchors.txt missing or empty")
+        return False
+    good = True
+    with anchors_txt.open() as f:
+        for ln in f:
+            if len(ln.split()) < 3:
+                good = False; break
+    tagged = _p(f"anchors-{ligand}.txt")
+    anchors_txt.rename(tagged)
+    if not good:
+        logger.warning("anchors.txt too short; pruning")
+        return False
+
+    lig_resid = str(int(recep_last) + 2)
+    with tagged.open() as f:
+        a = f.readline().split()
+        L1 = f":{lig_resid}@{a[0]}"; L2 = f":{lig_resid}@{a[1]}"; L3 = f":{lig_resid}@{a[2]}"
+
+    fe_pdb = _p(f"fe-{mol.lower()}.pdb")
+    if not fe_pdb.exists():
+        raise FileNotFoundError(f"Missing {fe_pdb}")
+    lines = fe_pdb.read_text().splitlines(True)
+    with fe_pdb.open("wt") as fout:
+        fout.write(f"{'REMARK A':-8s}  {P1:6s}  {P2:6s}  {P3:6s}  {L1:6s}  {L2:6s}  {L3:6s}  {first_res:6s}  {recep_last:4s}\n")
+        fout.writelines(lines[1:])
+
+    # (optional) persist anchors JSON for downstream
+    try:
+        from batter._internal.ops.helper import Anchors, save_anchors
+        save_anchors(workdir, Anchors(P1=P1, P2=P2, P3=P3, L1=L1, L2=L2, L3=L3, lig_res=lig_resid))
+    except Exception as e:
+        logger.debug(f"[build_complex_z] could not write anchors.json: {e}")
+
+    return True
+
+@register_build_complex("y")
+def build_complex_y(builder) -> bool:
+    """
+    Component 'y' (ligand-only) build_complex:
+    - No receptor complexing; just stage the ligand structural files.
+    - Sets builder.mol and builder.corrected_sdr_dist for downstream code.
+    """
+    # Where to put staged files
+    build_dir: Path = builder.build_dir
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve locations
+    ligand = builder.ctx.ligand
+    system_root: Path = builder.ctx.system_root
+    all_ligands_dir = system_root / "all-ligands"
+    ff_dir = builder.ctx.working_dir.parent / "ff"   # e.g., <child_root>/fe/ff
+
+    # Inputs
+    ligand_pdb = all_ligands_dir / f"{ligand}.pdb"
+    if not ligand_pdb.exists():
+        raise FileNotFoundError(f"[build_complex_y] Missing ligand pdb: {ligand_pdb}")
+
+    # Copy <pose>.pdb into build_dir
+    shutil.copy2(ligand_pdb, build_dir / f"{ligand}.pdb")
+
+    mol = builder.ctx.residue_name
+
+    # Copy ligand FF files from fe/ff → build_dir
+    for ext in (".mol2", ".sdf", ".pdb"):
+        src = ff_dir / f"{mol.lower()}{ext}"
+        if not src.exists():
+            raise FileNotFoundError(f"[build_complex_y] Missing ligand FF file: {src}")
+        shutil.copy2(src, build_dir / src.name)
+
+    # No SDR placement needed for ligand-only
+    builder.corrected_sdr_dist = 0
+
+    return True
+
+
+@register_sim_files("z")
+def sim_files_z(builder) -> None:
+    """
+    Create per-window MD input files for component 'z' (UNO-REST style),
+    supporting decoupling methods 'sdr' and 'dd'.
+
+    Expects the following templates to exist in ../<amber_files_folder>/:
+      - mdin-unorest              (for SDR)
+      - mdin-unorest-dd           (for DD)
+      - mini-unorest              (for SDR)
+      - mini-unorest-dd           (for DD)
+      - mini.in (for mini_eq.in)  (generic)
+      - eqnpt0-uno.in
+      - eqnpt-uno.in
+    """
+    import os
+    import MDAnalysis as mda
+
+    sim = builder.sim_config
+    comp = builder.comp
+    mol = builder.mol
+    win = builder.win
+
+    dec_method = getattr(sim, "dec_method", None)
+    if dec_method not in {"sdr", "dd"}:
+        raise ValueError(f"Decoupling method '{dec_method}' not recognized. Use 'sdr' or 'dd'.")
+
+    temperature = sim.temperature
+    num_sim = int(sim.num_fe_range)
+    steps1 = sim.dic_steps1[comp]
+    steps2 = sim.dic_steps2[comp]
+    ntwx = sim.ntwx
+
+    lambdas = builder.component_windows_dict[comp]
+    weight = lambdas[win if win != -1 else 0]
+
+    # vac system info
+    vac_atoms = mda.Universe("./vac.pdb").atoms.n_atoms
+
+    # find *last* residue index of this ligand in vac.pdb
+    last_lig = None
+    with open("./vac.pdb", "rt") as f:
+        for line in f:
+            rec = line[:6].strip()
+            if rec not in ("ATOM", "HETATM"):
+                continue
+            if line[17:20].strip().lower() == mol.lower():
+                last_lig = line[22:26].strip()
+    if last_lig is None:
+        raise ValueError(f"No ligand residue matching '{mol}' found in vac.pdb")
+
+    amber_dir_rel = Path("..") / builder.amber_files_folder
+
+    if dec_method == "sdr":
+        # simultaneous decouple → two markers bracketing ligand
+        mk2 = int(last_lig)
+        mk1 = mk2 - 1
+        template_mdin = amber_dir_rel / "mdin-unorest"
+        template_mini = amber_dir_rel / "mini-unorest"
+
+        for i in range(0, num_sim + 1):
+            n_steps_run = str(steps1) if i == 0 else str(steps2)
+            out_path = Path(f"./mdin-{i:02d}")
+            with open(template_mdin, "rt") as fin, open(out_path, "wt") as fout:
+                for line in fin:
+                    # first window tweaks
+                    if i == 0:
+                        if "ntx = 5" in line:
+                            line = "ntx = 1,\n"
+                        elif "irest" in line:
+                            line = "irest = 0,\n"
+                        elif "dt = " in line:
+                            line = "dt = 0.001,\n"
+                        elif "restraintmask" in line:
+                            # merge CA + ligand with any pre-existing mask
+                            rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                            if rm == "":
+                                line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                            else:
+                                line = f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+
+                    line = (
+                        line.replace("_temperature_", str(temperature))
+                            .replace("_num-atoms_", str(vac_atoms))
+                            .replace("_num-steps_", n_steps_run)
+                            .replace("lbd_val", f"{float(weight):6.5f}")
+                            .replace("mk1", str(mk1))
+                            .replace("mk2", str(mk2))
                     )
+                    fout.write(line)
 
-        try:
-            _render_prep_tcl(lig_name_str)
-            run_with_log(f"{vmd_exec} -dispdev text -e prep.tcl", error_match="anchor not found", shell=False)
-        except RuntimeError:
-            logger.info(
-                "Failed to find anchors with selected candidates; retrying with all ligand atoms."
+            # append MBAR + PME meta & NFE CV
+            with open(out_path, "a") as mdin:
+                mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+                mdin.write("  mbar_lambda =")
+                for lam in lambdas:
+                    mdin.write(f" {lam:6.5f},")
+                mdin.write("\n")
+                mdin.write("  infe = 1,\n")
+                mdin.write(" /\n")
+                mdin.write(" &pmd \n")
+                mdin.write("  output_file = 'cmass.txt'\n")
+                mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+                mdin.write("  cv_file = 'cv.in'\n")
+                mdin.write(" /\n")
+                mdin.write(" &wt type = 'END' , /\n")
+                mdin.write("DISANG=disang.rest\n")
+                mdin.write("LISTOUT=POUT\n")
+
+        # minimization template for SDR
+        with open(template_mini, "rt") as fin, open("./mini.in", "wt") as fout:
+            for line in fin:
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                        .replace("lbd_val", f"{float(weight):6.5f}")
+                        .replace("mk1", str(mk1))
+                        .replace("mk2", str(mk2))
+                        .replace("_lig_name_", mol)
+                )
+                fout.write(line)
+
+    else:  # dec_method == "dd"
+        infe_flag = 1 if getattr(builder, "infe", False) else 0
+        mk1 = int(last_lig)
+        template_mdin = amber_dir_rel / "mdin-unorest-dd"
+        template_mini = amber_dir_rel / "mini-unorest-dd"
+
+        for i in range(0, num_sim + 1):
+            n_steps_run = str(steps1) if i == 0 else str(steps2)
+            out_path = Path(f"./mdin-{i:02d}")
+            with open(template_mdin, "rt") as fin, open(out_path, "wt") as fout:
+                for line in fin:
+                    if i == 0:
+                        if "ntx = 5" in line:
+                            line = "ntx = 1,\n"
+                        elif "irest" in line:
+                            line = "irest = 0,\n"
+                        elif "dt = " in line:
+                            line = "dt = 0.001,\n"
+                        elif "restraintmask" in line:
+                            rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                            if rm == "":
+                                line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                            else:
+                                line = f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+
+                    line = (
+                        line.replace("_temperature_", str(temperature))
+                            .replace("_num-atoms_", str(vac_atoms))
+                            .replace("_num-steps_", n_steps_run)
+                            .replace("lbd_val", f"{float(weight):6.5f}")
+                            .replace("mk1", str(mk1))
+                    )
+                    fout.write(line)
+
+            with open(out_path, "a") as mdin:
+                mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+                mdin.write("  mbar_lambda =")
+                for lam in lambdas:
+                    mdin.write(f" {lam:6.5f},")
+                mdin.write("\n")
+                mdin.write(f"  infe = {infe_flag},\n")
+                mdin.write(" /\n")
+                mdin.write(" &pmd \n")
+                mdin.write("  output_file = 'cmass.txt'\n")
+                mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+                mdin.write("  cv_file = 'cv.in'\n")
+                mdin.write(" /\n")
+                mdin.write(" &wt type = 'END' , /\n")
+                mdin.write("DISANG=disang.rest\n")
+                mdin.write("LISTOUT=POUT\n")
+
+        with open(template_mini, "rt") as fin, open("./mini.in", "wt") as fout:
+            for line in fin:
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                        .replace("lbd_val", f"{float(weight):6.5f}")
+                        .replace("mk1", str(mk1))
+                        .replace("_lig_name_", mol)
+                )
+                fout.write(line)
+
+    # Always emit mini_eq.in, eqnpt0.in, eqnpt.in from UNO templates:
+    with open(amber_dir_rel / "mini.in", "rt") as fin, open("./mini_eq.in", "wt") as fout:
+        for line in fin:
+            fout.write(line.replace("_lig_name_", mol))
+
+    with open(amber_dir_rel / "eqnpt0-uno.in", "rt") as fin, open("./eqnpt0.in", "wt") as fout:
+        for line in fin:
+            if "mcwat" in line:
+                fout.write("  mcwat = 0,\n")
+            else:
+                fout.write(line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol))
+
+    with open(amber_dir_rel / "eqnpt-uno.in", "rt") as fin, open("./eqnpt.in", "wt") as fout:
+        for line in fin:
+            if "mcwat" in line:
+                fout.write("  mcwat = 0,\n")
+            else:
+                fout.write(line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol))
+
+    # Lambda schedule file
+    with open("./lambda.sch", "wt") as fout:
+        fout.write("TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n")
+
+    logger.debug(f"[sim_files_z] wrote mdin/mini/eq inputs for comp='z', win={win}, weight={weight:0.5f}")
+
+
+@register_sim_files("y")
+def sim_files_y(builder) -> None:
+    """
+    Generate MD input files for ligand-only component 'y'.
+
+    Requires the following templates in ../<amber_files_folder>/:
+      - mini-unorest-lig
+      - mini.in                (for mini_eq.in)
+      - eqnpt-lig.in
+      - eqnpt0-lig.in
+      - mdin-unorest-lig
+    """
+    sim = builder.sim_config
+    comp = builder.comp           # 'y'
+    mol = builder.mol
+    win = builder.win
+
+    temperature = sim.temperature
+    num_sim = int(sim.num_fe_range)
+    steps1 = sim.dic_steps1[comp]
+    steps2 = sim.dic_steps2[comp]
+    ntwx = sim.ntwx
+
+    lambdas = builder.component_windows_dict[comp]
+    weight = lambdas[win if win != -1 else 0]
+
+    # mk1 is fixed to residue 2 for ligand-only setup (matches your original)
+    mk1 = 2
+
+    amber_dir_rel = Path("..") / builder.amber_files_folder
+
+    # mini.in from ligand template
+    with open(amber_dir_rel / "mini-unorest-lig", "rt") as fin, open("./mini.in", "wt") as fout:
+        for line in fin:
+            line = (
+                line.replace("_temperature_", str(temperature))
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                    .replace("_lig_name_", mol)
             )
-            lig_name_str = " ".join(str(i) for i in lig_names)
-            _render_prep_tcl(lig_name_str)
-            run_with_log(f"{vmd_exec} -dispdev text -e prep.tcl", error_match="anchor not found", shell=False)
+            fout.write(line)
 
-        # 11) validate anchors file
-        anchor_file = Path("anchors.txt")
-        if anchor_file.stat().st_size == 0:
-            return (False, "anch1", mol, sdr_dist)
-        with anchor_file.open() as f:
-            for line in f:
-                if len(line.split()) < 3:
-                    anchor_file.rename(f"anchors-{pose}.txt")
-                    return (False, "anch2", mol, sdr_dist)
-        anchor_file.rename(f"anchors-{pose}.txt")
+    # mini_eq.in from generic mini template
+    with open(amber_dir_rel / "mini.in", "rt") as fin, open("./mini_eq.in", "wt") as fout:
+        for line in fin:
+            fout.write(line.replace("_lig_name_", mol))
 
-        # 12) read ligand anchors and write header into fe-<mol>.pdb
-        with open(equil_dir / f"equil-{mol.lower()}.pdb", "r") as f:
-            data = f.readline().split()
-            P1, P2, P3 = data[2].strip(), data[3].strip(), data[4].strip()
-            first_res, recep_last = data[8].strip(), data[9].strip()
-
-        lig_resid = str(int(recep_last) + 2)
-        with open(f"anchors-{pose}.txt", "r") as f:
-            for line in f:
-                splitdata = line.split()
-                L1 = ":" + lig_resid + "@" + splitdata[0]
-                L2 = ":" + lig_resid + "@" + splitdata[1]
-                L3 = ":" + lig_resid + "@" + splitdata[2]
-
-        with open(f"fe-{mol.lower()}.pdb", "r") as fin:
-            data_lines = fin.read().splitlines(True)
-        with open(f"fe-{mol.lower()}.pdb", "w") as fout:
+    # eqnpt.in / eqnpt0.in from ligand templates
+    with open(amber_dir_rel / "eqnpt-lig.in", "rt") as fin, open("./eqnpt.in", "wt") as fout:
+        for line in fin:
             fout.write(
-                "%-8s  %6s  %6s  %6s  %6s  %6s  %6s  %6s  %4s\n"
-                % ("REMARK A", P1, P2, P3, L1, L2, L3, first_res, recep_last)
+                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
             )
-            fout.writelines(data_lines[1:])
+    with open(amber_dir_rel / "eqnpt0-lig.in", "rt") as fin, open("./eqnpt0.in", "wt") as fout:
+        for line in fin:
+            fout.write(
+                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
+            )
 
-        logger.info("fe build_complex finished for pose={} (mol={})", pose, mol)
-        return (True, None, mol, float(sdr_dist))
+    # per-window production inputs
+    for i in range(0, num_sim + 1):
+        template = amber_dir_rel / "mdin-unorest-lig"
+        out_path = Path(f"./mdin-{i:02d}")
+        n_steps_run = str(steps1) if i == 0 else str(steps2)
+
+        with open(template, "rt") as fin, open(out_path, "wt") as fout:
+            for line in fin:
+                if i == 0:
+                    if "ntx = 5" in line:
+                        line = "ntx = 1,\n"
+                    elif "irest" in line:
+                        line = "irest = 0,\n"
+                    elif "dt = " in line:
+                        line = "dt = 0.001,\n"
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                        .replace("_num-steps_", n_steps_run)
+                        .replace("lbd_val", f"{float(weight):6.5f}")
+                        .replace("mk1", str(mk1))
+                        .replace("disang_file", "disang")
+                        .replace("_lig_name_", mol)
+                )
+                fout.write(line)
+
+        # append MBAR, PME/NFE and restraints section
+        with open(out_path, "a") as mdin:
+            mdin.write(f"  mbar_states = {len(lambdas)}\n")
+            mdin.write("  mbar_lambda =")
+            for lbd in lambdas:
+                mdin.write(f" {lbd:6.5f},")
+            mdin.write("\n")
+            mdin.write("  infe = 1,\n")
+            mdin.write(" /\n")
+            mdin.write(" &pmd \n")
+            mdin.write("  output_file = 'cmass.txt'\n")
+            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+            mdin.write("  cv_file = 'cv.in'\n")
+            mdin.write(" /\n")
+            mdin.write(" &wt type = 'END' , /\n")
+            mdin.write("DISANG=disang.rest\n")
+            mdin.write("LISTOUT=POUT\n")
+
+    logger.debug(f"[sim_files_y] wrote mdin/mini/eq inputs for comp='y', win={win}, weight={weight:0.5f}")

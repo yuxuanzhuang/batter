@@ -69,7 +69,15 @@ class BaseBuilder(ABC):
 
     @property
     def window_dir(self) -> Path:
-        tag = f"{self.ctx.comp}-{self.ctx.win if self.ctx.win != -1 else 1}"
+        """
+        Naming:
+          - win == -1  →  <comp>-1   (FE equil/scaffold)
+          - win >= 0   →  <comp><win>  (lambda window directories: z0, z1, ...)
+        """
+        if self.ctx.win == -1:
+            tag = f"{self.ctx.comp}-1"
+        else:
+            tag = f"{self.ctx.comp}{self.ctx.win}"
         return self.ctx.working_dir / tag
 
     @property

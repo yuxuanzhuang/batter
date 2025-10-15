@@ -22,7 +22,7 @@ from batter.utils import (
     vmd,
 )
 
-from batter._internal.builders.base import BuildContext
+from batter._internal.builders.interfaces import BuildContext
 
 from batter._internal.ops.helpers import (
     get_buffer_z,
