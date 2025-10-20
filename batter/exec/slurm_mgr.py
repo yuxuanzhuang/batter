@@ -35,14 +35,17 @@ def _state_from_squeue(jobid: str) -> Optional[str]:
     except Exception:
         pass
     return None
-
+    
 def _state_from_sacct(jobid: str) -> Optional[str]:
     try:
         out = subprocess.check_output(
-            ["sacct", "-j", jobid, "-X", "-n", "-o", "State"], text=True
-        ).strip()
-        if out:
-            return out.split()[0]
+            ["sacct", "-j", jobid, "-X", "-n", "-o", "State"],
+            text=True
+        )
+        for ln in out.splitlines():
+            ln = ln.strip()
+            if ln:
+                return ln.split()[0]
     except Exception:
         pass
     return None
@@ -193,6 +196,14 @@ class SlurmJobManager:
 
                 jobid = _read_text(s.jobid_path())
                 state = _slurm_state(jobid)
+
+                # --- NEW: handle final bad states immediately
+                if state in SLURM_FINAL_BAD:
+                    logger.error(f"[SLURM] {wd.name}: terminal state={state}; marking FAILED")
+                    s.failed_path().touch()
+                    done_now.append(wd)
+                    continue
+
                 if state in SLURM_OK_STATES:
                     logger.debug(f"[SLURM] {wd.name}: {state} (waiting)")
                     continue
@@ -200,8 +211,9 @@ class SlurmJobManager:
                 # job missing or ended without sentinel → resubmit
                 r = retries[wd]
                 if r >= self.max_retries:
-                    logger.error(f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} (state={state or 'MISSING'})")
-                    done_now.append(wd)  # stop waiting; leave without fabricating a sentinel
+                    logger.error(f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} (state={state or 'MISSING'}); marking FAILED")
+                    s.failed_path().touch()  # <-- NEW
+                    done_now.append(wd)
                     continue
 
                 logger.warning(f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} state={state or 'MISSING'}; resubmitting ({r+1}/{self.max_retries})")

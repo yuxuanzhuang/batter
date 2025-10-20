@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Mapping, Optional
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from loguru import logger
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# switched to joblib for process-based parallelism
+from joblib import Parallel, delayed
 
 from batter.pipeline.step import Step, ExecResult
 from batter.pipeline.pipeline import Pipeline
@@ -16,25 +17,28 @@ from batter.exec.base import ExecBackend  # whatever your base class path is
 Handler = Callable[[Step, SimSystem, Mapping], ExecResult]
 
 
+def _run_pipeline_task(
+    pipeline: Pipeline,
+    backend: "LocalBackend",
+    sys: SimSystem,
+) -> Tuple[str, Mapping[str, ExecResult] | None, BaseException | None]:
+    """
+    Top-level function so joblib can pickle it.
+    Returns (system_name, results_or_None, error_or_None).
+    """
+    try:
+        results = pipeline.run(backend, sys)
+        return sys.name, results, None
+    except BaseException as e:
+        return sys.name, None, e
+
+
 @dataclass
 class LocalBackend(ExecBackend):
     """
-    Local in-process backend with a pluggable handler registry.
+    Local backend with pluggable handler registry.
 
-    Features
-    --------
-    - `.run(step, system, params)` — execute a single step via a registered handler.
-    - `.run_parallel(pipeline, systems, max_workers=None)` — run a Pipeline
-      for many systems concurrently using ThreadPoolExecutor.
-    - Unknown steps are treated as no-ops (returns empty ExecResult), so you
-      can wire things incrementally.
-
-    Notes
-    -----
-    ThreadPoolExecutor is used by default because most steps are IO/CLI-bound.
-    If you *really* want process-based parallelism for CPU-bound handlers,
-    it’s safer to implement a dedicated Process backend where handlers and
-    their closures are guaranteed to be picklable.
+    Now supports process-based parallel via joblib (loky).
     """
 
     name: str = "local"
@@ -42,7 +46,6 @@ class LocalBackend(ExecBackend):
     _max_workers: Optional[int] = None  # None = auto, 0/1 = serial
 
     def __init__(self, max_workers: Optional[int] = None):
-        # dataclass init interop
         object.__setattr__(self, "name", "local")
         object.__setattr__(self, "_handlers", {})
         object.__setattr__(self, "_max_workers", max_workers)
@@ -60,7 +63,7 @@ class LocalBackend(ExecBackend):
         logger.info("LOCAL: executing step {!r}", step.name)
         return h(step, system, params)
 
-    # ---------- parallel pipeline runner ----------
+    # ---------- parallel pipeline runner (process-based via joblib) ----------
     def run_parallel(
         self,
         pipeline: Pipeline,
@@ -68,9 +71,14 @@ class LocalBackend(ExecBackend):
         *,
         max_workers: Optional[int] = None,
         description: str = "",
+        # joblib-specific knobs
+        batch_size: str | int = "auto",
+        verbose: int = 10,  # joblib progress logging
+        prefer: str = "processes",  # enforce processes
+        backend: Optional[str] = None,  # keep None to let joblib choose 'loky' for processes
     ) -> Dict[str, Mapping[str, ExecResult]]:
         """
-        Run the given Pipeline once per system, concurrently.
+        Run the Pipeline for many systems concurrently using joblib (processes).
 
         Returns
         -------
@@ -83,45 +91,65 @@ class LocalBackend(ExecBackend):
         # resolve worker count
         mw = max_workers if max_workers is not None else self._max_workers
         if mw in (0, 1):
-            # serial execution
             logger.info(
-                f"LOCAL(parallel): running serially for {len(systems)} system(s) (max_workers={mw}) {'— {description}' if description else ''}",
+                "LOCAL(parallel): running serially for {} system(s) (max_workers={}) — {}",
+                len(systems), mw, description,
             )
             out: Dict[str, Mapping[str, ExecResult]] = {}
+            errors: Dict[str, BaseException] = {}
             for sys in systems:
-                out[sys.name] = pipeline.run(self, sys)
+                try:
+                    out[sys.name] = pipeline.run(self, sys)
+                except BaseException as e:
+                    errors[sys.name] = e
+                    logger.error("LOCAL(parallel-serial): {} failed: {}: {}", sys.name, type(e).__name__, e)
+            if errors:
+                logger.warning(
+                    "LOCAL(parallel-serial): {} system(s) failed: {}",
+                    len(errors), ", ".join(errors.keys()),
+                )
             return out
 
-        # auto workers: min(#systems, CPU count) as a sensible default
+        # auto: cap by CPU count and number of systems
         if mw is None:
             cpu = os.cpu_count() or 1
             mw = min(len(systems), cpu)
+
         logger.info(
-            f"LOCAL(parallel): ThreadPoolExecutor with max_workers={mw} for {len(systems)} system(s) — {description}",
+            "LOCAL(parallel): joblib(loky) with n_jobs={} for {} system(s) — {}",
+            mw, len(systems), description,
+        )
+
+        # IMPORTANT: self, pipeline, and systems must be picklable.
+        # Ensure handlers are top-level callables.
+        results: List[Tuple[str, Mapping[str, ExecResult] | None, BaseException | None]] = Parallel(
+            n_jobs=mw,
+            backend=backend,        # None → 'loky' for processes
+            prefer=prefer,          # 'processes'
+            batch_size=batch_size,
+            verbose=verbose,
+        )(
+            delayed(_run_pipeline_task)(pipeline, self, sys)
+            for sys in systems
         )
 
         out: Dict[str, Mapping[str, ExecResult]] = {}
         errors: Dict[str, BaseException] = {}
 
-        def _task(sys: SimSystem) -> tuple[str, Mapping[str, ExecResult]]:
-            # Each pipeline.run uses this backend's registered handlers
-            results = pipeline.run(self, sys)
-            return sys.name, results
-
-        with ThreadPoolExecutor(max_workers=mw) as ex:
-            fut_map = {ex.submit(_task, sys): sys for sys in systems}
-            for fut in as_completed(fut_map):
-                sys = fut_map[fut]
-                try:
-                    name, results = fut.result()
-                    out[name] = results
-                    logger.info(f"LOCAL(parallel): finished {name}")
-                except BaseException as e:
-                    errors[sys.name] = e
-                    logger.error(f"LOCAL(parallel): {sys.name} failed: {type(e).__name__}: {e}")
+        for name, res, err in results:
+            if err is None and res is not None:
+                out[name] = res
+                logger.info("LOCAL(parallel): finished {}", name)
+            else:
+                errors[name] = err or RuntimeError("Unknown error")
+                logger.error(
+                    "LOCAL(parallel): {} failed: {}: {}",
+                    name, type(errors[name]).__name__, errors[name],
+                )
 
         if errors:
-            # You can choose to raise, or just log and return partial results.
-            # Here we *do not raise*, to let the orchestrator decide (prune/raise).
-            logger.warning(f"LOCAL(parallel): {len(errors)} system(s) failed in parallel run: {', '.join(errors.keys())}")
+            logger.warning(
+                "LOCAL(parallel): {} system(s) failed in parallel run: {}",
+                len(errors), ", ".join(errors.keys()),
+            )
         return out

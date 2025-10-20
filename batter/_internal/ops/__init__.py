@@ -11,5 +11,4 @@ from . import io
 from . import runfiles
 from . import equil_ops
 from . import fe
-from . import prep
 from . import simprep

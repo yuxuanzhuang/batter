@@ -38,6 +38,31 @@ class BuildContext:
     other_mol: Tuple[str, ...] = ()
     extra: Mapping[str, Any] | None = None
 
+    @property
+    def window_dir(self) -> Path:
+        """
+        Compute the subdirectory for the current window:
+          - win == -1 → <comp>-1  (FE equil/scaffold)
+          - win >= 0  → <comp><win> (lambda window directories: z0, z1, ...)
+        """
+        name = f"{self.comp}{self.win:02d}" if self.win >= 0 else f"{self.comp}-1"
+        return self.working_dir / name
+
+    @property
+    def build_dir(self) -> Path:
+        """Return the directory where build files (PDBs, anchors, etc.) are stored."""
+        return self.working_dir / f"{self.comp}_build_files"
+
+    @property
+    def amber_dir(self) -> Path:
+        """Return the directory where AMBER files (topology, coords, inputs) are stored."""
+        return self.working_dir / f"{self.comp}_amber_files"
+        
+    @property
+    def is_equilibration(self) -> bool:
+        """Return True if this context corresponds to equilibration (-1 window)."""
+        return self.win == -1
+
 
 @runtime_checkable
 class ISystemBuilder(Protocol):

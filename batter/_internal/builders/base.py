@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 from loguru import logger
 
-from batter.config.simulation import SimulationConfig
+from batter.config.simulation import SimulationConfig, MEMBRANE_EXEMPT_COMPONENTS
 from batter._internal.ops import io as io_ops
 from batter._internal.ops import simprep as sim_ops
 from batter._internal.builders.interfaces import BuildContext
@@ -65,7 +65,7 @@ class BaseBuilder(ABC):
     # ---- folders
     @property
     def build_dir(self) -> Path:
-        return self.ctx.working_dir / f"{self.ctx.comp}_build_files"
+        return self.ctx.build_dir
 
     @property
     def window_dir(self) -> Path:
@@ -74,19 +74,24 @@ class BaseBuilder(ABC):
           - win == -1  →  <comp>-1   (FE equil/scaffold)
           - win >= 0   →  <comp><win>  (lambda window directories: z0, z1, ...)
         """
-        if self.ctx.win == -1:
-            tag = f"{self.ctx.comp}-1"
-        else:
-            tag = f"{self.ctx.comp}{self.ctx.win}"
-        return self.ctx.working_dir / tag
+        return self.ctx.window_dir
 
     @property
     def amber_dir(self) -> Path:
-        return self.ctx.working_dir / f"{self.ctx.comp}_amber_files"
+        return self.ctx.amber_dir
+
+    @property
+    def comp(self) -> str:
+        return self.ctx.comp
+        
+    @property
+    def membrane_builder(self) -> bool:
+        sim_flag = getattr(self.ctx.sim, "_membrane_simulation", False)
+        return sim_flag and self.ctx.comp not in MEMBRANE_EXEMPT_COMPONENTS
 
     # ---- main template
     def build(self) -> "BaseBuilder":
-        logger.info(
+        logger.debug(
             f"building {self.ctx.ligand} [{self.stage or 'stage'}] "
             f"(comp={self.ctx.comp}, win={self.ctx.win}, residue={self.ctx.residue_name})"
         )
@@ -102,7 +107,7 @@ class BaseBuilder(ABC):
         # 2) create / copy simulation dir
         self.window_dir.mkdir(parents=True, exist_ok=True)
         if self.ctx.win == -1:
-            sim_ops.create_simulation_dir(self.ctx)
+            self._create_simulation_dir()
         else:
             sim_ops.copy_simulation_dir(
                 source=self.ctx.working_dir / f"{self.ctx.comp}-1",
@@ -111,9 +116,11 @@ class BaseBuilder(ABC):
             )
 
         # 3–7) delegate to subclass
-        self._create_box()
+        if self.ctx.win == -1:
+            self._create_box()
         self._restraints()
-        self._pre_sim_files()
+        if self.ctx.win == -1:
+            self._pre_sim_files()
         self._sim_files()
         self._run_files()
 
@@ -128,6 +135,11 @@ class BaseBuilder(ABC):
     @abstractmethod
     def _create_amber_files(self) -> None:
         """Create AMBER templates in build_dir."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _create_simulation_dir(self) -> None:
+        """Create simulation directory for this stage."""
         raise NotImplementedError
 
     @abstractmethod

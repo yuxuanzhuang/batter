@@ -836,6 +836,16 @@ class System:
         else:
             raise ValueError(f"Invalid system_dimensions: {self.system_dimensions}")
         u_merged.dimensions = box_dim
+        his_map = {
+            "HIS": "HIE",   # generic HIS → HID (or change to HIE if that’s your default)
+            "HSD": "HID",   # δ-protonated
+            "HSE": "HIE",   # ε-protonated
+            "HIP": "HIP",   # doubly protonated
+        }
+        # replace CHARMM specific resname
+        for res in u_merged.residues:
+            new_name = his_map.get(res.resname, res.resname)
+            res.resname = new_name
         # save as *_docked.pdb that matched `input-dd-amber.in`
         u_merged.atoms.write(f"{self.poses_folder}/{self.system_name}_docked.pdb")
         protein_ref = u_prot.select_atoms('protein')

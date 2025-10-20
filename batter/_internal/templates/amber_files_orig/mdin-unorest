@@ -29,7 +29,7 @@ Production runs elec-LJ sdr
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = ':2',
+  restraintmask = ':1-2',
   icfe = 1,
   clambda = lbd_val,
   timask1 = ':mk1',

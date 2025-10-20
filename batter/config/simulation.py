@@ -9,6 +9,7 @@ from batter.utils import COMPONENTS_LAMBDA_DICT
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 _ANCHOR_RE = re.compile(r"^:?\d+@[\w\d]+$")  # e.g., ":85@CA" or "85@CA"
 
+MEMBRANE_EXEMPT_COMPONENTS = {"y"}
 
 class SimulationConfig(BaseModel):
     """
@@ -45,7 +46,8 @@ class SimulationConfig(BaseModel):
     release_eq: List[float] = Field(default_factory=list, description="Equilibration release weights")
     attach_rest: List[float] = Field(default_factory=list, description="Attach weights (legacy)")
     ti_points: Optional[int] = Field(0, description="(#) TI points (not implemented)")
-    lambdas: List[float] = Field(default_factory=list, description="Lambda values")
+    lambdas: List[float] = Field(default_factory=list, description="default lambda values")
+    component_windows: Dict[str, List[float]] = Field(default_factory=dict, description="Per-component lambda values for overrides")
     sdr_dist: Optional[float] = Field(0.0, description="SDR placement distance (Å)")
     dec_method: Optional[str] = Field(None, description="Decoupling method (set for fe_type='custom')")
     blocks: int = Field(0, description="MBAR blocks")
@@ -93,7 +95,6 @@ class SimulationConfig(BaseModel):
     l1_range: Optional[float] = Field(None, description="L1 search radius (Å)")
     min_adis: Optional[float] = Field(None, description="Min anchor distance (Å)")
     max_adis: Optional[float] = Field(None, description="Max anchor distance (Å)")
-    dlambda: float = Field(0.001, description="Δλ for splitting initial λ into two close windows")
 
     # --- Amber i/o ---
     ntpr: int = Field(1000, description="Print energy every ntpr steps")
@@ -105,6 +106,7 @@ class SimulationConfig(BaseModel):
     barostat: Literal[1, 2] = Field(2, description="1=Berendsen, 2=MC barostat")
     dt: float = Field(0.004, description="Time step (ps)")
     num_fe_range: int = Field(10, description="# restarts per λ")
+    all_atoms: Literal["yes","no"] = Field("no", description="save all atoms for FE")
 
     # --- Force fields ---
     receptor_ff: str = Field("ff14SB", description="Receptor FF")
@@ -123,13 +125,9 @@ class SimulationConfig(BaseModel):
     receptor_segment: Optional[str] = Field(None, description="Segment to embed in membrane")
 
     # --- Private/internal runtime ---
-    _components: List[str] = PrivateAttr(default_factory=list)
-    _membrane_simulation: bool = PrivateAttr(True)
-
-    # ---------------- properties ----------------
-    @property
-    def components(self) -> tuple[str, ...]:
-        return tuple(self._components)
+    components: List[str] = Field(default_factory=list, description="List of components (v, o, z, etc.)")
+    component_lambdas: Dict[str, List[float]] = Field(default_factory=dict, description="Lambda schedule for each component")
+    membrane_simulation: bool = Field(default=True, description="Whether system includes a membrane")
 
     # ---------------- validators / coercers ----------------
     @field_validator("fe_type", "dec_int", mode="before")
@@ -210,44 +208,55 @@ class SimulationConfig(BaseModel):
             case "custom":
                 if self.dec_method is None:
                     raise ValueError("For fe_type='custom', set dec_method to one of: dd, sdr, exchange.")
-                self._components = []
+                self.components = []
             case "rest":
-                self._components, self.dec_method = ['c', 'a', 'l', 't', 'r'], "dd"
+                self.components, self.dec_method = ['c', 'a', 'l', 't', 'r'], "dd"
             case "sdr":
-                self._components, self.dec_method = ['e', 'v'], "sdr"
+                self.components, self.dec_method = ['e', 'v'], "sdr"
             case "dd":
-                self._components, self.dec_method = ['e', 'v', 'f', 'w'], "dd"
+                self.components, self.dec_method = ['e', 'v', 'f', 'w'], "dd"
             case "sdr-rest":
-                self._components, self.dec_method = ['c', 'a', 'l', 't', 'r', 'e', 'v'], "sdr"
+                self.components, self.dec_method = ['c', 'a', 'l', 't', 'r', 'e', 'v'], "sdr"
             case "express":
-                self._components, self.dec_method = ['m', 'n', 'e', 'v'], "sdr"
+                self.components, self.dec_method = ['m', 'n', 'e', 'v'], "sdr"
             case "dd-rest":
-                self._components, self.dec_method = ['c', 'a', 'l', 't', 'r', 'e', 'v', 'f', 'w'], "dd"
+                self.components, self.dec_method = ['c', 'a', 'l', 't', 'r', 'e', 'v', 'f', 'w'], "dd"
             case "relative":
-                self._components, self.dec_method = ['x', 'e', 'n', 'm'], "exchange"
+                self.components, self.dec_method = ['x', 'e', 'n', 'm'], "exchange"
             case "uno":
-                self._components, self.dec_method = ['m', 'n', 'o'], "sdr"
+                self.components, self.dec_method = ['m', 'n', 'o'], "sdr"
             case "uno_rest":
-                self._components, self.dec_method = ['z'], "sdr"
+                self.components, self.dec_method = ['z'], "sdr"
             case "uno_com":
-                self._components, self.dec_method = ['o'], "sdr"
+                self.components, self.dec_method = ['o'], "sdr"
             case "self":
-                self._components, self.dec_method = ['s'], "sdr"
+                self.components, self.dec_method = ['s'], "sdr"
             case "uno_dd":
-                self._components, self.dec_method = ['z', 'y'], "dd"
+                self.components, self.dec_method = ['z', 'y'], "dd"
             case "asfe":
-                self._components, self.dec_method = ['y'], "sdr"
+                self.components, self.dec_method = ['y'], "sdr"
 
         # sanity checks for active components only
-        for comp in self._components:
+        for comp in self.components:
             s1, s2 = self.dic_steps1.get(comp, 0), self.dic_steps2.get(comp, 0)
             if s1 <= 0:
                 raise ValueError(f"{comp}: stage 1 steps must be > 0 (key '{comp}_steps1').")
             if s2 <= 0:
                 raise ValueError(f"{comp}: stage 2 steps must be > 0 (key '{comp}_steps2').")
 
+        # update per-component lambdas
+        self.component_lambdas.clear()
+        for comp in self.components:
+            lambdas = self.component_windows.get(comp) or []
+            if not lambdas:
+                lambdas = self.lambdas
+                if not lambdas:
+                    raise ValueError(f"No lambdas defined for component '{comp}'.")
+                logger.debug(f"No per-component lambdas for '{comp}'; using default lambdas.")
+            self.component_lambdas[comp] = lambdas
+
         # membrane simulation if lipids defined
-        self._membrane_simulation = len(self.lipid_mol) > 0
+        self.membrane_simulation = len(self.lipid_mol) > 0
 
         return self
 

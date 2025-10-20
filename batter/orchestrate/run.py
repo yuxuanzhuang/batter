@@ -12,7 +12,7 @@ single param job ("param_ligands") → per-ligand pipelines → FE record save.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Tuple
 from datetime import datetime, timezone
 import json
 import shutil
@@ -182,6 +182,8 @@ def _register_local_handlers(backend: LocalBackend) -> None:
     from batter.exec.handlers.equil_analysis import equil_analysis_handler as _equil_analysis
     from batter.exec.handlers.prepare_fe import prepare_fe_handler as _prepare_fe
     from batter.exec.handlers.prepare_fe import prepare_fe_windows_handler as _prepare_fe_windows
+    from batter.exec.handlers.fe import fe_equil_handler as _fe_equil
+    from batter.exec.handlers.fe import fe_handler as _fe
 
 
     def _touch_artifact(system: SimSystem, subdir: str, fname: str, content: str = "ok\n") -> Path:
@@ -190,14 +192,6 @@ def _register_local_handlers(backend: LocalBackend) -> None:
         p = d / fname
         p.write_text(content)
         return p
-
-    def _fe_equil(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-        rst = _touch_artifact(system, "fe_equil", "fe_equil.rst7", "dummy-fe-eq\n")
-        return ExecResult([], {"fe_equil_rst": rst})
-
-    def _fe(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-        summ = _touch_artifact(system, "fe", "windows.json", '{"total_dG": -7.1, "total_se": 0.3}\n')
-        return ExecResult([], {"summary": summ})
 
     def _analyze(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
         ok = _touch_artifact(system, "analyze", "analyze.ok")
@@ -219,22 +213,55 @@ def _register_local_handlers(backend: LocalBackend) -> None:
 # --- phase skipping utilities -----------------------------------------------
 
 REQUIRED_MARKERS = {
-    "prepare_equil": [["equil/full.prmtop"]],                        # all-of single → must exist
-    "equil":         [["equil/FINISHED"], ["equil/FAILED"]],         # either/or
+    "prepare_equil": [["equil/full.prmtop"]],
+    "equil":         [["equil/FINISHED"], ["equil/FAILED"]],
     "equil_analysis":[["equil/representative.pdb"], ["equil/UNBOUND"]],
-    "prepare_fe":    [["artifacts/prepare_fe/prepare_fe.ok"]],
-    "fe_equil":      [["artifacts/fe_equil/fe_equil.rst7"]],
-    "fe":            [["artifacts/fe/windows.json"], ["artifacts/fe/FINISHED"]],
+    "prepare_fe":    [["artifacts/prepare_fe_windows/windows_prep.ok"]],
+    "fe_equil":      [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
+    "fe":            [["fe/{comp}/{comp}{win}/FINISHED"]],
     "analyze":       [["artifacts/analyze/analyze.ok"]],
 }
 
-def _is_done(system: SimSystem, marker_spec) -> bool:
+def _components_under(root: Path) -> list[str]:
+    """fe/<comp>/ must be a directory; component name = folder name."""
+    fe_root = root / "fe"
+    if not fe_root.exists():
+        return []
+    return sorted([p.name for p in fe_root.iterdir() if p.is_dir()])
+
+def _production_windows_under(root: Path, comp: str) -> list[int]:
+    """
+    Return sorted list of integer window indices for <ligand>/fe/<comp>/<compN>
+    (exclude equil dir <comp>-1).
+    """
+    base = root / "fe" / comp
+    if not base.exists():
+        return []
+    out: list[int] = []
+    for p in base.iterdir():
+        if not p.is_dir():
+            continue
+        name = p.name
+        if name == f"{comp}-1":
+            continue  # equil folder
+        if not name.startswith(comp):
+            continue
+        tail = name[len(comp):]  # e.g., '0', '1', '-3', etc.
+        try:
+            idx = int(tail)
+        except ValueError:
+            continue
+        # production windows are >= 0
+        if idx >= 0:
+            out.append(idx)
+    return sorted(out)
+
+def _dnf_satisfied(root: Path, marker_spec) -> bool:
     """
     marker_spec can be:
-      - list[str]          → ANY of these (backward-compat)
+      - list[str]          → ANY of these (back-compat)
       - list[list[str]]    → DNF: ANY group satisfied; each group is ALL-of
     """
-    root = system.root
     if not marker_spec:
         return False
 
@@ -242,17 +269,57 @@ def _is_done(system: SimSystem, marker_spec) -> bool:
     if all(isinstance(m, str) for m in marker_spec):
         return any((root / m).exists() for m in marker_spec)
 
-    # DNF: list of groups; a group is satisfied only if ALL paths in it exist
+    # DNF groups: satisfied if ANY group has ALL files present
     for group in marker_spec:
         if all((root / p).exists() for p in group):
             return True
     return False
 
+def _is_done(system: SimSystem, phase_name: str) -> bool:
+    root = system.root
+    spec = REQUIRED_MARKERS.get(phase_name, [])
+    if not spec:
+        return False
+
+    # Simple phases use the generic DNF logic as-is
+    if phase_name not in {"fe_equil", "fe"}:
+        return _dnf_satisfied(root, spec)
+
+    # Expand placeholders and require ALL components (and ALL windows for 'fe')
+    comps = _components_under(root)
+    if not comps:
+        return False
+
+    if phase_name == "fe_equil":
+        # Every component must satisfy: fe/{comp}/{comp}-1/EQ_FINISHED
+        for comp in comps:
+            expanded_groups = []
+            for group in spec:
+                expanded_groups.append([p.format(comp=comp, win="") for p in group])
+            if not _dnf_satisfied(root, expanded_groups):
+                return False
+        return True
+
+    if phase_name == "fe":
+        # Every component AND every production window must satisfy: fe/{comp}/{comp}{win}/FINISHED
+        for comp in comps:
+            wins = _production_windows_under(root, comp)
+            if not wins:
+                return False  # no windows → not done
+            for win in wins:
+                expanded_groups = []
+                for group in spec:
+                    expanded_groups.append([p.format(comp=comp, win=win) for p in group])
+                if not _dnf_satisfied(root, expanded_groups):
+                    return False
+        return True
+
+    return False
+
 def _filter_needing_phase(children: list[SimSystem], phase_name: str) -> list[SimSystem]:
-    marker_spec = REQUIRED_MARKERS.get(phase_name, [])
-    if not marker_spec:
+    if phase_name not in REQUIRED_MARKERS:
         return list(children)
-    need = [c for c in children if not _is_done(c, marker_spec)]
+    need = [c for c in children if not _is_done(c, phase_name)]
     done = [c for c in children if c not in need]
     if done:
         names = ", ".join(c.meta.get("ligand", c.name) for c in done)
@@ -379,6 +446,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         (sys.root / "artifacts" / "config").mkdir(parents=True, exist_ok=True)
         write_yaml_config(sim_cfg_updated, sys.root / "artifacts" / "config" / "sim.resolved.yaml")
 
+
     # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
     removed = {"system_prep", "param_ligands"}
 
@@ -476,7 +544,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         )
 
     # --- helpers: submit phase and wait for markers ---
-    def _run_phase_for_all(phase: Pipeline, children: list[SimSystem], phase_name: str, backend: LocalBackend, max_workers: int | None = None):
+    def _run_phase_for_all(phase: Pipeline, children: list[SimSystem], phase_name: str, backend, max_workers: int | None = None):
         if not phase.ordered_steps():
             return
         logger.debug(f"Phase: {phase_name} → steps={ [s.name for s in phase.ordered_steps()] }")
@@ -510,7 +578,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     children = _filter_bound(children)
 
-    # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------
     _run_phase_skipping_done(phase_prepare_fe, children, "prepare_fe", backend, max_workers=rc.run.max_workers)
@@ -520,21 +587,21 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # --------------------
     # PHASE 4: fe_equil (parallel; if present)
     # --------------------
-    _run_phase_for_all(phase_fe_equil, children, "fe_equil", backend)
+    _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend)
     # Optional: wait
     # children = _wait_for_markers(children, "artifacts/fe_equil/fe_equil.rst7")
 
     # --------------------
     # PHASE 5: fe (parallel)
     # --------------------
-    _run_phase_for_all(phase_fe, children, "fe", backend)
+    _run_phase_skipping_done(phase_fe, children, "fe", backend)
     # Optional: wait for completion of FE windows across ligands
     # children = _wait_for_markers(children, "artifacts/fe/windows.json")
 
     # --------------------
     # PHASE 6: analyze (parallel)
     # --------------------
-    _run_phase_for_all(phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers)
+    _run_phase_skipping_done(phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers)
     # Optional: wait
     # children = _wait_for_markers(children, "artifacts/analyze/analyze.ok")
 
