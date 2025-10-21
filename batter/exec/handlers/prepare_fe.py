@@ -72,7 +72,7 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
     infe: bool = bool(params.get("infe", False))
 
     artifacts: Dict[str, Any] = {}
-    logger.info(f"[prepare_fe] start ligand={ligand} residue={residue_name} components={components}")
+    logger.debug(f"[prepare_fe] start ligand={ligand} residue={residue_name} components={components}")
 
     # Build per component (scaffold / templates only; win=-1)
     for comp in components:
@@ -101,7 +101,7 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("ok\n")
 
-    logger.success(f"[prepare_fe] finished ligand={ligand} → {marker}")
+    logger.debug(f"[prepare_fe] finished ligand={ligand} → {marker}")
     return ExecResult(job_ids=[], artifacts={"prepare_fe_ok": marker, **artifacts})
 
 
@@ -136,7 +136,7 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     infe: bool = bool(params.get("infe", False))
 
     windows_summary: Dict[str, Any] = {}
-    logger.info(f"[prepare_fe_windows] start ligand={ligand} residue={residue_name} components={components}")
+    logger.debug(f"[prepare_fe_windows] start ligand={ligand} residue={residue_name} components={components}")
 
     for comp in components:
         workdir = child_root / "fe" / comp
@@ -165,5 +165,5 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     windows_json.parent.mkdir(parents=True, exist_ok=True)
     windows_json.write_text(json.dumps(windows_summary, indent=2) + "\n")
 
-    logger.success(f"[prepare_fe_windows] finished ligand={ligand} → {windows_json}")
+    logger.debug(f"[prepare_fe_windows] finished ligand={ligand} → {windows_json}")
     return ExecResult(job_ids=[], artifacts={"windows_json": windows_json})

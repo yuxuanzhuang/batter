@@ -139,7 +139,8 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
                 pass
 
         env = {"ONLY_EQ": "1", "INPCRD": "full.inpcrd"}
-        job_name = f"{system.root.name}_{comp}_{comp}-1"
+        fe_folder = os.path.abspath(system.root) + "fe"
+        job_name = f"fep_{fe_folder}_{comp}_{comp}_equil"
         spec = _spec_from_dir(
             wd,
             finished_name="EQ_FINISHED",
@@ -193,7 +194,8 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                     pass
 
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
-            job_name = f"{system.root.name}_{comp}_{wd.name}"
+            fe_folder = os.path.abspath(system.root) + "fe"
+            job_name = f"fep_{fe_folder}_{comp}_{wd.name}"
             spec = _spec_from_dir(
                 wd,
                 finished_name="FINISHED",
