@@ -1909,7 +1909,7 @@ class EquilibrationBuilder(SystemBuilder):
                             if i == 0:
                                 if 'irest' in line:
                                     line = 'irest = 0, \n'
-                                elif 'ntx' in line:
+                                elif 'ntx = 5' in line:
                                     line = 'ntx = 1, \n'
                             fout.write(line.replace('_temperature_', str(temperature)).replace(
                                 '_enable_infe_', str(infe)).replace(

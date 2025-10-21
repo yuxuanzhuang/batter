@@ -558,7 +558,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    _run_phase_skipping_done(phase_equil, children, "equil", backend)
+    _run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=1)
 
     # --------------------
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
@@ -587,14 +587,14 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # --------------------
     # PHASE 4: fe_equil (parallel; if present)
     # --------------------
-    _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend)
+    _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend, max_workers=1)
     # Optional: wait
     # children = _wait_for_markers(children, "artifacts/fe_equil/fe_equil.rst7")
 
     # --------------------
     # PHASE 5: fe (parallel)
     # --------------------
-    _run_phase_skipping_done(phase_fe, children, "fe", backend)
+    _run_phase_skipping_done(phase_fe, children, "fe", backend, max_workers=1)
     # Optional: wait for completion of FE windows across ligands
     # children = _wait_for_markers(children, "artifacts/fe/windows.json")
 

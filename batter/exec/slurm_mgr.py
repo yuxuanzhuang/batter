@@ -29,7 +29,10 @@ def _jobid_file(root: Path) -> Path:
 
 def _state_from_squeue(jobid: str) -> Optional[str]:
     try:
-        out = subprocess.check_output(["squeue", "-h", "-j", jobid, "-o", "%T"], text=True).strip()
+        out = subprocess.check_output(["squeue", "-h", "-j", jobid, "-o", "%T"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            ).strip()
         if out:
             return out.split()[0]
     except Exception:
@@ -40,7 +43,8 @@ def _state_from_sacct(jobid: str) -> Optional[str]:
     try:
         out = subprocess.check_output(
             ["sacct", "-j", jobid, "-X", "-n", "-o", "State"],
-            text=True
+            text=True,
+            stderr=subprocess.DEVNULL,
         )
         for ln in out.splitlines():
             ln = ln.strip()
@@ -117,7 +121,6 @@ class SlurmJobManager:
                 f"contents: {listing}"
             )
 
-        # Best effort: ensure executable bit
         try:
             script_abs.chmod(script_abs.stat().st_mode | 0o111)
         except Exception:
@@ -139,7 +142,7 @@ class SlurmJobManager:
             raise RuntimeError(f"Could not parse sbatch output: {out}")
         jobid = m.group(1)
         _write_text(spec.jobid_path(), f"{jobid}\n")
-        logger.info(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
+        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
         return jobid
 
     def _status(self, spec: SlurmJobSpec) -> Tuple[bool, Optional[str]]:
@@ -159,23 +162,37 @@ class SlurmJobManager:
     def ensure_running(self, spec: SlurmJobSpec) -> None:
         done, status = self._status(spec)
         if done:
-            logger.info(f"[SLURM] {spec.workdir.name}: already {status}; not submitting")
+            logger.debug(f"[SLURM] {spec.workdir.name}: already {status}; not submitting")
             return
         state = _slurm_state(_read_text(spec.jobid_path()))
         if state in SLURM_OK_STATES:
-            logger.info(f"[SLURM] {spec.workdir.name}: active ({state}); not submitting")
+            logger.debug(f"[SLURM] {spec.workdir.name}: active ({state}); not submitting")
             return
         self._submit(spec)
 
     def wait_until_done(self, specs: Iterable[SlurmJobSpec]) -> None:
         """
         For a set of specs:
-          - submit if needed
-          - watch until FINISHED/FAILED
-          - if job vanishes and no sentinel: resubmit (bounded)
+        - submit if needed
+        - watch until FINISHED/FAILED
+        - if job vanishes and no sentinel: resubmit (bounded)
         """
         specs = list(specs)
         retries = {s.workdir: 0 for s in specs}
+
+        # optional progress bar (tqdm)
+        try:
+            from tqdm import tqdm  # type: ignore
+            use_tqdm = True
+        except Exception:
+            tqdm = None  # type: ignore
+            use_tqdm = False
+
+        total = len(specs)
+        completed: set[Path] = set()
+        last_log = 0.0
+
+        pbar = tqdm(total=total, desc="SLURM jobs", leave=True, dynamic_ncols=True) if use_tqdm else None
 
         # initial submissions
         for s in specs:
@@ -187,35 +204,45 @@ class SlurmJobManager:
         pending = {s.workdir: s for s in specs}
         while pending:
             done_now: List[Path] = []
+
+            # quick counts for progress display
+            running_cnt = 0
+            resub_cnt = 0
+            failed_cnt = 0
+
             for wd, s in list(pending.items()):
                 done, status = self._status(s)
                 if done:
-                    logger.info(f"[SLURM] {wd.name}: {status}")
+                    if status == "FAILED":
+                        failed_cnt += 1
                     done_now.append(wd)
                     continue
 
                 jobid = _read_text(s.jobid_path())
                 state = _slurm_state(jobid)
 
-                # --- NEW: handle final bad states immediately
+                # handle final bad states immediately
                 if state in SLURM_FINAL_BAD:
                     logger.error(f"[SLURM] {wd.name}: terminal state={state}; marking FAILED")
                     s.failed_path().touch()
+                    failed_cnt += 1
                     done_now.append(wd)
                     continue
 
                 if state in SLURM_OK_STATES:
-                    logger.debug(f"[SLURM] {wd.name}: {state} (waiting)")
+                    running_cnt += 1
                     continue
 
                 # job missing or ended without sentinel → resubmit
                 r = retries[wd]
                 if r >= self.max_retries:
                     logger.error(f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} (state={state or 'MISSING'}); marking FAILED")
-                    s.failed_path().touch()  # <-- NEW
+                    s.failed_path().touch()
+                    failed_cnt += 1
                     done_now.append(wd)
                     continue
 
+                resub_cnt += 1
                 logger.warning(f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} state={state or 'MISSING'}; resubmitting ({r+1}/{self.max_retries})")
                 time.sleep(self.resubmit_backoff_s)
                 try:
@@ -224,8 +251,32 @@ class SlurmJobManager:
                 except Exception as e:
                     logger.error(f"[SLURM] {wd.name}: resubmit failed: {e}")
 
+            # remove finished from pending and update progress
             for wd in done_now:
                 pending.pop(wd, None)
+                if wd not in completed:
+                    completed.add(wd)
+                    if pbar:
+                        pbar.update(1)
+
+            # render progress info
+            if pbar:
+                pbar.set_postfix({
+                    "active": running_cnt,
+                    "resub": resub_cnt,
+                    "failed": failed_cnt,
+                    "pending": len(pending),
+                })
+            else:
+                # fallback: log a compact status every ~30s
+                now = time.time()
+                if now - last_log > 30 or not pending:
+                    logger.info(f"[SLURM] progress {len(completed)}/{total} "
+                                f"(active={running_cnt}, resub={resub_cnt}, failed={failed_cnt}, pending={len(pending)})")
+                    last_log = now
 
             if pending:
                 time.sleep(self.poll_s)
+
+        if pbar:
+            pbar.close()

@@ -68,7 +68,7 @@ class SlurmJobManager(_BaseSlurmJobManager):
             raise RuntimeError(f"Could not parse sbatch output: {out}")
         jobid = m.group(1)
         (spec.workdir / "JOBID").write_text(f"{jobid}\n")
-        logger.info(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
+        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
         return jobid
 
 # ---------------- utilities ----------------
@@ -155,7 +155,7 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
     """
     lig = (system.meta or {}).get("ligand", system.name)
     part = _read_partition(params)
-    max_jobs = int(params.get("max_active_jobs", 1000))
+    max_jobs = int(params.get("max_active_jobs", 2000))
 
     comps = _components_under(system.root)
     if not comps:
@@ -193,12 +193,6 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
         raise RuntimeError(f"[fe_equil:{lig}] No component equil windows to submit.")
 
     mgr = SlurmJobManager(poll_s=60 * 15)
-    for s in specs:
-        try:
-            mgr.ensure_running(s)
-        except Exception as e:
-            logger.error(f"[fe_equil:{lig}] submit failed for {s.workdir}: {e}")
-
     mgr.wait_until_done(specs)
 
     arts: Dict[str, Dict[str, Any]] = {}
@@ -230,7 +224,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     """
     lig = (system.meta or {}).get("ligand", system.name)
     part = _read_partition(params)
-    max_jobs = int(params.get("max_active_jobs", 1000))
+    max_jobs = int(params.get("max_active_jobs", 2000))
 
     comps = _components_under(system.root)
     if not comps:
@@ -265,11 +259,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         raise RuntimeError(f"[fe:{lig}] No production windows to submit.")
 
     mgr = SlurmJobManager(poll_s=60 * 15)
-    for s in specs:
-        try:
-            mgr.ensure_running(s)
-        except Exception as e:
-            logger.error(f"[fe:{lig}] submit failed for {s.workdir}: {e}")
 
     mgr.wait_until_done(specs)
 
