@@ -30,14 +30,10 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     comp_windows: dict = params.get("component_windows", {})
     infe: bool = bool(params.get("infe", False))
 
-    # 3) Locate parent system root (…/work/<system>)
-    try:
-        system_root = system.root.parents[1]
-    except Exception:
-        system_root = system.root
+    system_root = system.root
 
-    # 4) Read parameter index (produced by param_ligands)
-    index_json = system_root / "artifacts" / "ligand_params" / "index.json"
+    # 3) Read parameter index (produced by param_ligands)
+    index_json = system_root.parents[1] / "artifacts" / "ligand_params" / "index.json"
     param_dir_dict = {}
     try:
         index_data = json.loads(index_json.read_text())
@@ -48,19 +44,19 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     except Exception as e:
         raise RuntimeError(f"Failed to parse ligand param index {index_json}: {e}")
 
-    logger.info(
+    logger.debug(
         f"[prepare_equil] start for ligand={ligand} "
         f"| residue={residue_name} | workdir={working_dir}"
     )
 
-    # 5) Build equilibration system
+    # 4) Build equilibration system
     builder = PrepareEquilBuilder(
         ligand=ligand,
         sim_config=sim,
         component_windows_dict=comp_windows,
         working_dir=working_dir,
         infe=infe,
-        system_root=system_root,
+        system_root=system_root.parents[1],
         residue_name=residue_name,
         param_dir_dict=param_dir_dict,
     )
@@ -68,7 +64,10 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     if not ok:
         raise RuntimeError(f"[prepare_equil] anchor detection failed for ligand={ligand}")
 
-    logger.info(f"[prepare_equil] finished for ligand={ligand}")
+    prepare_finished = system_root / "artifacts" /  "prepare_equil.ok"
+    open(prepare_finished, "w").close()
+
+    logger.debug(f"[prepare_equil] finished for ligand={ligand}")
 
     return ExecResult(
         [],

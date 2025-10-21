@@ -19,7 +19,7 @@ fi
 
 source check_run.bash
 
-if [[ $overwrite -eq 0 && -s mini.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping EM steps." 
 else
     pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
@@ -45,12 +45,25 @@ fi
 if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping equilibration steps."
 else
-    # Equilbration with gradually-incrase lambda of the ligand
-    # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
-    pmemd.cuda -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
-    check_sim_failure "NVT" "$log_file"
-    # check ligand entaglement
-    python check_penetration.py
+    python check_penetration.py mini.rst7
+
+    # if RING_PENETRATION file is found
+    if [[ -f RING_PENETRATION ]]; then
+        echo "Ligand ring penetration detected previously; using longer equilibration."
+
+        # Equilbration with gradually-incrase lambda of the ligand
+        # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
+        pmemd.cuda -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
+        check_sim_failure "NVT" "$log_file"
+        python check_penetration.py eqnvt.rst7
+        if [[ -f RING_PENETRATION ]]; then
+            echo "Ligand ring penetration still detected after NVT; exiting."
+            exit 1
+        fi
+    else
+        # no NVT needed
+        cp mini.rst7 eqnvt.rst7
+    fi
 
     # Equilibration with protein and ligand restrained
     # this is to equilibrate the density of water

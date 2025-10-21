@@ -1067,14 +1067,12 @@ class System:
                         rmsf_file=rmsf_file
                     )
             if extra_restraints is not None:
-                self._extra_restraints = extra_restraints
                 self.add_extra_restraints(
                         stage='equil',
                         extra_restraints=extra_restraints,
                         extra_restraints_fc=extra_restraints_fc
                     )
             if extra_conformation_restraints is not None:
-                self._extra_conformation_restraints = extra_conformation_restraints
                 self.add_extra_conformation_restraints(
                         stage='equil',
                         extra_conformation_restraints=extra_conformation_restraints,
@@ -3055,6 +3053,9 @@ class System:
         
         self._max_num_jobs = max_num_jobs
         self._fail_on_error = fail_on_error
+        self._extra_restraints = extra_restraints
+        self._extra_conformation_restraints = extra_conformation_restraints
+
 
         start_time = time.time()
         logger.info(f'Start time: {time.ctime()}')

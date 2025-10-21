@@ -83,33 +83,6 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         extra_sbatch=["-p", part],
     )
 
-    # Ensure running, then block until done (15-min poll; no overall timeout)
-    mgr = SlurmJobManager(poll_s=60 * 15)
-    mgr.ensure_running(spec)
-    # best-effort read of job id for logging
-    try:
-        jid = paths["jobid"].read_text().strip()
-    except Exception:
-        jid = None
-    logger.info(f"[equil:{lig}] SLURM job ensured running (jobid={jid or 'unknown'}, partition={part}).")
-
-    mgr.wait_until_done([spec])
-
-    # Decide outcome based on sentinels
-    if paths["finished"].exists():
-        logger.success(f"[equil:{lig}] FINISHED")
-        arts = {"rst7": paths["rst7"], "finished": paths["finished"]}
-        for k in ("stdout", "stderr"):
-            if paths[k].exists():
-                arts[k] = paths[k]
-        if jid:
-            arts["job_id"] = jid
-        return ExecResult(job_ids=[jid] if jid else [], artifacts=arts)
-
-    if paths["failed"].exists():
-        msg = f"[equil:{lig}] FAILED — see {paths['stderr']} / {paths['stdout']}"
-        logger.error(msg)
-        raise RuntimeError(msg)
-
-    # Neither FINISHED nor FAILED (shouldn't happen if manager did its job)
-    raise RuntimeError(f"[equil:{lig}] Unknown terminal state in {paths['phase_dir']}")
+    mgr = params.get("job_mgr")
+    mgr.add(spec)
+    return ExecResult(job_ids=[], artifacts={"workdir": paths["phase_dir"]})

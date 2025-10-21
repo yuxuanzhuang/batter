@@ -159,10 +159,6 @@ class SystemBuilder(ABC):
         ntwx = self.sim_config.ntwx
         cut = self.sim_config.cut
         gamma_ln = self.sim_config.gamma_ln
-        barostat = self.sim_config.barostat
-        if barostat == '2':
-            logger.warning('WARNING: Switch to Berendsen barostat')
-            barostat = '1'
         
         receptor_ff = self.sim_config.receptor_ff
         ligand_ff = self.sim_config.ligand_ff
@@ -202,7 +198,6 @@ class SystemBuilder(ABC):
                          .replace('_ntwx_', str(ntwx))
                          .replace('_cutoff_', str(cut))
                          .replace('_gamma_ln_', str(gamma_ln))
-                         .replace('_barostat_', str(barostat))
                          .replace('_receptor_ff_', receptor_ff)
                          .replace('_ligand_ff_', ligand_ff)
                          .replace('_lipid_ff_', lipid_ff)

@@ -110,7 +110,6 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
                         .replace("MMM", f"'{mol}'")
                 )
 
-    # Run VMD split; note error_match follows your legacy pattern
     run_with_log(f"{vmd} -dispdev text -e {str(split_tcl)}", error_match="syntax error", shell=False, working_dir=build_dir)
     # Protein PDB cleanup with pdb4amber
     shutil.copy2(build_dir / "protein.pdb", build_dir / "protein_vmd.pdb")
@@ -175,7 +174,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         lipid_mol = [x[:3] for x in lipid_mol]
 
     # Convert CHARMM lipids to lipid21 if membrane
-    if sim._membrane_simulation and lipid_mol:
+    if sim.membrane_simulation:
         run_with_log(f"{charmmlipid2amber} -i {build_dir/'lipids.pdb'} -o {build_dir/'lipids_amber.pdb'}")
         u_lip = mda.Universe(str(build_dir / "lipids_amber.pdb"))
         lipid_resnames = list(set(u_lip.residues.resnames))
@@ -184,7 +183,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     # Merge raw complex (protein + ligand + others + (lipids) + crystal waters)
     parts: list[Path] = [build_dir / "protein.pdb", build_dir / f"{mol.lower()}.pdb", build_dir / "others.pdb"]
-    if sim._membrane_simulation and lipid_mol:
+    if sim.membrane_simulation:
         parts.append(build_dir / "lipids_amber.pdb")
     parts.append(build_dir / "crystalwat.pdb")
     merged = build_dir / "complex-merge.pdb"
@@ -217,7 +216,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     run_with_log("pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y", working_dir=build_dir)
 
     # For membrane: restore box info and re-merge lipid partial residues into single resids
-    if sim._membrane_simulation and lipid_mol:
+    if sim.membrane_simulation:
         u_aln = mda.Universe(str(build_dir / "aligned_amber.pdb"))
         u_aln.dimensions = u_original.dimensions
         renum_txt2 = build_dir / "aligned_amber_renum.txt"
@@ -225,17 +224,19 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             renum_txt2, sep=r"\s+", header=None,
             names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"]
         )
-        revised = []
-        resid_counter = 1
-        prev_resid = 0
-        for _, row in ren2.iterrows():
-            if row["old_resid"] != prev_resid or row["old_resname"] not in lipid_mol:
-                revised.append(resid_counter)
-                resid_counter += 1
-            else:
-                revised.append(resid_counter - 1)
-            prev_resid = row["old_resid"]
-        u_aln.atoms.residues.resids = revised
+        key_chain = ren2["old_chain"].astype(str)
+        key_resid = ren2["old_resid"].astype(int)
+
+        boundary = key_chain.ne(key_chain.shift(1)) | key_resid.ne(key_resid.shift(1))
+        revised = boundary.cumsum().to_numpy(dtype=int)
+
+        # Safety check (the renum table should have one row per residue in the universe)
+        if revised.size != u_aln.residues.n_residues:
+            raise ValueError(
+                f"Residue count mismatch: renum rows={revised.size} vs universe={u_aln.residues.n_residues}"
+            )
+
+        u_aln.residues.resids = revised
         u_aln.atoms.write(str(build_dir / "aligned_amber.pdb"))
 
     sdf_file = build_dir / f"{mol.lower()}.sdf"
@@ -312,13 +313,12 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     sim = ctx.sim
     work = ctx.working_dir
 
-    amber_dir = work / "amber_files"
+    amber_dir = ctx.amber_dir
 
     temperature = sim.temperature
     mol = ctx.residue_name
     num_sim = len(sim.release_eq)
 
-    # Parse anchors from disang.rest (first line, as in legacy)
     with open(work / "disang.rest", "r") as f:
         parts = f.readline().split()
         # positions: ... L1 L2 L3 ...
@@ -348,7 +348,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     )
 
     # eqnpt0.in (membrane vs water variant)
-    eqnpt0_src = Path(amber_dir) / ( "eqnpt0.in" if sim._membrane_simulation else "eqnpt0-water.in" )
+    eqnpt0_src = Path(amber_dir) / ( "eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in" )
     _sub_write(
         eqnpt0_src,
         work / "eqnpt0.in",
@@ -356,7 +356,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     )
 
     # eqnpt.in
-    eqnpt_src = Path(amber_dir) / ( "eqnpt.in" if sim._membrane_simulation else "eqnpt-water.in" )
+    eqnpt_src = Path(amber_dir) / ( "eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in" )
     _sub_write(
         eqnpt_src,
         work / "eqnpt.in",

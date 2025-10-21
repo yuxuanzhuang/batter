@@ -4,72 +4,14 @@ from __future__ import annotations
 import os
 import time
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional
 
 from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
-from batter.exec.slurm_mgr import SlurmJobManager, SlurmJobSpec as _BaseSlurmJobSpec
-
-# ---------------- small shim to add env to SlurmJobSpec ----------------
-
-@dataclass
-class SlurmJobSpec(_BaseSlurmJobSpec):
-    """
-    Extend base SlurmJobSpec with per-job environment injection.
-
-    These are passed to sbatch as: --export=ALL,KEY=VAL,KEY2=VAL2...
-    """
-    extra_env: Dict[str, str] = field(default_factory=dict)
-
-# monkey-patch the manager's _submit to honor extra_env
-# (If your SlurmJobManager already supports this, you can drop the patching.)
-from batter.exec.slurm_mgr import SlurmJobManager as _BaseSlurmJobManager
-
-class SlurmJobManager(_BaseSlurmJobManager):
-    def _submit(self, spec: SlurmJobSpec) -> str:
-        script_abs = spec.resolve_script_abs()
-        if not script_abs.exists():
-            listing = ", ".join(sorted(p.name for p in spec.workdir.iterdir())) if spec.workdir.exists() else "(missing workdir)"
-            raise FileNotFoundError(
-                f"SLURM script not found: {script_abs}\n"
-                f"in workdir: {spec.workdir}\n"
-                f"contents: {listing}"
-            )
-
-        try:
-            script_abs.chmod(script_abs.stat().st_mode | 0o111)
-        except Exception:
-            pass
-
-        # Build sbatch command (relative to workdir)
-        cmd: List[str] = ["sbatch"]
-        if spec.name:
-            cmd += ["--job-name", spec.name]
-        if spec.extra_sbatch:
-            cmd += list(spec.extra_sbatch)
-
-        # Environment export
-        if getattr(spec, "extra_env", None):
-            kv = [f"{k}={v}" for k, v in spec.extra_env.items()]
-            cmd += ["--export", "ALL," + ",".join(kv)]
-
-        cmd.append(spec.script_arg())
-
-        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
-        out = subprocess.check_output(cmd, cwd=spec.workdir, text=True).strip()
-
-        import re
-        m = re.search(r"Submitted batch job\s+(\d+)", out, re.I)
-        if not m:
-            raise RuntimeError(f"Could not parse sbatch output: {out}")
-        jobid = m.group(1)
-        (spec.workdir / "JOBID").write_text(f"{jobid}\n")
-        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
-        return jobid
+from batter.exec.slurm_mgr import SlurmJobSpec  # job manager is passed via params["job_mgr"]
 
 # ---------------- utilities ----------------
 
@@ -89,6 +31,10 @@ def _active_job_count(user: Optional[str] = None) -> int:
         return 0
 
 def _ensure_job_quota(max_active: int, user: Optional[str] = None, poll_s: int = 60) -> None:
+    """
+    Enforce a one-time cap on active jobs at the start of a ligand.
+    (Do not re-check per job; the global manager will handle the rest.)
+    """
     if max_active <= 0:
         return
     while True:
@@ -103,6 +49,7 @@ def _ensure_job_quota(max_active: int, user: Optional[str] = None, poll_s: int =
 # ---------------- discovery helpers ----------------
 
 def _components_under(root: Path) -> List[str]:
+    """Return component folder names under <ligand>/fe/ ."""
     fe_root = root / "fe"
     if not fe_root.exists():
         return []
@@ -113,6 +60,10 @@ def _equil_window_dir(root: Path, comp: str) -> Path:
     return root / "fe" / comp / f"{comp}-1"
 
 def _production_window_dirs(root: Path, comp: str) -> List[Path]:
+    """
+    Return all production window dirs under <ligand>/fe/<comp> matching <comp>0, <comp>1, ...
+    (Skip equil dir <comp>-1).
+    """
     base = root / "fe" / comp
     if not base.exists():
         return []
@@ -129,16 +80,20 @@ def _production_window_dirs(root: Path, comp: str) -> List[Path]:
     return out
 
 def _spec_from_dir(
-    workdir: Path, *, finished_name: str, part: str, job_name: str, extra_env: Optional[Dict[str, str]] = None
+    workdir: Path,
+    *,
+    finished_name: str,
+    part: str,
+    job_name: str,
+    extra_env: Optional[Dict[str, str]] = None,
 ) -> SlurmJobSpec:
-    extra = ["-p", part]
     return SlurmJobSpec(
         workdir=workdir,
         script_rel="SLURMM-run",
         finished_name=finished_name,
         failed_name="FAILED",
         name=job_name,
-        extra_sbatch=extra,
+        extra_sbatch=["-p", part],
         extra_env=extra_env or {},
     )
 
@@ -146,28 +101,33 @@ def _spec_from_dir(
 
 def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """
-    Submit & monitor FE-equilibration jobs for all components of a ligand.
+    Enqueue FE-equilibration jobs for all components of a ligand (non-blocking).
 
-    - Root: <ligand>/fe/<comp>/<comp>-1
+    - Workdir per job: <ligand>/fe/<comp>/<comp>-1
     - Success sentinel: EQ_FINISHED
-    - Adds env: ONLY_EQ=1, INPCRD=full.inpcrd
-    - Checks job cap once per ligand
+    - Env: ONLY_EQ=1, INPCRD=full.inpcrd
+    - Applies one-time job cap check per ligand
+    - Requires a global manager at params["job_mgr"]
     """
     lig = (system.meta or {}).get("ligand", system.name)
     part = _read_partition(params)
     max_jobs = int(params.get("max_active_jobs", 2000))
 
+    job_mgr = params.get("job_mgr")
+    if job_mgr is None:
+        raise ValueError("[fe_equil] params must include a global 'job_mgr' (SlurmJobManager).")
+
     comps = _components_under(system.root)
     if not comps:
-        raise FileNotFoundError(f"[fe_equil:{lig}] No components under {system.root/'fe'}")
+        raise FileNotFoundError(f"[fe_equil:{lig}] No components found under {system.root/'fe'}")
 
     _ensure_job_quota(max_jobs)
 
-    specs: List[SlurmJobSpec] = []
+    count = 0
     for comp in comps:
         wd = _equil_window_dir(system.root, comp)
         if not wd.exists():
-            logger.warning(f"[fe_equil:{lig}] missing window dir: {wd} — skipping")
+            logger.warning(f"[fe_equil:{lig}] missing equil window dir: {wd} — skipping")
             continue
 
         # clear FAILED if present
@@ -178,8 +138,8 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
             except Exception:
                 pass
 
-        job_name = f"{system.root.name}_{comp}_{comp}-1"
         env = {"ONLY_EQ": "1", "INPCRD": "full.inpcrd"}
+        job_name = f"{system.root.name}_{comp}_{comp}-1"
         spec = _spec_from_dir(
             wd,
             finished_name="EQ_FINISHED",
@@ -187,52 +147,41 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
             job_name=job_name,
             extra_env=env,
         )
-        specs.append(spec)
+        job_mgr.add(spec)
+        count += 1
 
-    if not specs:
+    if count == 0:
         raise RuntimeError(f"[fe_equil:{lig}] No component equil windows to submit.")
 
-    mgr = SlurmJobManager(poll_s=60 * 15)
-    mgr.wait_until_done(specs)
-
-    arts: Dict[str, Dict[str, Any]] = {}
-    for s in specs:
-        key = str(s.workdir)
-        arts.setdefault(key, {})
-        jid = (s.workdir / "JOBID")
-        if jid.exists():
-            arts[key]["job_id"] = jid.read_text().strip()
-        if s.finished_path().exists():
-            arts[key]["finished"] = s.finished_path()
-        for logn in ("slurm.out", "slurm.err"):
-            p = s.workdir / logn
-            if p.exists():
-                arts[key][logn.rstrip(".out").rstrip(".err") or logn] = p
-
-    logger.success(f"[fe_equil:{lig}] all components reached terminal state.")
-    return ExecResult(job_ids=[], artifacts=arts)
-
+    logger.debug(f"[fe_equil:{lig}] enqueued {count} component equil job(s) (partition={part}).")
+    # Don’t claim success/terminal state; we’re not waiting here.
+    return ExecResult(job_ids=[], artifacts={"count": count})
 
 def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """
-    Submit & monitor FE production jobs for all components and windows.
+    Enqueue FE production jobs for all components and windows of a ligand (non-blocking).
 
-    - Root: <ligand>/fe/<comp>/<comp{idx}>
+    - Workdir per job: <ligand>/fe/<comp>/<comp{idx}>
     - Success sentinel: FINISHED
-    - Adds env: INPCRD=../{comp}-1/eqnpt04.rst7
-    - Checks job cap once per ligand
+    - Env: INPCRD=../{comp}-1/eqnpt04.rst7
+    - Applies one-time job cap check per ligand
+    - Requires a global manager at params["job_mgr"]
     """
     lig = (system.meta or {}).get("ligand", system.name)
     part = _read_partition(params)
     max_jobs = int(params.get("max_active_jobs", 2000))
 
+    job_mgr = params.get("job_mgr")
+    if job_mgr is None:
+        raise ValueError("[fe] params must include a global 'job_mgr' (SlurmJobManager).")
+
     comps = _components_under(system.root)
     if not comps:
-        raise FileNotFoundError(f"[fe:{lig}] No components under {system.root/'fe'}")
+        raise FileNotFoundError(f"[fe:{lig}] No components found under {system.root/'fe'}")
 
     _ensure_job_quota(max_jobs)
 
-    specs: List[SlurmJobSpec] = []
+    count = 0
     for comp in comps:
         for wd in _production_window_dirs(system.root, comp):
             # clear FAILED if present
@@ -243,9 +192,8 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 except Exception:
                     pass
 
-            job_name = f"{system.root.name}_{comp}_{wd.name}"
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
-
+            job_name = f"{system.root.name}_{comp}_{wd.name}"
             spec = _spec_from_dir(
                 wd,
                 finished_name="FINISHED",
@@ -253,28 +201,12 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 job_name=job_name,
                 extra_env=env,
             )
-            specs.append(spec)
+            job_mgr.add(spec)
+            count += 1
 
-    if not specs:
+    if count == 0:
         raise RuntimeError(f"[fe:{lig}] No production windows to submit.")
 
-    mgr = SlurmJobManager(poll_s=60 * 15)
-
-    mgr.wait_until_done(specs)
-
-    arts: Dict[str, Dict[str, Any]] = {}
-    for s in specs:
-        key = str(s.workdir)
-        arts.setdefault(key, {})
-        jid = (s.workdir / "JOBID")
-        if jid.exists():
-            arts[key]["job_id"] = jid.read_text().strip()
-        if s.finished_path().exists():
-            arts[key]["finished"] = s.finished_path()
-        for logn in ("slurm.out", "slurm.err"):
-            p = s.workdir / logn
-            if p.exists():
-                arts[key][logn.rstrip(".out").rstrip(".err") or logn] = p
-
-    logger.success(f"[fe:{lig}] all production jobs reached terminal state.")
-    return ExecResult(job_ids=[], artifacts=arts)
+    logger.debug(f"[fe:{lig}] enqueued {count} production job(s) (partition={part}).")
+    # Don’t claim success/terminal state; we’re not waiting here.
+    return ExecResult(job_ids=[], artifacts={"count": count})

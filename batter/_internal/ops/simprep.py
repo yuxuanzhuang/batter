@@ -15,7 +15,7 @@ from batter._internal.ops.helpers import load_anchors, save_anchors, Anchors, ge
 from batter.utils import run_with_log
 from batter.config.simulation import SimulationConfig
 
-ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
+ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
 
 
 # ---------------------- small utils ----------------------
@@ -84,11 +84,16 @@ def write_build_from_aligned(
     ion_mol: Iterable[str],
     extra_ligand_shift: List = [],
     sdr_dist: float = 0.0,
-    offset_other_by_ligand: int = 1,
     start_off_set: int = 0,
     use_ter_markers: bool = False,
     ter_atoms: Optional[Set[int]] = None,
-) -> None:
+) -> int:
+    """
+    Write build.pdb and build-dry.pdb from an aligned system PDB file,
+    adding dummy atoms and categorizing residues.
+
+    Returns the last receptor residue id.
+    """
     ter_atoms = ter_atoms or set()
 
     # ---- read aligned system
@@ -136,13 +141,11 @@ def write_build_from_aligned(
 
         if resname not in {lig, "DUM", "WAT"} and resname not in om and resname not in lm and resname not in im:
             recep_block.append((name, resname, resid - start_off_set, chain, x, y, z))
-            recep_last_resid = max(recep_last_resid, resid)
+            recep_last_resid = max(recep_last_resid, resid-start_off_set)
         elif resname == lig:
             lig_block.append((name, resname, resid - start_off_set, chain, x, y, z))
         else:
             oth_block.append((name, resname, resid - start_off_set, chain, x, y, z))
-
-    lig_resid = recep_last_resid + dum_count
 
     # ---- write build.pdb
     out_build = window_dir / "build.pdb"
@@ -155,6 +158,7 @@ def write_build_from_aligned(
             fout.write(_fmt_atom_line(serial, name, resname, chain, resid, x, y, z) + "\n")
             fout.write("TER\n")
             serial += 1
+            recep_last_resid += 1
         fout.write("TER\n")
 
         # Receptor (+dum_count)
@@ -166,30 +170,30 @@ def write_build_from_aligned(
             fout.write(_fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z) + "\n")
             serial += 1
             if use_ter_markers:
-                leg_idx = (resid + 2 - dum_count)  # legacy mapping heuristic
+                leg_idx = (resid + 2 - dum_count)
                 if leg_idx in (ter_atoms or set()):
                     fout.write("TER\n")
         fout.write("TER\n")
 
         # Ligand at lig_resid
         for name, resname, resid, chain, x, y, z in lig_block:
-            fout.write(_fmt_atom_line(serial, name, resname, chain, lig_resid, x, y, z) + "\n")
+            fout.write(_fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z) + "\n")
             serial += 1
         fout.write("TER\n")
 
         # Optional shifted ligand copy (+sdr_dist along z) for z/v/o with SDR/EXCHANGE
         # extra_ligand_shift is a list of whether to shift the ligand or not
-        for shift in extra_ligand_shift:
+        for i, shift in enumerate(extra_ligand_shift, start=1):
             shift_sdr_dist = sdr_dist if shift else 0.0
             for name, _, __, chain, x, y, z in lig_block:
-                fout.write(_fmt_atom_line(serial, name, lig, chain, lig_resid + 1, x, y, z + float(shift_sdr_dist)) + "\n")
+                fout.write(_fmt_atom_line(serial, name, lig, chain, resid + i, x, y, z + float(shift_sdr_dist)) + "\n")
                 serial += 1
             fout.write("TER\n")
 
         # Others (+dum_count plus optional ligand offset)
         last_resid = None
         for name, resname, resid, chain, x, y, z in oth_block:
-            out_resid = resid + dum_count + (offset_other_by_ligand - 1)
+            out_resid = resid + dum_count + len(extra_ligand_shift)
             if last_resid is not None and out_resid != last_resid:
                 fout.write("TER\n")
             last_resid = out_resid
@@ -205,21 +209,10 @@ def write_build_from_aligned(
             if len(ln) >= 20 and ln[17:20] == "WAT":
                 break
             fout.write(ln)
+    return recep_last_resid
 
 
 # ---------------------- create_simulation_dir: EQUIL ----------------------
-def _parse_recep_last_resid(pdb_path: Path, lig: str, other_mol: set, lipid_mol: set) -> int:
-    """Find the last receptor residue id (not water/lig/other/lipid/ion)."""
-    lines = _read_nonblank_lines(pdb_path)
-    recep_last = 0
-    for ln in lines:
-        if not _is_atom_line(ln):
-            continue
-        resn = _field(ln, 17, 21)
-        resid = int(_field(ln, 22, 26) or 0)
-        if resn not in {lig, "DUM", "WAT"} and resn not in other_mol and resn not in lipid_mol and resn not in ION_NAMES:
-            recep_last = max(recep_last, resid)
-    return recep_last
 
 def _read_protein_anchors(txt: Path) -> Tuple[str, str, str]:
     """protein_anchors.txt is expected to have 3 lines: P1, P2, P3."""
@@ -258,10 +251,8 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
     mol = ctx.residue_name
 
     # folders
-    build_dir = work / f"{comp}_build_files"
-    window_dir = work / (f"{comp}-1" if comp != "q" else "")
-    if str(window_dir) == "":
-        window_dir = work
+    build_dir = ctx.build_dir
+    window_dir = ctx.window_dir
     window_dir.mkdir(parents=True, exist_ok=True)
 
     # sources
@@ -305,7 +296,7 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
     l1_name, l2_name, l3_name = _read_ligand_anchor_names(src_anchors)
 
     # write build.pdb / build-dry.pdb
-    write_build_from_aligned(
+    recep_last = write_build_from_aligned(
         lig=mol,
         window_dir=window_dir,
         build_dir=build_dir,
@@ -315,27 +306,25 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
         ion_mol=ION_NAMES,
         extra_ligand_shift=[],
         sdr_dist=0.0,
-        offset_other_by_ligand=1,
         start_off_set=0,
         use_ter_markers=False,
     )
 
     # compute residue numbers for REMARK and anchors.json
-    recep_last = _parse_recep_last_resid(dst_equil, mol, set(ctx.sim.other_mol or []), set(ctx.sim.lipid_mol or []))
     lig_resid  = recep_last + 1
     L1 = _mask(lig_resid, l1_name)
     L2 = _mask(lig_resid, l2_name)
     L3 = _mask(lig_resid, l3_name)
 
     # prepend REMARK A to equil-<lig>.pdb
-    first_res = int(getattr(ctx.sim, "first_res", 1))
+    first_res = 1
     remark = f"REMARK A  {P1:6s}  {P2:6s}  {P3:6s}  {L1 or 'NA':6s}  {L2 or 'NA':6s}  {L3 or 'NA':6s}  {first_res:4d}  {recep_last:4d}\n"
     orig = dst_equil.read_text().splitlines(True)
     # keep original first line content after remark
     dst_equil.write_text(remark + "".join(orig[1:]))
 
     # persist anchors.json
-    anchors = Anchors(P1=P1, P2=P2, P3=P3, L1=L1 or "", L2=L2 or "", L3=L3 or "", lig_res=str(lig_resid))
+    anchors = Anchors(P1=P1, P2=P2, P3=P3, L1=L1, L2=L2, L3=L3, lig_res=str(lig_resid))
     save_anchors(ctx.working_dir, anchors)
     logger.debug("[simprep:equil] wrote build files in {}", window_dir)
 
@@ -420,7 +409,6 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         ion_mol=ION_NAMES,
         extra_ligand_shift=[True],  # SDR copy
         sdr_dist=sdr_dist,
-        offset_other_by_ligand=2,   # v/o/z legacy offset
         start_off_set=1, # equil offset
         use_ter_markers=True,
         ter_atoms=set(ter_atoms),

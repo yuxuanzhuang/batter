@@ -15,9 +15,9 @@ class PrepareEquilBuilder(BaseBuilder):
     Responsibilities
     ----------------
     Writes under <work>/<ligand>/:
-      - build_files/…        (aligned complex, anchors, reference artifacts)
-      - amber_files/…        (rendered AMBER templates with sim params)
-      - run_files/…          (run scripts/templates for the subsequent `equil` stage)
+      - q_build_files/…        (aligned complex, anchors, reference artifacts)
+      - q_amber_files/…        (rendered AMBER templates with sim params)
+      - q_run_files/…          (run scripts/templates for the subsequent `equil` stage)
       - disang.rest, cv.in   (equil restraints)
 
     Notes
@@ -52,13 +52,10 @@ class PrepareEquilBuilder(BaseBuilder):
             param_dir_dict=param_dir_dict,
         )
         self.infe = infe
+        # override property self.ctx.window_dir
+
 
         logger.debug(f"[prepare_equil] ligand={ligand}")
-
-    # don't create a subdir for equil since it's the only step here
-    @property
-    def window_dir(self) -> Path:
-        return self.ctx.working_dir
 
     # ------------------------------------------------------------------
     # Core build hooks
@@ -73,11 +70,10 @@ class PrepareEquilBuilder(BaseBuilder):
         """Render AMBER templates for the system."""
         
         work = self.ctx.working_dir
-        amber_dir = work / "amber_files"
         amber.write_amber_templates(
-            out_dir=amber_dir,
+            out_dir=self.amber_dir,
             sim=self.ctx.sim,
-            membrane=self.membrne_builder,
+            membrane=self.membrane_builder,
             production=False,
         )
         logger.debug(f"[prepare_equil] Created amber files for {self.ctx.ligand}")

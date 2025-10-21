@@ -79,7 +79,7 @@ class MABFEBuilder(SystemBuilder):
 
         marker = artifacts_dir / ".prepared"
         if marker.exists() and not args.overwrite:
-            logger.info("System already prepared at {} (overwrite=False) — keeping existing artifacts.", root)
+            logger.info("System found at {} (overwrite=False) — keeping existing artifacts.", root)
             return self._assemble_system(system, inputs_dir, artifacts_dir, args)
 
         if args.overwrite:

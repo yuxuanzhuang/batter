@@ -1,8 +1,17 @@
 import MDAnalysis as mda
 from batter.analysis.sim_validation import check_universe_ring_penetration
+import sys
+import os
 
 if __name__ == '__main__':
-    u = mda.Universe('full.prmtop', 'eqnvt.rst7', format='RESTRT')
+    args = sys.argv[1:]
+    u = mda.Universe('full.hmr.prmtop', args[0], format='RESTRT')
 
     if check_universe_ring_penetration(u):
-        raise RuntimeError('Error: Ring penetration detected in the system.')
+        # write ring penetration detected
+        with open('RING_PENETRATION', 'w') as f:
+            f.write('Ring penetration detected in the system.\n')
+    else:
+        # remove file if it exists
+        if os.path.exists('RING_PENETRATION'):
+            os.remove('RING_PENETRATION')

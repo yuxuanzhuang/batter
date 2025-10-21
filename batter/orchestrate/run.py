@@ -34,6 +34,8 @@ from batter.pipeline.step import Step, ExecResult
 from batter.runtime.portable import ArtifactStore
 from batter.runtime.fe_repo import FEResultsRepository, FERecord
 
+from batter.exec.slurm_mgr import SlurmJobManager
+
 
 # -----------------------------------------------------------------------------
 # Pipeline utilities
@@ -213,13 +215,13 @@ def _register_local_handlers(backend: LocalBackend) -> None:
 # --- phase skipping utilities -----------------------------------------------
 
 REQUIRED_MARKERS = {
-    "prepare_equil": [["equil/full.prmtop"]],
+    "prepare_equil": [["equil/full.prmtop", "artifacts/prepare_equil.ok"]],
     "equil":         [["equil/FINISHED"], ["equil/FAILED"]],
     "equil_analysis":[["equil/representative.pdb"], ["equil/UNBOUND"]],
-    "prepare_fe":    [["artifacts/prepare_fe_windows/windows_prep.ok"]],
+    "prepare_fe":    [["artifacts/windows_prep.ok"]],
     "fe_equil":      [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
     "fe":            [["fe/{comp}/{comp}{win}/FINISHED"]],
-    "analyze":       [["artifacts/analyze/analyze.ok"]],
+    "analyze":       [["artifacts/analyze.ok"]],
 }
 
 def _components_under(root: Path) -> list[str]:
@@ -336,7 +338,7 @@ def _run_phase_skipping_done(phase: Pipeline, children: list[SimSystem],
         logger.info(f"[skip] {phase_name}: all ligands already complete.")
         return children
     logger.info(f"{phase_name}: {len(todo)} ligand(s) need work "
-                f"(of {len(children)} total). Submitting now.")
+                f"(of {len(children)} total).")
     backend.run_parallel(phase, todo, description=phase_name, max_workers=max_workers)
     return children
 
@@ -407,10 +409,23 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if rc.system.type != "MABFE":
         raise ValueError(f"Unsupported system.type={rc.system.type!r}. Only 'MABFE' is implemented.")
 
+
+    def _inject_mgr(p: Pipeline) -> Pipeline:
+        patched = []
+        for s in p.ordered_steps():
+            prm = dict(s.params)
+            prm["job_mgr"] = job_mgr
+            patched.append(Step(name=s.name, requires=s.requires, params=prm))
+        return Pipeline(patched)
+
     builder = MABFEBuilder()
     sys = SimSystem(name=rc.create.system_name, root=rc.system.output_folder)
     sys = builder.build(sys, rc.create)
 
+    job_mgr = SlurmJobManager(poll_s=60*15, max_retries=3, resubmit_backoff_s=30,
+        registry_file=(Path(sys.root) / ".slurm" / "queue.jsonl")
+    )
+    
     lig_root = sys.root / "simulations"
     lig_root.mkdir(parents=True, exist_ok=True)
 
@@ -438,7 +453,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     overrides_path = sys.root / "artifacts" / "config" / "sim_overrides.json"
     sim_cfg_updated = sim_cfg
     if overrides_path.exists():
-        import json
         upd = json.loads(overrides_path.read_text()) or {}
         sim_cfg_updated = sim_cfg.model_copy(update={k: v for k, v in upd.items() if v is not None})
 
@@ -543,13 +557,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
             )
         )
 
-    # --- helpers: submit phase and wait for markers ---
-    def _run_phase_for_all(phase: Pipeline, children: list[SimSystem], phase_name: str, backend, max_workers: int | None = None):
-        if not phase.ordered_steps():
-            return
-        logger.debug(f"Phase: {phase_name} → steps={ [s.name for s in phase.ordered_steps()] }")
-        backend.run_parallel(phase, children, description=phase_name)
-
     # --------------------
     # PHASE 1: prepare_equil (parallel)
     # --------------------
@@ -558,7 +565,10 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    _run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=1)
+    phase_equil = _inject_mgr(phase_equil)
+    _run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=rc.run.max_workers)
+    job_mgr.wait_all()
+    job_mgr.clear()
 
     # --------------------
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
@@ -581,29 +591,28 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # PHASE 3: prepare_fe (parallel)
     # --------------------
     _run_phase_skipping_done(phase_prepare_fe, children, "prepare_fe", backend, max_workers=rc.run.max_workers)
-    # Optional: wait for prep sentinel
-    # children = _wait_for_markers(children, "artifacts/prepare_fe/prepare_fe.ok")
 
     # --------------------
-    # PHASE 4: fe_equil (parallel; if present)
+    # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------
-    _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend, max_workers=1)
-    # Optional: wait
-    # children = _wait_for_markers(children, "artifacts/fe_equil/fe_equil.rst7")
+    phase_fe_equil = _inject_mgr(phase_fe_equil)
+    _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend, max_workers=rc.run.max_workers)
+    job_mgr.wait_all()
+    job_mgr.clear()
 
+    
     # --------------------
-    # PHASE 5: fe (parallel)
+    # PHASE 5: fe → must COMPLETE for all ligands
     # --------------------
-    _run_phase_skipping_done(phase_fe, children, "fe", backend, max_workers=1)
-    # Optional: wait for completion of FE windows across ligands
-    # children = _wait_for_markers(children, "artifacts/fe/windows.json")
+    phase_fe = _inject_mgr(phase_fe)
+    _run_phase_skipping_done(phase_fe, children, "fe", backend, max_workers=rc.run.max_workers)
+    job_mgr.wait_all()
+    job_mgr.clear()
 
     # --------------------
     # PHASE 6: analyze (parallel)
     # --------------------
     _run_phase_skipping_done(phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers)
-    # Optional: wait
-    # children = _wait_for_markers(children, "artifacts/analyze/analyze.ok")
 
     # --------------------
     # FE record save (no re-running the pipeline)

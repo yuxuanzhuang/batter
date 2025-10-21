@@ -1,16 +1,39 @@
 from __future__ import annotations
+
 import os
 import re
 import time
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from loguru import logger
+import json
+import fcntl
+
+# ---------- atomic registry append ----------
+def _atomic_append_jsonl(path: Path, rec: dict) -> None:
+    """
+    Append one JSON record per line to `path`, safely:
+    - mkdir -p parent
+    - exclusive flock
+    - flush + fsync
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+        fcntl.flock(f, fcntl.LOCK_UN)
 
 # ---- SLURM state sets ----
-SLURM_OK_STATES = {"PENDING", "CONFIGURING", "RUNNING", "COMPLETING", "STAGE_OUT", "SUSPENDED"}
-SLURM_FINAL_BAD = {"CANCELLED", "FAILED", "TIMEOUT", "NODE_FAIL", "PREEMPTED", "OUT_OF_MEMORY"}
+SLURM_OK_STATES = {
+    "PENDING", "CONFIGURING", "RUNNING", "COMPLETING", "STAGE_OUT", "SUSPENDED"
+}
+SLURM_FINAL_BAD = {
+    "CANCELLED", "FAILED", "TIMEOUT", "NODE_FAIL", "PREEMPTED", "OUT_OF_MEMORY"
+}
 JOBID_RE = re.compile(r"Submitted batch job\s+(\d+)", re.I)
 
 # ---- Helpers ----
@@ -29,22 +52,23 @@ def _jobid_file(root: Path) -> Path:
 
 def _state_from_squeue(jobid: str) -> Optional[str]:
     try:
-        out = subprocess.check_output(["squeue", "-h", "-j", jobid, "-o", "%T"],
+        out = subprocess.check_output(
+            ["squeue", "-h", "-j", jobid, "-o", "%T"],
             text=True,
-            stderr=subprocess.DEVNULL,
-            ).strip()
+            stderr=subprocess.DEVNULL,  # hide "slurm_load_jobs error: Invalid job id specified"
+        ).strip()
         if out:
             return out.split()[0]
     except Exception:
         pass
     return None
-    
+
 def _state_from_sacct(jobid: str) -> Optional[str]:
     try:
         out = subprocess.check_output(
             ["sacct", "-j", jobid, "-X", "-n", "-o", "State"],
             text=True,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,  # hide warnings/errors
         )
         for ln in out.splitlines():
             ln = ln.strip()
@@ -59,7 +83,7 @@ def _slurm_state(jobid: Optional[str]) -> Optional[str]:
         return None
     return _state_from_squeue(jobid) or _state_from_sacct(jobid)
 
-
+# ---- Spec ----
 @dataclass
 class SlurmJobSpec:
     workdir: Path
@@ -68,6 +92,7 @@ class SlurmJobSpec:
     failed_name: str = "FAILED"
     name: Optional[str] = None
     extra_sbatch: Sequence[str] = field(default_factory=list)
+    extra_env: Dict[str, str] = field(default_factory=dict)
 
     # allow a few common variants (case, alt names)
     alt_script_names: Sequence[str] = ("SLURMM-run", "SLURMM-Run", "slurmm-run", "run.sh")
@@ -83,7 +108,9 @@ class SlurmJobSpec:
         Falls back to the preferred name even if missing (for error msgs).
         """
         preferred = self.workdir / self.script_rel
-        candidates = [preferred] + [self.workdir / n for n in self.alt_script_names if n != self.script_rel]
+        candidates = [preferred] + [
+            self.workdir / n for n in self.alt_script_names if n != self.script_rel
+        ]
         for p in candidates:
             if p.exists():
                 return p
@@ -96,22 +123,90 @@ class SlurmJobSpec:
         """
         abs_script = self.resolve_script_abs()
         try:
-            # best effort to keep it relative to workdir
             return str(abs_script.relative_to(self.workdir))
         except ValueError:
-            # fallback: just the basename
             return abs_script.name
-
 
 # ---- Manager ----
 class SlurmJobManager:
-    def __init__(self, poll_s: float = 20.0, max_retries: int = 3, resubmit_backoff_s: float = 30.0):
+    def __init__(
+        self,
+        poll_s: float = 20.0,
+        max_retries: int = 3,
+        resubmit_backoff_s: float = 30.0,
+        registry_file: Optional[Path] = None,
+    ):
         self.poll_s = float(poll_s)
         self.max_retries = int(max_retries)
         self.resubmit_backoff_s = float(resubmit_backoff_s)
 
+        # Central registry: in-memory accumulation (per-process)
+        self._inmem_specs: dict[Path, SlurmJobSpec] = {}
+        # Optional on-disk queue for cross-process accumulation
+        self._registry_file = registry_file
+        # retry accounting (by workdir)
+        self._retries: Dict[Path, int] = {}
+
+    # ---------- Registry API ----------
+    def add(self, spec: SlurmJobSpec) -> None:
+        """Add a job spec to the in-memory set and (optionally) append to the on-disk queue."""
+        self._inmem_specs[spec.workdir] = spec
+        if self._registry_file:
+            rec = {
+                "workdir": str(spec.workdir),
+                "script_rel": spec.script_rel,
+                "finished_name": spec.finished_name,
+                "failed_name": spec.failed_name,
+                "name": spec.name,
+                "extra_sbatch": list(spec.extra_sbatch or []),
+                "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
+            }
+            _atomic_append_jsonl(self._registry_file, rec)
+
+    def _load_registry_specs(self) -> dict[Path, SlurmJobSpec]:
+        """Load specs from the on-disk queue (if configured)."""
+        out: dict[Path, SlurmJobSpec] = {}
+        if not self._registry_file or not self._registry_file.exists():
+            return out
+        with open(self._registry_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                wd = Path(rec["workdir"])
+                out[wd] = SlurmJobSpec(
+                    workdir=wd,
+                    script_rel=rec.get("script_rel", "SLURMM-run"),
+                    finished_name=rec.get("finished_name", "FINISHED"),
+                    failed_name=rec.get("failed_name", "FAILED"),
+                    name=rec.get("name"),
+                    extra_sbatch=rec.get("extra_sbatch") or [],
+                    extra_env=rec.get("extra_env") or {},
+                )
+        return out
+
+    def jobs(self) -> List[SlurmJobSpec]:
+        """Return the union of in-memory and on-disk queued specs (dedup by workdir)."""
+        merged: dict[Path, SlurmJobSpec] = self._load_registry_specs()
+        merged.update(self._inmem_specs)
+        return list(merged.values())
+
+    def clear(self) -> None:
+        """Clear in-memory specs, retry bookkeeping, and remove the on-disk queue file if present."""
+        self._inmem_specs.clear()
+        self._retries.clear()
+        if self._registry_file and self._registry_file.exists():
+            try:
+                self._registry_file.unlink()
+            except Exception:
+                pass
+
+    # ---------- Core ops ----------
     def _submit(self, spec: SlurmJobSpec) -> str:
-        # Resolve the absolute path for existence/chmod checks
         script_abs = spec.resolve_script_abs()
         if not script_abs.exists():
             listing = ", ".join(sorted(p.name for p in spec.workdir.iterdir())) if spec.workdir.exists() else "(missing workdir)"
@@ -121,21 +216,30 @@ class SlurmJobManager:
                 f"contents: {listing}"
             )
 
+        # Best effort: ensure executable bit
         try:
             script_abs.chmod(script_abs.stat().st_mode | 0o111)
         except Exception:
             pass
 
-        # Build sbatch command using a path RELATIVE to workdir
+        # Build sbatch command (relative to workdir)
         cmd: List[str] = ["sbatch"]
         if spec.name:
             cmd += ["--job-name", spec.name]
         if spec.extra_sbatch:
             cmd += list(spec.extra_sbatch)
+
+        # Environment export
+        if spec.extra_env:
+            kv = [f"{k}={v}" for k, v in spec.extra_env.items()]
+            cmd += ["--export", "ALL," + ",".join(kv)]
+
         cmd.append(spec.script_arg())
 
         logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
-        out = subprocess.check_output(cmd, cwd=spec.workdir, text=True).strip()
+        out = subprocess.check_output(
+            cmd, cwd=spec.workdir, text=True, stderr=subprocess.DEVNULL
+        ).strip()
 
         m = JOBID_RE.search(out)
         if not m:
@@ -158,8 +262,9 @@ class SlurmJobManager:
         jobid = _read_text(spec.jobid_path())
         return False, _slurm_state(jobid)
 
-    # --- public high-level API ---
+    # ---------- Compatibility one-off API ----------
     def ensure_running(self, spec: SlurmJobSpec) -> None:
+        """Ensure the given spec is submitted or already active/done (does not register)."""
         done, status = self._status(spec)
         if done:
             logger.debug(f"[SLURM] {spec.workdir.name}: already {status}; not submitting")
@@ -171,15 +276,23 @@ class SlurmJobManager:
         self._submit(spec)
 
     def wait_until_done(self, specs: Iterable[SlurmJobSpec]) -> None:
-        """
-        For a set of specs:
-        - submit if needed
-        - watch until FINISHED/FAILED
-        - if job vanishes and no sentinel: resubmit (bounded)
-        """
-        specs = list(specs)
-        retries = {s.workdir: 0 for s in specs}
+        """Submit if needed and watch the given set until done/fail (legacy interface)."""
+        self._wait_loop(list(specs))
 
+    # ---------- Global wait ----------
+    def wait_all(self) -> None:
+        """Submit/monitor all registered (in-memory + on-disk) jobs together and block until completion."""
+        specs_map = self._load_registry_specs()
+        specs_map.update(self._inmem_specs)
+        if not specs_map:
+            logger.info("[SLURM] wait_all: nothing to monitor.")
+            return
+        self._wait_loop(list(specs_map.values()))
+        # clear registry for next phase
+        self.clear()
+
+    # ---------- Shared wait logic ----------
+    def _wait_loop(self, specs: List[SlurmJobSpec]) -> None:
         # optional progress bar (tqdm)
         try:
             from tqdm import tqdm  # type: ignore
@@ -188,13 +301,7 @@ class SlurmJobManager:
             tqdm = None  # type: ignore
             use_tqdm = False
 
-        total = len(specs)
-        completed: set[Path] = set()
-        last_log = 0.0
-
-        pbar = tqdm(total=total, desc="SLURM jobs", leave=True, dynamic_ncols=True) if use_tqdm else None
-
-        # initial submissions
+        # Initial submissions for provided specs only (do not re-submit already active jobs)
         for s in specs:
             try:
                 self.ensure_running(s)
@@ -202,6 +309,13 @@ class SlurmJobManager:
                 logger.error(f"[SLURM] submit failed for {s.workdir}: {e}")
 
         pending = {s.workdir: s for s in specs}
+        retries = {s.workdir: self._retries.get(s.workdir, 0) for s in specs}
+
+        total = len(specs)
+        completed: set[Path] = set()
+        last_log = 0.0
+        pbar = tqdm(total=total, desc="SLURM jobs", leave=True, dynamic_ncols=True) if use_tqdm else None
+
         while pending:
             done_now: List[Path] = []
 
@@ -221,7 +335,7 @@ class SlurmJobManager:
                 jobid = _read_text(s.jobid_path())
                 state = _slurm_state(jobid)
 
-                # handle final bad states immediately
+                # handle terminal bad states immediately
                 if state in SLURM_FINAL_BAD:
                     logger.error(f"[SLURM] {wd.name}: terminal state={state}; marking FAILED")
                     s.failed_path().touch()
@@ -236,18 +350,25 @@ class SlurmJobManager:
                 # job missing or ended without sentinel → resubmit
                 r = retries[wd]
                 if r >= self.max_retries:
-                    logger.error(f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} (state={state or 'MISSING'}); marking FAILED")
+                    logger.error(
+                        f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} "
+                        f"(state={state or 'MISSING'}); marking FAILED"
+                    )
                     s.failed_path().touch()
                     failed_cnt += 1
                     done_now.append(wd)
                     continue
 
                 resub_cnt += 1
-                logger.warning(f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} state={state or 'MISSING'}; resubmitting ({r+1}/{self.max_retries})")
+                logger.warning(
+                    f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} "
+                    f"state={state or 'MISSING'}; resubmitting ({r+1}/{self.max_retries})"
+                )
                 time.sleep(self.resubmit_backoff_s)
                 try:
                     self._submit(s)
                     retries[wd] = r + 1
+                    self._retries[wd] = retries[wd]  # keep central book
                 except Exception as e:
                     logger.error(f"[SLURM] {wd.name}: resubmit failed: {e}")
 
@@ -271,8 +392,10 @@ class SlurmJobManager:
                 # fallback: log a compact status every ~30s
                 now = time.time()
                 if now - last_log > 30 or not pending:
-                    logger.info(f"[SLURM] progress {len(completed)}/{total} "
-                                f"(active={running_cnt}, resub={resub_cnt}, failed={failed_cnt}, pending={len(pending)})")
+                    logger.info(
+                        f"[SLURM] progress {len(completed)}/{total} "
+                        f"(active={running_cnt}, resub={resub_cnt}, failed={failed_cnt}, pending={len(pending)})"
+                    )
                     last_log = now
 
             if pending:
@@ -280,3 +403,4 @@ class SlurmJobManager:
 
         if pbar:
             pbar.close()
+        logger.info("[SLURM] All jobs complete.")

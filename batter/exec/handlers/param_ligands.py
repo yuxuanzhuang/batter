@@ -57,7 +57,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     outdir.mkdir(parents=True, exist_ok=True)
     logger.info(f"[param_ligands] {len(lig_map)} ligands")
     logger.info(
-        f"[param_ligands] parameterizing → {outdir} "
+        f"[param_ligands] parameterizing"
         f"(charge={charge}, ff={ligand_ff}, retain={retain})"
     )
 
@@ -155,8 +155,8 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         for alias, lh in linked:
             mf.write(f"{alias}\t{lh}\n")
 
-    logger.info(f"[param_ligands] Linked params for staged ligands: {linked}")
-    logger.info(f"[param_ligands] Wrote index → {artifacts_index_dir / 'index.json'}")
+    logger.debug(f"[param_ligands] Linked params for staged ligands: {linked}")
+    logger.debug(f"[param_ligands] Wrote index → {artifacts_index_dir / 'index.json'}")
 
     # Return rich metadata so downstream steps can consume without re-reading disk, if desired
     return ExecResult(

@@ -45,6 +45,8 @@ class BuildContext:
           - win == -1 → <comp>-1  (FE equil/scaffold)
           - win >= 0  → <comp><win> (lambda window directories: z0, z1, ...)
         """
+        if self.comp == "q":
+            return self.working_dir # equilibration has no subdir
         name = f"{self.comp}{self.win:02d}" if self.win >= 0 else f"{self.comp}-1"
         return self.working_dir / name
 

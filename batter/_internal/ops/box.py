@@ -37,10 +37,7 @@ def create_box(ctx: BuildContext) -> None:
     sim = ctx.sim
     comp = ctx.comp
     build_dir = ctx.build_dir
-    if comp == 'q':
-        window_dir = work
-    else:
-        window_dir = ctx.window_dir
+    window_dir = ctx.window_dir
     amber_dir = ctx.amber_dir
     window_dir.mkdir(parents=True, exist_ok=True)
 

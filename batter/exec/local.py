@@ -6,13 +6,12 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from loguru import logger
-# switched to joblib for process-based parallelism
 from joblib import Parallel, delayed
 
 from batter.pipeline.step import Step, ExecResult
 from batter.pipeline.pipeline import Pipeline
 from batter.systems.core import SimSystem
-from batter.exec.base import ExecBackend  # whatever your base class path is
+from batter.exec.base import ExecBackend
 
 Handler = Callable[[Step, SimSystem, Mapping], ExecResult]
 
@@ -58,9 +57,9 @@ class LocalBackend(ExecBackend):
     def run(self, step: Step, system: SimSystem, params: Mapping) -> ExecResult:
         h = self._handlers.get(step.name)
         if h is None:
-            logger.info("LOCAL: no handler for step {!r}; treating as no-op.", step.name)
+            logger.debug("LOCAL: no handler for step {!r}; treating as no-op.", step.name)
             return ExecResult(job_ids=[], artifacts={})
-        logger.info("LOCAL: executing step {!r}", step.name)
+        logger.debug("LOCAL: executing step {!r}", step.name)
         return h(step, system, params)
 
     # ---------- parallel pipeline runner (process-based via joblib) ----------
@@ -91,7 +90,7 @@ class LocalBackend(ExecBackend):
         # resolve worker count
         mw = max_workers if max_workers is not None else self._max_workers
         if mw in (0, 1):
-            logger.info(
+            logger.debug(
                 "LOCAL(parallel): running serially for {} system(s) (max_workers={}) — {}",
                 len(systems), mw, description,
             )
@@ -102,7 +101,7 @@ class LocalBackend(ExecBackend):
                     out[sys.name] = pipeline.run(self, sys)
                 except BaseException as e:
                     errors[sys.name] = e
-                    logger.error("LOCAL(parallel-serial): {} failed: {}: {}", sys.name, type(e).__name__, e)
+                    raise RuntimeError(f"LOCAL(parallel-serial): {sys.name} failed") from e
             if errors:
                 logger.warning(
                     "LOCAL(parallel-serial): {} system(s) failed: {}",
@@ -115,7 +114,7 @@ class LocalBackend(ExecBackend):
             cpu = os.cpu_count() or 1
             mw = min(len(systems), cpu)
 
-        logger.info(
+        logger.debug(
             "LOCAL(parallel): joblib(loky) with n_jobs={} for {} system(s) — {}",
             mw, len(systems), description,
         )
@@ -139,13 +138,10 @@ class LocalBackend(ExecBackend):
         for name, res, err in results:
             if err is None and res is not None:
                 out[name] = res
-                logger.info("LOCAL(parallel): finished {}", name)
+                logger.debug("LOCAL(parallel): finished {}", name)
             else:
                 errors[name] = err or RuntimeError("Unknown error")
-                logger.error(
-                    "LOCAL(parallel): {} failed: {}: {}",
-                    name, type(errors[name]).__name__, errors[name],
-                )
+                raise RuntimeError(f"LOCAL(parallel): {name} failed") from errors[name]
 
         if errors:
             logger.warning(
