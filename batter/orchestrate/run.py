@@ -36,6 +36,9 @@ from batter.runtime.fe_repo import FEResultsRepository, FERecord
 
 from batter.exec.slurm_mgr import SlurmJobManager
 
+from batter.utils import COMPONENTS_LAMBDA_DICT
+
+FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 
 # -----------------------------------------------------------------------------
 # Pipeline utilities
@@ -186,18 +189,7 @@ def _register_local_handlers(backend: LocalBackend) -> None:
     from batter.exec.handlers.prepare_fe import prepare_fe_windows_handler as _prepare_fe_windows
     from batter.exec.handlers.fe import fe_equil_handler as _fe_equil
     from batter.exec.handlers.fe import fe_handler as _fe
-
-
-    def _touch_artifact(system: SimSystem, subdir: str, fname: str, content: str = "ok\n") -> Path:
-        d = system.root / "artifacts" / subdir
-        d.mkdir(parents=True, exist_ok=True)
-        p = d / fname
-        p.write_text(content)
-        return p
-
-    def _analyze(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-        ok = _touch_artifact(system, "analyze", "analyze.ok")
-        return ExecResult([], {"analysis": ok})
+    from batter.exec.handlers.fe_analysis import analyze_handler as _analyze
 
     backend.register("system_prep", _system_prep)
     backend.register("param_ligands", _param_ligands)
@@ -215,13 +207,13 @@ def _register_local_handlers(backend: LocalBackend) -> None:
 # --- phase skipping utilities -----------------------------------------------
 
 REQUIRED_MARKERS = {
-    "prepare_equil": [["equil/full.prmtop", "artifacts/prepare_equil.ok"]],
+    "prepare_equil": [["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"]],
     "equil":         [["equil/FINISHED"], ["equil/FAILED"]],
     "equil_analysis":[["equil/representative.pdb"], ["equil/UNBOUND"]],
-    "prepare_fe":    [["artifacts/windows_prep.ok"]],
+    "prepare_fe":    [["fe/artifacts/prepare_fe.ok", "fe/artifacts/prepare_fe_windows.ok"]],
     "fe_equil":      [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
-    "fe":            [["fe/{comp}/{comp}{win}/FINISHED"]],
-    "analyze":       [["artifacts/analyze.ok"]],
+    "fe":            [["fe/{comp}/{comp}{win:02d}/FINISHED"]],
+    "analyze":       [["fe/artifacts/analyze.ok"]],
 }
 
 def _components_under(root: Path) -> list[str]:
@@ -229,7 +221,7 @@ def _components_under(root: Path) -> list[str]:
     fe_root = root / "fe"
     if not fe_root.exists():
         return []
-    return sorted([p.name for p in fe_root.iterdir() if p.is_dir()])
+    return sorted([p.name for p in fe_root.iterdir() if p.is_dir() and p.name in FEP_COMPONENTS])
 
 def _production_windows_under(root: Path, comp: str) -> list[int]:
     """
@@ -300,10 +292,11 @@ def _is_done(system: SimSystem, phase_name: str) -> bool:
                 expanded_groups.append([p.format(comp=comp, win="") for p in group])
             if not _dnf_satisfied(root, expanded_groups):
                 return False
+        
         return True
 
     if phase_name == "fe":
-        # Every component AND every production window must satisfy: fe/{comp}/{comp}{win}/FINISHED
+        # Every component AND every production window must satisfy: fe/{comp}/{comp}{win:02d}/FINISHED
         for comp in comps:
             wins = _production_windows_under(root, comp)
             if not wins:
@@ -337,7 +330,7 @@ def _run_phase_skipping_done(phase: Pipeline, children: list[SimSystem],
     if not todo:
         logger.info(f"[skip] {phase_name}: all ligands already complete.")
         return children
-    logger.info(f"{phase_name}: {len(todo)} ligand(s) need work "
+    logger.info(f"{phase_name}: {len(todo)} ligand(s) not finished → running phase..."
                 f"(of {len(children)} total).")
     backend.run_parallel(phase, todo, description=phase_name, max_workers=max_workers)
     return children
@@ -397,6 +390,8 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     sim_cfg = rc.resolved_sim_config()
     logger.info(f"Loaded simulation config for system: {sim_cfg.system_name}")
+    # add debug logging to the output
+    logger.add(rc.system.output_folder / "batter.log", level="DEBUG")
 
     # Backend
     if rc.backend == "slurm":

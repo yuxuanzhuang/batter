@@ -29,6 +29,7 @@ class BuildContext:
     residue_name: str
     param_dir_dict: Mapping[str, str]
     working_dir: Path
+    # The root of the overall system (e.g., work/<system>)
     system_root: Path
     comp: str
     win: int
@@ -59,6 +60,11 @@ class BuildContext:
     def amber_dir(self) -> Path:
         """Return the directory where AMBER files (topology, coords, inputs) are stored."""
         return self.working_dir / f"{self.comp}_amber_files"
+    
+    @property
+    def run_dir(self) -> Path:
+        """Return the directory where run files (job scripts, logs, etc.) are stored."""
+        return self.working_dir / f"{self.comp}_run_files"
         
     @property
     def is_equilibration(self) -> bool:

@@ -69,9 +69,9 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     # Stage directories
     work = ctx.working_dir
-    build_dir = work / "q_build_files"
-    run_dir = work / "run_files"
-    amber_dir = work / "amber_files"
+    build_dir = ctx.build_dir
+    run_dir = ctx.run_dir
+    amber_dir = ctx.amber_dir
     os.makedirs(build_dir, exist_ok=True)
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(amber_dir, exist_ok=True)

@@ -285,7 +285,7 @@ class SlurmJobManager:
         specs_map = self._load_registry_specs()
         specs_map.update(self._inmem_specs)
         if not specs_map:
-            logger.info("[SLURM] wait_all: nothing to monitor.")
+            logger.debug("[SLURM] wait_all: nothing to monitor.")
             return
         self._wait_loop(list(specs_map.values()))
         # clear registry for next phase

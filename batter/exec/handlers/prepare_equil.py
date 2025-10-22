@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
-
+import os
 from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
@@ -64,7 +64,8 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     if not ok:
         raise RuntimeError(f"[prepare_equil] anchor detection failed for ligand={ligand}")
 
-    prepare_finished = system_root / "artifacts" /  "prepare_equil.ok"
+    os.makedirs(system_root / "equil" / "artifacts", exist_ok=True)
+    prepare_finished = system_root / "equil" / "artifacts" /  "prepare_equil.ok"
     open(prepare_finished, "w").close()
 
     logger.debug(f"[prepare_equil] finished for ligand={ligand}")

@@ -97,7 +97,7 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
         artifacts[f"{comp}_workdir"] = str(workdir)
 
     # emit the common OK marker used by the orchestrator
-    marker = system_root / "artifacts" / "prepare_fe" / "prepare_fe.ok"
+    marker = child_root / "fe" / "artifacts" / "prepare_fe.ok"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("ok\n")
 
@@ -130,6 +130,7 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
 
     child_root = system.root
     system_root = _system_root_for(child_root)
+
     param_dir_dict = _load_param_dir_dict(system_root)
 
     comp_windows: dict = params["sim"]["component_lambdas"]
@@ -161,9 +162,12 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}
 
     # write a canonical windows.json under artifacts/fe/
-    windows_json = system_root / "artifacts" / "fe" / "windows.json"
+    windows_json = child_root / "fe" / "artifacts" / "windows.json"
     windows_json.parent.mkdir(parents=True, exist_ok=True)
     windows_json.write_text(json.dumps(windows_summary, indent=2) + "\n")
+
+    prepare_finished = child_root / "fe" / "artifacts" /  "prepare_fe_windows.ok"
+    open(prepare_finished, "w").close()
 
     logger.debug(f"[prepare_fe_windows] finished ligand={ligand} → {windows_json}")
     return ExecResult(job_ids=[], artifacts={"windows_json": windows_json})

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timezone
+
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -76,7 +78,7 @@ class FERecord(BaseModel):
     total_dG: float
     total_se: float = 0.0
     components: List[str] = Field(default_factory=list)
-    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     windows: List[WindowResult] = Field(default_factory=list)
 
 

@@ -57,7 +57,6 @@ def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparat
             "fe",
             requires=["fe_equil"],
             sim=sim.model_dump(),
-            components=list(getattr(sim, "components", [])),
         )
     )
     steps.append(_step("analyze", requires=["fe"], mode="abfe", sim=sim.model_dump()))

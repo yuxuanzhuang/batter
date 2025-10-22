@@ -344,7 +344,7 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     # paths
     sys_root = ctx.system_root
     build_dir = ctx.working_dir / f"{comp}_build_files"
-    amber_dir = ctx.working_dir / "amber_files"
+    amber_dir = ctx.amber_dir
     dest_dir  = ctx.working_dir / f"{comp}-1"   # z-1 is fe_equil folder
     ff_dir    = sys_root / "simulations" / ligand / "params"
 
