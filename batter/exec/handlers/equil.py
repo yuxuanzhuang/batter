@@ -8,8 +8,6 @@ from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobManager, SlurmJobSpec
 
-
-
 def _phase_paths(root: Path) -> dict[str, Path]:
     p = root / "equil"
     return {

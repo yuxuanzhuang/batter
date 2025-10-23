@@ -72,7 +72,7 @@ class LocalBackend(ExecBackend):
         description: str = "",
         # joblib-specific knobs
         batch_size: str | int = "auto",
-        verbose: int = 10,  # joblib progress logging
+        verbose: int = 0,
         prefer: str = "processes",  # enforce processes
         backend: Optional[str] = None,  # keep None to let joblib choose 'loky' for processes
     ) -> Dict[str, Mapping[str, ExecResult]]:

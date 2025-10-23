@@ -11,13 +11,7 @@ from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 
 from batter.analysis.analysis_v2 import analyze_lig_task
-
-
-def _components_under(fe_root: Path) -> List[str]:
-    """List components by directories under <ligand>/fe/."""
-    if not fe_root.exists():
-        return []
-    return sorted([p.name for p in fe_root.iterdir() if p.is_dir()])
+from batter.utils import components_under
 
 
 def _production_window_indices(fe_root: Path, comp: str) -> List[int]:
@@ -73,7 +67,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
 
     sim = params.get("sim", {}) or {}
     # Pull analysis settings, with safe defaults
-    components: List[str] = list(sim.get("components") or _components_under(system.root / "fe"))
+    components: List[str] = list(sim.get("components") or components_under(system.root / "fe"))
     temperature: float = float(sim.get("temperature", 300.0))
     water_model: str = str(sim.get("water_model", "tip3p")).lower()
     rocklin_correction = bool(sim.get("rocklin_correction", False))

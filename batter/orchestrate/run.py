@@ -36,9 +36,7 @@ from batter.runtime.fe_repo import FEResultsRepository, FERecord
 
 from batter.exec.slurm_mgr import SlurmJobManager
 
-from batter.utils import COMPONENTS_LAMBDA_DICT
-
-FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
+from batter.utils import components_under
 
 # -----------------------------------------------------------------------------
 # Pipeline utilities
@@ -218,12 +216,6 @@ REQUIRED_MARKERS = {
     "analyze":       [["fe/artifacts/analyze.ok"]],
 }
 
-def _components_under(root: Path) -> list[str]:
-    """fe/<comp>/ must be a directory; component name = folder name."""
-    fe_root = root / "fe"
-    if not fe_root.exists():
-        return []
-    return sorted([p.name for p in fe_root.iterdir() if p.is_dir() and p.name in FEP_COMPONENTS])
 
 def _production_windows_under(root: Path, comp: str) -> list[int]:
     """
@@ -283,7 +275,7 @@ def _is_done(system: SimSystem, phase_name: str) -> bool:
         return _dnf_satisfied(root, spec)
 
     # Expand placeholders and require ALL components (and ALL windows for 'fe')
-    comps = _components_under(root)
+    comps = components_under(root)
     if not comps:
         return False
 
@@ -328,15 +320,15 @@ def _run_phase_skipping_done(phase: Pipeline, children: list[SimSystem],
                              phase_name: str, backend,
                              max_workers: int | None = None
                              ) -> list[SimSystem]:
-    """Run a phase only for ligands that still need it. Returns the original children list."""
+    """Run a phase only for ligands that still need it. Returns True if all were already done."""
     todo = _filter_needing_phase(children, phase_name)
     if not todo:
         logger.info(f"[skip] {phase_name}: all ligands already complete.")
-        return children
+        return True
     logger.info(f"{phase_name}: {len(todo)} ligand(s) not finished → running phase..."
                 f"(of {len(children)} total).")
     backend.run_parallel(phase, todo, description=phase_name, max_workers=max_workers)
-    return children
+    return False
 
 # -----------------------------------------------------------------------------
 # Main entry
@@ -590,11 +582,12 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
     phase_equil = _inject_mgr(phase_equil)
-    _run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=rc.run.max_workers)
-    job_mgr.wait_all()
-    if dry_run and job_mgr.triggered:
-        logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
-        raise SystemExit(0)
+    finished = _run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=rc.run.max_workers)
+    if not finished:
+        job_mgr.wait_all()
+        if dry_run and job_mgr.triggered:
+            logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+            raise SystemExit(0)
 
     # --------------------
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
@@ -622,22 +615,24 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------
     phase_fe_equil = _inject_mgr(phase_fe_equil)
-    _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend, max_workers=rc.run.max_workers)
-    job_mgr.wait_all()
-    if dry_run and job_mgr.triggered:
-        logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
-        raise SystemExit(0)
+    finished = _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend, max_workers=rc.run.max_workers)
+    if not finished:
+        job_mgr.wait_all()
+        if dry_run and job_mgr.triggered:
+            logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+            raise SystemExit(0)
 
     
     # --------------------
     # PHASE 5: fe → must COMPLETE for all ligands
     # --------------------
     phase_fe = _inject_mgr(phase_fe)
-    _run_phase_skipping_done(phase_fe, children, "fe", backend, max_workers=rc.run.max_workers)
-    job_mgr.wait_all()
-    if dry_run and job_mgr.triggered:
-        logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
-        raise SystemExit(0)
+    finished = _run_phase_skipping_done(phase_fe, children, "fe", backend, max_workers=rc.run.max_workers)
+    if not finished:
+        job_mgr.wait_all()
+        if dry_run and job_mgr.triggered:
+            logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+            raise SystemExit(0)
 
     # --------------------
     # PHASE 6: analyze (parallel)

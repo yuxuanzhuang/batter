@@ -34,6 +34,7 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     if extra_conformation_restraints is not None and extra_restraints is not None:
         raise ValueError("Cannot specify both extra_restraints and extra_conformation_restraints")
     
+    infe = False
     if extra_restraints is not None:
         infe = False
         sim.barostat = '1'

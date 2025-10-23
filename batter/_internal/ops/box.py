@@ -34,9 +34,9 @@ def create_box(ctx: BuildContext) -> None:
     Create the solvated box for the given component and window.
     """
     work = ctx.working_dir
-    param_dir = work.parent.parent / "params"
-    sim = ctx.sim
     comp = ctx.comp
+    param_dir = work.parent.parent / "params" if comp != 'q' else work.parent / "params"
+    sim = ctx.sim
     build_dir = ctx.build_dir
     window_dir = ctx.window_dir
     amber_dir = ctx.amber_dir

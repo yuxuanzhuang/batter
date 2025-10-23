@@ -12,6 +12,7 @@ from loguru import logger
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobSpec  # job manager is passed via params["job_mgr"]
+from batter.utils import components_under
 
 # ---------------- utilities ----------------
 
@@ -41,19 +42,12 @@ def _ensure_job_quota(max_active: int, user: Optional[str] = None, poll_s: int =
         n = _active_job_count(user)
         if n < max_active:
             if n > 0:
-                logger.info(f"[SLURM] Active jobs={n} < cap={max_active} — proceeding with submissions.")
+                logger.debug(f"[SLURM] Active jobs={n} < cap={max_active} — proceeding with submissions.")
             break
         logger.warning(f"[SLURM] Active jobs={n} ≥ cap={max_active}; sleeping {poll_s}s before submitting…")
         time.sleep(poll_s)
 
 # ---------------- discovery helpers ----------------
-
-def _components_under(root: Path) -> List[str]:
-    """Return component folder names under <ligand>/fe/ ."""
-    fe_root = root / "fe"
-    if not fe_root.exists():
-        return []
-    return [p.name for p in sorted(fe_root.iterdir()) if p.is_dir()]
 
 def _equil_window_dir(root: Path, comp: str) -> Path:
     # <ligand>/fe/<comp>/<comp>-1
@@ -117,7 +111,7 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
     if job_mgr is None:
         raise ValueError("[fe_equil] params must include a global 'job_mgr' (SlurmJobManager).")
 
-    comps = _components_under(system.root)
+    comps = components_under(system.root)
     if not comps:
         raise FileNotFoundError(f"[fe_equil:{lig}] No components found under {system.root/'fe'}")
 
@@ -176,7 +170,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     if job_mgr is None:
         raise ValueError("[fe] params must include a global 'job_mgr' (SlurmJobManager).")
 
-    comps = _components_under(system.root)
+    comps = components_under(system.root)
     if not comps:
         raise FileNotFoundError(f"[fe:{lig}] No components found under {system.root/'fe'}")
 

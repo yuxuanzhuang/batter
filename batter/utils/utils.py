@@ -3,6 +3,8 @@ import subprocess as sp
 import os
 import pickle
 from functools import wraps
+from pathlib import Path
+
 import shlex
 import signal
 
@@ -53,6 +55,8 @@ COMPONENTS_LAMBDA_DICT = {
     'm': 'attach_rest',
     'n': 'attach_rest',
 }
+
+FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 
 COMPONENTS_FOLDER_DICT = {
     'v': 'sdr',
@@ -281,3 +285,10 @@ def natural_keys(text):
     http://nedbatchelder.com/blog/200712/human_sorting.html
     """
     return [atoi(c) for c in re.split(r"(\d+)", text)]
+
+def components_under(root: Path) -> list[str]:
+    """fe/<comp>/ must be a directory; component name = folder name."""
+    fe_root = root / "fe"
+    if not fe_root.exists():
+        return []
+    return sorted([p.name for p in fe_root.iterdir() if p.is_dir() and p.name in FEP_COMPONENTS])
