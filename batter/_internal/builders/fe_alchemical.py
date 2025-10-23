@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from batter._internal.builders.base import BaseBuilder
 from .fe_registry import BUILD_COMPLEX_REGISTRY, CREATE_SIMULATION_REGISTRY, RESTRAINT_REGISTRY, SIM_FILES_REGISTRY
-from batter._internal.ops import fe_ops, restraints, runfiles, box, amber
+from batter._internal.ops import restraints, runfiles, box, amber
 
 
 from batter.utils import (

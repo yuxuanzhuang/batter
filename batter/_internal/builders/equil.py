@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from loguru import logger
+from typing import Any, Dict, Optional
 
 from batter.config.simulation import SimulationConfig
 from batter._internal.builders.base import BaseBuilder
-from batter._internal.ops import equil_ops, restraints, runfiles, box, amber, simprep
+from batter._internal.ops import build_complex, restraints, runfiles, box, amber, simprep, sim_files
 
 
 class PrepareEquilBuilder(BaseBuilder):
@@ -39,6 +40,7 @@ class PrepareEquilBuilder(BaseBuilder):
         system_root: Path | str,
         *,
         infe: bool = False,
+        extra: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(
             ligand=ligand,
@@ -50,11 +52,9 @@ class PrepareEquilBuilder(BaseBuilder):
             win=-1,
             residue_name=residue_name,
             param_dir_dict=param_dir_dict,
+            extra=extra,
         )
         self.infe = infe
-        # override property self.ctx.window_dir
-
-
         logger.debug(f"[prepare_equil] ligand={ligand}")
 
     # ------------------------------------------------------------------
@@ -64,7 +64,7 @@ class PrepareEquilBuilder(BaseBuilder):
     def _build_complex(self) -> bool:
         """Align receptor–ligand complex and detect anchors."""
         logger.debug(f"[prepare_equil] Building complex for {self.ctx.ligand}")
-        return equil_ops.build_complex(self.ctx, infe=self.infe)
+        return build_complex.build_complex(self.ctx, infe=self.infe)
 
     def _create_amber_files(self) -> None:
         """Render AMBER templates for the system."""
@@ -95,7 +95,7 @@ class PrepareEquilBuilder(BaseBuilder):
 
     def _sim_files(self) -> None:
         """Write equilibration input decks: mini.in, eqnvt.in, eqnpt*.in, etc."""
-        equil_ops.write_sim_files(self.ctx, infe=self.infe)
+        sim_files.write_sim_files(self.ctx, infe=self.infe)
         logger.debug(f"[prepare_equil] Wrote sim files for {self.ctx.ligand}")
 
     def _run_files(self) -> None:

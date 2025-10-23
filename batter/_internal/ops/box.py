@@ -34,7 +34,7 @@ def create_box(ctx: BuildContext) -> None:
     Create the solvated box for the given component and window.
     """
     work = ctx.working_dir
-    param_dir = work.parent / "params"
+    param_dir = work.parent.parent / "params"
     sim = ctx.sim
     comp = ctx.comp
     build_dir = ctx.build_dir
@@ -46,6 +46,7 @@ def create_box(ctx: BuildContext) -> None:
     lipid_mol = sim.lipid_mol
     other_mol = sim.other_mol
 
+    ligand = ctx.ligand
     mol = ctx.residue_name
 
     if comp == "x":
@@ -81,6 +82,9 @@ def create_box(ctx: BuildContext) -> None:
     for ext in ("prmtop", "mol2", "sdf", "inpcrd"):
         src = param_dir / f"{ctx.residue_name}.{ext}"
         shutil.copy2(src, window_dir / f"vac_ligand.{ext}")
+    
+    shutil.copy2(build_dir / f"{ligand}.pdb", window_dir / f"{ligand}.pdb")
+
     
     # molr
     if comp == "x":
@@ -125,8 +129,8 @@ def create_box(ctx: BuildContext) -> None:
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
 
         if comp == "x":
-            f.write(f"loadamberparams {molr.lower()}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr.lower()}.mol2\n\n")
+            f.write(f"loadamberparams {molr}.frcmod\n")
+            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
         if water_model != "TIP3PF":
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
@@ -304,8 +308,8 @@ def create_box(ctx: BuildContext) -> None:
         f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
         if comp == "x":
-            f.write(f"loadamberparams {molr.lower()}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr.lower()}.mol2\n\n")
+            f.write(f"loadamberparams {molr}.frcmod\n")
+            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
         f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
         f.write(f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
         f.write("savepdb ligands solvate_ligands.pdb\n")

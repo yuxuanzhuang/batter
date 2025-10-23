@@ -26,7 +26,7 @@ class BaseBuilder(ABC):
         _pre_sim_files(), _sim_files(), _run_files()
     """
 
-    stage: Optional[str] = None  # for logging
+    stage: Optional[str] = None
 
     def __init__(
         self,

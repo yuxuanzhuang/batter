@@ -28,8 +28,20 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     residue_name = system.meta["residue_name"]
     working_dir: Path = system.root / "equil"
     comp_windows: dict = params.get("component_windows", {})
-    infe: bool = bool(params.get("infe", False))
-
+    extra_restraints: Optional[dict] = params.get("extra_restraints", None)
+    extra_restraints_fc: float = float(params.get("extra_restraints_fc", 10.0))
+    extra_conformation_restraints: Optional[dict] = params.get("extra_conformation_restraints", None)
+    if extra_conformation_restraints is not None and extra_restraints is not None:
+        raise ValueError("Cannot specify both extra_restraints and extra_conformation_restraints")
+    
+    if extra_restraints is not None:
+        infe = False
+        sim.barostat = '1'
+    if extra_conformation_restraints is not None:
+        infe = True
+        # cannot do NFE with barostat 1 (Berendsen)
+        sim.barostat = '2'
+    
     system_root = system.root
 
     # 3) Read parameter index (produced by param_ligands)
@@ -50,6 +62,11 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
         system_root=system_root.parents[1],
         residue_name=residue_name,
         param_dir_dict=param_dir_dict,
+        extra={
+            "extra_restraints": extra_restraints,
+            "extra_restraints_fc": extra_restraints_fc,
+            "extra_conformation_restraints": extra_conformation_restraints,
+        }
     )
     ok = builder.build()
     if not ok:

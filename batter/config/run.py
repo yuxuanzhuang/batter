@@ -91,8 +91,15 @@ class CreateArgs(BaseModel):
     anchor_atoms: list[str] = Field(default_factory=list)
     lipid_mol: list[str] = Field(default_factory=list)
     other_mol: list[str] = Field(default_factory=list)
-    extra_restraints: Optional[str] = None
     overwrite: bool = True
+
+    # Extra restraints
+    # position restraints on selected string
+    extra_restraints: Optional[str] = None
+    extra_restraint_fc: str = 10.0
+
+    # additional conformational restraints file (NFE)
+    extra_conformational_restraints: Optional[Path] = None
 
     # Box / chemistry basics that are used before FE
     receptor_ff: str = "ff14SB"

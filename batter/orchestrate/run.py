@@ -401,6 +401,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         "ligand_ff": rc.create.ligand_ff,
         "retain_lig_prot": bool(rc.create.retain_lig_prot),
         "yaml_dir": str(yaml_dir),
+        "extra_restraints": rc.create.extra_restraints or "",
+        "extra_restraint_fc": rc.create.extra_restraint_fc,
+        "extra_conformational_restraints": rc.create.extra_conformational_restraints or "",
     }
 
 

@@ -11,20 +11,6 @@ from batter.config.simulation import SimulationConfig
 from batter._internal.templates import AMBER_FILES_DIR as amber_files_orig  # type: ignore
 
 
-def _normalize_barostat(barostat: str | int | None) -> str:
-    """
-    Historically, '2' (Monte Carlo) was downshifted to '1' (Berendsen) with a warning.
-    Keep that behavior for compatibility.
-    """
-    if barostat is None:
-        return "1"
-    b = str(barostat).strip()
-    if b == "2":
-        logger.warning("WARNING: Switch to Berendsen barostat (requested '2').")
-        return "1"
-    return b
-
-
 def _resolve_ligand_ff(sim: SimulationConfig) -> str:
     """
     If user picked an OpenFF for the ligand, the legacy AMBER decks expect GAFF2 for build.
@@ -73,9 +59,10 @@ def write_amber_templates(
     ntwx = getattr(sim, "ntwx", 5000)
     cut = getattr(sim, "cut", 9.0)
     gamma_ln = getattr(sim, "gamma_ln", 2.0)
-    barostat = _normalize_barostat(getattr(sim, "barostat", "1"))
+    barostat = getattr(sim, "barostat", "1")
 
     receptor_ff = getattr(sim, "receptor_ff", "protein.ff14SB")
+    # only used for building the system
     ligand_ff = _resolve_ligand_ff(sim)
     lipid_ff = getattr(sim, "lipid_ff", "lipid21")
 
@@ -87,7 +74,6 @@ def write_amber_templates(
         p_coupling = "1"  # isotropic/anisotropic off for water only
         c_surften = "0"
 
-    # In production windows (win != -1) you historically forced ntp=0 → p_coupling off.
     if production:
         p_coupling = "0"
 

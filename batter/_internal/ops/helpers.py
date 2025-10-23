@@ -202,3 +202,27 @@ def num_to_mask(pdb_file: str | Path) -> list[str]:
             resid = line[22:26].strip()
             atm_num.append(f":{resid}@{atom_name}")
     return atm_num
+
+
+def format_ranges(numbers):
+    """
+    Convert a list of numbers into a string of ranges.
+    For example, [1, 2, 3, 5, 6] will be converted to "1-3,5-6".
+
+    This is to avoid the nasty AMBER issue that restraintmask can
+    only be 256 characters long. -.-
+    """
+    from itertools import groupby
+    numbers = sorted(set(numbers))
+    ranges = []
+
+    for _, group in groupby(enumerate(numbers), key=lambda x: x[1] - x[0]):
+        group = list(group)
+        start = group[0][1]
+        end = group[-1][1]
+        if start == end:
+            ranges.append(f"{start}")
+        else:
+            ranges.append(f"{start}-{end}")
+    
+    return ','.join(ranges)
