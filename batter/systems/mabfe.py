@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import replace
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 from loguru import logger
 
@@ -29,24 +28,11 @@ class MABFEBuilder(SystemBuilder):
     inputs/           # canonical copies of user-provided inputs
     artifacts/        # files produced by builders (e.g., PRMTOP, RST7)
     simulations/
-      <LIG1>/inputs/ligand.sdf
+      <LIG1>/inputs/ligand.<ext>
               artifacts/
-      <LIG2>/inputs/ligand.sdf
+      <LIG2>/inputs/ligand.<ext>
               artifacts/
       ...
-
-    Idempotency
-    -----------
-    - If ``overwrite=False`` and the shared artifacts marker exists, existing
-      files are kept.
-    - If ``overwrite=True``, the *shared* ``artifacts/`` folder is wiped and
-      re-created. Ligand subfolders are **not** touched (see ``build_all_ligands``).
-
-    Notes
-    -----
-    This class does not perform equilibration or run FE windows. It only ensures
-    that required on-disk artifacts and per-ligand folders exist for pipelines
-    and backends to consume.
     """
 
     # -------------------- public API --------------------
@@ -55,17 +41,7 @@ class MABFEBuilder(SystemBuilder):
         """
         Prepare the shared system area (stage protein/topology/coordinates/inputs).
 
-        Parameters
-        ----------
-        system : SimSystem
-            Descriptor for the shared system.
-        args : CreateSystemLike
-            Creation arguments (protein_input, ligand_paths, etc.).
-
-        Returns
-        -------
-        SimSystem
-            Updated descriptor with staged artifacts.
+        Uses the **actual suffixes** from user inputs (no hard-coded extensions).
         """
         self._assert_names_match(system, args)
 
@@ -86,22 +62,32 @@ class MABFEBuilder(SystemBuilder):
             logger.warning("overwrite=True — wiping and re-preparing artifacts under {}", artifacts_dir)
             self._clean_dir(artifacts_dir)
 
-        # Stage shared inputs
-        staged_protein = self._stage_optional(inputs_dir, args.protein_input, "protein.pdb")
-        staged_top = self._stage_optional(inputs_dir, args.system_input, "input.prmtop")
-        staged_coord = self._stage_optional(inputs_dir, args.system_coordinate, "input.rst7")
-        staged_ligs = self._stage_ligands_named(inputs_dir, args.ligand_paths)
+        # Stage shared inputs with their actual suffixes
+        staged_protein = self._stage_optional(
+            inputs_dir,
+            args.protein_input,
+            f"protein{args.protein_input.suffix}" if args.protein_input else None,
+        )
+        staged_top = self._stage_optional(
+            inputs_dir,
+            args.system_input,
+            f"system{args.system_input.suffix}" if args.system_input else None,
+        )
+        staged_coord = self._stage_optional(
+            inputs_dir,
+            args.system_coordinate,
+            f"system{args.system_coordinate.suffix}" if args.system_coordinate else None,
+        )
 
-        # Produce canonical shared artifacts (if provided)
-        final_top = self._copy_optional(artifacts_dir, staged_top, "system.prmtop")
-        final_coord = self._copy_optional(artifacts_dir, staged_coord, "system.rst7")
+        # Stage ligands with <NAME>.<ext>
+        staged_ligs = self._stage_ligands_named(inputs_dir, args.ligand_paths)
 
         marker.touch()
 
         updated = system.with_artifacts(
             protein=staged_protein,
-            topology=final_top or staged_top,
-            coordinates=final_coord or staged_coord,
+            topology=staged_top,
+            coordinates=staged_coord,
             ligands=tuple(staged_ligs),
             lipid_mol=tuple(args.lipid_mol),
             anchors=tuple(args.anchor_atoms),
@@ -110,6 +96,8 @@ class MABFEBuilder(SystemBuilder):
         logger.info(
             f"Prepared MABFE system '{updated.name}' at {updated.root} (ligands: {len(updated.ligands)})")
         logger.info("  Protein:    {}", updated.protein)
+        logger.info("  System Topology:   {}", updated.topology)
+        logger.info("  System Coord:      {}", updated.coordinates)
         logger.info("  Ligands:    {}", ", ".join(l.stem for l in updated.ligands))
         return updated
 
@@ -122,25 +110,7 @@ class MABFEBuilder(SystemBuilder):
         """
         Stage **all ligands at once** under ``parent.root/simulations/<NAME>/...``.
 
-        Parameters
-        ----------
-        parent : SimSystem
-            Shared system previously prepared by :meth:`build`.
-        lig_paths : Sequence[pathlib.Path]
-            List of ligand files to stage.
-        overwrite : bool, default=False
-            If ``True``, each per-ligand ``artifacts/`` directory is wiped
-            before (re)creation. Inputs are always copied.
-
-        Returns
-        -------
-        dict[str, SimSystem]
-            Mapping ligand name (uppercase stem) → child :class:`SimSystem`.
-
-        Notes
-        -----
-        Child systems reuse parent protein/topology/coordinates by reference to
-        keep the store portable and avoid duplication.
+        Ligands are copied as ``inputs/ligand.<ext>`` using each source's suffix.
         """
         lig_dir = parent.root / "simulations"
         lig_dir.mkdir(parents=True, exist_ok=True)
@@ -160,9 +130,9 @@ class MABFEBuilder(SystemBuilder):
                 logger.warning("overwrite=True — wiping ligand artifacts under {}", art_dir)
                 self._clean_dir(art_dir)
 
-            # stage ligand into its own inputs/
-            dst = sub_root / "inputs" / "ligand.sdf"
-            shutil.copy2(p, dst)
+            # stage ligand into its own inputs/ as ligand.<ext>
+            lig_dst = sub_root / "inputs" / f"ligand{p.suffix}"
+            shutil.copy2(p, lig_dst)
 
             child = SimSystem(
                 name=f"{parent.name}:{name}",
@@ -170,7 +140,7 @@ class MABFEBuilder(SystemBuilder):
                 protein=parent.protein,
                 topology=parent.topology,
                 coordinates=parent.coordinates,
-                ligands=(dst,),
+                ligands=(lig_dst,),
                 lipid_mol=parent.lipid_mol,
                 anchors=parent.anchors,
                 meta={**(parent.meta or {}), "ligand": name},
@@ -185,28 +155,15 @@ class MABFEBuilder(SystemBuilder):
     @staticmethod
     def make_child_for_ligand(parent: SimSystem, lig_name: str, lig_src: Path) -> SimSystem:
         """
-        Create a single per-ligand child system under ``simulations/<NAME>/``.
-
-        Parameters
-        ----------
-        parent : SimSystem
-            Shared system.
-        lig_name : str
-            Ligand identifier (used as folder name; e.g., ``"LIG1"``).
-        lig_src : path-like
-            Path to the ligand file to stage.
-
-        Returns
-        -------
-        SimSystem
-            Child system descriptor.
+        Create a single per-ligand child system under ``simulations/<NAME>/`` with ligand.<ext>.
         """
         lig_dir = parent.root / "simulations" / lig_name
         (lig_dir / "inputs").mkdir(parents=True, exist_ok=True)
         (lig_dir / "artifacts").mkdir(parents=True, exist_ok=True)
 
-        dst = lig_dir / "inputs" / "ligand.sdf"
-        shutil.copy2(lig_src, dst)
+        p = Path(lig_src)
+        dst = lig_dir / "inputs" / f"ligand{p.suffix}"
+        shutil.copy2(p, dst)
 
         return SimSystem(
             name=f"{parent.name}:{lig_name}",
@@ -238,8 +195,8 @@ class MABFEBuilder(SystemBuilder):
                 p.unlink(missing_ok=True)
 
     @staticmethod
-    def _stage_optional(dst_dir: Path, maybe_src: Optional[Path], filename: str) -> Optional[Path]:
-        if maybe_src is None:
+    def _stage_optional(dst_dir: Path, maybe_src: Optional[Path], filename: Optional[str]) -> Optional[Path]:
+        if maybe_src is None or filename is None:
             return None
         dst = dst_dir / filename
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -247,52 +204,24 @@ class MABFEBuilder(SystemBuilder):
         return dst
 
     @staticmethod
-    def _stage_many(dst_dir: Path, sources: Sequence[Path], pattern: str) -> List[Path]:
+    def _stage_ligands_named(dst_dir: Path, lig_map: Mapping[str, Path]) -> List[Path]:
+        """
+        Copy ligand files into dst_dir as <LIG_NAME>.<ext> using the keys of lig_map.
+        """
         staged: List[Path] = []
-        for i, src in enumerate(sources):
-            name = pattern.format(i=i)
-            dst = dst_dir / name
+        for name, src in lig_map.items():
+            src = Path(src)
+            dst = dst_dir / f"{name}{src.suffix}"
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
             staged.append(dst)
         return staged
 
     @staticmethod
-    def _stage_ligands_named(dst_dir: Path, lig_map: Mapping[str, Path]) -> List[Path]:
-        """
-        Copy ligand files into dst_dir as <LIG_NAME>.sdf using the keys of lig_map.
-
-        Parameters
-        ----------
-        lig_map : Mapping[str, Path]
-            Mapping of ligand name -> source path.
-
-        Returns
-        -------
-        list[Path]
-            Paths of staged ligand files (sorted by ligand name).
-        """
-        staged: List[Path] = []
-        for name, src in sorted(lig_map.items(), key=lambda kv: kv[0]):
-            dst = dst_dir / f"{name}.sdf"
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(Path(src), dst)
-            staged.append(dst)
-        return staged
-
-    @staticmethod
-    def _copy_optional(dst_dir: Path, maybe_src: Optional[Path], filename: str) -> Optional[Path]:
-        if maybe_src is None:
-            return None
-        dst = dst_dir / filename
-        shutil.copy2(maybe_src, dst)
-        return dst
-
-    @staticmethod
-    def _first_existing(paths: Iterable[Path]) -> Optional[Path]:
+    def _first_existing(paths: Iterable[Optional[Path]]) -> Optional[Path]:
         for p in paths:
-            if p and p.exists():
-                return p
+            if p and Path(p).exists():
+                return Path(p)
         return None
 
     def _assemble_system(
@@ -302,10 +231,41 @@ class MABFEBuilder(SystemBuilder):
         artifacts_dir: Path,
         args: CreateSystemLike,
     ) -> SimSystem:
-        protein = self._first_existing([artifacts_dir / "system.pdb", inputs_dir / "protein.pdb"])
-        topology = self._first_existing([artifacts_dir / "system.prmtop", inputs_dir / "input.prmtop"])
-        coordinates = self._first_existing([artifacts_dir / "system.rst7", inputs_dir / "input.rst7"])
-        ligands = inputs_dir.glob("*.sdf")
+        """
+        Re-assemble a SimSystem referencing already-staged files.
+        Prefer artifacts/, fallback to inputs/, using **suffixes from args** when available.
+        """
+        # Determine expected filenames based on original input suffixes (if provided)
+        prot_candidates: List[Optional[Path]] = []
+        if args.protein_input:
+            prot_candidates += [
+                artifacts_dir / f"protein{args.protein_input.suffix}",
+                inputs_dir / f"protein{args.protein_input.suffix}",
+            ]
+        # Also fallback to a couple of common names if inputs absent
+        prot_candidates += [artifacts_dir / "protein.pdb", inputs_dir / "protein.pdb"]
+
+        top_candidates: List[Optional[Path]] = []
+        if args.system_input:
+            top_candidates += [
+                artifacts_dir / f"system{args.system_input.suffix}",
+                inputs_dir / f"system{args.system_input.suffix}",
+            ]
+        top_candidates += [inputs_dir / "input.prmtop", artifacts_dir / "system.prmtop"]
+
+        coord_candidates: List[Optional[Path]] = []
+        if args.system_coordinate:
+            coord_candidates += [
+                artifacts_dir / f"system{args.system_coordinate.suffix}",
+                inputs_dir / f"system{args.system_coordinate.suffix}",
+            ]
+        coord_candidates += [inputs_dir / "input.rst7", artifacts_dir / "system.rst7"]
+
+        protein = self._first_existing(prot_candidates)
+        topology = self._first_existing(top_candidates)
+        coordinates = self._first_existing(coord_candidates)
+        ligands = sorted(inputs_dir.glob("*.sdf")) + sorted(inputs_dir.glob("*.mol2")) + sorted(inputs_dir.glob("*.pdb"))
+
         return system.with_artifacts(
             protein=protein,
             topology=topology,
@@ -318,21 +278,14 @@ class MABFEBuilder(SystemBuilder):
 
 
 # --------------------------------------------------------------------------
-# Free helpers (functional style) if you prefer not to call methods directly
+# Free helpers (functional style)
 # --------------------------------------------------------------------------
 
 def make_ligand_subsystem(parent: SimSystem, lig_name: str, lig_src: Path) -> SimSystem:
-    """
-    Functional helper that mirrors :meth:`MABFEBuilder.make_child_for_ligand`.
-    """
     builder = MABFEBuilder()
     return builder.make_child_for_ligand(parent, lig_name, Path(lig_src))
 
 
 def prepare_subsystems_for_ligands(parent: SimSystem, lig_paths: Iterable[Path]) -> Dict[str, SimSystem]:
-    """
-    Functional helper that mirrors :meth:`MABFEBuilder.build_all_ligands`
-    with ``overwrite=False``.
-    """
     builder = MABFEBuilder()
-    return builder.build_all_ligands(parent, list(lig_paths), overwrite=False)
+    return builder.build_all_ligands(parent, [Path(p) for p in lig_paths], overwrite=False)

@@ -65,9 +65,10 @@ def _ensure_pdb(lig_path: Path, out_dir: Path) -> Path:
         if mol is None:
             raise ValueError(f"RDKit could not read {lig_path}")
         Chem.MolToPDBFile(mol, str(out_pdb))
+    elif lig_path.suffix.lower() == "pdb":
+        _copy(lig_path, out_pdb)
     else:
         raise ValueError(f"Unsupported ligand format: {lig_path.suffix} for {lig_path}")
-
     return out_pdb
 
 
@@ -81,7 +82,7 @@ class _SystemPrepRunner:
 
         self.output_dir = system.root
         self.ligands_folder = self.output_dir / "all-ligands"
-        self.ligandff_folder = self.output_dir / "ff"  # still used as a scratch for conversions
+        self.ligandff_folder = self.output_dir / "artifacts" / "ligands"
         self.ligandff_folder.mkdir(parents=True, exist_ok=True)
 
         # state
@@ -384,10 +385,7 @@ class _SystemPrepRunner:
         # name order is deterministic
         for i, (name, ligand_path) in enumerate(sorted(self.ligand_dict.items())):
             name_up = name.upper()
-            # ensure PDB (convert on the fly if needed)
-            ligand_file = Path(ligand_path)
-            if ligand_file.suffix.lower() != ".pdb":
-                ligand_file = _ensure_pdb(Path(ligand_path), self.ligandff_folder)
+            ligand_file = _ensure_pdb(Path(ligand_path), self.ligandff_folder)
 
             u = mda.Universe(str(ligand_file))
             try:

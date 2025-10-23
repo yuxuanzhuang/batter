@@ -433,8 +433,14 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     sys = SimSystem(name=rc.create.system_name, root=rc.system.output_folder)
     sys = builder.build(sys, rc.create)
 
+    dry_run = rc.run.dry_run
+    if dry_run:
+        logger.warning("DRY RUN mode enabled: no SLRUM jobs will be submitted.")
+
+    slurm_flags = rc.run.slurm.to_sbatch_flags() if rc.run.slurm else None
     job_mgr = SlurmJobManager(poll_s=60*15, max_retries=3, resubmit_backoff_s=30,
-        registry_file=(Path(sys.root) / ".slurm" / "queue.jsonl")
+        registry_file=(Path(sys.root) / ".slurm" / "queue.jsonl"), dry_run=dry_run,
+        sbatch_flags=slurm_flags
     )
     
     lig_root = sys.root / "simulations"
@@ -583,7 +589,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     phase_equil = _inject_mgr(phase_equil)
     _run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=rc.run.max_workers)
     job_mgr.wait_all()
-    job_mgr.clear()
+    if dry_run and job_mgr.triggered:
+        logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+        raise SystemExit(0)
 
     # --------------------
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
@@ -613,7 +621,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     phase_fe_equil = _inject_mgr(phase_fe_equil)
     _run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend, max_workers=rc.run.max_workers)
     job_mgr.wait_all()
-    job_mgr.clear()
+    if dry_run and job_mgr.triggered:
+        logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+        raise SystemExit(0)
 
     
     # --------------------
@@ -622,7 +632,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     phase_fe = _inject_mgr(phase_fe)
     _run_phase_skipping_done(phase_fe, children, "fe", backend, max_workers=rc.run.max_workers)
     job_mgr.wait_all()
-    job_mgr.clear()
+    if dry_run and job_mgr.triggered:
+        logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+        raise SystemExit(0)
 
     # --------------------
     # PHASE 6: analyze (parallel)

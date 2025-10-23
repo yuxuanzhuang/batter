@@ -135,10 +135,16 @@ class SlurmJobManager:
         max_retries: int = 3,
         resubmit_backoff_s: float = 30.0,
         registry_file: Optional[Path] = None,
+        dry_run: bool = False,
+        sbatch_flags: Optional[Sequence[str]] = None,
     ):
         self.poll_s = float(poll_s)
         self.max_retries = int(max_retries)
         self.resubmit_backoff_s = float(resubmit_backoff_s)
+        self.dry_run = dry_run
+        self.triggered = False
+
+        self.sbatch_flags: List[str] = list(sbatch_flags or [])
 
         # Central registry: in-memory accumulation (per-process)
         self._inmem_specs: dict[Path, SlurmJobSpec] = {}
@@ -150,6 +156,10 @@ class SlurmJobManager:
     # ---------- Registry API ----------
     def add(self, spec: SlurmJobSpec) -> None:
         """Add a job spec to the in-memory set and (optionally) append to the on-disk queue."""
+        if self.dry_run:
+            self.triggered = True
+            return 
+
         self._inmem_specs[spec.workdir] = spec
         if self._registry_file:
             rec = {
@@ -216,31 +226,34 @@ class SlurmJobManager:
                 f"contents: {listing}"
             )
 
-        # Best effort: ensure executable bit
         try:
             script_abs.chmod(script_abs.stat().st_mode | 0o111)
         except Exception:
             pass
 
-        # Build sbatch command (relative to workdir)
+        # base + global flags + per-job flags
         cmd: List[str] = ["sbatch"]
+        if self.sbatch_flags:
+            cmd += self.sbatch_flags                     # <- global flags first
         if spec.name:
             cmd += ["--job-name", spec.name]
         if spec.extra_sbatch:
-            cmd += list(spec.extra_sbatch)
+            cmd += list(spec.extra_sbatch)               # <- job-specific flags after
 
-        # Environment export
         if spec.extra_env:
             kv = [f"{k}={v}" for k, v in spec.extra_env.items()]
             cmd += ["--export", "ALL," + ",".join(kv)]
 
         cmd.append(spec.script_arg())
 
-        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
-        out = subprocess.check_output(
-            cmd, cwd=spec.workdir, text=True, stderr=subprocess.DEVNULL
-        ).strip()
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] sbatch (cwd={spec.workdir}): {' '.join(cmd)}")
+            # fabricate a dummy JOBID to keep downstream logic harmless
+            _write_text(spec.jobid_path(), "0\n")
+            return "0"
 
+        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
+        out = subprocess.check_output(cmd, cwd=spec.workdir, text=True, stderr=subprocess.DEVNULL).strip()
         m = JOBID_RE.search(out)
         if not m:
             raise RuntimeError(f"Could not parse sbatch output: {out}")
@@ -269,6 +282,9 @@ class SlurmJobManager:
         if done:
             logger.debug(f"[SLURM] {spec.workdir.name}: already {status}; not submitting")
             return
+        if self.dry_run:
+            self.triggered = True
+            return
         state = _slurm_state(_read_text(spec.jobid_path()))
         if state in SLURM_OK_STATES:
             logger.debug(f"[SLURM] {spec.workdir.name}: active ({state}); not submitting")
@@ -277,6 +293,9 @@ class SlurmJobManager:
 
     def wait_until_done(self, specs: Iterable[SlurmJobSpec]) -> None:
         """Submit if needed and watch the given set until done/fail (legacy interface)."""
+        if self.dry_run:
+            self.triggered = True
+            return
         self._wait_loop(list(specs))
 
     # ---------- Global wait ----------
@@ -284,8 +303,11 @@ class SlurmJobManager:
         """Submit/monitor all registered (in-memory + on-disk) jobs together and block until completion."""
         specs_map = self._load_registry_specs()
         specs_map.update(self._inmem_specs)
-        if not specs_map:
+        if not specs_map and not self.dry_run:
             logger.debug("[SLURM] wait_all: nothing to monitor.")
+            return
+        elif self.dry_run:
+            self.triggered = True
             return
         self._wait_loop(list(specs_map.values()))
         # clear registry for next phase

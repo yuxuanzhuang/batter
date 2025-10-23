@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Any
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from batter.config.simulation import SimulationConfig
-from batter.config.io import read_yaml_config
 
+# ----------------------------- utils ---------------------------------
 
 def _coerce_yes_no(v):
     if v is None:
@@ -17,18 +17,45 @@ def _coerce_yes_no(v):
         return "yes" if v else "no"
     if isinstance(v, str):
         s = v.strip().lower()
-        if s in {"yes", "no"}:
-            return s
-        if s in {"true", "t", "1"}:
-            return "yes"
-        if s in {"false", "f", "0"}:
-            return "no"
+        if s in {"yes", "no"}: return s
+        if s in {"true", "t", "1"}: return "yes"
+        if s in {"false", "f", "0"}: return "no"
     raise ValueError(f"Expected yes/no (or boolean), got {v!r}")
+
+# ----------------------------- SLURM ---------------------------------
+
+class SlurmConfig(BaseModel):
+    """SLURM-specific configuration."""
+    model_config = ConfigDict(extra="ignore")
+
+    partition: Optional[str] = Field(None, description="SLURM partition / queue")
+    time: Optional[str] = Field(None, description="Walltime, e.g. '04:00:00'")
+    nodes: Optional[int] = None
+    ntasks_per_node: Optional[int] = None
+    mem_per_cpu: Optional[str] = None
+    gres: Optional[str] = None
+    account: Optional[str] = None
+    qos: Optional[str] = None
+    constraint: Optional[str] = None
+    extra_sbatch: List[str] = Field(default_factory=list)
+
+    def to_sbatch_flags(self) -> List[str]:
+        flags: List[str] = []
+        if self.partition:       flags += ["-p", self.partition]
+        if self.time:            flags += ["-t", self.time]
+        if self.nodes:           flags += ["-N", str(self.nodes)]
+        if self.ntasks_per_node: flags += ["--ntasks-per-node", str(self.ntasks_per_node)]
+        if self.mem_per_cpu:     flags += ["--mem-per-cpu", self.mem_per_cpu]
+        if self.gres:            flags += ["--gres", self.gres]
+        if self.account:         flags += ["--account", self.account]
+        if self.qos:             flags += ["--qos", self.qos]
+        if self.constraint:      flags += ["--constraint", self.constraint]
+        flags += list(self.extra_sbatch or [])
+        return flags
 
 # ----------------------------- Sections ---------------------------------
 
 class SystemSection(BaseModel):
-    #model_config = ConfigDict(extra="ignore")
     type: Literal["MABFE"] = "MABFE"
     output_folder: Path
 
@@ -36,7 +63,6 @@ class SystemSection(BaseModel):
     @classmethod
     def _coerce_path(cls, v):
         return None if v is None else Path(v)
-
 
 class CreateArgs(BaseModel):
     """
@@ -86,7 +112,6 @@ class CreateArgs(BaseModel):
     min_adis: float = 3.0
     max_adis: float = 7.0
 
-    # ---------------- coercion ----------------
     @field_validator("protein_input", "system_input", "system_coordinate", "param_outdir", mode="before")
     @classmethod
     def _coerce_opt_paths(cls, v):
@@ -116,7 +141,6 @@ class CreateArgs(BaseModel):
         if not self.ligand_paths and not self.ligand_input:
             raise ValueError("You must provide either `ligand_paths` or `ligand_input`.")
         return self
-
 
 class FESimArgs(BaseModel):
     """
@@ -164,19 +188,19 @@ class FESimArgs(BaseModel):
     def _coerce_fe_yes_no(cls, v):
         return _coerce_yes_no(v)
 
-
 class RunSection(BaseModel):
+    """Run-related settings."""
     model_config = ConfigDict(extra="ignore")
     only_fe_preparation: bool = False
     on_failure: str = Field("raise", description="Behavior on ligand failure: 'raise' or 'prune'")
     max_workers: int | None = Field(
         None,
-        description="Number of parallel workers for local backend (None = auto, 0 = serial)"
+        description="Parallel workers for local backend (None = auto, 0 = serial)"
     )
     dry_run: bool = False
     run_id: str = "auto"
-    partition: Optional[str] = None
 
+    slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
 class RunConfig(BaseModel):
     """Top-level YAML config."""
@@ -189,13 +213,8 @@ class RunConfig(BaseModel):
     system: SystemSection
     create: CreateArgs
     fe_sim: FESimArgs = Field(default_factory=FESimArgs)
-
-    # Optional legacy sim-config file; if present we start from it and then override.
-    sim_config_path: Optional[Path] = None
-
     run: RunSection = Field(default_factory=RunSection)
 
-    # ---------------- coercion & loaders ----------------
     @field_validator("protocol", mode="before")
     @classmethod
     def _lower_protocol(cls, v):
@@ -205,13 +224,6 @@ class RunConfig(BaseModel):
     @classmethod
     def _lower_backend(cls, v):
         return str(v).lower() if v else v
-
-    @field_validator("sim_config_path", mode="before")
-    @classmethod
-    def _coerce_sim_cfg(cls, v):
-        if v in (None, ""):
-            return None
-        return Path(v)
 
     @classmethod
     def load(cls, path: Path | str) -> "RunConfig":
@@ -225,28 +237,10 @@ class RunConfig(BaseModel):
         import yaml
         return cls(**(yaml.safe_load(yaml_text) or {}))
 
-    # ---------------- bridge to SimulationConfig ----------------
     def resolved_sim_config(self) -> SimulationConfig:
-        """
-        Build a SimulationConfig by merging (optional) file contents with
-        values from `create` and `fe_sim` in this RunConfig. This ensures
-        required fields (e.g., system_name, fe_type) are always present.
-        """
-        # 1) Start from file if provided
+        """Merge create/fe_sim into a SimulationConfig and surface SLURM bits."""
         base: dict[str, Any] = {}
-        cfg_path = self.sim_config_path
-        if cfg_path:
-            if not cfg_path.is_absolute():
-                cfg_path = Path.cwd() / cfg_path
-            try:
-                # If file is present and valid, get a dict out of it
-                file_cfg = read_yaml_config(cfg_path)
-                base = file_cfg.model_dump()
-                logger.info(f"Loaded SimulationConfig base from {cfg_path}")
-            except Exception as e:
-                logger.warning(f"Could not load sim_config_path ({cfg_path}): {e}; using defaults from run YAML.")
 
-        # 2) Overlay from `create:` (system context + FF + environment)
         c = self.create
         overlay_create = {
             "system_name": c.system_name,
@@ -256,7 +250,7 @@ class RunConfig(BaseModel):
             "lipid_mol": list(c.lipid_mol or []),
             "other_mol": list(c.other_mol or []),
             "water_model": getattr(c, "water_model", "TIP3P"),
-            "temperature": getattr(c, "temperature", 310.0),
+            "temperature": float(getattr(c, "temperature", 310.0)),
             "dt": float(getattr(c, "dt", 0.004)),
             "neutralize_only": _coerce_yes_no(getattr(c, "neutralize_only", "no")),
             "hmr": _coerce_yes_no(getattr(c, "hmr", "no")),
@@ -265,14 +259,12 @@ class RunConfig(BaseModel):
             "anion": getattr(c, "anion", "Cl-"),
             "solv_shell": float(getattr(c, "solv_shell", 15.0)),
             "protein_align": getattr(c, "protein_align", "name CA"),
-            "temperature": float(getattr(c, "temperature", 310.0)),
             "release_eq": list(getattr(c, "release_eq", [])),
             "l1_range": float(getattr(c, "l1_range", 6.0)),
             "min_adis": float(getattr(c, "min_adis", 3.0)),
             "max_adis": float(getattr(c, "max_adis", 7.0)),
         }
 
-        # 3) Overlay from `fe_sim:` (FE protocol + sim knobs)
         f = self.fe_sim
         overlay_fe = {
             "fe_type": f.fe_type,
@@ -296,7 +288,6 @@ class RunConfig(BaseModel):
             "buffer_z": float(getattr(f, "buffer_z", 0.0)),
             "eq_steps1": int(getattr(f, "eq_steps1", 500_000)),
             "eq_steps2": int(getattr(f, "eq_steps2", 1_000_000)),
-            # z-only steps you added; we fold them into n_steps_dict defaults if needed
             "n_steps_dict": {
                 "z_steps1": int(getattr(f, "z_steps1", 50_000)),
                 "z_steps2": int(getattr(f, "z_steps2", 300_000)),
@@ -310,11 +301,10 @@ class RunConfig(BaseModel):
             "barostat": int(getattr(f, "barostat", 2)),
         }
 
-        # 4) Merge: file base < create < fe_sim
         merged: dict[str, Any] = {**base, **overlay_create, **overlay_fe}
 
-        # Ensure partition is accessible from run section
-        merged.setdefault("partition", getattr(self.run, "partition", "owners"))
+        # Surface SLURM selections to sim config for handlers to consume
+        slurm= self.run.slurm
+        merged["partition"] = slurm.partition
 
-        # 5) Build SimulationConfig (now system_name/fe_type are guaranteed)
         return SimulationConfig(**merged)
