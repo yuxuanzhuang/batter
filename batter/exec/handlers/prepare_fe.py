@@ -134,8 +134,19 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     param_dir_dict = _load_param_dir_dict(system_root)
 
     comp_windows: dict = params["sim"]["component_lambdas"]
-    infe: bool = bool(params.get("infe", False))
+    extra_restraints: Optional[dict] = params['sys_params'].get("extra_restraints", None)
+    extra_restraints_fc: float = float(params['sys_params'].get("extra_restraints_fc", 10.0))
+    extra_conformation_restraints: Optional[Path] = params['sys_params'].get("extra_conformation_restraints", None)
 
+    infe = False
+    if extra_restraints is not None:
+        infe = False
+        sim.barostat = '1'
+    if extra_conformation_restraints is not None:
+        infe = True
+        # cannot do NFE with barostat 1 (Berendsen)
+        sim.barostat = '2'
+    
     windows_summary: Dict[str, Any] = {}
     logger.debug(f"[prepare_fe_windows] start ligand={ligand} residue={residue_name} components={components}")
 
@@ -151,12 +162,17 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
                 param_dir_dict=param_dir_dict,
                 sim_config=sim,
                 component=comp,
+                infe=infe,
                 component_windows=lambdas,
                 working_dir=workdir,
                 system_root=system_root,
                 win=win_idx,
-                extra={"infe": infe},
-            )
+                extra={
+                    "extra_restraints": extra_restraints,
+                    "extra_restraints_fc": extra_restraints_fc,
+                    "extra_conformation_restraints": extra_conformation_restraints,
+                }
+        )
             builder.build()
 
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}

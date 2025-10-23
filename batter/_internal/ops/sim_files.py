@@ -1,52 +1,121 @@
+# sim_files.py — drop-in replacement
 from __future__ import annotations
 
-import os
 import re
-import glob
-import json
-import shutil
-import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import MDAnalysis as mda
 from loguru import logger
 
-from batter.utils import (
-    run_with_log,
-    tleap,
-    cpptraj,
-    charmmlipid2amber,
-    vmd,
-)
-
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_sim_files
+from batter._internal.ops.helpers import format_ranges
+
+
+# ----------------------------- helpers ----------------------------- #
+
+def _patch_restraint_block(text: str, new_mask_component: str, force_const: float) -> str:
+    """
+    Idempotently enable ntr=1, merge/append restraintmask with new_mask_component,
+    and set restraint_wt. If mask already present, replace the appended part.
+    """
+    lines = text.splitlines(True)
+    out = []
+    seen_mask = False
+    for line in lines:
+        if re.search(r"\bntr\s*=", line):
+            line = re.sub(r"\bntr\s*=\s*\d+", "  ntr = 1", line)
+        elif re.search(r"\brestraintmask\s*=", line):
+            m = re.search(r'restraintmask\s*=\s*["\']([^"\']*)["\']', line)
+            base_mask = (m.group(1).strip() if m else "")
+            # drop any previously appended “| ((:... ) & @CA)” chunk to stay idempotent
+            base_mask = re.sub(r'\|\s*\(\s*\(:[^)]*\)\s*&\s*@CA\s*\)\s*', '', base_mask).strip()
+            mask = f'({base_mask}) | ({new_mask_component})' if base_mask else new_mask_component
+            if len(mask) > 256:
+                raise ValueError(f"Restraint mask too long (>256 chars): {mask}")
+            line = f'  restraintmask = "{mask}",\n'
+            seen_mask = True
+        elif re.search(r"\brestraint_wt\s*=", line):
+            line = re.sub(r"\brestraint_wt\s*=\s*[\d.]+", f" restraint_wt = {force_const}", line)
+        out.append(line)
+
+    if not seen_mask:
+        out.append(f'\n  restraintmask = "{new_mask_component}",\n')
+        out.append(f'  restraint_wt   = {force_const},\n')
+
+    return "".join(out)
+
+
+def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], float]:
+    """
+    Build '(:a-b,c-... ) & @CA' + force constant from ctx.extra.
+    Returns (mask or None, force_const).
+    """
+    extra = ctx.extra or {}
+    extra_sel = extra.get("extra_restraints")
+    if not extra_sel:
+        return None, 0.0
+    force_const = float(extra.get("extra_restraints_fc", 10.0))
+
+    ref_pdb = work / "full.pdb"
+    renum_txt1 = work / "build_files" / "protein_renum.txt"
+    renum_txt2 = ctx.build_dir / "protein_renum.txt"
+    renum_txt = renum_txt1 if renum_txt1.exists() else renum_txt2
+
+    if not ref_pdb.exists():
+        logger.warning(f"[extra_restraints] Missing reference PDB: {ref_pdb}; skip.")
+        return None, force_const
+    if not renum_txt.exists():
+        logger.warning(f"[extra_restraints] Missing renumber map: {renum_txt1} / {renum_txt2}; skip.")
+        return None, force_const
+
+    u = mda.Universe(str(ref_pdb))
+    sel = u.select_atoms(f"({extra_sel}) and name CA")
+    if len(sel) == 0:
+        logger.warning(f"[extra_restraints] 0 atoms selected for '({extra_sel}) and name CA'; skip.")
+        return None, force_const
+
+    ren = pd.read_csv(
+        renum_txt, sep=r"\s+", header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"]
+    )
+    amber_resids = ren.loc[ren["old_resid"].isin(sel.residues.resids), "new_resid"]
+    mask_ranges = format_ranges(amber_resids)
+    if not mask_ranges:
+        logger.warning("[extra_restraints] No mapped residues after renumber; skip.")
+        return None, force_const
+
+    mask = f"(:{mask_ranges}) & @CA"
+    logger.info(f"[extra_restraints] Mask: {mask} (wt={force_const})")
+    return mask, force_const
+
+
+# ------------------------- generic equil files ------------------------- #
 
 def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     """
     Writes minimization/NVT/NPT inputs and mdin-XX files based on
     release schedule; fills in temperature, restraint file names, etc.
+    Also (optionally) injects extra CA restraints via ctx.extra['extra_restraints']
+    **only** into mdin-XX files (NOT eqnpt.in).
     """
     sim = ctx.sim
     work = ctx.working_dir
-
     amber_dir = ctx.amber_dir
 
     temperature = sim.temperature
     mol = ctx.residue_name
-    num_sim = len(sim.release_eq)
 
+    # disang anchor triplet (L1/L2/L3)
     with open(work / "disang.rest", "r") as f:
         parts = f.readline().split()
-        # positions: ... L1 L2 L3 ...
         L1 = parts[6].strip()
         L2 = parts[7].strip()
         L3 = parts[8].strip()
 
-    # Generate template-based files
     def _sub_write(src: Path, dst: Path, repl: dict[str, str]) -> None:
         text = Path(src).read_text()
         for k, v in repl.items():
@@ -54,45 +123,35 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         dst.write_text(text)
 
     # mini.in
-    _sub_write(
-        Path(amber_dir) / "mini.in",
-        work / "mini.in",
-        {"_lig_name_": mol},
-    )
+    _sub_write(amber_dir / "mini.in", work / "mini.in", {"_lig_name_": mol})
 
     # eqnvt.in
-    _sub_write(
-        Path(amber_dir) / "eqnvt.in",
-        work / "eqnvt.in",
-        {"_temperature_": f"{temperature}", "_lig_name_": mol},
-    )
+    _sub_write(amber_dir / "eqnvt.in", work / "eqnvt.in",
+               {"_temperature_": f"{temperature}", "_lig_name_": mol})
 
     # eqnpt0.in (membrane vs water variant)
-    eqnpt0_src = Path(amber_dir) / ( "eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in" )
-    _sub_write(
-        eqnpt0_src,
-        work / "eqnpt0.in",
-        {"_temperature_": f"{temperature}", "_lig_name_": mol},
-    )
+    eqnpt0_src = amber_dir / ("eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in")
+    _sub_write(eqnpt0_src, work / "eqnpt0.in",
+               {"_temperature_": f"{temperature}", "_lig_name_": mol})
 
-    # eqnpt.in
-    eqnpt_src = Path(amber_dir) / ( "eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in" )
-    _sub_write(
-        eqnpt_src,
-        work / "eqnpt.in",
-        {"_temperature_": f"{temperature}", "_lig_name_": mol},
-    )
+    # eqnpt.in  (no extra restraints here)
+    eqnpt_src = amber_dir / ("eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in")
+    _sub_write(eqnpt_src, work / "eqnpt.in",
+               {"_temperature_": f"{temperature}", "_lig_name_": mol})
 
-    # mdin-XX files for gradual release
+    # mdin-XX for gradual release
     steps1 = sim.eq_steps1
     steps2 = sim.eq_steps2
     infe_flag = "1" if infe else "0"
 
+    mdin_src = amber_dir / "mdin-equil"
+    base_text = mdin_src.read_text()
+
+    # compute extra mask once for equil (applied to mdin-XX only)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, work)
+
     for i, weight in enumerate(sim.release_eq):
-        mdin_src = Path(amber_dir) / "mdin-equil"
-        dst = work / f"mdin-{i:02d}"
-        text = mdin_src.read_text()
-        # First stage (i==0) needs irest/ntx reset
+        text = base_text
         if i == 0:
             text = re.sub(r"^\s*irest\s*=.*$", "  irest = 0,", text, flags=re.MULTILINE)
             text = re.sub(r"^\s*ntx\s*=.*$", "  ntx = 1,", text, flags=re.MULTILINE)
@@ -104,19 +163,28 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
                 .replace("_lig_name_", mol)
                 .replace("_num-steps_", f"{num_steps}")
                 .replace("disang_file", f"disang{i:02d}")
-                )
-        dst.write_text(text)
+               )
+
+        # Inject extra restraints ONLY for mdin-XX files
+        if extra_mask:
+            try:
+                text = _patch_restraint_block(text, extra_mask, extra_fc)
+            except Exception as e:
+                logger.warning(f"[extra_restraints] Could not patch mdin-{i:02d}: {e}")
+
+        (work / f"mdin-{i:02d}").write_text(text)
 
     logger.debug(f"[Equil] Simulation input files written under {work}")
 
 
-
+# ------------------------- FE component: z ------------------------- #
 
 @register_sim_files("z")
-def sim_files_z(ctx, lambdas) -> None:
+def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
     Create per-window MD input files for component 'z' (UNO-REST style),
-    supporting decoupling methods 'sdr' and 'dd'.
+    supporting decoupling methods 'sdr' and 'dd'. Optionally applies
+    extra CA restraints via ctx.extra['extra_restraints'] to mdin-XX only.
     """
     work: Path = ctx.working_dir
     sim = ctx.sim
@@ -138,15 +206,16 @@ def sim_files_z(ctx, lambdas) -> None:
 
     weight = lambdas[win if win != -1 else 0]
 
+    # Count atoms
     if all_atoms.lower() == "no":
         vac_pdb = windows_dir / "vac.pdb"
         if not vac_pdb.exists():
             raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-
         vac_atoms = mda.Universe(vac_pdb.as_posix()).atoms.n_atoms
     else:
         full_pdb = windows_dir / "full.pdb"
         vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
+        vac_pdb = windows_dir / "vac.pdb"  # still needed below to find last_lig
 
     # find *last* residue index of this ligand in vac.pdb
     last_lig: Optional[str] = None
@@ -161,6 +230,9 @@ def sim_files_z(ctx, lambdas) -> None:
         raise ValueError(f"No ligand residue matching '{mol}' found in {vac_pdb.name}")
 
     amber_dir = ctx.amber_dir
+
+    # compute extra mask once for this window root; applied to mdin-XX only
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
 
     if dec_method == "sdr":
         mk2 = int(last_lig)
@@ -214,6 +286,15 @@ def sim_files_z(ctx, lambdas) -> None:
                 mdin.write("DISANG=disang.rest\n")
                 mdin.write("LISTOUT=POUT\n")
 
+            # Patch mdin with extra restraints (only mdin-XX)
+            if extra_mask:
+                try:
+                    content = out_path.read_text()
+                    content = _patch_restraint_block(content, extra_mask, extra_fc)
+                    out_path.write_text(content)
+                except Exception as e:
+                    logger.warning(f"[extra_restraints] Could not patch {out_path.name}: {e}")
+
         with template_mini.open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
             for line in fin:
                 line = (
@@ -260,10 +341,10 @@ def sim_files_z(ctx, lambdas) -> None:
                     fout.write(line)
 
             with out_path.open("a") as mdin:
-                mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+                mdin.write(f"  mbar_states = {len(lambdas)}\n")
                 mdin.write("  mbar_lambda =")
-                for lam in lambdas:
-                    mdin.write(f" {lam:6.5f},")
+                for lbd in lambdas:
+                    mdin.write(f" {lbd:6.5f},")
                 mdin.write("\n")
                 mdin.write(f"  infe = {infe_flag},\n")
                 mdin.write(" /\n")
@@ -276,6 +357,15 @@ def sim_files_z(ctx, lambdas) -> None:
                 mdin.write("DISANG=disang.rest\n")
                 mdin.write("LISTOUT=POUT\n")
 
+            # Patch mdin with extra restraints (only mdin-XX)
+            if extra_mask:
+                try:
+                    content = out_path.read_text()
+                    content = _patch_restraint_block(content, extra_mask, extra_fc)
+                    out_path.write_text(content)
+                except Exception as e:
+                    logger.warning(f"[extra_restraints] Could not patch {out_path.name}: {e}")
+
         with template_mini.open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
             for line in fin:
                 line = (
@@ -286,9 +376,7 @@ def sim_files_z(ctx, lambdas) -> None:
                 )
                 fout.write(line)
 
-    # Always emit mini_eq.in, eqnpt0.in, eqnpt.in from UNO templates:
-    amber_dir = ctx.amber_dir
-
+    # Always emit mini_eq.in, eqnpt0.in, eqnpt.in from UNO templates (no extra restraints here)
     with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open("wt") as fout:
         for line in fin:
             fout.write(line.replace("_lig_name_", mol))
@@ -312,26 +400,25 @@ def sim_files_z(ctx, lambdas) -> None:
     logger.debug(f"[sim_files_z] wrote mdin/mini/eq inputs in {windows_dir} for comp='z', win={win}, weight={weight:0.5f}")
 
 
+# ------------------------- FE component: y ------------------------- #
+
 @register_sim_files("y")
-def sim_files_y(ctx, lambdas) -> None:
+def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
     Generate MD input files for ligand-only component 'y'.
+    (No extra CA restraints apply to ligand-only eq inputs.)
     """
-    work: Path = ctx.working_dir
     sim = ctx.sim
-    comp = ctx.comp
     mol = ctx.residue_name
-    win = ctx.win
     windows_dir = ctx.window_dir
-
 
     temperature = sim.temperature
     num_sim = int(sim.num_fe_range)
-    steps1 = sim.dic_steps1[comp]
-    steps2 = sim.dic_steps2[comp]
+    steps1 = sim.dic_steps1["y"]
+    steps2 = sim.dic_steps2["y"]
     ntwx = sim.ntwx
 
-    weight = lambdas[win if win != -1 else 0]
+    weight = lambdas[ctx.win if ctx.win != -1 else 0]
     mk1 = 2  # ligand-only marker convention
 
     amber_dir = ctx.amber_dir
@@ -406,4 +493,4 @@ def sim_files_y(ctx, lambdas) -> None:
             mdin.write("DISANG=disang.rest\n")
             mdin.write("LISTOUT=POUT\n")
 
-    logger.debug(f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', win={win}, weight={weight:0.5f}")
+    logger.debug(f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}")
