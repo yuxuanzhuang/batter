@@ -45,7 +45,7 @@ where = ["."]
 
 # Include type markers (and any other static data you want) for both packages
 [tool.setuptools.package-data]
-batter = ["py.typed"]
+batter = ["py.typed", "data/**/*"]
 batter_v2 = ["py.typed"]
 
 [tool.versioningit]

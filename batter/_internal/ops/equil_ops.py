@@ -84,6 +84,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     shutil.copy2(all_ligand_folder / "reference.pdb", build_dir / "reference.pdb")
     shutil.copy2(all_ligand_folder / f"{system_name}.pdb", build_dir / "rec_file.pdb")
     shutil.copy2(all_ligand_folder / f"{ligand}.pdb", build_dir / f"{ligand}.pdb")
+    shutil.copy2(all_ligand_folder / f"{ligand}.pdb", work / f"{ligand}.pdb")
 
     # Ensure ligand atom names match antechamber mol2 (ligand.ff prepared earlier)
     shutil.copy2(work.parent / "params" / f"{mol}.mol2", build_dir / f"{mol}.mol2")
@@ -182,7 +183,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         lipid_mol = lipid_resnames  # updated list
 
     # Merge raw complex (protein + ligand + others + (lipids) + crystal waters)
-    parts: list[Path] = [build_dir / "protein.pdb", build_dir / f"{mol.lower()}.pdb", build_dir / "others.pdb"]
+    parts: list[Path] = [build_dir / "protein.pdb", build_dir / f"{mol}.pdb", build_dir / "others.pdb"]
     if sim.membrane_simulation:
         parts.append(build_dir / "lipids_amber.pdb")
     parts.append(build_dir / "crystalwat.pdb")
@@ -239,11 +240,11 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         u_aln.residues.resids = revised
         u_aln.atoms.write(str(build_dir / "aligned_amber.pdb"))
 
-    sdf_file = build_dir / f"{mol.lower()}.sdf"
+    sdf_file = build_dir / f"{mol}.sdf"
     candidates_indices = get_ligand_candidates(str(sdf_file))
     pdb_file = build_dir / "aligned_amber.pdb"
     u = mda.Universe(str(pdb_file))
-    lig_names = u.select_atoms(f"resname {mol.lower()}").names
+    lig_names = u.select_atoms(f"resname {mol}").names
     lig_name_str = " ".join([str(x) for x in lig_names[candidates_indices]])
 
     # Build VMD prep.tcl from template, try with candidate names first
@@ -255,8 +256,8 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             lipid_mol_vmd = " ".join(lipid_mol)
             for line in fin:
                 fout.write(
-                    line.replace("MMM", f"'{mol}'")
-                        .replace("mmm", mol.lower())
+                    line.replace("MMM", mol)
+                        .replace("mmm", mol)
                         .replace("NN", h1_atom)
                         .replace("P1A", f"{p1_vmd}")
                         .replace("FIRST", "1")

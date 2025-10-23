@@ -150,16 +150,17 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     work = ctx.working_dir
     build_dir = ctx.build_dir
     lig = ctx.ligand
+    mol = ctx.residue_name
     comp = ctx.comp
     stage = getattr(ctx, "stage", "prepare_equil")
 
     vac_pdb         = work / "vac.pdb"
-    vac_lig_pdb     = work / "vac_ligand.pdb"
+    vac_lig_pdb     = work / f"{lig}.pdb"
     vac_lig_prmtop  = work / "vac_ligand.prmtop"
     full_hmr_prmtop = work / "full.hmr.prmtop"
     full_inpcrd     = work / "full.inpcrd"
-    lig_mol2        = work / f"{ctx.residue_name}.mol2"
-    anchors_pdb     = build_dir / f"equil-{lig.lower()}.pdb"
+    lig_mol2        = work / f"{mol}.mol2"
+    anchors_pdb     = build_dir / f"equil-{mol}.pdb"
 
     if not anchors_pdb.exists():
         raise FileNotFoundError(f"Anchor header not found: {anchors_pdb}")
@@ -293,15 +294,16 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     """
     work = ctx.working_dir
     windows_dir = ctx.window_dir
+    lig = ctx.ligand
     mol  = ctx.residue_name
     comp = ctx.comp
 
     vac_pdb         = windows_dir / "vac.pdb"
-    vac_lig_pdb     = windows_dir / "vac_ligand.pdb"
+    vac_lig_pdb     = windows_dir / f"{lig}.pdb"
     vac_lig_prmtop  = windows_dir / "vac_ligand.prmtop"
     full_hmr_prmtop = windows_dir / "full.hmr.prmtop"
     full_inpcrd     = windows_dir / "full.inpcrd"
-    lig_mol2        = windows_dir / f"{mol.lower()}.mol2"
+    lig_mol2        = windows_dir / f"{mol}.mol2"
 
     for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_hmr_prmtop, full_inpcrd):
         if not p.exists():

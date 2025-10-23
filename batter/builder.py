@@ -3632,6 +3632,9 @@ class FreeEnergyBuilder(SystemBuilder):
         lipid_mol = self.lipid_mol
         lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
+        barostat = self.sim_config.barostat
+        if self.infe:
+            barostat = '2'
 
         # Find anchors
         with open('disang.rest', 'r') as f:
@@ -3724,7 +3727,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace(
                                 '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
                 mdin = open("./mdin-%02d" % int(i), "a")
                 mdin.write(' /\n')
@@ -3750,7 +3753,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace(
                                         '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
 
         else:  # n
@@ -3772,7 +3775,7 @@ class FreeEnergyBuilder(SystemBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace(
                                             '_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace('disang_file', 'disang'))
                 mdin = open("./mdin-%02d" % int(i), "a")
                 mdin.write('  infe = 0,\n')
@@ -4221,6 +4224,9 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
         ntwx = self.sim_config.ntwx
         lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
+        barostat = self.sim_config.barostat
+        if self.infe:
+            barostat = '2'
 
         # Read 'disang.rest' and extract L1, L2, L3
         with open('disang.rest', 'r') as f:
@@ -4268,7 +4274,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                                             line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                         else:
                                             line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write(f'  mbar_states = {len(lambdas)}\n')
@@ -4335,7 +4341,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                                             line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                         else:
                                             line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -4395,7 +4401,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                                             line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                         else:
                                             line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace(
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace('_num-steps_', n_steps_run).replace(
                                         'lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -4463,7 +4469,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                                             line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                         else:
                                             line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                                fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                                fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                     '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                     mdin = open("./mdin-%02d" % int(i), 'a')
                     mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -4516,7 +4522,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -4562,7 +4568,7 @@ class AlChemicalFreeEnergyBuilder(FreeEnergyBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -4864,6 +4870,9 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
         ntwx = self.sim_config.ntwx
+        barostat = self.sim_config.barostat
+        if self.infe:
+            barostat = '2'
 
         with open('disang.rest', 'r') as f:
             data = f.readline().split()
@@ -4906,7 +4915,7 @@ class EXFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                                     line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                 else:
                                     line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                        fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                        fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                             '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)).replace('mk3', str(mk3)).replace('mk4', str(mk4)))
             mdin = open("./mdin-%02d" % int(i), 'a')
             mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -4982,6 +4991,9 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
         ntwx = self.sim_config.ntwx
         lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
+        barostat = self.sim_config.barostat
+        if self.infe:
+            barostat = '2'
 
         # Read 'disang.rest' and extract L1, L2, L3
         #with open('disang.rest', 'r') as f:
@@ -5028,7 +5040,7 @@ class UNOFreeEnergyBuilder(AlChemicalFreeEnergyBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', '2').replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -5105,6 +5117,9 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
         ntwx = self.sim_config.ntwx
         lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
+        barostat = self.sim_config.barostat
+        if self.infe:
+            barostat = '2'
 
         # Read 'disang.rest' and extract L1, L2, L3
         #with open('disang.rest', 'r') as f:
@@ -5151,7 +5166,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', '2').replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -5203,7 +5218,7 @@ class UNORESTFreeEnergyBuilder(UNOFreeEnergyBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))
@@ -5887,6 +5902,9 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
         ntwx = self.sim_config.ntwx
         lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
+        barostat = self.sim_config.barostat
+        if self.infe:
+            barostat = '2'
 
         # Read 'disang.rest' and extract L1, L2, L3
         #with open('disang.rest', 'r') as f:
@@ -5932,7 +5950,7 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write(f'  mbar_states = {len(lambdas):02d}\n')
@@ -6602,6 +6620,9 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
         ntwx = self.sim_config.ntwx
         lambdas = self.component_windows_dict[comp]
         weight = lambdas[self.win if self.win != -1 else 0]
+        barostat = self.sim_config.barostat
+        if self.infe:
+            barostat = '2'
 
         # Read 'disang.rest' and extract L1, L2, L3
         #with open('disang.rest', 'r') as f:
@@ -6647,7 +6668,7 @@ class ACESEquilibrationBuilder(FreeEnergyBuilder):
                                         line = f"restraintmask = '(@CA | :{mol}) & !@H=' \n"
                                     else:
                                         line = f"restraintmask = '(@CA | :{mol} | {restraint_mask}) & !@H=' \n"
-                            fout.write(line.replace('_temperature_', str(temperature)).replace('_num-atoms_', str(vac_atoms)).replace(
+                            fout.write(line.replace('_temperature_', str(temperature)).replace('_barostat_', str(barostat)).replace('_num-atoms_', str(vac_atoms)).replace(
                                 '_num-steps_', n_steps_run).replace('lbd_val', '%6.5f' % float(weight)).replace('mk1', str(mk1)).replace('mk2', str(mk2)))
                 mdin = open("./mdin-%02d" % int(i), 'a')
                 mdin.write('  mbar_states = %02d\n' % len(lambdas))

@@ -207,6 +207,8 @@ def _register_local_handlers(backend: LocalBackend) -> None:
 # --- phase skipping utilities -----------------------------------------------
 
 REQUIRED_MARKERS = {
+    "system_prep": [["artifacts/config/sim_overrides.json"]],
+    "param_ligands": [["artifacts/ligand_params/index.json"]],
     "prepare_equil": [["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"]],
     "equil":         [["equil/FINISHED"], ["equil/FAILED"]],
     "equil_analysis":[["equil/representative.pdb"], ["equil/UNBOUND"]],
@@ -255,7 +257,7 @@ def _dnf_satisfied(root: Path, marker_spec) -> bool:
     marker_spec can be:
       - list[str]          → ANY of these (back-compat)
       - list[list[str]]    → DNF: ANY group satisfied; each group is ALL-of
-    """
+    """ 
     if not marker_spec:
         return False
 
@@ -267,6 +269,7 @@ def _dnf_satisfied(root: Path, marker_spec) -> bool:
     for group in marker_spec:
         if all((root / p).exists() for p in group):
             return True
+    
     return False
 
 def _is_done(system: SimSystem, phase_name: str) -> bool:
@@ -318,7 +321,7 @@ def _filter_needing_phase(children: list[SimSystem], phase_name: str) -> list[Si
     done = [c for c in children if c not in need]
     if done:
         names = ", ".join(c.meta.get("ligand", c.name) for c in done)
-        logger.info(f"[skip] {phase_name}: {len(done)} ligand(s) already complete → {names}")
+        logger.debug(f"[skip] {phase_name}: {len(done)} ligand(s) already complete → {names}")
     return need
 
 def _run_phase_skipping_done(phase: Pipeline, children: list[SimSystem],
@@ -373,6 +376,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     # Build system-prep params exactly once
     sys_params = {
+        "param_outdir": str(rc.create.param_outdir),
         "system_name": rc.create.system_name,
         "protein_input": str(rc.create.protein_input),
         "system_input": str(rc.create.system_input),
@@ -442,7 +446,12 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if parent_only.ordered_steps():
         names = [s.name for s in parent_only.ordered_steps()]
         logger.debug(f"Executing parent-only steps at {sys.root}: {names}")
-        parent_only.run(backend, sys)
+        for step in parent_only.ordered_steps():
+            # ---- Check whether to skip ----
+            if _is_done(sys, step.name):
+                logger.info(f"[skip] {step.name}: finished.")
+                continue
+            backend.run(step, sys, step.params)
     
     # Locate sim_overrides from system_prep
     overrides_path = sys.root / "artifacts" / "config" / "sim_overrides.json"
@@ -516,7 +525,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     phase_fe            = _phase(PH_FE)
     phase_analyze       = _phase(PH_ANALYZE)
 
-    # --- build SimSystem children (attach param_dir_dict once) ---
+    # --- build SimSystem children ---
     param_idx_path = sys.root / "artifacts" / "ligand_params" / "index.json"
     if not param_idx_path.exists():
         raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
@@ -525,15 +534,14 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     # get mapping of ligand name → residue name
     lig_resname_map = {}
-    for entry in param_index.get("ligands", []):
+    for entry in param_index["ligands"]:
         lig = entry.get("ligand")
         resn = entry.get("residue_name")
-        if lig and resn:
-            lig_resname_map[lig] = resn
+        lig_resname_map[lig] = resn
 
     children: List[SimSystem] = []
-    for d in sorted([p for p in (sys.root / "simulations").glob("*") if p.is_dir()]):
-        lig_name = d.name
+    for lig_name, resn in lig_resname_map.items():
+        d = sys.root / "simulations" / lig_name
         children.append(
             SimSystem(
                 name=f"{sys.name}:{lig_name}",
@@ -547,7 +555,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
                 anchors=sys.anchors,
                 meta={**(sys.meta or {}),
                 "ligand": lig_name,
-                "residue_name": lig_resname_map[lig_name],
+                "residue_name": resn,
                 "param_dir_dict": param_dir_dict},
             )
         )

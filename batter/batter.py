@@ -1565,7 +1565,7 @@ class System:
                 continue
             logger.debug(f'Preparing pose: {pose}')
             
-            sim_config_pose = sim_config.copy(deep=True)
+            sim_config_pose = sim_config.model_copy(deep=True)
             # load anchor_list
             with open(f"{self.equil_folder}/{pose}/anchor_list.txt", 'r') as f:
                 anchor_list = f.readlines()
@@ -1585,7 +1585,7 @@ class System:
             
             for component in sim_config._components:
                 logger.debug(f'Preparing component: {component}')
-                lambdas_comp = sim_config.dict()[COMPONENTS_LAMBDA_DICT[component]]
+                lambdas_comp = sim_config.model_dump()[COMPONENTS_LAMBDA_DICT[component]]
                 n_sims = len(lambdas_comp)
                 logger.debug(f'Number of simulations: {n_sims}')
                 cv_path = f"{self.fe_folder}/{pose}/{COMPONENTS_FOLDER_DICT[component]}/{component}-1/cv.in"

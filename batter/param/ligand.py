@@ -354,7 +354,7 @@ class LigandProcessing(ABC):
             np.sum([charge._magnitude for charge in molecule.partial_charges])
         )
         self.ligand_charge = float(ligand_charge)
-        logger.info(
+        logger.debug(
             "Net charge of ligand {} in {} is {}.", self.name, self.ligand_file, self.ligand_charge
         )
 
@@ -416,7 +416,7 @@ class LigandProcessing(ABC):
             atom.name = atn
 
         interchange.to_prmtop(f"{self.output_dir}/{mol}.prmtop")
-        logger.info(
+        logger.debug(
             f"Ligand {mol} OpenFF parameters prepared: {self.output_dir}/{mol}.prmtop",
         )
 
@@ -483,7 +483,7 @@ quit
         lig_u = Universe(f"{self.output_dir}/{mol}.pdb")
         self.atomnames = list(lig_u.atoms.names)
 
-        logger.info("Ligand {} AMBER parameters prepared: {}/{}.lib", mol, self.output_dir, mol)
+        logger.debug("Ligand {} AMBER parameters prepared: {}/{}.lib", mol, self.output_dir, mol)
 
     # -------------------- DB lookup --------------------
 
@@ -563,7 +563,7 @@ quit
         for suffix in suffixes:
             shutil.copy(db / f"{self.name}.{suffix}", Path(self.output_dir) / f"{self.name}.{suffix}")
 
-        logger.info("Ligand {} found in database {}. Files copied to {}.", self.name, db, self.output_dir)
+        logger.debug("Ligand {} found in database {}. Files copied to {}.", self.name, db, self.output_dir)
         return True
 
 
@@ -726,8 +726,9 @@ def batch_ligand_process(
     Returns
     -------
     list[str]
-        The list of **hash ids** (processing order) for all unique inputs.
-        (Note: multiple aliases of the same file/path collapse to one hash.)
+        The list of **hash ids** (processing order) for all inputs.
+    Dict[str, Tuple[str, str]]
+        Mapping from input path to (hash_id, canonical_smiles).
     """
     # --- normalize inputs ---
     if isinstance(ligand_paths, list):
@@ -761,21 +762,21 @@ def batch_ligand_process(
     ordered_paths = []
     seen = set()
     ligand_names = []
+    hash_order = []
     for name, p in lig_map.items():
         if p not in seen:
             ordered_paths.append(p)
             ligand_names.append(name)
             seen.add(p)
-
-    hash_order: List[str] = [unique[p][0] for p in ordered_paths]
+        hash_order.append(unique[p][0])
 
     # --- build LigandProcessing objects for each unique hash ---
     to_prepare: List[Tuple[str, "LigandProcessing"]] = []
-    unique_mol_names = []
 
     factory = LigandFactory()
 
     for idx, p in enumerate(ordered_paths, start=1):
+        lig_name = ligand_names[idx - 1]
         hid, smi = unique[p]
         target_dir = out_root / hid
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -784,13 +785,12 @@ def batch_ligand_process(
             ligand_file=p,
             index=idx,
             output_dir=target_dir.as_posix(),
-            ligand_name=ligand_names[idx - 1],
+            ligand_name='lig',
             retain_lig_prot=retain_lig_prot,
             charge=charge_method,
             ligand_ff=ligand_ff,
-            unique_mol_names=unique_mol_names,
+            unique_mol_names=[],
         )
-        unique_mol_names.append(lig.name)
         # Dump metadata for traceability
         meta = {
             "hash_id": hid,
@@ -799,7 +799,7 @@ def batch_ligand_process(
             "canonical_smiles": smi,
             "retain_lig_prot": bool(retain_lig_prot),
             "ligand_ff": ligand_ff,
-            "prepared_base": lig.name,
+            "prepared_base": lig_name,
         }
         (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
@@ -809,19 +809,16 @@ def batch_ligand_process(
         if not overwrite and marker_any:
             logger.info("Reusing cached ligand @ {} ({})", hid, meta["prepared_base"])
         else:
-            to_prepare.append((hid, lig))
+            to_prepare.append((lig_name, hid, lig))
 
     # --- perform parametrization (local or SLURM) ---
     if to_prepare:
         if run_with_slurm:
-            # (unchanged: same Dask + SLURM logic as in your previous version)
-            # you can keep your previous SLURM code path here verbatim,
-            # but submit lig.prepare_ligand_parameters for each (hid, lig)
-            raise NotImplementedError("SLURM path omitted here for brevity; reuse your previous block.")
+            raise NotImplementedError("Not implemented yet.")
         else:
-            for hid, lig in to_prepare:
-                logger.debug("Preparing {} in {}", lig.name, lig.output_dir)
+            for lig_name, hid, lig in to_prepare:
+                logger.info(f"Preparing {lig_name} in {lig.output_dir}")
                 lig.prepare_ligand_parameters()
 
-    logger.info("Prepared {} unique ligands into {}", len(hash_order), out_root)
-    return hash_order, unique_mol_names
+    logger.success(f"Prepared all ligands into {out_root}")
+    return hash_order, unique

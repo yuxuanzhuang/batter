@@ -34,6 +34,7 @@ def create_box(ctx: BuildContext) -> None:
     Create the solvated box for the given component and window.
     """
     work = ctx.working_dir
+    param_dir = work.parent / "params"
     sim = ctx.sim
     comp = ctx.comp
     build_dir = ctx.build_dir
@@ -73,25 +74,22 @@ def create_box(ctx: BuildContext) -> None:
     dec_method = str(getattr(sim, "dec_method", "dd"))
 
     # ---- copy FF artifacts (resolve ff/ relative to window_dir: ../../param) ----
-    param_dir = Path(ctx.param_dir_dict.get(ctx.residue_name))
-    if not param_dir:
-        raise FileNotFoundError(f"Param dir not found for ligand {ctx.ligand} in param_dir_dict")
-
-    # mol
-    for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "pdb", "sdf", "json"):
+    for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
         src = param_dir / f"{ctx.residue_name}.{ext}"
         shutil.copy2(src, window_dir / src.name)
     
-    for ext in ("prmtop", "mol2", "pdb", "sdf", "inpcrd"):
+    for ext in ("prmtop", "mol2", "sdf", "inpcrd"):
         src = param_dir / f"{ctx.residue_name}.{ext}"
         shutil.copy2(src, window_dir / f"vac_ligand.{ext}")
     
     # molr
     if comp == "x":
-        param_dir = Path(ctx.param_dir_dict.get(ctx.residuer))
+        # need FIX
+        raise NotImplementedError("Comp=x (rbfe) not supported in box.py; use box_dimer.py.")
+        param_dir = work.parent.parent / lig2 / "param"
         if not param_dir:
             raise FileNotFoundError(f"Param dir not found for ligand {ctx.ligandr} in param_dir_dict")
-        for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "pdb", "sdf", "json"):
+        for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
             src = param_dir / f"{ctx.residuer}.{ext}"
             shutil.copy2(src, window_dir / src.name)
     
@@ -122,8 +120,10 @@ def create_box(ctx: BuildContext) -> None:
         for om in other_mol:
             f.write(f"loadamberparams {om.lower()}.frcmod\n")
             f.write(f"{om} = loadmol2 {om.lower()}.mol2\n")
-        f.write(f"loadamberparams {mol.lower()}.frcmod\n")
-        f.write(f"{mol} = loadmol2 {mol.lower()}.mol2\n\n")
+        f.write(f"loadamberparams {mol}.frcmod\n")
+        f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
+        f.write(f'set {{{mol}.1}} name "{mol}"\n')
+
         if comp == "x":
             f.write(f"loadamberparams {molr.lower()}.frcmod\n")
             f.write(f"{molr} = loadmol2 {molr.lower()}.mol2\n\n")
@@ -300,8 +300,9 @@ def create_box(ctx: BuildContext) -> None:
     _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_ligands.in")
     with (window_dir / "tleap_solvate_ligands.in").open("a") as f:
         f.write("# Load the necessary parameters\n")
-        f.write(f"loadamberparams {mol.lower()}.frcmod\n")
-        f.write(f"{mol} = loadmol2 {mol.lower()}.mol2\n\n")
+        f.write(f"loadamberparams {mol}.frcmod\n")
+        f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
+        f.write(f'set {{{mol}.1}} name "{mol}"\n')
         if comp == "x":
             f.write(f"loadamberparams {molr.lower()}.frcmod\n")
             f.write(f"{molr} = loadmol2 {molr.lower()}.mol2\n\n")
@@ -410,8 +411,10 @@ def create_box(ctx: BuildContext) -> None:
     # combine with ParmEd
     dum_p = pmd.load_file(str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd"))
     prot_p = pmd.load_file(str(window_dir / "solvate_prot.prmtop"), str(window_dir / "solvate_prot.inpcrd"))
-    ligand_p_1 = pmd.load_file(str(window_dir / f"{mol.lower()}.prmtop"))
-    ligand_p_1.residues[0].name = mol.lower()
+    ligand_p_1 = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
+    ligand_p_1.residues[0].name = mol
+    ligand_p_1.save(str(window_dir / f"{mol}.prmtop"), overwrite=True)
+    ligand_p_1 = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
 
     lig_inp = pmd.load_file(str(window_dir / "solvate_ligands.inpcrd")).coordinates
     if dec_method == "dd" or comp == "q":

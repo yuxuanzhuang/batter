@@ -33,16 +33,7 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     system_root = system.root
 
     # 3) Read parameter index (produced by param_ligands)
-    index_json = system_root.parents[1] / "artifacts" / "ligand_params" / "index.json"
-    param_dir_dict = {}
-    try:
-        index_data = json.loads(index_json.read_text())
-        for entry in index_data.get("ligands", []):
-            store_dir = entry.get("store_dir")
-            resn = entry.get("residue_name")
-            param_dir_dict[resn] = store_dir
-    except Exception as e:
-        raise RuntimeError(f"Failed to parse ligand param index {index_json}: {e}")
+    param_dir_dict = system.meta['param_dir_dict']
 
     logger.debug(
         f"[prepare_equil] start for ligand={ligand} "

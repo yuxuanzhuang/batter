@@ -24,24 +24,20 @@ def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparat
 
     # 0) system prep — runs once at system root
     steps.append(
-        Step(
+        _step(
             name="system_prep",
             requires=[],
-            params={"sim": sim.model_dump(), **sys_params},
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+
         )
     )
-
-    # 0) single parent job
     steps.append(
-        Step(
+        _step(
             name="param_ligands",
-            requires=[],
-            params=dict(
-                outdir="{WORK}/ligand_params",
-                charge="am1bcc",
-                ligand_ff=sim.ligand_ff,
-                retain_lig_prot=True,
-            ),
+            requires=["system_prep"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
         )
     )
 

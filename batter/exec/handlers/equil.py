@@ -1,6 +1,5 @@
-# batter/exec/handlers/equil.py
-
 from __future__ import annotations
+import os
 from pathlib import Path
 from typing import Any, Dict
 from loguru import logger
@@ -8,6 +7,7 @@ from loguru import logger
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobManager, SlurmJobSpec
+
 
 
 def _phase_paths(root: Path) -> dict[str, Path]:

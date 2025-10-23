@@ -548,71 +548,39 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     the anchor and membrane information for downstream steps.
 
     """
-    
-    yaml_dir = Path(params.get("yaml_dir", ".")).resolve()
+    logger.info(f"[system_prep] Preparing system in {system.root}")
+    sys_params = params['sys_params']
+    yaml_dir = Path(sys_params['yaml_dir']).resolve()
 
     # accept new key `system_input` or legacy `system_topology`
-    system_topology = params.get("system_input") or params.get("system_topology")
-    if not system_topology:
-        raise KeyError("system_prep requires 'system_input' (or legacy 'system_topology').")
+    system_topology = sys_params['system_input']
 
     # --- Normalize ligand inputs to a dict {NAME: PATH} ---
-    lig_map: Dict[str, str] = {}
-
-    # 1) explicit mapping
-    if isinstance(params.get("ligand_paths"), dict):
-        lig_map = {str(k): str(v) for k, v in params["ligand_paths"].items()}
-
-    # 2) list of paths
-    elif isinstance(params.get("ligand_paths"), list) and params["ligand_paths"]:
-        for p in params["ligand_paths"]:
-            pp = Path(p)
-            name = pp.stem.upper()
-            lig_map[name] = str(pp)
-
-    # 3) JSON file (dict or list)
-    elif params.get("ligand_input"):
-        jpath = Path(params["ligand_input"])
-        if not jpath.is_absolute():
-            jpath = (yaml_dir / jpath).resolve()
-        data = json.loads(jpath.read_text())
-        if isinstance(data, dict):
-            for name, p in data.items():
-                lig_map[str(name).upper()] = str((jpath.parent / p) if not Path(p).is_absolute() else Path(p))
-        elif isinstance(data, list):
-            for p in data:
-                pp = Path(p)
-                pp = (jpath.parent / pp) if not pp.is_absolute() else pp
-                lig_map[pp.stem.upper()] = str(pp)
-        else:
-            raise TypeError(f"{jpath} must be a dict or list, got {type(data).__name__}")
-
-    else:
-        raise ValueError("No ligands provided to system_prep (ligand_paths or ligand_input required).")
+    lig_map = sys_params['ligand_paths']
 
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
-        system_name=params["system_name"],
-        protein_input=params["protein_input"],
+        system_name=sys_params["system_name"],
+        protein_input=sys_params["protein_input"],
         system_topology=system_topology,
         ligand_paths=lig_map,
-        anchor_atoms=list(params.get("anchor_atoms", [])),
-        ligand_anchor_atom=params.get("ligand_anchor_atom"),
-        receptor_segment=params.get("receptor_segment"),
-        system_coordinate=params.get("system_coordinate"),
-        protein_align=params.get("protein_align", "name CA and resid 60 to 250"),
-        receptor_ff=params.get("receptor_ff", "protein.ff14SB"),
-        retain_lig_prot=bool(params.get("retain_lig_prot", True)),
-        ligand_ph=float(params.get("ligand_ph", 7.4)),
-        lipid_mol=list(params.get("lipid_mol", [])),
-        lipid_ff=params.get("lipid_ff", "lipid21"),
-        overwrite=bool(params.get("overwrite", False)),
-        verbose=bool(params.get("verbose", False)),
+        anchor_atoms=list(sys_params.get("anchor_atoms", [])),
+        ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),
+        receptor_segment=sys_params.get("receptor_segment"),
+        system_coordinate=sys_params.get("system_coordinate"),
+        protein_align=sys_params.get("protein_align", "name CA and resid 60 to 250"),
+        receptor_ff=sys_params.get("receptor_ff", "protein.ff14SB"),
+        retain_lig_prot=bool(sys_params.get("retain_lig_prot", True)),
+        ligand_ph=float(sys_params.get("ligand_ph", 7.4)),
+        lipid_mol=list(sys_params.get("lipid_mol", [])),
+        lipid_ff=sys_params.get("lipid_ff", "lipid21"),
+        overwrite=bool(sys_params.get("overwrite", False)),
+        verbose=bool(sys_params.get("verbose", False)),
     )
 
     outputs = [
         system.root / "all-ligands" / "reference.pdb",
-        system.root / "all-ligands" / f"{params['system_name']}.pdb",
+        system.root / "all-ligands" / f"{sys_params['system_name']}.pdb",
     ]
     updates = {
         "p1": manifest["anchors"]["p1"],
@@ -626,6 +594,7 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     }
     (manifest_dir := (system.root / "artifacts" / "config")).mkdir(parents=True, exist_ok=True)
     (system.root / "artifacts" / "config" / "sim_overrides.json").write_text(json.dumps(updates, indent=2))
+
 
     info = {"system_prep_ok": True, **manifest, "sim_updates": updates}
     return ExecResult(outputs, info)

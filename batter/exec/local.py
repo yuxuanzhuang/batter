@@ -113,6 +113,8 @@ class LocalBackend(ExecBackend):
         if mw is None:
             cpu = os.cpu_count() or 1
             mw = min(len(systems), cpu)
+        else:
+            mw = min(mw, len(systems))
 
         logger.debug(
             "LOCAL(parallel): joblib(loky) with n_jobs={} for {} system(s) — {}",
@@ -120,7 +122,6 @@ class LocalBackend(ExecBackend):
         )
 
         # IMPORTANT: self, pipeline, and systems must be picklable.
-        # Ensure handlers are top-level callables.
         results: List[Tuple[str, Mapping[str, ExecResult] | None, BaseException | None]] = Parallel(
             n_jobs=mw,
             backend=backend,        # None → 'loky' for processes
