@@ -53,8 +53,8 @@ class PrepareEquilBuilder(BaseBuilder):
             residue_name=residue_name,
             param_dir_dict=param_dir_dict,
             extra=extra,
+            infe=infe,
         )
-        self.infe = infe
         logger.debug(f"[prepare_equil] ligand={ligand}")
 
     # ------------------------------------------------------------------

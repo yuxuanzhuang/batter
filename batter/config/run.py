@@ -68,7 +68,7 @@ class CreateArgs(BaseModel):
     """
     Inputs for system creation/staging (pre-simulation).
     """
-    #model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     system_name: str
     protein_input: Path
@@ -99,7 +99,7 @@ class CreateArgs(BaseModel):
     extra_restraint_fc: str = 10.0
 
     # additional conformational restraints file (NFE)
-    extra_conformational_restraints: Optional[Path] = None
+    extra_conformation_restraints: Optional[Path] = None
 
     # Box / chemistry basics that are used before FE
     receptor_ff: str = "ff14SB"
@@ -149,11 +149,27 @@ class CreateArgs(BaseModel):
             raise ValueError("You must provide either `ligand_paths` or `ligand_input`.")
         return self
 
+    @model_validator(mode="after")
+    def _check_extra_restraints(self):
+        if self.extra_conformation_restraints and self.extra_restraints:
+            raise ValueError("Cannot specify both `extra_conformation_restraints` and `extra_restraints`.")
+        if self.extra_conformation_restraints:
+            if not self.extra_conformation_restraints.exists():
+                raise ValueError(f"extra_conformation_restraints file does not exist: {self.extra_conformation_restraints}")
+                p = Path(self.extra_conformation_restraints)
+                try:
+                    data = json.loads(p.read_text())
+                except Exception as e:
+                    raise ValueError(f"Could not parse {p}: {e}")
+                if not isinstance(data, (list, tuple)) or not all(isinstance(r, (list, tuple)) for r in data):
+                    raise ValueError(f"JSON must be a list of rows [dir, res1, res2, cutoff, k]. Got: {type(data)}")
+        return self
+
 class FESimArgs(BaseModel):
     """
     Free-energy simulation knobs (lives under `fe_sim:`).
     """
-    #model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     fe_type: str = "uno_rest"
     dec_int: str = "mbar"
@@ -197,7 +213,7 @@ class FESimArgs(BaseModel):
 
 class RunSection(BaseModel):
     """Run-related settings."""
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
     only_fe_preparation: bool = False
     on_failure: str = Field("raise", description="Behavior on ligand failure: 'raise' or 'prune'")
     max_workers: int | None = Field(
@@ -211,7 +227,7 @@ class RunSection(BaseModel):
 
 class RunConfig(BaseModel):
     """Top-level YAML config."""
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     version: int = 1
     protocol: Literal["abfe", "asfe"] = "abfe"

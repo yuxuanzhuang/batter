@@ -31,8 +31,6 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     extra_restraints: Optional[dict] = params['sys_params'].get("extra_restraints", None)
     extra_restraints_fc: float = float(params['sys_params'].get("extra_restraints_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = params['sys_params'].get("extra_conformation_restraints", None)
-    if extra_conformation_restraints is not None and extra_restraints is not None:
-        raise ValueError("Cannot specify both extra_restraints and extra_conformation_restraints")
     
     infe = False
     if extra_restraints is not None:

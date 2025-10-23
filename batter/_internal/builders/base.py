@@ -39,6 +39,7 @@ class BaseBuilder(ABC):
         working_dir: Path | str,
         system_root: Path | str,
         win: int = -1,
+        infe: bool = False,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
         abs_working_dir = Path(working_dir).resolve()
@@ -54,6 +55,8 @@ class BaseBuilder(ABC):
             extra=extra or {},
         )
 
+        # whether to enable infe
+        self.infe = infe
         self.component_windows = component_windows
         self.ctx.working_dir.mkdir(parents=True, exist_ok=True)
 

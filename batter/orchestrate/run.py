@@ -395,7 +395,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         "yaml_dir": str(yaml_dir),
         "extra_restraints": rc.create.extra_restraints or "",
         "extra_restraint_fc": rc.create.extra_restraint_fc,
-        "extra_conformational_restraints": rc.create.extra_conformational_restraints or "",
+        "extra_conformation_restraints": rc.create.extra_conformation_restraints or "",
     }
 
 
