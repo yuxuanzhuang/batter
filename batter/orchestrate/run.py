@@ -344,7 +344,8 @@ def _run_phase_skipping_done(phase: Pipeline, children: list[SimSystem],
 
 
 
-def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None) -> None:
+def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None,
+                  system_overrides: Dict[str, Any] = None) -> None:
     """
     Run a full BATTER workflow from a YAML configuration.
 
@@ -363,12 +364,23 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     # Configs
     rc = RunConfig.load(path)
+    if system_overrides:
+        logger.info(f"Applying system overrides: {system_overrides}")
+        rc = rc.model_copy(update={
+            "system": rc.system.model_copy(update=system_overrides)
+        })
     yaml_path = Path(path)
     yaml_dir = yaml_path.parent
 
     # lf ligand_input load json and set ligand_paths 
     lig_map = _resolve_ligand_map(rc, yaml_dir)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
+
+    # if rc.create.param_outdir is None, set to default under work/
+    if rc.create.param_outdir is None:
+        rc.create.param_outdir = str(Path(rc.system.output_folder) / "ligand_params")
+    else:
+        logger.info(f"Using user-specified ligand param_outdir: {rc.create.param_outdir}")
 
     # update on_failure
     if on_failure:

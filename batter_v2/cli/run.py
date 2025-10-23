@@ -44,7 +44,13 @@ def cli() -> None:
     show_default=True,
     help="How to handle a failing ligand pipeline: prune (skip ligand) or raise (abort run).",
 )
-def cmd_run(yaml_path: Path, on_failure: str) -> None:
+@click.option(
+    "--output-folder",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Output directory to use instead of that specified in the YAML.",
+)
+def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path]) -> None:
     """
     Run an orchestration described by a YAML file.
 
@@ -53,7 +59,8 @@ def cmd_run(yaml_path: Path, on_failure: str) -> None:
     yaml_path
         Path to a top-level run YAML (includes system/create/run/simulation).
     """
-    run_from_yaml(yaml_path, on_failure=on_failure.lower())
+    run_from_yaml(yaml_path, on_failure=on_failure.lower(),
+        system_overrides={"output_folder": output_folder} if output_folder else None)
 
 
 # ------------------------------- config --------------------------------
