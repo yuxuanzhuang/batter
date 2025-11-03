@@ -9,6 +9,10 @@ import numpy as np
 import pandas as pd
 import MDAnalysis as mda
 from loguru import logger
+import os
+import json
+import shutil
+
 
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_sim_files
@@ -58,6 +62,16 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
     extra_sel = extra.get("extra_restraints")
     if not extra_sel:
         return None, 0.0
+
+    if ctx.win != -1:
+        # load from window -1 dir
+        res_json = ctx.equil_dir / "extra_restraints.json"
+        if not os.path.exists(res_json):
+            raise FileNotFoundError(f"Missing extra_restraints.json in equil dir: {res_json}")
+        with open(res_json, "rt") as f:
+            data = json.load(f)
+        return data.get("mask"), data.get("force_const", 10.0)
+
     force_const = float(extra.get("extra_restraints_fc", 10.0))
 
     ref_pdb = work / "full.pdb"
@@ -89,7 +103,9 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
         return None, force_const
 
     mask = f"(:{mask_ranges}) & @CA"
-    logger.info(f"[extra_restraints] Mask: {mask} (wt={force_const})")
+    # save as json
+    json.dump({"mask": mask, "force_const": force_const}, (work / "extra_restraints.json").open("wt"))
+    logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
 

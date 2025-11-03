@@ -70,6 +70,11 @@ class BuildContext:
     def is_equilibration(self) -> bool:
         """Return True if this context corresponds to equilibration (-1 window)."""
         return self.win == -1
+    
+    @property
+    def equil_dir(self) -> Path:
+        """Return the equilibration directory."""
+        return self.working_dir if self.is_equilibration else self.working_dir / f"{self.comp}-1"
 
 
 @runtime_checkable

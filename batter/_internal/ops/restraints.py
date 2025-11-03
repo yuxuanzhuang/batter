@@ -150,16 +150,16 @@ def _write_assign_and_read_vals(work: Path, rst_exprs: List[str], prmtop: Path, 
 
 # ───────────────────── extra conformation restraints (helpers) ─────────────────────
 
-def _gen_cv_blocks_from_distance_restraints(pose_dir: Path,
+def _gen_cv_blocks_from_distance_restraints(work_dir: Path,
                                             restraints: Iterable[Iterable]) -> list[str]:
     """
     Build &colvar DISTANCE blocks from JSON rows:
       [direction, res1, res2, cutoff, force_constant]
-    Uses CA atoms from pose_dir/full.pdb.
+    Uses CA atoms from work_dir/full.pdb.
     """
-    pdb = pose_dir / "full.pdb"
+    pdb = work_dir / "full.pdb"
     if not pdb.exists():
-        raise FileNotFoundError(f"[extra_conf] Missing full.pdb under {pose_dir}")
+        raise FileNotFoundError(f"[extra_conf] Missing full.pdb under {work_dir}")
 
     u = mda.Universe(pdb.as_posix())
     blocks: list[str] = []
@@ -227,14 +227,22 @@ def _append_or_replace_tagged_block(file_path: Path, tag: str, blocks: list[str]
 
     file_path.write_text(text)
 
-def _maybe_append_extra_conf_blocks(ctx: BuildContext, pose_dir: Path, cv_file: Path, *, comp: Optional[str]=None) -> None:
+def _maybe_append_extra_conf_blocks(ctx: BuildContext, work_dir: Path, cv_file: Path, *, comp: Optional[str]=None) -> None:
     """
     If ctx.extra['extra_conformation_restraints'] is set, parse JSON and append
     the generated &colvar blocks to cv_file (idempotently).
     For FE stage, pass comp (e.g., 'z' or 'o') to honor component gating.
     """
-    spec_path = (ctx.extra or {}).get("extra_conformation_restraints")
+    spec_path = ctx.extra.get("extra_conformation_restraints")
     if not spec_path:
+        return
+    if ctx.win != -1:
+        # load from equil dir
+        block_json = ctx.equil_dir / "extra_conf_restraints.json"
+        if not block_json.exists():
+            raise FileNotFoundError(f"[extra_conf] Expected extra_conf_restraints.json in equil dir: {block_json}")
+        _append_or_replace_tagged_block(cv_file, tag="EXTRA_CONFORMATIONAL_REST",
+                                       blocks=json.load(block_json.open())['blocks'])
         return
     p = Path(spec_path)
     try:
@@ -245,12 +253,11 @@ def _maybe_append_extra_conf_blocks(ctx: BuildContext, pose_dir: Path, cv_file: 
     if not isinstance(data, (list, tuple)) or not all(isinstance(r, (list, tuple)) for r in data):
         raise ValueError(f"[extra_conf] JSON must be a list of rows [dir, res1, res2, cutoff, k]. Got: {type(data)}")
 
-    blocks = _gen_cv_blocks_from_distance_restraints(pose_dir, data)
+    blocks = _gen_cv_blocks_from_distance_restraints(work_dir, data)
+    # save blocks
+    json.dump({'blocks': blocks}, (work_dir / "extra_conf_restraints.json").open("w"), indent=2)
     _append_or_replace_tagged_block(cv_file, tag="EXTRA_CONFORMATIONAL_REST", blocks=blocks)
-    if comp:
-        logger.debug(f"[extra_conf] Appended {len(blocks)} block(s) to {cv_file} (comp={comp})")
-    else:
-        logger.debug(f"[extra_conf] Appended {len(blocks)} block(s) to {cv_file}")
+    return
 
 
 # ───────────────────────────── write_equil_restraints (integrated) ─────────────────────────────
@@ -333,7 +340,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
         cvf.write("/\n")
 
     # ---- integrate extra conformation restraints (equil) ----
-    _maybe_append_extra_conf_blocks(ctx, pose_dir=work, cv_file=cv_in)
+    _maybe_append_extra_conf_blocks(ctx, work_dir=work, cv_file=cv_in)
 
     # staged disangXX.rest
     for idx, weight in enumerate(release_eq):
@@ -488,7 +495,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     if ctx.comp in {"z", "o"}:
-        _maybe_append_extra_conf_blocks(ctx, pose_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
+        _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
 
     # disang.rest
     disang = windows_dir / "disang.rest"

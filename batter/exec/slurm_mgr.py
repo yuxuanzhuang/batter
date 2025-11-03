@@ -12,20 +12,43 @@ import json
 import fcntl
 
 # ---------- atomic registry append ----------
-def _atomic_append_jsonl(path: Path, rec: dict) -> None:
+def _atomic_append_jsonl_unique(path: Path, rec: dict, unique_key: str = "workdir") -> None:
     """
-    Append one JSON record per line to `path`, safely:
+    Append one JSON record per line to `path` IFF no existing record has the same `unique_key` value.
     - mkdir -p parent
     - exclusive flock
-    - flush + fsync
+    - scan existing file under the same lock
+    - append + flush + fsync
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a") as f:
+    key_val = rec.get(unique_key)
+    if key_val is None:
+        raise ValueError(f"Record missing unique key '{unique_key}': {rec}")
+
+    # Open for read+append; create if missing.
+    with open(path, "a+") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
-        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-        fcntl.flock(f, fcntl.LOCK_UN)
+        try:
+            # Rewind and scan existing lines
+            f.seek(0)
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    prev = json.loads(line)
+                except Exception:
+                    continue
+                if prev.get(unique_key) == key_val:
+                    # Already registered for this folder → no-op
+                    return
+
+            # Not found → append
+            f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 # ---- SLURM state sets ----
 SLURM_OK_STATES = {
@@ -171,7 +194,7 @@ class SlurmJobManager:
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
             }
-            _atomic_append_jsonl(self._registry_file, rec)
+            _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
 
     def _load_registry_specs(self) -> dict[Path, SlurmJobSpec]:
         """Load specs from the on-disk queue (if configured)."""

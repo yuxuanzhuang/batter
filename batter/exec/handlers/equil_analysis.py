@@ -87,6 +87,7 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
     hmr = str(sim.get("hmr", "yes"))  # "yes"/"no"
 
     # hard requirements
+    print(p["finished"])
     if not p["finished"].exists():
         if p["failed"].exists():
             raise FileNotFoundError(f"[equil_check:{lig}] equil FAILED; cannot proceed")
