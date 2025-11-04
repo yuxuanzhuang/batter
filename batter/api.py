@@ -24,20 +24,24 @@ Inspect FE results in a work directory (portable across clusters)::
 
     from batter.api import list_fe_runs, load_fe_run
     idx = list_fe_runs("work/at1r_aai")
-    rec = load_fe_run("work/at1r_aai", run_id=idx.iloc[-1]["run_id"])
+    if not idx.empty:
+        rec = load_fe_run("work/at1r_aai", run_id=idx.iloc[-1]["run_id"])
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from ._version import __version__  # semantic version string
 
 # --- Schemas / configs ---
 from .config.simulation import SimulationConfig
 from .config.run import RunConfig
-from .config.io import read_yaml_config as load_sim_config, write_yaml_config as save_sim_config
+from .config.io import (
+    read_yaml_config as load_sim_config,
+    write_yaml_config as save_sim_config,
+)
 
 # --- Orchestration entrypoint ---
 from .orchestrate.run import run_from_yaml
@@ -45,12 +49,13 @@ from .orchestrate.run import run_from_yaml
 # --- Portable runtime + FE results ---
 from .runtime.portable import ArtifactStore
 from .runtime.fe_repo import FEResultsRepository, FERecord, WindowResult
+from .utils.exec_clone import clone_execution
 
 # --- System descriptor (read-only for users) ---
-from .systems.core import SimSystem  # exposed for typing/provenance
+from .systems.core import SimSystem
 
 if TYPE_CHECKING:
-    import pandas as pd  # for type hints only
+    import pandas as pd  # type: ignore[assignment]  # for type hints only
 
 __all__ = [
     # version
@@ -72,6 +77,8 @@ __all__ = [
     # convenience helpers
     "list_fe_runs",
     "load_fe_run",
+    # execution cloning
+    "clone_execution",
 ]
 
 

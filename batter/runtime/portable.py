@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Optional
-
+from typing import Any, Dict, List, Literal, Optional
 
 __all__ = ["Artifact", "ArtifactManifest", "ArtifactStore"]
 
@@ -31,7 +31,7 @@ class Artifact:
     Parameters
     ----------
     name : str
-        Logical name (e.g., ``"fe/index"`` or ``"traj/lig1.zarr"``).
+        Logical name (e.g., "fe/index" or "traj/lig1.zarr").
     relpath : pathlib.Path
         Path relative to the store root.
     kind : {"file","dir"}
@@ -66,22 +66,30 @@ class ArtifactManifest:
 
     # -------------- mutation --------------
 
-    def add(self, art: Artifact) -> None:
-        # Artifact is frozen; assume meta is already a dict (default_factory handles it)
+    def add(self, art: Artifact, overwrite: bool = False) -> None:
+        if art.name in self._items and not overwrite:
+            raise KeyError(f"Artifact name already exists: {art.name!r}")
         self._items[art.name] = art
 
     # -------------- queries ---------------
 
     def get(self, name: str) -> Artifact:
-        return self._items[name]
+        try:
+            return self._items[name]
+        except KeyError as e:
+            raise KeyError(f"No artifact named {name!r} in manifest") from e
 
     def names(self) -> List[str]:
         return sorted(self._items.keys())
+
+    def exists(self, name: str) -> bool:
+        return name in self._items
 
     # -------------- i/o -------------------
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "version": 1,
             "artifacts": [
                 {
                     "name": a.name,
@@ -92,7 +100,7 @@ class ArtifactManifest:
                     "meta": a.meta or {},
                 }
                 for a in self._items.values()
-            ]
+            ],
         }
 
     @classmethod
@@ -107,7 +115,8 @@ class ArtifactManifest:
                     sha256=row.get("sha256", ""),
                     size=int(row.get("size", 0)),
                     meta=row.get("meta", {}) or {},
-                )
+                ),
+                overwrite=True,
             )
         return m
 
@@ -121,7 +130,7 @@ class ArtifactStore:
     root : path-like
         Store root directory (e.g., a run's work directory).
     manifest_name : str
-        File name for the manifest JSON under ``root`` (default: ``"manifest.json"``).
+        File name for the manifest JSON under ``root`` (default: "manifest.json").
 
     Examples
     --------
@@ -142,18 +151,26 @@ class ArtifactStore:
 
     # ---------------- core ops ----------------
 
-    def put_file(self, src: Path, name: str, dst_rel: Optional[Path] = None) -> Path:
+    def put_file(
+        self,
+        src: Path,
+        name: str,
+        dst_rel: Optional[Path] = None,
+        overwrite_manifest_entry: bool = False,
+    ) -> Path:
         """
         Copy a file under the store and record it in the manifest.
 
         Parameters
         ----------
         src : path-like
-            Source file path.
+            Source file path (must exist and be a file).
         name : str
             Logical artifact name to register under.
         dst_rel : path-like, optional
             Relative destination path. Defaults to ``name.replace('/', '_')``.
+        overwrite_manifest_entry : bool
+            If True, allows replacing an existing manifest entry with the same name.
 
         Returns
         -------
@@ -161,16 +178,32 @@ class ArtifactStore:
             Absolute destination path.
         """
         src = Path(src)
+        if not src.is_file():
+            raise FileNotFoundError(f"Source file does not exist or is not a file: {src}")
+
         dst_rel = dst_rel or Path(name.replace("/", "_"))
+        if dst_rel.is_absolute():
+            raise ValueError(f"dst_rel must be relative, got absolute: {dst_rel}")
+
         dst_abs = self.root / dst_rel
         dst_abs.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst_abs)
+        shutil.copy2(src, dst_abs)  # follow symlinks by default
+
         sha = _sha256(dst_abs)
         size = dst_abs.stat().st_size
-        self._manifest.add(Artifact(name=name, relpath=dst_rel, kind="file", sha256=sha, size=size))
+        self._manifest.add(
+            Artifact(name=name, relpath=dst_rel, kind="file", sha256=sha, size=size),
+            overwrite=overwrite_manifest_entry,
+        )
         return dst_abs
 
-    def put_dir(self, src_dir: Path, name: str, dst_rel: Optional[Path] = None) -> Path:
+    def put_dir(
+        self,
+        src_dir: Path,
+        name: str,
+        dst_rel: Optional[Path] = None,
+        overwrite_manifest_entry: bool = False,
+    ) -> Path:
         """
         Copy a directory under the store and record it in the manifest.
 
@@ -179,12 +212,18 @@ class ArtifactStore:
         - No per-file hashing; use :meth:`put_file` for critical files.
         """
         src_dir = Path(src_dir)
+        if not src_dir.is_dir():
+            raise FileNotFoundError(f"Source directory does not exist or is not a directory: {src_dir}")
+
         dst_rel = dst_rel or Path(name)
+        if dst_rel.is_absolute():
+            raise ValueError(f"dst_rel must be relative, got absolute: {dst_rel}")
+
         dst_abs = self.root / dst_rel
         if dst_abs.exists():
             shutil.rmtree(dst_abs)
         shutil.copytree(src_dir, dst_abs)
-        self._manifest.add(Artifact(name=name, relpath=dst_rel, kind="dir"))
+        self._manifest.add(Artifact(name=name, relpath=dst_rel, kind="dir"), overwrite=overwrite_manifest_entry)
         return dst_abs
 
     def path(self, name: str) -> Path:
@@ -194,14 +233,19 @@ class ArtifactStore:
     # ---------------- manifest i/o ----------------
 
     def save_manifest(self) -> Path:
-        """Write the manifest JSON under ``root``."""
+        """Write the manifest JSON under ``root`` (atomic)."""
         p = self.root / self.manifest_name
-        p.write_text(json.dumps(self._manifest.to_dict(), indent=2))
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        data = json.dumps(self._manifest.to_dict(), indent=2)
+        tmp.write_text(data)
+        os.replace(tmp, p)  # atomic on POSIX
         return p
 
     def load_manifest(self) -> None:
         """Load the manifest JSON from ``root``."""
         p = self.root / self.manifest_name
+        if not p.is_file():
+            raise FileNotFoundError(f"Manifest not found at {p}")
         self._manifest = ArtifactManifest.from_dict(json.loads(p.read_text()))
 
     # ---------------- portability ----------------
