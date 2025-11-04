@@ -72,9 +72,6 @@ def _ensure_pdb(lig_path: Path, out_dir: Path) -> Path:
     return out_pdb
 
 
-# -----------------------
-# Runner (legacy create_system flow w/o ligand parametrization)
-# -----------------------
 class _SystemPrepRunner:
     def __init__(self, system: SimSystem, yaml_dir: Path) -> None:
         self.system = system
@@ -553,15 +550,12 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     # accept new key `system_input` or legacy `system_topology`
     system_topology = sys_params['system_input']
 
-    # --- Normalize ligand inputs to a dict {NAME: PATH} ---
-    lig_map = sys_params['ligand_paths']
-
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
         system_name=sys_params["system_name"],
         protein_input=sys_params["protein_input"],
         system_topology=system_topology,
-        ligand_paths=lig_map,
+        ligand_paths=sys_params['ligand_paths'],
         anchor_atoms=list(sys_params.get("anchor_atoms", [])),
         ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),
         receptor_segment=sys_params.get("receptor_segment"),
@@ -594,5 +588,6 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     (system.root / "artifacts" / "config" / "sim_overrides.json").write_text(json.dumps(updates, indent=2))
 
 
+    logger.info(f"[system_prep] System preparation complete.")
     info = {"system_prep_ok": True, **manifest, "sim_updates": updates}
     return ExecResult(outputs, info)

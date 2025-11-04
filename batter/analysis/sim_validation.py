@@ -141,7 +141,6 @@ class SimValidator:
         # Calculate the distance between the ligand and the protein
         distances = []
         for ts in self.universe.trajectory:
-            print(self.universe.dimensions)
             dist = distance_array(
                 ligand_ag.center_of_mass(),
                 bs_ag.center_of_mass(),
@@ -641,12 +640,6 @@ def check_ring_penetration(top, coord, pbc=[], xtl='rect', verbose=0):
                 allatoms[n*(i+1):n*(i+2),:2] = allatoms[n*(i+1):n*(i+2),:2] + xy
             atoms_map = np.tile(atoms_map, 7)
 
-    # print out image atoms
-    #fp = open('image.pdb', 'w')
-    #for i,atom in enumerate(allatoms):
-    #    x, y, z = atom
-    #    fp.write("HETATM%5d  %-3s %3s  %4d    %8.3f%8.3f%8.3f  0.00  0.00      \n" % (i, 'C', 'DUM', i, x, y, z))
-
     pen_pairs = []
     pen_cycles = []
 
@@ -659,7 +652,7 @@ def check_ring_penetration(top, coord, pbc=[], xtl='rect', verbose=0):
             if len(set([top.nodes[num]['resid'] for num in cycle])) > 1: continue
             if verbose:
                 num = cycle[0]
-                print('found ring:', top.nodes[num]['segid'], top.nodes[num]['resid'], top.nodes[num]['resname'])
+                logger.info('found ring:', top.nodes[num]['segid'], top.nodes[num]['resid'], top.nodes[num]['resname'])
 
             # build least square fit plane
             axis, com, n = lsqp(atoms)

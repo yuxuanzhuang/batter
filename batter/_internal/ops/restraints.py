@@ -438,7 +438,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     p2_atom = P2.split('@')[1]
     p3_atom = P3.split('@')[1]
     # add 1 to Px resid if  dec_method == 'sdr'
-    if ctx.dec_method == 'sdr':
+    if ctx.sim.dec_method == 'sdr':
         P1 = f":{int(p1_res)+1}@{p1_atom}"
         P2 = f":{int(p2_res)+1}@{p2_atom}"
         P3 = f":{int(p3_res)+1}@{p3_atom}"

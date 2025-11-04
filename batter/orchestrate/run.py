@@ -446,7 +446,8 @@ def _run_phase_skipping_done(phase: Pipeline, children: list[SimSystem],
 # -----------------------------------------------------------------------------
 
 def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None,
-                  system_overrides: Dict[str, Any] = None) -> None:
+                  system_overrides: Dict[str, Any] = None,
+                  run_overrides: Dict[str, Any] | None = None) -> None:
     """
     Run a full BATTER workflow from a YAML configuration.
 
@@ -468,18 +469,20 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if system_overrides:
         logger.info(f"Applying system overrides: {system_overrides}")
         rc = rc.model_copy(update={"system": rc.system.model_copy(update=system_overrides)})
-    yaml_path = Path(path)
-    yaml_dir = yaml_path.parent
+    if run_overrides:
+        logger.info(f"Applying run overrides: {run_overrides}")
+        rc = rc.model_copy(update={"run": rc.run.model_copy(update=run_overrides)})
+    if on_failure:
+        logger.info(f"Overriding on_failure behavior to: {on_failure}")
+        rc.run.on_failure = on_failure
+
+    yaml_dir = path.parent
 
     # ligand params output directory
     if rc.create.param_outdir is None:
         rc.create.param_outdir = str(Path(rc.system.output_folder) / "ligand_params")
     else:
         logger.info(f"Using user-specified ligand param_outdir: {rc.create.param_outdir}")
-
-    # on_failure override
-    if on_failure:
-        rc.run.on_failure = on_failure
 
     # Build system-prep params exactly once
     sys_params = {
@@ -526,9 +529,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         logger.info(f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}")
     else:
         # Fall back to YAML resolution (requires original paths/files to exist)
-        lig_map = _resolve_ligand_map(rc, Path(path).parent)
+        lig_map = _resolve_ligand_map(rc, yaml_dir)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
-
+    sys_params.update({"ligand_paths": rc.create.ligand_paths})
 
     sys = SimSystem(name=rc.create.system_name, root=run_dir)
     sys = builder.build(sys, rc.create)
