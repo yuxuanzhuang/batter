@@ -9,7 +9,7 @@ from loguru import logger
 import glob
 import click
 import tempfile
-from batter.utils.utils import natural_keys
+from batter_v1.utils.utils import natural_keys
 from MDAnalysis.analysis import align
 from MDAnalysis.transformations.base import TransformationBase
 import MDAnalysis.transformations as trans

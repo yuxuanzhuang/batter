@@ -5,10 +5,10 @@ import os as os
 import shutil as shutil
 import signal as signal
 import sys as sys
-from batter.batter import System
+from batter_v1.batter import System
 from functools import wraps
-from batter.utils.slurm_job import SLURMJob
-from batter.utils.utils import natural_keys
+from batter_v1.utils.slurm_job import SLURMJob
+from batter_v1.utils.utils import natural_keys
 import tempfile
 import subprocess
 import pandas as pd

@@ -1,4 +1,4 @@
-import batter
+import batter_v1
 from batter import batpy
 
 import click
@@ -21,11 +21,11 @@ Version: {batter.__version__}
 def main(args=None):
     pass
 
-from batter.batpy import copy_system, gather, report_jobs, cancel_jobs
-from batter.utils.error_report import error_report
-from batter.utils.align import aligning
-from batter.run_in_batch import run_in_batch
-from batter.analysis.preprocessing import preprocess
+from batter_v1.batpy import copy_system, gather, report_jobs, cancel_jobs
+from batter_v1.utils.error_report import error_report
+from batter_v1.utils.align import aligning
+from batter_v1.run_in_batch import run_in_batch
+from batter_v1.analysis.preprocessing import preprocess
 
 main.add_command(copy_system)
 main.add_command(gather)

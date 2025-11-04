@@ -12,7 +12,7 @@ from typing import List, Optional, Dict, Union, Any, Literal, Sequence
 import re
 import numpy as np
 from loguru import logger
-from batter.utils import COMPONENTS_LAMBDA_DICT
+from batter_v1.utils import COMPONENTS_LAMBDA_DICT
 
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 

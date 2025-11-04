@@ -1,4 +1,4 @@
-from batter.ligand_process import (
+from batter_v1.ligand_process import (
     LigandFactory,
     _base26_triplet,
     _stable_hash_int,

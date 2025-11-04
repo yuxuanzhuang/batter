@@ -4,7 +4,7 @@ import os
 import glob
 import subprocess
 from batter import MABFESystem
-from batter.utils import COMPONENTS_DICT
+from batter_v1.utils import COMPONENTS_DICT
 import numpy as np
 from loguru import logger
 

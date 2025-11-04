@@ -12,8 +12,8 @@ from alchemlyb.visualisation import (
                 plot_block_average
             )
 
-from batter.utils import run_with_log, cpptraj
-from batter.analysis.utils import exclude_outliers
+from batter_v1.utils import run_with_log, cpptraj
+from batter_v1.analysis.utils import exclude_outliers
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,7 +25,7 @@ from loguru import logger
 import sys
 import glob
 import os
-from batter.utils import (
+from batter_v1.utils import (
     COMPONENTS_FOLDER_DICT,
 )
 

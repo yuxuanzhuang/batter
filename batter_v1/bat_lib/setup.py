@@ -7,14 +7,14 @@ import shutil as shutil
 import signal as signal
 import subprocess as sp
 import sys as sys
-import batter.bat_lib.scripts as scripts
-from batter.utils import (
+import batter_v1.bat_lib.scripts as scripts
+from batter_v1.utils import (
     run_with_log,
     antechamber,
     tleap,
     cpptraj
 )
-from batter.data import run_files as run_files_orig
+from batter_v1.data import run_files as run_files_orig
 
 
 def restraints(pose, rest, bb_start, bb_end, weight, stage, mol, molr, comp, bb_equil, sdr_dist, dec_method, other_mol):

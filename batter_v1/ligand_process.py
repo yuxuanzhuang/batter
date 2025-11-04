@@ -12,7 +12,7 @@ import shutil
 from openfe import SmallMoleculeComponent
 from typing import List, Union
 
-from batter.utils import (
+from batter_v1.utils import (
     run_with_log,
     save_state,
     safe_directory,

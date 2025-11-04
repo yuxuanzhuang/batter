@@ -7,7 +7,7 @@ import shutil as shutil
 import signal as signal
 import subprocess as sp
 import sys as sys
-from batter.utils import (
+from batter_v1.utils import (
     run_with_log,
     antechamber,
     tleap,

@@ -18,7 +18,7 @@ from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_forc
 from openfe import SmallMoleculeComponent
 from rdkit import Chem
 
-from batter.utils import (
+from batter_v1.utils import (
     antechamber,
     parmchk2,
     run_with_log,

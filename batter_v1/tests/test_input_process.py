@@ -6,7 +6,7 @@ from .data import (
     INPUT_NUMWATER
 )
 
-from batter.input_process import get_configure_from_file, parse_input_file
+from batter_v1.input_process import get_configure_from_file, parse_input_file
 import pytest
 from loguru import logger
 import json

@@ -4,7 +4,7 @@ import click
 import numpy as np
 import MDAnalysis as mda
 import tempfile
-from batter.utils import run_with_log
+from batter_v1.utils import run_with_log
 from loguru import logger
 import shutil
 from pathlib import Path

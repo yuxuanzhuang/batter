@@ -7,7 +7,7 @@ from datetime import datetime
 from batter import MABFESystem
 
 import pytest
-from batter.tests.data import (pipeline_ligands_files,
+from batter_v1.tests.data import (pipeline_ligands_files,
                     pipeline_reference_files,
                     pipeline_ligands_dict_json,
                     pipeline_sim_extra_rest_json,

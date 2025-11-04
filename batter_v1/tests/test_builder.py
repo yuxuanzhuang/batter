@@ -1,6 +1,6 @@
 import pytest
-from batter.tests.data import two_candidates, three_candidates
-from batter.builder import get_ligand_candidates
+from batter_v1.tests.data import two_candidates, three_candidates
+from batter_v1.builder import get_ligand_candidates
 import numpy as np
 
 

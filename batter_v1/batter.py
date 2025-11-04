@@ -25,22 +25,22 @@ from typing import List, Tuple, Optional, Union
 from loguru import logger
 from collections import defaultdict
 from batter import __version__
-from batter.input_process import SimulationConfig, get_configure_from_file
-from batter.analysis.results import FEResult
-from batter.utils.utils import tqdm_joblib
-from batter.utils.slurm_job import SLURMJob, get_squeue_job_count
-from batter.data import run_files as run_files_orig
-from batter.data import build_files as build_files_orig
-from batter.data import batch_files as batch_files_orig
-from batter.builder import BuilderFactory, get_ligand_candidates
-from batter.utils import (
+from batter_v1.input_process import SimulationConfig, get_configure_from_file
+from batter_v1.analysis.results import FEResult
+from batter_v1.utils.utils import tqdm_joblib
+from batter_v1.utils.slurm_job import SLURMJob, get_squeue_job_count
+from batter_v1.data import run_files as run_files_orig
+from batter_v1.data import build_files as build_files_orig
+from batter_v1.data import batch_files as batch_files_orig
+from batter_v1.builder import BuilderFactory, get_ligand_candidates
+from batter_v1.utils import (
     run_with_log,
     save_state,
     safe_directory,
     natural_keys,
 )
 
-from batter.utils import (
+from batter_v1.utils import (
     COMPONENTS_LAMBDA_DICT,
     COMPONENTS_FOLDER_DICT,
     COMPONENTS_DICT,

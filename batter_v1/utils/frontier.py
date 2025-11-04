@@ -13,7 +13,7 @@ import numpy as np
 import json
 # from batter.utils.utils import run_with_log, antechamber, tleap, cpptraj
 # from batter.batter import System
-from batter.data import frontier_files
+from batter_v1.data import frontier_files
 
 
 def generate_frontier_files(version=24, dec_method='sdr'):

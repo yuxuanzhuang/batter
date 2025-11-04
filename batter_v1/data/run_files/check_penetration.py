@@ -1,5 +1,5 @@
 import MDAnalysis as mda
-from batter.analysis.sim_validation import check_universe_ring_penetration
+from batter_v1.analysis.sim_validation import check_universe_ring_penetration
 import sys
 import os
 

@@ -14,14 +14,14 @@ import tempfile
 import warnings
 from typing import Union
 
-import batter
-from batter.input_process import SimulationConfig, get_configure_from_file
-from batter.data import build_files as build_files_orig
-from batter.data import amber_files as amber_files_orig
-from batter.data import run_files as run_files_orig
-from batter.bat_lib import setup, scripts
+import batter_v1
+from batter_v1.input_process import SimulationConfig, get_configure_from_file
+from batter_v1.data import build_files as build_files_orig
+from batter_v1.data import amber_files as amber_files_orig
+from batter_v1.data import run_files as run_files_orig
+from batter_v1.bat_lib import setup, scripts
 
-from batter.utils import (
+from batter_v1.utils import (
     run_with_log,
     tleap,
     cpptraj,
