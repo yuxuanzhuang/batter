@@ -431,6 +431,18 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
 
     anchors = load_anchors(work / f"{ctx.comp}_build_files")
     P1, P2, P3 = anchors.P1, anchors.P2, anchors.P3
+    p1_res = P1.split('@')[0][1:]
+    p2_res = P2.split('@')[0][1:]
+    p3_res = P3.split('@')[0][1:]
+    p1_atom = P1.split('@')[1]
+    p2_atom = P2.split('@')[1]
+    p3_atom = P3.split('@')[1]
+    # add 1 to Px resid if  dec_method == 'sdr'
+    if ctx.dec_method == 'sdr':
+        P1 = f":{int(p1_res)+1}@{p1_atom}"
+        P2 = f":{int(p2_res)+1}@{p2_atom}"
+        P3 = f":{int(p3_res)+1}@{p3_atom}"
+        
     L1, L2, L3 = anchors.L1, anchors.L2, anchors.L3
     lig_res    = anchors.lig_res
 

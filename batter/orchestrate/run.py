@@ -207,6 +207,42 @@ def _resolve_ligand_map(rc, yaml_dir: Path) -> dict[str, Path]:
     return lig_map
 
 
+def _discover_staged_ligands(run_dir: Path) -> dict[str, Path]:
+    """
+    Try to reconstruct {LIG_NAME: path} from already-staged files inside run_dir.
+    Priority:
+      1) simulations/<LIG>/inputs/ligand.*
+      2) inputs/<LIG>.*  (legacy bulk-staged case)
+    """
+    lig_map: dict[str, Path] = {}
+
+    # Case 1: per-ligand subsystems
+    sim_dir = run_dir / "simulations"
+    if sim_dir.exists():
+        for sub in sim_dir.iterdir():
+            if not sub.is_dir():
+                continue
+            name = sub.name.upper()
+            inp = sub / "inputs"
+            if not inp.exists():
+                continue
+            # pick the first typical ligand file present
+            for ext in (".sdf", ".mol2", ".pdb"):
+                cand = inp / f"ligand{ext}"
+                if cand.exists():
+                    lig_map[name] = cand
+                    break
+
+    # Case 2: legacy single inputs folder with <NAME>.<ext>
+    if not lig_map:
+        inp_dir = run_dir / "inputs"
+        if inp_dir.exists():
+            for p in inp_dir.iterdir():
+                if p.suffix.lower() in {".sdf", ".mol2", ".pdb"}:
+                    lig_map[p.stem.upper()] = p
+
+    return lig_map
+
 # -----------------------------------------------------------------------------
 # Local backend minimal handlers
 # -----------------------------------------------------------------------------
@@ -435,10 +471,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     yaml_path = Path(path)
     yaml_dir = yaml_path.parent
 
-    # Ligands
-    lig_map = _resolve_ligand_map(rc, yaml_dir)
-    rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
-
     # ligand params output directory
     if rc.create.param_outdir is None:
         rc.create.param_outdir = str(Path(rc.system.output_folder) / "ligand_params")
@@ -483,12 +515,25 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if rc.system.type != "MABFE":
         raise ValueError(f"Unsupported system.type={rc.system.type!r}. Only 'MABFE' is implemented.")
     builder = MABFEBuilder()
-    sys = SimSystem(name=rc.create.system_name, root=rc.system.output_folder)
+
+    requested_run_id = getattr(rc.run, "run_id", "auto")
+    run_id, run_dir = _select_run_id(rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id)
+    
+    # Ligands
+    staged_lig_map = _discover_staged_ligands(run_dir)
+    if staged_lig_map:
+        lig_map = staged_lig_map
+        logger.info(f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}")
+    else:
+        # Fall back to YAML resolution (requires original paths/files to exist)
+        lig_map = _resolve_ligand_map(rc, Path(path).parent)
+    rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
+
+
+    sys = SimSystem(name=rc.create.system_name, root=run_dir)
     sys = builder.build(sys, rc.create)
 
     # Per-execution run directory (auto-resume latest when 'auto')
-    requested_run_id = getattr(rc.run, "run_id", "auto")
-    run_id, run_dir = _select_run_id(sys.root, rc.protocol, rc.create.system_name, requested_run_id)
     logger.add(run_dir / "batter.run.log", level="DEBUG")
     logger.info(f"Using run_id='{run_id}' under {run_dir}")
 
@@ -507,12 +552,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         sbatch_flags=slurm_flags,
     )
 
-    # Stage ligands under this execution
-    lig_root = run_dir / "simulations"
-    lig_root.mkdir(parents=True, exist_ok=True)
-    for lig_name, lig_path in lig_map.items():
-        builder.make_child_for_ligand(sys, lig_name, lig_path)
-    logger.debug(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
 
     # Build pipeline with explicit sys_params
     tpl = _select_pipeline(rc.protocol, sim_cfg, rc.run.only_fe_preparation, sys_params=sys_params)
@@ -530,6 +569,14 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         anchors=sys.anchors,
         meta=sys.meta,
     )
+    # Stage ligands under this execution
+    lig_root = run_dir / "simulations"
+    lig_root.mkdir(parents=True, exist_ok=True)
+    for lig_name, lig_path in lig_map.items():
+        sub = lig_root / lig_name / "inputs"
+        if not (sub / f"ligand{Path(lig_path).suffix}").exists():
+            builder.make_child_for_ligand(sys, lig_name, lig_path)
+    logger.debug(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
 
     parent_only = Pipeline([s for s in tpl.ordered_steps() if s.name in {"system_prep", "param_ligands"}])
     if parent_only.ordered_steps():

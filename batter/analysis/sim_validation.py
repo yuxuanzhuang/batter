@@ -87,7 +87,7 @@ class SimValidator:
     def _validate(self):
         self._box()
         self._rmsd()
-        self._rmsf()
+        # self._rmsf()
         # self._membrane()
         self._ligand_bs()
         
@@ -141,6 +141,7 @@ class SimValidator:
         # Calculate the distance between the ligand and the protein
         distances = []
         for ts in self.universe.trajectory:
+            print(self.universe.dimensions)
             dist = distance_array(
                 ligand_ag.center_of_mass(),
                 bs_ag.center_of_mass(),
@@ -726,7 +727,7 @@ def check_ring_penetration(top, coord, pbc=[], xtl='rect', verbose=0):
     return pen_pairs, pen_cycles
 
 
-def check_universe_ring_penetration(universe):
+def check_universe_ring_penetration(universe, verbose=0):
     """
     Check if there is any ring penetration in the universe
     
@@ -734,6 +735,8 @@ def check_universe_ring_penetration(universe):
     ----------
     universe : MDAnalysis.Universe
         The MDAnalysis universe object; it shoud contain bond information
+    verbose : int, optional
+        Verbosity level, by default 0
 
     Returns
     -------
@@ -750,7 +753,7 @@ def check_universe_ring_penetration(universe):
         if len(top.nodes()) != len(coord):
             raise AtomMismatch('Number of atoms does not match')        
         #  only rect pbc have been tested
-        pairs, rings = check_ring_penetration(top, coord)
+        pairs, rings = check_ring_penetration(top, coord, verbose=verbose)
         if pairs:
             logger.warning(f'In frame {frame} found a ring penetration:')
             for i, cycle in enumerate(rings):

@@ -58,7 +58,6 @@ def _resolve_outdir(template: str, system: SimSystem) -> Path:
 def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """
     Parent-only parametrization pass:
-      - Validates staged ligands under <root>/ligands/*/inputs/ligand.sdf
       - Runs batch_ligand_process once into a content-addressed store
       - Links per-ligand params into <root>/ligands/<LIG>/params/*
       - Emits an index for downstream steps

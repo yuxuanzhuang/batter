@@ -64,10 +64,10 @@ class SimulationConfig(BaseModel):
     # --- Solvent / box ---
     water_model: Literal["SPCE", "TIP4PEW", "TIP3P", "TIP3PF", "OPC"] = Field("TIP3P", description="Water model")
     num_waters: int = Field(0, description="[DEPRECATED] Must remain 0 (automatic sizing)")
-    buffer_x: float = Field(0.0, description="Box buffer X (Å)")
-    buffer_y: float = Field(0.0, description="Box buffer Y (Å)")
-    buffer_z: float = Field(0.0, description="Box buffer Z (Å)")
-    lig_buffer: float = Field(0.0, description="Ligand box buffer (Å)")
+    buffer_x: float = Field(10.0, description="Box buffer X (Å)")
+    buffer_y: float = Field(10.0, description="Box buffer Y (Å)")
+    buffer_z: float = Field(10.0, description="Box buffer Z (Å)")
+    lig_buffer: float = Field(10.0, description="Ligand box buffer (Å)")
 
     # --- Ions ---
     neutralize_only: Literal["yes","no"] = Field("no", description="Neutralize only")
@@ -257,8 +257,21 @@ class SimulationConfig(BaseModel):
 
         # membrane simulation if lipids defined
         self.membrane_simulation = len(self.lipid_mol) > 0
+        if self.membrane_simulation:
+            self._check_membrane_compatibility()
+        else:
+            self._check_water_compatibility()
 
         return self
+
+    def _check_membrane_compatibility(self) -> None:
+        pass
+
+    def _check_water_compatibility(self) -> None:
+        # make sure buffer_x/y/z is > 5.0 Å
+        for dim, buf in zip(("X","Y","Z"), (self.buffer_x, self.buffer_y, self.buffer_z)):
+            if buf < 5.0:
+                raise ValueError(f"For water simulations, buffer_{dim.lower()} must be >= 5.0 Å (got {buf}).")
 
     # convenience
     def to_dict(self) -> Dict[str, Any]:

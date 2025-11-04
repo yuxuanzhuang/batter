@@ -486,8 +486,8 @@ class _SystemPrepRunner:
                     "No box dimensions in system_topology. Using default 10 Å padding around protein. "
                     f"Box dimensions: {self.system_dimensions}"
                 )
-        if (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self._system_coordinate is None:
-            raise ValueError("No box dimensions found in system_topology or system_coordinate.")
+        if self.membrane_simulation and (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self._system_coordinate is None:
+            raise ValueError("No box dimensions found in system_topology or system_coordinate when lipid system is on.")
         u_sys.atoms.write(f"{self.ligands_folder}/system_input.pdb")
         self._system_input_pdb = f"{self.ligands_folder}/system_input.pdb"
 
