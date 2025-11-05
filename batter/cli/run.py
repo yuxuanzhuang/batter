@@ -124,6 +124,7 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
             f.write(manager_code)
             f.write("\n")
             f.write(run_cmd)
+            f.write("\n")
             f.write("echo 'Job completed.'\n")
             f.write("\n")
         
