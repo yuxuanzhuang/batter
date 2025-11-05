@@ -569,21 +569,39 @@ def build_complex_y(ctx) -> bool:
     """
     # Where to put staged files
     build_dir: Path = ctx.build_dir
+    work: Path = ctx.working_dir
+    
     build_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve locations
     ligand = ctx.ligand
-    system_root: Path = ctx.system_root
-    all_ligands_dir = system_root / "all-ligands"
-    ff_dir = ctx.working_dir.parent / "params"
+    mol = ctx.residue_name
+    sys_root   = ctx.system_root                         # .../work/<system>
+    all_ligand_folder = sys_root / "all-ligands"
+    ff_dir = sys_root / "simulations" / ligand / "params"  # .../work/<system>/simulations/<LIG>/params
+
+    shutil.copytree(build_files_orig, build_dir, dirs_exist_ok=True)
 
     # Inputs
-    ligand_pdb = all_ligands_dir / f"{ligand}.pdb"
+    ligand_pdb = all_ligand_folder / f"{ligand}.pdb"
     if not ligand_pdb.exists():
         raise FileNotFoundError(f"[build_complex_y] Missing ligand pdb: {ligand_pdb}")
 
     # Copy <pose>.pdb into build_dir
     shutil.copy2(ligand_pdb, build_dir / f"{ligand}.pdb")
+    shutil.copy2(all_ligand_folder / f"{ligand}.pdb", work / f"{ligand}.pdb")
+
+    # Ensure ligand atom names match antechamber mol2 (ligand.ff prepared earlier)
+    shutil.copy2(ff_dir / f"{mol}.mol2", build_dir / f"{mol}.mol2")
+    shutil.copy2(ff_dir / f"{mol}.sdf", build_dir / f"{mol}.sdf")
+
+
+    ante_mol = mda.Universe(str(build_dir / f"{mol}.mol2"))
+    lig_u = mda.Universe(str(build_dir / f"{ligand}.pdb"))
+    lig_u.atoms.names = ante_mol.atoms.names
+    lig_u.atoms.residues.resnames = mol
+    lig_u.atoms.write(str(build_dir / f"{mol}.pdb"))
+
 
     mol = ctx.residue_name
 

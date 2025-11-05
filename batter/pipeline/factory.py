@@ -111,7 +111,7 @@ def make_abfe_pipeline(
 
     if only_fe_preparation:
         # Keep up to 'prepare_fe' (inclusive); we’ll still prune 'param_ligands' at child level in run.py
-        keep = {"system_prep", "param_ligands", "prepare_equil", "equil", "prepare_fe"}
+        keep = {"system_prep", "param_ligands", "prepare_equil", "equil", "prepare_fe", "prepare_fe_windows"}
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
@@ -128,7 +128,7 @@ def make_asfe_pipeline(
     steps: List[Step] = []
     steps.append(
         _step(
-            name="system_prep",
+            name="system_prep_asfe",
             requires=[],
             sim=sim.model_dump(),
             sys_params=sys_params,
@@ -137,7 +137,7 @@ def make_asfe_pipeline(
     steps.append(
         _step(
             name="param_ligands",
-            requires=["system_prep"],
+            requires=["system_prep_asfe"],
             sim=sim.model_dump(),
             sys_params=sys_params,
         )
@@ -150,14 +150,30 @@ def make_asfe_pipeline(
             sys_params=sys_params,
         )
     )
+    steps.append(
+        _step(
+            "prepare_fe_windows",
+            requires=["prepare_fe"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
     if only_fe_preparation:
-        keep = {"system_prep", "param_ligands", "prepare_fe"}
+        keep = {"system_prep", "param_ligands", "prepare_fe", "prepare_fe_windows"}
         steps = [s for s in steps if s.name in keep]
     else:
         steps.append(
             _step(
-                "solvation",
-                requires=["prepare_fe"],
+                "fe_equil",
+                requires=["prepare_fe_windows"],
+                sim=sim.model_dump(),
+                sys_params=sys_params,
+            )
+        )
+        steps.append(
+            _step(
+                "fe",
+                requires=["fe_equil"],
                 sim=sim.model_dump(),
                 sys_params=sys_params,
             )
@@ -165,7 +181,7 @@ def make_asfe_pipeline(
         steps.append(
             _step(
                 "analyze",
-                requires=["solvation"],
+                requires=["fe"],
                 mode="asfe",
                 sim=sim.model_dump(),
                 sys_params=sys_params,

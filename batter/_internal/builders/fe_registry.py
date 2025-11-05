@@ -33,3 +33,11 @@ def register_create_simulation(component: str):
         CREATE_SIMULATION_REGISTRY[component] = fn
         return fn
     return deco
+
+CREATE_BOX_REGISTRY: Dict[str, Callable[["BaseBuilder"], None]] = {}
+
+def register_create_box(component: str):
+    def deco(fn: Callable[["BaseBuilder"], None]):
+        CREATE_BOX_REGISTRY[component] = fn
+        return fn
+    return deco

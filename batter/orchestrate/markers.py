@@ -57,16 +57,16 @@ def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple
     return ok, bad
 
 
-def handle_phase_failures(children: List[SimSystem], phase: str, mode: str) -> List[SimSystem]:
-    ok, bad = partition_children_by_status(children, phase)
+def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str) -> List[SimSystem]:
+    ok, bad = partition_children_by_status(children, phase_name)
     if bad:
         bad_names = ", ".join(c.meta.get("ligand", c.name) for c in bad)
         if (mode or "").lower() == "prune":
-            logger.warning(f"[{phase}] Pruning {len(bad)} ligand(s) that FAILED: {bad_names}")
+            logger.warning(f"[{phase_name}] Pruning {len(bad)} ligand(s) that FAILED: {bad_names}")
             return ok
-        raise RuntimeError(f"[{phase}] {len(bad)} ligand(s) FAILED: {bad_names}")
+        raise RuntimeError(f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}")
     if not ok:
-        raise RuntimeError(f"[{phase}] No ligands completed successfully.")
+        raise RuntimeError(f"[{phase_name}] No ligands completed successfully.")
     return children
 
 

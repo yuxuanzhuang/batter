@@ -8,6 +8,9 @@ import re
 
 from loguru import logger
 
+import numpy as np
+import MDAnalysis as mda
+
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.ops.helpers import load_anchors, save_anchors, Anchors, get_sdr_dist
@@ -343,9 +346,9 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
 
     # paths
     sys_root = ctx.system_root
-    build_dir = ctx.working_dir / f"{comp}_build_files"
+    build_dir = ctx.build_dir
     amber_dir = ctx.amber_dir
-    dest_dir  = ctx.working_dir / f"{comp}-1"   # z-1 is fe_equil folder
+    dest_dir  = ctx.equil_dir
     ff_dir    = sys_root / "simulations" / ligand / "params"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -416,6 +419,55 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
 
     logger.debug(f"[simprep:z] simulation directory created → {dest_dir}")
 
+@register_create_simulation('y')
+def create_simulation_dir_y(ctx: BuildContext) -> None:
+    mol = ctx.residue_name
+    ligand = ctx.ligand
+
+    # paths
+    sys_root = ctx.system_root
+    build_dir = ctx.build_dir
+    amber_dir = ctx.amber_dir
+    dest_dir  = ctx.equil_dir
+    ff_dir    = sys_root / "simulations" / ligand / "params"
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # link amber files
+    _rel_symlink(amber_dir, dest_dir / "amber_files")
+
+    # bring build outputs
+    for p in build_dir.glob("vac_ligand*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    for s, d in [
+        (build_dir / f"{mol}.pdb",                 dest_dir / f"{mol}.pdb"),
+        (build_dir / "dum.inpcrd",                 dest_dir / "dum.inpcrd"),
+        (build_dir / "dum.prmtop",                 dest_dir / "dum.prmtop"),
+    ]:
+        _copy_if_exists(s, d)
+
+    # copy ff files (ligand + dum)
+    for p in ff_dir.glob(f"{mol}.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+    for p in build_dir.glob("dum.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    # write build.pdb with dum atom + ligand
+    # the position of the DUM atom is the center of mass of the ligand
+    u_lig = mda.Universe(dest_dir / f'{mol}.pdb')
+    com = u_lig.atoms.center_of_mass()
+    u_dum = mda.Universe.empty(1,
+                        n_residues=1,
+                        atom_resindex=[0],
+                        residue_segindex=[0],
+                        trajectory=True)
+    u_dum.add_TopologyAttr('name', ['Pb'])
+    u_dum.add_TopologyAttr('resname', ['DUM'])
+    u_dum.atoms.positions = np.array([com])
+    with mda.Writer(dest_dir / 'build.pdb', n_atoms=u_lig.atoms.n_atoms + 1) as W:
+        W.write(u_dum)
+        W.write(u_lig)
 
 # ---------------------- window copier ----------------------
 def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None:

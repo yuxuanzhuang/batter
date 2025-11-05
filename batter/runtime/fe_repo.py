@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field
+import json
+import shutil
 
 from .portable import ArtifactStore, Artifact
 
@@ -51,6 +53,10 @@ class FERecord(BaseModel):
     ----------
     run_id : str
         Unique run identifier.
+    ligand : str
+        Ligand identifier.
+    mol_name : str
+        Molecule resname.
     system_name : str
         Logical system name.
     fe_type : str
@@ -71,6 +77,8 @@ class FERecord(BaseModel):
         Per-window results.
     """
     run_id: str
+    ligand: str
+    mol_name: str
     system_name: str
     fe_type: str
     temperature: float
@@ -83,53 +91,29 @@ class FERecord(BaseModel):
 
 
 class FEResultsRepository:
-    """
-    Repository that saves/loads FE records in a relocatable :class:`ArtifactStore`.
-
-    Layout
-    ------
-    ``<store.root>/fe/``
-      - ``index.parquet``          # tabular index of runs (one row per record)
-      - ``<run_id>/record.json``   # full FERecord (JSON)
-      - ``<run_id>/windows.parquet``  # per-window table (optional)
-
-    Notes
-    -----
-    - Index appends; it is safe to call :meth:`save` many times with new runs.
-    - All paths are relative to the store root and registered in the manifest.
-    """
-
-    def __init__(self, store: ArtifactStore) -> None:
+    def __init__(self, store: "ArtifactStore") -> None:
         self.store = store
-        self.base = self.store.root / "fe"
-        self.base.mkdir(parents=True, exist_ok=True)
+        self._root = store.root / "results"
+        self._idx = self._root / "index.parquet"  # or CSV if you prefer
 
-    # ---------------- public ops ----------------
+    def _lig_dir(self, run_id: str, ligand: str) -> Path:
+        return self._root / run_id / ligand
 
-    def save(self, rec: FERecord) -> None:
-        """
-        Save a record (JSON + Parquet) and update the index.
-
-        Parameters
-        ----------
-        rec : FERecord
-            Free-energy record to persist.
-        """
-        run_dir = self.base / rec.run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-
-        # JSON record
-        (run_dir / "record.json").write_text(rec.model_dump_json(indent=2))
-
-        # Per-window parquet (optional)
-        if rec.windows:
-            df_w = pd.DataFrame([w.model_dump() for w in rec.windows])
-            df_w.to_parquet(run_dir / "windows.parquet", index=False)
-
-        # Append/update index
-        idx_path = self.base / "index.parquet"
+    def save(self, rec: FERecord, copy_from: Path | None = None) -> None:
+        lig_dir = self._lig_dir(rec.run_id, rec.ligand)
+        lig_dir.mkdir(parents=True, exist_ok=True)
+        # write JSON record
+        (lig_dir / "record.json").write_text(json.dumps(rec.__dict__, indent=2))
+        # optional: copy raw Results/ in
+        if copy_from and copy_from.exists():
+            # keep raw artifacts alongside the record
+            shutil.rmtree(lig_dir / "Results", ignore_errors=True)
+            shutil.copytree(copy_from, lig_dir / "Results")
+        # update index table (append-or-upsert by (run_id, ligand))
         row = {
             "run_id": rec.run_id,
+            "ligand": rec.ligand,
+            "mol_name": rec.mol_name,
             "system_name": rec.system_name,
             "fe_type": rec.fe_type,
             "temperature": rec.temperature,
@@ -139,51 +123,24 @@ class FEResultsRepository:
             "components": ",".join(rec.components),
             "created_at": rec.created_at,
         }
-        if idx_path.exists():
-            idx = pd.read_parquet(idx_path)
-            idx = pd.concat([idx, pd.DataFrame([row])], ignore_index=True)
+        if self._idx.exists():
+            df = pd.read_parquet(self._idx)
+            df = df[~((df.run_id == rec.run_id) & (df.ligand == rec.ligand))]
+            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
         else:
-            idx = pd.DataFrame([row])
-        idx.to_parquet(idx_path, index=False)
+            df = pd.DataFrame([row])
+        df.to_parquet(self._idx, index=False)
 
-        # Register artifacts for portability
-        rel_run = run_dir.relative_to(self.store.root)
-        self.store._manifest.add(Artifact(name=f"fe/{rec.run_id}/record", relpath=rel_run / "record.json"))
-        if (run_dir / "windows.parquet").exists():
-            self.store._manifest.add(Artifact(name=f"fe/{rec.run_id}/windows", relpath=rel_run / "windows.parquet"))
-        self.store._manifest.add(Artifact(name="fe/index", relpath=Path("fe/index.parquet")))
-        self.store.save_manifest()
+    def index(self) -> "pd.DataFrame":
+        if self._idx.exists():
+            return pd.read_parquet(self._idx)
+        import pandas as pd
+        return pd.DataFrame(columns=[
+            "run_id","ligand","system_name","fe_type","temperature","method","total_dG","total_se","components","created_at"
+        ])
 
-    def load(self, run_id: str) -> FERecord:
-        """
-        Load a record by run id.
-
-        Parameters
-        ----------
-        run_id : str
-            Identifier to load.
-
-        Returns
-        -------
-        FERecord
-            Parsed record with windows (if present).
-        """
-        run_dir = self.base / run_id
-        rec = FERecord.model_validate_json((run_dir / "record.json").read_text())
-        wp = run_dir / "windows.parquet"
-        if wp.exists():
-            df_w = pd.read_parquet(wp)
-            rec.windows = [WindowResult(**row) for row in df_w.to_dict(orient="records")]
-        return rec
-
-    def index(self) -> pd.DataFrame:
-        """
-        Return the run index as a DataFrame.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Empty if no runs saved.
-        """
-        p = self.base / "index.parquet"
-        return pd.read_parquet(p) if p.exists() else pd.DataFrame()
+    def load(self, run_id: str, ligand: str) -> FERecord:
+        p = self._lig_dir(run_id, ligand) / "record.json"
+        d = json.loads(p.read_text())
+        d["components"] = d.get("components", "").split(",") if isinstance(d.get("components"), str) else d.get("components", [])
+        return FERecord(**d)

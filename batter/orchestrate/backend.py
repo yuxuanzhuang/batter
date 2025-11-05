@@ -10,6 +10,8 @@ def register_local_handlers(backend: LocalBackend) -> None:
     Register the built-in step handlers for the local backend.
     """
     from batter.exec.handlers.system_prep import system_prep as _system_prep
+    from batter.exec.handlers.system_prep_masfe import system_prep_masfe as _system_prep_masfe
+
     from batter.exec.handlers.param_ligands import param_ligands as _param_ligands
     from batter.exec.handlers.prepare_equil import prepare_equil_handler as _prepare_equil
     from batter.exec.handlers.equil import equil_handler as _equil
@@ -21,6 +23,7 @@ def register_local_handlers(backend: LocalBackend) -> None:
     from batter.exec.handlers.fe_analysis import analyze_handler as _analyze
 
     backend.register("system_prep", _system_prep)
+    backend.register("system_prep_asfe", _system_prep_masfe)
     backend.register("param_ligands", _param_ligands)
     backend.register("prepare_equil", _prepare_equil)
     backend.register("equil", _equil)

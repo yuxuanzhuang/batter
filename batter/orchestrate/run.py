@@ -20,6 +20,7 @@ from loguru import logger
 from batter.config.run import RunConfig
 from batter.systems.core import SimSystem
 from batter.systems.mabfe import MABFEBuilder
+from batter.systems.masfe import MASFEBuilder
 from batter.exec.local import LocalBackend
 from batter.exec.slurm import SlurmBackend
 
@@ -51,7 +52,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     2. Choose backend (local/slurm)
     3. Build shared system once
     4. Stage **all ligands at once** under executions/<run_id>/simulations/<LIG>/
-    5. Run **system_prep** and **param_ligands** ONCE at executions/<run_id>/
+    5. Run **system_prep<_asfe>** and **param_ligands** ONCE at executions/<run_id>/
     6. For each ligand, run the rest of the pipeline under its child root
     7. Save one FE record per ligand (does not overwrite older runs)
     """
@@ -109,9 +110,12 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         register_local_handlers(backend)
 
     # Shared System Build (system-level assets live under sys.root)
-    if rc.system.type != "MABFE":
+    if rc.system.type == "MABFE":
+        builder = MABFEBuilder()
+    elif rc.system.type == "MASFE":
+        builder = MASFEBuilder()
+    else:
         raise ValueError(f"Unsupported system.type={rc.system.type!r}. Only 'MABFE' is implemented.")
-    builder = MABFEBuilder()
 
     requested_run_id = getattr(rc.run, "run_id", "auto")
     run_id, run_dir = select_run_id(rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id)
@@ -128,8 +132,8 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
     sys_params.update({"ligand_paths": rc.create.ligand_paths})
 
-    sys = SimSystem(name=rc.create.system_name, root=run_dir)
-    sys = builder.build(sys, rc.create)
+    sys_exec = SimSystem(name=rc.create.system_name, root=run_dir)
+    sys_exec = builder.build(sys_exec, rc.create)
 
     # Per-execution run directory (auto-resume latest when 'auto')
     logger.add(run_dir / "batter.run.log", level="DEBUG")
@@ -155,16 +159,16 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     # Run parent-only steps at run_dir by using a run-scoped SimSystem
     run_sys = SimSystem(
-        name=f"{sys.name}:{run_id}",
+        name=f"{sys_exec.name}:{run_id}",
         root=run_dir,
-        protein=sys.protein,
-        topology=sys.topology,
-        coordinates=sys.coordinates,
+        protein=sys_exec.protein,
+        topology=sys_exec.topology,
+        coordinates=sys_exec.coordinates,
         ligands=tuple(),  # parent steps don't need per-ligand sdf
-        lipid_mol=sys.lipid_mol,
-        other_mol=sys.other_mol,
-        anchors=sys.anchors,
-        meta=sys.meta,
+        lipid_mol=sys_exec.lipid_mol,
+        other_mol=sys_exec.other_mol,
+        anchors=sys_exec.anchors,
+        meta=sys_exec.meta,
     )
     # Stage ligands under this execution
     lig_root = run_dir / "simulations"
@@ -172,10 +176,10 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     for lig_name, lig_path in lig_map.items():
         sub = lig_root / lig_name / "inputs"
         if not (sub / f"ligand{Path(lig_path).suffix}").exists():
-            builder.make_child_for_ligand(sys, lig_name, lig_path)
+            builder.make_child_for_ligand(sys_exec, lig_name, lig_path)
     logger.debug(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
 
-    parent_only = Pipeline([s for s in tpl.ordered_steps() if s.name in {"system_prep", "param_ligands"}])
+    parent_only = Pipeline([s for s in tpl.ordered_steps() if s.name in {"system_prep", "system_prep_asfe", "param_ligands"}])
     if parent_only.ordered_steps():
         names = [s.name for s in parent_only.ordered_steps()]
         logger.debug(f"Executing parent-only steps at {run_dir}: {names}")
@@ -197,7 +201,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         write_yaml_config(sim_cfg_updated, run_dir / "artifacts" / "config" / "sim.resolved.yaml")
 
     # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
-    removed = {"system_prep", "param_ligands"}
+    removed = {"system_prep", "system_prep_asfe", "param_ligands"}
     per_lig_steps: List[Step] = []
     for s in tpl.ordered_steps():
         if s.name in removed:
@@ -264,34 +268,39 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         resn = entry.get("residue_name")
         lig_resname_map[lig] = resn
 
-    children: List[SimSystem] = []
+    # keep all children for now
+    children_all: List[SimSystem] = []
     for lig_name, resn in lig_resname_map.items():
         d = run_dir / "simulations" / lig_name
-        children.append(
+        children_all.append(
             SimSystem(
-                name=f"{sys.name}:{lig_name}:{run_id}",
+                name=f"{sys_exec.name}:{lig_name}:{run_id}",
                 root=d,
-                protein=sys.protein,
-                topology=sys.topology,
-                coordinates=sys.coordinates,
+                protein=sys_exec.protein,
+                topology=sys_exec.topology,
+                coordinates=sys_exec.coordinates,
                 ligands=tuple([d / "inputs" / "ligand.sdf"]),
-                lipid_mol=sys.lipid_mol,
-                other_mol=sys.other_mol,
-                anchors=sys.anchors,
+                lipid_mol=sys_exec.lipid_mol,
+                other_mol=sys_exec.other_mol,
+                anchors=sys_exec.anchors,
                 meta={
-                    **(sys.meta or {}),
+                    **(sys_exec.meta or {}),
                     "ligand": lig_name,
                     "residue_name": resn,
                     "param_dir_dict": param_dir_dict,
                 },
             )
         )
-
+    # start with all children
+    children = children_all
     # --------------------
     # PHASE 1: prepare_equil (parallel)
     # --------------------
-    run_phase_skipping_done(phase_prepare_equil, children, "prepare_equil", backend, max_workers=rc.run.max_workers)
-    children = handle_phase_failures(children, "prepare_equil", rc.run.on_failure)
+    if phase_prepare_equil.ordered_steps():
+        run_phase_skipping_done(phase_prepare_equil, children, "prepare_equil", backend, max_workers=rc.run.max_workers)
+        children = handle_phase_failures(children, "prepare_equil", rc.run.on_failure)
+    else:
+        logger.info(f"[skip] prepare_equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
@@ -305,20 +314,20 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         return Pipeline(patched)
 
     phase_equil = _inject_mgr(phase_equil)
-    finished = run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=rc.run.max_workers)
-    if not finished:
-        job_mgr.wait_all()
-        if dry_run and job_mgr.triggered:
-            logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
-            raise SystemExit(0)
-    children = handle_phase_failures(children, "equil", rc.run.on_failure)
+    if phase_equil.ordered_steps():
+        finished = run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=rc.run.max_workers)
+        if not finished:
+            job_mgr.wait_all()
+            if dry_run and job_mgr.triggered:
+                logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+                raise SystemExit(0)
+        children = handle_phase_failures(children, "equil", rc.run.on_failure)
+    else:
+        logger.info(f"[skip] equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
     # --------------------
-    run_phase_skipping_done(phase_equil_analysis, children, "equil_analysis", backend, max_workers=rc.run.max_workers)
-    children = handle_phase_failures(children, "equil_analysis", rc.run.on_failure)
-
     # prune UNBOUND ligands before FE prep
     def _filter_bound(children_list):
         keep = []
@@ -330,7 +339,12 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
             keep.append(c)
         return keep
 
-    children = _filter_bound(children)
+    if phase_equil_analysis.ordered_steps():
+        run_phase_skipping_done(phase_equil_analysis, children, "equil_analysis", backend, max_workers=rc.run.max_workers)
+        children = handle_phase_failures(children, "equil_analysis", rc.run.on_failure)
+        children = _filter_bound(children)
+    else:
+        logger.info(f"[skip] equil_analysis: no steps in this protocol.")
 
     # --------------------
     # PHASE 3: prepare_fe (parallel)
@@ -371,12 +385,13 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # FE record save
     # --------------------
     # Store at the system store (shared across executions of this system)
-    store = ArtifactStore(sys.root)
+    store = ArtifactStore(rc.system.output_folder)
     repo = FEResultsRepository(store)
 
     failures: list[tuple[str, str]] = []
-    for child in children:
+    for child in children_all:
         lig_name = child.meta["ligand"]
+        mol_name = child.meta["residue_name"]
         results_dir = child.root / "fe" / "Results"
         total_dG, total_se = None, None
 
@@ -402,7 +417,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
         try:
             rec = FERecord(
-                run_id=run_id,  # use the execution's run_id (do not regenerate per ligand)
+                run_id=run_id,
+                ligand=lig_name,
+                mol_name=mol_name,
                 system_name=sim_cfg_updated.system_name,
                 fe_type=sim_cfg_updated.fe_type,
                 temperature=sim_cfg_updated.temperature,
@@ -412,9 +429,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
                 components=list(sim_cfg_updated.components),
                 windows=[],  # optional: can be populated later
             )
-            repo.save(rec)  # repo should upsert-or-skip as designed (no destructive overwrite)
+            repo.save(rec, copy_from=results_dir)
             logger.info(
-                f"Saved FE record for ligand {lig_name} under {sys.root} "
+                f"Saved FE record for ligand {lig_name}"
                 f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
             )
         except Exception as e:
@@ -424,4 +441,4 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if failures:
         failed = ", ".join([f"{n} ({m})" for n, m in failures])
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
-    logger.success(f"All phases completed. FE results written under {run_dir} (store rooted at {sys.root})")
+    logger.success(f"All phases completed. FE results written under {run_dir} (store rooted at {rc.system.output_folder}).")

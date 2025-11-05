@@ -57,7 +57,7 @@ class SlurmConfig(BaseModel):
 # ----------------------------- Sections ---------------------------------
 
 class SystemSection(BaseModel):
-    type: Literal["MABFE"] = "MABFE"
+    type: Literal["MABFE", "MASFE"] = "MABFE"
     output_folder: Path
 
     @field_validator("output_folder", mode="before")
@@ -73,11 +73,11 @@ class CreateArgs(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
 
-    system_name: str
-    protein_input: Path
+    system_name: Optional[str] = 'unnamed_system'
+    protein_input: Optional[Path] = None
     system_input: Optional[Path] = None
     system_coordinate: Optional[Path] = None
-    protein_align: Optional[str] = None
+    protein_align: Optional[str] = "name CA"
 
     # Ligand staging
     ligand_paths: dict[str, Path] = Field(default_factory=dict)
@@ -105,7 +105,7 @@ class CreateArgs(BaseModel):
     extra_conformation_restraints: Optional[Path] = None
 
     # Box / chemistry basics that are used before FE
-    receptor_ff: str = "ff14SB"
+    receptor_ff: str = "protein.ff14SB"
     lipid_ff: str = "lipid21"
     solv_shell: float = 15.0
     cation: str = "Na+"
@@ -155,12 +155,6 @@ class CreateArgs(BaseModel):
             return d
         raise ValueError(f"Unsupported ligand_paths type: {type(v).__name__}")
 
-    @model_validator(mode="after")
-    def _require_ligands(self):
-        if not self.ligand_paths and not self.ligand_input:
-            raise ValueError("Provide `create.ligand_paths` or `create.ligand_input`.")
-        return self
-        
     @field_validator("neutralize_only", mode="before")
     @classmethod
     def _coerce_create_yes_no(cls, v):
@@ -229,6 +223,8 @@ class FESimArgs(BaseModel):
     eq_steps2: int = 1_000_000
     z_steps1: int = 50_000
     z_steps2: int = 300_000
+    y_steps1: int = 50_000
+    y_steps2: int = 300_000
     ntpr: int = 1000
     ntwr: int = 10000
     ntwe: int = 0
@@ -300,8 +296,8 @@ class RunConfig(BaseModel):
 
         c = self.create
         overlay_create = {
-            "system_name": c.system_name,
-            "receptor_ff": getattr(c, "receptor_ff", "ff14SB"),
+            "system_name": getattr(c, "system_name", "unnamed_system"),
+            "receptor_ff": getattr(c, "receptor_ff", "protein.ff14SB"),
             "ligand_ff": c.ligand_ff,
             "lipid_ff": getattr(c, "lipid_ff", "lipid21"),
             "lipid_mol": list(c.lipid_mol or []),
@@ -347,6 +343,8 @@ class RunConfig(BaseModel):
             "n_steps_dict": {
                 "z_steps1": int(getattr(f, "z_steps1", 50_000)),
                 "z_steps2": int(getattr(f, "z_steps2", 300_000)),
+                "y_steps1": int(getattr(f, "y_steps1", 50_000)),
+                "y_steps2": int(getattr(f, "y_steps2", 300_000)),
             },
             "ntpr": int(getattr(f, "ntpr", 1000)),
             "ntwr": int(getattr(f, "ntwr", 10000)),

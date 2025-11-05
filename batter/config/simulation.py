@@ -106,7 +106,7 @@ class SimulationConfig(BaseModel):
     all_atoms: Literal["yes","no"] = Field("no", description="save all atoms for FE")
 
     # --- Force fields ---
-    receptor_ff: str = Field("ff14SB", description="Receptor FF")
+    receptor_ff: str = Field("protein.ff14SB", description="Receptor FF")
     ligand_ff: str = Field("gaff2", description="Ligand FF")
     lipid_ff: str = Field("lipid21", description="Lipid FF")
 

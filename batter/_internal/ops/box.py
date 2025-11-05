@@ -1,5 +1,3 @@
-# batter/_internal/ops/box.py  (only create_box rewritten to avoid chdir)
-
 from __future__ import annotations
 
 import glob
@@ -18,6 +16,7 @@ import parmed as pmd
 from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
+from batter._internal.builders.fe_registry import register_create_box
 
 def _cp(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -27,7 +26,6 @@ def _cp(src: Path, dst: Path) -> None:
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
-
 
 def create_box(ctx: BuildContext) -> None:
     """
@@ -492,3 +490,154 @@ def create_box(ctx: BuildContext) -> None:
         run_with_log("parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir)
     else:
         logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+
+
+@register_create_box("z")
+def create_box_default(ctx: BuildContext) -> None:
+    create_box(ctx)
+
+
+@register_create_box("y")
+def create_box_y(ctx: BuildContext) -> None:
+    """
+    Create the box for ligand-only (solvation FE) systems.
+    Produces vac.{prmtop,inpcrd,pdb} and full.{prmtop,inpcrd,pdb}.
+    """
+    work = ctx.working_dir
+    sim = ctx.sim
+    amber_dir = ctx.amber_dir
+    window_dir = ctx.window_dir
+    window_dir.mkdir(parents=True, exist_ok=True)
+
+    mol = ctx.residue_name
+    solv_shell = float(getattr(sim, "solv_shell", 12.0))
+    if solv_shell < 10.0:
+        raise ValueError(
+            "Buffer size (`solv_shell`) too small for ligand-only box; "
+            "use ≥ 10 Å to avoid GPU PME/neighbor-list issues."
+        )
+
+    water_model = str(getattr(sim, "water_model", "TIP3P")).upper()
+    ion_def = getattr(sim, "ion_def", ("Na+", "Cl-", 0.15))  # (cation, anion, molarity)
+    neut = str(getattr(sim, "neut", "no")).lower()  # "yes" | "no"
+
+    # --- locate param dir (consistent with your default create_box) ---
+    comp = ctx.comp
+    param_dir = (work.parent.parent / "params") if comp != "q" else (work.parent / "params")
+
+    # --- stage required ligand artifacts into window_dir ---
+    for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "pdb", "json"):
+        src = param_dir / f"{mol}.{ext}"
+        if src.exists():
+            _cp(src, window_dir / src.name)
+        else:
+            # frcmod, lib, mol2, prmtop/inpcrd/pdb should exist for ligand
+            logger.debug(f"[create_box_y] Optional/absent: {src}")
+
+    # Convenience copies used elsewhere (mirror your default function)
+    for ext in ("prmtop", "mol2", "sdf", "inpcrd"):
+        src = param_dir / f"{mol}.{ext}"
+        if src.exists():
+            _cp(src, window_dir / f"vac_ligand.{ext}")
+
+    # --- copy a base tleap template into window_dir ---
+    src_tleap = amber_dir / "tleap.in.amber16"
+    if not src_tleap.exists():
+        src_tleap = amber_dir / "tleap.in"
+    if not src_tleap.exists():
+        raise FileNotFoundError("No tleap template found (tleap.in[.amber16]) in amber_dir.")
+    _cp(src_tleap, window_dir / "tleap.in")
+
+    # --- build the vacuum unit from ligand PDB (vac.*) ---
+    tleap_lig_txt = [
+        "# ligand-only vacuum topology",
+        f"loadamberparams {mol}.frcmod",
+        f"{mol} = loadmol2 {mol}.mol2",
+        f'lig = loadpdb {mol}.pdb',
+        "desc lig",
+        "savepdb lig vac.pdb",
+        "saveamberparm lig vac.prmtop vac.inpcrd",
+        "quit",
+    ]
+    _write(window_dir / "tleap_ligands.in", "\n".join(tleap_lig_txt) + "\n")
+    run_with_log(f"{tleap} -s -f tleap_ligands.in > tleap_ligands.log", working_dir=window_dir)
+
+    # --- determine water box keyword ---
+    if water_model == "TIP3PF":
+        water_box = "FB3BOX"  # leaprc.water.fb3
+        water_leaprc = "leaprc.water.fb3"
+    elif water_model == "SPCE":
+        water_box = "SPCBOX"
+        water_leaprc = "leaprc.water.spce"
+    else:
+        water_box = f"{water_model}BOX"
+        water_leaprc = f"leaprc.water.{water_model.lower()}"
+
+    # --- read ligand net charge from tleap log (unperturbed unit charge line) ---
+    def _unit_charge_from_log(logfile: Path) -> int:
+        if not logfile.exists():
+            return 0
+        q = 0.0
+        for ln in logfile.read_text().splitlines():
+            if "The unperturbed charge of the unit" in ln:
+                try:
+                    q = float(ln.split()[6].strip("'\",.:;#()[]"))
+                except Exception:
+                    pass
+        return int(round(q))
+
+    lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
+    # number of ions for concentration (before neutralization adjustment)
+    # Box built as cube with side = 2*solv_shell (Å)
+    side = 2.0 * solv_shell  # Å
+    box_volume_A3 = side ** 3
+    num_per_species = int(round(float(ion_def[2]) * 6.02e23 * box_volume_A3 * 1e-27))
+
+    # If neut == "yes", add counterions to neutralize; if "no", add by concentration only.
+    add_neu_cat = max(0, -lig_charge)  # if ligand is negative, add cations
+    add_neu_ani = max(0, lig_charge)   # if ligand is positive, add anions
+
+    # --- write tleap to solvate and ionize ligand-only system (full.*) ---
+    # first read lines from tleap.in
+    tleap_solv_lines = open(window_dir / "tleap.in").read().splitlines()
+    tleap_solv_lines += [
+        "# ligand-only solvation",
+        f"loadamberparams {mol}.frcmod",
+        f"{mol} = loadmol2 {mol}.mol2",
+        f"source {water_leaprc}",
+        f'model = loadpdb build.pdb',
+        "",
+        f"# cubic box with {solv_shell:.3f} Å padding each side",
+        f"solvatebox model {water_box} {{ {solv_shell:.3f} {solv_shell:.3f} {solv_shell:.3f} }} 1",
+        "",
+        "# ions",
+    ]
+    if neut == "no":
+        tleap_solv_lines += [
+            f"addionsrand model {ion_def[0]} {num_per_species}",
+            f"addionsrand model {ion_def[1]} {num_per_species}",
+        ]
+    else:
+        # neutralize first, then still add concentration salt if you prefer; here we only neutralize
+        if add_neu_cat:
+            tleap_solv_lines.append(f"addionsrand model {ion_def[0]} {add_neu_cat}")
+        if add_neu_ani:
+            tleap_solv_lines.append(f"addionsrand model {ion_def[1]} {add_neu_ani}")
+
+    tleap_solv_lines += [
+        "desc model",
+        "savepdb model full.pdb",
+        "saveamberparm model full.prmtop full.inpcrd",
+        "quit",
+        "",
+    ]
+    _write(window_dir / "tleap_solvate.in", "\n".join(tleap_solv_lines))
+    run_with_log(f"{tleap} -s -f tleap_solvate.in > tleap_solvate.log", working_dir=window_dir)
+
+    # --- HMR (optional) ---
+    parmed_hmr = amber_dir / "parmed-hmr.in"
+    if parmed_hmr.exists():
+        _cp(parmed_hmr, window_dir / "parmed-hmr.in")
+        run_with_log("parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir)
+    else:
+        logger.warning("[create_box_y] parmed-hmr.in not found in amber_dir; skipping HMR.")

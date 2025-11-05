@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from batter._internal.builders.base import BaseBuilder
-from .fe_registry import BUILD_COMPLEX_REGISTRY, CREATE_SIMULATION_REGISTRY, RESTRAINT_REGISTRY, SIM_FILES_REGISTRY
+from .fe_registry import BUILD_COMPLEX_REGISTRY, CREATE_SIMULATION_REGISTRY, CREATE_BOX_REGISTRY, RESTRAINT_REGISTRY, SIM_FILES_REGISTRY
 from batter._internal.ops import restraints, runfiles, box, amber
 
 
@@ -48,7 +48,10 @@ class AlchemicalFEBuilder(BaseBuilder):
     def _create_box(self) -> None:
         """Render AMBER templates and build solvated/ionized system."""
 
-        box.create_box(self.ctx)
+        comp = self.ctx.comp.lower()
+        if comp not in CREATE_BOX_REGISTRY:
+            raise NotImplementedError(f"No create_box registered for component '{comp}'")
+        CREATE_BOX_REGISTRY[comp](self.ctx)
         logger.debug(f"[prepare_fe] Created box for {self.ctx.ligand}")
 
     def _restraints(self) -> None:

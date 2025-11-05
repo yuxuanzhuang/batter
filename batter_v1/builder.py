@@ -5844,7 +5844,8 @@ class UNOFreeEnergyFBBuilder(UNOFreeEnergyBuilder):
 
         # Ligand solvent COM restraints
         lig_solv = ligand_residues[1].atoms
-        index_amber = lig_solv.indices + 1
+        # 2 DUM
+        index_amber = lig_solv.indices + 2
         cv_file.write('&colvar \n')
         cv_file.write(' cv_type = \'COM_DISTANCE\' \n')
         cv_file.write(' cv_ni = %s, cv_i = 2,0,' % str(len(index_amber)+2))

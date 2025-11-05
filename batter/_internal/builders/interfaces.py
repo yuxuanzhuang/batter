@@ -69,7 +69,7 @@ class BuildContext:
     @property
     def is_equilibration(self) -> bool:
         """Return True if this context corresponds to equilibration (-1 window)."""
-        return self.win == -1
+        return self.comp == "q"
     
     @property
     def equil_dir(self) -> Path:
