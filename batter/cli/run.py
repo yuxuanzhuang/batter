@@ -330,10 +330,32 @@ def cmd_clone_exec(
 # ----------------------------- check status -------------------------------
 _STAGE_SUFFIXES = ("_fe_equil", "_fe", "_eq")
 
-_comp_win_re = re.compile(r"(?:^|_)"
-                          r"(?P<comp>[a-zA-Z])"          # component like z, v, ...
-                          r"(?:(?P<win>-?\d{1,3}))?"     # optional window (e.g., 25, -1)
-                          r"$")
+#   LIG_COMP_fe_equil
+_tail_re = re.compile(
+    r"""
+    ^
+    (?P<lig>[A-Za-z0-9][A-Za-z0-9._-]*)
+    (?:
+        _(?:
+            # fe-equil
+            (?P<comp_feq>[A-Za-z]+)_fe_equil
+          |
+            # fe
+            (?P<comp_fe>[A-Za-z]+)
+            (?:
+                _(?P<comptok>[A-Za-z]*)
+                 (?P<win>\d+)
+            )?
+            _fe
+          |
+            # equil
+            (?P<eq>eq)
+        )
+    )?
+    $
+    """,
+    re.X,
+)
 
 def _endswith_stage(jobname: str):
     for s in _STAGE_SUFFIXES:
@@ -349,70 +371,87 @@ def _split_after(parts, token):
     except ValueError:
         return -1
 
-def _parse_jobname(jobname: str) -> dict:
+def _parse_jobname(jobname: str):
     """
-    Accepts jobname like:
-      fep_/.../executions/rep1/simulations/CARAZOLOL_eq
-      fep_/.../executions/abfe-BRD4-.../simulations/STRUCTURE17_1_z_z25_fe
-      fep_/.../executions/rep_test/fe/pose1/sdr/_z_fe_equil
-    Returns a dict with best-effort fields.
+    Parse BATTER job names of forms:
+      .../simulations/<LIGAND>_eq
+      .../simulations/<LIGAND>_<COMP>_fe
+      .../simulations/<LIGAND>_<COMP>_<COMP><WIN>_fe
+      .../simulations/<LIGAND>_<COMP>_fe_equil
+    Returns dict with: stage, run_id, system_root, ligand, comp, win(int|None)
     """
-    out = {
-        "raw": jobname,
-        "stage": None,
-        "system_root": None,
-        "run_id": None,
-        "ligand": None,
-        "pose": None,
-        "comp": None,
-        "win": None,
+    if not jobname.startswith("fep_"):
+        return None
+
+    body = jobname[4:]  # strip 'fep_'
+
+    # Split into prefix (system_root-ish) and tail (the last segment with stage info)
+    if "/simulations/" in body:
+        pre, tail = body.split("/simulations/", 1)
+        tail = tail.rsplit("/", 1)[-1]  # keep only the last path component
+    else:
+        # Fallback: take last path component as tail
+        parts = body.rsplit("/", 1)
+        pre = parts[0] if len(parts) == 2 else ""
+        tail = parts[-1]
+
+    # Extract run_id from /executions/<RID>/
+    run_id = None
+    mrun = re.search(r"/executions/([^/]+)/", "/" + pre + "/")
+    if mrun:
+        run_id = mrun.group(1)
+
+    m = _tail_re.match(tail)
+    if not m:
+        return {
+            "stage": "unknown",
+            "run_id": run_id,
+            "system_root": pre,
+            "ligand": None,
+            "comp": None,
+            "win": None,
+        }
+
+    gd = m.groupdict()
+    ligand = gd.get("lig")
+    comp = None
+    win = None
+    stage = "unknown"
+
+    if gd.get("eq"):
+        stage = "eq"
+    elif gd.get("comp_feq"):
+        stage = "fe_equil"
+        comp = gd.get("comp_feq")
+    elif gd.get("comp_fe"):
+        stage = "fe"
+        comp = gd.get("comp_fe")
+        if gd.get("win"):
+            try:
+                win = int(gd["win"])
+            except ValueError:
+                win = None
+
+    return {
+        "stage": stage,
+        "run_id": run_id,
+        "system_root": pre,
+        "ligand": ligand,
+        "comp": comp,
+        "win": win,
     }
 
-    if not jobname.startswith("fep_"):
-        return out
-    payload = jobname[4:]  # strip 'fep_'
+_nat_split_rx = re.compile(r"(\d+)")
 
-    stage, base = _endswith_stage(payload)
-    out["stage"] = stage or ""
+def _natural_keys(val: str):
+    s = "" if val is None else str(val)
+    parts = _nat_split_rx.split(s)
+    return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 
-    # normalize path-like string
-    p = PurePosixPath(base)
-
-    # token lists
-    parts = p.parts
-
-    # locate executions/<run_id>
-    j = _split_after(parts, "executions")
-    if j > 0 and j < len(parts):
-        out["run_id"] = parts[j]
-        out["system_root"] = "/".join(parts[:j+1])  # up to .../executions/<run_id>
-
-    # try ligand from simulations/<ligand>
-    k = _split_after(parts, "simulations")
-    if k > 0 and k < len(parts):
-        out["ligand"] = parts[k]
-
-    # try pose from fe/<pose>
-    m = _split_after(parts, "fe")
-    if m > 0 and m < len(parts):
-        out["pose"] = parts[m]
-
-    tail = parts[-1] if parts else ""
-    # We search the last token that looks like comp/win.
-    tokens = [t for t in re.split(r"[/_]", tail) if t]
-    for tok in reversed(tokens):
-        m = _comp_win_re.match(tok)
-        if m:
-            out["comp"] = m.group("comp")
-            out["win"] = m.group("win")
-            break
-
-    return out
-
-def _natural_keys(text: str):
-    """Sort helper: natural order for strings with numbers."""
-    return [int(s) if s.isdigit() else s for s in re.split(r"(\d+)", str(text))]
-
+def _natkey_series(s: pd.Series) -> pd.Series:
+    if pd.api.types.is_numeric_dtype(s):
+        return s
+    return s.astype(str).map(_natural_keys)
 
 @cli.command("report-jobs")
 @click.option("--partition", "-p", default=None, help="SLURM partition filter.")
@@ -451,7 +490,6 @@ def report_jobs(partition=None, detailed=False):
             "run_id": meta["run_id"],
             "system_root": meta["system_root"],
             "ligand": meta["ligand"],
-            "pose": meta["pose"],
             "comp": meta["comp"],
             "win": meta["win"],
             "jobname": jobname,
@@ -478,11 +516,7 @@ def report_jobs(partition=None, detailed=False):
         click.echo(f"Stages present: {stages or '(unknown)'}")
         click.echo("-" * 70)
 
-        # summarize by ligand/pose for quick glance
-        # prefer ligand if present; otherwise fall back to pose
         label_col = "ligand"
-        if sub["ligand"].isna().all():
-            label_col = "pose"
 
         summary = (sub
                    .assign(label=sub[label_col].fillna("(n/a)"))
@@ -514,8 +548,9 @@ def report_jobs(partition=None, detailed=False):
 
         if detailed:
             click.echo(click.style("\nDetailed:", bold=True))
-            det = (sub[["jobid", "status", "stage", "ligand", "pose", "comp", "win"]]
-                   .sort_values(["stage", "ligand", "pose", "comp", "win"], key=lambda s: s.map(_natural_keys)))
+            det = (sub[["jobid", "status", "stage", "ligand", "comp", "win"]]
+                .assign(win=sub["win"].fillna(-1))
+                .sort_values(["stage", "ligand", "comp", "win"], key=_natkey_series))
             with pd.option_context("display.width", 140, "display.max_columns", None):
                 click.echo(det.to_string(index=False))
         click.echo("-" * 70)
