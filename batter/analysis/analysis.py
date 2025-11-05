@@ -1,5 +1,3 @@
-# batter/analysis/analysis.py
-
 from __future__ import annotations
 
 import os
@@ -22,7 +20,6 @@ from pymbar.timeseries import detect_equilibration
 import MDAnalysis as mda
 from MDAnalysis.lib.distances import calc_bonds, calc_angles, calc_dihedrals
 
-# alchemlyb bits
 from alchemlyb.estimators import MBAR
 from alchemlyb.parsing.amber import extract_u_nk
 from alchemlyb.convergence import forward_backward_convergence, block_average
@@ -39,12 +36,12 @@ from batter.utils import run_with_log, cpptraj
 from batter.analysis.utils import exclude_outliers
 
 
-# Component groups / signs
 COMPONENTS_DICT = {
     "rest": ["a", "l", "t", "c", "r", "m", "n"],
     "dd":   ["e", "v", "f", "w", "x", "o", "s", "z", "y"],
 }
 
+# sign that determines direction of contribution to total FE
 COMPONENT_DIRECTION_DICT = {
     "m": -1,
     "n": +1,
@@ -61,14 +58,11 @@ class SilenceAlchemlybOnly:
         logger.disable("alchemlyb")
         logger.disable("alchemlyb.parsing")
         logger.disable("alchemlyb.parsing.amber")
-        # Optional: also remove sinks if needed:
-        # logger.remove()
     def __exit__(self, *args):
         logger.enable("alchemlyb")
         logger.enable("alchemlyb.parsing")
         logger.enable("alchemlyb.parsing.amber")
 
-# ---- Base class --------------------------------------------------------------
 
 class FEAnalysisBase(ABC):
     """
@@ -108,7 +102,6 @@ class FEAnalysisBase(ABC):
                 f, indent=2
             )
 
-# ---- MBAR analysis (DD components) ------------------------------------------
 
 class MBARAnalysis(FEAnalysisBase):
     def __init__(
@@ -338,7 +331,6 @@ class MBARAnalysis(FEAnalysisBase):
         else:
             plt.show()
 
-# ---- REST MBAR (restraint components) ---------------------------------------
 
 class RESTMBARAnalysis(MBARAnalysis):
     def _extract_restraints_from_windows(self):
@@ -564,8 +556,6 @@ class RESTMBARAnalysis(MBARAnalysis):
         finally:
             os.chdir(cwd0)
 
-# ---- Cpptraj driver for REST traces -----------------------------------------
-
 def generate_results_rest(md_sim_files: List[str], comp: str, blocks: int = 5, top: str = "full") -> None:
     """
     Build a cpptraj input on the fly using 'restraints.in' template in cwd,
@@ -631,26 +621,23 @@ def analyze_lig_task(
         fe_timeseries: Dict[str, np.ndarray] = {}
 
         # Analytical Boresch (if present)
-        try:
-            if "v" in components:
-                disangfile = f"{lig_path}/v/v-1/disang.rest"
-            elif "o" in components:
-                disangfile = f"{lig_path}/o/o-1/disang.rest"
-            elif "z" in components:
-                disangfile = f"{lig_path}/z/z-1/disang.rest"
-            else:
-                raise ValueError("No Boresch needed")
+        if "v" in components:
+            boresch_file = f"{lig_path}/v/v-1/disang.rest"
+        elif "o" in components:
+            boresch_file = f"{lig_path}/o/o-1/disang.rest"
+        elif "z" in components:
+            boresch_file = f"{lig_path}/z/z-1/disang.rest"
+        else:
+            boresch_file = None
 
+        if boresch_file:
             k_r, k_a = rest[2], rest[3]
-            bor = BoreschAnalysis(disangfile=disangfile, k_r=k_r, k_a=k_a, temperature=temperature)
+            bor = BoreschAnalysis(disangfile=boresch_file, k_r=k_r, k_a=k_a, temperature=temperature)
             bor.run_analysis()
             fe_values.append(COMPONENT_DIRECTION_DICT["Boresch"] * bor.results["fe"])
             fe_stds.append(bor.results["fe_error"])
             fe_timeseries["Boresch"] = np.asarray([bor.results["fe"], 0.0])
             results_entries.append(f"Boresch\t{COMPONENT_DIRECTION_DICT['Boresch'] * bor.results['fe']:.2f}\t{bor.results['fe_error']:.2f}")
-        except Exception:
-            # Not fatal if no Boresch
-            pass
 
         for comp in components:
             comp_path = f"{lig_path}/{comp}"
