@@ -472,7 +472,8 @@ def report_jobs(partition=None, detailed=False):
     # group by run_id (fallback to system_root)
     grp_key = df["run_id"].fillna(df["system_root"])
     for gid, sub in df.groupby(grp_key):
-        click.echo(click.style(f"\nRun: {gid}", bold=True))
+        system_root = sub["system_root"].dropna().unique()[0]
+        click.echo(click.style(f"\nRun: {system_root}", bold=True))
         stages = ", ".join(sorted(sub["stage"].dropna().unique()))
         click.echo(f"Stages present: {stages or '(unknown)'}")
         click.echo("-" * 70)

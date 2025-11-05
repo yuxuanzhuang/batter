@@ -10,7 +10,7 @@ from loguru import logger
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 
-from batter.analysis.analysis_v2 import analyze_lig_task
+from batter.analysis.analysis import analyze_lig_task
 from batter.utils import components_under
 
 

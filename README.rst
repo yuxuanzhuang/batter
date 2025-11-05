@@ -25,13 +25,12 @@ To install, first clone the repository and then run the following command:
     cd batter
     git submodule update --init --recursive
 
-    conda env create -f extern/openfe/environment.yml -n batter
-    conda env update --name batter --file environment.yml
+    conda create -n batter -y python=3.12
+    conda env update -f environment.yml -n batter
 
     conda activate batter
     
     pip install -e ./extern/alchemlyb
-    pip install -e ./extern/openfe
     pip install -e ./extern/rocklinc
     pip install -e .
 

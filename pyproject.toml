@@ -17,7 +17,7 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "MDAnalysis",
+    "MDAnalysis>=2.8.0",
     "pandas",
     "pydantic",
     "click",
@@ -25,8 +25,8 @@ dependencies = [
 ]
 
 [project.scripts]
-batter = "batter.old_cli:main"
-new_batter = "batter_v2.cli.run:cli"
+old_batter = "batter_v1.old_cli:main"
+batter = "batter.cli.run:cli"
 
 [project.optional-dependencies]
 test = [
@@ -45,8 +45,8 @@ where = ["."]
 
 # Include type markers (and any other static data you want) for both packages
 [tool.setuptools.package-data]
-batter = ["py.typed", "data/**/*"]
-batter_v2 = ["py.typed"]
+batter = ["py.typed", "data/**/*", "templates/**/*"]
+batter_v1 = ["py.typed", "data/**/*"]
 
 [tool.versioningit]
 default-version = "1+unknown"

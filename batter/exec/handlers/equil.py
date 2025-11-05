@@ -72,7 +72,7 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
     # Build job spec (submit from equil/ directory; pass partition)
     equil_folder = os.path.abspath(system.root) + "/equil"
-    job_name = f"fep_{equil_folder}"
+    job_name = f"fep_{equil_folder}_equil"
     spec = SlurmJobSpec(
         workdir=paths["phase_dir"],
         script_rel=script.name,                   # relative (submitted with cwd=workdir)

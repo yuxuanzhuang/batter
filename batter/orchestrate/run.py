@@ -521,6 +521,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     requested_run_id = getattr(rc.run, "run_id", "auto")
     run_id, run_dir = _select_run_id(rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id)
+    logger.info(f"Using run_id='{run_id}' under {run_dir}")
     
     # Ligands
     staged_lig_map = _discover_staged_ligands(run_dir)
@@ -538,7 +539,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     # Per-execution run directory (auto-resume latest when 'auto')
     logger.add(run_dir / "batter.run.log", level="DEBUG")
-    logger.info(f"Using run_id='{run_id}' under {run_dir}")
 
     dry_run = rc.run.dry_run
     if dry_run:

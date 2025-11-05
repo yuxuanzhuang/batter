@@ -13,9 +13,9 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 import numpy as np
 from loguru import logger
 from MDAnalysis import Universe
-from openff.toolkit import Molecule
+from openff.toolkit.topology import Molecule
 from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
-from openfe import SmallMoleculeComponent
+from gufe import SmallMoleculeComponent
 from rdkit import Chem
 
 from batter.utils import (

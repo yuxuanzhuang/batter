@@ -14,6 +14,18 @@ warnings.filterwarnings(
     module="MDAnalysis.coordinates.PDB"
 )
 
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="MDAnalysis.topology.PDBParser"
+)
+
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="MDAnalysis.topology.MOL2Parser"
+)
+
 try:
     from Bio.Application import BiopythonDeprecationWarning
 except ImportError:
@@ -39,10 +51,6 @@ _mbar_log.addFilter(_mute_timeseries)
 _mbar_log = logging.getLogger("pymbar.mbar_solvers")
 _mbar_log.addFilter(_mute_jax)
 _mbar_log.addFilter(_mute_jax_2)
-
-# Add imports here
-from .batter import ABFESystem, MABFESystem, RBFESystem, MASFESystem
-from .analysis import results
 
 logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')
