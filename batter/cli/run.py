@@ -375,7 +375,6 @@ def _parse_jobname(jobname: str):
     """
     Parse BATTER job names of forms:
       .../simulations/<LIGAND>_eq
-      .../simulations/<LIGAND>_<COMP>_fe
       .../simulations/<LIGAND>_<COMP>_<COMP><WIN>_fe
       .../simulations/<LIGAND>_<COMP>_fe_equil
     Returns dict with: stage, run_id, system_root, ligand, comp, win(int|None)
@@ -508,7 +507,7 @@ def report_jobs(partition=None, detailed=False):
     click.echo(click.style(f"Total jobs: {total}, Running: {running}, Pending: {pending}", bold=True))
 
     # group by run_id (fallback to system_root)
-    grp_key = df["run_id"].fillna(df["system_root"])
+    grp_key = df["run_id"]
     for gid, sub in df.groupby(grp_key):
         system_root = sub["system_root"].dropna().unique()[0]
         click.echo(click.style(f"\nRun: {system_root}", bold=True))
@@ -518,12 +517,7 @@ def report_jobs(partition=None, detailed=False):
 
         label_col = "ligand"
 
-        summary = (sub
-                   .assign(label=sub[label_col].fillna("(n/a)"))
-                   .groupby(["label"])["status"]
-                   .value_counts()
-                   .unstack(fill_value=0)
-                   .reset_index())
+        summary = sub.assign(label=sub[label_col]).groupby(["label"])["status"].value_counts().unstack(fill_value=0).reset_index()
 
         for need_col in ("RUNNING", "PENDING"):
             if need_col not in summary.columns:
@@ -549,7 +543,7 @@ def report_jobs(partition=None, detailed=False):
         if detailed:
             click.echo(click.style("\nDetailed:", bold=True))
             det = (sub[["jobid", "status", "stage", "ligand", "comp", "win"]]
-                .assign(win=sub["win"].fillna(-1))
+                .assign(win=sub["win"])
                 .sort_values(["stage", "ligand", "comp", "win"], key=_natkey_series))
             with pd.option_context("display.width", 140, "display.max_columns", None):
                 click.echo(det.to_string(index=False))

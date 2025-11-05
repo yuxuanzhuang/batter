@@ -519,9 +519,8 @@ def create_box_y(ctx: BuildContext) -> None:
 
     water_model = str(getattr(sim, "water_model", "TIP3P")).upper()
     ion_def = getattr(sim, "ion_def", ("Na+", "Cl-", 0.15))  # (cation, anion, molarity)
-    neut = str(getattr(sim, "neut", "no")).lower()  # "yes" | "no"
+    neut = str(getattr(sim, "neut", "yes")).lower()  # "yes" | "no"
 
-    # --- locate param dir (consistent with your default create_box) ---
     comp = ctx.comp
     param_dir = (work.parent.parent / "params") if comp != "q" else (work.parent / "params")
 
@@ -591,7 +590,7 @@ def create_box_y(ctx: BuildContext) -> None:
     # Box built as cube with side = 2*solv_shell (Å)
     side = 2.0 * solv_shell  # Å
     box_volume_A3 = side ** 3
-    num_per_species = int(round(float(ion_def[2]) * 6.02e23 * box_volume_A3 * 1e-27))
+    num_per_species = max(1, round(float(ion_def[2]) * 6.02e23 * box_volume_A3 * 1e-27))
 
     # If neut == "yes", add counterions to neutralize; if "no", add by concentration only.
     add_neu_cat = max(0, -lig_charge)  # if ligand is negative, add cations
@@ -614,8 +613,8 @@ def create_box_y(ctx: BuildContext) -> None:
     ]
     if neut == "no":
         tleap_solv_lines += [
-            f"addionsrand model {ion_def[0]} {num_per_species}",
-            f"addionsrand model {ion_def[1]} {num_per_species}",
+            f"addionsrand model {ion_def[0]} {num_per_species+add_neu_cat}",
+            f"addionsrand model {ion_def[1]} {num_per_species+add_neu_ani}",
         ]
     else:
         # neutralize first, then still add concentration salt if you prefer; here we only neutralize

@@ -15,6 +15,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal
 import json
 
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Tuple
+
 from loguru import logger
 
 from batter.config.run import RunConfig
@@ -37,7 +41,38 @@ from batter.orchestrate.ligands import discover_staged_ligands, resolve_ligand_m
 from batter.orchestrate.markers import handle_phase_failures, run_phase_skipping_done, is_done
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.orchestrate.results_io import fallback_totals_from_json, parse_results_dat
-from batter.orchestrate.run_id import select_run_id
+
+
+def select_run_id(sys_root: Path | str, protocol: str, system_name: str, requested: str | None) -> Tuple[str, Path]:
+    """
+    Choose the run identifier for the current execution and ensure its directory exists.
+
+    Returns
+    -------
+    (run_id, run_dir)
+    """
+    runs_dir = Path(sys_root) / "executions"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+
+    if requested and requested != "auto":
+        run_dir = runs_dir / requested
+        run_dir.mkdir(parents=True, exist_ok=True)
+        return requested, run_dir
+
+    candidates = [p for p in runs_dir.iterdir() if p.is_dir()]
+    if candidates:
+        latest = max(candidates, key=lambda p: p.stat().st_mtime)
+        return latest.name, latest
+
+    rid = generate_run_id(protocol, system_name)
+    run_dir = runs_dir / rid
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return rid, run_dir
+
+
+def generate_run_id(protocol: str, system_name: str) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{protocol}-{system_name}-{ts}"
 
 
 def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None,
@@ -441,4 +476,4 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if failures:
         failed = ", ".join([f"{n} ({m})" for n, m in failures])
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
-    logger.success(f"All phases completed. FE results written under {run_dir} (store rooted at {rc.system.output_folder}).")
+    logger.success(f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/.")

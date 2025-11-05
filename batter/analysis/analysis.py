@@ -556,6 +556,201 @@ class RESTMBARAnalysis(MBARAnalysis):
         finally:
             os.chdir(cwd0)
 
+
+class BoreschAnalysis(FEAnalysisBase):
+    def __init__(self, disangfile, k_r, k_a, temperature):
+        """
+        Initialize the Boresch analysis with the disang file and parameters.
+
+        Parameters
+        ----------
+        disangfile : str
+            The path to the disang file containing the anchor atoms.
+        k_r : float
+            The force constant for the translation restraint.
+        k_a : float
+            The force constant for the angle and dihedral restraints.
+            They are the same (they don't have to be).
+        temperature : float
+            The temperature in Kelvin for the analysis.
+        """
+        super().__init__()
+        self.disangfile = disangfile
+        self.k_r = k_r
+        self.k_a = k_a
+        self.temperature = temperature
+
+    def run_analysis(self):
+        """
+        Run the analytical analysis for Boresch restraint.
+        """
+        logger.debug("Running analytical analysis for Boresch restraint")
+        def _extract_r2_val(line: str) -> float:
+            m = re.search(r"\br2=\s*([+-]?\d+(?:\.\d+)?)", line)
+            if not m:
+                raise ValueError(f"Couldn't find r2= value in line: {line}")
+            return float(m.group(1))
+
+        # Read disang file to get anchor atoms
+        with open(self.disangfile, 'r') as f_in:        
+            lines = [line.rstrip() for line in f_in]
+
+            tr_lines = list(line for line in lines if '#Lig_TR' in line)
+            r0    = _extract_r2_val(tr_lines[0])  # P1–L1 distance (target at r2)
+            a1_0  = _extract_r2_val(tr_lines[1])  # P2–P1–L1 angle
+            t1_0  = _extract_r2_val(tr_lines[2])  # P3–P2–P1–L1 dihedral
+            a2_0  = _extract_r2_val(tr_lines[3])  # P1–L1–L2 angle
+            t2_0  = _extract_r2_val(tr_lines[4])  # P2–P1–L1–L2 dihedral
+            t3_0  = _extract_r2_val(tr_lines[5])  # P1–L1–L2–L3 dihedral
+            fe_bd = self.fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0,
+                                self.k_r, self.k_a, self.temperature)
+            self.results['fe'] = fe_bd
+            self.results['fe_error'] = 0.0
+            logger.debug(f'Analytical release ligand TR: {fe_bd:.2f} kcal/mol')
+
+
+    def _run_analysis(self,
+                     protein_path,
+                     protein_anchor_atmoms,
+                     ligand_anchor_atmoms,
+                     k_r,
+                     k_a,
+                     temperature):
+        """
+        Get analytical results of Bosrech restraint.
+
+        P3-P2-P1-L1-L2-L3
+        r0 = d(P1, L1)
+        a1_0 = angle(P2, P1, L1)
+        t1_0 = dihedral(P3, P2, P1, L1)
+        a2_0 = angle(P1, L1, L2)
+        t2_0 = dihedral(P2, P1, L1, L2)
+        t3_0 = dihedral(P1, L1, L2, L3)
+
+        Parameters
+        ----------
+        protein_path : str
+            The path to the protein structure file.
+        protein_anchor_atmoms : list of str
+            The selection string for the protein anchor atoms in MDAnalysis.
+        ligand_anchor_atmoms : list of str
+            The selection string for the ligand anchor atoms in MDAnalysis.
+        k_r : float
+            The force constant for the translation restraint.
+        ka : float
+            The force constant for the angle and dihedral restraints.
+            They are the same (they don't have to be).
+        temperature : float
+            The temperature in Kelvin for the analysis.
+        """
+        raise NotImplementedError("This method is not implemented yet.")
+        logger.debug("Getting analytical results for Boresch restraint")
+
+        u = mda.Universe(protein_path)
+        l1 = u.select_atoms(protein_anchor_atmoms[0])
+        l2 = u.select_atoms(protein_anchor_atmoms[1])
+        l3 = u.select_atoms(protein_anchor_atmoms[2])        
+
+        p1 = u.select_atoms(ligand_anchor_atmoms[0])
+        p2 = u.select_atoms(ligand_anchor_atmoms[1])
+        p3 = u.select_atoms(ligand_anchor_atmoms[2])
+
+        # make sure they all have one atom
+        if len(l1) != 1 or len(l2) != 1 or len(l3) != 1 or \
+              len(p1) != 1 or len(p2) != 1 or len(p3) != 1:
+            raise ValueError("Anchor atoms must be single atoms.")
+        
+        r0 = calc_bonds(l1.positions[0],
+                          p1.position[0],
+                          box=u.dimensions)
+        a1_0 = calc_angles(p2.positions[0],
+                          p1.positions[0], l1.positions[0],
+                          box=u.dimensions)
+        t1_0 = calc_dihedrals(p3.positions[0],
+                              p2.positions[0], p1.positions[0], l1.positions[0],
+                              box=u.dimensions)
+        a2_0 = calc_angles(p1.positions[0],
+                            l1.positions[0], l2.positions[0],
+                            box=u.dimensions)
+        t2_0 = calc_dihedrals(p2.positions[0],
+                                p1.positions[0], l1.positions[0], l2.positions[0],
+                                box=u.dimensions)
+        t3_0 = calc_dihedrals(p1.positions[0],
+                                l1.positions[0], l2.positions[0], l3.positions[0],
+                                box=u.dimensions)
+        rest = [r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a]
+        logger.debug(f'Boresch restraint: {rest}')
+        fe_bd = self.fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature)
+        logger.debug(f'Analytical release ligand TR: {fe_bd:.2f} kcal/mol')
+        self.results['fe'] = fe_bd
+        self.results['fe_error'] = 0.0
+
+    def plot_convergence(self, ax=None, **kwargs):
+        """
+        no convergence for analytical results
+        """
+        pass
+
+    @staticmethod
+    def fe_int(r1_0, a1_0, t1_0, a2_0, t2_0, t3_0, k_r, k_a, temperature):
+        """
+        Calculate the analytical free energy of boresch restraint.
+        from BAT.py
+        """
+        R = 1.987204118e-3  # kcal/mol-K, a.k.a. boltzman constant
+        beta = 1/(temperature*R)
+        r1lb, r1ub, r1st = [0.0, 100.0, 0.0001]
+        a1lb, a1ub, a1st = [0.0, np.pi, 0.00005]
+        t1lb, t1ub, t1st = [-np.pi, np.pi, 0.00005]
+        a2lb, a2ub, a2st = [0.0, np.pi, 0.00005]
+        t2lb, t2ub, t2st = [-np.pi, np.pi, 0.00005]
+        t3lb, t3ub, t3st = [-np.pi, np.pi, 0.00005]
+
+        def dih_per(lb, ub, st, t_0):
+            drange = np.arange(lb, ub, st)
+            delta = (drange-np.radians(t_0))
+            for i in range(0, len(delta)):
+                if delta[i] >= np.pi:
+                    delta[i] = delta[i]-(2*np.pi)
+                if delta[i] <= -np.pi:
+                    delta[i] = delta[i]+(2*np.pi)
+            return delta
+
+        def f_r1(val):
+            return (val**2)*np.exp(-beta*k_r*(val-r1_0)**2)
+
+        def f_a1(val):
+            return np.sin(val)*np.exp(-beta*k_a*(val-np.radians(a1_0))**2)
+
+        def f_a2(val):
+            return np.sin(val)*np.exp(-beta*k_a*(val-np.radians(a2_0))**2)
+
+        def f_t1(delta):
+            return np.exp(-beta*k_a*(delta)**2)
+
+        def f_t2(delta):
+            return np.exp(-beta*k_a*(delta)**2)
+
+        def f_t3(delta):
+            return np.exp(-beta*k_a*(delta)**2)
+
+        # Integrate translation and rotation
+        r1_int, a1_int, t1_int, a2_int, t2_int, t3_int = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        intrange = np.arange(r1lb, r1ub, r1st)
+        r1_int = np.trapz(f_r1(intrange), intrange)
+        intrange = np.arange(a1lb, a1ub, a1st)
+        a1_int = np.trapz(f_a1(intrange), intrange)
+        intrange = dih_per(t1lb, t1ub, t1st, t1_0)
+        t1_int = np.trapz(f_t1(intrange), intrange)
+        intrange = np.arange(a2lb, a2ub, a2st)
+        a2_int = np.trapz(f_a2(intrange), intrange)
+        intrange = dih_per(t2lb, t2ub, t2st, t2_0)
+        t2_int = np.trapz(f_t2(intrange), intrange)
+        intrange = dih_per(t3lb, t3ub, t3st, t3_0)
+        t3_int = np.trapz(f_t3(intrange), intrange)
+        return R*temperature*np.log((1/(8.0*np.pi*np.pi))*(1.0/1660.0)*r1_int*a1_int*t1_int*a2_int*t2_int*t3_int)
+
+
 def generate_results_rest(md_sim_files: List[str], comp: str, blocks: int = 5, top: str = "full") -> None:
     """
     Build a cpptraj input on the fly using 'restraints.in' template in cwd,

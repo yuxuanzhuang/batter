@@ -19,7 +19,7 @@ REQUIRED_MARKERS = {
     "prepare_fe": [["fe/artifacts/prepare_fe.ok", "fe/artifacts/prepare_fe_windows.ok"]],
     "fe_equil": [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
     "fe": [["fe/{comp}/{comp}{win:02d}/FINISHED"]],
-    "analyze": [["fe/artifacts/analyze.ok"]],
+    "analyze": [["fe/artifacts/analyze.ok", "fe/Results/Results.dat"]],
 }
 
 SUCCESS_MARKERS = {
@@ -31,7 +31,7 @@ SUCCESS_MARKERS = {
     "prepare_fe": [["fe/artifacts/prepare_fe.ok", "fe/artifacts/prepare_fe_windows.ok"]],
     "fe_equil": [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
     "fe": [["fe/{comp}/{comp}{win:02d}/FINISHED"]],
-    "analyze": [["fe/artifacts/analyze.ok"]],
+    "analyze": [["fe/artifacts/analyze.ok", "fe/Results/Results.dat"]],
 }
 
 FAILURE_MARKERS = {

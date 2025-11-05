@@ -94,7 +94,7 @@ class FEResultsRepository:
     def __init__(self, store: "ArtifactStore") -> None:
         self.store = store
         self._root = store.root / "results"
-        self._idx = self._root / "index.parquet"  # or CSV if you prefer
+        self._idx = self._root / "index.csv"
 
     def _lig_dir(self, run_id: str, ligand: str) -> Path:
         return self._root / run_id / ligand
@@ -124,16 +124,16 @@ class FEResultsRepository:
             "created_at": rec.created_at,
         }
         if self._idx.exists():
-            df = pd.read_parquet(self._idx)
+            df = pd.read_csv(self._idx)
             df = df[~((df.run_id == rec.run_id) & (df.ligand == rec.ligand))]
             df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
         else:
             df = pd.DataFrame([row])
-        df.to_parquet(self._idx, index=False)
+        df.to_csv(self._idx, index=False)
 
     def index(self) -> "pd.DataFrame":
         if self._idx.exists():
-            return pd.read_parquet(self._idx)
+            return pd.read_csv(self._idx)
         import pandas as pd
         return pd.DataFrame(columns=[
             "run_id","ligand","system_name","fe_type","temperature","method","total_dG","total_se","components","created_at"

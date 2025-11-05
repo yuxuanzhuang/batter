@@ -18,6 +18,9 @@ from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_forc
 from gufe import SmallMoleculeComponent
 from rdkit import Chem
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="gufe")
+
 from batter.utils import (
     antechamber,
     parmchk2,
@@ -281,6 +284,7 @@ class LigandProcessing(ABC):
         if ligand_name is None:
             ligand = SmallMoleculeComponent(ligand_rdkit)
         else:
+            # skip warning
             ligand = SmallMoleculeComponent(ligand_rdkit, name=ligand_name)
 
         self.ligand_object = ligand
@@ -785,6 +789,7 @@ def batch_ligand_process(
             ligand_file=p,
             index=idx,
             output_dir=target_dir.as_posix(),
+            # set to a generic name
             ligand_name='lig',
             retain_lig_prot=retain_lig_prot,
             charge=charge_method,
