@@ -24,9 +24,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-examples/*fe
-examples/new_api
-examples/(*_job_manager.sbatch)
+examples/**/*fe
+examples/**/new_api
+examples/**/*_job_manager.sbatch
+examples/**/*.err
+examples/**/*.out
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
