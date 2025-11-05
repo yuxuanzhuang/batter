@@ -24,7 +24,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple, Optional, Union
 from loguru import logger
 from collections import defaultdict
-from batter import __version__
+from . import *
+from batter_v1 import __version__
 from batter_v1.input_process import SimulationConfig, get_configure_from_file
 from batter_v1.analysis.results import FEResult
 from batter_v1.utils.utils import tqdm_joblib
@@ -50,6 +51,40 @@ from batter_v1.utils import (
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=ResourceWarning)
+
+import io
+import pickle
+import re
+
+# Specific legacy→new module mapping (edit target to match your tree)
+MODULE_REMAP = {
+    "batter.batter": "batter_v1",               # legacy package self-nesting
+    "batter.ligand_process": "batter_v1.ligand_process" # ← CHANGE THIS to where those classes live now
+}
+
+# Fallback: any other "batter.*" → "batter_v1.*"
+GENERIC_RX = re.compile(r"^batter(\.|$)")
+
+class ModuleMappingUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        orig_module = module
+
+        # 1) exact remaps first
+        if module in MODULE_REMAP:
+            module = MODULE_REMAP[module]
+        else:
+            # 2) generic batter→batter_v1 rewrite
+            if GENERIC_RX.search(module):
+                module = GENERIC_RX.sub(r"batter_v1\1", module)
+
+        try:
+            return super().find_class(module, name)
+        except Exception:
+            # last-resort: try original (in case you already have a shim installed)
+            return super().find_class(orig_module, name)
+
+def load_with_module_map(fobj):
+    return ModuleMappingUnpickler(fobj).load()
 
 
 AVAILABLE_COMPONENTS = COMPONENTS_DICT['dd'] + COMPONENTS_DICT['rest']
@@ -151,8 +186,13 @@ class System:
 
         try:
             with open(system_file, 'rb') as f:
-
-                loaded_state = pickle.load(f)
+                try:
+                    # Try with remapping first
+                    loaded_state = load_with_module_map(f)
+                except Exception:
+                    # Rewind and try a plain load (in case it was already batter_v1)
+                    f.seek(0)
+                    loaded_state = pickle.load(f)
                 # in case the folder is moved
                 loaded_state.output_dir = self.output_dir
                 # Update self with loaded attributes
@@ -402,7 +442,7 @@ class System:
         if self.overwrite or not os.path.exists(f"{self.poses_folder}/{self.system_name}_docked.pdb") or not os.path.exists(f"{self.poses_folder}/reference.pdb"):
             self._process_system()
         
-        from batter.ligand_process import LigandFactory
+        from batter_v1.ligand_process import LigandFactory
         
         self.unique_mol_names = []
         mols = []
@@ -908,7 +948,7 @@ class System:
         logger.debug('Input: membrane system')
 
         # read charmmlipid2amber file
-        charmm_csv_path = resources.files("batter") / "data/charmmlipid2amber.csv"
+        charmm_csv_path = resources.files("batter_v1") / "data/charmmlipid2amber.csv"
         charmm_amber_lipid_df = pd.read_csv(charmm_csv_path, header=1, sep=',')
 
         lipid_mol = self.lipid_mol
@@ -2881,7 +2921,7 @@ class System:
         """
         Check if the ligand is bound after equilibration
         """
-        from batter.analysis.sim_validation import SimValidator
+        from batter_v1.analysis.sim_validation import SimValidator
 
         logger.info("Checking if ligands are bound after equilibration")
         UNBOUND_THRESHOLD = 8.0
@@ -3069,8 +3109,8 @@ class System:
             if not os.path.exists(vmd):
                 raise FileNotFoundError(f'VMD executable {vmd} not found')
             # set batter.utils.vmd to the provided path
-            import batter.utils
-            batter.utils.vmd = vmd
+            import batter_v1.utils
+            batter_v1.utils.vmd = vmd
             logger.info(f'Setting VMD path to {vmd}')
 
         if self._check_equilibration():
@@ -4416,7 +4456,7 @@ class MASFESystem(System):
             raise ValueError(f"Unsupported force field: {ligand_ff}. "
                              f"Supported force fields are: {available_amber_ff + available_openff_ff}")
 
-        from batter.ligand_process import LigandFactory
+        from batter_v1.ligand_process import LigandFactory
         
         self.unique_mol_names = []
         mols = []
@@ -4554,8 +4594,8 @@ class MASFESystem(System):
             if not os.path.exists(vmd):
                 raise FileNotFoundError(f'VMD executable {vmd} not found')
             # set batter.utils.vmd to the provided path
-            import batter.utils
-            batter.utils.vmd = vmd
+            import batter_v1.utils
+            batter_v1.utils.vmd = vmd
             logger.info(f'Setting VMD path to {vmd}')
 
         self._bound_poses = self._all_poses
@@ -5041,7 +5081,7 @@ def analyze_pose_task(
         The number of workers to use for parallel processing.
         Default is 4.
     """
-    from batter.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
+    from batter_v1.analysis.analysis import BoreschAnalysis, MBARAnalysis, RESTMBARAnalysis
 
     pose_path = f'{fe_folder}/{pose}'
     os.makedirs(f'{pose_path}/Results', exist_ok=True)
@@ -5168,7 +5208,7 @@ def analyze_pose_task(
         fe_timeseries_std = np.zeros(LEN_FE_TIMESERIES) * np.nan
 
     if rocklin_correction == 'yes':
-        from batter.analysis.rocklin import run_rocklin_correction
+        from batter_v1.analysis.rocklin import run_rocklin_correction
         # only implement for single charged ligand system
         # in component `y`
         if 'y' not in components:

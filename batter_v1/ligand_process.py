@@ -9,7 +9,7 @@ import random
 import string
 import tempfile
 import shutil
-from openfe import SmallMoleculeComponent
+from gufe import SmallMoleculeComponent
 from typing import List, Union
 
 from batter_v1.utils import (

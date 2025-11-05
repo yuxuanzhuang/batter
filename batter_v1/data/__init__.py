@@ -1,6 +1,6 @@
 from importlib import resources
 
-_base_ref = resources.files('batter.data')
+_base_ref = resources.files('batter_v1.data')
 
 build_files = (_base_ref / 'build_files').as_posix()
 amber_files = (_base_ref / 'amber_files').as_posix()
