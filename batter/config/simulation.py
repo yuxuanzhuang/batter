@@ -44,7 +44,6 @@ class SimulationConfig(BaseModel):
 
     # --- FE controls / analysis ---
     release_eq: List[float] = Field(default_factory=list, description="Equilibration release weights")
-    attach_rest: List[float] = Field(default_factory=list, description="Attach weights (legacy)")
     ti_points: Optional[int] = Field(0, description="(#) TI points (not implemented)")
     lambdas: List[float] = Field(default_factory=list, description="default lambda values")
     component_windows: Dict[str, List[float]] = Field(default_factory=dict, description="Per-component lambda values for overrides")
@@ -53,8 +52,6 @@ class SimulationConfig(BaseModel):
     blocks: int = Field(0, description="MBAR blocks")
 
     # --- Force constants ---
-    rec_dihcf_force: float = Field(0.0, description="Protein dihedral spring (kcal/mol/rad^2)")
-    rec_discf_force: float = Field(0.0, description="Protein distance spring (kcal/mol/Å^2)")
     lig_distance_force: float = Field(0.0, description="Ligand COM distance spring (kcal/mol/Å^2)")
     lig_angle_force: float = Field(0.0, description="Ligand angle/dihedral spring (kcal/mol/rad^2)")
     lig_dihcf_force: float = Field(0.0, description="Ligand dihedral spring (kcal/mol/rad^2)")
@@ -173,6 +170,9 @@ class SimulationConfig(BaseModel):
 
     @model_validator(mode="after")
     def _finalize(self) -> "SimulationConfig":
+        # REMD not implemented
+        if self.remd == "yes":
+            raise NotImplementedError("REMD not implemented; set remd to 'no'.")
         # TI not implemented
         if self.dec_int == "ti":
             raise NotImplementedError("TI integration not implemented; use 'mbar'.")
@@ -192,7 +192,7 @@ class SimulationConfig(BaseModel):
 
         # pack restraints (order-sensitive, matches legacy)
         self.rest = [
-            self.rec_dihcf_force, self.rec_discf_force,
+            0, 0,
             self.lig_distance_force, self.lig_angle_force, self.lig_dihcf_force,
             self.rec_com_force, self.lig_com_force,
         ]

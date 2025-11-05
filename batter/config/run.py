@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Optional, Literal, List, Any
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
@@ -62,7 +63,9 @@ class SystemSection(BaseModel):
     @field_validator("output_folder", mode="before")
     @classmethod
     def _coerce_path(cls, v):
-        return None if v is None else Path(v)
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("`system.output_folder` is required.")
+        return Path(v)
 
 class CreateArgs(BaseModel):
     """
@@ -77,7 +80,7 @@ class CreateArgs(BaseModel):
     protein_align: Optional[str] = None
 
     # Ligand staging
-    ligand_paths: list[Path] = Field(default_factory=list)
+    ligand_paths: dict[str, Path] = Field(default_factory=dict)
     ligand_input: Optional[Path] = None
 
     # Param settings
@@ -96,7 +99,7 @@ class CreateArgs(BaseModel):
     # Extra restraints
     # position restraints on selected string
     extra_restraints: Optional[str] = None
-    extra_restraint_fc: str = 10.0
+    extra_restraint_fc: float = 10.0
 
     # additional conformational restraints file (NFE)
     extra_conformation_restraints: Optional[Path] = None
@@ -110,11 +113,7 @@ class CreateArgs(BaseModel):
     ion_conc: float = 0.15
     neutralize_only: Literal["yes", "no"] = "no"
     water_model: str = "TIP3P"
-    hmr: Literal["yes", "no"] = "no"
-    dt: float = 0.004
-    temperature: float = 310.0
 
-    release_eq: list[float] = Field(default_factory=list)
     l1_range: float = 6.0
     min_adis: float = 3.0
     max_adis: float = 7.0
@@ -126,14 +125,43 @@ class CreateArgs(BaseModel):
 
     @field_validator("ligand_paths", mode="before")
     @classmethod
-    def _coerce_paths_list(cls, v):
+    def _normalize_ligand_paths(cls, v):
+        """
+        Accept:
+          - dict[str, path-like]
+          - list/tuple of path-like
+          - CSV string of paths
+        Normalize → dict[str, Path] with sanitized names from stems if needed.
+        """
         if v is None:
-            return []
+            return {}
+        # CSV string
         if isinstance(v, str):
-            return [Path(p.strip()) for p in v.split(",") if p.strip()]
-        return [Path(p) for p in v]
+            items = [p.strip() for p in v.split(",") if p.strip()]
+            d: dict[str, Path] = {}
+            for s in items:
+                p = Path(s)
+                d[_sanitize_name(p.stem)] = p
+            return d
+        # mapping
+        if isinstance(v, Mapping):
+            return {_sanitize_name(str(k)): Path(p) for k, p in v.items()}
+        # iterable of paths
+        if isinstance(v, Iterable):
+            d: dict[str, Path] = {}
+            for p in v:
+                p = Path(p)
+                d[_sanitize_name(p.stem)] = p
+            return d
+        raise ValueError(f"Unsupported ligand_paths type: {type(v).__name__}")
 
-    @field_validator("neutralize_only", "hmr", mode="before")
+    @model_validator(mode="after")
+    def _require_ligands(self):
+        if not self.ligand_paths and not self.ligand_input:
+            raise ValueError("Provide `create.ligand_paths` or `create.ligand_input`.")
+        return self
+        
+    @field_validator("neutralize_only", mode="before")
     @classmethod
     def _coerce_create_yes_no(cls, v):
         return _coerce_yes_no(v)
@@ -153,16 +181,18 @@ class CreateArgs(BaseModel):
     def _check_extra_restraints(self):
         if self.extra_conformation_restraints and self.extra_restraints:
             raise ValueError("Cannot specify both `extra_conformation_restraints` and `extra_restraints`.")
+
         if self.extra_conformation_restraints:
-            if not self.extra_conformation_restraints.exists():
-                raise ValueError(f"extra_conformation_restraints file does not exist: {self.extra_conformation_restraints}")
-                p = Path(self.extra_conformation_restraints)
-                try:
-                    data = json.loads(p.read_text())
-                except Exception as e:
-                    raise ValueError(f"Could not parse {p}: {e}")
-                if not isinstance(data, (list, tuple)) or not all(isinstance(r, (list, tuple)) for r in data):
-                    raise ValueError(f"JSON must be a list of rows [dir, res1, res2, cutoff, k]. Got: {type(data)}")
+            p = Path(self.extra_conformation_restraints)
+            if not p.exists():
+                raise ValueError(f"extra_conformation_restraints file does not exist: {p}")
+            # (optional) schema check if you expect JSON:
+            try:
+                data = json.loads(p.read_text())
+            except Exception as e:
+                raise ValueError(f"Could not parse {p}: {e}")
+            if not isinstance(data, (list, tuple)) or not all(isinstance(r, (list, tuple)) for r in data):
+                raise ValueError("JSON must be a list of rows [dir, res1, res2, cutoff, k].")
         return self
 
 class FESimArgs(BaseModel):
@@ -194,6 +224,7 @@ class FESimArgs(BaseModel):
     buffer_z: float = 0.0
 
     # Step counts / reporting
+    release_eq: list[float] = Field(default_factory=list)
     eq_steps1: int = 500_000
     eq_steps2: int = 1_000_000
     z_steps1: int = 50_000
@@ -204,9 +235,12 @@ class FESimArgs(BaseModel):
     ntwx: int = 2500
     cut: float = 9.0
     gamma_ln: float = 1.0
+    dt: float = 0.004
+    hmr: Literal["yes", "no"] = "no"
+    temperature: float = 310.0
     barostat: int = 2
 
-    @field_validator("remd", "rocklin_correction", mode="before")
+    @field_validator("remd", "rocklin_correction", "hmr", mode="before")
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return _coerce_yes_no(v)
@@ -273,34 +307,28 @@ class RunConfig(BaseModel):
             "lipid_mol": list(c.lipid_mol or []),
             "other_mol": list(c.other_mol or []),
             "water_model": getattr(c, "water_model", "TIP3P"),
-            "temperature": float(getattr(c, "temperature", 310.0)),
-            "dt": float(getattr(c, "dt", 0.004)),
             "neutralize_only": _coerce_yes_no(getattr(c, "neutralize_only", "no")),
-            "hmr": _coerce_yes_no(getattr(c, "hmr", "no")),
             "ion_conc": float(getattr(c, "ion_conc", 0.15)),
             "cation": getattr(c, "cation", "Na+"),
             "anion": getattr(c, "anion", "Cl-"),
             "solv_shell": float(getattr(c, "solv_shell", 15.0)),
             "protein_align": getattr(c, "protein_align", "name CA"),
-            "release_eq": list(getattr(c, "release_eq", [])),
             "l1_range": float(getattr(c, "l1_range", 6.0)),
             "min_adis": float(getattr(c, "min_adis", 3.0)),
             "max_adis": float(getattr(c, "max_adis", 7.0)),
         }
 
         f = self.fe_sim
+
         overlay_fe = {
             "fe_type": f.fe_type,
             "dec_int": f.dec_int,
             "remd": _coerce_yes_no(getattr(f, "remd", "no")),
             "rocklin_correction": _coerce_yes_no(getattr(f, "rocklin_correction", "no")),
-            "attach_rest": list(getattr(f, "attach_rest", [])),
             "lambdas": list(getattr(f, "lambdas", [])),
             "sdr_dist": float(getattr(f, "sdr_dist", 0.0)),
             "blocks": int(getattr(f, "blocks", 0)),
             "lig_buffer": float(getattr(f, "lig_buffer", 0.0)),
-            "rec_dihcf_force": float(getattr(f, "rec_dihcf_force", 0.0)),
-            "rec_discf_force": float(getattr(f, "rec_discf_force", 0.0)),
             "lig_distance_force": float(getattr(f, "lig_distance_force", 0.0)),
             "lig_angle_force": float(getattr(f, "lig_angle_force", 0.0)),
             "lig_dihcf_force": float(getattr(f, "lig_dihcf_force", 0.0)),
@@ -309,6 +337,11 @@ class RunConfig(BaseModel):
             "buffer_x": float(getattr(f, "buffer_x", 0.0)),
             "buffer_y": float(getattr(f, "buffer_y", 0.0)),
             "buffer_z": float(getattr(f, "buffer_z", 0.0)),
+            # timing/thermo here (NOT in create):
+            "temperature": float(getattr(f, "temperature", 310.0)),
+            "dt": float(getattr(f, "dt", 0.004)),
+            "hmr": _coerce_yes_no(getattr(f, "hmr", "no")),
+            "release_eq": list(getattr(f, "release_eq", [0])),
             "eq_steps1": int(getattr(f, "eq_steps1", 500_000)),
             "eq_steps2": int(getattr(f, "eq_steps2", 1_000_000)),
             "n_steps_dict": {
