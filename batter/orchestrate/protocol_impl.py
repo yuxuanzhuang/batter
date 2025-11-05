@@ -1,6 +1,7 @@
+"""Concrete protocol implementations registered with the orchestrator."""
+
 from __future__ import annotations
 from typing import List
-from pydantic import BaseModel
 from batter.config.simulation import SimulationConfig
 from batter.pipeline.pipeline import Pipeline
 from .protocols import FEProtocol, ProtocolContext

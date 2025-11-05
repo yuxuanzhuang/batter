@@ -1,3 +1,5 @@
+"""Protocol interfaces and registry used by the orchestrator."""
+
 from __future__ import annotations
 from typing import Protocol, Dict, Any, List, Literal, Optional
 from pydantic import BaseModel, Field, model_validator

@@ -1,3 +1,5 @@
+"""Utilities for reading FE analysis results stored on disk."""
+
 from __future__ import annotations
 
 import json

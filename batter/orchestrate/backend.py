@@ -1,3 +1,5 @@
+"""Utilities for configuring execution backends used by the orchestrator."""
+
 from __future__ import annotations
 
 from loguru import logger

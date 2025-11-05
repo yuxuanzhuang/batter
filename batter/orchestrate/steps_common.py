@@ -1,3 +1,5 @@
+"""Factory helpers for assembling common orchestration pipeline steps."""
+
 from typing import Dict, Any, List
 from batter.pipeline.step import Step
 from batter.config.simulation import SimulationConfig
@@ -20,5 +22,8 @@ def step_solvation(sim: SimulationConfig) -> Step:
     return Step(name="solvation", requires=["prepare_fe"], params={"sim": sim.model_dump()})
 
 def step_analysis(sim: SimulationConfig, mode: str) -> Step:
-    return Step(name="analyze", requires=["windows" if mode!="asfe" else "solvation"],
-                params={"sim": sim.model_dump(), "mode": mode})
+    return Step(
+        name="analyze",
+        requires=["windows" if mode != "asfe" else "solvation"],
+        params={"sim": sim.model_dump(), "mode": mode},
+    )

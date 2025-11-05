@@ -1,3 +1,5 @@
+"""Helpers for resolving ligand inputs and staged ligands for a run."""
+
 from __future__ import annotations
 
 import json
