@@ -11,13 +11,11 @@ single param job ("param_ligands") → per-ligand pipelines → FE record save.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Dict, List, Literal
-import json
-
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Dict, List, Literal, Tuple
+
+import json
 
 from loguru import logger
 
@@ -87,7 +85,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     2. Choose backend (local/slurm)
     3. Build shared system once
     4. Stage **all ligands at once** under executions/<run_id>/simulations/<LIG>/
-    5. Run **system_prep<_asfe>** and **param_ligands** ONCE at executions/<run_id>/
+    5. Run **system_prep** and **param_ligands** ONCE at executions/<run_id>/
     6. For each ligand, run the rest of the pipeline under its child root
     7. Save one FE record per ligand (does not overwrite older runs)
     """
