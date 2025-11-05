@@ -13,6 +13,10 @@ import os
 import re
 import subprocess
 import tempfile
+import hashlib
+import shlex
+import sys
+
 
 # Import only from the public surface:
 from batter.api import (
@@ -24,6 +28,8 @@ from batter.api import (
     __version__,
     clone_execution
 )
+
+from batter.data import job_manager
 
 # ----------------------------- Click groups -----------------------------
 
@@ -38,6 +44,33 @@ def cli() -> None:
 
 # -------------------------------- run ----------------------------------
 
+def hash_run_input(yaml_path: Path, **options) -> str:
+    """
+    Stable hash of the YAML file *contents* plus selected CLI overrides.
+    Returns a short hex (first 12 chars).
+    """
+    p = Path(yaml_path)
+    data = p.read_bytes()  # raw bytes to avoid newline normalization issues
+    # freeze options dict deterministically (sorted keys)
+    frozen = json.dumps(options, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    h = hashlib.sha256()
+    h.update(data)
+    h.update(b"\0")         # separator byte to avoid accidental concatenation collisions
+    h.update(frozen)
+    return h.hexdigest()[:12]    
+
+
+def _which_batter() -> str:
+    """
+    Resolve the CLI to run.
+    Returns a *quoted* absolute shell token.
+    """
+    import shutil
+    exe = shutil.which('batter')
+    if exe:
+        return shlex.quote(exe)
+    # last resort: run module (works inside editable installs)
+    return shlex.quote(sys.executable) + " -m batter.cli"
 
 @cli.command("run")
 @click.argument("yaml_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
@@ -47,8 +80,53 @@ def cli() -> None:
 @click.option("--run-id", default=None, help="Override run_id (e.g., rep1). Use 'auto' to reuse latest.")
 @click.option("--dry-run/--no-dry-run", default=None, help="Override YAML run.dry_run.")
 @click.option("--only-equil/--full", default=None, help="Run only equil steps; override YAML.")
+@click.option("--slurm-submit/--local-run", default=False, help="Submit this run via SLURM (sbatch) instead of running locally.")
+@click.option("--slurm-manager-path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="Optional path to a SLURM header/template to prepend to the generated script.")
 def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
-            run_id: Optional[str], dry_run: Optional[bool], only_equil: Optional[bool]) -> None:
+            run_id: Optional[str], dry_run: Optional[bool], only_equil: Optional[bool],
+            slurm_submit: bool, slurm_manager_path: Optional[Path]) -> None:
+    if slurm_submit:
+        batter_cmd = _which_batter()
+        parts = [batter_cmd, "run", shlex.quote(str(Path(yaml_path).resolve()))]
+        parts += ["--on-failure", shlex.quote(on_failure)]
+
+        if output_folder:
+            parts += ["--output-folder", shlex.quote(str(Path(output_folder).resolve()))]
+        if run_id is not None:
+            parts += ["--run-id", shlex.quote(run_id)]
+        if dry_run is not None:
+            parts += ["--dry-run" if dry_run else "--no-dry-run"]
+        if only_equil is not None:
+            parts += ["--only-equil" if only_equil else "--full"]
+
+        run_cmd = " ".join(parts)
+
+        # create a hash based on contents of the yaml and options
+        run_hash = hash_run_input(
+            yaml_path,
+            on_failure=on_failure.lower(),
+            output_folder=str(Path(output_folder).resolve()) if output_folder else "",
+            run_id=run_id or "",
+            dry_run=("1" if dry_run else "0") if dry_run is not None else "",
+            only_equil=("1" if only_equil else "0") if only_equil is not None else "",
+        )
+        with open(slurm_manager_path or job_manager, "r") as f:
+            manager_code = f.read()
+        with open(f'{run_hash}_job_manager.sbatch', 'w') as f:
+            f.write(manager_code)
+            f.write("\n")
+            f.write(run_cmd)
+            f.write("echo 'Job completed.'\n")
+            f.write("\n")
+        
+        # submit slurm job
+        result = subprocess.run(['sbatch', f'{run_hash}_job_manager.sbatch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        click.echo(f"Submitted jobscript: {run_hash}_job_manager.sbatch")
+        click.echo(f"STDOUT: {result.stdout}")
+        click.echo(f"STDERR: {result.stderr}")
+        return
+
     overrides = {}
     if output_folder:
         overrides["output_folder"] = output_folder

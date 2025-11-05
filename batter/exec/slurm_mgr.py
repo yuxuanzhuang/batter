@@ -110,7 +110,7 @@ def _slurm_state(jobid: Optional[str]) -> Optional[str]:
 @dataclass
 class SlurmJobSpec:
     workdir: Path
-    script_rel: str = "SLURMM-run"          # default relative to workdir
+    script_rel: str = "SLURMM-run"
     finished_name: str = "FINISHED"
     failed_name: str = "FAILED"
     name: Optional[str] = None
@@ -428,10 +428,10 @@ class SlurmJobManager:
             # render progress info
             if pbar:
                 pbar.set_postfix({
-                    "active": running_cnt,
-                    "resub": resub_cnt,
+                    "running": running_cnt,
+                    #"resub": resub_cnt,
                     "failed": failed_cnt,
-                    "pending": len(pending),
+                    #"pending": len(pending)
                 })
             else:
                 # fallback: log a compact status every ~30s
@@ -439,7 +439,7 @@ class SlurmJobManager:
                 if now - last_log > 30 or not pending:
                     logger.info(
                         f"[SLURM] progress {len(completed)}/{total} "
-                        f"(active={running_cnt}, resub={resub_cnt}, failed={failed_cnt}, pending={len(pending)})"
+                        f"(running={running_cnt}, resub={resub_cnt}, failed={failed_cnt}, pending={len(pending)})"
                     )
                     last_log = now
 
