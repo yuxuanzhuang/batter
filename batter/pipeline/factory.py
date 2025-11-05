@@ -13,7 +13,9 @@ def _step(name: str, requires: List[str] | None = None, **params) -> Step:
     return Step(name=name, requires=requires or [], params=params)
 
 
-def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparation: bool = False) -> Pipeline:
+def make_abfe_pipeline(
+    sim: SimulationConfig, sys_params: dict, only_fe_preparation: bool = False
+) -> Pipeline:
     """
     ABFE pipeline (expanded):
 
@@ -29,7 +31,6 @@ def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparat
             requires=[],
             sim=sim.model_dump(),
             sys_params=sys_params,
-
         )
     )
     steps.append(
@@ -42,13 +43,54 @@ def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparat
     )
 
     # Per-ligand steps
-    steps.append(_step("prepare_equil", requires=["param_ligands"], sim=sim.model_dump(),
-                        sys_params=sys_params))
-    steps.append(_step("equil", requires=["prepare_equil"], sim=sim.model_dump(), sys_params=sys_params))
-    steps.append(_step("equil_analysis", requires=["equil"], sim=sim.model_dump(), sys_params=sys_params))
-    steps.append(_step("prepare_fe", requires=["equil_analysis"], sim=sim.model_dump(), sys_params=sys_params))
-    steps.append(_step("prepare_fe_windows", requires=["prepare_fe"], sim=sim.model_dump(), sys_params=sys_params))
-    steps.append(_step("fe_equil", requires=["prepare_fe_windows"], sim=sim.model_dump(), sys_params=sys_params))
+    steps.append(
+        _step(
+            "prepare_equil",
+            requires=["param_ligands"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
+    steps.append(
+        _step(
+            "equil",
+            requires=["prepare_equil"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
+    steps.append(
+        _step(
+            "equil_analysis",
+            requires=["equil"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
+    steps.append(
+        _step(
+            "prepare_fe",
+            requires=["equil_analysis"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
+    steps.append(
+        _step(
+            "prepare_fe_windows",
+            requires=["prepare_fe"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
+    steps.append(
+        _step(
+            "fe_equil",
+            requires=["prepare_fe_windows"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
     steps.append(
         _step(
             "fe",
@@ -57,17 +99,27 @@ def make_abfe_pipeline(sim: SimulationConfig, sys_params: dict, only_fe_preparat
             sys_params=sys_params,
         )
     )
-    steps.append(_step("analyze", requires=["fe"], mode="abfe", sim=sim.model_dump(), sys_params=sys_params))
+    steps.append(
+        _step(
+            "analyze",
+            requires=["fe"],
+            mode="abfe",
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
 
     if only_fe_preparation:
         # Keep up to 'prepare_fe' (inclusive); we’ll still prune 'param_ligands' at child level in run.py
-        keep = {"param_ligands", "prepare_equil", "equil", "prepare_fe"}
+        keep = {"system_prep", "param_ligands", "prepare_equil", "equil", "prepare_fe"}
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
 
 
-def make_asfe_pipeline(sim: SimulationConfig, only_fe_preparation: bool = False) -> Pipeline:
+def make_asfe_pipeline(
+    sim: SimulationConfig, sys_params: dict, only_fe_preparation: bool = False
+) -> Pipeline:
     """
     ASFE pipeline (unchanged here for completeness):
 
@@ -76,14 +128,47 @@ def make_asfe_pipeline(sim: SimulationConfig, only_fe_preparation: bool = False)
     steps: List[Step] = []
     steps.append(
         _step(
+            name="system_prep",
+            requires=[],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
+    steps.append(
+        _step(
             name="param_ligands",
             requires=["system_prep"],
             sim=sim.model_dump(),
             sys_params=sys_params,
         )
     )
-    steps.append(_step("prepare_fe", requires=["param_ligands"], sim=sim.model_dump()))
-    if not only_fe_preparation:
-        steps.append(_step("solvation", requires=["prepare_fe"], sim=sim.model_dump()))
-        steps.append(_step("analyze", requires=["solvation"], mode="asfe", sim=sim.model_dump()))
+    steps.append(
+        _step(
+            "prepare_fe",
+            requires=["param_ligands"],
+            sim=sim.model_dump(),
+            sys_params=sys_params,
+        )
+    )
+    if only_fe_preparation:
+        keep = {"system_prep", "param_ligands", "prepare_fe"}
+        steps = [s for s in steps if s.name in keep]
+    else:
+        steps.append(
+            _step(
+                "solvation",
+                requires=["prepare_fe"],
+                sim=sim.model_dump(),
+                sys_params=sys_params,
+            )
+        )
+        steps.append(
+            _step(
+                "analyze",
+                requires=["solvation"],
+                mode="asfe",
+                sim=sim.model_dump(),
+                sys_params=sys_params,
+            )
+        )
     return Pipeline(steps)
