@@ -26,7 +26,7 @@ wheels/
 *.egg
 examples/*fe
 examples/new_api
-examples/(_job_manager.sbatch)
+examples/(*_job_manager.sbatch)
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
