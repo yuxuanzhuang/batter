@@ -1,5 +1,5 @@
 import batter_v1
-from batter import batpy
+from batter_v1 import batpy
 
 import click
 import glob as glob
@@ -12,9 +12,9 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 HELP_STR = f"""Batter project; a refactored version of BAT.py
 
-Author: {batter.__author__}
-Email: {batter.__email__}
-Version: {batter.__version__}
+Author: {batter_v1.__author__}
+Email: {batter_v1.__email__}
+Version: {batter_v1.__version__}
 """
 
 @click.group(help=HELP_STR)

@@ -3,7 +3,7 @@ import hashlib
 import os
 import glob
 import subprocess
-from batter import MABFESystem
+from batter_v1 import MABFESystem
 from batter_v1.utils import COMPONENTS_DICT
 import numpy as np
 from loguru import logger
