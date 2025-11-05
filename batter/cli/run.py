@@ -21,13 +21,14 @@ import sys
 # Import only from the public surface:
 from batter.api import (
     run_from_yaml,
-    load_sim_config,
-    save_sim_config,
     list_fe_runs,
     load_fe_run,
     __version__,
     clone_execution
 )
+
+from batter.config.run import RunConfig
+
 
 from batter.data import job_manager
 
@@ -86,6 +87,12 @@ def _which_batter() -> str:
 def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
             run_id: Optional[str], dry_run: Optional[bool], only_equil: Optional[bool],
             slurm_submit: bool, slurm_manager_path: Optional[Path]) -> None:
+    # first do a basic validation of the YAML
+    try:
+        _ = RunConfig.load(yaml_path)
+    except Exception as e:
+        raise click.ClickException(f"Invalid SimulationConfig YAML: {e}")
+
     if slurm_submit:
         batter_cmd = _which_batter()
         parts = [batter_cmd, "run", shlex.quote(str(Path(yaml_path).resolve()))]
@@ -145,56 +152,7 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
     )
 
 
-# ------------------------------- config --------------------------------
-
-
-@cli.group("cfg")
-def cfg() -> None:
-    """Configuration utilities."""
-
-
-@cfg.command("validate")
-@click.argument("sim_yaml", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-def cfg_validate(sim_yaml: Path) -> None:
-    """
-    Validate a SimulationConfig YAML.
-
-    Parameters
-    ----------
-    sim_yaml
-        Path to a SimulationConfig YAML file.
-    """
-    try:
-        _ = load_sim_config(sim_yaml)
-    except Exception as e:
-        raise click.ClickException(str(e))
-    click.secho("OK: configuration is valid.", fg="green")
-
-
-@cfg.command("resolve")
-@click.argument("in_yaml", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.argument("out_yaml", type=click.Path(dir_okay=False, path_type=Path))
-def cfg_resolve(in_yaml: Path, out_yaml: Path) -> None:
-    """
-    Load a SimulationConfig and write a resolved YAML.
-
-    Parameters
-    ----------
-    in_yaml
-        Input SimulationConfig YAML.
-    out_yaml
-        Output path for the resolved YAML (directories are created).
-    """
-    try:
-        cfg = load_sim_config(in_yaml)
-        out_yaml.parent.mkdir(parents=True, exist_ok=True)
-        save_sim_config(cfg, out_yaml)
-    except Exception as e:
-        raise click.ClickException(str(e))
-    click.secho(f"Wrote resolved config to {out_yaml}", fg="green")
-
-
-# ---------------------------- free energy ------------------------------
+# ---------------------------- free energy results check ------------------------------
 
 
 @cli.group("fe")
