@@ -16,6 +16,7 @@ from MDAnalysis.analysis import align
 from importlib import resources
 
 from batter.pipeline.step import Step, ExecResult
+from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.systems.core import SimSystem
 from batter.utils.builder_utils import find_anchor_atoms
 from batter.orchestrate.state_registry import register_phase_state
