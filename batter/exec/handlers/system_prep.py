@@ -23,6 +23,7 @@ from batter.orchestrate.state_registry import register_phase_state
 
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
 
+
 # -----------------------
 # Small helpers
 # -----------------------
@@ -149,48 +150,57 @@ class _SystemPrepRunner:
         """
         Convert input lipid names to lipid21 set (PC/PA/OL for POPC) via lookup CSV.
         """
-        logger.debug('Input: membrane system')
+        logger.debug("Input: membrane system")
 
         # read charmmlipid2amber file
         charmm_csv_path = resources.files("batter") / "data/charmmlipid2amber.csv"
-        charmm_amber_lipid_df = pd.read_csv(charmm_csv_path, header=1, sep=',')
+        charmm_amber_lipid_df = pd.read_csv(charmm_csv_path, header=1, sep=",")
 
         lipid_mol = list(self.lipid_mol)
-        logger.debug(f'Converting lipid input: {lipid_mol}')
-        amber_lipid_mol = charmm_amber_lipid_df.query('residue in @lipid_mol')['replace']
-        amber_lipid_mol = amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
+        logger.debug(f"Converting lipid input: {lipid_mol}")
+        amber_lipid_mol = charmm_amber_lipid_df.query("residue in @lipid_mol")[
+            "replace"
+        ]
+        amber_lipid_mol = (
+            amber_lipid_mol.apply(lambda x: x.split()[1]).unique().tolist()
+        )
 
         # extend instead of replacing so that we can have both
         lipid_mol.extend(amber_lipid_mol)
         self.lipid_mol = lipid_mol
-        logger.debug(f'New lipid_mol list: {self.lipid_mol}')
+        logger.debug(f"New lipid_mol list: {self.lipid_mol}")
 
     def _get_alignment(self):
         """
         Prepare for the alignment of the protein and ligand to the system.
         """
-        logger.debug('Getting the alignment of the protein and ligand to the system')
+        logger.debug("Getting the alignment of the protein and ligand to the system")
 
         # translate the cog of protein to the origin
-        # 
+        #
         u_prot = mda.Universe(self._protein_input)
 
-        u_sys = mda.Universe(self._system_input_pdb, format='XPDB')
-        cog_prot = u_sys.select_atoms('protein and name CA C N O').center_of_geometry()
+        u_sys = mda.Universe(self._system_input_pdb, format="XPDB")
+        cog_prot = u_sys.select_atoms("protein and name CA C N O").center_of_geometry()
         u_sys.atoms.positions -= cog_prot
-        
+
         # get translation-rotation matrix
-        mobile = u_prot.select_atoms(self.protein_align).select_atoms('name CA and not resname NMA ACE')
-        ref = u_sys.select_atoms(self.protein_align).select_atoms('name CA and not resname NMA ACE')
+        mobile = u_prot.select_atoms(self.protein_align).select_atoms(
+            "name CA and not resname NMA ACE"
+        )
+        ref = u_sys.select_atoms(self.protein_align).select_atoms(
+            "name CA and not resname NMA ACE"
+        )
 
         if mobile.n_atoms != ref.n_atoms:
-            raise ValueError(f"Number of atoms in the alignment selection is different: protein_input: "
-            f"{mobile.n_atoms} and system_input {ref.n_atoms} \n"
-            f"The selection string is {self.protein_align} and name CA and not resname NMA ACE\n"
-            f"protein selected resids: {mobile.residues.resids}\n"
-            f"system selected resids: {ref.residues.resids}\n"
-            "set `protein_align` to a selection string that has the same number of atoms in both files"
-            "when running `create_system`."
+            raise ValueError(
+                f"Number of atoms in the alignment selection is different: protein_input: "
+                f"{mobile.n_atoms} and system_input {ref.n_atoms} \n"
+                f"The selection string is {self.protein_align} and name CA and not resname NMA ACE\n"
+                f"protein selected resids: {mobile.residues.resids}\n"
+                f"system selected resids: {ref.residues.resids}\n"
+                "set `protein_align` to a selection string that has the same number of atoms in both files"
+                "when running `create_system`."
             )
         mobile_com = mobile.center(weights=None)
         ref_com = ref.center(weights=None)
@@ -202,15 +212,16 @@ class _SystemPrepRunner:
             ref_coordinates=ref_coord,
             mobile_atoms=u_prot.atoms,
             mobile_com=mobile_com,
-            ref_com=ref_com)
+            ref_com=ref_com,
+        )
 
-        cog_prot = u_prot.select_atoms('protein and name CA C N O').center_of_geometry()
+        cog_prot = u_prot.select_atoms("protein and name CA C N O").center_of_geometry()
         u_prot.atoms.positions -= cog_prot
         u_prot.atoms.write(f"{self.ligands_folder}/protein_aligned.pdb")
         self._protein_aligned_pdb = f"{self.ligands_folder}/protein_aligned.pdb"
         u_sys.atoms.write(f"{self.ligands_folder}/system_aligned.pdb")
         self._system_aligned_pdb = f"{self.ligands_folder}/system_aligned.pdb"
-        
+
         self.translation = cog_prot
 
         # store these for ligand alignment
@@ -224,129 +235,144 @@ class _SystemPrepRunner:
         Generate the protein, reference, and lipid (if applicable) files.
         We will align the protein_input to the system_topology because
         the system_topology is generated by dabble and may be shifted;
-        we want to align the protein to the system so the membrane is 
+        we want to align the protein to the system so the membrane is
         properly positioned.
         """
-        logger.debug('Processing the system')
+        logger.debug("Processing the system")
 
         if not self._protein_aligned_pdb or not self._system_aligned_pdb:
             raise RuntimeError("Alignment not computed. Call _get_alignment() first.")
 
         u_prot = mda.Universe(self._protein_aligned_pdb)
-        u_sys = mda.Universe(self._system_aligned_pdb, format='XPDB')
+        u_sys = mda.Universe(self._system_aligned_pdb, format="XPDB")
         try:
             u_sys.atoms.chainIDs
         except AttributeError:
-            u_sys.add_TopologyAttr('chainIDs')
+            u_sys.add_TopologyAttr("chainIDs")
 
-        memb_seg = u_sys.add_Segment(segid='MEMB')
-        water_seg = u_sys.add_Segment(segid='WATR')
+        memb_seg = u_sys.add_Segment(segid="MEMB")
+        water_seg = u_sys.add_Segment(segid="WATR")
 
         # modify the chaininfo to be unique for each segment
         current_chain = 65
         u_prot.atoms.tempfactors = 0
 
         # read and validate the correct segments
-        n_segments = len(u_sys.select_atoms('protein').segments)
-        n_segment_name = np.unique(u_sys.select_atoms('protein').segids)
+        n_segments = len(u_sys.select_atoms("protein").segments)
+        n_segment_name = np.unique(u_sys.select_atoms("protein").segids)
         if len(n_segment_name) != n_segments:
             logger.warning(
                 f"Number of segments in the system is {n_segments} but the segment names are {n_segment_name}. "
                 f"Setting all segments to 'A' for the protein. If you want to use different segments, "
                 "modify the segments column in the system_topology file manually."
             )
-            protein_seg = u_sys.add_Segment(segid='A')
-            u_sys.select_atoms('protein').residues.segments = protein_seg
+            protein_seg = u_sys.add_Segment(segid="A")
+            u_sys.select_atoms("protein").residues.segments = protein_seg
 
-        for segment in u_sys.select_atoms('protein').segments:
+        for segment in u_sys.select_atoms("protein").segments:
             resid_seg = segment.residues.resids
             resid_seq = " ".join([str(resid) for resid in resid_seg])
             chain_id = segment.atoms.chainIDs[0]
             u_prot.select_atoms(
-                f'resid {resid_seq} and chainID {chain_id} and protein').atoms.tempfactors = current_chain
+                f"resid {resid_seq} and chainID {chain_id} and protein"
+            ).atoms.tempfactors = current_chain
             current_chain += 1
-        u_prot.atoms.chainIDs = [chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors]
+        u_prot.atoms.chainIDs = [
+            chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors
+        ]
 
         comp_2_combined = []
 
         if self.receptor_segment:
-            protein_anchor = u_prot.select_atoms(f'segid {self.receptor_segment} and protein')
-            protein_anchor.atoms.chainIDs = 'A'
+            protein_anchor = u_prot.select_atoms(
+                f"segid {self.receptor_segment} and protein"
+            )
+            protein_anchor.atoms.chainIDs = "A"
             protein_anchor.atoms.tempfactors = 65
-            other_protein = u_prot.select_atoms(f'not segid {self.receptor_segment} and protein')
+            other_protein = u_prot.select_atoms(
+                f"not segid {self.receptor_segment} and protein"
+            )
             comp_2_combined.append(protein_anchor)
             comp_2_combined.append(other_protein)
         else:
-            comp_2_combined.append(u_prot.select_atoms('protein'))
+            comp_2_combined.append(u_prot.select_atoms("protein"))
 
         if self.membrane_simulation:
             membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
             if len(membrane_ag) == 0:
                 logger.warning(
-                "No membrane atoms found with resname {}. Available resnames are {}. "
-                "Please check the lipid_mol parameter.",
-                self.lipid_mol, list(np.unique(u_sys.atoms.resnames))
-            )
+                    "No membrane atoms found with resname {}. Available resnames are {}. "
+                    "Please check the lipid_mol parameter.",
+                    self.lipid_mol,
+                    list(np.unique(u_sys.atoms.resnames)),
+                )
             else:
-                with open(f'{build_files_orig}/memb_opls2charmm.json', 'r') as f:
+                with open(f"{build_files_orig}/memb_opls2charmm.json", "r") as f:
                     MEMB_OPLS_2_CHARMM_DICT = json.load(f)
-                if np.any(membrane_ag.names == 'O1'):
-                    if np.any(membrane_ag.residues.resnames != 'POPC'):
+                if np.any(membrane_ag.names == "O1"):
+                    if np.any(membrane_ag.residues.resnames != "POPC"):
                         raise ValueError(
                             f"Found OPLS lipid name {membrane_ag.residues.resnames}, only 'POPC' is supported."
                         )
                     # convert the lipid names to CHARMM names
-                    membrane_ag.names = [MEMB_OPLS_2_CHARMM_DICT.get(name, name) for name in membrane_ag.names]
+                    membrane_ag.names = [
+                        MEMB_OPLS_2_CHARMM_DICT.get(name, name)
+                        for name in membrane_ag.names
+                    ]
                     logger.info("Converting OPLS lipid names to CHARMM names.")
-                membrane_ag.chainIDs = 'M'
+                membrane_ag.chainIDs = "M"
                 membrane_ag.residues.segments = memb_seg
-                logger.debug(f'Number of lipid molecules: {membrane_ag.n_residues}')
+                logger.debug(f"Number of lipid molecules: {membrane_ag.n_residues}")
                 comp_2_combined.append(membrane_ag)
         else:
             membrane_ag = u_sys.atoms[[]]  # empty selection
 
         # gather water (and ions) around protein/membrane
         water_ag = u_sys.select_atoms(
-            'byres (((resname SPC and name O) or water) and around 15 (protein or group memb))',
-            memb=membrane_ag
+            "byres (((resname SPC and name O) or water) and around 15 (protein or group memb))",
+            memb=membrane_ag,
         )
-        logger.debug(f'Number of water molecules: {water_ag.n_residues}')
-        ion_ag = u_sys.select_atoms('byres (resname SOD POT CLA NA CL and around 5 (protein))')
-        logger.debug(f'Number of ion molecules: {ion_ag.n_residues}')
+        logger.debug(f"Number of water molecules: {water_ag.n_residues}")
+        ion_ag = u_sys.select_atoms(
+            "byres (resname SOD POT CLA NA CL and around 5 (protein))"
+        )
+        logger.debug(f"Number of ion molecules: {ion_ag.n_residues}")
         # normalize ion names
-        ion_ag.select_atoms('resname SOD').names = 'Na+'
-        ion_ag.select_atoms('resname SOD').residues.resnames = 'Na+'
-        ion_ag.select_atoms('resname NA').names = 'Na+'
-        ion_ag.select_atoms('resname NA').residues.resnames = 'Na+'
-        ion_ag.select_atoms('resname POT').names = 'K+'
-        ion_ag.select_atoms('resname POT').residues.resnames = 'K+'
-        ion_ag.select_atoms('resname CLA').names = 'Cl-'
-        ion_ag.select_atoms('resname CLA').residues.resnames = 'Cl-'
-        ion_ag.select_atoms('resname CL').names = 'Cl-'
-        ion_ag.select_atoms('resname CL').residues.resnames = 'Cl-'
+        ion_ag.select_atoms("resname SOD").names = "Na+"
+        ion_ag.select_atoms("resname SOD").residues.resnames = "Na+"
+        ion_ag.select_atoms("resname NA").names = "Na+"
+        ion_ag.select_atoms("resname NA").residues.resnames = "Na+"
+        ion_ag.select_atoms("resname POT").names = "K+"
+        ion_ag.select_atoms("resname POT").residues.resnames = "K+"
+        ion_ag.select_atoms("resname CLA").names = "Cl-"
+        ion_ag.select_atoms("resname CLA").residues.resnames = "Cl-"
+        ion_ag.select_atoms("resname CL").names = "Cl-"
+        ion_ag.select_atoms("resname CL").residues.resnames = "Cl-"
 
         water_ag = water_ag + ion_ag
-        water_ag.chainIDs = 'W'
+        water_ag.chainIDs = "W"
         water_ag.residues.segments = water_seg
         if len(water_ag) == 0:
             logger.warning(
                 "No water molecules found in the system. Available resnames are %s. "
                 "Please check the system_topology and system_coordinate files.",
-                np.unique(u_sys.atoms.resnames)
+                np.unique(u_sys.atoms.resnames),
             )
         else:
             comp_2_combined.append(water_ag)
 
         u_merged = mda.Merge(*comp_2_combined)
 
-        water = u_merged.select_atoms('water or resname SPC')
+        water = u_merged.select_atoms("water or resname SPC")
         if len(water) != 0:
-            logger.debug(f'Number of water molecules in merged system: {water.n_residues}')
-            logger.debug(f'Water atom names: {water.residues[0].atoms.names}')
+            logger.debug(
+                f"Number of water molecules in merged system: {water.n_residues}"
+            )
+            logger.debug(f"Water atom names: {water.residues[0].atoms.names}")
 
         # Normalize water O names for tleap
-        water.select_atoms('name OW').names = 'O'
-        water.select_atoms('name OH2').names = 'O'
+        water.select_atoms("name OW").names = "O"
+        water.select_atoms("name OH2").names = "O"
 
         box_dim = np.zeros(6)
         if len(self.system_dimensions) == 3:
@@ -359,7 +385,7 @@ class _SystemPrepRunner:
         u_merged.dimensions = box_dim
 
         u_merged.atoms.write(f"{self.ligands_folder}/{self.system_name}.pdb")
-        protein_ref = u_prot.select_atoms('protein')
+        protein_ref = u_prot.select_atoms("protein")
         protein_ref.write(f"{self.ligands_folder}/reference.pdb")
 
     def _align_2_system(self, mobile_atoms):
@@ -371,7 +397,8 @@ class _SystemPrepRunner:
             ref_coordinates=self.ref_coord,
             mobile_atoms=mobile_atoms,
             mobile_com=self.mobile_com,
-            ref_com=self.ref_com)
+            ref_com=self.ref_com,
+        )
 
         mobile_atoms.positions -= self.translation
 
@@ -379,7 +406,7 @@ class _SystemPrepRunner:
         """
         Prepare ligand ligands for the system from input ligand files (PDB/SDF/MOL2).
         """
-        logger.debug('prepare ligands')
+        logger.debug("prepare ligands")
         new_ligand_dict: Dict[str, str] = {}
         # name order is deterministic
         for i, (name, ligand_path) in enumerate(sorted(self.ligand_dict.items())):
@@ -390,11 +417,11 @@ class _SystemPrepRunner:
             try:
                 u.atoms.chainIDs
             except AttributeError:
-                u.add_TopologyAttr('chainIDs')
-            lig_seg = u.add_Segment(segid='LIG')
-            u.atoms.chainIDs = 'L'
+                u.add_TopologyAttr("chainIDs")
+            lig_seg = u.add_Segment(segid="LIG")
+            u.atoms.chainIDs = "L"
             u.atoms.residues.segments = lig_seg
-            u.atoms.residues.resnames = 'lig'
+            u.atoms.residues.resnames = "lig"
 
             logger.debug(f"Processing ligand {i}: {ligand_path}")
             self._align_2_system(u.atoms)
@@ -430,9 +457,15 @@ class _SystemPrepRunner:
         self._system_name = system_name
         self._protein_input = self._convert_2_relative_path(protein_input)
         self._system_topology = self._convert_2_relative_path(system_topology)
-        self._system_coordinate = self._convert_2_relative_path(system_coordinate) if system_coordinate else None
+        self._system_coordinate = (
+            self._convert_2_relative_path(system_coordinate)
+            if system_coordinate
+            else None
+        )
 
-        self.ligand_dict = {k: self._convert_2_relative_path(v) for k, v in ligand_paths.items()}
+        self.ligand_dict = {
+            k: self._convert_2_relative_path(v) for k, v in ligand_paths.items()
+        }
         # prefer the provided keys for naming
         self.unique_mol_names = [k.upper() for k in ligand_paths.keys()]
 
@@ -456,7 +489,9 @@ class _SystemPrepRunner:
             if not Path(p).exists():
                 raise FileNotFoundError(f"Ligand file not found: {p}")
         if self._system_coordinate and not Path(self._system_coordinate).exists():
-            raise FileNotFoundError(f"System coordinate file not found: {system_coordinate}")
+            raise FileNotFoundError(
+                f"System coordinate file not found: {system_coordinate}"
+            )
 
         # Directories
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
@@ -474,19 +509,39 @@ class _SystemPrepRunner:
                 self.system_dimensions = u_sys.dimensions[:3]
             except TypeError:
                 if self.membrane_simulation:
-                    raise ValueError("No box dimensions found in system_topology; required for membrane systems.")
+                    raise ValueError(
+                        "No box dimensions found in system_topology; required for membrane systems."
+                    )
                 protein = u_sys.select_atoms("protein")
                 padding = 10.0
-                box_x = protein.positions[:, 0].max() - protein.positions[:, 0].min() + 2 * padding
-                box_y = protein.positions[:, 1].max() - protein.positions[:, 1].min() + 2 * padding
-                box_z = protein.positions[:, 2].max() - protein.positions[:, 2].min() + 2 * padding
+                box_x = (
+                    protein.positions[:, 0].max()
+                    - protein.positions[:, 0].min()
+                    + 2 * padding
+                )
+                box_y = (
+                    protein.positions[:, 1].max()
+                    - protein.positions[:, 1].min()
+                    + 2 * padding
+                )
+                box_z = (
+                    protein.positions[:, 2].max()
+                    - protein.positions[:, 2].min()
+                    + 2 * padding
+                )
                 self.system_dimensions = np.array([box_x, box_y, box_z])
                 logger.warning(
                     "No box dimensions in system_topology. Using default 10 Å padding around protein. "
                     f"Box dimensions: {self.system_dimensions}"
                 )
-        if self.membrane_simulation and (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any()) and self._system_coordinate is None:
-            raise ValueError("No box dimensions found in system_topology or system_coordinate when lipid system is on.")
+        if (
+            self.membrane_simulation
+            and (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any())
+            and self._system_coordinate is None
+        ):
+            raise ValueError(
+                "No box dimensions found in system_topology or system_coordinate when lipid system is on."
+            )
         u_sys.atoms.write(f"{self.ligands_folder}/system_input.pdb")
         self._system_input_pdb = f"{self.ligands_folder}/system_input.pdb"
 
@@ -507,7 +562,7 @@ class _SystemPrepRunner:
         u_prot = mda.Universe(f"{self.output_dir}/all-ligands/reference.pdb")
         first_ligand_path = sorted(self.ligand_dict.values())[0]
         u_lig = mda.Universe(first_ligand_path)
-        lig_sdf = Path(ligand_paths[self.unique_mol_names[0]])
+        lig_sdf = str(Path(ligand_paths[self.unique_mol_names[0]]))
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
             u_prot, u_lig, lig_sdf, anchor_atoms, ligand_anchor_atom
@@ -525,10 +580,21 @@ class _SystemPrepRunner:
             "docked": str(self.ligands_folder / f"{self._system_name}.pdb"),
             "ligands": dict(self.ligand_dict),
             "anchors": {"p1": self.p1, "p2": self.p2, "p3": self.p3},
-            "l1": {"x": self.l1_x, "y": self.l1_y, "z": self.l1_z, "range": self.l1_range},
-            "membrane": {"lipid_mol": self.lipid_mol, "lipid_ff": self.lipid_ff} if self.membrane_simulation else None,
+            "l1": {
+                "x": self.l1_x,
+                "y": self.l1_y,
+                "z": self.l1_z,
+                "range": self.l1_range,
+            },
+            "membrane": (
+                {"lipid_mol": self.lipid_mol, "lipid_ff": self.lipid_ff}
+                if self.membrane_simulation
+                else None
+            ),
         }
-        (self.ligands_folder / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        (self.ligands_folder / "manifest.json").write_text(
+            json.dumps(manifest, indent=2)
+        )
         logger.debug("System loaded and prepared.")
         return manifest
 
@@ -587,7 +653,9 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
         "l1_range": manifest["l1"]["range"],
         "lipid_mol": manifest["membrane"]["lipid_mol"] if manifest["membrane"] else [],
     }
-    (manifest_dir := (system.root / "artifacts" / "config")).mkdir(parents=True, exist_ok=True)
+    (manifest_dir := (system.root / "artifacts" / "config")).mkdir(
+        parents=True, exist_ok=True
+    )
     overrides_path = system.root / "artifacts" / "config" / "sim_overrides.json"
     overrides_path.write_text(json.dumps(updates, indent=2))
 
