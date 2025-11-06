@@ -10,6 +10,7 @@ from loguru import logger
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.config.simulation import SimulationConfig
+from batter.orchestrate.state_registry import register_phase_state
 
 from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
 
@@ -118,6 +119,13 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
     marker.write_text("ok\n")
 
     logger.debug(f"[prepare_fe] finished ligand={ligand} → {marker}")
+    marker_rel = marker.relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "prepare_fe",
+        required=[[marker_rel]],
+        success=[[marker_rel]],
+    )
     return ExecResult(job_ids=[], artifacts={"prepare_fe_ok": marker, **artifacts})
 
 
@@ -198,8 +206,17 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     windows_json.parent.mkdir(parents=True, exist_ok=True)
     windows_json.write_text(json.dumps(windows_summary, indent=2) + "\n")
 
-    prepare_finished = child_root / "fe" / "artifacts" /  "prepare_fe_windows.ok"
+    prepare_finished = child_root / "fe" / "artifacts" / "prepare_fe_windows.ok"
     open(prepare_finished, "w").close()
+
+    windows_rel = prepare_finished.relative_to(system.root).as_posix()
+    prepare_rel = (child_root / "fe" / "artifacts" / "prepare_fe.ok").relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "prepare_fe",
+        required=[[prepare_rel, windows_rel]],
+        success=[[prepare_rel, windows_rel]],
+    )
 
     logger.debug(f"[prepare_fe_windows] finished ligand={ligand} → {windows_json}")
     return ExecResult(job_ids=[], artifacts={"windows_json": windows_json})

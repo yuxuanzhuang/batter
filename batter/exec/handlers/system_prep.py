@@ -18,6 +18,7 @@ from importlib import resources
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.utils.builder_utils import find_anchor_atoms
+from batter.orchestrate.state_registry import register_phase_state
 
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
 
@@ -585,8 +586,16 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
         "lipid_mol": manifest["membrane"]["lipid_mol"] if manifest["membrane"] else [],
     }
     (manifest_dir := (system.root / "artifacts" / "config")).mkdir(parents=True, exist_ok=True)
-    (system.root / "artifacts" / "config" / "sim_overrides.json").write_text(json.dumps(updates, indent=2))
+    overrides_path = system.root / "artifacts" / "config" / "sim_overrides.json"
+    overrides_path.write_text(json.dumps(updates, indent=2))
 
+    marker_rel = overrides_path.relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "system_prep",
+        required=[[marker_rel]],
+        success=[[marker_rel]],
+    )
 
     logger.info(f"[system_prep] System preparation complete.")
     info = {"system_prep_ok": True, **manifest, "sim_updates": updates}

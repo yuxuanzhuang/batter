@@ -10,6 +10,7 @@ from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.config.simulation import SimulationConfig
 from batter._internal.builders.equil import PrepareEquilBuilder
+from batter.orchestrate.state_registry import register_phase_state
 
 
 def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
@@ -72,8 +73,17 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
         raise RuntimeError(f"[prepare_equil] anchor detection failed for ligand={ligand}")
 
     os.makedirs(system_root / "equil" / "artifacts", exist_ok=True)
-    prepare_finished = system_root / "equil" / "artifacts" /  "prepare_equil.ok"
+    prepare_finished = system_root / "equil" / "artifacts" / "prepare_equil.ok"
     open(prepare_finished, "w").close()
+
+    prepare_rel = prepare_finished.relative_to(system.root).as_posix()
+    full_prmtop = (system_root / "equil" / "full.prmtop").relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "prepare_equil",
+        required=[[full_prmtop, prepare_rel]],
+        success=[[full_prmtop, prepare_rel]],
+    )
 
     logger.debug(f"[prepare_equil] finished for ligand={ligand}")
 

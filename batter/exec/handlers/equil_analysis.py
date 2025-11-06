@@ -12,6 +12,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.orchestrate.state_registry import register_phase_state
 
 from batter.analysis.sim_validation import SimValidator
 from batter.utils import run_with_log, cpptraj
@@ -79,6 +80,15 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
     lig = system.meta.get("ligand")
     residue_name = system.meta.get("residue_name")
     logger.debug(f"Running equil_analysis_handler for ligand {lig} (residue {residue_name})")
+
+    rep_rel = p["rep_pdb"].relative_to(system.root).as_posix()
+    unbound_rel = p["unbound"].relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "equil_analysis",
+        required=[[rep_rel], [unbound_rel]],
+        success=[[rep_rel], [unbound_rel]],
+    )
 
     sim = params.get("sim")
     threshold = float(params.get("unbound_threshold", 8.0))

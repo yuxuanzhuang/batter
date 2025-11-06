@@ -9,6 +9,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.orchestrate.state_registry import register_phase_state
 
 
 # Reuse helpers from content-addressed ligand store
@@ -151,7 +152,15 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
             "retain_lig_prot": retain,
         },
     }
-    (artifacts_index_dir / "index.json").write_text(json.dumps(index_payload, indent=2))
+    index_path = artifacts_index_dir / "index.json"
+    index_path.write_text(json.dumps(index_payload, indent=2))
+    marker_rel = index_path.relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "param_ligands",
+        required=[[marker_rel]],
+        success=[[marker_rel]],
+    )
 
     # also save a simple TSV manifest (name\t hash)
     manifest = artifacts_index_dir / "ligand_manifest.tsv"
@@ -160,7 +169,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
             mf.write(f"{name}\t{lh}\t{rn}\n")
 
     logger.debug(f"[param_ligands] Linked params for staged ligands: {linked}")
-    logger.debug(f"[param_ligands] Wrote index → {artifacts_index_dir / 'index.json'}")
+    logger.debug(f"[param_ligands] Wrote index → {index_path}")
 
     # Return rich metadata so downstream steps can consume without re-reading disk, if desired
     return ExecResult(

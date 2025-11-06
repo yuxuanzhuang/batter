@@ -7,6 +7,7 @@ from loguru import logger
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobManager, SlurmJobSpec
+from batter.orchestrate.state_registry import register_phase_state
 
 def _phase_paths(root: Path) -> dict[str, Path]:
     p = root / "equil"
@@ -43,6 +44,16 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     paths = _phase_paths(system.root)
     lig = (system.meta or {}).get("ligand", system.name)
     part = _read_partition(params)
+
+    finished_rel = paths["finished"].relative_to(system.root).as_posix()
+    failed_rel = paths["failed"].relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "equil",
+        required=[[finished_rel], [failed_rel]],
+        success=[[finished_rel]],
+        failure=[[failed_rel]],
+    )
 
     # Fast path: already done
     if paths["finished"].exists():

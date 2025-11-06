@@ -9,6 +9,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.orchestrate.state_registry import register_phase_state
 
 # -----------------------
 # Small helpers
@@ -127,7 +128,16 @@ def system_prep_masfe(step: Step, system: SimSystem, params: Dict[str, Any]) -> 
         # No anchors, no membrane here
     }
     (system.root / "artifacts" / "config").mkdir(parents=True, exist_ok=True)
-    (system.root / "artifacts" / "config" / "sim_overrides.json").write_text(json.dumps(overrides, indent=2))
+    overrides_path = system.root / "artifacts" / "config" / "sim_overrides.json"
+    overrides_path.write_text(json.dumps(overrides, indent=2))
+
+    marker_rel = overrides_path.relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "system_prep_asfe",
+        required=[[marker_rel]],
+        success=[[marker_rel]],
+    )
 
     outputs = [system.root / "all-ligands" / "manifest.json"]
     info = {"system_prep_ok": True, **manifest, "sim_updates": overrides}

@@ -13,6 +13,7 @@ from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobSpec  # job manager is passed via params["job_mgr"]
 from batter.utils import components_under
+from batter.orchestrate.state_registry import register_phase_state
 
 # ---------------- utilities ----------------
 
@@ -117,6 +118,17 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
 
     _ensure_job_quota(max_jobs)
 
+    register_phase_state(
+        system.root,
+        "fe_equil",
+        required=[
+            ["fe/{comp}/{comp}-1/EQ_FINISHED"],
+            ["fe/{comp}/{comp}-1/FAILED"],
+        ],
+        success=[["fe/{comp}/{comp}-1/EQ_FINISHED"]],
+        failure=[["fe/{comp}/{comp}-1/FAILED"]],
+    )
+
     count = 0
     for comp in comps:
         wd = _equil_window_dir(system.root, comp)
@@ -174,6 +186,17 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         raise FileNotFoundError(f"[fe:{lig}] No components found under {system.root/'fe'}")
 
     _ensure_job_quota(max_jobs)
+
+    register_phase_state(
+        system.root,
+        "fe",
+        required=[
+            ["fe/{comp}/{comp}{win:02d}/FINISHED"],
+            ["fe/{comp}/{comp}{win:02d}/FAILED"],
+        ],
+        success=[["fe/{comp}/{comp}{win:02d}/FINISHED"]],
+        failure=[["fe/{comp}/{comp}{win:02d}/FAILED"]],
+    )
 
     count = 0
     for comp in comps:

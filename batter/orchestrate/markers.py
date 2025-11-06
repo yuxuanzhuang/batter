@@ -11,49 +11,19 @@ from batter.systems.core import SimSystem
 from batter.pipeline.pipeline import Pipeline
 from batter.pipeline.step import Step
 from batter.utils import components_under
-
-REQUIRED_MARKERS = {
-    "system_prep": [["artifacts/config/sim_overrides.json"]],
-    "param_ligands": [["artifacts/ligand_params/index.json"]],
-    "prepare_equil": [["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"]],
-    "equil": [["equil/FINISHED"], ["equil/FAILED"]],
-    "equil_analysis": [["equil/representative.pdb"], ["equil/UNBOUND"]],
-    "prepare_fe": [["fe/artifacts/prepare_fe.ok", "fe/artifacts/prepare_fe_windows.ok"]],
-    "fe_equil": [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
-    "fe": [["fe/{comp}/{comp}{win:02d}/FINISHED"]],
-    "analyze": [["fe/artifacts/analyze.ok", "fe/Results/Results.dat"]],
-}
-
-SUCCESS_MARKERS = {
-    "system_prep": [["artifacts/config/sim_overrides.json"]],
-    "param_ligands": [["artifacts/ligand_params/index.json"]],
-    "prepare_equil": [["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"]],
-    "equil": [["equil/FINISHED"]],
-    "equil_analysis": [["equil/representative.pdb"], ["equil/UNBOUND"]],
-    "prepare_fe": [["fe/artifacts/prepare_fe.ok", "fe/artifacts/prepare_fe_windows.ok"]],
-    "fe_equil": [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
-    "fe": [["fe/{comp}/{comp}{win:02d}/FINISHED"]],
-    "analyze": [["fe/artifacts/analyze.ok", "fe/Results/Results.dat"]],
-}
-
-FAILURE_MARKERS = {
-    "equil": [["equil/FAILED"]],
-    "fe_equil": [["fe/{comp}/{comp}-1/FAILED"]],
-    "fe": [["fe/{comp}/{comp}{win:02d}/FAILED"]],
-}
+from batter.orchestrate.state_registry import get_phase_state, PhaseState
 
 
 def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple[List[SimSystem], List[SimSystem]]:
     ok, bad = [], []
-    succ = SUCCESS_MARKERS.get(phase, [])
-    fail = FAILURE_MARKERS.get(phase, [])
     for child in children:
-        root = child.root
-        is_success = _expand_and_check(root, succ)
+        spec = _phase_spec(child.root, phase)
+        success_spec = spec.success or spec.required
+        is_success = _spec_satisfied(child.root, success_spec)
         if is_success:
             ok.append(child)
             continue
-        is_failure = _expand_and_check(root, fail) if fail else False
+        is_failure = _spec_satisfied(child.root, spec.failure)
         if is_failure or not is_success:
             bad.append(child)
     return ok, bad
@@ -73,10 +43,12 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
 
 
 def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[SimSystem]:
-    if phase_name not in REQUIRED_MARKERS:
-        return list(children)
-    need = [c for c in children if not is_done(c, phase_name)]
-    done = [c for c in children if c not in need]
+    need, done = [], []
+    for child in children:
+        if is_done(child, phase_name):
+            done.append(child)
+        else:
+            need.append(child)
     if done:
         names = ", ".join(c.meta.get("ligand", c.name) for c in done)
         logger.debug(f"[skip] {phase_name}: {len(done)} ligand(s) already complete → {names}")
@@ -104,65 +76,52 @@ def run_phase_skipping_done(
 
 
 def is_done(system: SimSystem, phase_name: str) -> bool:
-    root = system.root
-    spec = REQUIRED_MARKERS.get(phase_name, [])
+    spec = _phase_spec(system.root, phase_name)
+    required_spec = spec.required or spec.success
+    return _spec_satisfied(system.root, required_spec)
+
+
+def _phase_spec(root: Path, phase: str) -> PhaseState:
+    return get_phase_state(root, phase)
+
+
+def _spec_satisfied(root: Path, spec: List[List[str]]) -> bool:
     if not spec:
         return False
+    for group in spec:
+        paths: List[Path] = []
+        for pattern in group:
+            expanded = _expand_pattern(root, pattern)
+            if not expanded:
+                paths = []
+                break
+            paths.extend(expanded)
+        if paths and all(p.exists() for p in paths):
+            return True
+    return False
 
-    if phase_name not in {"fe_equil", "fe"}:
-        return _dnf_satisfied(root, spec)
+
+def _expand_pattern(root: Path, pattern: str) -> List[Path]:
+    if "{comp" not in pattern and "{win" not in pattern:
+        return [root / pattern]
 
     comps = components_under(root)
     if not comps:
-        return False
+        return []
 
-    if phase_name == "fe_equil":
-        for comp in comps:
-            expanded_groups = []
-            for group in spec:
-                expanded_groups.append([p.format(comp=comp, win="") for p in group])
-            if not _dnf_satisfied(root, expanded_groups):
-                return False
-        return True
-
-    if phase_name == "fe":
+    expanded: List[Path] = []
+    if "{win" in pattern:
         for comp in comps:
             wins = _production_windows_under(root, comp)
             if not wins:
-                return False
+                return []
             for win in wins:
-                expanded_groups = []
-                for group in spec:
-                    expanded_groups.append([p.format(comp=comp, win=win) for p in group])
-                if not _dnf_satisfied(root, expanded_groups):
-                    return False
-        return True
+                expanded.append(root / pattern.format(comp=comp, win=win))
+        return expanded
 
-    return False
-
-
-def _expand_and_check(root: Path, spec) -> bool:
-    if not spec:
-        return False
-    if all(isinstance(g, list) and all("{" not in s for s in g) for g in spec):
-        return _dnf_satisfied(root, spec)
-    comps = components_under(root) or []
-    for group in spec:
-        required: List[Path] = []
-        for patt in group:
-            if "{comp}" in patt or "{win" in patt:
-                if not comps:
-                    required.append(root / patt.format(comp="", win=0))
-                else:
-                    for comp in comps:
-                        wins = _production_windows_under(root, comp) if "{win" in patt else [None]
-                        for w in wins:
-                            required.append(root / patt.format(comp=comp, win=(0 if w is None else w)))
-            else:
-                required.append(root / patt)
-        if all(p.exists() for p in required):
-            return True
-    return False
+    for comp in comps:
+        expanded.append(root / pattern.format(comp=comp))
+    return expanded
 
 
 def _production_windows_under(root: Path, comp: str) -> List[int]:
@@ -186,17 +145,3 @@ def _production_windows_under(root: Path, comp: str) -> List[int]:
         if idx >= 0:
             out.append(idx)
     return sorted(out)
-
-
-def _dnf_satisfied(root: Path, marker_spec) -> bool:
-    if not marker_spec:
-        return False
-
-    if all(isinstance(m, str) for m in marker_spec):
-        return any((root / m).exists() for m in marker_spec)
-
-    for group in marker_spec:
-        if all((root / p).exists() for p in group):
-            return True
-
-    return False

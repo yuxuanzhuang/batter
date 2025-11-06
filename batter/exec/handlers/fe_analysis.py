@@ -9,6 +9,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.orchestrate.state_registry import register_phase_state
 
 from batter.analysis.analysis import analyze_lig_task
 from batter.utils import components_under
@@ -146,8 +147,17 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         if ts_png.exists():
             arts["fe_timeseries_png"] = ts_png
 
-    analyzed_finished = fe_root / "artifacts" /  "analyze.ok"
+    analyzed_finished = fe_root / "artifacts" / "analyze.ok"
     open(analyzed_finished, "w").close()
+
+    analyze_rel = analyzed_finished.relative_to(system.root).as_posix()
+    results_rel = (results_dir / "Results.dat").relative_to(system.root).as_posix()
+    register_phase_state(
+        system.root,
+        "analyze",
+        required=[[analyze_rel, results_rel]],
+        success=[[analyze_rel, results_rel]],
+    )
 
     logger.debug(f"[analyze:{lig}] FE analysis done. Artifacts: {', '.join(p.name for p in arts.values()) or 'none'}")
     return ExecResult(job_ids=[], artifacts=arts)
