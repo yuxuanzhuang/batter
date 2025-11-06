@@ -99,13 +99,25 @@ def write_fe_run_file(
     win_idx = ctx.win if ctx.win != -1 else 0
     hmr = ctx.sim.hmr
     n_windows = len(lambdas)
-    system_name = getattr(ctx.sim, "system_name", "system")
-    partition = (
-        partition_override
-        or getattr(ctx.sim, "partition", None)
-        or getattr(ctx.sim, "queue", None)
-        or "normal"
-    )
+
+    if not hasattr(ctx.sim, "system_name"):
+        raise AttributeError(
+            "SimulationConfig is missing 'system_name'. "
+            "Please update the run configuration."
+        )
+    system_name = ctx.sim.system_name
+
+    if partition_override is not None:
+        partition = partition_override
+    elif hasattr(ctx.sim, "partition"):
+        partition = ctx.sim.partition
+    elif hasattr(ctx.sim, "queue"):
+        partition = ctx.sim.queue
+    else:
+        raise AttributeError(
+            "SimulationConfig is missing 'partition' (or legacy 'queue'). "
+            "Specify a partition in the simulation configuration or pass partition_override."
+        )
 
     # -------- check_run.bash (verbatim copy)
     out_check = dst_dir / "check_run.bash"

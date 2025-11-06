@@ -1,7 +1,7 @@
 # batter/_internal/builders/interfaces.py
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable, Callable, Mapping, Tuple, Optional
+from typing import Protocol, runtime_checkable, Callable, Mapping, Tuple, Optional, Any
 from pathlib import Path
 from dataclasses import dataclass
 

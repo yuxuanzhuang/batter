@@ -52,25 +52,43 @@ def create_box(ctx: BuildContext) -> None:
     else:
         molr = mol
 
-    buffer_x = float(getattr(sim, "buffer_x", 10.0))
-    buffer_y = float(getattr(sim, "buffer_y", 10.0))
-    buffer_z = float(getattr(sim, "buffer_z", 10.0))
+    for attr in ("buffer_x", "buffer_y", "buffer_z"):
+        if not hasattr(sim, attr):
+            raise AttributeError(
+                f"SimulationConfig missing '{attr}'. Please specify this buffer in the YAML."
+            )
+    buffer_x = float(sim.buffer_x)
+    buffer_y = float(sim.buffer_y)
+    buffer_z = float(sim.buffer_z)
     if (not membrane_builder) and (buffer_x < 5 or buffer_y < 5 or buffer_z < 5):
         raise ValueError("For water systems, buffer_x/y/z must be ≥ 5 Å.")
 
     if membrane_builder:
-        targeted_buffer_z = float(getattr(sim, "buffer_z", 25.0)) or 25.0
+        targeted_buffer_z = float(sim.buffer_z) or 25.0
         buffer_z = get_buffer_z(window_dir / "build.pdb", targeted_buf=targeted_buffer_z)
         buffer_x = 0.0
         buffer_y = 0.0
 
-    water_model = str(getattr(sim, "water_model", "TIP3P")).upper()
-    num_waters = int(getattr(sim, "num_waters", 0))
+    if not hasattr(sim, "water_model"):
+        raise AttributeError("SimulationConfig missing 'water_model'.")
+    water_model = str(sim.water_model).upper()
+
+    if not hasattr(sim, "num_waters"):
+        raise AttributeError("SimulationConfig missing 'num_waters'.")
+    num_waters = int(sim.num_waters)
     if num_waters != 0:
         raise NotImplementedError("Fixed number of waters not supported; use fixed z buffer.")
-    ion_def = getattr(sim, "ion_def", ("Na+", "Cl-", 0.15))
-    neut = str(getattr(sim, "neut", "no"))
-    dec_method = str(getattr(sim, "dec_method", "dd"))
+    if not hasattr(sim, "ion_def"):
+        raise AttributeError("SimulationConfig missing 'ion_def'.")
+    ion_def = sim.ion_def
+
+    if not hasattr(sim, "neut"):
+        raise AttributeError("SimulationConfig missing 'neut'.")
+    neut = str(sim.neut)
+
+    if not hasattr(sim, "dec_method"):
+        raise AttributeError("SimulationConfig missing 'dec_method'.")
+    dec_method = str(sim.dec_method)
 
     # ---- copy FF artifacts (resolve ff/ relative to window_dir: ../../param) ----
     for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
@@ -510,16 +528,26 @@ def create_box_y(ctx: BuildContext) -> None:
     window_dir.mkdir(parents=True, exist_ok=True)
 
     mol = ctx.residue_name
-    solv_shell = float(getattr(sim, "solv_shell", 12.0))
+    if not hasattr(sim, "solv_shell"):
+        raise AttributeError("SimulationConfig missing 'solv_shell'.")
+    solv_shell = float(sim.solv_shell)
     if solv_shell < 10.0:
         raise ValueError(
             "Buffer size (`solv_shell`) too small for ligand-only box; "
             "use ≥ 10 Å to avoid GPU PME/neighbor-list issues."
         )
 
-    water_model = str(getattr(sim, "water_model", "TIP3P")).upper()
-    ion_def = getattr(sim, "ion_def", ("Na+", "Cl-", 0.15))  # (cation, anion, molarity)
-    neut = str(getattr(sim, "neut", "yes")).lower()  # "yes" | "no"
+    if not hasattr(sim, "water_model"):
+        raise AttributeError("SimulationConfig missing 'water_model'.")
+    water_model = str(sim.water_model).upper()
+
+    if not hasattr(sim, "ion_def"):
+        raise AttributeError("SimulationConfig missing 'ion_def'.")
+    ion_def = sim.ion_def
+
+    if not hasattr(sim, "neut"):
+        raise AttributeError("SimulationConfig missing 'neut'.")
+    neut = str(sim.neut).lower()
 
     comp = ctx.comp
     param_dir = (work.parent.parent / "params") if comp != "q" else (work.parent / "params")

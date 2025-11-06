@@ -64,7 +64,12 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     min_adis = sim.min_adis
 
     other_mol = sim.other_mol
-    lipid_mol = getattr(sim, "lipid_mol", [])
+    if not hasattr(sim, "lipid_mol"):
+        raise AttributeError(
+            "SimulationConfig is missing 'lipid_mol'. "
+            "Please include it in the run configuration (use an empty list if not needed)."
+        )
+    lipid_mol = sim.lipid_mol
     if mol in other_mol or mol in lipid_mol:
         raise ValueError(f"The ligand {mol} cannot be in the other_mol/lipid_mol list: {other_mol} and {lipid_mol}")
 

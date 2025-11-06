@@ -479,7 +479,9 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
         "fe-lig.pdb", "lig.mol2",
         "disang.rest", "cv.in",
     ]
-    if getattr(sim, "hmr", None) == "yes":
+    if not hasattr(sim, "hmr"):
+        raise AttributeError("SimulationConfig missing 'hmr'.")
+    if sim.hmr == "yes":
         needed.append("full.hmr.prmtop")
 
     dest.mkdir(parents=True, exist_ok=True)

@@ -210,9 +210,16 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
     all_atoms = sim.all_atoms
 
-    dec_method = getattr(sim, "dec_method", None)
+    if not hasattr(sim, "dec_method"):
+        raise AttributeError(
+            "SimulationConfig is missing 'dec_method'. "
+            "Set 'dec_method' to 'sdr' or 'dd' in the YAML."
+        )
+    dec_method = sim.dec_method
     if dec_method not in {"sdr", "dd"}:
-        raise ValueError(f"Decoupling method '{dec_method}' not recognized. Use 'sdr' or 'dd'.")
+        raise ValueError(
+            f"Decoupling method '{dec_method}' not recognized. Use 'sdr' or 'dd'."
+        )
 
     temperature = sim.temperature
     num_sim = int(sim.num_fe_range)
@@ -323,7 +330,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
     else:  # dd
-        infe_flag = 1 if getattr(ctx, "infe", False) else 0
+        extra_ctx = ctx.extra or {}
+        if "infe" not in extra_ctx:
+            raise KeyError(
+                "BuildContext.extra missing 'infe'. Ensure BaseBuilder sets this flag."
+            )
+        infe_flag = 1 if extra_ctx["infe"] else 0
         mk1 = int(last_lig)
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"

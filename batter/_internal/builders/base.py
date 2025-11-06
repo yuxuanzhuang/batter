@@ -43,6 +43,9 @@ class BaseBuilder(ABC):
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
         abs_working_dir = Path(working_dir).resolve()
+        ctx_extra: Dict[str, Any] = dict(extra or {})
+        ctx_extra.setdefault("infe", bool(infe))
+
         self.ctx = BuildContext(
             ligand=ligand,
             residue_name=residue_name,
@@ -52,7 +55,7 @@ class BaseBuilder(ABC):
             system_root=Path(system_root),
             comp=component,
             win=win,
-            extra=extra or {},
+            extra=ctx_extra,
         )
 
         # whether to enable infe
@@ -89,7 +92,12 @@ class BaseBuilder(ABC):
         
     @property
     def membrane_builder(self) -> bool:
-        sim_flag = getattr(self.ctx.sim, "membrane_simulation", False)
+        if not hasattr(self.ctx.sim, "membrane_simulation"):
+            raise AttributeError(
+                "SimulationConfig is missing 'membrane_simulation'. "
+                "Please add this field to the run configuration."
+            )
+        sim_flag = self.ctx.sim.membrane_simulation
         return sim_flag and self.ctx.comp not in MEMBRANE_EXEMPT_COMPONENTS
 
     # ---- main template
