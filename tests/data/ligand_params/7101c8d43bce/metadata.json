@@ -1,0 +1,11 @@
+{
+  "hash_id": "7101c8d43bce",
+  "input_path": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/reference/ligands/2RH1.sdf",
+  "aliases": [
+    "CAU"
+  ],
+  "canonical_smiles": "[H]O[C@]([H])(C([H])([H])Oc1c([H])c([H])c([H])c2c1c1c([H])c([H])c([H])c([H])c1n2[H])C([H])([H])[N+]([H])([H])C([H])(C([H])([H])[H])C([H])([H])[H]",
+  "retain_lig_prot": true,
+  "ligand_ff": "openff-2.2.1",
+  "prepared_base": "CAU"
+}

@@ -8,20 +8,18 @@ system:
 
 create:
   system_name: adrb2_A
-  protein_input: ../reference/adrb2_A.pdb
-  system_input: ../reference/adrb2_A_membrane.pdb
-  system_coordinate: ../reference/adrb2_A_membrane.rst7
+  protein_input: reference/adrb2_A.pdb
+  system_input: reference/adrb2_A_membrane.pdb
+  system_coordinate: reference/adrb2_A_membrane.rst7
   protein_align: name CA and resid 50 to 200
-  ligand_input: ../reference/ligands_dict.json
+  ligand_input: reference/ligands_dict.json
   ligand_ff: openff-2.2.1
   retain_lig_prot: true
   param_charge: am1bcc
-  param_outdir: ligand_params
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
     - "name CA and resid 316"
-  extra_conformation_restraints: rest.json
   lipid_mol: ["POPC"]
   overwrite: false
   receptor_ff: protein.ff14SB
@@ -36,7 +34,7 @@ run:
   max_workers: 8
   on_failure: prune
   slurm:
-    partition: owners
+    partition: rondror
     time: "4:00:00"
 
 fe_sim:

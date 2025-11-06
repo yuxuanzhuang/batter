@@ -10,6 +10,7 @@ create:
   ligand_input: reference/ligands_dict.json
   ligand_ff: openff-2.2.1
   param_charge: am1bcc
+  ligand_param: ligand_params
   overwrite: false
   solv_shell: 15.0
   water_model: TIP3P

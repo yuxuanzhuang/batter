@@ -1,0 +1,11 @@
+{
+  "hash_id": "8b6033428fff",
+  "input_path": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/reference/ligands/7XKA.sdf",
+  "aliases": [
+    "G1I"
+  ],
+  "canonical_smiles": "[H]Oc1c([H])c([H])c2c(c1O[H])C([H])([H])C([H])([H])[C@@]([H])([N+]([H])([H])C([H])([H])[H])[C@]2([H])O[H]",
+  "retain_lig_prot": true,
+  "ligand_ff": "openff-2.2.1",
+  "prepared_base": "G1I"
+}

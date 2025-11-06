@@ -16,6 +16,8 @@ create:
   ligand_ff: openff-2.2.1
   retain_lig_prot: true
   param_charge: am1bcc
+  param_outdir: ligand_params
+
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
