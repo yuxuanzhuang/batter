@@ -1,5 +1,5 @@
 Typed Pipeline Payloads and System Metadata
-==========================================
+===========================================
 
 This guide explains the structured data models that flow through the orchestrator,
 pipeline steps, and execution handlers. The new payload and metadata classes live in
