@@ -1,0 +1,43 @@
+version: 1
+protocol: asfe
+backend: local
+
+system:
+  type: MASFE
+  output_folder: adrb2_A_masfe
+
+create:
+  ligand_input: reference/ligands_dict.json
+  ligand_ff: openff-2.2.1
+  param_charge: am1bcc
+  overwrite: false
+  solv_shell: 15.0
+  water_model: TIP3P
+
+run:
+  only_fe_preparation: false
+  dry_run: false
+  run_id: auto
+  max_workers: 1
+  on_failure: prune
+  slurm:
+    partition: rondror
+    time: "4:00:00"
+
+fe_sim:
+  fe_type: asfe
+  rocklin_correction: yes
+  dec_int: mbar
+  remd: no
+  lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
+  blocks: 5
+  temperature: 310.0
+  y_steps1: 5000
+  y_steps2: 30000
+  cut: 9.0
+  barostat: 1
+  hmr: yes
+  dt: 0.004
+  buffer_x: 10.0
+  buffer_y: 10.0
+  buffer_z: 10.0
