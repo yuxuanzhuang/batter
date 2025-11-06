@@ -15,7 +15,22 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class SystemMeta:
-    """Structured metadata attached to a :class:`SimSystem`."""
+    """
+    Structured metadata attached to a :class:`SimSystem`.
+
+    Parameters
+    ----------
+    ligand : str, optional
+        Ligand identifier associated with the system (if applicable).
+    residue_name : str, optional
+        Residue name used for the ligand.
+    mode : str, optional
+        High-level mode indicator (e.g., ``"MABFE"`` vs ``"MASFE"``).
+    param_dir_dict : dict[str, str]
+        Mapping from residue names to parameter storage directories.
+    extras : dict[str, Any]
+        Additional context stored alongside the known fields.
+    """
 
     ligand: Optional[str] = None
     residue_name: Optional[str] = None
@@ -25,6 +40,19 @@ class SystemMeta:
 
     @classmethod
     def from_mapping(cls, data: Optional[Mapping[str, Any]]) -> "SystemMeta":
+        """
+        Construct a :class:`SystemMeta` from a mapping-like object.
+
+        Parameters
+        ----------
+        data : mapping or None
+            Source metadata. If already a :class:`SystemMeta`, it is returned.
+
+        Returns
+        -------
+        SystemMeta
+            Normalised metadata object.
+        """
         if data is None:
             return cls()
         if isinstance(data, SystemMeta):
@@ -45,6 +73,14 @@ class SystemMeta:
         )
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the metadata to a plain dictionary.
+
+        Returns
+        -------
+        dict[str, Any]
+            All known fields plus extra entries.
+        """
         data: Dict[str, Any] = {}
         if self.ligand is not None:
             data["ligand"] = self.ligand
@@ -58,6 +94,21 @@ class SystemMeta:
         return data
 
     def get(self, key: str, default: Any = None) -> Any:
+        """
+        Retrieve a value by key with an optional default.
+
+        Parameters
+        ----------
+        key : str
+            Metadata key.
+        default : Any, optional
+            Value returned when the key is missing.
+
+        Returns
+        -------
+        Any
+            Stored value or the default.
+        """
         if key == "ligand":
             return self.ligand if self.ligand is not None else default
         if key == "residue_name":
@@ -69,12 +120,43 @@ class SystemMeta:
         return self.extras.get(key, default)
 
     def __getitem__(self, item: str) -> Any:
+        """
+        Access metadata using dictionary-style syntax.
+
+        Parameters
+        ----------
+        item : str
+            Requested key.
+
+        Returns
+        -------
+        Any
+            Stored value.
+
+        Raises
+        ------
+        KeyError
+            If the key is not present.
+        """
         value = self.get(item, None)
         if value is None and item not in {"ligand", "residue_name", "mode", "param_dir_dict"} and item not in self.extras:
             raise KeyError(item)
         return value
 
     def merge(self, **updates: Any) -> "SystemMeta":
+        """
+        Create a new :class:`SystemMeta` with updated values.
+
+        Parameters
+        ----------
+        **updates
+            Keyword overrides applied to the existing metadata.
+
+        Returns
+        -------
+        SystemMeta
+            New instance containing the merged metadata.
+        """
         data = self.to_dict()
         data.update(updates)
         return SystemMeta.from_mapping(data)

@@ -68,7 +68,7 @@ surface frequently accessed fields as attributes and ensures paths are converted
    sys_params.get("missing", default) # safe lookup with default
 
 SimSystem Metadata (SystemMeta)
--------------------------------
+--------------------------------
 
 ``SimSystem.meta`` is now a :class:`~batter.systems.core.SystemMeta` instance. The
 class keeps track of common keys (ligand identifier, residue name, parameter
