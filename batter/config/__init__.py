@@ -53,7 +53,7 @@ def dump_run_config(cfg: RunConfig, path: Path | str) -> None:
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(
-        yaml.safe_dump(cfg.model_dump(mode="python"), sort_keys=True)
+        yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=True)
     )
 
 
@@ -89,5 +89,5 @@ def dump_simulation_config(cfg: SimulationConfig, path: Path | str) -> None:
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(
-        yaml.safe_dump(cfg.model_dump(mode="python"), sort_keys=True)
+        yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=True)
     )

@@ -17,6 +17,10 @@ from batter.config.simulation import SimulationConfig
 from batter.config.utils import coerce_yes_no
 
 
+def data_dir() -> Path:
+    return Path(__file__).parent / "data"
+
+
 def base_sim_kwargs(**overrides):
     data = {
         "system_name": "sys",
@@ -26,6 +30,72 @@ def base_sim_kwargs(**overrides):
     }
     data.update(overrides)
     return data
+
+
+def test_load_and_dump_run_config(tmp_path: Path, monkeypatch) -> None:
+    lig_file = tmp_path / "inputs" / "ligand.sdf"
+    lig_file.parent.mkdir(parents=True, exist_ok=True)
+    lig_file.write_text("dummy\n")
+    monkeypatch.setenv("LIG_FILE", str(lig_file))
+
+    run_yaml = tmp_path / "run.yaml"
+    run_yaml.write_text(
+        f"""
+system:
+  type: MABFE
+  output_folder: "{tmp_path / 'work'}"
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "${{LIG_FILE}}"
+  param_outdir: "./params"
+fe_sim: {{}}
+run:
+  run_id: auto
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    assert cfg.create.ligand_paths["LIG1"] == lig_file
+    assert cfg.create.param_outdir == (tmp_path / "params")
+
+    out_yaml = tmp_path / "roundtrip.yaml"
+    dump_run_config(cfg, out_yaml)
+    cfg_roundtrip = load_run_config(out_yaml)
+    assert cfg_roundtrip.create.param_outdir == (tmp_path / "params")
+    assert "LIG1" in cfg_roundtrip.create.ligand_paths
+
+
+def test_load_and_dump_simulation_config(tmp_path: Path) -> None:
+    sim_yaml = tmp_path / "sim.yaml"
+    sim_yaml.write_text(
+        """
+system_name: sim-example
+fe_type: uno_rest
+neutralize_only: "YES"
+lambdas: [0.0, 1.0]
+release_eq: [0.0, 1.0]
+"""
+    )
+
+    sim_cfg = load_simulation_config(sim_yaml)
+    assert sim_cfg.system_name == "sim-example"
+    assert sim_cfg.neutralize_only == "yes"
+
+    out_yaml = tmp_path / "sim_roundtrip.yaml"
+    dump_simulation_config(sim_cfg, out_yaml)
+    sim_cfg_roundtrip = load_simulation_config(out_yaml)
+    assert sim_cfg_roundtrip.system_name == "sim-example"
+    assert sim_cfg_roundtrip.neutralize_only == "yes"
+
+
+@pytest.mark.parametrize("yaml_file", sorted(path for path in data_dir().glob("*.yaml")))
+def test_example_run_configs_load(monkeypatch, yaml_file: Path) -> None:
+    monkeypatch.chdir(yaml_file.parent)
+    cfg = load_run_config(yaml_file.name)
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.system_name
+    assert cfg.run.run_id
 
 
 def test_coerce_yes_no_invalid():
