@@ -121,9 +121,15 @@ def test_fesim_args_unsorted_lambdas():
         FESimArgs(lambdas=[0.5, 0.1])
 
 
-def test_fesim_args_negative_force():
+def test_args_negative_force():
     with pytest.raises(ValidationError):
-        FESimArgs(lig_distance_force=-1.0)
+        FESimArgs(lig_distance_force=0.0)
+    with pytest.raises(ValidationError):
+        FESimArgs(lig_angle_force=0.0)
+    with pytest.raises(ValidationError):
+        FESimArgs(rec_com_force=0.0)
+    with pytest.raises(ValidationError):
+        FESimArgs(lig_com_force=0.0)
 
 
 @pytest.mark.parametrize(

@@ -397,17 +397,17 @@ class FESimArgs(BaseModel):
         description="Number of MBAR blocks to use during analysis.",
     )
     lig_buffer: float = Field(
-        0.0,
+        15.0,
         description="Ligand-specific box buffer (Å) for solvation boxes.",
     )
 
     # Restraint forces
     lig_distance_force: float = Field(
-        0.0,
+        5.0,
         description="Ligand COM distance restraint spring constant (kcal/mol/Å^2).",
     )
     lig_angle_force: float = Field(
-        0.0,
+        250.0,
         description="Ligand angle restraint spring constant (kcal/mol/rad^2).",
     )
     lig_dihcf_force: float = Field(
@@ -415,11 +415,11 @@ class FESimArgs(BaseModel):
         description="Ligand dihedral restraint spring constant (kcal/mol/rad^2).",
     )
     rec_com_force: float = Field(
-        0.0,
+        10.0,
         description="Protein COM restraint spring constant (kcal/mol/Å^2).",
     )
     lig_com_force: float = Field(
-        0.0,
+        10.0,
         description="Ligand COM restraint spring constant (kcal/mol/Å^2).",
     )
 
@@ -466,7 +466,6 @@ class FESimArgs(BaseModel):
     @field_validator(
         "lig_distance_force",
         "lig_angle_force",
-        "lig_dihcf_force",
         "rec_com_force",
         "lig_com_force",
     )
@@ -474,8 +473,8 @@ class FESimArgs(BaseModel):
     def _validate_force_const(cls, value: float) -> float:
         if value is None:
             return value
-        if value < 0.0:
-            raise ValueError("Force constants must be non-negative.")
+        if value <= 0.0:
+            raise ValueError("Force constants must be non-zero and positive.")
         return value
 
 

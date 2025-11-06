@@ -252,7 +252,7 @@ class LigandProcessing(ABC):
         self.ligand_ff = ligand_ff_openff
 
         from openff.toolkit import ForceField, Molecule, Topology
-        from openfe import SmallMoleculeComponent
+        from gufe import SmallMoleculeComponent
 
         mol = self.name
         logger.debug(f'Preparing ligand {mol} parameters with OpenFF force field {self.ligand_ff}.')
@@ -452,7 +452,7 @@ class LigandFactory:
             Default is None, which will be processed from the ligand file.
         charge : str, optional
             The ligand charge method. Default is ``"am1bcc"``.
-            Supported charge methods (by openfe) are:
+            Supported charge methods (by openfe/gufe) are:
                 - ``"am1bcc"``
                 - ``"am1bccelf10"`` (requires OpenEye Toolkits)
                 - ``"am1-mulliken"``
