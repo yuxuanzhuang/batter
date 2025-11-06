@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Type
+from typing import Any, Dict, Type, Optional
 
 from loguru import logger
 
@@ -15,6 +15,7 @@ from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 
+
 # -----------------------------
 # helpers
 # -----------------------------
@@ -24,6 +25,7 @@ def _system_root_for(child_root: Path) -> Path:
         return child_root.parents[1]
     except Exception:
         return child_root
+
 
 def _load_param_dir_dict(system_root: Path) -> Dict[str, str]:
     """
@@ -41,10 +43,13 @@ def _load_param_dir_dict(system_root: Path) -> Dict[str, str]:
         raise RuntimeError(f"No ligand param entries found in {index_json}")
     return out
 
+
 # -----------------------------
 # prepare_fe (scaffolding / amber templates)
 # -----------------------------
-def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
+def prepare_fe_handler(
+    step: Step, system: SimSystem, params: Dict[str, Any]
+) -> ExecResult:
     """Construct the initial FE directory layout for a ligand.
 
     Parameters
@@ -83,19 +88,23 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
     sys_params = payload.sys_params or SystemParams()
     extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
     extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
-    extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
+    extra_conformation_restraints: Optional[Path] = sys_params.get(
+        "extra_conformation_restraints", None
+    )
 
     infe = False
     if extra_restraints is not None:
         infe = False
-        sim.barostat = '1'
+        sim.barostat = "1"
     if extra_conformation_restraints is not None:
         infe = True
         # cannot do NFE with barostat 1 (Berendsen)
-        sim.barostat = '2'
-    
+        sim.barostat = "2"
+
     artifacts: Dict[str, Any] = {}
-    logger.debug(f"[prepare_fe] start ligand={ligand} residue={residue_name} components={components}")
+    logger.debug(
+        f"[prepare_fe] start ligand={ligand} residue={residue_name} components={components}"
+    )
 
     # Build per component (scaffold / templates only; win=-1)
     for comp in components:
@@ -115,10 +124,10 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
             infe=infe,
             win=-1,
             extra={
-            "extra_restraints": extra_restraints,
-            "extra_restraints_fc": extra_restraints_fc,
-            "extra_conformation_restraints": extra_conformation_restraints,
-            }
+                "extra_restraints": extra_restraints,
+                "extra_restraints_fc": extra_restraints_fc,
+                "extra_conformation_restraints": extra_conformation_restraints,
+            },
         )
         builder.build()  # will create <comp>-1, amber templates, run files, etc.
 
@@ -143,7 +152,9 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
 # -----------------------------
 # prepare_fe_windows (expand per-lambda windows)
 # -----------------------------
-def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
+def prepare_fe_windows_handler(
+    step: Step, system: SimSystem, params: Dict[str, Any]
+) -> ExecResult:
     """
     Expand FE windows for each requested component:
       - copies <comp>-1 to <comp>-2, <comp>-3, ... (depending on lambda schedule)
@@ -155,11 +166,15 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     """
     payload = StepPayload.model_validate(params)
     if payload.sim is None:
-        raise ValueError("[prepare_fe_windows] Missing simulation configuration in payload.")
+        raise ValueError(
+            "[prepare_fe_windows] Missing simulation configuration in payload."
+        )
     sim = payload.sim
     components = list(getattr(sim, "components", []) or [])
     if not components:
-        raise RuntimeError("No components specified in sim config for FE window preparation.")
+        raise RuntimeError(
+            "No components specified in sim config for FE window preparation."
+        )
 
     ligand = system.meta.get("ligand")
     residue_name = system.meta.get("residue_name")
@@ -175,26 +190,32 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     sys_params = payload.sys_params or SystemParams()
     extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
     extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
-    extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
+    extra_conformation_restraints: Optional[Path] = sys_params.get(
+        "extra_conformation_restraints", None
+    )
 
     infe = False
     if extra_restraints is not None:
         infe = False
-        sim.barostat = '1'
+        sim.barostat = "1"
     if extra_conformation_restraints is not None:
         infe = True
         # cannot do NFE with barostat 1 (Berendsen)
-        sim.barostat = '2'
-    
+        sim.barostat = "2"
+
     windows_summary: Dict[str, Any] = {}
-    logger.debug(f"[prepare_fe_windows] start ligand={ligand} residue={residue_name} components={components}")
+    logger.debug(
+        f"[prepare_fe_windows] start ligand={ligand} residue={residue_name} components={components}"
+    )
 
     for comp in components:
         workdir = child_root / "fe" / comp
         lambdas = comp_windows[comp]
 
         for win_idx, _ in enumerate(lambdas):
-            logger.debug(f"[prepare_fe_windows] {comp} → creating window {win_idx} in {workdir}")
+            logger.debug(
+                f"[prepare_fe_windows] {comp} → creating window {win_idx} in {workdir}"
+            )
             builder = AlchemicalFEBuilder(
                 ligand=ligand,
                 residue_name=residue_name,
@@ -210,8 +231,8 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
                     "extra_restraints": extra_restraints,
                     "extra_restraints_fc": extra_restraints_fc,
                     "extra_conformation_restraints": extra_conformation_restraints,
-                }
-        )
+                },
+            )
             builder.build()
 
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}
@@ -225,7 +246,11 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     open(prepare_finished, "w").close()
 
     windows_rel = prepare_finished.relative_to(system.root).as_posix()
-    prepare_rel = (child_root / "fe" / "artifacts" / "prepare_fe.ok").relative_to(system.root).as_posix()
+    prepare_rel = (
+        (child_root / "fe" / "artifacts" / "prepare_fe.ok")
+        .relative_to(system.root)
+        .as_posix()
+    )
     register_phase_state(
         system.root,
         "prepare_fe",

@@ -6,7 +6,15 @@ from typing import Any, Dict, Optional
 
 from batter.config.simulation import SimulationConfig
 from batter._internal.builders.base import BaseBuilder
-from batter._internal.ops import build_complex, restraints, runfiles, box, amber, simprep, sim_files
+from batter._internal.ops import (
+    build_complex,
+    restraints,
+    runfiles,
+    box,
+    amber,
+    simprep,
+    sim_files,
+)
 
 
 class PrepareEquilBuilder(BaseBuilder):
@@ -68,7 +76,7 @@ class PrepareEquilBuilder(BaseBuilder):
 
     def _create_amber_files(self) -> None:
         """Render AMBER templates for the system."""
-        
+
         work = self.ctx.working_dir
         amber.write_amber_templates(
             out_dir=self.amber_dir,
@@ -77,7 +85,7 @@ class PrepareEquilBuilder(BaseBuilder):
             production=False,
         )
         logger.debug(f"[prepare_equil] Created amber files for {self.ctx.ligand}")
-    
+
     def _create_simulation_dir(self) -> None:
         """Create the simulation directory."""
         simprep.create_simulation_dir_eq(self.ctx)
