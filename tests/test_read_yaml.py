@@ -66,6 +66,35 @@ run:
     assert "LIG1" in cfg_roundtrip.create.ligand_paths
 
 
+def test_run_config_relative_paths(tmp_path: Path) -> None:
+    reference_dir = tmp_path / "reference"
+    reference_dir.mkdir()
+    protein = reference_dir / "protein.pdb"
+    protein.write_text("HEADER\n")
+    lig_json = reference_dir / "ligands.json"
+    lig_json.write_text(json.dumps({"lig": str(protein)}))
+
+    run_yaml = tmp_path / "run_rel.yaml"
+    run_yaml.write_text(
+        """
+system:
+  type: MABFE
+  output_folder: work
+create:
+  system_name: example
+  protein_input: reference/protein.pdb
+  ligand_input: reference/ligands.json
+fe_sim: {}
+run:
+  run_id: auto
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    assert cfg.create.protein_input == protein
+    assert cfg.create.ligand_input == lig_json
+
+
 def test_load_and_dump_simulation_config(tmp_path: Path) -> None:
     sim_yaml = tmp_path / "sim.yaml"
     sim_yaml.write_text(

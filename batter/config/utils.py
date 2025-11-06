@@ -104,8 +104,8 @@ def expand_env_vars(data: Any, *, base_dir: Path | None = None) -> Any:
     def _expand(value: Any) -> Any:
         if isinstance(value, str):
             expanded = os.path.expandvars(os.path.expanduser(value))
-            if base_dir is not None and expanded.startswith("./"):
-                return str((base_dir / expanded[2:]).resolve())
+            if base_dir is not None and not os.path.isabs(expanded):
+                return str((base_dir / expanded).resolve())
             return expanded
         if isinstance(value, Mapping):
             return {k: _expand(v) for k, v in value.items()}
