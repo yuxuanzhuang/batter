@@ -1,54 +1,57 @@
+"""Command-line interface for BATTER."""
+
 from __future__ import annotations
 
-from pathlib import Path
-from pathlib import PurePosixPath
-from typing import Optional
-
+import hashlib
 import json
-import click
-from loguru import logger
-import pandas as pd
-import yaml
 import os
 import re
-import subprocess
-import tempfile
-import hashlib
 import shlex
+import subprocess
 import sys
+import tempfile
+from pathlib import Path, PurePosixPath
+from typing import Optional
 
+import click
+import pandas as pd
+import yaml
+from loguru import logger
 
-# Import only from the public surface:
 from batter.api import (
-    run_from_yaml,
+    __version__,
+    clone_execution,
     list_fe_runs,
     load_fe_run,
-    __version__,
-    clone_execution
+    run_from_yaml,
 )
-
 from batter.config.run import RunConfig
-
-
 from batter.data import job_manager
-
-# ----------------------------- Click groups -----------------------------
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(version=__version__, prog_name="batter")
 def cli() -> None:
-    """
-    BATTER command-line interface.
-    """
+    """Root command group for BATTER."""
 
 
 # -------------------------------- run ----------------------------------
 
 def hash_run_input(yaml_path: Path, **options) -> str:
     """
-    Stable hash of the YAML file *contents* plus selected CLI overrides.
-    Returns a short hex (first 12 chars).
+    Return a stable hash for the YAML contents and CLI overrides.
+
+    Parameters
+    ----------
+    yaml_path : Path
+        Path to the run YAML file.
+    **options
+        CLI overrides that should affect the hash.
+
+    Returns
+    -------
+    str
+        First 12 characters of the SHA-256 digest.
     """
     p = Path(yaml_path)
     data = p.read_bytes()  # raw bytes to avoid newline normalization issues
@@ -63,8 +66,12 @@ def hash_run_input(yaml_path: Path, **options) -> str:
 
 def _which_batter() -> str:
     """
-    Resolve the CLI to run.
-    Returns a *quoted* absolute shell token.
+    Resolve the executable used to invoke ``batter``.
+
+    Returns
+    -------
+    str
+        Shell-escaped token (``batter`` path or ``python -m batter.cli``).
     """
     import shutil
     exe = shutil.which('batter')
@@ -87,6 +94,28 @@ def _which_batter() -> str:
 def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
             run_id: Optional[str], dry_run: Optional[bool], only_equil: Optional[bool],
             slurm_submit: bool, slurm_manager_path: Optional[Path]) -> None:
+    """
+    Execute a BATTER workflow defined in ``YAML_PATH``.
+
+    Parameters
+    ----------
+    yaml_path : Path
+        Path to the run configuration YAML.
+    on_failure : {"prune", "raise"}
+        Failure policy for ligand pipelines.
+    output_folder : Path, optional
+        Override for the system output folder.
+    run_id : str, optional
+        Requested execution identifier (``auto`` reuses the latest).
+    dry_run : bool, optional
+        Override the ``run.dry_run`` flag from the YAML.
+    only_equil : bool, optional
+        When ``True`` run only equilibration preparation steps.
+    slurm_submit : bool
+        If ``True``, generate an ``sbatch`` script and submit the job.
+    slurm_manager_path : Path, optional
+        Optional path to a SLURM header/template file.
+    """
     # first do a basic validation of the YAML
     try:
         _ = RunConfig.load(yaml_path)
@@ -173,12 +202,14 @@ def fe() -> None:
 )
 def fe_list(work_dir: Path, fmt: str) -> None:
     """
-    List FE runs in a work directory.
+    List free-energy runs stored within ``WORK_DIR``.
 
     Parameters
     ----------
-    work_dir
-        BATTER work directory (portable across clusters).
+    work_dir : Path
+        Portable work directory containing the ``results/`` tree.
+    fmt : {"table", "json", "csv", "tsv"}
+        Output formatting option (defaults to ``"table"``).
     """
     try:
         df = list_fe_runs(work_dir)
@@ -235,14 +266,14 @@ def fe_list(work_dir: Path, fmt: str) -> None:
 @click.argument("run_id", type=str)
 def fe_show(work_dir: Path, run_id: str) -> None:
     """
-    Show a single FE record.
+    Display a single free-energy record from ``WORK_DIR``.
 
     Parameters
     ----------
-    work_dir
-        BATTER work directory (portable across clusters).
-    run_id
-        Identifier of the run (see `batter fe list`).
+    work_dir : Path
+        Portable work directory.
+    run_id : str
+        Run identifier returned by :func:`fe_list`.
     """
     try:
         rec = load_fe_run(work_dir, run_id)
@@ -325,9 +356,24 @@ def cmd_clone_exec(
     force: bool,
 ) -> None:
     """
-    Clone an existing execution (RUN_ID) to a new RUN_ID (and optionally a new WORK_DIR).
+    Clone an existing execution directory.
 
-    WORK_DIR is the source work directory containing executions/<RUN_ID>.
+    Parameters
+    ----------
+    work_dir : Path
+        Source work directory containing ``executions/<run_id>/``.
+    src_run_id : str
+        Source execution identifier.
+    dst_run_id : str, optional
+        Destination execution identifier (defaults to ``<SRC>-clone``).
+    dst_root : Path, optional
+        Destination work directory (defaults to ``work_dir``).
+    only_equil : bool
+        Clone only equilibration artifacts when ``True``.
+    symlink : bool
+        Use symlinks instead of copying files whenever possible.
+    force : bool
+        Overwrite the destination folder if it already exists.
     """
     dst_root = dst_root or work_dir
     if dst_run_id is None:
@@ -395,13 +441,14 @@ _tail_re = re.compile(
 )
 
 def _endswith_stage(jobname: str):
+    """Return ``(stage, base)`` if ``jobname`` uses a known suffix."""
     for s in _STAGE_SUFFIXES:
         if jobname.endswith(s):
             return s[1:], jobname[: -len(s)]  # stage (no leading _), basepath
     return None, jobname
 
 def _split_after(parts, token):
-    """Return index after first occurrence of token; -1 if not found."""
+    """Return the index after the first occurrence of ``token`` or ``-1``."""
     try:
         i = parts.index(token)
         return i + 1
@@ -480,11 +527,13 @@ def _parse_jobname(jobname: str):
 _nat_split_rx = re.compile(r"(\d+)")
 
 def _natural_keys(val: str):
+    """Return a tuple suitable for natural sorting of strings containing digits."""
     s = "" if val is None else str(val)
     parts = _nat_split_rx.split(s)
     return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
 
 def _natkey_series(s: pd.Series) -> pd.Series:
+    """Vectorised version of :func:`_natural_keys` for pandas Series."""
     if pd.api.types.is_numeric_dtype(s):
         return s
     return s.astype(str).map(_natural_keys)
@@ -493,7 +542,7 @@ def _natkey_series(s: pd.Series) -> pd.Series:
 @click.option("--partition", "-p", default=None, help="SLURM partition filter.")
 @click.option("--detailed", "-d", is_flag=True, help="Show detailed job lines.")
 def report_jobs(partition=None, detailed=False):
-    """Report the status of SLURM jobs launched by BATTER (job names starting with 'fep_')."""
+    """Report SLURM job status for BATTER jobs prefixed with ``fep_``."""
     try:
         cmd = ["squeue", "--user", os.getenv("USER"), "--format=%i %j %T"]
         if partition:
@@ -593,7 +642,7 @@ def report_jobs(partition=None, detailed=False):
 @click.option("--contains", "-c", required=True,
               help="Cancel all jobs whose SLURM job name contains this substring (match against full 'fep_...').")
 def cancel_jobs(contains: str):
-    """Cancel all SLURM jobs whose names contain the given substring."""
+    """Cancel all SLURM jobs whose names contain ``contains``."""
     try:
         res = subprocess.run(
             ["squeue", "--user", os.getenv("USER"), "--format=%i %j"],
