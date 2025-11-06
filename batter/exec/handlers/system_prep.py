@@ -546,7 +546,7 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     """
     logger.info(f"[system_prep] Preparing system in {system.root}")
     payload = StepPayload.model_validate(params)
-    sys_params = payload.sys_params or SystemParams({})
+    sys_params = payload.sys_params or SystemParams()
     yaml_dir = Path(sys_params["yaml_dir"]).resolve()
 
     # accept new key `system_input` or legacy `system_topology`

@@ -113,7 +113,7 @@ def system_prep_masfe(step: Step, system: SimSystem, params: Dict[str, Any]) -> 
 
     # Expect the same sys_params envelope your orchestrator already passes
     payload = StepPayload.model_validate(params)
-    sys_params = payload.sys_params or SystemParams({})
+    sys_params = payload.sys_params or SystemParams()
     lig_map = sys_params["ligand_paths"]  # should already be {NAME: abs_path}
 
     runner = _MASFESystemPrepRunner(system)

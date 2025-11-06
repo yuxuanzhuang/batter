@@ -37,7 +37,7 @@ def make_abfe_pipeline(
     params_model = (
         sys_params
         if isinstance(sys_params, SystemParams)
-        else SystemParams(sys_params or {})
+        else SystemParams.model_validate(sys_params or {})
     )
 
     # 0) system prep — runs once at system root
@@ -145,7 +145,7 @@ def make_asfe_pipeline(
     params_model = (
         sys_params
         if isinstance(sys_params, SystemParams)
-        else SystemParams(sys_params or {})
+        else SystemParams.model_validate(sys_params or {})
     )
     steps.append(
         _step(

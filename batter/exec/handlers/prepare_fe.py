@@ -74,7 +74,7 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
     param_dir_dict = _load_param_dir_dict(system_root)
 
     comp_windows: dict = sim.component_lambdas  # type: ignore[attr-defined]
-    sys_params = payload.sys_params or SystemParams({})
+    sys_params = payload.sys_params or SystemParams()
     extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
     extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
@@ -166,7 +166,7 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     param_dir_dict = _load_param_dir_dict(system_root)
 
     comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
-    sys_params = payload.sys_params or SystemParams({})
+    sys_params = payload.sys_params or SystemParams()
     extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
     extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)

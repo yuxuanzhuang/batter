@@ -65,7 +65,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
       - Emits an index for downstream steps
     """
     payload = StepPayload.model_validate(params)
-    sys_params = payload.sys_params or SystemParams({})
+    sys_params = payload.sys_params or SystemParams()
     lig_root = system.root / "simulations"
     if not lig_root.exists():
         raise FileNotFoundError(f"[param_ligands] No 'ligands/' at {system.root}. Did staging run?")

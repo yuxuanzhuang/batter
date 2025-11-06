@@ -46,7 +46,7 @@ def select_pipeline(
     params_model = (
         sys_params
         if isinstance(sys_params, SystemParams)
-        else SystemParams(sys_params or {})
+        else SystemParams.model_validate(sys_params or {})
     )
 
     if name == "abfe":
