@@ -38,9 +38,11 @@ from ._version import __version__  # semantic version string
 # --- Schemas / configs ---
 from .config.simulation import SimulationConfig
 from .config.run import RunConfig
-from .config.io import (
-    read_yaml_config as load_sim_config,
-    write_yaml_config as save_sim_config,
+from .config import (
+    load_run_config,
+    dump_run_config,
+    load_simulation_config as load_sim_config,
+    dump_simulation_config as save_sim_config,
 )
 
 # --- Orchestration entrypoint ---
@@ -63,6 +65,8 @@ __all__ = [
     # configs
     "SimulationConfig",
     "RunConfig",
+    "load_run_config",
+    "dump_run_config",
     "load_sim_config",
     "save_sim_config",
     # orchestrator

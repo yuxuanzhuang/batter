@@ -2,26 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-from typing import Optional, Literal, List, Any
+from typing import Optional, Literal, List, Mapping, Iterable
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from batter.config.simulation import SimulationConfig
-
-# ----------------------------- utils ---------------------------------
-
-def _coerce_yes_no(v):
-    if v is None:
-        return None
-    if isinstance(v, bool):
-        return "yes" if v else "no"
-    if isinstance(v, (int, float)):
-        return "yes" if v else "no"
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in {"yes", "no"}: return s
-        if s in {"true", "t", "1"}: return "yes"
-        if s in {"false", "f", "0"}: return "no"
-    raise ValueError(f"Expected yes/no (or boolean), got {v!r}")
+from batter.config.utils import (
+    coerce_yes_no,
+    expand_env_vars,
+    normalize_optional_path,
+    sanitize_ligand_name,
+)
 
 # ----------------------------- SLURM ---------------------------------
 
@@ -121,7 +111,7 @@ class CreateArgs(BaseModel):
     @field_validator("protein_input", "system_input", "system_coordinate", "param_outdir", mode="before")
     @classmethod
     def _coerce_opt_paths(cls, v):
-        return None if v in (None, "") else Path(v)
+        return normalize_optional_path(v)
 
     @field_validator("ligand_paths", mode="before")
     @classmethod
@@ -140,30 +130,40 @@ class CreateArgs(BaseModel):
             items = [p.strip() for p in v.split(",") if p.strip()]
             d: dict[str, Path] = {}
             for s in items:
-                p = Path(s)
-                d[_sanitize_name(p.stem)] = p
+                p = normalize_optional_path(s)
+                if p is None:
+                    continue
+                d[sanitize_ligand_name(p.stem)] = p
             return d
         # mapping
         if isinstance(v, Mapping):
-            return {_sanitize_name(str(k)): Path(p) for k, p in v.items()}
+            out: dict[str, Path] = {}
+            for k, p in v.items():
+                path_obj = normalize_optional_path(p)
+                if path_obj is None:
+                    continue
+                out[sanitize_ligand_name(str(k))] = path_obj
+            return out
         # iterable of paths
         if isinstance(v, Iterable):
             d: dict[str, Path] = {}
             for p in v:
-                p = Path(p)
-                d[_sanitize_name(p.stem)] = p
+                path_obj = normalize_optional_path(p)
+                if path_obj is None:
+                    continue
+                d[sanitize_ligand_name(path_obj.stem)] = path_obj
             return d
         raise ValueError(f"Unsupported ligand_paths type: {type(v).__name__}")
 
     @field_validator("neutralize_only", mode="before")
     @classmethod
     def _coerce_create_yes_no(cls, v):
-        return _coerce_yes_no(v)
+        return coerce_yes_no(v)
 
     @field_validator("ligand_input", mode="before")
     @classmethod
     def _coerce_ligand_input(cls, v):
-        return None if v in (None, "") else Path(v)
+        return normalize_optional_path(v)
 
     @model_validator(mode="after")
     def _require_ligands(self):
@@ -239,7 +239,7 @@ class FESimArgs(BaseModel):
     @field_validator("remd", "rocklin_correction", "hmr", mode="before")
     @classmethod
     def _coerce_fe_yes_no(cls, v):
-        return _coerce_yes_no(v)
+        return coerce_yes_no(v)
 
 class RunSection(BaseModel):
     """Run-related settings."""
@@ -282,83 +282,20 @@ class RunConfig(BaseModel):
     def load(cls, path: Path | str) -> "RunConfig":
         import yaml
         p = Path(path)
-        data = yaml.safe_load(p.read_text())
-        return cls(**data)
+        data = yaml.safe_load(p.read_text()) or {}
+        data = expand_env_vars(data, base_dir=p.parent)
+        return cls.model_validate(data)
 
     @classmethod
     def model_validate_yaml(cls, yaml_text: str) -> "RunConfig":
         import yaml
-        return cls(**(yaml.safe_load(yaml_text) or {}))
+        raw = yaml.safe_load(yaml_text) or {}
+        return cls.model_validate(expand_env_vars(raw))
 
     def resolved_sim_config(self) -> SimulationConfig:
         """Merge create/fe_sim into a SimulationConfig and surface SLURM bits."""
-        base: dict[str, Any] = {}
-
-        c = self.create
-        overlay_create = {
-            "system_name": getattr(c, "system_name", "unnamed_system"),
-            "receptor_ff": getattr(c, "receptor_ff", "protein.ff14SB"),
-            "ligand_ff": c.ligand_ff,
-            "lipid_ff": getattr(c, "lipid_ff", "lipid21"),
-            "lipid_mol": list(c.lipid_mol or []),
-            "other_mol": list(c.other_mol or []),
-            "water_model": getattr(c, "water_model", "TIP3P"),
-            "neutralize_only": _coerce_yes_no(getattr(c, "neutralize_only", "no")),
-            "ion_conc": float(getattr(c, "ion_conc", 0.15)),
-            "cation": getattr(c, "cation", "Na+"),
-            "anion": getattr(c, "anion", "Cl-"),
-            "solv_shell": float(getattr(c, "solv_shell", 15.0)),
-            "protein_align": getattr(c, "protein_align", "name CA"),
-            "l1_range": float(getattr(c, "l1_range", 6.0)),
-            "min_adis": float(getattr(c, "min_adis", 3.0)),
-            "max_adis": float(getattr(c, "max_adis", 7.0)),
-        }
-
-        f = self.fe_sim
-
-        overlay_fe = {
-            "fe_type": f.fe_type,
-            "dec_int": f.dec_int,
-            "remd": _coerce_yes_no(getattr(f, "remd", "no")),
-            "rocklin_correction": _coerce_yes_no(getattr(f, "rocklin_correction", "no")),
-            "lambdas": list(getattr(f, "lambdas", [])),
-            "sdr_dist": float(getattr(f, "sdr_dist", 0.0)),
-            "blocks": int(getattr(f, "blocks", 0)),
-            "lig_buffer": float(getattr(f, "lig_buffer", 0.0)),
-            "lig_distance_force": float(getattr(f, "lig_distance_force", 0.0)),
-            "lig_angle_force": float(getattr(f, "lig_angle_force", 0.0)),
-            "lig_dihcf_force": float(getattr(f, "lig_dihcf_force", 0.0)),
-            "rec_com_force": float(getattr(f, "rec_com_force", 0.0)),
-            "lig_com_force": float(getattr(f, "lig_com_force", 0.0)),
-            "buffer_x": float(getattr(f, "buffer_x", 0.0)),
-            "buffer_y": float(getattr(f, "buffer_y", 0.0)),
-            "buffer_z": float(getattr(f, "buffer_z", 0.0)),
-            # timing/thermo here (NOT in create):
-            "temperature": float(getattr(f, "temperature", 310.0)),
-            "dt": float(getattr(f, "dt", 0.004)),
-            "hmr": _coerce_yes_no(getattr(f, "hmr", "no")),
-            "release_eq": list(getattr(f, "release_eq", [0])),
-            "eq_steps1": int(getattr(f, "eq_steps1", 500_000)),
-            "eq_steps2": int(getattr(f, "eq_steps2", 1_000_000)),
-            "n_steps_dict": {
-                "z_steps1": int(getattr(f, "z_steps1", 50_000)),
-                "z_steps2": int(getattr(f, "z_steps2", 300_000)),
-                "y_steps1": int(getattr(f, "y_steps1", 50_000)),
-                "y_steps2": int(getattr(f, "y_steps2", 300_000)),
-            },
-            "ntpr": int(getattr(f, "ntpr", 1000)),
-            "ntwr": int(getattr(f, "ntwr", 10000)),
-            "ntwe": int(getattr(f, "ntwe", 0)),
-            "ntwx": int(getattr(f, "ntwx", 2500)),
-            "cut": float(getattr(f, "cut", 9.0)),
-            "gamma_ln": float(getattr(f, "gamma_ln", 1.0)),
-            "barostat": int(getattr(f, "barostat", 2)),
-        }
-
-        merged: dict[str, Any] = {**base, **overlay_create, **overlay_fe}
-
-        # Surface SLURM selections to sim config for handlers to consume
-        slurm= self.run.slurm
-        merged["partition"] = slurm.partition
-
-        return SimulationConfig(**merged)
+        return SimulationConfig.from_sections(
+            self.create,
+            self.fe_sim,
+            partition=self.run.slurm.partition,
+        )

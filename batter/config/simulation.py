@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal, TYPE_CHECKING
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr, field_validator, model_validator
 import re
 from loguru import logger
 from batter.utils import COMPONENTS_LAMBDA_DICT
+from batter.config.utils import coerce_yes_no
+
+if TYPE_CHECKING:
+    from batter.config.run import CreateArgs, FESimArgs
 
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 _ANCHOR_RE = re.compile(r"^:?\d+@[\w\d]+$")  # e.g., ":85@CA" or "85@CA"
@@ -16,6 +20,81 @@ class SimulationConfig(BaseModel):
     Simulation configuration for ABFE/ASFE workflows.
     Values are fed by RunConfig.resolved_sim_config(), which merges `create:` and `fe_sim:`.
     """
+
+    @classmethod
+    def from_sections(
+        cls,
+        create: "CreateArgs",
+        fe: "FESimArgs",
+        *,
+        partition: str | None = None,
+    ) -> "SimulationConfig":
+        create_data: dict[str, Any] = {
+            "system_name": getattr(create, "system_name", "unnamed_system") or "unnamed_system",
+            "receptor_ff": getattr(create, "receptor_ff", "protein.ff14SB"),
+            "ligand_ff": getattr(create, "ligand_ff", "gaff2"),
+            "lipid_ff": getattr(create, "lipid_ff", "lipid21"),
+            "lipid_mol": list(getattr(create, "lipid_mol", []) or []),
+            "other_mol": list(getattr(create, "other_mol", []) or []),
+            "water_model": getattr(create, "water_model", "TIP3P"),
+            "neutralize_only": coerce_yes_no(getattr(create, "neutralize_only", "no")),
+            "ion_conc": float(getattr(create, "ion_conc", 0.15)),
+            "cation": getattr(create, "cation", "Na+"),
+            "anion": getattr(create, "anion", "Cl-"),
+            "solv_shell": float(getattr(create, "solv_shell", 15.0)),
+            "protein_align": getattr(create, "protein_align", "name CA"),
+            "l1_range": float(getattr(create, "l1_range", 6.0)),
+            "min_adis": float(getattr(create, "min_adis", 3.0)),
+            "max_adis": float(getattr(create, "max_adis", 7.0)),
+        }
+
+        release_eq_value = getattr(fe, "release_eq", None)
+        fe_release_eq = release_eq_value if release_eq_value is not None else [0]
+
+        fe_data: dict[str, Any] = {
+            "fe_type": getattr(fe, "fe_type", "uno_rest"),
+            "dec_int": getattr(fe, "dec_int", "mbar"),
+            "remd": coerce_yes_no(getattr(fe, "remd", "no")),
+            "rocklin_correction": coerce_yes_no(getattr(fe, "rocklin_correction", "no")),
+            "lambdas": list(getattr(fe, "lambdas", []) or []),
+            "sdr_dist": float(getattr(fe, "sdr_dist", 0.0)),
+            "blocks": int(getattr(fe, "blocks", 0)),
+            "lig_buffer": float(getattr(fe, "lig_buffer", 0.0)),
+            "lig_distance_force": float(getattr(fe, "lig_distance_force", 0.0)),
+            "lig_angle_force": float(getattr(fe, "lig_angle_force", 0.0)),
+            "lig_dihcf_force": float(getattr(fe, "lig_dihcf_force", 0.0)),
+            "rec_com_force": float(getattr(fe, "rec_com_force", 0.0)),
+            "lig_com_force": float(getattr(fe, "lig_com_force", 0.0)),
+            "buffer_x": float(getattr(fe, "buffer_x", 0.0)),
+            "buffer_y": float(getattr(fe, "buffer_y", 0.0)),
+            "buffer_z": float(getattr(fe, "buffer_z", 0.0)),
+            "temperature": float(getattr(fe, "temperature", 310.0)),
+            "dt": float(getattr(fe, "dt", 0.004)),
+            "hmr": coerce_yes_no(getattr(fe, "hmr", "no")),
+            "release_eq": list(fe_release_eq),
+            "eq_steps1": int(getattr(fe, "eq_steps1", 500_000)),
+            "eq_steps2": int(getattr(fe, "eq_steps2", 1_000_000)),
+            "ntpr": int(getattr(fe, "ntpr", 1000)),
+            "ntwr": int(getattr(fe, "ntwr", 10_000)),
+            "ntwe": int(getattr(fe, "ntwe", 0)),
+            "ntwx": int(getattr(fe, "ntwx", 2_500)),
+            "cut": float(getattr(fe, "cut", 9.0)),
+            "gamma_ln": float(getattr(fe, "gamma_ln", 1.0)),
+            "barostat": int(getattr(fe, "barostat", 2)),
+        }
+
+        n_steps_dict = {
+            "z_steps1": int(getattr(fe, "z_steps1", 50_000)),
+            "z_steps2": int(getattr(fe, "z_steps2", 300_000)),
+            "y_steps1": int(getattr(fe, "y_steps1", 50_000)),
+            "y_steps2": int(getattr(fe, "y_steps2", 300_000)),
+        }
+
+        merged: dict[str, Any] = {**create_data, **fe_data, "n_steps_dict": n_steps_dict}
+        if partition:
+            merged["partition"] = partition
+
+        return cls(**merged)
 
     #model_config = ConfigDict(extra="ignore", populate_by_name=True, validate_default=True)
 
