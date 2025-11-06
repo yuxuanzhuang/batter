@@ -56,6 +56,38 @@ SLURM Utilities
 * ``batter cancel-jobs --contains TEXT`` – Cancel SLURM jobs whose name contains the
   supplied substring (matches the ``fep_...`` job names produced by BATTER).
 
+FE Toolkit Schedules
+====================
+
+BATTER wraps the legacy ``fetkutils-tischedule.py`` script via ``batter fek-schedule`` so
+you can optimise or analyse lambda schedules without leaving the main CLI.
+
+.. code-block:: console
+
+   batter fek-schedule \
+       --opt 96 \
+       --ar --ssc --sym \
+       --start 4 --stop 8 \
+       -T 310 \
+       --out sched.ar.z.dat \
+       --plot sched.ar.z.png \
+       ADRB2_I/rep1/fe/pose0/sdr/z
+
+Key options:
+
+``--opt N`` / ``--read FILE``
+   Optimise a fresh schedule with ``N`` lambda values or analyse an existing schedule.
+``--pso`` | ``--ar`` | ``--kl``
+   Choose the optimisation metric (phase-space overlap, replica-exchange ratio, or exp(-KL)).
+``--ssc`` / ``--sym`` / ``--alpha0`` / ``--alpha1``
+   Restrict optimisation to SSC(alpha) families, optionally symmetric around 0.5.
+``--plot PATH`` / ``--out PATH``
+   Save the interpolated heatmap and the digitised schedule to disk.
+
+All options mirror the original script, so existing workflows can switch to the new command
+without rewriting job scripts. Use ``--verbose`` to surface the diagnostic output emitted by
+the underlying ``fetkutils`` routines.
+
 Environment Notes
 =================
 

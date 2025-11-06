@@ -27,6 +27,7 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
+from batter.cli.fek import fek_schedule
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -672,3 +673,6 @@ def cancel_jobs(contains: str):
             subprocess.run(["scancel"] + batch, check=True)
         except subprocess.CalledProcessError as e:
             click.echo(f"Failed to cancel {batch}: {e.stderr}")
+
+
+cli.add_command(fek_schedule)

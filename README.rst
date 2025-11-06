@@ -7,9 +7,9 @@ batter
 .. image:: https://codecov.io/gh/yuxuanzhuang/batter/branch/main/graph/badge.svg
    :target: https://codecov.io/gh/yuxuanzhuang/batter/branch/main
 
-``batter`` is a refactor of the original ``BAT.py`` package into a modern, object-oriented toolkit for free-energy workflows.
+``batter`` is a modern, object-oriented toolkit for free-energy workflows.
 It adds first-class support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
-with an AMBER + sdg + express pipeline.
+with an AMBER + sdg + express pipeline to the original ``BAT.py`` package.
 
 .. note::
    The API is stabilizing. Some modules are still under active development, but the overall structure is in place.
