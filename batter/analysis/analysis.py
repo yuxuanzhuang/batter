@@ -578,6 +578,8 @@ class BoreschAnalysis(FEAnalysisBase):
         self.disangfile = disangfile
         self.k_r = k_r
         self.k_a = k_a
+        assert self.k_r > 0.0, "k_r must be positive"
+        assert self.k_a > 0.0, "k_a must be positive"
         self.temperature = temperature
 
     def run_analysis(self):
@@ -602,6 +604,7 @@ class BoreschAnalysis(FEAnalysisBase):
             a2_0  = _extract_r2_val(tr_lines[3])  # P1–L1–L2 angle
             t2_0  = _extract_r2_val(tr_lines[4])  # P2–P1–L1–L2 dihedral
             t3_0  = _extract_r2_val(tr_lines[5])  # P1–L1–L2–L3 dihedral
+            
             fe_bd = self.fe_int(r0, a1_0, t1_0, a2_0, t2_0, t3_0,
                                 self.k_r, self.k_a, self.temperature)
             self.results['fe'] = fe_bd

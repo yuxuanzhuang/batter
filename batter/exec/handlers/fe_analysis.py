@@ -84,11 +84,10 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
 
     default_components = components_under(fe_root)
     components: List[str] = list(default_components)
-    temperature: float = 300.0
+    temperature: float = 310.0
     water_model: str = "tip3p"
     rocklin_correction: bool = False
     n_workers: int = 4
-    rest: Tuple[float, float, float, float, float] = (0.0, 0.0, 0.0, 0.0, 0.0)
 
     if sim_cfg is not None:
         if sim_cfg.components:
@@ -96,16 +95,13 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         temperature = float(sim_cfg.temperature)
         water_model = str(sim_cfg.water_model).lower()
         rocklin_correction = bool(sim_cfg.rocklin_correction)
+        rest = tuple(sim_cfg.rest)
 
     components = list(payload.get("components", components))
     temperature = float(payload.get("temperature", temperature))
     water_model = str(payload.get("water_model", water_model)).lower()
     rocklin_correction = bool(payload.get("rocklin_correction", rocklin_correction))
     n_workers = int(payload.get("n_workers", n_workers))
-    rest_value = payload.get("rest", rest)
-    if rest_value is None:
-        rest_value = rest
-    rest = tuple(rest_value)
 
     # Optional: (start_idx, end_idx) subset of windows to analyze; else analyze all available
     sim_range = payload.get("sim_range", None)
@@ -121,19 +117,6 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     if not component_windows_dict:
         component_windows_dict = _infer_component_windows_dict(fe_root, components)
 
-    # Build the input dict expected by your analyze_* helpers
-    input_dict = {
-        "fe_folder": str(fe_root),
-        "components": components,
-        "rest": rest,
-        "temperature": temperature,
-        "water_model": water_model,
-        "rocklin_correction": rocklin_correction,
-        "component_windows_dict": component_windows_dict,
-        "sim_range": sim_range,
-        "raise_on_error": True,
-        "n_workers": n_workers,
-    }
 
     logger.debug(f"[analyze:{lig}] Starting FE analysis "
                 f"(components={components}, T={temperature}K, rocklin={rocklin_correction}, mol={mol})")
