@@ -1,4 +1,5 @@
-# batter/exec/handlers/analyze.py
+"""Run post-processing analysis on free-energy simulations."""
+
 from __future__ import annotations
 
 import json
@@ -7,12 +8,11 @@ from typing import Any, Dict, List, Tuple
 
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
-from batter.systems.core import SimSystem
-from batter.pipeline.payloads import StepPayload
-from batter.orchestrate.state_registry import register_phase_state
-
 from batter.analysis.analysis import analyze_lig_task
+from batter.orchestrate.state_registry import register_phase_state
+from batter.pipeline.payloads import StepPayload
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
 from batter.utils import components_under
 
 
@@ -55,14 +55,22 @@ def _infer_component_windows_dict(fe_root: Path, components: List[str]) -> Dict[
 
 
 def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Run FE analysis for a ligand (single 'lig' rooted at <ligand>/fe).
+    """Run FE analysis for a ligand rooted at ``<system.root>/fe``.
 
-    Expects the simulation phases to have produced the standard directory layout:
-        <ligand>/fe/<comp>/<comp-1> (equil)
-        <ligand>/fe/<comp>/<comp0>, <comp1>, ...
+    Parameters
+    ----------
+    step : Step
+        Pipeline metadata (unused).
+    system : SimSystem
+        Simulation system descriptor.
+    params : dict
+        Handler payload validated into :class:`StepPayload`.
 
-    Artifacts written by the analysis are returned (Results.dat, fe_timeseries.*).
+    Returns
+    -------
+    ExecResult
+        Mapping with the generated ``Results.dat`` and optional timeseries
+        artefacts.
     """
     lig = system.meta.get("ligand")
     mol = system.meta.get("residue_name")

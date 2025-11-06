@@ -1,3 +1,5 @@
+"""Execution backend that submits steps to Slurm via ``sbatch``."""
+
 from __future__ import annotations
 
 import os
@@ -8,10 +10,10 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
+from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
-from .base import ExecBackend, Resources
 
+from .base import ExecBackend, Resources
 
 __all__ = ["SlurmBackend"]
 
@@ -36,42 +38,36 @@ echo "[batter] start: $(date -Is)"
 echo "[batter] done: $(date -Is)"
 """
 
+
 def _fmt(flag: str, value: Optional[str | int]) -> str:
+    """Render a ``#SBATCH`` line when ``value`` is provided."""
     return f"#SBATCH --{flag}={value}\n" if value not in (None, "", 0) else ""
 
 
 class SlurmBackend(ExecBackend):
-    """
-    Slurm backend that materializes simple sbatch scripts and submits them.
+    """Slurm backend that materializes lightweight job scripts."""
 
-    Behavior
-    --------
-    - For each step, a script is written to ``<system.root>/sbatch/<step>.sh``.
-    - Logs go under ``<system.root>/logs/``.
-    - Submission uses, in order of preference:
-        1) ``utils.slurm_job.submit_job(script_path)`` if available.
-        2) ``sbatch <script>`` subprocess.
-    - The payload is determined by ``params.get("payload")`` (string shell code).
-      If unset, a minimal placeholder is used.
-
-    Resources
-    ---------
-    - Read from ``params.get("resources", {})`` with keys matching :class:`Resources`:
-      ``time``, ``cpus``, ``gpus``, ``mem``, ``partition``, ``account``, and
-      optional ``extra`` mapping (converted to additional SBATCH lines).
-
-    Environment
-    -----------
-    - Optional ``params.get("env", {})`` key (dict) exports ``KEY=VALUE`` before payload.
-
-    Returns
-    -------
-    ExecResult
-        With Slurm job id (if submission succeeded) and basic artifacts.
-    """
     name: str = "slurm"
 
     def run(self, step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
+        """Submit ``step`` to Slurm.
+
+        Parameters
+        ----------
+        step : Step
+            Pipeline step metadata.
+        system : SimSystem
+            Simulation system whose ``root`` directory stores scripts and logs.
+        params : dict
+            Backend-specific options. Recognised keys include ``resources``,
+            ``env`` (exported variables), and ``payload`` (shell snippet).
+
+        Returns
+        -------
+        ExecResult
+            Artifacts referencing the generated script and log paths together
+            with the submitted job identifier (if available).
+        """
         root = system.root
         sbatch_dir = root / "sbatch"
         log_dir = root / "logs"
@@ -124,6 +120,7 @@ class SlurmBackend(ExecBackend):
 
     @staticmethod
     def _format_env(env: Dict[str, str]) -> str:
+        """Create export statements for user-provided environment variables."""
         if not env:
             return ":\n"
         lines = [f'export {k}={shlex.quote(str(v))}' for k, v in env.items()]
@@ -131,25 +128,27 @@ class SlurmBackend(ExecBackend):
 
     @staticmethod
     def _payload(step: Step, system: SimSystem, params: Dict[str, Any]) -> str:
-        # if user provided a payload, use it
+        """Return the shell snippet that drives the step."""
         payload = params.get("payload")
         if isinstance(payload, str) and payload.strip():
             return payload
 
-        # default placeholder: print what would have been run
         return f'echo "[batter] no payload for step {step.name}; system root: {system.root}"'
 
     @staticmethod
     def _submit(script_path: Path) -> Optional[str]:
-        """
-        Submit a script via utils.slurm_job if present, else sbatch.
+        """Submit a script via ``utils.slurm_job`` or ``sbatch``.
+
+        Parameters
+        ----------
+        script_path : pathlib.Path
+            Script to submit.
 
         Returns
         -------
         str or None
-            Slurm job ID if it can be parsed; otherwise ``None``.
+            Parsed Slurm job identifier when submission succeeds.
         """
-        # 1) try package helper if available
         try:
             from batter.utils.slurm_job import submit_job  # type: ignore
             job_id = submit_job(script_path)  # expected to return string/int id
@@ -157,7 +156,6 @@ class SlurmBackend(ExecBackend):
         except Exception:
             pass
 
-        # 2) fallback to sbatch
         try:
             res = subprocess.run(["sbatch", str(script_path)], check=True, capture_output=True, text=True)
             # typical output: "Submitted batch job 123456"

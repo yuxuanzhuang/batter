@@ -1,4 +1,5 @@
-# batter/exec/handlers/prepare_fe.py
+"""Prepare alchemical FE inputs for a ligand."""
+
 from __future__ import annotations
 
 import json
@@ -7,13 +8,12 @@ from typing import Any, Dict, Type
 
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
-from batter.systems.core import SimSystem
+from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
-
-from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
 
 # -----------------------------
 # helpers
@@ -45,15 +45,21 @@ def _load_param_dir_dict(system_root: Path) -> Dict[str, str]:
 # prepare_fe (scaffolding / amber templates)
 # -----------------------------
 def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Prepare per-ligand FE scaffolding (no window expansion here):
-      - builds the initial FE directory for each requested component
-      - writes artifacts/prepare_fe/prepare_fe.ok on success
+    """Construct the initial FE directory layout for a ligand.
 
-    Notes
-    -----
-    - Windows are created in the separate 'prepare_fe_windows' step.
-    - Builders internally call the shared `write_run_file()` to materialize run scripts.
+    Parameters
+    ----------
+    step : Step
+        Pipeline metadata (unused).
+    system : SimSystem
+        Simulation system descriptor.
+    params : dict
+        Handler payload validated into :class:`StepPayload`.
+
+    Returns
+    -------
+    ExecResult
+        Metadata describing the generated directories.
     """
     # 1) Parse sim config + components
     payload = StepPayload.model_validate(params)

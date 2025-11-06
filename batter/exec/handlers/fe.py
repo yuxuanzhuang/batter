@@ -1,24 +1,26 @@
-# batter/exec/handlers/fe.py
+"""Handlers that queue free-energy equilibration and production jobs."""
+
 from __future__ import annotations
 
 import os
-import time
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
-from batter.systems.core import SimSystem
-from batter.exec.slurm_mgr import SlurmJobSpec  # job manager is passed via params["job_mgr"]
-from batter.utils import components_under
+from batter.exec.slurm_mgr import SlurmJobManager, SlurmJobSpec
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
+from batter.utils import components_under
 
 # ---------------- utilities ----------------
 
 def _read_partition(payload: StepPayload) -> str:
+    """Resolve the desired Slurm partition from ``payload``."""
     if payload.sim is not None:
         sim_cfg = payload.sim
         part = getattr(sim_cfg, "partition", None) or getattr(sim_cfg, "queue", None)
@@ -37,6 +39,7 @@ def _read_partition(payload: StepPayload) -> str:
     return str(part) if part else "normal"
 
 def _active_job_count(user: Optional[str] = None) -> int:
+    """Return the number of active jobs for ``user``."""
     user = user or os.environ.get("USER")
     if not user:
         return 0
@@ -47,10 +50,7 @@ def _active_job_count(user: Optional[str] = None) -> int:
         return 0
 
 def _ensure_job_quota(max_active: int, user: Optional[str] = None, poll_s: int = 60) -> None:
-    """
-    Enforce a one-time cap on active jobs at the start of a ligand.
-    (Do not re-check per job; the global manager will handle the rest.)
-    """
+    """Block until the number of active jobs drops below ``max_active``."""
     if max_active <= 0:
         return
     while True:
@@ -65,14 +65,11 @@ def _ensure_job_quota(max_active: int, user: Optional[str] = None, poll_s: int =
 # ---------------- discovery helpers ----------------
 
 def _equil_window_dir(root: Path, comp: str) -> Path:
-    # <ligand>/fe/<comp>/<comp>-1
+    """Return the equilibration window directory for ``comp``."""
     return root / "fe" / comp / f"{comp}-1"
 
 def _production_window_dirs(root: Path, comp: str) -> List[Path]:
-    """
-    Return all production window dirs under <ligand>/fe/<comp> matching <comp>0, <comp>1, ...
-    (Skip equil dir <comp>-1).
-    """
+    """Return production window directories for ``comp``."""
     base = root / "fe" / comp
     if not base.exists():
         return []
@@ -96,6 +93,7 @@ def _spec_from_dir(
     job_name: str,
     extra_env: Optional[Dict[str, str]] = None,
 ) -> SlurmJobSpec:
+    """Build a :class:`SlurmJobSpec` for ``workdir``."""
     return SlurmJobSpec(
         workdir=workdir,
         script_rel="SLURMM-run",
@@ -109,14 +107,19 @@ def _spec_from_dir(
 # ---------------- handlers ----------------
 
 def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Enqueue FE-equilibration jobs for all components of a ligand (non-blocking).
+    """Queue equilibration jobs for each component of a ligand.
 
-    - Workdir per job: <ligand>/fe/<comp>/<comp>-1
-    - Success sentinel: EQ_FINISHED
-    - Env: ONLY_EQ=1, INPCRD=full.inpcrd
-    - Applies one-time job cap check per ligand
-    - Requires a global manager at params["job_mgr"]
+    Parameters
+    ----------
+    step, system : ignored
+        Included for parity with the handler signature.
+    params : dict
+        Handler payload containing the job manager and configuration values.
+
+    Returns
+    -------
+    ExecResult
+        Number of jobs enqueued (without waiting for completion).
     """
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
@@ -124,8 +127,8 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
     max_jobs = int(payload.get("max_active_jobs", 2000))
 
     job_mgr = payload.get("job_mgr")
-    if job_mgr is None:
-        raise ValueError("[fe_equil] params must include a global 'job_mgr' (SlurmJobManager).")
+    if not isinstance(job_mgr, SlurmJobManager):
+        raise ValueError("[fe_equil] payload['job_mgr'] must be an instance of SlurmJobManager.")
 
     comps = components_under(system.root)
     if not comps:
@@ -179,14 +182,19 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
     return ExecResult(job_ids=[], artifacts={"count": count})
 
 def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Enqueue FE production jobs for all components and windows of a ligand (non-blocking).
+    """Queue production jobs for each component/window combination.
 
-    - Workdir per job: <ligand>/fe/<comp>/<comp{idx}>
-    - Success sentinel: FINISHED
-    - Env: INPCRD=../{comp}-1/eqnpt04.rst7
-    - Applies one-time job cap check per ligand
-    - Requires a global manager at params["job_mgr"]
+    Parameters
+    ----------
+    step, system : ignored
+        Provided for handler API compatibility.
+    params : dict
+        Handler payload containing the job manager and configuration values.
+
+    Returns
+    -------
+    ExecResult
+        Number of jobs enqueued (without waiting for completion).
     """
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
@@ -194,8 +202,8 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     max_jobs = int(payload.get("max_active_jobs", 2000))
 
     job_mgr = payload.get("job_mgr")
-    if job_mgr is None:
-        raise ValueError("[fe] params must include a global 'job_mgr' (SlurmJobManager).")
+    if not isinstance(job_mgr, SlurmJobManager):
+        raise ValueError("[fe] payload['job_mgr'] must be an instance of SlurmJobManager.")
 
     comps = components_under(system.root)
     if not comps:

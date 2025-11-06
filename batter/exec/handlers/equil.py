@@ -1,30 +1,36 @@
+"""Slurm-backed equilibration handler."""
+
 from __future__ import annotations
+
 import os
 from pathlib import Path
 from typing import Any, Dict
+
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
-from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobManager, SlurmJobSpec
-from batter.pipeline.payloads import StepPayload
 from batter.orchestrate.state_registry import register_phase_state
+from batter.pipeline.payloads import StepPayload
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
 
 def _phase_paths(root: Path) -> dict[str, Path]:
-    p = root / "equil"
+    """Return resolved paths for equilibration artifacts under ``root``."""
+    phase_dir = root / "equil"
     return {
-        "phase_dir": p,
-        "script": p / "SLURMM-run",
-        "finished": p / "FINISHED",
-        "failed": p / "FAILED",
-        "jobid": p / "JOBID",
-        "stdout": p / "slurm.out",
-        "stderr": p / "slurm.err",
+        "phase_dir": phase_dir,
+        "script": phase_dir / "SLURMM-run",
+        "finished": phase_dir / "FINISHED",
+        "failed": phase_dir / "FAILED",
+        "jobid": phase_dir / "JOBID",
+        "stdout": phase_dir / "slurm.out",
+        "stderr": phase_dir / "slurm.err",
         "rst7": root / "artifacts" / "equil" / "equil.rst7",
     }
 
 
 def _read_partition(payload: StepPayload) -> str:
+    """Resolve the desired Slurm partition from ``payload``."""
     if payload.sim is not None:
         sim_cfg = payload.sim
         part = getattr(sim_cfg, "partition", None) or getattr(sim_cfg, "queue", None)
@@ -44,16 +50,29 @@ def _read_partition(payload: StepPayload) -> str:
 
 
 def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Submit & monitor the equilibration SLURM job.
+    """Submit and register the equilibration job with the Slurm manager.
 
-    Behavior
-    --------
-    - Always uses SLURM (no local execution).
-    - If FINISHED exists, returns immediately.
-    - If FAILED exists, clears it and resubmits.
-    - If job not active (or was killed), resubmits.
-    - Blocks until FINISHED/FAILED; raises on FAILED/unknown terminal state.
+    Parameters
+    ----------
+    step : Step
+        Pipeline step metadata (unused but provided for symmetry).
+    system : SimSystem
+        Simulation system descriptor.
+    params : dict
+        Raw handler payload; validated into :class:`StepPayload`.
+
+    Returns
+    -------
+    ExecResult
+        Result containing either existing artifacts (when already finished) or
+        the work directory to be monitored by the manager.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the expected submission script is missing.
+    RuntimeError
+        When ``payload['job_mgr']`` is not a :class:`SlurmJobManager`.
     """
     payload = StepPayload.model_validate(params)
     paths = _phase_paths(system.root)
@@ -108,5 +127,7 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     )
 
     mgr = payload.get("job_mgr")
+    if not isinstance(mgr, SlurmJobManager):
+        raise RuntimeError("Equilibration handler requires payload['job_mgr'] to be a SlurmJobManager instance")
     mgr.add(spec)
     return ExecResult(job_ids=[], artifacts={"workdir": paths["phase_dir"]})

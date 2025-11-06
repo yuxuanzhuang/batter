@@ -1,24 +1,32 @@
+"""Utilities for monitoring and resubmitting Slurm-managed jobs."""
+
 from __future__ import annotations
 
+import fcntl
+import json
 import os
 import re
-import time
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
 from loguru import logger
-import json
-import fcntl
+
 
 # ---------- atomic registry append ----------
 def _atomic_append_jsonl_unique(path: Path, rec: dict, unique_key: str = "workdir") -> None:
-    """
-    Append one JSON record per line to `path` IFF no existing record has the same `unique_key` value.
-    - mkdir -p parent
-    - exclusive flock
-    - scan existing file under the same lock
-    - append + flush + fsync
+    """Append ``rec`` to ``path`` if ``unique_key`` is not already present.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        Target JSONL file (created if missing).
+    rec : dict
+        Record to append.
+    unique_key : str, optional
+        Key whose value must be unique across existing rows.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     key_val = rec.get(unique_key)
@@ -61,19 +69,23 @@ JOBID_RE = re.compile(r"Submitted batch job\s+(\d+)", re.I)
 
 # ---- Helpers ----
 def _read_text(p: Path) -> Optional[str]:
+    """Return stripped file contents or ``None`` if the file is unreadable."""
     try:
         return p.read_text().strip()
     except Exception:
         return None
 
 def _write_text(p: Path, txt: str) -> None:
+    """Write ``txt`` to ``p`` creating parent directories as required."""
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(txt)
 
 def _jobid_file(root: Path) -> Path:
+    """Convenience helper returning ``root / 'JOBID'``."""
     return root / "JOBID"
 
 def _state_from_squeue(jobid: str) -> Optional[str]:
+    """Query ``squeue`` for ``jobid`` returning the job state."""
     try:
         out = subprocess.check_output(
             ["squeue", "-h", "-j", jobid, "-o", "%T"],
@@ -87,6 +99,7 @@ def _state_from_squeue(jobid: str) -> Optional[str]:
     return None
 
 def _state_from_sacct(jobid: str) -> Optional[str]:
+    """Query ``sacct`` for ``jobid`` returning the job state."""
     try:
         out = subprocess.check_output(
             ["sacct", "-j", jobid, "-X", "-n", "-o", "State"],
@@ -102,6 +115,7 @@ def _state_from_sacct(jobid: str) -> Optional[str]:
     return None
 
 def _slurm_state(jobid: Optional[str]) -> Optional[str]:
+    """Return the best-effort Slurm state for ``jobid``."""
     if not jobid:
         return None
     return _state_from_squeue(jobid) or _state_from_sacct(jobid)
@@ -109,6 +123,26 @@ def _slurm_state(jobid: Optional[str]) -> Optional[str]:
 # ---- Spec ----
 @dataclass
 class SlurmJobSpec:
+    """Descriptor for a Slurm job managed by :class:`SlurmJobManager`.
+
+    Parameters
+    ----------
+    workdir : pathlib.Path
+        Working directory containing submission scripts and sentinel files.
+    script_rel : str, optional
+        Preferred relative submission script path (default: ``"SLURMM-run"``).
+    finished_name : str, optional
+        Name of the sentinel file indicating success.
+    failed_name : str, optional
+        Name of the sentinel file indicating failure.
+    name : str, optional
+        Friendly display name used in logs.
+    extra_sbatch : Sequence[str], optional
+        Additional ``sbatch`` flags appended during submission.
+    extra_env : dict, optional
+        Additional environment variables exported before submission.
+    """
+
     workdir: Path
     script_rel: str = "SLURMM-run"
     finished_name: str = "FINISHED"
@@ -121,15 +155,20 @@ class SlurmJobSpec:
     alt_script_names: Sequence[str] = ("SLURMM-run", "SLURMM-Run", "slurmm-run", "run.sh")
 
     # --- absolute paths for checks/sentinels ---
-    def finished_path(self) -> Path: return self.workdir / self.finished_name
-    def failed_path(self)   -> Path: return self.workdir / self.failed_name
-    def jobid_path(self)    -> Path: return self.workdir / "JOBID"
+    def finished_path(self) -> Path:
+        """Sentinel path signalling successful completion."""
+        return self.workdir / self.finished_name
+
+    def failed_path(self) -> Path:
+        """Sentinel path signalling failure."""
+        return self.workdir / self.failed_name
+
+    def jobid_path(self) -> Path:
+        """Path containing the most recent Slurm job identifier."""
+        return self.workdir / "JOBID"
 
     def resolve_script_abs(self) -> Path:
-        """
-        Return the first existing absolute script path under workdir.
-        Falls back to the preferred name even if missing (for error msgs).
-        """
+        """Return the absolute path to the submission script."""
         preferred = self.workdir / self.script_rel
         candidates = [preferred] + [
             self.workdir / n for n in self.alt_script_names if n != self.script_rel
@@ -140,10 +179,7 @@ class SlurmJobSpec:
         return preferred
 
     def script_arg(self) -> str:
-        """
-        Relative path passed to sbatch. Use just the filename (or workdir-relative path)
-        so submission happens *in* workdir.
-        """
+        """Return the workdir-relative script argument for ``sbatch``."""
         abs_script = self.resolve_script_abs()
         try:
             return str(abs_script.relative_to(self.workdir))
@@ -152,6 +188,8 @@ class SlurmJobSpec:
 
 # ---- Manager ----
 class SlurmJobManager:
+    """Submit, monitor, and resubmit Slurm jobs for BATTER executions."""
+
     def __init__(
         self,
         poll_s: float = 20.0,
@@ -161,6 +199,23 @@ class SlurmJobManager:
         dry_run: bool = False,
         sbatch_flags: Optional[Sequence[str]] = None,
     ):
+        """Initialise the manager.
+
+        Parameters
+        ----------
+        poll_s : float, optional
+            Polling interval in seconds.
+        max_retries : int, optional
+            Maximum number of automatic resubmissions per job.
+        resubmit_backoff_s : float, optional
+            Delay between failed submission and retry.
+        registry_file : pathlib.Path, optional
+            Optional JSONL file acting as a persistent queue.
+        dry_run : bool, optional
+            When ``True`` do not submit jobs; only mark that a submission would occur.
+        sbatch_flags : Sequence[str], optional
+            Global ``sbatch`` flags appended to every submission.
+        """
         self.poll_s = float(poll_s)
         self.max_retries = int(max_retries)
         self.resubmit_backoff_s = float(resubmit_backoff_s)
@@ -178,10 +233,16 @@ class SlurmJobManager:
 
     # ---------- Registry API ----------
     def add(self, spec: SlurmJobSpec) -> None:
-        """Add a job spec to the in-memory set and (optionally) append to the on-disk queue."""
+        """Queue ``spec`` for later submission.
+
+        Parameters
+        ----------
+        spec : SlurmJobSpec
+            Job specification to store. Persisted to ``registry_file`` when configured.
+        """
         if self.dry_run:
             self.triggered = True
-            return 
+            return
 
         self._inmem_specs[spec.workdir] = spec
         if self._registry_file:
@@ -197,7 +258,7 @@ class SlurmJobManager:
             _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
 
     def _load_registry_specs(self) -> dict[Path, SlurmJobSpec]:
-        """Load specs from the on-disk queue (if configured)."""
+        """Load job specifications from the persistent registry."""
         out: dict[Path, SlurmJobSpec] = {}
         if not self._registry_file or not self._registry_file.exists():
             return out
@@ -240,6 +301,7 @@ class SlurmJobManager:
 
     # ---------- Core ops ----------
     def _submit(self, spec: SlurmJobSpec) -> str:
+        """Submit ``spec`` via ``sbatch`` and persist the resulting job id."""
         script_abs = spec.resolve_script_abs()
         if not script_abs.exists():
             listing = ", ".join(sorted(p.name for p in spec.workdir.iterdir())) if spec.workdir.exists() else "(missing workdir)"
@@ -286,11 +348,7 @@ class SlurmJobManager:
         return jobid
 
     def _status(self, spec: SlurmJobSpec) -> Tuple[bool, Optional[str]]:
-        """
-        Returns (done, status):
-          - (True, 'FINISHED'|'FAILED') if a sentinel exists
-          - (False, <SLURM_STATE|None>) otherwise
-        """
+        """Return ``(done, status)`` tuple for ``spec``."""
         if spec.finished_path().exists():
             return True, "FINISHED"
         if spec.failed_path().exists():
@@ -338,6 +396,7 @@ class SlurmJobManager:
 
     # ---------- Shared wait logic ----------
     def _wait_loop(self, specs: List[SlurmJobSpec]) -> None:
+        """Internal polling loop shared by :meth:`wait_until_done` and :meth:`wait_all`."""
         # optional progress bar (tqdm)
         try:
             from tqdm import tqdm  # type: ignore

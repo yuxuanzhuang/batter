@@ -1,27 +1,27 @@
-# batter/exec/handlers/system_prep.py
+"""Prepare complex systems (protein/ligand/membrane) for simulations."""
+
 from __future__ import annotations
 
-import os
-import json
-import shutil
 import contextlib
+import json
+import os
+import shutil
+from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
 
+import MDAnalysis as mda
 import numpy as np
 import pandas as pd
-from loguru import logger
-import MDAnalysis as mda
 from MDAnalysis.analysis import align
-from importlib import resources
-
-from batter.pipeline.step import Step, ExecResult
-from batter.pipeline.payloads import StepPayload, SystemParams
-from batter.systems.core import SimSystem
-from batter.utils.builder_utils import find_anchor_atoms
-from batter.orchestrate.state_registry import register_phase_state
+from loguru import logger
 
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
+from batter.orchestrate.state_registry import register_phase_state
+from batter.pipeline.payloads import StepPayload, SystemParams
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
+from batter.utils.builder_utils import find_anchor_atoms
 
 
 # -----------------------
@@ -603,13 +603,22 @@ class _SystemPrepRunner:
 # Handler entry point
 # -----------------------
 def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Prepare a system for simulation by aligning the protein to the system topology,
-    translating ligands into the system frame, and generating a reference PDB.
+    """Prepare a system by aligning components and generating reference structures.
 
-    Note this will create a sim_overrides.json file in artifacts/config/ with
-    the anchor and membrane information for downstream steps.
+    Parameters
+    ----------
+    step : Step
+        Pipeline metadata (unused).
+    system : SimSystem
+        Simulation system descriptor.
+    params : dict
+        Handler payload validated into :class:`StepPayload`.
 
+    Returns
+    -------
+    ExecResult
+        Paths to generated reference structures and a metadata dictionary with
+        anchor and membrane information.
     """
     logger.info(f"[system_prep] Preparing system in {system.root}")
     payload = StepPayload.model_validate(params)

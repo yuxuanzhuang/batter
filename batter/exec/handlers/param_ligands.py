@@ -1,35 +1,25 @@
+"""Parameterise ligands and populate per-ligand artifacts."""
+
 from __future__ import annotations
 
-import os
 import json
+import os
 import shutil
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Any, Dict, List, Tuple
+
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
-from batter.systems.core import SimSystem
-from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.orchestrate.state_registry import register_phase_state
-
-
-# Reuse helpers from content-addressed ligand store
-from batter.param.ligand import (
-    _rdkit_load,
-    _canonical_payload,
-    _hash_id,
-    batch_ligand_process,
-    _convert_mol_name_to_unique,
-)
-
+from batter.param.ligand import _convert_mol_name_to_unique, batch_ligand_process
+from batter.pipeline.payloads import StepPayload, SystemParams
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
 
 LIGAND_FILES = ["mol2", "prmtop", "sdf", "json", "frcmod", "inpcrd", "lib"]
 
-def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str):
-    """
-    Copy ligand parameter files (lig.*) from src_dir into child_dir/params/,
-    renaming them from 'lig.ext' to '{residue_name}.ext'.
-    """
+def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str) -> None:
+    """Copy ``lig.*`` artifacts into ``child_dir/params`` using ``residue_name``."""
     child_params = child_dir / "params"
     child_params.mkdir(parents=True, exist_ok=True)
 
@@ -48,9 +38,7 @@ def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str):
 
 
 def _resolve_outdir(template: str | Path, system: SimSystem) -> Path:
-    """
-    Resolve {WORK} placeholder in output dir, then absolutize & expanduser.
-    """
+    """Resolve ``{WORK}`` placeholders against ``system.root``."""
     if not isinstance(template, (str, Path)):
         raise TypeError("param_ligands.outdir must be a string")
     resolved = str(template).replace("{WORK}", system.root.as_posix())
@@ -58,11 +46,21 @@ def _resolve_outdir(template: str | Path, system: SimSystem) -> Path:
 
 
 def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Parent-only parametrization pass:
-      - Runs batch_ligand_process once into a content-addressed store
-      - Links per-ligand params into <root>/ligands/<LIG>/params/*
-      - Emits an index for downstream steps
+    """Run the ligand parametrisation pipeline and index results.
+
+    Parameters
+    ----------
+    step : Step
+        Pipeline metadata (unused).
+    system : SimSystem
+        Simulation system descriptor.
+    params : dict
+        Handler payload validated into :class:`StepPayload`.
+
+    Returns
+    -------
+    ExecResult
+        Mapping containing the parameter store path, JSON index, manifest, and raw hashes.
     """
     payload = StepPayload.model_validate(params)
     sys_params = payload.sys_params or SystemParams()

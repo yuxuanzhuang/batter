@@ -1,26 +1,38 @@
+"""Prepare equilibration inputs for a ligand."""
+
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
-import os
+
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
-from batter.systems.core import SimSystem
-from batter.config.simulation import SimulationConfig
 from batter._internal.builders.equil import PrepareEquilBuilder
-from batter.pipeline.payloads import StepPayload, SystemParams
+from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
+from batter.pipeline.payloads import StepPayload, SystemParams
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
 
 
 def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    Pipeline handler for the `prepare_equil` step.
+    """Build equilibration inputs for the current ligand.
 
-    - Reads artifacts/ligand_params/index.json to find per-ligand parameter store
-    - Validates SimulationConfig from params["sim"]
-    - Invokes the PrepareEquilBuilder
+    Parameters
+    ----------
+    step : Step
+        Pipeline step metadata (unused).
+    system : SimSystem
+        Simulation system descriptor.
+    params : dict
+        Handler payload validated into :class:`StepPayload`.
+
+    Returns
+    -------
+    ExecResult
+        Contains the output directory and any generated metadata.
     """
     # 1) Parse sim config
     payload = StepPayload.model_validate(params)

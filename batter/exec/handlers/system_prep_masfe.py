@@ -1,3 +1,5 @@
+"""Minimal system-preparation handler for MASFE workflows."""
+
 from __future__ import annotations
 
 import json
@@ -7,10 +9,10 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from batter.pipeline.step import Step, ExecResult
-from batter.systems.core import SimSystem
-from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.orchestrate.state_registry import register_phase_state
+from batter.pipeline.payloads import StepPayload, SystemParams
+from batter.pipeline.step import ExecResult, Step
+from batter.systems.core import SimSystem
 
 # -----------------------
 # Small helpers
@@ -103,11 +105,21 @@ class _MASFESystemPrepRunner:
 # Handler entry point
 # -----------------------
 def system_prep_masfe(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
-    """
-    MASFE system_prep:
-      - No receptor alignment or membrane logic
-      - Stage ligands → PDB under all-ligands/
-      - Write artifacts/config/sim_overrides.json with a small 'is_solvation' flag
+    """Prepare a MASFE solvation system by staging ligands and overrides.
+
+    Parameters
+    ----------
+    step : Step
+        Pipeline metadata (unused).
+    system : SimSystem
+        Simulation system descriptor.
+    params : dict
+        Handler payload validated into :class:`StepPayload`.
+
+    Returns
+    -------
+    ExecResult
+        Manifest of staged ligands and paths to generated files.
     """
     logger.info(f"[system_prep_masfe] Preparing solvation FE system in {system.root}")
 
