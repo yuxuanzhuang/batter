@@ -46,11 +46,14 @@ def _mute_jax(record):
     return not "****** PyMBAR will use 64-bit JAX! *******" in record.msg
 def _mute_jax_2(record):
     return not "******* JAX 64-bit mode is now on! *******" in record.msg
+def _mute_jax_3(record):
+    return not "PyMBAR can run faster with JAX" in record.msg
 _mbar_log = logging.getLogger("pymbar.timeseries")
 _mbar_log.addFilter(_mute_timeseries)
 _mbar_log = logging.getLogger("pymbar.mbar_solvers")
 _mbar_log.addFilter(_mute_jax)
 _mbar_log.addFilter(_mute_jax_2)
+_mbar_log.addFilter(_mute_jax_3)
 
 logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')

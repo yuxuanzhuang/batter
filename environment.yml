@@ -16,7 +16,8 @@ dependencies:
   - vmd
   - apbs
   - MDAnalysis >=2.9.0
-  - pymbar
+  - jax
+  - pymbar >4.0
   # dask distributed for analysis
   - dask
   - dask-jobqueue
