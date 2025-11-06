@@ -26,7 +26,7 @@ wheels/
 *.egg
 examples/**/*fe
 examples/**/new_api
-examples/**/*_job_manager.sbatch
+examples/**/*job_manager.sbatch
 examples/**/*.err
 examples/**/*.out
 tests/**/metadata.json

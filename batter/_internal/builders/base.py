@@ -89,7 +89,7 @@ class BaseBuilder(ABC):
         
     @property
     def membrane_builder(self) -> bool:
-        sim_flag = getattr(self.ctx.sim, "_membrane_simulation", False)
+        sim_flag = getattr(self.ctx.sim, "membrane_simulation", False)
         return sim_flag and self.ctx.comp not in MEMBRANE_EXEMPT_COMPONENTS
 
     # ---- main template

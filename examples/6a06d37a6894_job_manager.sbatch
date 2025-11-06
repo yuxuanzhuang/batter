@@ -17,6 +17,6 @@
 # print out node information
 scontrol show job $SLURM_JOB_ID
 
-/scratch/users/yuzhuang/miniforge3_0808/envs/batter_new/bin/batter run /oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/mabfe_nonmembrane.yaml --on-failure raise
+/scratch/users/yuzhuang/miniforge3_1106/envs/batter_new/bin/batter run /oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/mabfe_nonmembrane.yaml --on-failure raise
 echo 'Job completed.'
 
