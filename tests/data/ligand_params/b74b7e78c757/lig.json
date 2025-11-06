@@ -1,0 +1,10 @@
+{
+    "ligand_file": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/tests/data/reference/nonmembrane/Structure17_1.sdf",
+    "charge_type": "am1bcc",
+    "smiles": "[H]c1c([H])c([H])c(Oc2c([H])c([H])c([N-]S(=O)(=O)C([H])([H])[H])c([H])c2-c2c(OC([H])([H])[H])c([H])c(=O)n(C([H])([H])[H])c2[H])c([H])c1[H]",
+    "ligand_sdf_path": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/tests/data/ligand_params/b74b7e78c757/lig.sdf",
+    "ligand_charge": -1.0,
+    "ligand_ff": "openff-2.2.1",
+    "ligand_name": "lig",
+    "retain_lig_prot": true
+}

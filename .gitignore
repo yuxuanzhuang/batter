@@ -29,6 +29,7 @@ examples/**/new_api
 examples/**/*_job_manager.sbatch
 examples/**/*.err
 examples/**/*.out
+tests/**/metadata.json
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
