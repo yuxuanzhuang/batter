@@ -76,6 +76,18 @@ Quick Links
 
          Open the Developer Guide
 
+   .. grid-item-card:: Command-Line Usage
+      :margin: 0 3 0 3
+
+      Learn the available ``batter`` commands, options, and SLURM utilities.
+
+      .. button-link:: cli.html
+         :color: primary
+         :outline:
+         :expand:
+
+         View the CLI Reference
+
 .. toctree::
    :maxdepth: 2
    :hidden:
@@ -87,3 +99,4 @@ Quick Links
    api
    developer_guide
    developer_guide/pipeline_payloads_and_metadata
+   cli

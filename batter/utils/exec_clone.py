@@ -89,31 +89,37 @@ def clone_execution(
     overwrite: bool = False,
 ) -> Path:
     """
-    Clone <work_dir>/executions/<src_run_id> → <work_dir>/executions/<dst_run_id>.
+    Clone an execution folder to a new run id.
 
     Parameters
     ----------
-    work_dir
-        BATTER work directory (the same passed to run_from_yaml; contains 'executions/').
-    src_run_id
-        Existing run_id to clone from.
-    dst_run_id
-        Target run_id. If None, suffix '-CLONE' is appended to src_run_id.
-    mode
-        'copy'      → real copy of files
-        'hardlink'  → hardlink files (fast, but same filesystem required)
-        'symlink'   → symlink files/dirs into the new run
-    only_equil
-        If True, copy inputs/artifacts/simulations/*/{inputs,artifacts,equil} but no FE data.
-    reset_states
-        If True, remove JOBID files, .slurm/ queue, FINISHED/FAILED/EQ_FINISHED/UNBOUND markers in the clone.
-    overwrite
-        If True, allow replacing an existing destination run directory.
+    work_dir : Path
+        Work directory containing ``executions/``.
+    src_run_id : str
+        Existing run identifier to clone.
+    dst_run_id : str, optional
+        Destination run identifier. When ``None``, ``"-CLONE"`` is appended to
+        ``src_run_id``.
+    mode : {"copy", "hardlink", "symlink"}
+        Copy strategy for files.
+    only_equil : bool
+        When ``True``, copy only inputs/artifacts/equilibration directories.
+    reset_states : bool
+        Remove SLURM metadata and phase sentinels from the cloned run.
+    overwrite : bool
+        Allow deleting an existing destination before cloning.
 
     Returns
     -------
     Path
-        The path to the new run directory.
+        Path to the newly cloned execution directory.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``src_run_id`` does not exist.
+    FileExistsError
+        If the destination already exists and ``overwrite`` is ``False``.
     """
     runs_dir = Path(work_dir) / "executions"
     src = runs_dir / src_run_id

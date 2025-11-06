@@ -25,6 +25,7 @@ Public API
 ----------
 
 .. automodule:: batter.api
+   :noindex:
    :members:
    :undoc-members:
    :show-inheritance:
