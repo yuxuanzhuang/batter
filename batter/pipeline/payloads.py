@@ -32,14 +32,14 @@ class SystemParams(BaseModel):
         raise TypeError(f"Cannot construct SystemParams from {type(value)!r}")
 
     def __getitem__(self, item: str) -> Any:
-        if item in self.model_fields:
+        if item in type(self).model_fields:
             return getattr(self, item)
         if self.model_extra is not None and item in self.model_extra:
             return self.model_extra[item]
         raise KeyError(item)
 
     def get(self, item: str, default: Any = None) -> Any:
-        if item in self.model_fields:
+        if item in type(self).model_fields:
             value = getattr(self, item)
             return default if value is None else value
         if self.model_extra is not None:
@@ -84,14 +84,14 @@ class StepPayload(BaseModel):
         return self
 
     def __getitem__(self, item: str) -> Any:
-        if item in self.model_fields:
+        if item in type(self).model_fields:
             return getattr(self, item)
         if self.model_extra is not None and item in self.model_extra:
             return self.model_extra[item]
         raise KeyError(item)
 
     def get(self, item: str, default: Any = None) -> Any:
-        if item in self.model_fields:
+        if item in type(self).model_fields:
             value = getattr(self, item)
             return default if value is None else value
         if self.model_extra is not None:
