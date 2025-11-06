@@ -15,6 +15,21 @@ from batter.orchestrate.state_registry import get_phase_state, PhaseState
 
 
 def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple[List[SimSystem], List[SimSystem]]:
+    """Split systems into success and failure buckets for a given phase.
+
+    Parameters
+    ----------
+    children
+        Sequence of per-ligand :class:`SimSystem` descriptors.
+    phase
+        Phase identifier whose sentinel criteria should be evaluated.
+
+    Returns
+    -------
+    tuple[list[SimSystem], list[SimSystem]]
+        Two lists containing systems that satisfied the success spec and those that
+        appear to have failed (either explicitly or due to missing sentinels).
+    """
     ok, bad = [], []
     for child in children:
         spec = _phase_spec(child.root, phase)
@@ -30,6 +45,28 @@ def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple
 
 
 def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str) -> List[SimSystem]:
+    """Post-process phase results, pruning or raising on failure.
+
+    Parameters
+    ----------
+    children
+        Systems evaluated for the phase.
+    phase_name
+        Name of the phase being processed.
+    mode
+        Failure-handling strategy. ``"prune"`` removes failed systems, otherwise an
+        exception is raised.
+
+    Returns
+    -------
+    list[SimSystem]
+        Systems that should proceed to the next phase (possibly pruned).
+
+    Raises
+    ------
+    RuntimeError
+        If failures occur and ``mode`` is not ``"prune"``.
+    """
     ok, bad = partition_children_by_status(children, phase_name)
     if bad:
         bad_names = ", ".join(c.meta.get("ligand", c.name) for c in bad)
@@ -43,6 +80,20 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
 
 
 def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[SimSystem]:
+    """Return only systems that still require work for the given phase.
+
+    Parameters
+    ----------
+    children
+        Candidate systems for the phase.
+    phase_name
+        Phase identifier whose completion criteria are checked.
+
+    Returns
+    -------
+    list[SimSystem]
+        Subset of systems lacking the necessary success sentinels.
+    """
     need, done = [], []
     for child in children:
         if is_done(child, phase_name):
@@ -63,6 +114,27 @@ def run_phase_skipping_done(
     *,
     max_workers: int | None = None,
 ) -> bool:
+    """Execute a phase for systems that still need it, skipping completed ones.
+
+    Parameters
+    ----------
+    phase
+        Pipeline configured for the phase.
+    children
+        Per-ligand systems targeted by the phase.
+    phase_name
+        Name of the phase (used for logging and state lookups).
+    backend
+        Execution backend implementing ``run_parallel``.
+    max_workers
+        Optional parallelism limit passed through to the backend.
+
+    Returns
+    -------
+    bool
+        ``True`` if all systems were already complete (phase skipped),
+        ``False`` otherwise.
+    """
     todo = filter_needing_phase(children, phase_name)
     if not todo:
         logger.info(f"[skip] {phase_name}: all ligands already complete.")
@@ -76,16 +148,34 @@ def run_phase_skipping_done(
 
 
 def is_done(system: SimSystem, phase_name: str) -> bool:
+    """Return ``True`` if a system satisfies the success criteria for a phase.
+
+    Parameters
+    ----------
+    system
+        Per-ligand :class:`SimSystem` descriptor.
+    phase_name
+        Name of the phase being checked.
+
+    Returns
+    -------
+    bool
+        ``True`` if the system meets the success specification, ``False`` otherwise.
+    """
     spec = _phase_spec(system.root, phase_name)
     required_spec = spec.required or spec.success
     return _spec_satisfied(system.root, required_spec)
 
 
 def _phase_spec(root: Path, phase: str) -> PhaseState:
+    """Fetch the phase specification for ``phase`` under ``root``."""
+
     return get_phase_state(root, phase)
 
 
 def _spec_satisfied(root: Path, spec: List[List[str]]) -> bool:
+    """Evaluate whether any clause in the DNF spec is satisfied on disk."""
+
     if not spec:
         return False
     for group in spec:
@@ -102,6 +192,8 @@ def _spec_satisfied(root: Path, spec: List[List[str]]) -> bool:
 
 
 def _expand_pattern(root: Path, pattern: str) -> List[Path]:
+    """Expand a single sentinel pattern, interpolating components and windows."""
+
     if "{comp" not in pattern and "{win" not in pattern:
         return [root / pattern]
 
@@ -125,6 +217,8 @@ def _expand_pattern(root: Path, pattern: str) -> List[Path]:
 
 
 def _production_windows_under(root: Path, comp: str) -> List[int]:
+    """Return sorted production window indices for ``comp`` under ``root``."""
+
     base = root / "fe" / comp
     if not base.exists():
         return []

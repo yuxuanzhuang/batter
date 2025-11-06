@@ -1,3 +1,5 @@
+"""Persistent registry for orchestrator phase sentinel specifications."""
+
 from __future__ import annotations
 
 import json
@@ -64,10 +66,14 @@ LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
 
 
 def _registry_path(root: Path) -> Path:
+    """Return the phase-state manifest path under ``root``."""
+
     return Path(root) / "artifacts" / REGISTRY_FILENAME
 
 
 def _as_dnf(spec: Sequence[Sequence[str] | str] | Sequence[str] | str | None) -> List[List[str]]:
+    """Normalize a sentinel specification to a DNF-style list of lists."""
+
     if spec is None:
         return []
     if isinstance(spec, str):
@@ -83,6 +89,21 @@ def _as_dnf(spec: Sequence[Sequence[str] | str] | Sequence[str] | str | None) ->
 
 @dataclass(slots=True)
 class PhaseState:
+    """Structured phase sentinel specification pulled from the registry.
+
+    Parameters
+    ----------
+    phase
+        Logical name of the phase (for example ``"equil"``).
+    required
+        Disjunctive normal form (DNF) list of sentinel groups that define readiness.
+        Each inner list represents a conjunction of relative paths.
+    success
+        Optional DNF list describing the sentinel groups that constitute success.
+    failure
+        Optional DNF list of sentinel groups that constitute failure.
+    """
+
     phase: str
     required: List[List[str]] = field(default_factory=list)
     success: List[List[str]] = field(default_factory=list)
@@ -90,6 +111,8 @@ class PhaseState:
 
 
 def _load_raw(root: Path) -> Dict[str, Dict[str, List[List[str]]]]:
+    """Load the raw registry payload from disk, returning an empty dict on failure."""
+
     path = _registry_path(root)
     if not path.exists():
         return {}
@@ -103,6 +126,8 @@ def _load_raw(root: Path) -> Dict[str, Dict[str, List[List[str]]]]:
 
 
 def _dump_raw(root: Path, payload: Dict[str, Dict[str, List[List[str]]]]) -> None:
+    """Persist the registry payload to disk in an atomic manner."""
+
     path = _registry_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
@@ -122,8 +147,27 @@ def register_phase_state(
     success: Sequence[Sequence[str] | str] | Sequence[str] | str | None = None,
     failure: Sequence[Sequence[str] | str] | Sequence[str] | str | None = None,
 ) -> PhaseState:
-    """
-    Record or update the on-disk phase state specification for a system root.
+    r"""Record or update the persisted phase-state specification.
+
+    Parameters
+    ----------
+    root
+        Filesystem root for the execution (e.g., ``Path("work/at1r")``).
+    phase
+        Phase identifier whose sentinel metadata is being registered.
+    required
+        Optional disjunctive-normal-form iterable describing required sentinel
+        combinations. ``None`` leaves the current value untouched.
+    success
+        Optional iterable describing success sentinel combinations. When omitted, the
+        ``required`` specification is mirrored.
+    failure
+        Optional iterable describing failure sentinel combinations.
+
+    Returns
+    -------
+    PhaseState
+        Structured phase-state record after the update is persisted.
     """
     root_path = Path(root)
     registry = _load_raw(root_path)
@@ -145,8 +189,17 @@ def register_phase_state(
 
 
 def read_phase_states(root: Path | str) -> Dict[str, PhaseState]:
-    """
-    Return all recorded phase state specifications for ``root``.
+    """Return all recorded phase-state specifications under a system root.
+
+    Parameters
+    ----------
+    root
+        Filesystem root containing the registry manifest.
+
+    Returns
+    -------
+    dict[str, PhaseState]
+        Mapping from phase name to :class:`PhaseState` instances.
     """
     root_path = Path(root)
     raw = _load_raw(root_path)
@@ -162,8 +215,19 @@ def read_phase_states(root: Path | str) -> Dict[str, PhaseState]:
 
 
 def get_phase_state(root: Path | str, phase: str) -> PhaseState:
-    """
-    Convenience accessor for a single phase specification.
+    """Return a single phase-state record, falling back to legacy defaults.
+
+    Parameters
+    ----------
+    root
+        Filesystem root containing the registry manifest.
+    phase
+        Phase identifier to fetch.
+
+    Returns
+    -------
+    PhaseState
+        Stored phase-state entry, or a legacy default if none has been registered yet.
     """
     states = read_phase_states(root)
     if phase in states:
