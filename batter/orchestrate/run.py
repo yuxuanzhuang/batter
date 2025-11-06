@@ -101,7 +101,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         logger.info(f"Applying run overrides: {run_overrides}")
         rc = rc.model_copy(update={"run": rc.run.model_copy(update=run_overrides)})
     if on_failure:
-        logger.info(f"Overriding on_failure behavior to: {on_failure}")
+        logger.info(f"on_failure behavior: {on_failure}")
         rc.run.on_failure = on_failure
 
     yaml_dir = path.parent

@@ -84,7 +84,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
 
     # Optional: restraint tuple for Boresch analytical term (k’s etc.)
     # Default to zeros if not provided or not applicable.
-    rest: Tuple[float, float, float, float, float] = tuple(sim.get("rest", (0, 0, 0, 0, 0)))  # type: ignore
+    rest: Tuple[float, float, float, float, float] = sim.get("rest")
 
     fe_root = system.root / "fe"
     if not fe_root.exists():

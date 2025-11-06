@@ -203,14 +203,14 @@ class FESimArgs(BaseModel):
     lambdas: List[float] = Field(default_factory=list)
     sdr_dist: float = 0.0
     blocks: int = 0
-    lig_buffer: float = 0.0
+    lig_buffer: float = 15.0
 
     # Restraint forces
-    lig_distance_force: float = 0.0
-    lig_angle_force: float = 0.0
+    lig_distance_force: float = 5.0
+    lig_angle_force: float = 250.0
     lig_dihcf_force: float = 0.0
-    rec_com_force: float = 0.0
-    lig_com_force: float = 0.0
+    rec_com_force: float = 10.0
+    lig_com_force: float = 10.0
 
     # Box padding (used by some builders)
     buffer_x: float = 0.0
@@ -232,7 +232,7 @@ class FESimArgs(BaseModel):
     cut: float = 9.0
     gamma_ln: float = 1.0
     dt: float = 0.004
-    hmr: Literal["yes", "no"] = "no"
+    hmr: Literal["yes", "no"] = "yes"
     temperature: float = 310.0
     barostat: int = 2
 
@@ -240,6 +240,24 @@ class FESimArgs(BaseModel):
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
+    
+    # make sure lambdas are sorted otherwise raise error
+    @field_validator("lambdas", mode="after")
+    @classmethod
+    def _validate_lambdas(cls, v):
+        if sorted(v) != v:
+            raise ValueError("Lambda values must be in ascending order.")
+        return v
+    
+    # make sure lig_distance_force is not zero or negative
+    @field_validator("lig_distance_force", "lig_angle_force", "lig_com_force", mode="after")
+    @classmethod
+    def _validate_force_const(cls, v):
+        if v <= 0.0:
+            raise ValueError(f"{v} must be positive and non-zero.")
+        return v
+
+
 
 class RunSection(BaseModel):
     """Run-related settings."""
