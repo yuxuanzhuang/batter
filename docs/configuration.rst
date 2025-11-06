@@ -65,4 +65,3 @@ Quick Reference
    batter.config.dump_run_config
    batter.config.load_simulation_config
    batter.config.dump_simulation_config
-
