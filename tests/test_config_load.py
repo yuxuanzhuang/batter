@@ -116,6 +116,16 @@ def test_fesim_args_invalid_yes_no():
         FESimArgs(remd="maybe")
 
 
+def test_fesim_args_unsorted_lambdas():
+    with pytest.raises(ValidationError):
+        FESimArgs(lambdas=[0.5, 0.1])
+
+
+def test_fesim_args_negative_force():
+    with pytest.raises(ValidationError):
+        FESimArgs(lig_distance_force=-1.0)
+
+
 @pytest.mark.parametrize(
     "overrides, message",
     [

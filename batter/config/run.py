@@ -454,6 +454,29 @@ class FESimArgs(BaseModel):
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
+    @field_validator("lambdas")
+    @classmethod
+    def _validate_lambdas(cls, v: List[float]) -> List[float]:
+        if not v:
+            return v
+        if any(left > right for left, right in zip(v, v[1:])):
+            raise ValueError("Lambda values must be in ascending order.")
+        return v
+
+    @field_validator(
+        "lig_distance_force",
+        "lig_angle_force",
+        "lig_dihcf_force",
+        "rec_com_force",
+        "lig_com_force",
+    )
+    @classmethod
+    def _validate_force_const(cls, value: float) -> float:
+        if value is None:
+            return value
+        if value < 0.0:
+            raise ValueError("Force constants must be non-negative.")
+        return value
 
 
 
