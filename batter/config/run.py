@@ -16,7 +16,32 @@ from batter.config.utils import (
 # ----------------------------- SLURM ---------------------------------
 
 class SlurmConfig(BaseModel):
-    """SLURM-specific configuration."""
+    """
+    SLURM-specific configuration.
+
+    Parameters
+    ----------
+    partition : str, optional
+        SLURM partition/queue name.
+    time : str, optional
+        Walltime in the ``HH:MM:SS`` format.
+    nodes : int, optional
+        Number of nodes to request.
+    ntasks_per_node : int, optional
+        Number of tasks per node.
+    mem_per_cpu : str, optional
+        Memory per CPU (e.g., ``16G``).
+    gres : str, optional
+        Generic resource string (e.g., GPU spec).
+    account : str, optional
+        Account to charge for jobs.
+    qos : str, optional
+        QoS string if required by the cluster.
+    constraint : str, optional
+        Constraint string passed to ``sbatch``.
+    extra_sbatch : list[str]
+        Additional arguments appended to the ``sbatch`` submission command.
+    """
     model_config = ConfigDict(extra="ignore")
 
     partition: Optional[str] = Field(None, description="SLURM partition / queue")
@@ -55,8 +80,14 @@ class SlurmConfig(BaseModel):
 # ----------------------------- Sections ---------------------------------
 
 class SystemSection(BaseModel):
-    type: Literal["MABFE", "MASFE"] = "MABFE"
-    output_folder: Path
+    type: Literal["MABFE", "MASFE"] = Field(
+        "MABFE",
+        description="System builder type. ``MABFE`` supports membrane ABFE workflows; ``MASFE`` enables ASFE.",
+    )
+    output_folder: Path = Field(
+        ...,
+        description="Directory where system artifacts and executions will be written.",
+    )
 
     def resolve_paths(self, base: Path) -> "SystemSection":
         """
@@ -106,9 +137,9 @@ class CreateArgs(BaseModel):
     )
 
     # Ligand staging
-    ligand_paths: dict[str, Path] = Field(
+    ligand_paths: dict[str, Path | str] = Field(
         default_factory=dict,
-        description="Mapping of ligand identifiers to structure files.",
+        description="Mapping of ligand identifiers to structure files (relative paths are resolved at runtime).",
     )
     ligand_input: Optional[Path] = Field(
         None,
@@ -328,50 +359,96 @@ class CreateArgs(BaseModel):
 
 class FESimArgs(BaseModel):
     """
-    Free-energy simulation knobs (lives under `fe_sim:`).
+    Free-energy simulation knobs loaded from the ``fe_sim`` section.
+
+    The fields map directly onto :class:`batter.config.simulation.SimulationConfig`
+    overrides. Most values are optional and fall back to the defaults assembled in
+    :class:`SimulationConfig`.
     """
     model_config = ConfigDict(extra="forbid")
 
-    fe_type: str = "uno_rest"
-    dec_int: str = "mbar"
-    remd: Literal["yes", "no"] = "no"
-    rocklin_correction: Literal["yes", "no"] = "no"
+    fe_type: str = Field(
+        "uno_rest",
+        description="Free-energy protocol type passed to the simulation configuration.",
+    )
+    dec_int: str = Field(
+        "mbar",
+        description="Free-energy integration scheme (``mbar`` or ``ti``).",
+    )
+    remd: Literal["yes", "no"] = Field(
+        "no",
+        description="Enable replica-exchange MD (currently unsupported; must remain ``\"no\"``).",
+    )
+    rocklin_correction: Literal["yes", "no"] = Field(
+        "no",
+        description="Apply Rocklin correction during analysis.",
+    )
 
-    lambdas: List[float] = Field(default_factory=list)
-    sdr_dist: float = 0.0
-    blocks: int = 0
-    lig_buffer: float = 0.0
+    lambdas: List[float] = Field(
+        default_factory=list,
+        description="Default lambda schedule when component-specific overrides are not provided.",
+    )
+    sdr_dist: float = Field(
+        0.0,
+        description="SDR placement distance for SDR protocols (Å).",
+    )
+    blocks: int = Field(
+        0,
+        description="Number of MBAR blocks to use during analysis.",
+    )
+    lig_buffer: float = Field(
+        0.0,
+        description="Ligand-specific box buffer (Å) for solvation boxes.",
+    )
 
     # Restraint forces
-    lig_distance_force: float = 0.0
-    lig_angle_force: float = 0.0
-    lig_dihcf_force: float = 0.0
-    rec_com_force: float = 0.0
-    lig_com_force: float = 0.0
+    lig_distance_force: float = Field(
+        0.0,
+        description="Ligand COM distance restraint spring constant (kcal/mol/Å^2).",
+    )
+    lig_angle_force: float = Field(
+        0.0,
+        description="Ligand angle restraint spring constant (kcal/mol/rad^2).",
+    )
+    lig_dihcf_force: float = Field(
+        0.0,
+        description="Ligand dihedral restraint spring constant (kcal/mol/rad^2).",
+    )
+    rec_com_force: float = Field(
+        0.0,
+        description="Protein COM restraint spring constant (kcal/mol/Å^2).",
+    )
+    lig_com_force: float = Field(
+        0.0,
+        description="Ligand COM restraint spring constant (kcal/mol/Å^2).",
+    )
 
     # Box padding (used by some builders)
-    buffer_x: float = 0.0
-    buffer_y: float = 0.0
-    buffer_z: float = 0.0
+    buffer_x: float = Field(0.0, description="Box padding along X (Å).")
+    buffer_y: float = Field(0.0, description="Box padding along Y (Å).")
+    buffer_z: float = Field(0.0, description="Box padding along Z (Å).")
 
     # Step counts / reporting
-    release_eq: list[float] = Field(default_factory=list)
-    eq_steps1: int = 500_000
-    eq_steps2: int = 1_000_000
-    z_steps1: int = 50_000
-    z_steps2: int = 300_000
-    y_steps1: int = 50_000
-    y_steps2: int = 300_000
-    ntpr: int = 1000
-    ntwr: int = 10000
-    ntwe: int = 0
-    ntwx: int = 2500
-    cut: float = 9.0
-    gamma_ln: float = 1.0
-    dt: float = 0.004
-    hmr: Literal["yes", "no"] = "no"
-    temperature: float = 310.0
-    barostat: int = 2
+    release_eq: list[float] = Field(
+        default_factory=list,
+        description="Release-equilibration schedule weights.",
+    )
+    eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps.")
+    eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps.")
+    z_steps1: int = Field(50_000, description="Stage 1 steps for the 'z' component.")
+    z_steps2: int = Field(300_000, description="Stage 2 steps for the 'z' component.")
+    y_steps1: int = Field(50_000, description="Stage 1 steps for the 'y' component.")
+    y_steps2: int = Field(300_000, description="Stage 2 steps for the 'y' component.")
+    ntpr: int = Field(1000, description="Energy print frequency.")
+    ntwr: int = Field(10_000, description="Restart write frequency.")
+    ntwe: int = Field(0, description="Energy write frequency (0 disables).")
+    ntwx: int = Field(2500, description="Trajectory write frequency.")
+    cut: float = Field(9.0, description="Nonbonded cutoff (Å).")
+    gamma_ln: float = Field(1.0, description="Langevin gamma value (ps^-1).")
+    dt: float = Field(0.004, description="MD timestep (ps).")
+    hmr: Literal["yes", "no"] = Field("no", description="Hydrogen mass repartitioning toggle.")
+    temperature: float = Field(310.0, description="Simulation temperature (K).")
+    barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
 
     @field_validator("remd", "rocklin_correction", "hmr", mode="before")
     @classmethod
@@ -383,14 +460,17 @@ class FESimArgs(BaseModel):
 class RunSection(BaseModel):
     """Run-related settings."""
     model_config = ConfigDict(extra="forbid")
-    only_fe_preparation: bool = False
+    only_fe_preparation: bool = Field(
+        False,
+        description="When true, stop the workflow after FE preparation.",
+    )
     on_failure: str = Field("raise", description="Behavior on ligand failure: 'raise' or 'prune'")
     max_workers: int | None = Field(
         None,
-        description="Parallel workers for local backend (None = auto, 0 = serial)"
+        description="Parallel workers for local backend (None = auto, 0 = serial).",
     )
-    dry_run: bool = False
-    run_id: str = "auto"
+    dry_run: bool = Field(False, description="Force dry-run mode regardless of YAML setting.")
+    run_id: str = Field("auto", description="Run identifier to use (``auto`` picks latest).")
 
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
@@ -398,14 +478,14 @@ class RunConfig(BaseModel):
     """Top-level YAML config."""
     model_config = ConfigDict(extra="forbid")
 
-    version: int = 1
-    protocol: Literal["abfe", "asfe"] = "abfe"
-    backend: Literal["local", "slurm"] = "local"
+    version: int = Field(1, description="Schema version of the run configuration.")
+    protocol: Literal["abfe", "asfe"] = Field("abfe", description="High-level protocol to execute.")
+    backend: Literal["local", "slurm"] = Field("local", description="Execution backend.")
 
-    system: SystemSection
-    create: CreateArgs
-    fe_sim: FESimArgs = Field(default_factory=FESimArgs)
-    run: RunSection = Field(default_factory=RunSection)
+    system: SystemSection = Field(..., description="System-level configuration block.")
+    create: CreateArgs = Field(..., description="Settings for system creation/staging.")
+    fe_sim: FESimArgs = Field(default_factory=FESimArgs, description="Simulation parameter overrides.")
+    run: RunSection = Field(default_factory=RunSection, description="Execution controls.")
 
     @field_validator("protocol", mode="before")
     @classmethod
