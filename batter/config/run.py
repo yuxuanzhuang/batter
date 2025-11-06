@@ -31,6 +31,14 @@ class SlurmConfig(BaseModel):
     extra_sbatch: List[str] = Field(default_factory=list)
 
     def to_sbatch_flags(self) -> List[str]:
+        """
+        Produce a flat list of ``sbatch`` command-line flags.
+
+        Returns
+        -------
+        list of str
+            Sequence suitable for passing to :func:`subprocess.run`.
+        """
         flags: List[str] = []
         if self.partition:       flags += ["-p", self.partition]
         if self.time:            flags += ["-t", self.time]
@@ -59,54 +67,148 @@ class SystemSection(BaseModel):
 
 class CreateArgs(BaseModel):
     """
-    Inputs for system creation/staging (pre-simulation).
+    Inputs for system creation and staging.
+
+    Notes
+    -----
+    This section mirrors the ``create`` block in the run YAML file.
     """
     model_config = ConfigDict(extra="forbid")
 
-    system_name: Optional[str] = 'unnamed_system'
-    protein_input: Optional[Path] = None
-    system_input: Optional[Path] = None
-    system_coordinate: Optional[Path] = None
-    protein_align: Optional[str] = "name CA"
+    system_name: Optional[str] = Field(
+        "unnamed_system",
+        description="Logical system name; used to label outputs when not provided.",
+    )
+    protein_input: Optional[Path] = Field(
+        None,
+        description="Path to the receptor structure (PDB/mmCIF).",
+    )
+    system_input: Optional[Path] = Field(
+        None,
+        description="Optional pre-built system topology (e.g., PRMTOP).",
+    )
+    system_coordinate: Optional[Path] = Field(
+        None,
+        description="Optional starting coordinates (e.g., INPCRD/RST7).",
+    )
+    protein_align: Optional[str] = Field(
+        "name CA",
+        description="Selection string used to align the protein prior to staging.",
+    )
 
     # Ligand staging
-    ligand_paths: dict[str, Path] = Field(default_factory=dict)
-    ligand_input: Optional[Path] = None
+    ligand_paths: dict[str, Path] = Field(
+        default_factory=dict,
+        description="Mapping of ligand identifiers to structure files.",
+    )
+    ligand_input: Optional[Path] = Field(
+        None,
+        description="Alternative JSON file describing ligands (dict or list).",
+    )
 
     # Param settings
-    ligand_ff: str = "gaff2"
-    retain_lig_prot: bool = True
-    param_method: Literal["amber", "openff"] = "amber"
-    param_charge: Literal["bcc", "gas", "am1bcc"] = "am1bcc"
-    param_outdir: Optional[Path] = None
+    ligand_ff: str = Field(
+        "gaff2",
+        description="Ligand force field identifier passed to parameterization tools.",
+    )
+    retain_lig_prot: bool = Field(
+        True,
+        description="Whether to retain ligand protomers generated during staging.",
+    )
+    param_method: Literal["amber", "openff"] = Field(
+        "amber",
+        description="Parameterization backend to use for ligands.",
+    )
+    param_charge: Literal["bcc", "gas", "am1bcc"] = Field(
+        "am1bcc",
+        description="Charge derivation method for ligands.",
+    )
+    param_outdir: Optional[Path] = Field(
+        None,
+        description="Optional override for the ligand parameter output directory.",
+    )
 
     # Environment / anchors
-    anchor_atoms: list[str] = Field(default_factory=list)
-    lipid_mol: list[str] = Field(default_factory=list)
-    other_mol: list[str] = Field(default_factory=list)
-    overwrite: bool = True
+    anchor_atoms: list[str] = Field(
+        default_factory=list,
+        description="List of anchor atom selections used for restraint placement.",
+    )
+    lipid_mol: list[str] = Field(
+        default_factory=list,
+        description="Names of lipid molecules present in the system.",
+    )
+    other_mol: list[str] = Field(
+        default_factory=list,
+        description="Names of non-lipid cofactors or co-binders.",
+    )
+    overwrite: bool = Field(
+        True,
+        description="If true, overwrite existing artifacts in the staging directory.",
+    )
 
     # Extra restraints
     # position restraints on selected string
-    extra_restraints: Optional[str] = None
-    extra_restraint_fc: float = 10.0
+    extra_restraints: Optional[str] = Field(
+        None,
+        description="Optional positional restraint specification string.",
+    )
+    extra_restraint_fc: float = Field(
+        10.0,
+        description="Force constant (kcal/mol/Å^2) applied to ``extra_restraints``.",
+    )
 
     # additional conformational restraints file (NFE)
-    extra_conformation_restraints: Optional[Path] = None
+    extra_conformation_restraints: Optional[Path] = Field(
+        None,
+        description="Path to conformational restraint JSON (used for NFE workflows).",
+    )
 
     # Box / chemistry basics that are used before FE
-    receptor_ff: str = "protein.ff14SB"
-    lipid_ff: str = "lipid21"
-    solv_shell: float = 15.0
-    cation: str = "Na+"
-    anion: str = "Cl-"
-    ion_conc: float = 0.15
-    neutralize_only: Literal["yes", "no"] = "no"
-    water_model: str = "TIP3P"
+    receptor_ff: str = Field(
+        "protein.ff14SB",
+        description="Protein force-field identifier.",
+    )
+    lipid_ff: str = Field(
+        "lipid21",
+        description="Lipid force-field identifier.",
+    )
+    solv_shell: float = Field(
+        15.0,
+        description="Initial solvent shell radius (Å).",
+    )
+    cation: str = Field(
+        "Na+",
+        description="Cation species for ion placement.",
+    )
+    anion: str = Field(
+        "Cl-",
+        description="Anion species for ion placement.",
+    )
+    ion_conc: float = Field(
+        0.15,
+        description="Target salt concentration (M).",
+    )
+    neutralize_only: Literal["yes", "no"] = Field(
+        "no",
+        description="If ``\"yes\"``, neutralize the system without adding bulk salt.",
+    )
+    water_model: str = Field(
+        "TIP3P",
+        description="Water model used for solvation.",
+    )
 
-    l1_range: float = 6.0
-    min_adis: float = 3.0
-    max_adis: float = 7.0
+    l1_range: float = Field(
+        6.0,
+        description="Radius (Å) for L1 search when identifying pocket positions.",
+    )
+    min_adis: float = Field(
+        3.0,
+        description="Minimum anchor-atom distance used during pose selection (Å).",
+    )
+    max_adis: float = Field(
+        7.0,
+        description="Maximum anchor-atom distance used during pose selection (Å).",
+    )
 
     @field_validator("protein_input", "system_input", "system_coordinate", "param_outdir", mode="before")
     @classmethod
@@ -298,6 +400,18 @@ class RunConfig(BaseModel):
 
     @classmethod
     def load(cls, path: Path | str) -> "RunConfig":
+        """Load and validate a run configuration from disk.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Location of the YAML file to parse.
+
+        Returns
+        -------
+        RunConfig
+            Fully validated configuration object.
+        """
         import yaml
         p = Path(path)
         data = yaml.safe_load(p.read_text()) or {}
@@ -306,12 +420,30 @@ class RunConfig(BaseModel):
 
     @classmethod
     def model_validate_yaml(cls, yaml_text: str) -> "RunConfig":
+        """Validate a run configuration from an in-memory YAML string.
+
+        Parameters
+        ----------
+        yaml_text : str
+            Raw YAML content describing the run configuration.
+
+        Returns
+        -------
+        RunConfig
+            Validated configuration model.
+        """
         import yaml
         raw = yaml.safe_load(yaml_text) or {}
         return cls.model_validate(expand_env_vars(raw))
 
     def resolved_sim_config(self) -> SimulationConfig:
-        """Merge create/fe_sim into a SimulationConfig and surface SLURM bits."""
+        """Build the effective simulation configuration for this run.
+
+        Returns
+        -------
+        SimulationConfig
+            Simulation parameters derived from ``create`` and ``fe_sim`` sections.
+        """
         return SimulationConfig.from_sections(
             self.create,
             self.fe_sim,

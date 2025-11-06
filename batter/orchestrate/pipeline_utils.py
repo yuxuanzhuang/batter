@@ -16,19 +16,30 @@ def select_pipeline(
     *,
     sys_params: Optional[dict] = None,
 ) -> Pipeline:
-    """
-    Return the protocol-specific pipeline for a run.
+    """Return the protocol-specific pipeline for a run.
 
     Parameters
     ----------
-    protocol
-        Name of the requested protocol (e.g., "abfe", "asfe").
-    sim_cfg
-        Validated simulation configuration.
-    only_fe_prep
-        Whether to stop after FE preparation.
-    sys_params
-        Extra parameters consumed by system-level steps.
+    protocol : str
+        Name of the requested protocol (e.g., ``"abfe"``).
+    sim_cfg : SimulationConfig
+        Validated simulation configuration produced by :class:`RunConfig`.
+    only_fe_prep : bool
+        When ``True``, stop after FE preparation steps.
+    sys_params : dict, optional
+        Extra parameters passed to system-level pipeline steps.
+
+    Returns
+    -------
+    Pipeline
+        Pipeline instance tailored to the requested protocol.
+
+    Raises
+    ------
+    ValueError
+        If the protocol name is not recognised.
+    NotImplementedError
+        Raised for protocols that are planned but not yet available (e.g., RBFE).
     """
     name = (protocol or "abfe").lower()
     if name == "abfe":

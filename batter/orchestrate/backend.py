@@ -8,8 +8,12 @@ from batter.exec.local import LocalBackend
 
 
 def register_local_handlers(backend: LocalBackend) -> None:
-    """
-    Register the built-in step handlers for the local backend.
+    """Register built-in pipeline handlers on the local backend.
+
+    Parameters
+    ----------
+    backend : LocalBackend
+        Backend instance that should receive the default handler mapping.
     """
     from batter.exec.handlers.system_prep import system_prep as _system_prep
     from batter.exec.handlers.system_prep_masfe import system_prep_masfe as _system_prep_masfe
