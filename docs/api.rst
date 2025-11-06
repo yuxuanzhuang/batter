@@ -121,3 +121,11 @@ Execution Modules
    :noindex:
    :members:
    :undoc-members:
+
+Parameterisation Modules
+------------------------
+
+.. automodule:: batter.param.ligand
+   :noindex:
+   :members:
+   :undoc-members:

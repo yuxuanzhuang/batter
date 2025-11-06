@@ -97,6 +97,7 @@ Quick Links
    tutorial
    configuration
    api
+   parameterisation
    developer_guide
    developer_guide/pipeline_payloads_and_metadata
    cli

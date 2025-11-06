@@ -1,3 +1,5 @@
+"""Ligand parameterisation helpers for GAFF/GAFF2 and OpenFF workflows."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,19 +8,19 @@ import os
 import re
 import shutil
 import tempfile
+import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
+from gufe import SmallMoleculeComponent
 from loguru import logger
 from MDAnalysis import Universe
 from openff.toolkit.topology import Molecule
 from openff.toolkit.typing.engines.smirnoff.forcefield import get_available_force_fields
-from gufe import SmallMoleculeComponent
 from rdkit import Chem
 
-import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="gufe")
 
 from batter.utils import (
@@ -114,8 +116,14 @@ def _convert_mol_name_to_unique(
 
 
 def _ensure_sdf_internal_name(sdf_path: Union[str, Path], name: str) -> None:
-    """
-    Ensure the SDF header (_Name property) equals `name`. Overwrites the file in-place.
+    """Normalize the ``_Name`` property of an SDF file.
+
+    Parameters
+    ----------
+    sdf_path
+        Input SDF file.
+    name
+        Value written to the ``_Name`` header field.
     """
     p = str(sdf_path)
     suppl = Chem.SDMolSupplier(p, removeHs=False)
@@ -294,6 +302,7 @@ class LigandProcessing(ABC):
     # -------------------- name / io helpers --------------------
 
     def _generate_unique_name(self) -> None:
+        """Derive a unique residue name for the ligand."""
         self._get_mol_name()
         self._name = _convert_mol_name_to_unique(
             self._name, self.index, self.smiles, self.unique_mol_names
@@ -325,6 +334,7 @@ class LigandProcessing(ABC):
         raise NotImplementedError
 
     def _get_mol_name(self) -> None:
+        """Populate ``self._name`` from user input or the source file."""
         if self._name is not None:
             return
         if self.ligand_object.name is not None:
@@ -335,22 +345,23 @@ class LigandProcessing(ABC):
 
     @property
     def name(self) -> str:
+        """str: Three-character residue name used for generated artifacts."""
         return str(self._name)
 
     @property
     def smiles(self) -> str:
+        """str: Canonical SMILES with explicit hydrogens."""
         return self._cano_smiles
 
     @property
     def ligand_sdf_path(self) -> str:
+        """str: Path to the canonicalised SDF stored on disk."""
         return str(Path(self.output_dir) / f"{self.name}.sdf")
 
     # -------------------- parameterization --------------------
 
     def _calculate_partial_charge(self) -> None:
-        """
-        Quick net charge estimate with OpenFF (Gasteiger for AMBER, otherwise user choice).
-        """
+        """Estimate the net charge using the configured partial-charge method."""
         molecule = self.openff_molecule
         charge_method = self.charge if self.force_field == "openff" else "gasteiger"
         molecule.assign_partial_charges(partial_charge_method=charge_method)
@@ -651,10 +662,23 @@ class LigandFactory:
         ligand_ff: str = "gaff2",
         unique_mol_names: Optional[List[str]] = None,
     ) -> LigandProcessing:
-        """
-        Create a ligand processor based on the input format.
+        """Instantiate a concrete :class:`LigandProcessing` subclass.
 
-        Supported formats: ``.sdf``, ``.mol2``. (PDB is intentionally unsupported.)
+        Parameters
+        ----------
+        ligand_file, index, output_dir, ligand_name, charge, retain_lig_prot,
+        ligand_ff, unique_mol_names
+            Forwarded to the underlying processor.
+
+        Returns
+        -------
+        LigandProcessing
+            Processor configured for the detected file type.
+
+        Raises
+        ------
+        ValueError
+            If the file extension is unsupported.
         """
         path = str(ligand_file).lower()
         if path.endswith(".pdb"):
@@ -688,7 +712,7 @@ def batch_ligand_process(
     ligand_paths: Union[List[str], Dict[str, str]],
     output_path: Union[str, Path],
     retain_lig_prot: bool = True,
-    ligand_ph: float = 7.0,  # reserved for future use
+    ligand_ph: float = 7.0,
     ligand_ff: str = "gaff2",
     charge_method: str = "am1bcc",
     overwrite: bool = False,
@@ -696,9 +720,8 @@ def batch_ligand_process(
     max_slurm_jobs: int = 50,
     run_with_slurm_kwargs: Optional[Dict[str, Any]] = None,
     job_extra_directives: Optional[List[str]] = None,
-) -> List[str]:
-    """
-    Batch parameterize ligands to a **content-addressed** store.
+) -> Tuple[List[str], Dict[str, Tuple[str, str]]]:
+    """Parameterise ligands into a content-addressed store.
 
     Artifacts for each ligand are written under::
 
@@ -715,7 +738,7 @@ def batch_ligand_process(
     retain_lig_prot
         Whether to retain hydrogens from inputs.
     ligand_ph
-        Target protonation pH (not applied here; reserved).
+        Target protonation pH (reserved for future use).
     ligand_ff
         Force field ('gaff'/'gaff2' or a valid OpenFF release name).
     charge_method
@@ -729,10 +752,10 @@ def batch_ligand_process(
 
     Returns
     -------
-    list[str]
-        The list of **hash ids** (processing order) for all inputs.
-    Dict[str, Tuple[str, str]]
-        Mapping from input path to (hash_id, canonical_smiles).
+    list of str
+        Hash identifiers in processing order (duplicates preserved).
+    dict
+        Mapping from the provided input path to ``(hash_id, canonical_smiles)``.
     """
     # --- normalize inputs ---
     if isinstance(ligand_paths, list):
