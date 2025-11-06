@@ -70,6 +70,6 @@ Welcome to batter's documentation!
 
    getting_started
    user_guide
+   configuration
    api
    developer_guide
-

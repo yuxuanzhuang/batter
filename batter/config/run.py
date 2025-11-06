@@ -31,6 +31,14 @@ class SlurmConfig(BaseModel):
     extra_sbatch: List[str] = Field(default_factory=list)
 
     def to_sbatch_flags(self) -> List[str]:
+        """
+        Produce a flat list of ``sbatch`` command-line flags.
+
+        Returns
+        -------
+        list of str
+            Sequence suitable for passing to :func:`subprocess.run`.
+        """
         flags: List[str] = []
         if self.partition:       flags += ["-p", self.partition]
         if self.time:            flags += ["-t", self.time]
@@ -280,6 +288,18 @@ class RunConfig(BaseModel):
 
     @classmethod
     def load(cls, path: Path | str) -> "RunConfig":
+        """Load and validate a run configuration from disk.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Location of the YAML file to parse.
+
+        Returns
+        -------
+        RunConfig
+            Fully validated configuration object.
+        """
         import yaml
         p = Path(path)
         data = yaml.safe_load(p.read_text()) or {}
@@ -288,12 +308,30 @@ class RunConfig(BaseModel):
 
     @classmethod
     def model_validate_yaml(cls, yaml_text: str) -> "RunConfig":
+        """Validate a run configuration from an in-memory YAML string.
+
+        Parameters
+        ----------
+        yaml_text : str
+            Raw YAML content describing the run configuration.
+
+        Returns
+        -------
+        RunConfig
+            Validated configuration model.
+        """
         import yaml
         raw = yaml.safe_load(yaml_text) or {}
         return cls.model_validate(expand_env_vars(raw))
 
     def resolved_sim_config(self) -> SimulationConfig:
-        """Merge create/fe_sim into a SimulationConfig and surface SLURM bits."""
+        """Build the effective simulation configuration for this run.
+
+        Returns
+        -------
+        SimulationConfig
+            Simulation parameters derived from ``create`` and ``fe_sim`` sections.
+        """
         return SimulationConfig.from_sections(
             self.create,
             self.fe_sim,

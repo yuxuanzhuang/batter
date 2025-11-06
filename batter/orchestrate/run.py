@@ -42,12 +42,24 @@ from batter.orchestrate.results_io import fallback_totals_from_json, parse_resul
 
 
 def select_run_id(sys_root: Path | str, protocol: str, system_name: str, requested: str | None) -> Tuple[str, Path]:
-    """
-    Choose the run identifier for the current execution and ensure its directory exists.
+    """Resolve the execution run identifier and backing directory.
+
+    Parameters
+    ----------
+    sys_root : str or pathlib.Path
+        Root directory that stores executions for the system.
+    protocol : str
+        Protocol name used to label the run identifier.
+    system_name : str
+        Logical system name; used when autogenerating identifiers.
+    requested : str or None
+        User-specified run id. ``"auto"`` or ``None`` triggers automatic selection.
 
     Returns
     -------
-    (run_id, run_dir)
+    tuple
+        Two-element tuple ``(run_id, run_dir)`` where ``run_dir`` is guaranteed to
+        exist on disk.
     """
     runs_dir = Path(sys_root) / "executions"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +81,20 @@ def select_run_id(sys_root: Path | str, protocol: str, system_name: str, request
 
 
 def generate_run_id(protocol: str, system_name: str) -> str:
+    """Generate a timestamped identifier for a new execution.
+
+    Parameters
+    ----------
+    protocol : str
+        Name of the protocol (e.g., ``"abfe"``) that will run.
+    system_name : str
+        Logical system label used to tie runs to systems on disk.
+
+    Returns
+    -------
+    str
+        Identifier formatted as ``"{protocol}-{system_name}-{timestamp}"``.
+    """
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{protocol}-{system_name}-{ts}"
 
@@ -76,18 +102,18 @@ def generate_run_id(protocol: str, system_name: str) -> str:
 def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None,
                   system_overrides: Dict[str, Any] = None,
                   run_overrides: Dict[str, Any] | None = None) -> None:
-    """
-    Run a full BATTER workflow from a YAML configuration.
+    """Execute a BATTER workflow described by a YAML file.
 
-    Process
-    -------
-    1. Load RunConfig and SimulationConfig
-    2. Choose backend (local/slurm)
-    3. Build shared system once
-    4. Stage **all ligands at once** under executions/<run_id>/simulations/<LIG>/
-    5. Run **system_prep** and **param_ligands** ONCE at executions/<run_id>/
-    6. For each ligand, run the rest of the pipeline under its child root
-    7. Save one FE record per ligand (does not overwrite older runs)
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Path to the top-level run YAML file.
+    on_failure : {"prune", "raise"}, optional
+        Override for the failure policy applied to ligand pipelines.
+    system_overrides : dict, optional
+        Mapping of fields that should override ``system`` section values at load time.
+    run_overrides : dict, optional
+        Overrides applied to the ``run`` section (e.g., only FE preparation).
     """
     path = Path(path)
     logger.info(f"Starting BATTER run from {path}")

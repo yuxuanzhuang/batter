@@ -11,7 +11,24 @@ _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 
 def coerce_yes_no(value: Any) -> str | None:
     """
-    Normalise truthy flags into ``\"yes\"``/``\"no\"`` strings accepted by legacy code.
+    Normalize boolean-like values into ``\"yes\"`` or ``\"no\"``.
+
+    Parameters
+    ----------
+    value :
+        Input flag provided by the user. Supported types include ``bool``, numeric
+        scalars, or strings such as ``\"true\"`` and ``\"0\"``.
+
+    Returns
+    -------
+    str or None
+        ``\"yes\"`` or ``\"no\"`` when the flag can be interpreted. ``None`` is
+        returned unchanged to preserve optional semantics.
+
+    Raises
+    ------
+    ValueError
+        If the value cannot be coerced into a boolean switch.
     """
     if value is None:
         return None
@@ -32,13 +49,37 @@ def coerce_yes_no(value: Any) -> str | None:
 
 def sanitize_ligand_name(name: str) -> str:
     """
-    Convert arbitrary ligand identifiers into filesystem-safe uppercase tokens.
+    Convert a ligand identifier into a filesystem-safe token.
+
+    Parameters
+    ----------
+    name : str
+        Original ligand identifier, often derived from filenames or keys.
+
+    Returns
+    -------
+    str
+        Uppercase alphanumeric token with unsafe characters replaced by underscores.
     """
     cleaned = _SANITIZE_RE.sub("_", name.strip())
     return cleaned.strip("_").upper()
 
 
 def normalize_optional_path(value: Any) -> Path | None:
+    """
+    Resolve optional path-like values into :class:`pathlib.Path` objects.
+
+    Parameters
+    ----------
+    value :
+        Path candidate that may be ``None`` or an empty string. Strings may
+        contain environment variables or ``~``.
+
+    Returns
+    -------
+    pathlib.Path or None
+        Expanded path when provided; ``None`` if the value is empty.
+    """
     if value in (None, ""):
         return None
     return Path(os.path.expanduser(os.path.expandvars(str(value))))
@@ -47,6 +88,18 @@ def normalize_optional_path(value: Any) -> Path | None:
 def expand_env_vars(data: Any, *, base_dir: Path | None = None) -> Any:
     """
     Recursively expand environment variables in a YAML-derived structure.
+
+    Parameters
+    ----------
+    data :
+        Parsed YAML content to normalise.
+    base_dir : Path, optional
+        Base directory for resolving relative (``./``) paths.
+
+    Returns
+    -------
+    Any
+        Structure with string values expanded.
     """
     def _expand(value: Any) -> Any:
         if isinstance(value, str):

@@ -22,7 +22,18 @@ __all__ = [
 
 
 def load_run_config(path: Path | str) -> RunConfig:
-    """Read a run-level YAML file and return a validated:class:`RunConfig`."""
+    """Read a run-level YAML file and return a validated configuration.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Location of the run YAML file.
+
+    Returns
+    -------
+    RunConfig
+        Parsed run configuration.
+    """
     file_path = Path(path)
     raw: Dict[str, Any] = yaml.safe_load(file_path.read_text()) or {}
     expanded = expand_env_vars(raw, base_dir=file_path.parent)
@@ -30,7 +41,15 @@ def load_run_config(path: Path | str) -> RunConfig:
 
 
 def dump_run_config(cfg: RunConfig, path: Path | str) -> None:
-    """Serialize a :class:`RunConfig` to YAML."""
+    """Serialize a run configuration to YAML.
+
+    Parameters
+    ----------
+    cfg : RunConfig
+        Configuration object to export.
+    path : str or pathlib.Path
+        Destination path for the YAML file.
+    """
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(
@@ -39,7 +58,18 @@ def dump_run_config(cfg: RunConfig, path: Path | str) -> None:
 
 
 def load_simulation_config(path: Path | str) -> SimulationConfig:
-    """Load a simulation config YAML file."""
+    """Load a simulation configuration from YAML.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Path to the simulation YAML file.
+
+    Returns
+    -------
+    SimulationConfig
+        Validated simulation configuration.
+    """
     file_path = Path(path)
     raw: Dict[str, Any] = yaml.safe_load(file_path.read_text()) or {}
     expanded = expand_env_vars(raw, base_dir=file_path.parent)
@@ -47,7 +77,15 @@ def load_simulation_config(path: Path | str) -> SimulationConfig:
 
 
 def dump_simulation_config(cfg: SimulationConfig, path: Path | str) -> None:
-    """Write a :class:`SimulationConfig` to YAML."""
+    """Write a simulation configuration to YAML.
+
+    Parameters
+    ----------
+    cfg : SimulationConfig
+        Configuration object to serialise.
+    path : str or pathlib.Path
+        Output file path for the YAML representation.
+    """
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(

@@ -29,6 +29,22 @@ class SimulationConfig(BaseModel):
         *,
         partition: str | None = None,
     ) -> "SimulationConfig":
+        """Construct a :class:`SimulationConfig` from run sections.
+
+        Parameters
+        ----------
+        create : CreateArgs
+            System creation inputs taken from the ``create`` YAML section.
+        fe : FESimArgs
+            Free-energy simulation overrides from the ``fe_sim`` section.
+        partition : str, optional
+            Cluster partition specified in the run section.
+
+        Returns
+        -------
+        SimulationConfig
+            Fully merged simulation configuration ready for downstream use.
+        """
         create_data: dict[str, Any] = {
             "system_name": getattr(create, "system_name", "unnamed_system") or "unnamed_system",
             "receptor_ff": getattr(create, "receptor_ff", "protein.ff14SB"),
