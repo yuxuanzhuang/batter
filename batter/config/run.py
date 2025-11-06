@@ -58,6 +58,15 @@ class SystemSection(BaseModel):
     type: Literal["MABFE", "MASFE"] = "MABFE"
     output_folder: Path
 
+    def resolve_paths(self, base: Path) -> "SystemSection":
+        """
+        Return a copy where ``output_folder`` is absolute relative to ``base``.
+        """
+        folder = self.output_folder
+        if not folder.is_absolute():
+            folder = (base / folder).resolve()
+        return self.model_copy(update={"output_folder": folder})
+
     @field_validator("output_folder", mode="before")
     @classmethod
     def _coerce_path(cls, v):
@@ -267,6 +276,32 @@ class CreateArgs(BaseModel):
     def _coerce_ligand_input(cls, v):
         return normalize_optional_path(v)
 
+    def resolve_paths(self, base: Path) -> "CreateArgs":
+        """
+        Return a copy where path fields are absolute relative to ``base``.
+        """
+        updates: dict[str, object] = {}
+        path_fields = [
+            "protein_input",
+            "system_input",
+            "system_coordinate",
+            "param_outdir",
+            "ligand_input",
+            "extra_conformation_restraints",
+        ]
+        for name in path_fields:
+            path_val = getattr(self, name)
+            if isinstance(path_val, Path) and not path_val.is_absolute():
+                updates[name] = (base / path_val).resolve()
+
+        if self.ligand_paths:
+            resolved = {}
+            for key, path_val in self.ligand_paths.items():
+                resolved[key] = (base / path_val).resolve() if not path_val.is_absolute() else path_val
+            updates["ligand_paths"] = resolved
+
+        return self.model_copy(update=updates)
+
     @model_validator(mode="after")
     def _require_ligands(self):
         if not self.ligand_paths and not self.ligand_input:
@@ -305,14 +340,14 @@ class FESimArgs(BaseModel):
     lambdas: List[float] = Field(default_factory=list)
     sdr_dist: float = 0.0
     blocks: int = 0
-    lig_buffer: float = 15.0
+    lig_buffer: float = 0.0
 
     # Restraint forces
-    lig_distance_force: float = 5.0
-    lig_angle_force: float = 250.0
+    lig_distance_force: float = 0.0
+    lig_angle_force: float = 0.0
     lig_dihcf_force: float = 0.0
-    rec_com_force: float = 10.0
-    lig_com_force: float = 10.0
+    rec_com_force: float = 0.0
+    lig_com_force: float = 0.0
 
     # Box padding (used by some builders)
     buffer_x: float = 0.0
@@ -334,7 +369,7 @@ class FESimArgs(BaseModel):
     cut: float = 9.0
     gamma_ln: float = 1.0
     dt: float = 0.004
-    hmr: Literal["yes", "no"] = "yes"
+    hmr: Literal["yes", "no"] = "no"
     temperature: float = 310.0
     barostat: int = 2
 
@@ -342,22 +377,6 @@ class FESimArgs(BaseModel):
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
-    
-    # make sure lambdas are sorted otherwise raise error
-    @field_validator("lambdas", mode="after")
-    @classmethod
-    def _validate_lambdas(cls, v):
-        if sorted(v) != v:
-            raise ValueError("Lambda values must be in ascending order.")
-        return v
-    
-    # make sure lig_distance_force is not zero or negative
-    @field_validator("lig_distance_force", "lig_angle_force", "lig_com_force", mode="after")
-    @classmethod
-    def _validate_force_const(cls, v):
-        if v <= 0.0:
-            raise ValueError(f"{v} must be positive and non-zero.")
-        return v
 
 
 
@@ -416,7 +435,8 @@ class RunConfig(BaseModel):
         p = Path(path)
         data = yaml.safe_load(p.read_text()) or {}
         data = expand_env_vars(data, base_dir=p.parent)
-        return cls.model_validate(data)
+        cfg = cls.model_validate(data)
+        return cfg.with_base_dir(p.parent)
 
     @classmethod
     def model_validate_yaml(cls, yaml_text: str) -> "RunConfig":
@@ -434,7 +454,8 @@ class RunConfig(BaseModel):
         """
         import yaml
         raw = yaml.safe_load(yaml_text) or {}
-        return cls.model_validate(expand_env_vars(raw))
+        cfg = cls.model_validate(expand_env_vars(raw))
+        return cfg.with_base_dir(Path.cwd())
 
     def resolved_sim_config(self) -> SimulationConfig:
         """Build the effective simulation configuration for this run.
@@ -449,3 +470,11 @@ class RunConfig(BaseModel):
             self.fe_sim,
             partition=self.run.slurm.partition,
         )
+
+    def with_base_dir(self, base_dir: Path) -> "RunConfig":
+        """
+        Return a copy with relative paths resolved against ``base_dir``.
+        """
+        resolved_system = self.system.resolve_paths(base_dir)
+        resolved_create = self.create.resolve_paths(base_dir)
+        return self.model_copy(update={"system": resolved_system, "create": resolved_create})

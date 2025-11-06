@@ -13,6 +13,7 @@ create:
   protein_align: name CA
   ligand_input: reference/nonmembrane/ligands_dict.json
   ligand_ff: openff-2.2.1
+  param_outdir: ligand_params
   retain_lig_prot: true
   param_charge: am1bcc
   anchor_atoms:
