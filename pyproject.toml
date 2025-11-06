@@ -21,7 +21,8 @@ dependencies = [
     "pandas",
     "pydantic",
     "click",
-    "loguru"
+    "loguru",
+    "pyyaml",
 ]
 
 [project.scripts]

@@ -48,14 +48,15 @@ Run an example configuration:
 
 .. code-block:: bash
 
-   new_batter run examples/no_membrane/BRD4/mabfe_nonmembrane.yaml --on-failure=prune
+   cd examples
+   batter run mabfe.yaml
 
 Use ``--help`` to see all commands:
 
 .. code-block:: bash
 
-   new_batter -h
-   new_batter run -h
+   batter -h
+   batter run -h
 
 Examples
 ==============================
