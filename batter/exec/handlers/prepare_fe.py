@@ -11,6 +11,7 @@ from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
+from batter.pipeline.payloads import StepPayload, SystemParams
 
 from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
 
@@ -55,13 +56,16 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
     - Builders internally call the shared `write_run_file()` to materialize run scripts.
     """
     # 1) Parse sim config + components
-    sim = SimulationConfig.model_validate(params["sim"])
+    payload = StepPayload.model_validate(params)
+    if payload.sim is None:
+        raise ValueError("[prepare_fe] Missing simulation configuration in payload.")
+    sim = payload.sim
     components = list(getattr(sim, "components", []) or [])
     if not components:
         raise ValueError("No components specified in sim config.")
 
-    ligand = (system.meta or {}).get("ligand")
-    residue_name = (system.meta or {}).get("residue_name")
+    ligand = system.meta.get("ligand")
+    residue_name = system.meta.get("residue_name")
     if not ligand or not residue_name:
         raise ValueError("System meta must include 'ligand' and 'residue_name'.")
 
@@ -69,10 +73,11 @@ def prepare_fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) ->
     system_root = _system_root_for(child_root)
     param_dir_dict = _load_param_dir_dict(system_root)
 
-    comp_windows: dict = params["sim"]["component_lambdas"]
-    extra_restraints: Optional[dict] = params['sys_params'].get("extra_restraints", None)
-    extra_restraints_fc: float = float(params['sys_params'].get("extra_restraints_fc", 10.0))
-    extra_conformation_restraints: Optional[Path] = params['sys_params'].get("extra_conformation_restraints", None)
+    comp_windows: dict = sim.component_lambdas  # type: ignore[attr-defined]
+    sys_params = payload.sys_params or SystemParams({})
+    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
+    extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
+    extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
 
     infe = False
     if extra_restraints is not None:
@@ -142,13 +147,16 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
     Builders re-use the same interface; here we just iterate components and request
     per-window builds by calling with win >= 1.
     """
-    sim = SimulationConfig.model_validate(params["sim"])
+    payload = StepPayload.model_validate(params)
+    if payload.sim is None:
+        raise ValueError("[prepare_fe_windows] Missing simulation configuration in payload.")
+    sim = payload.sim
     components = list(getattr(sim, "components", []) or [])
     if not components:
         raise RuntimeError("No components specified in sim config for FE window preparation.")
 
-    ligand = (system.meta or {}).get("ligand")
-    residue_name = (system.meta or {}).get("residue_name")
+    ligand = system.meta.get("ligand")
+    residue_name = system.meta.get("residue_name")
     if not ligand or not residue_name:
         raise ValueError("System meta must include 'ligand' and 'residue_name'.")
 
@@ -157,10 +165,11 @@ def prepare_fe_windows_handler(step: Step, system: SimSystem, params: Dict[str, 
 
     param_dir_dict = _load_param_dir_dict(system_root)
 
-    comp_windows: dict = params["sim"]["component_lambdas"]
-    extra_restraints: Optional[dict] = params['sys_params'].get("extra_restraints", None)
-    extra_restraints_fc: float = float(params['sys_params'].get("extra_restraints_fc", 10.0))
-    extra_conformation_restraints: Optional[Path] = params['sys_params'].get("extra_conformation_restraints", None)
+    comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
+    sys_params = payload.sys_params or SystemParams({})
+    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
+    extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
+    extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
 
     infe = False
     if extra_restraints is not None:

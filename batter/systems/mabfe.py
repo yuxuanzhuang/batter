@@ -91,7 +91,7 @@ class MABFEBuilder(SystemBuilder):
             ligands=tuple(staged_ligs),
             lipid_mol=tuple(args.lipid_mol),
             anchors=tuple(args.anchor_atoms),
-            meta={"ligand_ff": getattr(args, "ligand_ff", "gaff2")},
+            meta=system.meta.merge(ligand_ff=getattr(args, "ligand_ff", "gaff2")),
         )
         logger.info(
             f"Prepared MABFE system '{updated.name}' at {updated.root} (ligands: {len(updated.ligands)})")
@@ -143,7 +143,7 @@ class MABFEBuilder(SystemBuilder):
                 ligands=(lig_dst,),
                 lipid_mol=parent.lipid_mol,
                 anchors=parent.anchors,
-                meta={**(parent.meta or {}), "ligand": name},
+                meta=parent.meta.merge(ligand=name),
             )
             children[name] = child
 
@@ -174,7 +174,7 @@ class MABFEBuilder(SystemBuilder):
             ligands=(dst,),
             lipid_mol=parent.lipid_mol,
             anchors=parent.anchors,
-            meta={**(parent.meta or {}), "ligand": lig_name},
+            meta=parent.meta.merge(ligand=lig_name),
         )
 
     # ------------------ internal utilities ------------------

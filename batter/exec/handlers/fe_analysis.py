@@ -9,6 +9,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.pipeline.payloads import StepPayload
 from batter.orchestrate.state_registry import register_phase_state
 
 from batter.analysis.analysis import analyze_lig_task
@@ -66,16 +67,40 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     lig = system.meta.get("ligand")
     mol = system.meta.get("residue_name")
 
-    sim = params.get("sim", {}) or {}
-    # Pull analysis settings, with safe defaults
-    components: List[str] = list(sim.get("components") or components_under(system.root / "fe"))
-    temperature: float = float(sim.get("temperature", 300.0))
-    water_model: str = str(sim.get("water_model", "tip3p")).lower()
-    rocklin_correction = bool(sim.get("rocklin_correction", False))
-    n_workers: int = int(sim.get("n_workers", 4))
+    payload = StepPayload.model_validate(params)
+    sim_cfg = payload.sim
+
+    fe_root = system.root / "fe"
+    if not fe_root.exists():
+        raise FileNotFoundError(f"[analyze:{lig}] Missing FE folder: {fe_root}")
+
+    default_components = components_under(fe_root)
+    components: List[str] = list(default_components)
+    temperature: float = 300.0
+    water_model: str = "tip3p"
+    rocklin_correction: bool = False
+    n_workers: int = 4
+    rest: Tuple[float, float, float, float, float] = (0.0, 0.0, 0.0, 0.0, 0.0)
+
+    if sim_cfg is not None:
+        if sim_cfg.components:
+            components = list(sim_cfg.components)
+        temperature = float(sim_cfg.temperature)
+        water_model = str(sim_cfg.water_model).lower()
+        rocklin_correction = bool(sim_cfg.rocklin_correction)
+
+    components = list(payload.get("components", components))
+    temperature = float(payload.get("temperature", temperature))
+    water_model = str(payload.get("water_model", water_model)).lower()
+    rocklin_correction = bool(payload.get("rocklin_correction", rocklin_correction))
+    n_workers = int(payload.get("n_workers", n_workers))
+    rest_value = payload.get("rest", rest)
+    if rest_value is None:
+        rest_value = rest
+    rest = tuple(rest_value)
 
     # Optional: (start_idx, end_idx) subset of windows to analyze; else analyze all available
-    sim_range = sim.get("sim_range", None)
+    sim_range = payload.get("sim_range", None)
     if sim_range is not None:
         try:
             sim_range = (int(sim_range[0]), int(sim_range[1]))
@@ -83,16 +108,8 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
             logger.warning(f"[analyze:{lig}] Ignoring invalid sim_range={sim_range!r}")
             sim_range = None
 
-    # Optional: restraint tuple for Boresch analytical term (k’s etc.)
-    # Default to zeros if not provided or not applicable.
-    rest: Tuple[float, float, float, float, float] = sim.get("rest")
-
-    fe_root = system.root / "fe"
-    if not fe_root.exists():
-        raise FileNotFoundError(f"[analyze:{lig}] Missing FE folder: {fe_root}")
-
     # Try to reconstruct windows per component if the pipeline didn’t inject it
-    component_windows_dict = params.get("component_windows_dict")
+    component_windows_dict = payload.get("component_windows_dict")
     if not component_windows_dict:
         component_windows_dict = _infer_component_windows_dict(fe_root, components)
 

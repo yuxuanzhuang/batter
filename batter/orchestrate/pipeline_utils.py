@@ -7,6 +7,7 @@ from typing import Optional
 from batter.pipeline.pipeline import Pipeline
 from batter.config.simulation import SimulationConfig
 from batter.pipeline.factory import make_abfe_pipeline, make_asfe_pipeline
+from batter.pipeline.payloads import SystemParams
 
 
 def select_pipeline(
@@ -14,7 +15,7 @@ def select_pipeline(
     sim_cfg: SimulationConfig,
     only_fe_prep: bool,
     *,
-    sys_params: Optional[dict] = None,
+    sys_params: Optional[SystemParams | dict] = None,
 ) -> Pipeline:
     """Return the protocol-specific pipeline for a run.
 
@@ -26,7 +27,7 @@ def select_pipeline(
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
         When ``True``, stop after FE preparation steps.
-    sys_params : dict, optional
+    sys_params : SystemParams or dict, optional
         Extra parameters passed to system-level pipeline steps.
 
     Returns
@@ -42,16 +43,22 @@ def select_pipeline(
         Raised for protocols that are planned but not yet available (e.g., RBFE).
     """
     name = (protocol or "abfe").lower()
+    params_model = (
+        sys_params
+        if isinstance(sys_params, SystemParams)
+        else SystemParams(sys_params or {})
+    )
+
     if name == "abfe":
         return make_abfe_pipeline(
             sim_cfg,
-            sys_params=sys_params or {},
+            sys_params=params_model,
             only_fe_preparation=only_fe_prep,
         )
     if name == "asfe":
         return make_asfe_pipeline(
             sim_cfg,
-            sys_params=sys_params or {},
+            sys_params=params_model,
             only_fe_preparation=only_fe_prep,
         )
     if name == "rbfe":

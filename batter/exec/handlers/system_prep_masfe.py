@@ -9,6 +9,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.orchestrate.state_registry import register_phase_state
 
 # -----------------------
@@ -111,7 +112,8 @@ def system_prep_masfe(step: Step, system: SimSystem, params: Dict[str, Any]) -> 
     logger.info(f"[system_prep_masfe] Preparing solvation FE system in {system.root}")
 
     # Expect the same sys_params envelope your orchestrator already passes
-    sys_params = params["sys_params"]
+    payload = StepPayload.model_validate(params)
+    sys_params = payload.sys_params or SystemParams({})
     lig_map = sys_params["ligand_paths"]  # should already be {NAME: abs_path}
 
     runner = _MASFESystemPrepRunner(system)

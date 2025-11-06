@@ -7,6 +7,7 @@ from loguru import logger
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobManager, SlurmJobSpec
+from batter.pipeline.payloads import StepPayload
 from batter.orchestrate.state_registry import register_phase_state
 
 def _phase_paths(root: Path) -> dict[str, Path]:
@@ -23,9 +24,22 @@ def _phase_paths(root: Path) -> dict[str, Path]:
     }
 
 
-def _read_partition(params: Dict[str, Any]) -> str:
-    sim = params.get("sim", {}) or {}
-    part = sim.get("partition") or sim.get("queue")
+def _read_partition(payload: StepPayload) -> str:
+    if payload.sim is not None:
+        sim_cfg = payload.sim
+        part = getattr(sim_cfg, "partition", None) or getattr(sim_cfg, "queue", None)
+        if part:
+            return str(part)
+        sim_dict = sim_cfg.model_dump()
+        part = sim_dict.get("partition") or sim_dict.get("queue")
+        if part:
+            return str(part)
+    sim_extra = payload.get("sim", {})
+    if isinstance(sim_extra, dict):
+        part = sim_extra.get("partition") or sim_extra.get("queue")
+        if part:
+            return str(part)
+    part = payload.get("partition") or payload.get("queue")
     return str(part) if part else "normal"
 
 
@@ -41,9 +55,10 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     - If job not active (or was killed), resubmits.
     - Blocks until FINISHED/FAILED; raises on FAILED/unknown terminal state.
     """
+    payload = StepPayload.model_validate(params)
     paths = _phase_paths(system.root)
-    lig = (system.meta or {}).get("ligand", system.name)
-    part = _read_partition(params)
+    lig = system.meta.get("ligand", system.name)
+    part = _read_partition(payload)
 
     finished_rel = paths["finished"].relative_to(system.root).as_posix()
     failed_rel = paths["failed"].relative_to(system.root).as_posix()
@@ -92,6 +107,6 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         extra_sbatch=["-p", part],
     )
 
-    mgr = params.get("job_mgr")
+    mgr = payload.get("job_mgr")
     mgr.add(spec)
     return ExecResult(job_ids=[], artifacts={"workdir": paths["phase_dir"]})

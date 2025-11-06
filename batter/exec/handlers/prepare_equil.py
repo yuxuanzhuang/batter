@@ -10,6 +10,7 @@ from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
 from batter.config.simulation import SimulationConfig
 from batter._internal.builders.equil import PrepareEquilBuilder
+from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.orchestrate.state_registry import register_phase_state
 
 
@@ -22,16 +23,20 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     - Invokes the PrepareEquilBuilder
     """
     # 1) Parse sim config
-    sim = SimulationConfig.model_validate(params["sim"])
+    payload = StepPayload.model_validate(params)
+    if payload.sim is None:
+        raise ValueError("[prepare_equil] Missing simulation configuration in payload.")
+    sim = payload.sim
 
     # 2) Resolve ligand name (e.g., folder name under ligands/)
     ligand = system.meta["ligand"]
     residue_name = system.meta["residue_name"]
     working_dir: Path = system.root / "equil"
-    comp_windows: dict = params.get("component_windows", {})
-    extra_restraints: Optional[dict] = params['sys_params'].get("extra_restraints", None)
-    extra_restraints_fc: float = float(params['sys_params'].get("extra_restraints_fc", 10.0))
-    extra_conformation_restraints: Optional[Path] = params['sys_params'].get("extra_conformation_restraints", None)
+    comp_windows: dict = payload.get("component_windows", {})
+    sys_params = payload.sys_params or SystemParams({})
+    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
+    extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
+    extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
     
     infe = False
     if extra_restraints is not None:

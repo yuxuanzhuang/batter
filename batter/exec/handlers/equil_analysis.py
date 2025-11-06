@@ -12,6 +12,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.pipeline.payloads import StepPayload
 from batter.orchestrate.state_registry import register_phase_state
 
 from batter.analysis.sim_validation import SimValidator
@@ -90,11 +91,16 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
         success=[[rep_rel], [unbound_rel]],
     )
 
-    sim = params.get("sim")
-    threshold = float(params.get("unbound_threshold", 8.0))
-    release_eq = sim.get("release_eq")
+    payload = StepPayload.model_validate(params)
+    sim = payload.sim
+    if sim is None:
+        raise ValueError("[equil_analysis] Missing simulation configuration in payload.")
+    threshold = float(payload.get("unbound_threshold", 8.0))
+    release_eq = list(sim.release_eq or [])
+    if not release_eq:
+        release_eq = [0.0]
     n_eq = len(release_eq)
-    hmr = str(sim.get("hmr", "yes"))  # "yes"/"no"
+    hmr = str(sim.hmr)  # "yes"/"no"
 
     # hard requirements
     if not p["finished"].exists():

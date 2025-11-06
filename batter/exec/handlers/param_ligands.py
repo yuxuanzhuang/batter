@@ -9,6 +9,7 @@ from loguru import logger
 
 from batter.pipeline.step import Step, ExecResult
 from batter.systems.core import SimSystem
+from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.orchestrate.state_registry import register_phase_state
 
 
@@ -46,13 +47,13 @@ def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str):
             logger.warning(f"Failed to copy {src} to {dst}: {e}")
 
 
-def _resolve_outdir(template: str, system: SimSystem) -> Path:
+def _resolve_outdir(template: str | Path, system: SimSystem) -> Path:
     """
     Resolve {WORK} placeholder in output dir, then absolutize & expanduser.
     """
-    if not isinstance(template, str):
+    if not isinstance(template, (str, Path)):
         raise TypeError("param_ligands.outdir must be a string")
-    resolved = template.replace("{WORK}", system.root.as_posix())
+    resolved = str(template).replace("{WORK}", system.root.as_posix())
     return Path(resolved).expanduser().resolve()
 
 
@@ -63,7 +64,8 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
       - Links per-ligand params into <root>/ligands/<LIG>/params/*
       - Emits an index for downstream steps
     """
-    sys_params = params["sys_params"]
+    payload = StepPayload.model_validate(params)
+    sys_params = payload.sys_params or SystemParams({})
     lig_root = system.root / "simulations"
     if not lig_root.exists():
         raise FileNotFoundError(f"[param_ligands] No 'ligands/' at {system.root}. Did staging run?")

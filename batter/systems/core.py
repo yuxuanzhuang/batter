@@ -1,15 +1,83 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Sequence, Protocol
+from typing import Any, Dict, Mapping, Optional, Tuple, Sequence, Protocol
 
 
 __all__ = [
     "SimSystem",
     "CreateSystemLike",
     "SystemBuilder",
+    "SystemMeta",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class SystemMeta:
+    """Structured metadata attached to a :class:`SimSystem`."""
+
+    ligand: Optional[str] = None
+    residue_name: Optional[str] = None
+    mode: Optional[str] = None
+    param_dir_dict: Dict[str, str] = field(default_factory=dict)
+    extras: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_mapping(cls, data: Optional[Mapping[str, Any]]) -> "SystemMeta":
+        if data is None:
+            return cls()
+        if isinstance(data, SystemMeta):
+            return data
+        mapping = dict(data)
+        known = {
+            "ligand": mapping.pop("ligand", None),
+            "residue_name": mapping.pop("residue_name", None),
+            "mode": mapping.pop("mode", None),
+            "param_dir_dict": mapping.pop("param_dir_dict", {}) or {},
+        }
+        return cls(
+            ligand=known["ligand"],
+            residue_name=known["residue_name"],
+            mode=known["mode"],
+            param_dir_dict=dict(known["param_dir_dict"]),
+            extras=dict(mapping),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        data: Dict[str, Any] = {}
+        if self.ligand is not None:
+            data["ligand"] = self.ligand
+        if self.residue_name is not None:
+            data["residue_name"] = self.residue_name
+        if self.mode is not None:
+            data["mode"] = self.mode
+        if self.param_dir_dict:
+            data["param_dir_dict"] = dict(self.param_dir_dict)
+        data.update(self.extras)
+        return data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        if key == "ligand":
+            return self.ligand if self.ligand is not None else default
+        if key == "residue_name":
+            return self.residue_name if self.residue_name is not None else default
+        if key == "mode":
+            return self.mode if self.mode is not None else default
+        if key == "param_dir_dict":
+            return self.param_dir_dict if self.param_dir_dict else default
+        return self.extras.get(key, default)
+
+    def __getitem__(self, item: str) -> Any:
+        value = self.get(item, None)
+        if value is None and item not in {"ligand", "residue_name", "mode", "param_dir_dict"} and item not in self.extras:
+            raise KeyError(item)
+        return value
+
+    def merge(self, **updates: Any) -> "SystemMeta":
+        data = self.to_dict()
+        data.update(updates)
+        return SystemMeta.from_mapping(data)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,8 +107,8 @@ class SimSystem:
         Other cofactor present in the system``).
     anchors : tuple[str, ...]
         Anchor atoms in the form ``"RESID@ATOM"`` (e.g., ``"85@CA"``).
-    meta : dict
-        Free-form metadata for provenance (e.g., software versions).
+    meta : SystemMeta
+        Free-form metadata bundle for provenance (e.g., software versions).
     """
     name: str
     root: Path
@@ -51,7 +119,11 @@ class SimSystem:
     lipid_mol: Tuple[str, ...] = ()
     other_mol: Tuple[str, ...] = ()
     anchors: Tuple[str, ...] = ()
-    meta: Dict[str, str] = None
+    meta: SystemMeta = field(default_factory=SystemMeta)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.meta, SystemMeta):
+            object.__setattr__(self, "meta", SystemMeta.from_mapping(self.meta))
 
     def with_artifacts(self, **kw) -> "SimSystem":
         """
@@ -62,6 +134,8 @@ class SimSystem:
         >>> sys = SimSystem(name="X", root=Path("work/X"))
         >>> sys2 = sys.with_artifacts(topology=Path("work/X/top.prmtop"))
         """
+        if "meta" in kw and not isinstance(kw["meta"], SystemMeta):
+            kw["meta"] = SystemMeta.from_mapping(kw["meta"])
         return replace(self, **kw)
 
 

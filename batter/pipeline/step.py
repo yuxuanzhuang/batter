@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping
+from typing import Any, List, Mapping
 
 
 __all__ = ["Step", "ExecResult"]
@@ -18,8 +18,8 @@ class Step:
         Unique step name (e.g., ``"prepare_fe"``).
     requires : list[str]
         Names of steps that must complete before this step can run.
-    params : dict
-        Free-form, JSON-serializable parameters consumed by the backend.
+    payload : Any, optional
+        Typed payload consumed by the backend. Typically a :class:`~batter.pipeline.payloads.StepPayload`.
 
     Notes
     -----
@@ -28,7 +28,12 @@ class Step:
     """
     name: str
     requires: List[str] = field(default_factory=list)
-    params: Dict[str, Any] = field(default_factory=dict)
+    payload: Any = None
+
+    @property
+    def params(self) -> Any:
+        """Backwards-compatible alias for ``payload``."""
+        return self.payload
 
 
 @dataclass(slots=True)

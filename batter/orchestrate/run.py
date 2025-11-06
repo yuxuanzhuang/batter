@@ -28,6 +28,7 @@ from batter.exec.slurm import SlurmBackend
 
 from batter.pipeline.pipeline import Pipeline
 from batter.pipeline.step import Step
+from batter.pipeline.payloads import StepPayload
 
 from batter.runtime.portable import ArtifactStore
 from batter.runtime.fe_repo import FEResultsRepository, FERecord
@@ -265,12 +266,12 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     for s in tpl.ordered_steps():
         if s.name in removed:
             continue
-        p = dict(s.params)
+        payload = s.payload.copy_with() if s.payload is not None else None
         per_lig_steps.append(
             Step(
                 name=s.name,
                 requires=[r for r in s.requires if r not in removed],
-                params=p,
+                payload=payload,
             )
         )
     per_lig = Pipeline(per_lig_steps)
@@ -278,10 +279,10 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # IMPORTANT: also update the `sim` param on each remaining step
     patched = []
     for s in per_lig.ordered_steps():
-        p = dict(s.params)
-        if "sim" in p:
-            p["sim"] = sim_cfg_updated.model_dump()
-        patched.append(Step(name=s.name, requires=s.requires, params=p))
+        payload = s.payload
+        if payload is not None and payload.sim is not None:
+            payload = payload.copy_with(sim=sim_cfg_updated)
+        patched.append(Step(name=s.name, requires=s.requires, payload=payload))
     per_lig = Pipeline(patched)
 
     # --- define phases explicitly ---
@@ -300,7 +301,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
             Step(
                 name=s.name,
                 requires=[r for r in s.requires if r in selected_names],
-                params=dict(s.params),
+                payload=s.payload,
             )
             for s in selected
         ]
@@ -331,6 +332,11 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     children_all: List[SimSystem] = []
     for lig_name, resn in lig_resname_map.items():
         d = run_dir / "simulations" / lig_name
+        child_meta = sys_exec.meta.merge(
+            ligand=lig_name,
+            residue_name=resn,
+            param_dir_dict=param_dir_dict,
+        )
         children_all.append(
             SimSystem(
                 name=f"{sys_exec.name}:{lig_name}:{run_id}",
@@ -342,12 +348,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
                 lipid_mol=sys_exec.lipid_mol,
                 other_mol=sys_exec.other_mol,
                 anchors=sys_exec.anchors,
-                meta={
-                    **(sys_exec.meta or {}),
-                    "ligand": lig_name,
-                    "residue_name": resn,
-                    "param_dir_dict": param_dir_dict,
-                },
+                meta=child_meta,
             )
         )
     # start with all children
@@ -367,9 +368,8 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     def _inject_mgr(p: Pipeline) -> Pipeline:
         patched = []
         for s in p.ordered_steps():
-            prm = dict(s.params)
-            prm["job_mgr"] = job_mgr
-            patched.append(Step(name=s.name, requires=s.requires, params=prm))
+            payload = (s.payload or StepPayload()).copy_with(job_mgr=job_mgr)
+            patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
 
     phase_equil = _inject_mgr(phase_equil)
@@ -392,7 +392,7 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         keep = []
         for c in children_list:
             if (c.root / "equil" / "UNBOUND").exists():
-                lig = (c.meta or {}).get("ligand", c.name)
+                lig = c.meta.get("ligand", c.name)
                 logger.warning(f"Pruning UNBOUND ligand after equil: {lig}")
                 continue
             keep.append(c)

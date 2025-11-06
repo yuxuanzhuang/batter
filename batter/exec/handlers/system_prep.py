@@ -545,18 +545,19 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
 
     """
     logger.info(f"[system_prep] Preparing system in {system.root}")
-    sys_params = params['sys_params']
-    yaml_dir = Path(sys_params['yaml_dir']).resolve()
+    payload = StepPayload.model_validate(params)
+    sys_params = payload.sys_params or SystemParams({})
+    yaml_dir = Path(sys_params["yaml_dir"]).resolve()
 
     # accept new key `system_input` or legacy `system_topology`
-    system_topology = sys_params['system_input']
+    system_topology = sys_params["system_input"]
 
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
         system_name=sys_params["system_name"],
         protein_input=sys_params["protein_input"],
         system_topology=system_topology,
-        ligand_paths=sys_params['ligand_paths'],
+        ligand_paths=sys_params["ligand_paths"],
         anchor_atoms=list(sys_params.get("anchor_atoms", [])),
         ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),
         receptor_segment=sys_params.get("receptor_segment"),

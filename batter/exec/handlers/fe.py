@@ -14,12 +14,26 @@ from batter.systems.core import SimSystem
 from batter.exec.slurm_mgr import SlurmJobSpec  # job manager is passed via params["job_mgr"]
 from batter.utils import components_under
 from batter.orchestrate.state_registry import register_phase_state
+from batter.pipeline.payloads import StepPayload
 
 # ---------------- utilities ----------------
 
-def _read_partition(params: Dict[str, Any]) -> str:
-    sim = params.get("sim", {}) or {}
-    part = sim.get("partition") or sim.get("queue")
+def _read_partition(payload: StepPayload) -> str:
+    if payload.sim is not None:
+        sim_cfg = payload.sim
+        part = getattr(sim_cfg, "partition", None) or getattr(sim_cfg, "queue", None)
+        if part:
+            return str(part)
+        sim_dict = sim_cfg.model_dump()
+        part = sim_dict.get("partition") or sim_dict.get("queue")
+        if part:
+            return str(part)
+    sim_extra = payload.get("sim", {})
+    if isinstance(sim_extra, dict):
+        part = sim_extra.get("partition") or sim_extra.get("queue")
+        if part:
+            return str(part)
+    part = payload.get("partition") or payload.get("queue")
     return str(part) if part else "normal"
 
 def _active_job_count(user: Optional[str] = None) -> int:
@@ -104,11 +118,12 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
     - Applies one-time job cap check per ligand
     - Requires a global manager at params["job_mgr"]
     """
-    lig = (system.meta or {}).get("ligand", system.name)
-    part = _read_partition(params)
-    max_jobs = int(params.get("max_active_jobs", 2000))
+    payload = StepPayload.model_validate(params)
+    lig = system.meta.get("ligand", system.name)
+    part = _read_partition(payload)
+    max_jobs = int(payload.get("max_active_jobs", 2000))
 
-    job_mgr = params.get("job_mgr")
+    job_mgr = payload.get("job_mgr")
     if job_mgr is None:
         raise ValueError("[fe_equil] params must include a global 'job_mgr' (SlurmJobManager).")
 
@@ -173,11 +188,12 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     - Applies one-time job cap check per ligand
     - Requires a global manager at params["job_mgr"]
     """
-    lig = (system.meta or {}).get("ligand", system.name)
-    part = _read_partition(params)
-    max_jobs = int(params.get("max_active_jobs", 2000))
+    payload = StepPayload.model_validate(params)
+    lig = system.meta.get("ligand", system.name)
+    part = _read_partition(payload)
+    max_jobs = int(payload.get("max_active_jobs", 2000))
 
-    job_mgr = params.get("job_mgr")
+    job_mgr = payload.get("job_mgr")
     if job_mgr is None:
         raise ValueError("[fe] params must include a global 'job_mgr' (SlurmJobManager).")
 

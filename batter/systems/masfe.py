@@ -77,7 +77,7 @@ class MASFEBuilder(SystemBuilder):
             ligands=tuple(staged_ligs),
             lipid_mol=tuple(),            # not used for solvation FE
             anchors=tuple(),              # not used for solvation FE
-            meta={"ligand_ff": getattr(args, "ligand_ff", "gaff2"), "mode": "MASFE"},
+            meta=system.meta.merge(ligand_ff=getattr(args, "ligand_ff", "gaff2"), mode="MASFE"),
         )
         logger.info("Prepared MASFE system '{}' at {} (ligands: {})",
                     updated.name, updated.root, len(updated.ligands))
@@ -126,7 +126,7 @@ class MASFEBuilder(SystemBuilder):
                 ligands=(lig_dst,),
                 lipid_mol=tuple(),
                 anchors=tuple(),
-                meta={**(parent.meta or {}), "ligand": name, "mode": "MASFE"},
+                meta=parent.meta.merge(ligand=name, mode="MASFE"),
             )
             children[name] = child
 
@@ -157,7 +157,7 @@ class MASFEBuilder(SystemBuilder):
             ligands=(dst,),
             lipid_mol=tuple(),
             anchors=tuple(),
-            meta={**(parent.meta or {}), "ligand": lig_name, "mode": "MASFE"},
+            meta=parent.meta.merge(ligand=lig_name, mode="MASFE"),
         )
 
     # ------------------ internal utilities ------------------
