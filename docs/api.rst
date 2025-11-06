@@ -21,6 +21,13 @@ Config Modules
    :members:
    :undoc-members:
 
+Public API
+----------
+
+.. automodule:: batter.api
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
 Orchestrator Modules
 --------------------

@@ -1,31 +1,29 @@
-"""
-Public API for BATTER.
+"""Public API for BATTER.
 
-This module exposes a small, stable interface for:
-- Loading/saving simulation configs
-- Orchestrating runs from a top-level YAML
-- Managing portable artifacts and FE results
+This module collects the stable entry points intended for external consumption.
+They fall into four broad categories:
 
-Examples
---------
-Run from a top-level YAML::
+* **Configuration helpers** – load and dump ``RunConfig`` / ``SimulationConfig`` objects.
+* **Execution** – orchestrate complete workflows from a YAML definition.
+* **Portable results** – inspect and copy artifacts produced by a run.
+* **Utilities** – clone the state of an execution for reproducibility.
+
+Typical usage
+-------------
+
+Run a workflow from a top-level YAML::
 
     from batter.api import run_from_yaml
-    run_from_yaml("examples/run_abfe.yaml")
+    run_from_yaml(\"examples/mabfe.yaml\")
 
-Load, tweak, and re-save a simulation config::
-
-    from batter.api import load_sim_config, save_sim_config
-    cfg = load_sim_config("examples/sim_config.yaml")
-    cfg.temperature = 298.15
-    save_sim_config(cfg, "work/sim_config.resolved.yaml")
-
-Inspect FE results in a work directory (portable across clusters)::
+Inspect FE records stored in a work directory::
 
     from batter.api import list_fe_runs, load_fe_run
-    idx = list_fe_runs("work/at1r_aai")
-    if not idx.empty:
-        rec = load_fe_run("work/at1r_aai", run_id=idx.iloc[-1]["run_id"])
+    runs = list_fe_runs(\"work/adrb2\")
+    latest = runs.iloc[-1][\"run_id\"]
+    record = load_fe_run(\"work/adrb2\", latest)
+
+For more examples, refer to ``docs/getting_started.rst`` and the tutorials.
 """
 
 from __future__ import annotations
@@ -69,7 +67,7 @@ __all__ = [
     "dump_run_config",
     "load_sim_config",
     "save_sim_config",
-    # orchestrator
+    # orchestration
     "run_from_yaml",
     # portable store + results
     "ArtifactStore",
@@ -86,25 +84,21 @@ __all__ = [
 ]
 
 
-# ---------------------- Convenience helpers ----------------------
-
-
 def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
     """
-    List FE runs in a work directory.
+    Return an index of FE runs contained in a portable work directory.
 
     Parameters
     ----------
-    work_dir : str or pathlib.Path
-        Root directory for a BATTER run (portable across clusters).
+    work_dir : str or Path
+        Path to the root directory of a BATTER execution (portable layout).
 
     Returns
     -------
     pandas.DataFrame
-        Index of runs, or an empty DataFrame if none exist.
-        Columns typically include: ``run_id``, ``system_name``, ``fe_type``,
-        ``temperature``, ``method``, ``total_dG``, ``total_se``,
-        ``components``, ``created_at``.
+        DataFrame with one row per stored FE run. Columns typically include
+        ``run_id``, ``system_name``, ``fe_type``, ``temperature``,
+        ``method``, ``total_dG``, ``total_se``, ``components``, and ``created_at``.
     """
     store = ArtifactStore(Path(work_dir))
     repo = FEResultsRepository(store)
@@ -113,19 +107,20 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
 
 def load_fe_run(work_dir: Union[str, Path], run_id: str) -> FERecord:
     """
-    Load a single FE record by run id.
+    Load a single FE record by ``run_id`` from a portable work directory.
 
     Parameters
     ----------
-    work_dir : str or pathlib.Path
-        Root directory for a BATTER run (portable across clusters).
+    work_dir : str or Path
+        Root directory of the BATTER execution.
     run_id : str
-        Identifier of the FE run to load (see :func:`list_fe_runs`).
+        Identifier of the FE run to load (as returned by :func:`list_fe_runs`).
 
     Returns
     -------
     FERecord
-        A structured record containing total dG, components, and per-window data.
+        Structured record containing total ΔG, standard error, components, and
+        per-window results.
     """
     store = ArtifactStore(Path(work_dir))
     repo = FEResultsRepository(store)
