@@ -20,22 +20,7 @@ Welcome to batter's documentation!
 
          To the Getting Started Guide
 
-      
-
-    .. grid-item-card::  User Guide
-      :margin: 0 3 0 0
-      
-      An in-depth guide for users.
-
-      .. button-link:: ./user_guide.html
-         :color: primary
-         :outline:
-         :expand:
-
-         To the User Guide
-      
-      
-
+    
     .. grid-item-card:: API Reference
       :margin: 0 3 0 0
       
@@ -69,7 +54,6 @@ Welcome to batter's documentation!
    :titlesonly:
 
    getting_started
-   user_guide
    configuration
    tutorial
    api
