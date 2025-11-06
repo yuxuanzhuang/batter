@@ -71,5 +71,6 @@ Welcome to batter's documentation!
    getting_started
    user_guide
    configuration
+   tutorial
    api
    developer_guide
