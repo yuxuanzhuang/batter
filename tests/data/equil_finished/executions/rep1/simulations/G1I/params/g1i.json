@@ -1,0 +1,10 @@
+{
+    "ligand_file": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/reference/ligands/7XKA.sdf",
+    "charge_type": "am1bcc",
+    "smiles": "[H]Oc1c([H])c([H])c2c(c1O[H])C([H])([H])C([H])([H])[C@@]([H])([N+]([H])([H])C([H])([H])[H])[C@]2([H])O[H]",
+    "ligand_sdf_path": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/ligand_params/8b6033428fff/lig.sdf",
+    "ligand_charge": 1.0,
+    "ligand_ff": "openff-2.2.1",
+    "ligand_name": "lig",
+    "retain_lig_prot": true
+}

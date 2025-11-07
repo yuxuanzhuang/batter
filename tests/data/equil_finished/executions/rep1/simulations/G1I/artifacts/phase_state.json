@@ -1,0 +1,57 @@
+{
+  "phases": {
+    "equil": {
+      "failure": [
+        [
+          "equil/FAILED"
+        ]
+      ],
+      "required": [
+        [
+          "equil/FINISHED"
+        ],
+        [
+          "equil/FAILED"
+        ]
+      ],
+      "success": [
+        [
+          "equil/FINISHED"
+        ]
+      ]
+    },
+    "equil_analysis": {
+      "required": [
+        [
+          "equil/representative.pdb"
+        ],
+        [
+          "equil/UNBOUND"
+        ]
+      ],
+      "success": [
+        [
+          "equil/representative.pdb"
+        ],
+        [
+          "equil/UNBOUND"
+        ]
+      ]
+    },
+    "prepare_equil": {
+      "required": [
+        [
+          "equil/full.prmtop",
+          "equil/artifacts/prepare_equil.ok"
+        ]
+      ],
+      "success": [
+        [
+          "equil/full.prmtop",
+          "equil/artifacts/prepare_equil.ok"
+        ]
+      ]
+    }
+  },
+  "version": 1
+}
