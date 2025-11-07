@@ -45,6 +45,13 @@ def _resolve_outdir(template: str | Path, system: SimSystem) -> Path:
     return Path(resolved).expanduser().resolve()
 
 
+def _require(sys_params: SystemParams, key: str) -> Any:
+    try:
+        return sys_params[key]
+    except KeyError as exc:
+        raise KeyError(f"[param_ligands] Missing required sys_params[{key!r}]") from exc
+
+
 def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """Run the ligand parametrisation pipeline and index results.
 
@@ -70,9 +77,9 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
 
     outdir = _resolve_outdir(sys_params["param_outdir"], system)
-    charge = sys_params.get("charge", "am1bcc")
-    ligand_ff = sys_params.get("ligand_ff", "gaff2")
-    retain = bool(sys_params.get("retain_lig_prot", True))
+    charge = _require(sys_params, "charge")
+    ligand_ff = _require(sys_params, "ligand_ff")
+    retain = bool(_require(sys_params, "retain_lig_prot"))
 
     lig_map = sys_params["ligand_paths"]
 
