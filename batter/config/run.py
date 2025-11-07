@@ -526,8 +526,9 @@ class RunSection(BaseModel):
         False,
         description="When true, stop the workflow after FE preparation.",
     )
-    on_failure: str = Field(
-        "raise", description="Behavior on ligand failure: 'raise' or 'prune'"
+    on_failure: Literal["raise", "prune", "retry"] = Field(
+        "raise",
+        description="Behavior on ligand failure: 'raise', 'prune', or 'retry' (clear FAILED sentinels and rerun once).",
     )
     max_workers: int | None = Field(
         None,
