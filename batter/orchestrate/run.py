@@ -37,12 +37,18 @@ from batter.exec.slurm_mgr import SlurmJobManager
 
 from batter.orchestrate.backend import register_local_handlers
 from batter.orchestrate.ligands import discover_staged_ligands, resolve_ligand_map
-from batter.orchestrate.markers import handle_phase_failures, run_phase_skipping_done, is_done
+from batter.orchestrate.markers import (
+    handle_phase_failures,
+    run_phase_skipping_done,
+    is_done,
+)
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.orchestrate.results_io import fallback_totals_from_json, parse_results_dat
 
 
-def select_run_id(sys_root: Path | str, protocol: str, system_name: str, requested: str | None) -> Tuple[str, Path]:
+def select_run_id(
+    sys_root: Path | str, protocol: str, system_name: str, requested: str | None
+) -> Tuple[str, Path]:
     """Resolve the execution run identifier and backing directory.
 
     Parameters
@@ -100,9 +106,12 @@ def generate_run_id(protocol: str, system_name: str) -> str:
     return f"{protocol}-{system_name}-{ts}"
 
 
-def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None,
-                  system_overrides: Dict[str, Any] = None,
-                  run_overrides: Dict[str, Any] | None = None) -> None:
+def run_from_yaml(
+    path: Path | str,
+    on_failure: Literal["prune", "raise"] = None,
+    system_overrides: Dict[str, Any] = None,
+    run_overrides: Dict[str, Any] | None = None,
+) -> None:
     """Execute a BATTER workflow described by a YAML file.
 
     Parameters
@@ -123,7 +132,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     rc = RunConfig.load(path)
     if system_overrides:
         logger.info(f"Applying system overrides: {system_overrides}")
-        rc = rc.model_copy(update={"system": rc.system.model_copy(update=system_overrides)})
+        rc = rc.model_copy(
+            update={"system": rc.system.model_copy(update=system_overrides)}
+        )
     if run_overrides:
         logger.info(f"Applying run overrides: {run_overrides}")
         rc = rc.model_copy(update={"run": rc.run.model_copy(update=run_overrides)})
@@ -137,7 +148,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if rc.create.param_outdir is None:
         rc.create.param_outdir = str(Path(rc.system.output_folder) / "ligand_params")
     else:
-        logger.info(f"Using user-specified ligand param_outdir: {rc.create.param_outdir}")
+        logger.info(
+            f"Using user-specified ligand param_outdir: {rc.create.param_outdir}"
+        )
 
     # Build system-prep params exactly once
     sys_params = {
@@ -145,7 +158,9 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         "system_name": rc.create.system_name,
         "protein_input": str(rc.create.protein_input),
         "system_input": str(rc.create.system_input),
-        "system_coordinate": (str(rc.create.system_coordinate) if rc.create.system_coordinate else None),
+        "system_coordinate": (
+            str(rc.create.system_coordinate) if rc.create.system_coordinate else None
+        ),
         "ligand_paths": rc.create.ligand_paths,
         "anchor_atoms": list(rc.create.anchor_atoms or []),
         "protein_align": str(rc.create.protein_align),
@@ -176,17 +191,23 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     elif rc.system.type == "MASFE":
         builder = MASFEBuilder()
     else:
-        raise ValueError(f"Unsupported system.type={rc.system.type!r}. Only 'MABFE' is implemented.")
+        raise ValueError(
+            f"Unsupported system.type={rc.system.type!r}. Only 'MABFE' is implemented."
+        )
 
     requested_run_id = getattr(rc.run, "run_id", "auto")
-    run_id, run_dir = select_run_id(rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id)
+    run_id, run_dir = select_run_id(
+        rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id
+    )
     logger.info(f"Using run_id='{run_id}' under {run_dir}")
-    
+
     # Ligands
     staged_lig_map = discover_staged_ligands(run_dir)
     if staged_lig_map:
         lig_map = staged_lig_map
-        logger.info(f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}")
+        logger.info(
+            f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}"
+        )
     else:
         # Fall back to YAML resolution (requires original paths/files to exist)
         lig_map = resolve_ligand_map(rc, yaml_dir)
@@ -214,9 +235,10 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         sbatch_flags=slurm_flags,
     )
 
-
     # Build pipeline with explicit sys_params
-    tpl = select_pipeline(rc.protocol, sim_cfg, rc.run.only_fe_preparation, sys_params=sys_params)
+    tpl = select_pipeline(
+        rc.protocol, sim_cfg, rc.run.only_fe_preparation, sys_params=sys_params
+    )
 
     # Run parent-only steps at run_dir by using a run-scoped SimSystem
     run_sys = SimSystem(
@@ -240,7 +262,13 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
             builder.make_child_for_ligand(sys_exec, lig_name, lig_path)
     logger.debug(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
 
-    parent_only = Pipeline([s for s in tpl.ordered_steps() if s.name in {"system_prep", "system_prep_asfe", "param_ligands"}])
+    parent_only = Pipeline(
+        [
+            s
+            for s in tpl.ordered_steps()
+            if s.name in {"system_prep", "system_prep_asfe", "param_ligands"}
+        ]
+    )
     if parent_only.ordered_steps():
         names = [s.name for s in parent_only.ordered_steps()]
         logger.debug(f"Executing parent-only steps at {run_dir}: {names}")
@@ -255,11 +283,16 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     sim_cfg_updated = sim_cfg
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
-        sim_cfg_updated = sim_cfg.model_copy(update={k: v for k, v in upd.items() if v is not None})
+        sim_cfg_updated = sim_cfg.model_copy(
+            update={k: v for k, v in upd.items() if v is not None}
+        )
 
         from batter.config.io import write_yaml_config
+
         (run_dir / "artifacts" / "config").mkdir(parents=True, exist_ok=True)
-        write_yaml_config(sim_cfg_updated, run_dir / "artifacts" / "config" / "sim.resolved.yaml")
+        write_yaml_config(
+            sim_cfg_updated, run_dir / "artifacts" / "config" / "sim.resolved.yaml"
+        )
 
     # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
     removed = {"system_prep", "system_prep_asfe", "param_ligands"}
@@ -358,7 +391,13 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     # PHASE 1: prepare_equil (parallel)
     # --------------------
     if phase_prepare_equil.ordered_steps():
-        run_phase_skipping_done(phase_prepare_equil, children, "prepare_equil", backend, max_workers=rc.run.max_workers)
+        run_phase_skipping_done(
+            phase_prepare_equil,
+            children,
+            "prepare_equil",
+            backend,
+            max_workers=rc.run.max_workers,
+        )
         children = handle_phase_failures(children, "prepare_equil", rc.run.on_failure)
     else:
         logger.info(f"[skip] prepare_equil: no steps in this protocol.")
@@ -375,11 +414,15 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
 
     phase_equil = _inject_mgr(phase_equil)
     if phase_equil.ordered_steps():
-        finished = run_phase_skipping_done(phase_equil, children, "equil", backend, max_workers=rc.run.max_workers)
+        finished = run_phase_skipping_done(
+            phase_equil, children, "equil", backend, max_workers=rc.run.max_workers
+        )
         if not finished:
             job_mgr.wait_all()
             if dry_run and job_mgr.triggered:
-                logger.success("[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.")
+                logger.success(
+                    "[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting."
+                )
                 raise SystemExit(0)
         children = handle_phase_failures(children, "equil", rc.run.on_failure)
     else:
@@ -400,50 +443,92 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
         return keep
 
     if phase_equil_analysis.ordered_steps():
-        run_phase_skipping_done(phase_equil_analysis, children, "equil_analysis", backend, max_workers=rc.run.max_workers)
+        run_phase_skipping_done(
+            phase_equil_analysis,
+            children,
+            "equil_analysis",
+            backend,
+            max_workers=rc.run.max_workers,
+        )
         children = handle_phase_failures(children, "equil_analysis", rc.run.on_failure)
         children = _filter_bound(children)
     else:
-        logger.info(f"[skip] equil_analysis: no steps in this protocol.")
+        logger.info("[skip] equil_analysis: no steps in this protocol.")
 
     # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------
-    run_phase_skipping_done(phase_prepare_fe, children, "prepare_fe", backend, max_workers=rc.run.max_workers)
+    run_phase_skipping_done(
+        phase_prepare_fe,
+        children,
+        "prepare_fe",
+        backend,
+        max_workers=rc.run.max_workers,
+    )
     children = handle_phase_failures(children, "prepare_fe", rc.run.on_failure)
     # --------------------
     # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------
     phase_fe_equil = _inject_mgr(phase_fe_equil)
-    finished = run_phase_skipping_done(phase_fe_equil, children, "fe_equil", backend, max_workers=rc.run.max_workers)
-    if not finished:
-        job_mgr.wait_all()
-        if dry_run and job_mgr.triggered:
-            logger.success("[DRY-RUN] Reached first SLURM submission point (fe_equil). Exiting without submitting.")
-            raise SystemExit(0)
-    children = handle_phase_failures(children, "fe_equil", rc.run.on_failure)
+    if phase_fe_equil.ordered_steps():
+        finished = run_phase_skipping_done(
+            phase_fe_equil,
+            children,
+            "fe_equil",
+            backend,
+            max_workers=rc.run.max_workers,
+        )
+        if not finished:
+            job_mgr.wait_all()
+            if dry_run and job_mgr.triggered:
+                logger.success(
+                    "[DRY-RUN] Reached first SLURM submission point (fe_equil). Exiting without submitting."
+                )
+                raise SystemExit(0)
+        children = handle_phase_failures(children, "fe_equil", rc.run.on_failure)
+    else:
+        logger.info("[skip] fe_equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 5: fe → must COMPLETE for all ligands
     # --------------------
     phase_fe = _inject_mgr(phase_fe)
-    finished = run_phase_skipping_done(phase_fe, children, "fe", backend, max_workers=rc.run.max_workers)
-    if not finished:
-        job_mgr.wait_all()
-        if dry_run and job_mgr.triggered:
-            logger.success("[DRY-RUN] Reached first SLURM submission point (fe). Exiting without submitting.")
-            raise SystemExit(0)
-    children = handle_phase_failures(children, "fe", rc.run.on_failure)
+    has_fe_phase = bool(phase_fe.ordered_steps())
+    if has_fe_phase:
+        finished = run_phase_skipping_done(
+            phase_fe, children, "fe", backend, max_workers=rc.run.max_workers
+        )
+        if not finished:
+            job_mgr.wait_all()
+            if dry_run and job_mgr.triggered:
+                logger.success(
+                    "[DRY-RUN] Reached first SLURM submission point (fe). Exiting without submitting."
+                )
+                raise SystemExit(0)
+        children = handle_phase_failures(children, "fe", rc.run.on_failure)
+    else:
+        logger.info("[skip] fe: no steps in this protocol.")
 
     # --------------------
     # PHASE 6: analyze (parallel)
     # --------------------
-    run_phase_skipping_done(phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers)
-    children = handle_phase_failures(children, "analyze", rc.run.on_failure)
+    if phase_analyze.ordered_steps():
+        run_phase_skipping_done(
+            phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers
+        )
+        children = handle_phase_failures(children, "analyze", rc.run.on_failure)
+    else:
+        logger.info("[skip] analyze: no steps in this protocol.")
 
     # --------------------
     # FE record save
     # --------------------
+    if not has_fe_phase:
+        logger.info(
+            "FE production skipped (--only-equil); ending run without FE record export."
+        )
+        return
+
     # Store at the system store (shared across executions of this system)
     store = ArtifactStore(rc.system.output_folder)
     repo = FEResultsRepository(store)
@@ -501,4 +586,6 @@ def run_from_yaml(path: Path | str, on_failure: Literal["prune", "raise"] = None
     if failures:
         failed = ", ".join([f"{n} ({m})" for n, m in failures])
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
-    logger.success(f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/.")
+    logger.success(
+        f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/."
+    )
