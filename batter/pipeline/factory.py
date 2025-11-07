@@ -126,8 +126,12 @@ def make_abfe_pipeline(
     )
 
     if only_fe_preparation:
-        # Keep up to 'prepare_fe' (inclusive); we’ll still prune 'param_ligands' at child level in run.py
-        keep = {"system_prep", "param_ligands", "prepare_equil", "equil", "prepare_fe", "prepare_fe_windows"}
+        keep = {"system_prep", "param_ligands",
+                "prepare_equil", "equil",
+                "equil_analysis",
+                "prepare_fe", "prepare_fe_windows",
+                "fe_equil"
+        }
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
@@ -179,33 +183,35 @@ def make_asfe_pipeline(
             sys_params=params_model,
         )
     )
+    steps.append(
+        _step(
+            "fe_equil",
+            requires=["prepare_fe_windows"],
+            sim=sim,
+            sys_params=params_model,
+        )
+    )
+    steps.append(
+        _step(
+            "fe",
+            requires=["fe_equil"],
+            sim=sim,
+            sys_params=params_model,
+        )
+    )
+    steps.append(
+        _step(
+            "analyze",
+            requires=["fe"],
+            mode="asfe",
+            sim=sim,
+            sys_params=params_model,
+        )
+    )
     if only_fe_preparation:
-        keep = {"system_prep", "param_ligands", "prepare_fe", "prepare_fe_windows"}
+        keep = {"system_prep", "param_ligands",
+                "prepare_fe", "prepare_fe_windows",
+                "fe_equil"
+        }
         steps = [s for s in steps if s.name in keep]
-    else:
-        steps.append(
-            _step(
-                "fe_equil",
-                requires=["prepare_fe_windows"],
-                sim=sim,
-                sys_params=params_model,
-            )
-        )
-        steps.append(
-            _step(
-                "fe",
-                requires=["fe_equil"],
-                sim=sim,
-                sys_params=params_model,
-            )
-        )
-        steps.append(
-            _step(
-                "analyze",
-                requires=["fe"],
-                mode="asfe",
-                sim=sim,
-                sys_params=params_model,
-            )
-        )
     return Pipeline(steps)

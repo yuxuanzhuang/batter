@@ -19,11 +19,11 @@ def resolve_ligand_map(run_cfg, yaml_dir: Path) -> Dict[str, Path]:
     """
     lig_map: Dict[str, Path] = {}
 
-    paths = getattr(run_cfg.create, "ligand_paths", None) or []
-    for p in paths:
-        lig_path = Path(p)
+    paths = getattr(run_cfg.create, "ligand_paths", None) or dict()
+    for name, value in paths.items():
+        lig_path = Path(value)
         lig_path = lig_path if lig_path.is_absolute() else (yaml_dir / lig_path)
-        lig_map[sanitize_ligand_name(lig_path.stem)] = lig_path.resolve()
+        lig_map[sanitize_ligand_name(str(name))] = lig_path.resolve()
 
     lig_json = getattr(run_cfg.create, "ligand_input", None)
     if lig_json:
