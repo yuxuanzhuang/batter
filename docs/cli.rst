@@ -24,7 +24,8 @@ Options:
 ``--dry-run / --no-dry-run``
    Toggle ``run.dry_run`` from the YAML.
 ``--only-equil / --full``
-   Run only equilibration preparation steps.
+   Run only equilibration preparation steps. FE preparation is still performed (up to
+   ``prepare_fe_windows``), but the FE equilibration/production/analyse phases are skipped.
 ``--slurm-submit``
    Emit an ``sbatch`` script and submit the job instead of running locally.
 

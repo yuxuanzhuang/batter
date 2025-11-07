@@ -25,7 +25,9 @@ def _step(
 
 
 def make_abfe_pipeline(
-    sim: SimulationConfig, sys_params: SystemParams | dict | None, only_fe_preparation: bool = False
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
 ) -> Pipeline:
     """
     ABFE pipeline (expanded):
@@ -126,11 +128,14 @@ def make_abfe_pipeline(
     )
 
     if only_fe_preparation:
-        keep = {"system_prep", "param_ligands",
-                "prepare_equil", "equil",
-                "equil_analysis",
-                "prepare_fe", "prepare_fe_windows",
-                "fe_equil"
+        keep = {
+            "system_prep",
+            "param_ligands",
+            "prepare_equil",
+            "equil",
+            "equil_analysis",
+            "prepare_fe",
+            "prepare_fe_windows",
         }
         steps = [s for s in steps if s.name in keep]
 
@@ -138,7 +143,9 @@ def make_abfe_pipeline(
 
 
 def make_asfe_pipeline(
-    sim: SimulationConfig, sys_params: SystemParams | dict | None, only_fe_preparation: bool = False
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
 ) -> Pipeline:
     """
     ASFE pipeline (unchanged here for completeness):
