@@ -45,68 +45,85 @@ class SimulationConfig(BaseModel):
         SimulationConfig
             Fully merged simulation configuration ready for downstream use.
         """
+        l1_range = create.l1_range if create.l1_range is not None else 6.0
+        min_adis = create.min_adis if create.min_adis is not None else 3.0
+        max_adis = create.max_adis if create.max_adis is not None else 7.0
+
         create_data: dict[str, Any] = {
-            "system_name": getattr(create, "system_name", "unnamed_system") or "unnamed_system",
-            "receptor_ff": getattr(create, "receptor_ff", "protein.ff14SB"),
-            "ligand_ff": getattr(create, "ligand_ff", "gaff2"),
-            "lipid_ff": getattr(create, "lipid_ff", "lipid21"),
-            "lipid_mol": list(getattr(create, "lipid_mol", []) or []),
-            "other_mol": list(getattr(create, "other_mol", []) or []),
-            "water_model": getattr(create, "water_model", "TIP3P"),
-            "neutralize_only": coerce_yes_no(getattr(create, "neutralize_only", "no")),
-            "ion_conc": float(getattr(create, "ion_conc", 0.15)),
-            "cation": getattr(create, "cation", "Na+"),
-            "anion": getattr(create, "anion", "Cl-"),
-            "solv_shell": float(getattr(create, "solv_shell", 15.0)),
-            "protein_align": getattr(create, "protein_align", "name CA"),
-            "l1_range": float(getattr(create, "l1_range", 6.0)),
-            "min_adis": float(getattr(create, "min_adis", 3.0)),
-            "max_adis": float(getattr(create, "max_adis", 7.0)),
+            "system_name": create.system_name or "unnamed_system",
+            "receptor_ff": create.receptor_ff,
+            "ligand_ff": create.ligand_ff,
+            "lipid_ff": create.lipid_ff,
+            "lipid_mol": list(create.lipid_mol or []),
+            "other_mol": list(create.other_mol or []),
+            "water_model": create.water_model,
+            "neutralize_only": coerce_yes_no(create.neutralize_only),
+            "ion_conc": float(create.ion_conc),
+            "cation": create.cation,
+            "anion": create.anion,
+            "solv_shell": float(create.solv_shell),
+            "protein_align": create.protein_align,
+            "l1_range": float(l1_range),
+            "min_adis": float(min_adis),
+            "max_adis": float(max_adis),
         }
 
-        release_eq_value = getattr(fe, "release_eq", None)
-        fe_release_eq = release_eq_value if release_eq_value is not None else [0]
+        fe_release_eq = list(fe.release_eq or [0.0])
+
+        extra_conf_rest = create.extra_conformation_restraints
+        extra_restraints = create.extra_restraints
 
         fe_data: dict[str, Any] = {
-            "fe_type": getattr(fe, "fe_type", "uno_rest"),
-            "dec_int": getattr(fe, "dec_int", "mbar"),
-            "remd": coerce_yes_no(getattr(fe, "remd", "no")),
-            "rocklin_correction": coerce_yes_no(getattr(fe, "rocklin_correction", "no")),
-            "lambdas": list(getattr(fe, "lambdas", []) or []),
-            "sdr_dist": float(getattr(fe, "sdr_dist", 0.0)),
-            "blocks": int(getattr(fe, "blocks", 0)),
-            "lig_buffer": float(getattr(fe, "lig_buffer", 0.0)),
-            "lig_distance_force": float(getattr(fe, "lig_distance_force", 5.0)),
-            "lig_angle_force": float(getattr(fe, "lig_angle_force", 250.0)),
-            "lig_dihcf_force": float(getattr(fe, "lig_dihcf_force", 0.0)),
-            "rec_com_force": float(getattr(fe, "rec_com_force", 10.0)),
-            "lig_com_force": float(getattr(fe, "lig_com_force", 10.0)),
-            "buffer_x": float(getattr(fe, "buffer_x", 0.0)),
-            "buffer_y": float(getattr(fe, "buffer_y", 0.0)),
-            "buffer_z": float(getattr(fe, "buffer_z", 0.0)),
-            "temperature": float(getattr(fe, "temperature", 310.0)),
-            "dt": float(getattr(fe, "dt", 0.004)),
-            "hmr": coerce_yes_no(getattr(fe, "hmr", "no")),
-            "release_eq": list(fe_release_eq),
-            "eq_steps1": int(getattr(fe, "eq_steps1", 500_000)),
-            "eq_steps2": int(getattr(fe, "eq_steps2", 1_000_000)),
-            "ntpr": int(getattr(fe, "ntpr", 1000)),
-            "ntwr": int(getattr(fe, "ntwr", 10_000)),
-            "ntwe": int(getattr(fe, "ntwe", 0)),
-            "ntwx": int(getattr(fe, "ntwx", 2_500)),
-            "cut": float(getattr(fe, "cut", 9.0)),
-            "gamma_ln": float(getattr(fe, "gamma_ln", 1.0)),
-            "barostat": int(getattr(fe, "barostat", 2)),
+            "fe_type": fe.fe_type,
+            "dec_int": fe.dec_int,
+            "remd": coerce_yes_no(fe.remd),
+            "rocklin_correction": coerce_yes_no(fe.rocklin_correction),
+            "lambdas": list(fe.lambdas or []),
+            "sdr_dist": float(fe.sdr_dist),
+            "blocks": int(fe.blocks),
+            "lig_buffer": float(fe.lig_buffer),
+            "lig_distance_force": float(fe.lig_distance_force),
+            "lig_angle_force": float(fe.lig_angle_force),
+            "lig_dihcf_force": float(fe.lig_dihcf_force),
+            "rec_com_force": float(fe.rec_com_force),
+            "lig_com_force": float(fe.lig_com_force),
+            "buffer_x": float(fe.buffer_x),
+            "buffer_y": float(fe.buffer_y),
+            "buffer_z": float(fe.buffer_z),
+            "temperature": float(fe.temperature),
+            "dt": float(fe.dt),
+            "hmr": coerce_yes_no(fe.hmr),
+            "release_eq": fe_release_eq,
+            "eq_steps1": int(fe.eq_steps1),
+            "eq_steps2": int(fe.eq_steps2),
+            "ntpr": int(fe.ntpr),
+            "ntwr": int(fe.ntwr),
+            "ntwe": int(fe.ntwe),
+            "ntwx": int(fe.ntwx),
+            "cut": float(fe.cut),
+            "gamma_ln": float(fe.gamma_ln),
+            "barostat": int(fe.barostat),
         }
+
+        infe_flag = bool(extra_conf_rest)
+        if extra_conf_rest:
+            fe_data["barostat"] = 2
+        elif extra_restraints is not None:
+            fe_data["barostat"] = 1
 
         n_steps_dict = {
-            "z_steps1": int(getattr(fe, "z_steps1", 50_000)),
-            "z_steps2": int(getattr(fe, "z_steps2", 300_000)),
-            "y_steps1": int(getattr(fe, "y_steps1", 50_000)),
-            "y_steps2": int(getattr(fe, "y_steps2", 300_000)),
+            "z_steps1": int(fe.z_steps1),
+            "z_steps2": int(fe.z_steps2),
+            "y_steps1": int(fe.y_steps1),
+            "y_steps2": int(fe.y_steps2),
         }
 
-        merged: dict[str, Any] = {**create_data, **fe_data, "n_steps_dict": n_steps_dict}
+        merged: dict[str, Any] = {
+            **create_data,
+            **fe_data,
+            "n_steps_dict": n_steps_dict,
+            "infe": infe_flag,
+        }
         if partition:
             merged["partition"] = partition
 
@@ -125,6 +142,7 @@ class SimulationConfig(BaseModel):
     dec_int: Literal["mbar", "ti"] = Field("mbar", description="Integration method (mbar/ti)")
     remd: Literal["yes", "no"] = Field("no", description="H-REMD toggle")
     partition: str = Field("owners", description="Cluster partition/queue")
+    infe: bool = Field(False, description="Enable NFE (infinite) equilibration when true.")
 
     # --- Anchors / molecular definitions ---
     p1: str = Field("", description='Anchor P1 "RESID@ATOM" (e.g., "85@CA")')

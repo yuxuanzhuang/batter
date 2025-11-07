@@ -164,3 +164,28 @@ def test_simulation_config_errors(overrides, message):
     with pytest.raises(Exception) as excinfo:
         SimulationConfig(**kwargs)
     assert message in str(excinfo.value)
+
+
+def _minimal_create(tmp_path: Path, **updates) -> CreateArgs:
+    lig = tmp_path / "lig.sdf"
+    lig.write_text("dummy")
+    data = {
+        "system_name": "sys",
+        "ligand_paths": {"LIG": lig},
+    }
+    data.update(updates)
+    return CreateArgs(**data)
+
+
+def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
+    conf_json = tmp_path / "conf.json"
+    conf_json.write_text("[]")
+    create = _minimal_create(tmp_path, extra_conformation_restraints=conf_json)
+    cfg = SimulationConfig.from_sections(create, FESimArgs(lambdas=[0, 1], release_eq=[0, 1]))
+    assert cfg.infe is True
+    assert cfg.barostat == 2
+
+    create2 = create.model_copy(update={"extra_conformation_restraints": None, "extra_restraints": "mask"})
+    cfg2 = SimulationConfig.from_sections(create2, FESimArgs(lambdas=[0, 1], release_eq=[0, 1]))
+    assert cfg2.infe is False
+    assert cfg2.barostat == 1

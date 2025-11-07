@@ -92,14 +92,7 @@ def prepare_fe_handler(
         "extra_conformation_restraints", None
     )
 
-    infe = False
-    if extra_restraints is not None:
-        infe = False
-        sim.barostat = "1"
-    if extra_conformation_restraints is not None:
-        infe = True
-        # cannot do NFE with barostat 1 (Berendsen)
-        sim.barostat = "2"
+    infe = bool(sim.infe)
 
     artifacts: Dict[str, Any] = {}
     logger.debug(

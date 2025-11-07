@@ -50,14 +50,7 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
     
-    infe = False
-    if extra_restraints is not None:
-        infe = False
-        sim.barostat = '1'
-    if extra_conformation_restraints is not None:
-        infe = True
-        # cannot do NFE with barostat 1 (Berendsen)
-        sim.barostat = '2'
+    infe = bool(sim.infe)
     
     system_root = system.root
 

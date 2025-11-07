@@ -15,6 +15,7 @@ from batter.config.utils import (
 
 # ----------------------------- SLURM ---------------------------------
 
+
 class SlurmConfig(BaseModel):
     """
     SLURM-specific configuration.
@@ -42,6 +43,7 @@ class SlurmConfig(BaseModel):
     extra_sbatch : list[str]
         Additional arguments appended to the ``sbatch`` submission command.
     """
+
     model_config = ConfigDict(extra="ignore")
 
     partition: Optional[str] = Field(None, description="SLURM partition / queue")
@@ -65,19 +67,30 @@ class SlurmConfig(BaseModel):
             Sequence suitable for passing to :func:`subprocess.run`.
         """
         flags: List[str] = []
-        if self.partition:       flags += ["-p", self.partition]
-        if self.time:            flags += ["-t", self.time]
-        if self.nodes:           flags += ["-N", str(self.nodes)]
-        if self.ntasks_per_node: flags += ["--ntasks-per-node", str(self.ntasks_per_node)]
-        if self.mem_per_cpu:     flags += ["--mem-per-cpu", self.mem_per_cpu]
-        if self.gres:            flags += ["--gres", self.gres]
-        if self.account:         flags += ["--account", self.account]
-        if self.qos:             flags += ["--qos", self.qos]
-        if self.constraint:      flags += ["--constraint", self.constraint]
+        if self.partition:
+            flags += ["-p", self.partition]
+        if self.time:
+            flags += ["-t", self.time]
+        if self.nodes:
+            flags += ["-N", str(self.nodes)]
+        if self.ntasks_per_node:
+            flags += ["--ntasks-per-node", str(self.ntasks_per_node)]
+        if self.mem_per_cpu:
+            flags += ["--mem-per-cpu", self.mem_per_cpu]
+        if self.gres:
+            flags += ["--gres", self.gres]
+        if self.account:
+            flags += ["--account", self.account]
+        if self.qos:
+            flags += ["--qos", self.qos]
+        if self.constraint:
+            flags += ["--constraint", self.constraint]
         flags += list(self.extra_sbatch or [])
         return flags
 
+
 # ----------------------------- Sections ---------------------------------
+
 
 class SystemSection(BaseModel):
     type: Literal["MABFE", "MASFE"] = Field(
@@ -105,6 +118,7 @@ class SystemSection(BaseModel):
             raise ValueError("`system.output_folder` is required.")
         return Path(v)
 
+
 class CreateArgs(BaseModel):
     """
     Inputs for system creation and staging.
@@ -113,6 +127,7 @@ class CreateArgs(BaseModel):
     -----
     This section mirrors the ``create`` block in the run YAML file.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     system_name: Optional[str] = Field(
@@ -230,7 +245,7 @@ class CreateArgs(BaseModel):
     )
     neutralize_only: Literal["yes", "no"] = Field(
         "no",
-        description="If ``\"yes\"``, neutralize the system without adding bulk salt.",
+        description='If ``"yes"``, neutralize the system without adding bulk salt.',
     )
     water_model: str = Field(
         "TIP3P",
@@ -250,7 +265,13 @@ class CreateArgs(BaseModel):
         description="Maximum anchor-atom distance used during pose selection (Å).",
     )
 
-    @field_validator("protein_input", "system_input", "system_coordinate", "param_outdir", mode="before")
+    @field_validator(
+        "protein_input",
+        "system_input",
+        "system_coordinate",
+        "param_outdir",
+        mode="before",
+    )
     @classmethod
     def _coerce_opt_paths(cls, v):
         return normalize_optional_path(v)
@@ -328,7 +349,11 @@ class CreateArgs(BaseModel):
         if self.ligand_paths:
             resolved = {}
             for key, path_val in self.ligand_paths.items():
-                resolved[key] = (base / path_val).resolve() if not path_val.is_absolute() else path_val
+                resolved[key] = (
+                    (base / path_val).resolve()
+                    if not path_val.is_absolute()
+                    else path_val
+                )
             updates["ligand_paths"] = resolved
 
         return self.model_copy(update=updates)
@@ -336,26 +361,37 @@ class CreateArgs(BaseModel):
     @model_validator(mode="after")
     def _require_ligands(self):
         if not self.ligand_paths and not self.ligand_input:
-            raise ValueError("You must provide either `ligand_paths` or `ligand_input`.")
+            raise ValueError(
+                "You must provide either `ligand_paths` or `ligand_input`."
+            )
         return self
 
     @model_validator(mode="after")
     def _check_extra_restraints(self):
         if self.extra_conformation_restraints and self.extra_restraints:
-            raise ValueError("Cannot specify both `extra_conformation_restraints` and `extra_restraints`.")
+            raise ValueError(
+                "Cannot specify both `extra_conformation_restraints` and `extra_restraints`."
+            )
 
         if self.extra_conformation_restraints:
             p = Path(self.extra_conformation_restraints)
             if not p.exists():
-                raise ValueError(f"extra_conformation_restraints file does not exist: {p}")
+                raise ValueError(
+                    f"extra_conformation_restraints file does not exist: {p}"
+                )
             # (optional) schema check if you expect JSON:
             try:
                 data = json.loads(p.read_text())
             except Exception as e:
                 raise ValueError(f"Could not parse {p}: {e}")
-            if not isinstance(data, (list, tuple)) or not all(isinstance(r, (list, tuple)) for r in data):
-                raise ValueError("JSON must be a list of rows [dir, res1, res2, cutoff, k].")
+            if not isinstance(data, (list, tuple)) or not all(
+                isinstance(r, (list, tuple)) for r in data
+            ):
+                raise ValueError(
+                    "JSON must be a list of rows [dir, res1, res2, cutoff, k]."
+                )
         return self
+
 
 class FESimArgs(BaseModel):
     """
@@ -365,6 +401,7 @@ class FESimArgs(BaseModel):
     overrides. Most values are optional and fall back to the defaults assembled in
     :class:`SimulationConfig`.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     fe_type: str = Field(
@@ -377,7 +414,7 @@ class FESimArgs(BaseModel):
     )
     remd: Literal["yes", "no"] = Field(
         "no",
-        description="Enable replica-exchange MD (currently unsupported; must remain ``\"no\"``).",
+        description='Enable replica-exchange MD (currently unsupported; must remain ``"no"``).',
     )
     rocklin_correction: Literal["yes", "no"] = Field(
         "no",
@@ -424,9 +461,9 @@ class FESimArgs(BaseModel):
     )
 
     # Box padding (used by some builders)
-    buffer_x: float = Field(0.0, description="Box padding along X (Å).")
-    buffer_y: float = Field(0.0, description="Box padding along Y (Å).")
-    buffer_z: float = Field(0.0, description="Box padding along Z (Å).")
+    buffer_x: float = Field(10.0, description="Box padding along X (Å).")
+    buffer_y: float = Field(10.0, description="Box padding along Y (Å).")
+    buffer_z: float = Field(10.0, description="Box padding along Z (Å).")
 
     # Step counts / reporting
     release_eq: list[float] = Field(
@@ -446,7 +483,9 @@ class FESimArgs(BaseModel):
     cut: float = Field(9.0, description="Nonbonded cutoff (Å).")
     gamma_ln: float = Field(1.0, description="Langevin gamma value (ps^-1).")
     dt: float = Field(0.004, description="MD timestep (ps).")
-    hmr: Literal["yes", "no"] = Field("no", description="Hydrogen mass repartitioning toggle.")
+    hmr: Literal["yes", "no"] = Field(
+        "no", description="Hydrogen mass repartitioning toggle."
+    )
     temperature: float = Field(310.0, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
 
@@ -454,6 +493,7 @@ class FESimArgs(BaseModel):
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
+
     @field_validator("lambdas")
     @classmethod
     def _validate_lambdas(cls, v: List[float]) -> List[float]:
@@ -478,36 +518,52 @@ class FESimArgs(BaseModel):
         return value
 
 
-
 class RunSection(BaseModel):
     """Run-related settings."""
+
     model_config = ConfigDict(extra="forbid")
     only_fe_preparation: bool = Field(
         False,
         description="When true, stop the workflow after FE preparation.",
     )
-    on_failure: str = Field("raise", description="Behavior on ligand failure: 'raise' or 'prune'")
+    on_failure: str = Field(
+        "raise", description="Behavior on ligand failure: 'raise' or 'prune'"
+    )
     max_workers: int | None = Field(
         None,
         description="Parallel workers for local backend (None = auto, 0 = serial).",
     )
-    dry_run: bool = Field(False, description="Force dry-run mode regardless of YAML setting.")
-    run_id: str = Field("auto", description="Run identifier to use (``auto`` picks latest).")
+    dry_run: bool = Field(
+        False, description="Force dry-run mode regardless of YAML setting."
+    )
+    run_id: str = Field(
+        "auto", description="Run identifier to use (``auto`` picks latest)."
+    )
 
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
+
 class RunConfig(BaseModel):
     """Top-level YAML config."""
+
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(1, description="Schema version of the run configuration.")
-    protocol: Literal["abfe", "asfe"] = Field("abfe", description="High-level protocol to execute.")
-    backend: Literal["local", "slurm"] = Field("local", description="Execution backend.")
+    protocol: Literal["abfe", "asfe"] = Field(
+        "abfe", description="High-level protocol to execute."
+    )
+    backend: Literal["local", "slurm"] = Field(
+        "local", description="Execution backend."
+    )
 
     system: SystemSection = Field(..., description="System-level configuration block.")
     create: CreateArgs = Field(..., description="Settings for system creation/staging.")
-    fe_sim: FESimArgs = Field(default_factory=FESimArgs, description="Simulation parameter overrides.")
-    run: RunSection = Field(default_factory=RunSection, description="Execution controls.")
+    fe_sim: FESimArgs = Field(
+        default_factory=FESimArgs, description="Simulation parameter overrides."
+    )
+    run: RunSection = Field(
+        default_factory=RunSection, description="Execution controls."
+    )
 
     @field_validator("protocol", mode="before")
     @classmethod
@@ -534,6 +590,7 @@ class RunConfig(BaseModel):
             Fully validated configuration object.
         """
         import yaml
+
         p = Path(path)
         data = yaml.safe_load(p.read_text()) or {}
         data = expand_env_vars(data, base_dir=p.parent)
@@ -555,6 +612,7 @@ class RunConfig(BaseModel):
             Validated configuration model.
         """
         import yaml
+
         raw = yaml.safe_load(yaml_text) or {}
         cfg = cls.model_validate(expand_env_vars(raw))
         return cfg.with_base_dir(Path.cwd())
@@ -579,4 +637,6 @@ class RunConfig(BaseModel):
         """
         resolved_system = self.system.resolve_paths(base_dir)
         resolved_create = self.create.resolve_paths(base_dir)
-        return self.model_copy(update={"system": resolved_system, "create": resolved_create})
+        return self.model_copy(
+            update={"system": resolved_system, "create": resolved_create}
+        )
