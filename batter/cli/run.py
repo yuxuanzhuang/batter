@@ -654,10 +654,10 @@ def report_jobs(partition=None, detailed=False):
                 click.echo(det.to_string(index=False))
         click.echo("-" * 70)
 
-    click.echo("To cancel, run: new_batter cancel-jobs --contains '<substring>'")
+    click.echo("To cancel, run: batter cancel-jobs --contains '<folder_listed_above>'")
 
 
-@click.command("cancel-jobs")
+@cli.command("cancel-jobs")
 @click.option("--contains", "-c", required=True,
               help="Cancel all jobs whose SLURM job name contains this substring (match against full 'fep_...').")
 def cancel_jobs(contains: str):
