@@ -412,127 +412,60 @@ def cmd_clone_exec(
 
 
 # ----------------------------- check status -------------------------------
-_tail_re = re.compile(
-    r"""
-    ^
-    (?P<lig>.+?)
-    _
-    (?:
-        (?P<eq>eq)
-      |
-        (?P<comp_feq>[A-Za-z]+)_fe_equil
-      |
-        (?P<comp_fe>[A-Za-z]+)
-        (?:
-            _(?P<comptok>[A-Za-z]*)
-             (?P<win>\d+)
-        )?
-        _fe
-    )
-    $
-    """,
-    re.X,
-)
-
-_legacy_tail_re = re.compile(
-    r"""
-    ^
-    (?P<lig>[A-Za-z0-9][A-Za-z0-9._-]*)
-    (?:
-        _(?:
-            (?P<comp_feq>[A-Za-z]+)_fe_equil
-          |
-            (?P<comp_fe>[A-Za-z]+)
-            (?:
-                _(?P<comptok>[A-Za-z]*)
-                 (?P<win>\d+)
-            )?
-            _fe
-          |
-            (?P<eq>eq)
-        )
-    )?
-    $
-    """,
-    re.X,
-)
 
 def _parse_jobname(jobname: str):
     """
-    Parse BATTER job names of forms:
-      .../simulations/<LIGAND>_eq
-      .../simulations/<LIGAND>_<COMP>_<COMP><WIN>_fe
-      .../simulations/<LIGAND>_<COMP>_fe_equil
-    Returns dict with: stage, run_id, system_root, ligand, comp, win(int|None)
+    Parse BATTER job names emitted by SLURM handlers.
     """
     if not jobname.startswith("fep_"):
         return None
 
-    body = jobname[4:]  # strip 'fep_'
-    pre = None
-    tail = body
-    if "/simulations/" in body:
-        pre, tail = body.split("/simulations/", 1)
-        if "/" in tail:
-            tail = tail.split("/", 1)[0]
-    root = body
-    ligand = None
+    body = jobname[4:]
+    if "/simulations/" not in body:
+        return None
+
+    system_root, tail = body.split("/simulations/", 1)
+    if "/" in tail:
+        tail = tail.split("/", 1)[0]
+
+    if not tail:
+        return None
+
+    if "_" in tail:
+        ligand, suffix = tail.split("_", 1)
+    else:
+        ligand, suffix = tail, ""
+
+    stage = "unknown"
+    comp = None
+    win: int | None = None
+
+    if suffix == "eq":
+        stage = "eq"
+    elif suffix.endswith("_fe_equil"):
+        stage = "fe_equil"
+        comp = suffix[: -len("_fe_equil")]
+    elif suffix.endswith("_fe"):
+        stage = "fe"
+        fe_body = suffix[: -len("_fe")]
+        m = re.match(r"(?P<comp>[A-Za-z]+)(?:_(?P<tok>[A-Za-z]*)(?P<win>\d+))?", fe_body)
+        if m:
+            comp = m.group("comp")
+            if m.group("win"):
+                try:
+                    win = int(m.group("win"))
+                except ValueError:
+                    win = None
 
     run_id = None
-    m = _tail_re.match(tail)
-    if m:
-        gd = m.groupdict()
-        ligand = gd.get("lig")
-        tail = m.group(0)
-        if pre is not None and ligand:
-            root = f"{pre}/simulations/{ligand}"
-    else:
-        legacy = _legacy_tail_re.match(tail)
-        if legacy:
-            m = legacy
-            gd = legacy.groupdict()
-            ligand = ligand or gd.get("lig")
-            if pre is not None and ligand:
-                root = f"{pre}/simulations/{ligand}"
-        else:
-            gd = None
-
-    mrun = re.search(r"/executions/([^/]+)/", "/" + root + "/")
+    mrun = re.search(r"/executions/([^/]+)$", system_root)
     if mrun:
         run_id = mrun.group(1)
-
-    if not m:
-        return {
-            "stage": "unknown",
-            "run_id": run_id,
-            "system_root": root,
-            "ligand": None,
-            "comp": None,
-            "win": None,
-        }
-
-    comp = None
-    win = None
-    stage = "unknown"
-
-    if gd.get("eq"):
-        stage = "eq"
-    elif gd.get("comp_feq"):
-        stage = "fe_equil"
-        comp = gd.get("comp_feq")
-    elif gd.get("comp_fe"):
-        stage = "fe"
-        comp = gd.get("comp_fe")
-        if gd.get("win"):
-            try:
-                win = int(gd["win"])
-            except ValueError:
-                win = None
 
     return {
         "stage": stage,
         "run_id": run_id,
-        "system_root": root,
+        "system_root": system_root,
         "ligand": ligand,
         "comp": comp,
         "win": win,
