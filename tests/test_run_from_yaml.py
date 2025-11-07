@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import os
 import subprocess
 import sys
@@ -12,6 +13,8 @@ import pytest
 from batter.config.run import RunConfig
 from batter.config import load_run_config  # if you expose it here
 from batter.config.simulation import SimulationConfig  # where your class lives
+from batter.orchestrate.run import run_from_yaml
+from batter.pipeline.step import ExecResult
 
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -169,3 +172,30 @@ def test_cli_batter_run_dry(
         sys.stderr.write(f"\n--- STDOUT ({yaml_path.name}) ---\n{proc.stdout}\n")
 
     assert proc.returncode == 0, f"CLI failed for {yaml_path.name} (see logs above)"
+
+
+def test_runs_prepare_fe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Smoke-test that --only-equil reuse of a pre-equilibrated folder drives only FE prep.
+    """
+    src = DATA_DIR / "equil_finished"
+    work_dir = tmp_path / "equil_finished"
+    shutil.copytree(src, work_dir)
+
+    calls: list[str] = []
+
+    yaml_path = DATA_DIR / "mabfe_ligand.yaml"
+    run_from_yaml(
+        yaml_path,
+        on_failure="raise",
+        system_overrides={"output_folder": work_dir},
+        run_overrides={"run_id": "rep1", "dry_run": True},
+    )
+
+    # both ligands should have FE prep markers emitted
+    for lig in ("CAU", "G1I"):
+        lig_dir = (
+            work_dir / "executions" / "rep1" / "simulations" / lig / "fe" / "artifacts"
+        )
+        assert (lig_dir / "prepare_fe.ok").exists()
+        assert (lig_dir / "prepare_fe_windows.ok").exists()
