@@ -431,31 +431,33 @@ def _parse_jobname(jobname: str):
     if not tail:
         return None
 
-    if "_" in tail:
-        ligand, suffix = tail.rsplit("_", 1)
-    else:
-        ligand, suffix = tail, ""
-
     stage = "unknown"
     comp = None
     win: int | None = None
 
-    if suffix == "eq":
+    ligand = tail
+    if tail.endswith("_eq"):
+        ligand = tail[: -len("_eq")]
         stage = "eq"
-    elif suffix.endswith("_fe_equil"):
+    elif tail.endswith("_fe_equil"):
+        core = tail[: -len("_fe_equil")]
+        parts = core.rsplit("_", 1)
+        if len(parts) == 2:
+            ligand, comp = parts
         stage = "fe_equil"
-        comp = suffix[: -len("_fe_equil")]
-    elif suffix.endswith("_fe"):
-        stage = "fe"
-        fe_body = suffix[: -len("_fe")]
-        m = re.match(r"(?P<comp>[A-Za-z]+)(?:_(?P<tok>[A-Za-z]*)(?P<win>\d+))?", fe_body)
+    elif tail.endswith("_fe"):
+        core = tail[: -len("_fe")]
+        m = re.match(r"(?P<lig>.+)_(?P<comp>[A-Za-z]+)_(?P<win>[A-Za-z]+\d+)$", core)
         if m:
+            ligand = m.group("lig")
             comp = m.group("comp")
-            if m.group("win"):
+            win_match = re.search(r"(\d+)$", m.group("win"))
+            if win_match:
                 try:
-                    win = int(m.group("win"))
+                    win = int(win_match.group(1))
                 except ValueError:
                     win = None
+        stage = "fe"
 
     run_id = None
     mrun = re.search(r"/executions/([^/]+)$", system_root)
