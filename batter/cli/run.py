@@ -468,20 +468,11 @@ def _parse_jobname(jobname: str):
         return None
 
     body = jobname[4:]  # strip 'fep_'
-
-    # Split into prefix (system_root-ish) and tail (the last segment with stage info)
-    if "/simulations/" in body:
-        pre, tail = body.split("/simulations/", 1)
-        tail = tail.rsplit("/", 1)[-1]  # keep only the last path component
-    else:
-        # Fallback: take last path component as tail
-        parts = body.rsplit("/", 1)
-        pre = parts[0] if len(parts) == 2 else ""
-        tail = parts[-1]
-
-    # Extract run_id from /executions/<RID>/
+    parts = body.split("_", 1)
+    root = parts[0]
+    tail = parts[1] if len(parts) > 1 else ""
     run_id = None
-    mrun = re.search(r"/executions/([^/]+)/", "/" + pre + "/")
+    mrun = re.search(r"/executions/([^/]+)/", "/" + root + "/")
     if mrun:
         run_id = mrun.group(1)
 
@@ -490,7 +481,7 @@ def _parse_jobname(jobname: str):
         return {
             "stage": "unknown",
             "run_id": run_id,
-            "system_root": pre,
+            "system_root": root,
             "ligand": None,
             "comp": None,
             "win": None,
@@ -519,7 +510,7 @@ def _parse_jobname(jobname: str):
     return {
         "stage": stage,
         "run_id": run_id,
-        "system_root": pre,
+        "system_root": root,
         "ligand": ligand,
         "comp": comp,
         "win": win,
