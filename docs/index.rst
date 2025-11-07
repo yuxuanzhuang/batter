@@ -97,6 +97,7 @@ Quick Links
    tutorial
    configuration
    api
+   analysis
    parameterisation
    developer_guide
    developer_guide/pipeline_payloads_and_metadata

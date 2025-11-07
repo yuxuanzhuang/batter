@@ -129,3 +129,28 @@ Parameterisation Modules
    :noindex:
    :members:
    :undoc-members:
+
+Analysis Modules
+----------------
+
+.. automodule:: batter.analysis.analysis
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: batter.analysis.remd
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: batter.analysis.results
+   :noindex:
+   :members:
+   :undoc-members:
+
+.. automodule:: batter.analysis.utils
+   :noindex:
+   :members:
+   :undoc-members:
