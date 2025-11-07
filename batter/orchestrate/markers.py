@@ -44,6 +44,27 @@ def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple
     return ok, bad
 
 
+def _remove_patterns(root: Path, spec: List[List[str]]) -> bool:
+    removed = False
+    for group in spec:
+        for pattern in group:
+            for p in _expand_pattern(root, pattern):
+                if not p.exists():
+                    continue
+                try:
+                    if p.is_dir():
+                        for child in p.rglob("*"):
+                            if child.is_file():
+                                child.unlink(missing_ok=True)
+                        p.rmdir()
+                    else:
+                        p.unlink()
+                    removed = True
+                except Exception:
+                    logger.warning("Could not remove sentinel %s", p)
+    return removed
+
+
 def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str) -> List[SimSystem]:
     """Post-process phase results, pruning or raising on failure.
 
@@ -75,26 +96,23 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
             logger.warning(f"[{phase_name}] Pruning {len(bad)} ligand(s) that FAILED: {bad_names}")
             return ok
         if mode_lower == "retry":
-            survivors = []
+            retried = []
             for c in bad:
                 spec = _phase_spec(c.root, phase_name)
-                cleared = False
-                for group in spec.failure:
-                    for pattern in group:
-                        for p in _expand_pattern(c.root, pattern):
-                            if p.exists():
-                                try:
-                                    p.unlink()
-                                    cleared = True
-                                except Exception:
-                                    logger.warning("Could not remove failure sentinel %s", p)
-                if cleared:
-                    survivors.append(c)
+                removed_failure = _remove_patterns(c.root, spec.failure)
+                removed_success = _remove_patterns(c.root, spec.success)
+                if removed_failure or removed_success:
+                    retried.append(c)
                 else:
-                    logger.warning(f"[{phase_name}] retry requested but no failure markers found for {c.meta.get('ligand', c.name)}")
-            if survivors:
-                logger.warning(f"[{phase_name}] Clearing failure markers for {len(survivors)} ligand(s): {', '.join(c.meta.get('ligand', c.name) for c in survivors)}")
-            return ok + survivors
+                    logger.warning(
+                        "[%s] retry requested but no sentinels removed for %s",
+                        phase_name,
+                        c.meta.get("ligand", c.name),
+                    )
+            if retried:
+                names = ", ".join(c.meta.get("ligand", c.name) for c in retried)
+                logger.warning(f"[{phase_name}] Resetting failure state for {len(retried)} ligand(s): {names}")
+            return ok + retried
         raise RuntimeError(f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}")
     if not ok:
         raise RuntimeError(f"[{phase_name}] No ligands completed successfully.")
