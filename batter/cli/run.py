@@ -432,7 +432,7 @@ def _parse_jobname(jobname: str):
         return None
 
     if "_" in tail:
-        ligand, suffix = tail.split("_", 1)
+        ligand, suffix = tail.rsplit("_", 1)
     else:
         ligand, suffix = tail, ""
 
