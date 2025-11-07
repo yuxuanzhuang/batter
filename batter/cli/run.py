@@ -83,7 +83,7 @@ def _which_batter() -> str:
 
 @cli.command("run")
 @click.argument("yaml_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("--on-failure", type=click.Choice(["prune","raise"], case_sensitive=False),
+@click.option("--on-failure", type=click.Choice(["prune","raise","retry"], case_sensitive=False),
               default="raise", show_default=True)
 @click.option("--output-folder", type=click.Path(file_okay=False, path_type=Path), default=None)
 @click.option("--run-id", default=None, help="Override run_id (e.g., rep1). Use 'auto' to reuse latest.")

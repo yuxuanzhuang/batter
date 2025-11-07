@@ -75,24 +75,26 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
             logger.warning(f"[{phase_name}] Pruning {len(bad)} ligand(s) that FAILED: {bad_names}")
             return ok
         if mode_lower == "retry":
+            survivors = []
             for c in bad:
                 spec = _phase_spec(c.root, phase_name)
+                cleared = False
                 for group in spec.failure:
                     for pattern in group:
                         for p in _expand_pattern(c.root, pattern):
                             if p.exists():
                                 try:
-                                    if p.is_dir():
-                                        for child in p.rglob("*"):
-                                            if child.is_file():
-                                                child.unlink(missing_ok=True)
-                                        p.rmdir()
-                                    else:
-                                        p.unlink()
+                                    p.unlink()
+                                    cleared = True
                                 except Exception:
                                     logger.warning("Could not remove failure sentinel %s", p)
-            logger.warning(f"[{phase_name}] Clearing failure markers for {len(bad)} ligand(s): {bad_names}")
-            return children
+                if cleared:
+                    survivors.append(c)
+                else:
+                    logger.warning(f"[{phase_name}] retry requested but no failure markers found for {c.meta.get('ligand', c.name)}")
+            if survivors:
+                logger.warning(f"[{phase_name}] Clearing failure markers for {len(survivors)} ligand(s): {', '.join(c.meta.get('ligand', c.name) for c in survivors)}")
+            return ok + survivors
         raise RuntimeError(f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}")
     if not ok:
         raise RuntimeError(f"[{phase_name}] No ligands completed successfully.")
