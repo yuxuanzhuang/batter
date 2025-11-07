@@ -222,7 +222,7 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         return
 
     # ensure expected cols exist
-    cols = ["run_id", "system_name", "fe_type", "temperature", "method", "total_dG", "total_se", "created_at"]
+    cols = ["system_name", "run_id", "ligand", "mol_name", "fe_type", "total_dG", "total_se", "created_at"]
     for c in cols:
         if c not in df.columns:
             df[c] = pd.NA
@@ -412,19 +412,36 @@ def cmd_clone_exec(
 
 
 # ----------------------------- check status -------------------------------
-_STAGE_SUFFIXES = ("_fe_equil", "_fe", "_eq")
-
-#   LIG_COMP_fe_equil
 _tail_re = re.compile(
+    r"""
+    ^
+    (?P<lig>.+?)
+    _
+    (?:
+        (?P<eq>eq)
+      |
+        (?P<comp_feq>[A-Za-z]+)_fe_equil
+      |
+        (?P<comp_fe>[A-Za-z]+)
+        (?:
+            _(?P<comptok>[A-Za-z]*)
+             (?P<win>\d+)
+        )?
+        _fe
+    )
+    $
+    """,
+    re.X,
+)
+
+_legacy_tail_re = re.compile(
     r"""
     ^
     (?P<lig>[A-Za-z0-9][A-Za-z0-9._-]*)
     (?:
         _(?:
-            # fe-equil
             (?P<comp_feq>[A-Za-z]+)_fe_equil
           |
-            # fe
             (?P<comp_fe>[A-Za-z]+)
             (?:
                 _(?P<comptok>[A-Za-z]*)
@@ -432,7 +449,6 @@ _tail_re = re.compile(
             )?
             _fe
           |
-            # equil
             (?P<eq>eq)
         )
     )?
@@ -440,21 +456,6 @@ _tail_re = re.compile(
     """,
     re.X,
 )
-
-def _endswith_stage(jobname: str):
-    """Return ``(stage, base)`` if ``jobname`` uses a known suffix."""
-    for s in _STAGE_SUFFIXES:
-        if jobname.endswith(s):
-            return s[1:], jobname[: -len(s)]  # stage (no leading _), basepath
-    return None, jobname
-
-def _split_after(parts, token):
-    """Return the index after the first occurrence of ``token`` or ``-1``."""
-    try:
-        i = parts.index(token)
-        return i + 1
-    except ValueError:
-        return -1
 
 def _parse_jobname(jobname: str):
     """
@@ -468,15 +469,38 @@ def _parse_jobname(jobname: str):
         return None
 
     body = jobname[4:]  # strip 'fep_'
-    parts = body.split("_", 1)
-    root = parts[0]
-    tail = parts[1] if len(parts) > 1 else ""
+    pre = None
+    tail = body
+    if "/simulations/" in body:
+        pre, tail = body.split("/simulations/", 1)
+        if "/" in tail:
+            tail = tail.split("/", 1)[0]
+    root = body
+    ligand = None
+
     run_id = None
+    m = _tail_re.match(tail)
+    if m:
+        gd = m.groupdict()
+        ligand = gd.get("lig")
+        tail = m.group(0)
+        if pre is not None and ligand:
+            root = f"{pre}/simulations/{ligand}"
+    else:
+        legacy = _legacy_tail_re.match(tail)
+        if legacy:
+            m = legacy
+            gd = legacy.groupdict()
+            ligand = ligand or gd.get("lig")
+            if pre is not None and ligand:
+                root = f"{pre}/simulations/{ligand}"
+        else:
+            gd = None
+
     mrun = re.search(r"/executions/([^/]+)/", "/" + root + "/")
     if mrun:
         run_id = mrun.group(1)
 
-    m = _tail_re.match(tail)
     if not m:
         return {
             "stage": "unknown",
@@ -487,8 +511,6 @@ def _parse_jobname(jobname: str):
             "win": None,
         }
 
-    gd = m.groupdict()
-    ligand = gd.get("lig")
     comp = None
     win = None
     stage = "unknown"
@@ -526,6 +548,7 @@ def _natural_keys(val: str):
 
 def _natkey_series(s: pd.Series) -> pd.Series:
     """Vectorised version of :func:`_natural_keys` for pandas Series."""
+    assert pd is not None  # for type-checkers
     if pd.api.types.is_numeric_dtype(s):
         return s
     return s.astype(str).map(_natural_keys)
@@ -585,10 +608,14 @@ def report_jobs(partition=None, detailed=False):
     click.echo(click.style(f"Total jobs: {total}, Running: {running}, Pending: {pending}", bold=True))
 
     # group by run_id (fallback to system_root)
-    grp_key = df["run_id"]
-    for gid, sub in df.groupby(grp_key):
-        system_root = sub["system_root"].dropna().unique()[0]
-        click.echo(click.style(f"\nRun: {system_root}", bold=True))
+    grp_key = df["run_id"].where(df["run_id"].notna(), df["system_root"])
+    df = df.assign(_group=grp_key)
+    for gid, sub in df.groupby("_group"):
+        sys_root = sub["system_root"].dropna().unique()
+        label = gid if gid is not None else "(unknown)"
+        if sys_root.size > 0:
+            label = sys_root[0]
+        click.echo(click.style(f"\nRun: {label}", bold=True))
         stages = ", ".join(sorted(sub["stage"].dropna().unique()))
         click.echo(f"Stages present: {stages or '(unknown)'}")
         click.echo("-" * 70)

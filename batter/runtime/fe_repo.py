@@ -134,7 +134,6 @@ class FEResultsRepository:
     def index(self) -> "pd.DataFrame":
         if self._idx.exists():
             return pd.read_csv(self._idx)
-        import pandas as pd
         return pd.DataFrame(columns=[
             "run_id","ligand","system_name","fe_type","temperature","method","total_dG","total_se","components","created_at"
         ])

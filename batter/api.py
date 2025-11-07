@@ -97,7 +97,8 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
     -------
     pandas.DataFrame
         DataFrame with one row per stored FE run. Columns typically include
-        ``run_id``, ``system_name``, ``fe_type``, ``temperature``,
+        ``run_id``, ``system_name``, ``ligand``, ``mol_name``,
+        ``fe_type``, ``temperature``,
         ``method``, ``total_dG``, ``total_se``, ``components``, and ``created_at``.
     """
     store = ArtifactStore(Path(work_dir))
