@@ -1,36 +1,67 @@
+"""Parsing helpers for legacy component-wise free energy outputs."""
+
+from __future__ import annotations
+
 import os
+from pathlib import Path
+from typing import Dict, Iterable, Tuple
+
 import numpy as np
 from loguru import logger
 
-class ComponentFEResult:
-    _component_keys = ['fe', 'attach', 'elec', 'lj',
-                       'release', 'boresch', 'uno', 'uno-rest']
+__all__ = ["ComponentFEResult", "FEResult"]
 
-    def __init__(self, fe_value, fe_std):
-        """
-        Class to store the results of the free energy calculations
-        """
-        self._results = {}
-        # Example initialization; customize as needed
+
+class ComponentFEResult:
+    """
+    Container for individual component free energies.
+
+    Parameters
+    ----------
+    fe_value : float or None, optional
+        Default value for every component prior to parsing.
+    fe_std : float or None, optional
+        Default uncertainty associated with ``fe_value``.
+    """
+
+    _component_keys = ["fe", "attach", "elec", "lj", "release", "boresch", "uno", "uno-rest"]
+
+    def __init__(self, fe_value: float | None = None, fe_std: float | None = None) -> None:
+        self._results: Dict[str, Tuple[float | str | None, float | str | None]] = {}
         for key in self._component_keys:
             self._results[key] = (fe_value, fe_std)
 
     @property
-    def results(self):
-        """
-        Return the results
-        """
+    def results(self) -> Dict[str, Tuple[float | str | None, float | str | None]]:
+        """Return the internal component map."""
         return self._results
 
+    def to_dict(self) -> Dict[str, Dict[str, float | str | None]]:
+        """
+        Convert results into a JSON-friendly dictionary.
 
-    def __repr__(self):
+        Returns
+        -------
+        dict
+            ``{"component": {"value": float | str | None, "std": float | str | None}}``
+            for each component listed in :attr:`_component_keys`.
+        """
+        json_dict: Dict[str, Dict[str, float | str | None]] = {}
+        for key in self._component_keys:
+            value, std = self._results.get(key, (None, None))
+            json_dict[key] = {"value": value, "std": std}
+        return json_dict
+
+    def __repr__(self) -> str:  # pragma: no cover - string repr convenience only
         return f"FE: {self.fe if 'fe' in self._results else 'not calculated'} kcal/mol"
 
-# Dynamically add properties
-def _make_property(name, index):
+
+def _make_property(name: str, index: int):
     def getter(self):
         return self._results[name][index] if name in self._results else None
+
     return property(getter)
+
 
 for key in ComponentFEResult._component_keys:
     setattr(ComponentFEResult, f"{key}", _make_property(key, 0))
@@ -39,85 +70,124 @@ for key in ComponentFEResult._component_keys:
 
 class FEResult(ComponentFEResult):
     """
-    Class to store the results of all the free energy calculations
-    that are generated with the old analysis.
-    """
-    def __init__(self, result_file, fe_timeseries=None):
-        """
-        Currently, the results are created from a file.
-        """
-        self.result_file = result_file
-        self.fe_timeseries = fe_timeseries
-        if not os.path.exists(self.result_file):
-            logger.error(f"File {self.result_file} does not exist")
-            return
-        self._results = {}
-        if fe_timeseries is not None:
-            self.fe_timeseries = fe_timeseries
-            self._results['fe_timeseries'] = fe_timeseries
+    Representation of the ``Results/results.dat`` style output from BAT.py.
 
+    Parameters
+    ----------
+    result_file : str or Path
+        Path to the legacy text file.
+    fe_timeseries : array-like, optional
+        Optional time series of cumulative FE estimates to pack alongside the
+        scalar results.
+    """
+
+    _LINE_MAP = {
+        "Boresch": "boresch",
+        "e": "elec",
+        "v": "lj",
+        "o": "uno",
+        "n": "release",
+        "m": "attach",
+        "z": "uno-rest",
+        "Total": "fe",
+    }
+
+    def __init__(self, result_file: str | os.PathLike[str], fe_timeseries=None):
+        super().__init__()
+        self.result_file = Path(result_file)
+        self.fe_timeseries = fe_timeseries
+        if not self.result_file.exists():
+            raise FileNotFoundError(f"File {self.result_file} does not exist")
+        if fe_timeseries is not None:
+            self._results["fe_timeseries"] = fe_timeseries
         self._read_results()
 
-    def _read_results(self):
+    @classmethod
+    def from_lines(cls, lines: Iterable[str], fe_timeseries=None) -> "FEResult":
         """
-        Read the results from the file
-        The results will be stored as dictionary
-        where the key is the component
-        and the value is the free energy tuple (mean, std)
-        """
-        with open(self.result_file, 'r') as f:
-            result_lines = f.readlines()
-        if 'FAILED' in result_lines[0]:
-            raise ValueError("Analysis failed")
-        elif 'UNBOUND' in result_lines[0]:
-            self._results = {}
-            
-            for key in self._component_keys:
-                self._results[key] = ('unbound', 'unbound')
-            return
-        
-        results = {}
-        for line in result_lines:
-            if line.startswith('Boresch'):
-                comp = 'boresch'
-            elif line.startswith('e'):
-                comp = 'elec'
-            elif line.startswith('v'):
-                comp = 'lj'
-            elif line.startswith('o'):
-                comp = 'uno'
-            elif line.startswith('n'):
-                comp = 'release'
-            elif line.startswith('m'):
-                comp = 'attach'
-            elif line.startswith('z'):
-                comp = 'uno-rest'
-            elif line.startswith('Total'):
-                comp = 'fe'
-            else:
-                comp = None
-            if comp is not None:
-                energy = line.split()[-2][:-1]
-                std = line.split()[-1]
-                if energy == 'na':
-                    energy = np.nan
-                    std = np.nan
-                    results[comp] = (energy, std)
-                else:
-                    results[comp] = (float(energy), float(std))
-        self._results = results
+        Build an :class:`FEResult` from an iterable of lines.
 
-    def to_dict(self):
-        json_dict = {}
-        for key in self._component_keys:
-            if key in self._results:
-                json_dict[key] = {
-                    'value': self._results[key][0],
-                    'std': self._results[key][1]
-                }
-            else:
-                json_dict[key] = {
-                    'value': None,
-                    'std': None
-                }
-        return json_dict
+        Parameters
+        ----------
+        lines : Iterable[str]
+            Text lines formatted like the legacy results file.
+        fe_timeseries : array-like, optional
+            Optional time series to stash under ``fe_timeseries``.
+
+        Returns
+        -------
+        FEResult
+            Parsed object that behaves like the regular file-backed version.
+        """
+        obj = cls.__new__(cls)
+        ComponentFEResult.__init__(obj)
+        obj.result_file = Path("<in-memory>")
+        obj.fe_timeseries = fe_timeseries
+        if fe_timeseries is not None:
+            obj._results["fe_timeseries"] = fe_timeseries
+        obj._results.update(cls._parse_lines(lines))
+        return obj
+
+    @property
+    def is_unbound(self) -> bool:
+        """Return ``True`` if the analysis marked the complex as unbound."""
+        value = self._results.get("fe")
+        return isinstance(value, tuple) and value[0] == "unbound"
+
+    def _read_results(self) -> None:
+        with self.result_file.open("r") as handle:
+            lines = handle.readlines()
+        self._results.update(self._parse_lines(lines))
+
+    @classmethod
+    def _parse_lines(cls, lines: Iterable[str]) -> Dict[str, Tuple[float | str | None, float | str | None]]:
+        """
+        Parse legacy BAT.py analysis output.
+
+        Parameters
+        ----------
+        lines : Iterable[str]
+            File contents.
+
+        Returns
+        -------
+        dict
+            Mapping of component name to ``(value, std)``.
+        """
+        lines = list(lines)
+        if not lines:
+            return {}
+        first = lines[0].strip()
+        if "FAILED" in first:
+            raise ValueError("Analysis failed")
+        if "UNBOUND" in first:
+            return {key: ("unbound", "unbound") for key in cls._component_keys}
+
+        results: Dict[str, Tuple[float | str | None, float | str | None]] = {}
+        for line in lines:
+            comp = cls._component_from_line(line.strip())
+            if comp is None:
+                continue
+            tokens = line.split()
+            if len(tokens) < 2:
+                continue
+            energy_token = tokens[-2].rstrip(",")
+            std_token = tokens[-1]
+            if energy_token.lower() == "na":
+                results[comp] = (np.nan, np.nan)
+                continue
+            try:
+                energy = float(energy_token)
+                std = float(std_token)
+            except ValueError:
+                logger.warning("Could not parse FE line: %s", line.strip())
+                continue
+            results[comp] = (energy, std)
+        return results
+
+    @classmethod
+    def _component_from_line(cls, line: str) -> str | None:
+        for prefix, key in cls._LINE_MAP.items():
+            if line.startswith(prefix):
+                return key
+        return None
