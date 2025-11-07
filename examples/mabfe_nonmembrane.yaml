@@ -51,7 +51,7 @@ fe_sim:
   eq_steps1: 5000
   eq_steps2: 10000
   z_steps1: 5000
-  z_steps2: 30000
+  z_steps2: 100000
   cut: 9.0
   barostat: 1
   hmr: yes
