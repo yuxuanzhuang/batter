@@ -220,6 +220,42 @@ class SimSystem:
             kw["meta"] = SystemMeta.from_mapping(kw["meta"])
         return replace(self, **kw)
 
+    def path(self, *parts: str | Path) -> Path:
+        """
+        Join ``root`` with the provided path segments.
+
+        Parameters
+        ----------
+        *parts : str or Path
+            Relative path components appended in order.
+
+        Returns
+        -------
+        pathlib.Path
+            Absolute path pointing inside ``root``.
+        """
+        p = self.root
+        for part in parts:
+            p = p / Path(part)
+        return p
+
+    def with_meta(self, **updates: Any) -> "SimSystem":
+        """
+        Return a copy of the system with merged metadata.
+
+        Parameters
+        ----------
+        **updates
+            Keyword arguments forwarded to :meth:`SystemMeta.merge`.
+
+        Returns
+        -------
+        SimSystem
+            Copy of the system containing the updated metadata bundle.
+        """
+        merged = self.meta.merge(**updates)
+        return replace(self, meta=merged)
+
 
 class CreateSystemLike(Protocol):
     """

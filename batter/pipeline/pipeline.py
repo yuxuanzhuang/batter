@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from .step import Step, ExecResult
 
@@ -40,6 +40,8 @@ class Pipeline:
 
     def __init__(self, steps: List[Step]) -> None:
         self.steps = steps
+        self._step_by_name: Dict[str, Step] = {step.name: step for step in steps}
+        self._graph: Dict[str, List[str]] = {}
         self._validate_unique_names()
         self._order = self._toposort()
 
@@ -79,6 +81,61 @@ class Pipeline:
         """Return steps in execution order."""
         return list(self._order)
 
+    def describe(self) -> List[Dict[str, Any]]:
+        """
+        Return a serialisable summary of the pipeline.
+
+        Returns
+        -------
+        list of dict
+            Each entry contains ``name``, ``requires``, and ``payload_type`` keys.
+        """
+        summary: List[Dict[str, Any]] = []
+        for step in self._order:
+            summary.append(
+                {
+                    "name": step.name,
+                    "requires": list(step.requires),
+                    "payload_type": type(step.payload).__name__ if step.payload is not None else None,
+                }
+            )
+        return summary
+
+    def adjacency(self) -> Dict[str, List[str]]:
+        """
+        Return the adjacency list describing the DAG.
+
+        Returns
+        -------
+        dict[str, list[str]]
+            Mapping of each step to the steps that depend on it.
+        """
+        return {name: list(children) for name, children in self._graph.items()}
+
+    def dependencies(self, step_name: str) -> List[str]:
+        """
+        Retrieve the declared dependencies for ``step_name``.
+
+        Parameters
+        ----------
+        step_name : str
+            Step identifier.
+
+        Returns
+        -------
+        list[str]
+            Names of prerequisite steps.
+
+        Raises
+        ------
+        KeyError
+            If ``step_name`` does not exist in the pipeline.
+        """
+        try:
+            return list(self._step_by_name[step_name].requires)
+        except KeyError as exc:  # pragma: no cover - defensive branch
+            raise KeyError(f"Unknown step: {step_name}") from exc
+
     # ------------------- internals -------------------
 
     def _validate_unique_names(self) -> None:
@@ -90,7 +147,7 @@ class Pipeline:
     def _toposort(self) -> List[Step]:
         graph = defaultdict(list)     # node -> children
         indeg = defaultdict(int)      # node -> indegree
-        nodes = {s.name: s for s in self.steps}
+        nodes = self._step_by_name
 
         for s in self.steps:
             indeg.setdefault(s.name, 0)
@@ -112,4 +169,11 @@ class Pipeline:
 
         if len(order) != len(nodes):
             raise ValueError("Cycle detected in pipeline dependencies.")
+
+        # freeze graph for later introspection (ensure every node is present)
+        packed: Dict[str, List[str]] = {name: list(children) for name, children in graph.items()}
+        for name in nodes:
+            packed.setdefault(name, [])
+        self._graph = packed
+
         return order

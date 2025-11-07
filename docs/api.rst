@@ -130,6 +130,57 @@ Parameterisation Modules
    :members:
    :undoc-members:
 
+Pipeline Modules
+----------------
+
+.. automodule:: batter.pipeline.pipeline
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: batter.pipeline.step
+   :noindex:
+   :members:
+   :undoc-members:
+
+.. automodule:: batter.pipeline.payloads
+   :noindex:
+   :members:
+   :undoc-members:
+
+Runtime Modules
+---------------
+
+.. automodule:: batter.runtime.portable
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: batter.runtime.fe_repo
+   :noindex:
+   :members:
+   :undoc-members:
+
+Systems Modules
+---------------
+
+.. automodule:: batter.systems.core
+   :noindex:
+   :members:
+   :undoc-members:
+
+.. automodule:: batter.systems.mabfe
+   :noindex:
+   :members:
+   :undoc-members:
+
+.. automodule:: batter.systems.masfe
+   :noindex:
+   :members:
+   :undoc-members:
+
 Analysis Modules
 ----------------
 

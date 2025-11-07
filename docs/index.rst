@@ -99,6 +99,7 @@ Quick Links
    api
    analysis
    parameterisation
+   execution_model
    developer_guide
    developer_guide/pipeline_payloads_and_metadata
    cli

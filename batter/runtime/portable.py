@@ -12,7 +12,21 @@ __all__ = ["Artifact", "ArtifactManifest", "ArtifactStore"]
 
 
 def _sha256(path: Path, chunk: int = 1 << 20) -> str:
-    """Compute SHA-256 for a file."""
+    """
+    Compute the SHA-256 digest of ``path``.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        File to hash.
+    chunk : int, optional
+        Read size (bytes). Defaults to 1 MiB.
+
+    Returns
+    -------
+    str
+        Hexadecimal digest string.
+    """
     h = hashlib.sha256()
     with path.open("rb") as f:
         while True:
@@ -84,6 +98,17 @@ class ArtifactManifest:
 
     def exists(self, name: str) -> bool:
         return name in self._items
+
+    def items(self) -> List[Artifact]:
+        """
+        Return all registered artifacts sorted by name.
+
+        Returns
+        -------
+        list[Artifact]
+            Snapshot of the manifest contents.
+        """
+        return [self._items[name] for name in self.names()]
 
     # -------------- i/o -------------------
 
@@ -229,6 +254,36 @@ class ArtifactStore:
     def path(self, name: str) -> Path:
         """Resolve an artifact name to an **absolute** path under the current root."""
         return self.root / self._manifest.get(name).relpath
+
+    def list_artifacts(
+        self,
+        *,
+        prefix: Optional[str] = None,
+        kind: Literal["file", "dir", None] = None,
+    ) -> List[Artifact]:
+        """
+        Inspect manifest entries, optionally filtering by name or kind.
+
+        Parameters
+        ----------
+        prefix : str, optional
+            When provided, only artifacts whose logical name starts with
+            ``prefix`` are returned.
+        kind : {'file', 'dir', None}, optional
+            Restrict results to files or directories. ``None`` (default) returns
+            both.
+
+        Returns
+        -------
+        list[Artifact]
+            Matching artifacts in alphabetical order.
+        """
+        artifacts = self._manifest.items()
+        if prefix:
+            artifacts = [art for art in artifacts if art.name.startswith(prefix)]
+        if kind is not None:
+            artifacts = [art for art in artifacts if art.kind == kind]
+        return artifacts
 
     # ---------------- manifest i/o ----------------
 

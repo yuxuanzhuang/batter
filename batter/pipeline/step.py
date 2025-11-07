@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, List, Mapping
 
 
@@ -34,6 +34,23 @@ class Step:
     def params(self) -> Any:
         """Backwards-compatible alias for ``payload``."""
         return self.payload
+
+    def replace(self, **updates: Any) -> "Step":
+        """
+        Return a new :class:`Step` with selected attributes updated.
+
+        Parameters
+        ----------
+        **updates
+            Keyword overrides for any of the dataclass fields (``name``,
+            ``requires``, or ``payload``).
+
+        Returns
+        -------
+        Step
+            Fresh step instance containing the requested updates.
+        """
+        return replace(self, **updates)
 
 
 @dataclass(slots=True)
