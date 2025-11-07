@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "batter"
 description = "A python package that set up FEP simulations with bat.py"
 dynamic = ["version"]
-readme = "README.md"
+readme = "README.rst"
 authors = [
     { name = "Yuxuan Zhuang", email = "yuxuan.zhuang@stanford.edu" }
 ]
