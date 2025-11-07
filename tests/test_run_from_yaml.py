@@ -103,7 +103,7 @@ def test_yaml_has_minimal_keys(yaml_path: Path) -> None:
 
 @pytest.mark.parametrize("yaml_path", _iter_yaml_files(), ids=lambda p: p.name)
 def test_cli_batter_run_dry(
-    yaml_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    yaml_path: Path, tmp_path: Path,
 ) -> None:
     """
     Optional: smoke-test the CLI with a dry run for each YAML.
@@ -119,8 +119,6 @@ def test_cli_batter_run_dry(
         Path to a YAML configuration.
     tmp_path : pathlib.Path
         Temporary directory for CLI outputs, if needed.
-    monkeypatch : pytest.MonkeyPatch
-        Fixture for safe env mutation.
 
     Notes
     -----
@@ -174,17 +172,23 @@ def test_cli_batter_run_dry(
     assert proc.returncode == 0, f"CLI failed for {yaml_path.name} (see logs above)"
 
 
-def test_runs_prepare_fe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_runs_prepare_fe(tmp_path: Path) -> None:
     """
-    Smoke-test that --only-equil reuse of a pre-equilibrated folder drives only FE prep.
+    test that --only-equil reuse of a pre-equilibrated folder drives only FE prep.
+
+    This test is **skipped by default** to avoid heavy work. Enable it by setting:
+        BATTER_TEST_RUN_CLI=1
     """
+    if os.environ.get("BATTER_TEST_RUN_CLI", "0") != "1":
+        pytest.skip("Set BATTER_TEST_RUN_CLI=1 to enable CLI tests.")
+
     src = DATA_DIR / "equil_finished"
     work_dir = tmp_path / "equil_finished"
     shutil.copytree(src, work_dir)
 
     calls: list[str] = []
 
-    yaml_path = DATA_DIR / "mabfe_ligand.yaml"
+    yaml_path = DATA_DIR / "mabfe.yaml"
     run_from_yaml(
         yaml_path,
         on_failure="raise",

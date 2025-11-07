@@ -423,7 +423,7 @@ def run_from_yaml(
                 logger.success(
                     "[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting."
                 )
-                raise SystemExit(0)
+                return
         children = handle_phase_failures(children, "equil", rc.run.on_failure)
     else:
         logger.info(f"[skip] equil: no steps in this protocol.")
@@ -484,7 +484,7 @@ def run_from_yaml(
                 logger.success(
                     "[DRY-RUN] Reached first SLURM submission point (fe_equil). Exiting without submitting."
                 )
-                raise SystemExit(0)
+                return
         children = handle_phase_failures(children, "fe_equil", rc.run.on_failure)
     else:
         logger.info("[skip] fe_equil: no steps in this protocol.")
@@ -504,7 +504,7 @@ def run_from_yaml(
                 logger.success(
                     "[DRY-RUN] Reached first SLURM submission point (fe). Exiting without submitting."
                 )
-                raise SystemExit(0)
+                return
         children = handle_phase_failures(children, "fe", rc.run.on_failure)
     else:
         logger.info("[skip] fe: no steps in this protocol.")
