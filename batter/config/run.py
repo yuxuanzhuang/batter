@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-from typing import Optional, Literal, List, Mapping, Iterable
+from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from batter.config.simulation import SimulationConfig
@@ -535,6 +535,37 @@ class FESimArgs(BaseModel):
         return value
 
 
+class MDSimArgs(BaseModel):
+    """
+    Simulation overrides used when ``protocol == "md"``.
+
+    These runs reuse the equilibration steps from ABFE but never schedule FE windows,
+    so only generic MD knobs are required (no lambdas, SDR restraints, etc.).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dt: float = Field(0.004, description="MD timestep (ps).")
+    temperature: float = Field(310.0, description="Simulation temperature (K).")
+    eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps.")
+    eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps.")
+    ntpr: int = Field(1000, description="Energy print frequency.")
+    ntwr: int = Field(10_000, description="Restart write frequency.")
+    ntwe: int = Field(0, description="Energy write frequency (0 disables).")
+    ntwx: int = Field(2500, description="Trajectory write frequency.")
+    cut: float = Field(9.0, description="Nonbonded cutoff (Å).")
+    gamma_ln: float = Field(1.0, description="Langevin gamma value (ps^-1).")
+    barostat: int = Field(1, description="Barostat selection (1=Berendsen, 2=MC).")
+    hmr: Literal["yes", "no"] = Field(
+        "yes", description="Hydrogen mass repartitioning toggle."
+    )
+
+    @field_validator("hmr", mode="before")
+    @classmethod
+    def _coerce_hmr(cls, v):
+        return coerce_yes_no(v) or "no"
+
+
 class RunSection(BaseModel):
     """Run-related settings."""
 
@@ -576,12 +607,30 @@ class RunConfig(BaseModel):
 
     system: SystemSection = Field(..., description="System-level configuration block.")
     create: CreateArgs = Field(..., description="Settings for system creation/staging.")
-    fe_sim: FESimArgs = Field(
-        default_factory=FESimArgs, description="Simulation parameter overrides."
+    fe_sim: FESimArgs | MDSimArgs | Dict[str, Any] = Field(
+        default_factory=dict, description="Simulation parameter overrides."
     )
     run: RunSection = Field(
         default_factory=RunSection, description="Execution controls."
     )
+
+    @model_validator(mode="after")
+    def _coerce_fe_sim_model(self) -> "RunConfig":
+        proto = getattr(self, "protocol", "abfe")
+        current = self.fe_sim
+        if proto == "md":
+            target = MDSimArgs
+        else:
+            target = FESimArgs
+        if isinstance(current, target):
+            return self
+        payload: dict[str, Any]
+        if isinstance(current, BaseModel):
+            payload = current.model_dump()
+        else:
+            payload = dict(current or {})
+        self.fe_sim = target.model_validate(payload)
+        return self
 
     @field_validator("protocol", mode="before")
     @classmethod
@@ -658,3 +707,6 @@ class RunConfig(BaseModel):
         return self.model_copy(
             update={"system": resolved_system, "create": resolved_create}
         )
+
+
+RunConfig.model_rebuild()

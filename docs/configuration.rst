@@ -21,8 +21,10 @@ The run YAML file is divided into four top-level sections:
     selections, optional restraint files). The structure maps directly to
     :class:`batter.config.run.CreateArgs`.
 ``fe_sim``
-    Overrides and controls for free-energy simulation stages, represented by
-    :class:`batter.config.run.FESimArgs`.
+    Overrides and controls for free-energy simulation stages. For ABFE/ASFE runs
+    these map to :class:`batter.config.run.FESimArgs`. MD-only runs automatically
+    coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
+    ``lambdas`` or SDR restraints are no longer required.
 ``run``
     Execution behaviour such as SLURM options, dry-run toggles, and failure
     policies. These fields populate :class:`batter.config.run.RunSection`.
@@ -60,6 +62,7 @@ Quick Reference
    batter.config.run.RunConfig
    batter.config.run.CreateArgs
    batter.config.run.FESimArgs
+   batter.config.run.MDSimArgs
    batter.config.simulation.SimulationConfig
    batter.config.load_run_config
    batter.config.dump_run_config

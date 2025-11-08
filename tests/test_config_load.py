@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
-from batter.config.run import CreateArgs, FESimArgs, SystemSection
+from batter.config.run import CreateArgs, FESimArgs, SystemSection, RunConfig, MDSimArgs
 from batter.config.simulation import SimulationConfig
 from batter.config.utils import coerce_yes_no
 
@@ -201,3 +201,18 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     fe_args = FESimArgs(lambdas=[0, 1], release_eq=[0, 1], enable_mcwat="no")
     cfg = SimulationConfig.from_sections(create, fe_args)
     assert cfg.enable_mcwat == "no"
+
+
+def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:
+    lig = tmp_path / "lig.sdf"
+    lig.write_text("dummy")
+    run = RunConfig(
+        version=1,
+        protocol="md",
+        backend="local",
+        system=SystemSection(output_folder=tmp_path / "work"),
+        create=CreateArgs(system_name="sys", ligand_paths={"LIG": lig}),
+        fe_sim={},  # intentionally empty; lambdas not required for MD
+    )
+    assert isinstance(run.fe_sim, MDSimArgs)
+    assert run.fe_sim.dt == pytest.approx(0.004)
