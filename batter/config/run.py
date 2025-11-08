@@ -554,7 +554,7 @@ class RunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(1, description="Schema version of the run configuration.")
-    protocol: Literal["abfe", "asfe"] = Field(
+    protocol: Literal["abfe", "asfe", "md"] = Field(
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(

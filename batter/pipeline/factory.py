@@ -8,7 +8,7 @@ from .payloads import StepPayload, SystemParams
 from .pipeline import Pipeline
 from .step import Step
 
-__all__ = ["make_abfe_pipeline", "make_asfe_pipeline"]
+__all__ = ["make_abfe_pipeline", "make_asfe_pipeline", "make_md_pipeline"]
 
 
 def _step(
@@ -221,4 +221,57 @@ def make_asfe_pipeline(
                 "fe_equil"
         }
         steps = [s for s in steps if s.name in keep]
+    return Pipeline(steps)
+
+
+def make_md_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+) -> Pipeline:
+    """
+    MD-only pipeline focused on equilibration:
+
+    system_prep → param_ligands → prepare_equil → equil → equil_analysis
+    """
+    params_model = (
+        sys_params
+        if isinstance(sys_params, SystemParams)
+        else SystemParams.model_validate(sys_params or {})
+    )
+    steps: List[Step] = [
+        _step(
+            name="system_prep",
+            requires=[],
+            sim=sim,
+            sys_params=params_model,
+        ),
+        _step(
+            name="param_ligands",
+            requires=["system_prep"],
+            sim=sim,
+            sys_params=params_model,
+        ),
+        _step(
+            "prepare_equil",
+            requires=["param_ligands"],
+            sim=sim,
+            sys_params=params_model,
+        ),
+        _step(
+            "equil",
+            requires=["prepare_equil"],
+            sim=sim,
+            sys_params=params_model,
+        ),
+        _step(
+            "equil_analysis",
+            requires=["equil"],
+            sim=sim,
+            sys_params=params_model,
+        ),
+    ]
+    # only_fe_preparation has no effect here because the MD pipeline stops before FE.
+    if only_fe_preparation:
+        return Pipeline(steps)
     return Pipeline(steps)

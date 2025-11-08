@@ -6,7 +6,7 @@ from typing import Optional
 
 from batter.pipeline.pipeline import Pipeline
 from batter.config.simulation import SimulationConfig
-from batter.pipeline.factory import make_abfe_pipeline, make_asfe_pipeline
+from batter.pipeline.factory import make_abfe_pipeline, make_asfe_pipeline, make_md_pipeline
 from batter.pipeline.payloads import SystemParams
 
 
@@ -57,6 +57,12 @@ def select_pipeline(
         )
     if name == "asfe":
         return make_asfe_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+        )
+    if name == "md":
+        return make_md_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,
