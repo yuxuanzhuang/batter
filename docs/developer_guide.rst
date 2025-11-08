@@ -14,6 +14,8 @@ artifact store.
    :caption: Focus Topics
 
    developer_guide/pipeline_payloads_and_metadata
+   developer_guide/authoring_pipelines
+   developer_guide/internal_builders
 
 .. contents::
    :depth: 2
