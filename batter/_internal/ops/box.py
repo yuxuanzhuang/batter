@@ -298,7 +298,6 @@ def create_box(ctx: BuildContext) -> None:
         _write(window_dir / filename, body)
         run_with_log(f"{tleap} -s -f {filename} > {logname}", working_dir=window_dir)
 
-    # 
     _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_dum.in")
     with (window_dir / "tleap_solvate_dum.in").open("a") as f:
         f.write("dum = loadpdb solvate_pre_dum.pdb\n\n")
@@ -576,10 +575,12 @@ def create_box_y(ctx: BuildContext) -> None:
     _cp(src_tleap, window_dir / "tleap.in")
 
     # --- build the vacuum unit from ligand PDB (vac.*) ---
-    tleap_lig_txt = [
+    tleap_lig_txt = open(window_dir / "tleap.in").read().splitlines()
+    tleap_lig_txt += [
         "# ligand-only vacuum topology",
         f"loadamberparams {mol}.frcmod",
         f"{mol} = loadmol2 {mol}.mol2",
+        f'set {{{mol}.1}} name "{mol}"\n',
         f'lig = loadpdb {mol}.pdb',
         "desc lig",
         "savepdb lig vac.pdb",
@@ -632,6 +633,7 @@ def create_box_y(ctx: BuildContext) -> None:
         f"loadamberparams {mol}.frcmod",
         f"{mol} = loadmol2 {mol}.mol2",
         f"source {water_leaprc}",
+        f'set {{{mol}.1}} name "{mol}"',
         f'model = loadpdb build.pdb',
         "",
         f"# cubic box with {solv_shell:.3f} Å padding each side",
@@ -660,6 +662,51 @@ def create_box_y(ctx: BuildContext) -> None:
     ]
     _write(window_dir / "tleap_solvate.in", "\n".join(tleap_solv_lines))
     run_with_log(f"{tleap} -s -f tleap_solvate.in > tleap_solvate.log", working_dir=window_dir)
+    
+
+    # --- tleap parts (all with working_dir=window_dir) ---
+    def _tleap_write_and_run(filename: str, body: str, logname: str) -> None:
+        _write(window_dir / filename, body)
+        run_with_log(f"{tleap} -s -f {filename} > {logname}", working_dir=window_dir)
+
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_dum.in")
+    with (window_dir / "tleap_solvate_dum.in").open("a") as f:
+        f.write("dum = loadpdb solvate_pre_dum.pdb\n\n")
+        f.write(f"set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+        f.write("savepdb dum solvate_dum.pdb\n")
+        f.write("saveamberparm dum solvate_dum.prmtop solvate_dum.inpcrd\nquit\n")
+    run_with_log(f"{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log", working_dir=window_dir)
+
+    # ligands
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_ligands.in")
+    with (window_dir / "tleap_solvate_ligands.in").open("a") as f:
+        f.write("# Load the necessary parameters\n")
+        f.write(f"loadamberparams {mol}.frcmod\n")
+        f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
+        f.write(f'set {{{mol}.1}} name "{mol}"\n')
+        f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
+        f.write(f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+        f.write("savepdb ligands solvate_ligands.pdb\n")
+        f.write("saveamberparm ligands solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n")
+    run_with_log(f"{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log", working_dir=window_dir)
+
+    dum_p = pmd.load_file(str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd"))
+    ligand_p = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
+    ligand_p.residues[0].name = mol
+    ligand_p.save(str(window_dir / f"{mol}.prmtop"), overwrite=True)
+    ligand_p = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
+
+    combined = dum_p + ligand_p
+    vac = dum_p + ligand_p
+
+    combined.save(str(window_dir / "full.prmtop"), overwrite=True)
+    combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
+    combined.save(str(window_dir / "full.pdb"), overwrite=True)
+
+    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
+    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
+    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+
 
     # --- HMR (optional) ---
     parmed_hmr = amber_dir / "parmed-hmr.in"

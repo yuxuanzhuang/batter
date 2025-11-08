@@ -532,7 +532,7 @@ def run_from_yaml(
     # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------
-    if phase_fe_equil.ordered_steps():
+    if phase_prepare_fe.ordered_steps():
         run_phase_skipping_done(
             phase_prepare_fe,
             children,
