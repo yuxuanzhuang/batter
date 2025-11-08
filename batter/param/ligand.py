@@ -142,6 +142,7 @@ def _ensure_sdf_internal_name(sdf_path: Union[str, Path], name: str) -> None:
     w.close()
     logger.debug(f"[ligand] Set SDF _Name to '{name}' in {Path(p).name}")
 
+
 def _rdkit_load(path: Union[str, Path], retain_h: bool) -> Chem.Mol:
     """
     Load a ligand file with RDKit (SDF/MOL2). Raise on failure.
@@ -166,7 +167,9 @@ def _rdkit_load(path: Union[str, Path], retain_h: bool) -> Chem.Mol:
     elif p.lower().endswith(".mol2"):
         mol = Chem.MolFromMol2File(p, removeHs=not retain_h)
     else:
-        raise ValueError(f"Unsupported ligand format for hashing: {p} (use .sdf or .mol2)")
+        raise ValueError(
+            f"Unsupported ligand format for hashing: {p} (use .sdf or .mol2)"
+        )
 
     if mol is None:
         raise ValueError(f"RDKit failed to load {p}")
@@ -283,7 +286,9 @@ class LigandProcessing(ABC):
                 f"Unsupported force field: {ligand_ff}. "
                 f"Supported: {available_amber_ff + available_openff_ff}"
             )
-        logger.debug("Using force field {} for ligand {}", self.force_field, ligand_file)
+        logger.debug(
+            "Using force field {} for ligand {}", self.force_field, ligand_file
+        )
 
         self.unique_mol_names = set(unique_mol_names or [])
         ligand_rdkit = self._load_ligand()
@@ -370,7 +375,10 @@ class LigandProcessing(ABC):
         )
         self.ligand_charge = float(ligand_charge)
         logger.debug(
-            "Net charge of ligand {} in {} is {}.", self.name, self.ligand_file, self.ligand_charge
+            "Net charge of ligand {} in {} is {}.",
+            self.name,
+            self.ligand_file,
+            self.ligand_charge,
         )
 
     def prepare_ligand_parameters(self) -> None:
@@ -389,8 +397,11 @@ class LigandProcessing(ABC):
         else:
             raise ValueError("Unsupported force field; expected 'amber' or 'openff'.")
 
-        with open(f"{self.output_dir}/{self.name}.json", "w") as f:
-            json.dump(self.to_dict(), f, indent=4)
+        metadata = self.to_dict()
+        charge = metadata.get("ligand_charge")
+        json_path = Path(self.output_dir) / f"{self.name}.json"
+        with json_path.open("w") as f:
+            json.dump(metadata, f, indent=4)
 
     def prepare_ligand_parameters_openff(self) -> None:
         """
@@ -461,7 +472,9 @@ class LigandProcessing(ABC):
         with tempfile.TemporaryDirectory() as tmpdir:
             run_with_log(ante_cmd, working_dir=tmpdir)
 
-        shutil.copy(f"{self.output_dir}/{mol}_ante.mol2", f"{self.output_dir}/{mol}.mol2")
+        shutil.copy(
+            f"{self.output_dir}/{mol}_ante.mol2", f"{self.output_dir}/{mol}.mol2"
+        )
         self._ligand_mol2_path = f"{self.output_dir}/{mol}.mol2"
 
         if self.ligand_ff == "gaff":
@@ -498,7 +511,9 @@ quit
         lig_u = Universe(f"{self.output_dir}/{mol}.pdb")
         self.atomnames = list(lig_u.atoms.names)
 
-        logger.debug("Ligand {} AMBER parameters prepared: {}/{}.lib", mol, self.output_dir, mol)
+        logger.debug(
+            "Ligand {} AMBER parameters prepared: {}/{}.lib", mol, self.output_dir, mol
+        )
 
     # -------------------- DB lookup --------------------
 
@@ -576,9 +591,17 @@ quit
                 return False
 
         for suffix in suffixes:
-            shutil.copy(db / f"{self.name}.{suffix}", Path(self.output_dir) / f"{self.name}.{suffix}")
+            shutil.copy(
+                db / f"{self.name}.{suffix}",
+                Path(self.output_dir) / f"{self.name}.{suffix}",
+            )
 
-        logger.debug("Ligand {} found in database {}. Files copied to {}.", self.name, db, self.output_dir)
+        logger.debug(
+            "Ligand {} found in database {}. Files copied to {}.",
+            self.name,
+            db,
+            self.output_dir,
+        )
         return True
 
 
@@ -609,13 +632,18 @@ class PDB_LigandProcessing(LigandProcessing):
 
 class SDF_LigandProcessing(LigandProcessing):
     def _load_ligand(self) -> Chem.Mol:
-        supplier = Chem.SDMolSupplier(self.ligand_file, removeHs=not self.retain_lig_prot)
+        supplier = Chem.SDMolSupplier(
+            self.ligand_file, removeHs=not self.retain_lig_prot
+        )
         ligand_rdkit = supplier[0] if supplier and len(supplier) > 0 else None
         if not self.retain_lig_prot and ligand_rdkit is not None:
             ligand_rdkit = Chem.RemoveHs(ligand_rdkit)
             ligand_rdkit = Chem.AddHs(ligand_rdkit, addCoords=True)
         else:
-            if ligand_rdkit is not None and ligand_rdkit.GetNumAtoms() == ligand_rdkit.GetNumHeavyAtoms():
+            if (
+                ligand_rdkit is not None
+                and ligand_rdkit.GetNumAtoms() == ligand_rdkit.GetNumHeavyAtoms()
+            ):
                 logger.warning(
                     "Probably no explicit H in {} (SMILES: {}). retain_lig_prot=True may cause issues.",
                     self.ligand_file,
@@ -630,7 +658,9 @@ class SDF_LigandProcessing(LigandProcessing):
 
 class MOL2_LigandProcessing(LigandProcessing):
     def _load_ligand(self) -> Chem.Mol:
-        ligand_rdkit = Chem.MolFromMol2File(self.ligand_file, removeHs=not self.retain_lig_prot)
+        ligand_rdkit = Chem.MolFromMol2File(
+            self.ligand_file, removeHs=not self.retain_lig_prot
+        )
         if not self.retain_lig_prot and ligand_rdkit is not None:
             ligand_rdkit = Chem.RemoveHs(ligand_rdkit)
             ligand_rdkit = Chem.AddHs(ligand_rdkit)
@@ -771,10 +801,16 @@ def batch_ligand_process(
     out_root.mkdir(parents=True, exist_ok=True)
 
     available_amber_ff = ["gaff", "gaff2"]
-    available_openff_ff = [ff.removesuffix(".offxml") for ff in get_available_force_fields() if "openff" in ff]
+    available_openff_ff = [
+        ff.removesuffix(".offxml")
+        for ff in get_available_force_fields()
+        if "openff" in ff
+    ]
     if ligand_ff not in (available_amber_ff + available_openff_ff):
-        raise ValueError(f"Unsupported force field: {ligand_ff}. "
-                         f"Supported: {available_amber_ff + available_openff_ff}")
+        raise ValueError(
+            f"Unsupported force field: {ligand_ff}. "
+            f"Supported: {available_amber_ff + available_openff_ff}"
+        )
 
     # --- compute content hashes for unique physical inputs ---
     # key: path (string) → (hash_id, canonical_smiles)
@@ -813,7 +849,7 @@ def batch_ligand_process(
             index=idx,
             output_dir=target_dir.as_posix(),
             # set to a generic name
-            ligand_name='lig',
+            ligand_name="lig",
             retain_lig_prot=retain_lig_prot,
             charge=charge_method,
             ligand_ff=ligand_ff,
@@ -832,8 +868,10 @@ def batch_ligand_process(
         (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
         # Skip if artifacts already present and not overwriting
-        marker_any = any((target_dir / f"{lig.name}.{ext}").exists()
-                         for ext in ("frcmod", "lib", "prmtop", "xml"))
+        marker_any = any(
+            (target_dir / f"{lig.name}.{ext}").exists()
+            for ext in ("frcmod", "lib", "prmtop", "xml")
+        )
         if not overwrite and marker_any:
             logger.info("Reusing cached ligand @ {} ({})", hid, meta["prepared_base"])
         else:
