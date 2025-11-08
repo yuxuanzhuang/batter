@@ -559,6 +559,11 @@ class MDSimArgs(BaseModel):
     hmr: Literal["yes", "no"] = Field(
         "yes", description="Hydrogen mass repartitioning toggle."
     )
+    # Step counts / reporting
+    release_eq: list[float] = Field(
+        default_factory=list,
+        description="Release-equilibration schedule weights.",
+    )
 
     @field_validator("hmr", mode="before")
     @classmethod
@@ -607,7 +612,7 @@ class RunConfig(BaseModel):
 
     system: SystemSection = Field(..., description="System-level configuration block.")
     create: CreateArgs = Field(..., description="Settings for system creation/staging.")
-    fe_sim: FESimArgs | MDSimArgs | Dict[str, Any] = Field(
+    fe_sim: Dict[str, Any] | FESimArgs | MDSimArgs = Field(
         default_factory=dict, description="Simulation parameter overrides."
     )
     run: RunSection = Field(
@@ -624,7 +629,6 @@ class RunConfig(BaseModel):
             target = FESimArgs
         if isinstance(current, target):
             return self
-        payload: dict[str, Any]
         if isinstance(current, BaseModel):
             payload = current.model_dump()
         else:

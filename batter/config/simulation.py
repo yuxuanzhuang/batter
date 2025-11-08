@@ -68,42 +68,47 @@ class SimulationConfig(BaseModel):
             "max_adis": float(max_adis),
         }
 
-        fe_release_eq = list(fe.release_eq or [0.0])
+        def _fe_attr(name: str, default):
+            if hasattr(fe, name):
+                return getattr(fe, name)
+            return default() if callable(default) else default
+
+        fe_release_eq = list(_fe_attr("release_eq", list) or [0.0])
 
         extra_conf_rest = create.extra_conformation_restraints
         extra_restraints = create.extra_restraints
 
         fe_data: dict[str, Any] = {
-            "fe_type": fe.fe_type,
-            "dec_int": fe.dec_int,
-            "remd": coerce_yes_no(fe.remd),
-            "rocklin_correction": coerce_yes_no(fe.rocklin_correction),
-            "enable_mcwat": coerce_yes_no(fe.enable_mcwat),
-            "lambdas": list(fe.lambdas or []),
-            "sdr_dist": float(fe.sdr_dist),
-            "blocks": int(fe.blocks),
-            "lig_buffer": float(fe.lig_buffer),
-            "lig_distance_force": float(fe.lig_distance_force),
-            "lig_angle_force": float(fe.lig_angle_force),
-            "lig_dihcf_force": float(fe.lig_dihcf_force),
-            "rec_com_force": float(fe.rec_com_force),
-            "lig_com_force": float(fe.lig_com_force),
-            "buffer_x": float(fe.buffer_x),
-            "buffer_y": float(fe.buffer_y),
-            "buffer_z": float(fe.buffer_z),
-            "temperature": float(fe.temperature),
-            "dt": float(fe.dt),
-            "hmr": coerce_yes_no(fe.hmr),
+            "fe_type": _fe_attr("fe_type", lambda: "md"),
+            "dec_int": _fe_attr("dec_int", lambda: "mbar"),
+            "remd": coerce_yes_no(_fe_attr("remd", lambda: "no")),
+            "rocklin_correction": coerce_yes_no(_fe_attr("rocklin_correction", lambda: "no")),
+            "enable_mcwat": coerce_yes_no(_fe_attr("enable_mcwat", lambda: "yes")),
+            "lambdas": list(_fe_attr("lambdas", list) or []),
+            "sdr_dist": float(_fe_attr("sdr_dist", lambda: 0.0)),
+            "blocks": int(_fe_attr("blocks", lambda: 0)),
+            "lig_buffer": float(_fe_attr("lig_buffer", lambda: 15.0)),
+            "lig_distance_force": float(_fe_attr("lig_distance_force", lambda: 5.0)),
+            "lig_angle_force": float(_fe_attr("lig_angle_force", lambda: 250.0)),
+            "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
+            "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
+            "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
+            "buffer_x": float(_fe_attr("buffer_x", lambda: 10.0)),
+            "buffer_y": float(_fe_attr("buffer_y", lambda: 10.0)),
+            "buffer_z": float(_fe_attr("buffer_z", lambda: 10.0)),
+            "temperature": float(_fe_attr("temperature", lambda: 310.0)),
+            "dt": float(_fe_attr("dt", lambda: 0.004)),
+            "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "no")),
             "release_eq": fe_release_eq,
-            "eq_steps1": int(fe.eq_steps1),
-            "eq_steps2": int(fe.eq_steps2),
-            "ntpr": int(fe.ntpr),
-            "ntwr": int(fe.ntwr),
-            "ntwe": int(fe.ntwe),
-            "ntwx": int(fe.ntwx),
-            "cut": float(fe.cut),
-            "gamma_ln": float(fe.gamma_ln),
-            "barostat": int(fe.barostat),
+            "eq_steps1": int(_fe_attr("eq_steps1", lambda: 500_000)),
+            "eq_steps2": int(_fe_attr("eq_steps2", lambda: 1_000_000)),
+            "ntpr": int(_fe_attr("ntpr", lambda: 1000)),
+            "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
+            "ntwe": int(_fe_attr("ntwe", lambda: 0)),
+            "ntwx": int(_fe_attr("ntwx", lambda: 2500)),
+            "cut": float(_fe_attr("cut", lambda: 9.0)),
+            "gamma_ln": float(_fe_attr("gamma_ln", lambda: 1.0)),
+            "barostat": int(_fe_attr("barostat", lambda: 2)),
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -113,10 +118,10 @@ class SimulationConfig(BaseModel):
             fe_data["barostat"] = 1
 
         n_steps_dict = {
-            "z_steps1": int(fe.z_steps1),
-            "z_steps2": int(fe.z_steps2),
-            "y_steps1": int(fe.y_steps1),
-            "y_steps2": int(fe.y_steps2),
+            "z_steps1": int(_fe_attr("z_steps1", lambda: 50_000)),
+            "z_steps2": int(_fe_attr("z_steps2", lambda: 300_000)),
+            "y_steps1": int(_fe_attr("y_steps1", lambda: 50_000)),
+            "y_steps2": int(_fe_attr("y_steps2", lambda: 300_000)),
         }
 
         merged: dict[str, Any] = {
@@ -136,7 +141,7 @@ class SimulationConfig(BaseModel):
     system_name: str = Field(..., description="System name (required)")
     fe_type: Literal[
         "custom","rest","sdr","dd","sdr-rest","express","relative",
-        "uno","uno_com","uno_rest","self","uno_dd","dd-rest","asfe"
+        "uno","uno_com","uno_rest","self","uno_dd","dd-rest","asfe","md"
     ] = Field(..., description="Free-energy protocol type")
 
     # --- Global switches ---
@@ -353,6 +358,8 @@ class SimulationConfig(BaseModel):
                 self.components, self.dec_method = ['z', 'y'], "dd"
             case "asfe":
                 self.components, self.dec_method = ['y'], "sdr"
+            case "md":
+                self.components, self.dec_method = [], None
 
         # sanity checks for active components only
         for comp in self.components:
