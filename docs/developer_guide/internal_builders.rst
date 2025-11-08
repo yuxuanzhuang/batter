@@ -3,21 +3,79 @@ Implementing Internal Builders
 ==============================
 
 Per-step work inside BATTER (``prepare_equil``, ``prepare_fe``, etc.) is handled by
-classes under ``batter/_internal``. To add or extend one:
+classes under ``batter/_internal``. This section outlines the directory conventions,
+registries, and shared ops so you can extend builders without reverse-engineering the
+codebase.
 
-1. **Subclass :class:`batter._internal.builders.base.BaseBuilder`** and implement the
-   abstract hooks (``_build_complex``, ``_create_box``, ``_restraints``,
-   ``_sim_files``, and ``_run_files``). Each hook receives a populated
-   :class:`~batter._internal.builders.interfaces.BuildContext`.
-2. **Reuse shared ops** (``batter/_internal/ops``) for Amber template rendering,
-   restraint generation, and simulation-file patching instead of duplicating logic.
-3. **Register the builder** if it maps to a specific component or stage using the
-   decorators in :mod:`batter._internal.builders.fe_registry`.
-4. **Wire handlers** – update the relevant exec handler (for example
-   ``prepare_equil``) so it instantiates your builder when appropriate.
-5. **Test in isolation** by synthesising a :class:`BuildContext` fixture and verifying
-   the expected files appear under ``ctx.working_dir``.
+Directory Conventions
+---------------------
+
+Every builder receives a :class:`~batter._internal.builders.interfaces.BuildContext`
+that points at a per-ligand working directory::
+
+   simulations/<LIGAND>/
+   ├── q_build_files/         # Shared build artifacts (build.pdb, anchors, dum.*)
+   ├── q_amber_files/         # Amber templates for equilibration
+   ├── q_run_files/           # Job scripts, logs
+   ├── e_build_files/         # Per-component equivalents (e, v, o, z, y, ...)
+   └── ...
+
+The ``ctx.build_dir`` / ``ctx.amber_dir`` helpers abstract these paths so ops like
+``create_box`` can stage files without duplicating directory logic. Always write
+intermediate artifacts into the component’s build directory and keep final AMBER
+inputs under ``ctx.window_dir``.
+
+Registry Hooks
+--------------
+
+Registries live in :mod:`batter._internal.builders.fe_registry` and map component codes
+to functions:
+
+* ``@register_build_complex('e')`` – adds a factory for the component’s
+  ``_build_complex`` hook.
+* ``@register_create_box('z')`` – selects the correct ``create_box`` helper.
+* ``@register_restraints(...)``, ``@register_sim_files(...)``, etc. – route the remaining
+  hooks.
+
+When introducing a new component or overriding an existing hook, register it here so
+the orchestrator picks it up automatically.
+
+Reusable Ops
+------------
+
+Common tasks are centralised under ``batter/_internal/ops``:
+
+* ``box.py`` – ``create_box`` helpers (AMBER tleap scripts, solvation, ion placement).
+* ``restraints.py`` – Writers for disang/cv inputs.
+* ``sim_files.py`` – Template renderers for MD input decks.
+* ``simprep.py`` – Build directory initialisation and window copying.
+
+Prefer importing and extending these modules instead of duplicating tleap/parmed code.
+Many helpers already expect ``BuildContext`` objects and honour the directory layout
+described above.
+
+Builder Lifecycle
+-----------------
+
+Each :class:`batter._internal.builders.base.BaseBuilder` subclass implements the hook
+methods executed by :meth:`BaseBuilder.build`:
+
+1. ``_build_complex`` – Align systems, detect anchors, and populate ``build_dir``.
+2. ``_create_box`` – Write solvated/vacuum topologies using the registered ``create_box`` op.
+3. ``_restraints`` – Generate component-specific restraints.
+4. ``_pre_sim_files`` (optional) – Any additional preprocessing before rendering inputs.
+5. ``_sim_files`` – Produce AMBER mdin/mini/eq decks.
+6. ``_run_files`` – Emit SLURM/local job scripts.
+
+Builder Testing
+---------------
 
 Builders operate strictly inside the per-ligand working directory, which keeps them
-easy to reason about. Following the template above ensures new stages integrate with
-the existing handler and registry infrastructure.
+easy to reason about. To test a new builder in isolation:
+
+1. Construct a :class:`BuildContext` with temporary directories for ``working_dir``,
+   ``system_root``, and ``param_dir_dict``.
+2. Call the individual hook (or ``build()``) and assert that the expected files appear
+   under ``ctx.working_dir``.
+3. Re-run ``create_box`` and ``sim_files`` to ensure idempotency—many ops reuse cached
+   artifacts when files already exist.

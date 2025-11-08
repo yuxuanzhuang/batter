@@ -6,33 +6,30 @@ Tutorial
 Absolute Binding Free Energy (ABFE) Workflow with ``batter``
 ------------------------------------------------------------
 
-This tutorial demonstrates how to prepare and run an Absolute Binding Free
-Energy Perturbation (ABFEP) workflow using ``batter`` for a membrane protein-
-ligand system.
-
-It mirrors the example configuration distributed with the repository:
-``examples/mabfe.yaml``.
+This tutorial walks through a typical membrane ABFE run powered by ``batter``.
+We will reference the maintained example configuration (``examples/mabfe.yaml``)
+so you can reproduce the steps locally and later adapt them to your own system.
 
 Installation
 ------------
 
-0. *(Optional)* Set a persistent PIP cache directory to speed up future installs::
+#. *(Optional)* Set a persistent pip cache (helps on shared clusters)::
 
        export PIP_CACHE_DIR=$SCRATCH/.cache
 
-1. Clone the repository and initialize submodules::
+#. Clone the repository and initialize submodules::
 
        git clone https://github.com/yuxuanzhuang/batter.git
        cd batter
        git submodule update --init --recursive
 
-2. Create and activate a Conda environment::
+#. Create and activate a Conda environment (matches ``environment.yml``)::
 
        conda env create -n batter_env python=3.12 -y
        conda env update -n batter_env -f environment.yml
        conda activate batter_env
 
-3. Install dependencies in editable mode::
+#. Install editable copies of bundled dependencies and ``batter`` itself::
 
        pip install -e ./extern/alchemlyb
        pip install -e ./extern/rocklinc
@@ -41,8 +38,9 @@ Installation
 Preparing the System
 --------------------
 
-We will use ``mabfe.yaml`` as the base configuration file.  
-See :mod:`batter.config.run` for detailed descriptions of each YAML field.
+We will use ``examples/mabfe.yaml`` as our starting configuration. Each field is
+documented in :mod:`batter.config.run`, but you should review the following inputs
+before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
@@ -64,52 +62,68 @@ Required Files
 Generating Simulation Inputs
 ----------------------------
 
-1. Edit ``mabfe.yaml``:
-   - Set ``create.system_name``.
-   - Update ``create.anchor_atoms`` with the three anchors appropriate for your receptor.
-   - Adjust any additional fields as needed.
+#. Copy ``examples/mabfe.yaml`` to your own path:
 
-2. From the repository root, run::
+   - Set ``create.system_name`` and ``system.output_folder`` so outputs land in a dedicated folder.
+   - Update ``create.anchor_atoms`` with receptor-specific selections.
+   - Point the ``create.*`` paths at your protein/ligand/system inputs.
+
+#. From the repository root, validate the configuration before launching real work::
 
        batter run examples/mabfe.yaml --dry-run
 
-   Replace ``mabfe.yaml`` with your own configuration path.  
-   Remove ``--dry-run`` to start the actual workflow.
+#. Once staging completes, inspect ``<system.output_folder>/executions/<run_id>/``:
 
-3. When no errors are reported, the run directory will be created under::
-
-       <system.output_folder>/executions/<run_id>/
-
-   Inspect the staged files at ``simulations/<LIGAND>/`` and ``artifacts/`` to confirm correctness:
-   - Verify protein–ligand placement in the binding site.
-   - Check box dimensions, ions, and solvent configuration.
-   - Check if membrane lipids are correctly placed (if applicable).
+   - ``executions/<run_id>/simulations/<LIGAND>/inputs`` contains per-ligand copies of your structures.
+   - ``executions/<run_id>/artifacts`` holds shared topology/coordinate assets.
+   - Review “build.pdb” and intermediate logs before moving on to production sampling.
 
 Running on SLURM
 ~~~~~~~~~~~~~~~~
 
-To launch the workflow through a SLURM scheduler::
+To submit via SLURM instead of running locally::
 
-    batter run mabfe.yaml --slurm-submit
+    batter run examples/mabfe.yaml --slurm-submit
 
-This command starts a SLURM job manager that handles submission and monitoring.  
-You may supply a custom SLURM header template (for account, partition, etc.) using::
+Provide ``--slurm-manager-path`` if you keep a custom SLURM header template (accounts,
+modules, partitions, etc.). The job manager will stage the system locally, write an
+``sbatch`` script derived from the YAML hash, and stream status updates as windows finish.
 
-    --slurm-manager-path <path-to-slurm-header>
+Handy CLI Flags
+---------------
+
+``batter run`` exposes many overrides so you rarely have to edit YAML mid-iteration:
+
+``--on-failure {prune,raise,retry}``
+    Decide how to handle per-ligand failures. ``retry`` clears ``FAILED`` sentinels and reruns that phase once.
+``--only-equil / --full``
+    Stop after shared prep/equilibration—useful for debugging system setup before FE windows.
+``--run-id`` and ``--output-folder``
+    Override execution paths without touching ``system.*`` fields.
+``--slurm-submit`` / ``--slurm-manager-path``
+    Switch between local execution and SLURM submission (with an optional custom header).
+
+Run ``batter run --help`` anytime you need the full list of switches and defaults.
 
 Optional: Additional Conformational Restraints
 ----------------------------------------------
 
-1. Use ``https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb`` as a template to generate a
-   ``restraints.json`` file that captures the distances you want restrained.
+#. Use the restraint-generation notebook from `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
+   (or an equivalent script) to author a ``restraints.json`` describing the distance constraints you need.
 
-2. Enable these restraints by adding the following line under the ``create`` section
-   of your YAML file::
+#. Point ``create.extra_conformation_restraints`` at the resulting JSON file::
 
-       extra_conformation_restraints: restraints.json
+       extra_conformation_restraints: path/to/restraints.json
 
 Analysis
 --------
 
-Refer to :doc:`analysis` for guidance on running MBAR post-processing, REMD diagnostics,
-and inspecting legacy ``results.dat`` outputs once your simulations finish.
+Completed runs automatically write MBAR summaries under ``executions/<run_id>/results``.
+Use the CLI helpers to inspect them::
+
+    batter fe list <system.output_folder>
+    batter fe show <system.output_folder> <run_id>
+
+``fe list`` prints a high-level table (ΔG, SE, components) for every stored run, while
+``fe show`` dives into per-window data. CSV/JSON exports live alongside the results on disk.
+See :doc:`developer_guide/analysis` for deeper post-processing (plots, REMD diagnostics, etc.).

@@ -88,18 +88,17 @@ Quick Links
 
          View the CLI Reference
 
+
+Primary Guides
+==============
+
 .. toctree::
    :maxdepth: 2
-   :hidden:
    :titlesonly:
 
    getting_started
    tutorial
    configuration
-   api
-   analysis
-   parameterisation
-   execution_model
-   developer_guide
-   developer_guide/pipeline_payloads_and_metadata
    cli
+   api
+   developer_guide

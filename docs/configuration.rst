@@ -55,30 +55,50 @@ helper functions:
 They mirror the behaviour of :func:`load_run_config`, ensuring environment
 variables and user-relative paths are expanded consistently.
 
-Ligand-Only (MASFE) Solvation Inputs
-------------------------------------
+Component-Specific Inputs
+-------------------------
 
-Absolute solvation workflows (protocol ``asfe``) reuse the same ``create`` block
-but rely on a handful of fields that feed the ligand-only ``create_box_y`` helper:
+Although the ``create`` block is shared by ABFE, MASFE, and MD pipelines, some fields
+are consumed only by particular builders. The table below highlights the ones that
+feed into the low-level ops documented in :doc:`developer_guide/internal_builders`:
 
-``solv_shell``
-    Cubic padding applied when solvating the ligand. Values below ~10 Å leave too
-    little room for PME and neighbour lists, so the builder enforces this lower bound.
-``water_model``
-    Tells ``tleap`` which ``leaprc.water.*`` file to source (``TIP3P``, ``SPCE``,
-    ``TIP3PF``/FB3, etc.).
-``cation`` / ``anion`` / ``ion_conc``
-    Combined into ``SimulationConfig.ion_def = [cation, anion, concentration]`` so
-    ``create_box``/``create_box_y`` know which ions to add and at what molarity.
-``neutralize_only``
-    When set to ``"yes"`` BATTER neutralises the ligand-only box but skips the bulk
-    salt addition. The value is mirrored to :attr:`SimulationConfig.neut`.
+.. list-table::
+   :header-rows: 1
 
-The MASFE builders automatically write ``build.pdb`` (ligand + dummy COM) under the
-component's working directory; ``create_box_y`` falls back to the copy stored inside
-``ctx.build_dir`` if the file is missing from the window folder. As long as the
-fields above are present in your YAML the ligand-only create-box step runs without
-manual intervention.
+   * - Field
+     - Used by
+     - Purpose
+   * - ``buffer_x/y/z``
+     - ``create_box`` (protein systems)
+     - Controls rectangular solvent box sizing.
+   * - ``solv_shell``
+     - ``create_box`` (ligand-only runs)
+     - Sets cubic padding for standalone ligands.
+   * - ``water_model``
+     - ``create_box`` helpers
+     - Selects the ``leaprc.water.*`` template.
+   * - ``cation`` / ``anion``
+     - ``create_box`` helpers
+     - Define ion names that ``addionsrand`` inserts.
+   * - ``ion_conc``
+     - :attr:`SimulationConfig.ion_def` → ``create_box``
+     - Drives salt concentration when ``neutralize_only = "no"``.
+   * - ``neutralize_only``
+     - :attr:`SimulationConfig.neut` → ``create_box``
+     - Toggles between neutralisation-only or salt+neutralisation workflows.
+   * - ``extra_restraints``
+     - Restraint ops
+     - Adds positional restraints for ABFE builders.
+   * - ``extra_conformation_restraints``
+     - Restraint ops
+     - JSON specification for conformational restraints.
+   * - ``lipid_mol``
+     - Build/ops helpers
+     - Identifies membrane residues when trimming waters.
+
+Linking configuration fields to their downstream consumers makes it easier to reason
+about which parts of the file structure (build directories, solvation scripts,
+restraint writers) are affected when you toggle individual knobs.
 
 Quick Reference
 ---------------

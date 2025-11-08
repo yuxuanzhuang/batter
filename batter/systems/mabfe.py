@@ -23,16 +23,16 @@ class MABFEBuilder(SystemBuilder):
     This builder prepares a *shared* working directory under ``system.root`` and,
     optionally, stages *all ligands at once* into per-ligand subfolders.
 
-    Directory layout (relative to ``system.root``)
-    ----------------------------------------------
-    inputs/           # canonical copies of user-provided inputs
-    artifacts/        # files produced by builders (e.g., PRMTOP, RST7)
-    simulations/
-      <LIG1>/inputs/ligand.<ext>
-              artifacts/
-      <LIG2>/inputs/ligand.<ext>
-              artifacts/
-      ...
+    Directory layout (relative to ``system.root``)::
+
+        inputs/           # canonical copies of user-provided inputs
+        artifacts/        # files produced by builders (e.g., PRMTOP, RST7)
+        simulations/
+          <LIG1>/inputs/ligand.<ext>
+                  artifacts/
+          <LIG2>/inputs/ligand.<ext>
+                  artifacts/
+          ...
     """
 
     # -------------------- public API --------------------

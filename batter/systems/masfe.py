@@ -23,19 +23,21 @@ class MASFEBuilder(SystemBuilder):
     optionally, stages *all ligands at once* into per-ligand subfolders.
 
     Differences vs MABFE:
-      - No protein/topology/coordinates are required or staged.
-      - Resulting SimSystem has protein/topology/coordinates = None.
 
-    Directory layout (relative to ``system.root``)
-    ----------------------------------------------
-    inputs/           # canonical copies of user-provided ligand inputs
-    artifacts/        # files produced by builders
-    simulations/
-      <LIG1>/inputs/ligand.<ext>
-              artifacts/
-      <LIG2>/inputs/ligand.<ext>
-              artifacts/
-      ...
+    - No protein/topology/coordinates are required or staged.
+    - The resulting :class:`~batter.systems.core.SimSystem` stores ``None`` for protein,
+      topology, and coordinates.
+
+    Directory layout (relative to ``system.root``)::
+
+        inputs/           # canonical copies of user-provided ligand inputs
+        artifacts/        # files produced by builders
+        simulations/
+          <LIG1>/inputs/ligand.<ext>
+                  artifacts/
+          <LIG2>/inputs/ligand.<ext>
+                  artifacts/
+          ...
     """
 
     # -------------------- public API --------------------

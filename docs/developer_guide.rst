@@ -26,17 +26,51 @@ Code Layout
 
 .. code-block:: text
 
+   batter/                     # Modern package (public API, pipelines, builders)
+   batter_v1/                  # Legacy BAT.py compatibility layer (frozen)
+   docs/                       # Sphinx sources (user + developer guides)
+   examples/                   # Reference YAML workflows and restraint templates
+   tests/                      # Pytest suite covering configs, pipelines, exec, etc.
+   extern/                     # Vendored dependencies (editable installs)
+   devtools/                   # Helper scripts + conda envs for development
+   scripts/                    # Misc automation helpers
+   README.rst                  # Project overview
+   TODO                        # Open engineering tasks / ideas
+   pyproject.toml / setup.cfg  # Build and packaging metadata
+   environment*.yml            # Conda environments for the main stack
+
+The ``batter/`` package itself is organised as:
+
+.. code-block:: text
+
    batter/
-   ├── api.py                 # Public entry points
-   ├── config/                # Pydantic models for run and simulation YAML
+   ├── api.py                 # Public entry points (run_from_yaml, FE repos, etc.)
+   ├── cli/                   # click-based CLI commands (run, fe, fek-schedule, ...)
+   ├── config/                # Pydantic models for run/simulation YAML + helpers
    ├── systems/               # System descriptors and builders (MABFE / MASFE)
+   ├── _internal/             # Low-level build ops (create_box, restraints, sim files)
    ├── param/                 # Ligand parameterisation helpers
-   ├── pipeline/              # Steps, payloads, and pipeline factories
-   ├── exec/                  # Local and SLURM backends + handlers
-   ├── orchestrate/           # High-level orchestration logic
+   ├── pipeline/              # Steps, payloads, pipeline factories
+   ├── exec/                  # Local/SLURM backends and step handlers
+   ├── orchestrate/           # High-level orchestration + pipeline wiring
    ├── runtime/               # Portable artifact store and FE repository
    ├── analysis/              # Post-processing & convergence utilities
-   └── utils/                 # Shared helpers
+   └── utils/                 # Shared helpers (Amber wrappers, file ops, etc.)
+
+Further Reading
+---------------
+
+The following reference chapters live elsewhere in the docs but are useful when
+working on internal builders or pipelines:
+
+.. toctree::
+   :maxdepth: 1
+   :titlesonly:
+
+   developer_guide/pipeline_payloads_and_metadata
+   developer_guide/execution_model
+   developer_guide/analysis
+   developer_guide/parameterisation
 
 High-Level Execution Flow
 =========================
