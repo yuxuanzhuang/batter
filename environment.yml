@@ -4,22 +4,29 @@ channels:
   - defaults
 dependencies:
   # Conda dependencies
-  - ambertools=23.6
+  - pip
+  - ambertools >=23.6
   - openbabel
   - pandas
   - prettypyplot
   - seaborn
   - loguru
-  - pydantic>=2.11.7
-  - click
-  - pandas
-  - alchemlyb
+  - pydantic >=2.11.7
+  - click  >=8.2.0
   - vmd
   - apbs
+  - MDAnalysis >=2.9.0
+  - jax
+  - pymbar >4.0
   # dask distributed for analysis
   - dask
   - dask-jobqueue
   - distributed
+  # openfe
+  - gufe >=1.7.0
+  - openff-interchange
+  - openff-interchange-base
+  - openff-toolkit-base >=0.16.2
   # Tests
   - pytest
   - pytest-xdist

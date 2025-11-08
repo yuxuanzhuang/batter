@@ -1,22 +1,28 @@
+"""Utilities for inspecting replica-exchange simulations."""
+
+from __future__ import annotations
+
 # Copy from Amber FETools (refactored into a single class)
 import os
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from loguru import logger
-import matplotlib.pyplot as plt
+
+__all__ = ["RemdLog", "plot_trajectory"]
 
 class RemdLog:
-    """
-    Reader/Analyzer for AMBER REMD remlog files.
+    r"""
+    Read and analyse AMBER ``remlog`` files.
 
-    Usage
-    -----
-    rl = RemdLog("remlog")
-    results = rl.analyze()
+    The parser reconstructs the replica $\leftrightarrow$ state mapping at each
+    exchange step and reports high-level metrics such as average single-pass
+    duration and the number of round trips.
 
-    Or a one-liner:
-    results = RemdLog.get_remd_info("remlog")
+    Parameters
+    ----------
+    inputfile : str
+        Path to the ``remlog`` text file produced by AMBER.
     """
 
     def __init__(self, inputfile: str):
@@ -38,9 +44,7 @@ class RemdLog:
         self._read_log()
 
     def _read_log(self) -> None:
-        """
-        Parse the remlog file and populate trajectory/state/exchange arrays and ARs.
-        """
+        """Parse ``self.inputfile`` and populate cached arrays."""
         (
             self.replica_trajectory,
             self.replica_state_count,
@@ -53,22 +57,29 @@ class RemdLog:
 
     def analyze(self) -> Dict[str, float | List[float]]:
         """
-        Analyze the parsed REMD trajectory to produce round-trip and pass statistics.
+        Summarise the replica trajectory.
 
         Returns
         -------
-        Dict with:
-          - "Average single pass steps:"
-          - "Round trips per replica:"
-          - "Total round trips:"
-          - "neighbor_acceptance_ratio" (list of floats)
+        dict
+            Dictionary with the same keys as :meth:`get_remd_info`.
         """
         return self._remd_analysis(self.replica_trajectory, self.ARs)
 
     @classmethod
     def get_remd_info(cls, inputfile: str) -> Dict[str, float | List[float]]:
         """
-        Convenience one-shot method: parse and analyze.
+        Convenience helper that parses and analyses a ``remlog`` file.
+
+        Parameters
+        ----------
+        inputfile : str
+            Path to the ``remlog`` text file.
+
+        Returns
+        -------
+        dict
+            Same structure as :meth:`analyze`.
         """
         rl = cls(inputfile)
         rl._read_log()
@@ -76,9 +87,16 @@ class RemdLog:
 
     # ---------- Internals ----------
 
-    def _read_rem_log(
-        self,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[float], int, int]:
+    def _read_rem_log(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[float], int, int]:
+        """
+        Parse the on-disk remlog file.
+
+        Returns
+        -------
+        tuple
+            ``(replica_trajectory, replica_state_count, replica_ex_count,
+            replica_ex_succ, neighbor_acceptance_ratios, n_replica, n_step)``.
+        """
         logger.info("Analyzing remlog file: {}", self.inputfile)
 
         np.set_printoptions(precision=2, linewidth=150, formatter={"int": "{:2d}".format})
@@ -198,9 +216,27 @@ class RemdLog:
             n_step,
         )
 
+    @staticmethod
     def _remd_analysis(
-        self, replica_trajectory: np.ndarray, ARs: List[float]
+        replica_trajectory: np.ndarray, ARs: List[float]
     ) -> Dict[str, float | List[float]]:
+        """
+        Compute REMD round-trip statistics from a replica/state table.
+
+        Parameters
+        ----------
+        replica_trajectory : numpy.ndarray
+            Array of shape ``(n_replica, n_step + 1)`` describing which thermodynamic
+            state each replica occupied at every step.
+        ARs : list[float]
+            Neighbor acceptance ratios parsed from the tail of the remlog.
+
+        Returns
+        -------
+        dict
+            Summary containing the average single-pass length, round trips per
+            replica, total round trips, and the provided acceptance ratios.
+        """
         n_replica = int(np.size(replica_trajectory, 0))
         n_step = int(np.size(replica_trajectory, 1))
 
@@ -281,25 +317,27 @@ def plot_trajectory(
     ncols=4,
 ):
     """
-    Plot the replica trajectory with rainbow colors.
+    Visualise the replica walk through thermodynamic states.
 
     Parameters
     ----------
-    replica_trajectory : np.ndarray
-        Array of shape (n_replica, n_step+1).
-    figsize : tuple
-        Size of the figure (default (10, 6)); it would be
-        the size of each subplot if subplot=True.
-    alpha : float
-        Line transparency (default 0.8).
-    linewidth : float
-        Width of trajectory lines (default 1.5).
-    subplot : bool
-        If True, plot each replica in its own subplot.
-        If False, plot all replicas on one shared axis.
-    ncols : int
-        Number of subplot columns (only used if subplot=True).
+    replica_trajectory : numpy.ndarray
+        Array of shape ``(n_replica, n_step + 1)`` containing state indices.
+    figsize : tuple, optional
+        Base figure size. When ``subplot=True`` the width/height apply to each
+        panel instead of the aggregate.
+    alpha : float, optional
+        Line transparency used for individual replica traces.
+    linewidth : float, optional
+        Width of trajectory lines.
+    subplot : bool, optional
+        When ``True``, render one subplot per replica; otherwise plot all
+        replicas on a shared axis.
+    ncols : int, optional
+        Number of subplot columns when ``subplot=True``.
     """
+    import matplotlib.pyplot as plt  # deferred import to avoid heavy backends
+
     n_replica, n_step_plus1 = replica_trajectory.shape
     steps = np.arange(n_step_plus1)
 

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+from pathlib import Path
+
+from loguru import logger
 
 def GetBeta(T):
     """Returns 1/kT in units of (kcal/mol)^{-1}
@@ -412,7 +415,7 @@ def CptKullbackLeibler(xs,ys):
 
     Given probability distributions p(x) and q(x),
 
-    KL(p,q) = \int p(x) ln(q(x)/p(x)) dx
+    KL(p,q) = p(x) ln(q(x)/p(x)) dx
 
     Parameters
     ----------
@@ -794,32 +797,7 @@ class SymParamMap(ParamMap):
 ##############################################################################
 
 class GaussianParamMap(SymParamMap):
-    """A class that controls the mapping between the free parameters and the
-    lambda schedule. This version uses 2 parameters (a and d) to define the 
-    following density function:
-
-    \rho(x) = { 1, if x < d or x > 1-d
-                \frac{ (1-2d) \sqrt{a/\pi} }{ erf( \sqrt{a} (1-2d)/2 ) }
-                \times exp(-a (x-1/2)^2), 
-                    otherwise
-
-    The integrated density function is:
-
-    idf(x) = \int_{0}^{x} \rho(y) dy
-           = { x, if  x < d or x > 1-d
-               (1/2) (1 + (2d-1) erf(\sqrt{a}(1-2x)/2)/erf(\sqrt{a}(1-2d)/2)),
-                    otherwise
-
-    The inverse function of the of the integrated density is:
-
-    idf^{-1}(x) 
-           = { x, if x < d or x > 1-d
-               1/2 - InverseErf[((2x-1) Erf[\sqrt{a}(1-2d)/2])/(2d-1)]/\sqrt{a},
-                    otherwise
-
-    So, given a linear spacing, x0, x1, x2 ..., then mapped points are:
-    idf^{-1}(x0), idf^{-1}(x1), idf^{-1}(x2), ...
-
+    """
     Attributes
     ----------
     N : int
@@ -1602,58 +1580,115 @@ def old_ReadDataFiles(dname,T,fstart,fstop):
 
 
 def ReadDataFiles(dname,T,fstart,fstop):
-    import glob
     import pandas as pd
     from alchemlyb.parsing.amber import extract_u_nk
     import numpy as np
 
-    folders = glob.glob(f'{dname}*')
-    # dname is provided to be a directory with a trailing letter
-    # e.g. include v00, v01, v02, etc. in the folder names
-    # sort folders by the trailing number to ensure the order is correct
-    folders = [x for x in folders if x.split(dname)[-1].isdigit()]
-    folders.sort(key=lambda x: int(x.split(dname)[-1]))  # Sort by the trailing number
-    nlams = len(folders)
-    print(f"Found {nlams} folders for lambda values in directory: {dname}")
-    # read with extract_u_nk
+    base_dir = Path(dname).expanduser().resolve()
+    if not base_dir.is_dir():
+        msg = f"Input directory not found: {base_dir}"
+        logger.error(msg)
+        raise FileNotFoundError(msg)
 
-    #Upot = np.load(f"{work_dir}/sdr/data/Upot_{comp}_all.npy")
+    component = base_dir.name
+
+    def _collect_windows(root: Path, prefix: str):
+        windows = []
+        for child in root.iterdir():
+            if not child.is_dir():
+                continue
+            if not child.name.startswith(prefix):
+                continue
+            suffix = child.name[len(prefix):]
+            if not suffix or not suffix.isdigit():
+                continue
+            windows.append((int(suffix), child))
+        windows.sort(key=lambda item: item[0])
+        return [p for _, p in windows]
+
+    folders = _collect_windows(base_dir, component)
+    if not folders:
+        msg = (
+            f"No lambda windows found under {base_dir}. "
+            "Expected subdirectories such as 'z00', 'z01', ..."
+        )
+        logger.error(msg)
+        raise FileNotFoundError(msg)
+
+    nlams = len(folders)
+    logger.info("Discovered {} lambda windows in {}", nlams, base_dir)
+
+    def _resolve_bounds(n_files: int, start: float, stop: float) -> tuple[int, int]:
+        if 0 <= start <= 1 and 0 < stop <= 1:
+            start_idx = int(n_files * start)
+            stop_idx = int(n_files * stop)
+        else:
+            start_idx = int(start)
+            stop_idx = int(stop if stop > 0 else n_files)
+        start_idx = max(0, min(start_idx, n_files))
+        stop_idx = max(start_idx + 1, min(stop_idx, n_files))
+        return start_idx, stop_idx
+
     df_list = []
-    for win_i, folder in enumerate(folders):
-        mdin_out_files = glob.glob(f'{folder}/mdin*.out')
-        mdin_out_files.sort()
-        fstart = np.max([0, fstart])
-        fstop = np.min([len(mdin_out_files), fstop])
-        print(f'Reading {len(mdin_out_files)} mdin files from {folder} for window {win_i+1}/{nlams}')
-        print(f"Reading {fstart} to {fstop} mdin files")
-        df = pd.concat([extract_u_nk(mdin_f,
-                                    T=T,
-                                    reduced=False
-                                    ) for mdin_f in mdin_out_files[fstart:fstop]])
-        df.to_csv(f'{folder}/potential_energy.csv', index=False)  # Save for debugging
+    kT = T * 1.98720425864083e-3
+
+    for win_i, folder in enumerate(folders, start=1):
+        mdin_out_files = sorted(folder.glob("mdin*.out"))
+        if not mdin_out_files:
+            msg = f"No mdin*.out files found in {folder}"
+            logger.error(msg)
+            raise FileNotFoundError(msg)
+
+        start_idx, stop_idx = _resolve_bounds(len(mdin_out_files), fstart, fstop)
+        selected = mdin_out_files[start_idx:stop_idx]
+        if not selected:
+            msg = (
+                f"No files selected in {folder} after applying start/stop bounds "
+                f"({start_idx}:{stop_idx})."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+
+        logger.info(
+            "Reading {} mdin files from {} for window {}/{} (indices {}–{})",
+            len(selected),
+            folder,
+            win_i,
+            nlams,
+            start_idx,
+            stop_idx - 1,
+        )
+
+        frames = []
+        for path in selected:
+            try:
+                frames.append(extract_u_nk(str(path), T=T, reduced=False))
+            except Exception as exc:  # pragma: no cover - upstream parser errors
+                msg = f"Failed to parse {path}: {exc}"
+                logger.exception(msg)
+                raise RuntimeError(msg) from exc
+
+        df = pd.concat(frames)
         df_list.append(df)
 
     full_df = pd.concat(df_list)
-    lams = full_df.index.get_level_values('lambdas').unique()
-    print(f"Found {nlams} lambda values: {lams.values}")  # Print unique lambda values for verification
-    enemat = [] 
-    # generate enemat
-    # enemat is a list of
+    lams = full_df.index.get_level_values("lambdas").unique()
+    if len(lams) != nlams:
+        logger.warning(
+            "Detected {} lambda columns but {} window directories. Proceeding with intersection.",
+            len(lams),
+            nlams,
+        )
+
+    enemat = []
     for df in df_list:
-        # For each window, extract the potential energy for each lambda
-        # and create a matrix of potential energies
-        # where each row corresponds to a lambda producing the trajectory
-        # and each column corresponds to a lambda defining the potential energy
-        temp_enemat = np.zeros((len(df), nlams))
-        #print(f"Generating potential energy matrix for window {len(enemat)+1}/{nlams} with shape: {temp_enemat.shape}")
+        temp_enemat = np.zeros((len(df), len(lams)))
         for i, lam in enumerate(lams):
-            # convert kT back to kcal/mol
-            kT = T * 1.98720425864083e-3
             temp_enemat[:, i] = df[lam].values * kT
         enemat.append(temp_enemat)
-    #np.save(f'{dname}potential_energy_matrix.npy', enemat)  # Save for debugging
-    
-    return PotEneData_MBAR(lams,enemat,T)
+
+    logger.info("Constructed potential energy matrix with shape {}x{}", len(enemat), len(lams))
+    return PotEneData_MBAR(lams, enemat, T)
  
 
 def CalcOptRE( N, pedata, minval, maxgap, clean, sym ):
@@ -1818,27 +1853,44 @@ def SimpleScheduleOpt( nlam,
     import os
 
     if verbose:
-        print("Entered SimpleScheduleOpt with the following inputs:")
-        print("  Working dir: %s"%(os.getcwd()))
-        print("  nlam:        %i"%(nlam))
-        print("  directory:   %s"%(directory))
-        print("  temp:        %.2f"%(temp))
-        print("  fstart:      %.3f"%(fstart))
-        print("  fstop:       %.3f"%(fstop))
-        print("  ssc:         %s"%(str(ssc)))
-        print("  sym:         %s"%(str(sym)))
-        print("  pso:         %s"%(str(pso)))
-        print("  re:          %s"%(str(re)))
-        print("  kl:          %s"%(str(kl)))
-        print("  clean:       %s"%(str(clean)))
-        print("  maxgap:      %.3f"%(maxgap))
-        print("  minval:      %.3e"%(minval))
-        print("  digits:      %i"%(digits))
-        print("  verbose:     %s"%(str(verbose)))
-        print("")
+        logger.info(
+            "Entered SimpleScheduleOpt with inputs:\n"
+            "  Working dir: {cwd}\n"
+            "  nlam       : {nlam}\n"
+            "  directory  : {directory}\n"
+            "  temp       : {temp:.2f}\n"
+            "  fstart     : {fstart:.3f}\n"
+            "  fstop      : {fstop:.3f}\n"
+            "  ssc        : {ssc}\n"
+            "  sym        : {sym}\n"
+            "  pso        : {pso}\n"
+            "  re         : {re}\n"
+            "  kl         : {kl}\n"
+            "  clean      : {clean}\n"
+            "  maxgap     : {maxgap:.3f}\n"
+            "  minval     : {minval:.3e}\n"
+            "  digits     : {digits}\n"
+            "  verbose    : {verbose}",
+            cwd=os.getcwd(),
+            nlam=nlam,
+            directory=directory,
+            temp=temp,
+            fstart=fstart,
+            fstop=fstop,
+            ssc=ssc,
+            sym=sym,
+            pso=pso,
+            re=re,
+            kl=kl,
+            clean=clean,
+            maxgap=maxgap,
+            minval=minval,
+            digits=digits,
+            verbose=verbose,
+        )
     
-    fstart = int(max(0,fstart))
-    fstop  = int(max(1,max(fstart,fstop)))
+    fstart = max(0, fstart)
+    fstop  = max(1, max(fstart, fstop))
     pedata = ReadDataFiles(directory,temp,fstart,fstop)
 
     method = None
@@ -1865,13 +1917,11 @@ def SimpleScheduleOpt( nlam,
                                     maxgap, clean, sym )
         flams = pmap.Digitize( pmap.GetSched(res.x),digits)
         if verbose:
-            print("Optimization result:")
-            print(res)
-            print("")
-            print("Optimized free parameters:")
-            for p in res.x:
-                print("  %.8f"%(p))
-            print("")
+            logger.info("Optimization result:\n{}", res)
+            logger.info(
+                "Optimized free parameters:\n{}",
+                "\n".join(f"  {p:.8f}" for p in res.x),
+            )
     # elif pso_ssc is not None:
     #     interp = GaussianInterp(pedata.lams,pedata.pso,clean)
     #     flams = np.array([float(a) for a in
@@ -1900,7 +1950,7 @@ def SimpleScheduleOpt( nlam,
     if interp is not None:
         info = interp.GetSummary( flams )
         if verbose:
-            print(str(info))
+            logger.info(str(info))
             
     return info, pedata, interp
         
@@ -1914,26 +1964,39 @@ def SimpleScheduleRead( read,
     import os
 
     if verbose:
-        print("Entered SimpleScheduleRead with the following inputs:")
-        print("  Working dir: %s"%(os.getcwd()))
-        print("  read:        %s"%(read))
-        print("  directory:   %s"%(directory))
-        print("  temp:        %.2f"%(temp))
-        print("  fstart:      %.3f"%(fstart))
-        print("  fstop:       %.3f"%(fstop))
-        print("  ssc:         %s"%(str(ssc)))
-        print("  alpha0:      %.5f"%(alpha0))
-        if alpha1 is not None:
-            print("  alpha1:      %.5f"%(alpha1))
-        else:
-            print("  alpha1:      %s"%(str(alpha1)))
-        print("  pso:         %s"%(str(pso)))
-        print("  re:          %s"%(str(re)))
-        print("  kl:          %s"%(str(kl)))
-        print("  clean:       %s"%(str(clean)))
-        print("  digits:      %i"%(digits))
-        print("  verbose:     %s"%(str(verbose)))
-        print("")
+        logger.info(
+            "Entered SimpleScheduleRead with inputs:\n"
+            "  Working dir: {cwd}\n"
+            "  read       : {read}\n"
+            "  directory  : {directory}\n"
+            "  temp       : {temp:.2f}\n"
+            "  fstart     : {fstart:.3f}\n"
+            "  fstop      : {fstop:.3f}\n"
+            "  ssc        : {ssc}\n"
+            "  alpha0     : {alpha0:.5f}\n"
+            "  alpha1     : {alpha1}\n"
+            "  pso        : {pso}\n"
+            "  re         : {re}\n"
+            "  kl         : {kl}\n"
+            "  clean      : {clean}\n"
+            "  digits     : {digits}\n"
+            "  verbose    : {verbose}",
+            cwd=os.getcwd(),
+            read=read,
+            directory=directory,
+            temp=temp,
+            fstart=fstart,
+            fstop=fstop,
+            ssc=ssc,
+            alpha0=alpha0,
+            alpha1=f"{alpha1:.5f}" if alpha1 is not None else "None",
+            pso=pso,
+            re=re,
+            kl=kl,
+            clean=clean,
+            digits=digits,
+            verbose=verbose,
+        )
 
 
     fstart = max(0,fstart)
@@ -1948,26 +2011,21 @@ def SimpleScheduleRead( read,
         if alpha1 is None:
             sched = CptSSCSched(nlam,alpha0)
                 
-            print("Unoptimized parameters:")
-            print("  %.8f"%(alpha0))
-            print("")
+            logger.info("Unoptimized parameters:\n  {:.8f}", alpha0)
         else:
             sched = CptGeneralizedSSCSched(nlam,alpha0,alpha1)
             
-            print("Unoptimized parameters:")
-            print("  %.8f"%(alpha0))
-            print("  %.8f"%(alpha1))
-            print("")
+            logger.info("Unoptimized parameters:\n  {:.8f}\n  {:.8f}", alpha0, alpha1)
     else:
         # read
         sched = np.loadtxt(read)
         if len(sched.shape) == 2:
             sched = sched[:,0]
                 
-        print("Unoptimized parameters:")
-        for lam in sched:
-            print("  %.8f"%(lam))
-        print("")
+        logger.info(
+            "Unoptimized parameters:\n{}",
+            "\n".join(f"  {float(lam):.8f}" for lam in sched),
+        )
     ################################################
         
     flams = np.array([float(a) for a in
@@ -1981,7 +2039,7 @@ def SimpleScheduleRead( read,
     else:
         raise Exception("Expected pso, re, or kl but none are true")
     info = interp.GetSummary( flams )
-    print(str(info))
+    logger.info(str(info))
 
     return info, pedata, interp
         

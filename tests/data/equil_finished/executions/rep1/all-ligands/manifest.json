@@ -1,0 +1,29 @@
+{
+  "system_name": "adrb2_A",
+  "reference": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/rep2/all-ligands/reference.pdb",
+  "docked": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/rep2/all-ligands/adrb2_A.pdb",
+  "ligands": {
+    "CAU": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/rep2/all-ligands/CAU.pdb",
+    "G1I": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/rep2/all-ligands/G1I.pdb"
+  },
+  "anchors": {
+    "p1": ":113@CA",
+    "p2": ":82@CA",
+    "p3": ":316@CA"
+  },
+  "l1": {
+    "x": 1.338047422116879,
+    "y": -4.967561380393464,
+    "z": 2.1327198550466804,
+    "range": 6.569158908840776
+  },
+  "membrane": {
+    "lipid_mol": [
+      "POPC",
+      "PA",
+      "PC",
+      "OL"
+    ],
+    "lipid_ff": "lipid21"
+  }
+}

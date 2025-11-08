@@ -1,0 +1,26 @@
+{
+  "store": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/ligand_params",
+  "ligands": [
+    {
+      "ligand": "G1I",
+      "hash": "8b6033428fff",
+      "store_dir": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/ligand_params/8b6033428fff",
+      "linked_dir": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/rep2/simulations/G1I/params",
+      "residue_name": "g1i",
+      "title": "G1I"
+    },
+    {
+      "ligand": "CAU",
+      "hash": "7101c8d43bce",
+      "store_dir": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/ligand_params/7101c8d43bce",
+      "linked_dir": "/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/rep2/simulations/CAU/params",
+      "residue_name": "cau",
+      "title": "CAU"
+    }
+  ],
+  "config": {
+    "ligand_ff": "openff-2.2.1",
+    "charge": "am1bcc",
+    "retain_lig_prot": true
+  }
+}

@@ -1,0 +1,59 @@
+version: 1
+protocol: abfe
+backend: local
+
+system:
+  output_folder: brd4_mabfe
+
+create:
+  system_name: BRD4
+  protein_input: reference/nonmembrane/protein.pdb
+  system_input: reference/nonmembrane/system.pdb
+  protein_align: name CA
+  ligand_input: reference/nonmembrane/ligands_dict.json
+  ligand_ff: openff-2.2.1
+  param_outdir: ligand_params
+  retain_lig_prot: true
+  param_charge: am1bcc
+  anchor_atoms:
+    - "name CA and resid 425"
+    - "name CA and resid 447"
+    - "name CA and resid 363"
+  overwrite: false
+  receptor_ff: protein.ff14SB
+  solv_shell: 15.0
+  water_model: TIP3P
+
+run:
+  only_fe_preparation: false
+  dry_run: false
+  run_id: auto
+  max_workers: 8
+  on_failure: prune
+  slurm:
+    partition: owners
+    time: "10:00:00"
+
+fe_sim:
+  fe_type: uno_rest
+  remd: no
+  lambdas: [
+    0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,
+    0.31188, 0.32772, 0.34359, 0.35892, 0.37497, 0.39086, 0.40584, 0.42001, 0.43453, 0.45056,
+    0.46585, 0.47913, 0.49085, 0.5015, 0.51177, 0.52289, 0.53652, 0.55271, 0.56723, 0.58061,
+    0.59453, 0.60923, 0.62468, 0.63991, 0.65631, 0.67222, 0.68487, 0.69656, 0.70897, 0.72458,
+    0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
+  ]
+  blocks: 5
+  buffer_x: 12.0
+  buffer_y: 12.0
+  buffer_z: 12.0
+  eq_steps: 10000
+  num_equil_extends: 6
+  z_steps1: 5000
+  z_steps2: 30000
+  cut: 9.0
+  barostat: 1
+  hmr: yes
+  dt: 0.004
+  temperature: 310.0

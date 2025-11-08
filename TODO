@@ -1,4 +1,3 @@
-- add support to non-membrane systems
 - add support to run only equilibration (non FE production)
     - add support to run multiple replicates
 - add flat-bottom restraint aside from Bosrech to have a well-defined binding site

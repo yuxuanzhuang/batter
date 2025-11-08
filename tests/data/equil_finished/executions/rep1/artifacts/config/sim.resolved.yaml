@@ -1,0 +1,180 @@
+all_atoms: 'no'
+anion: Cl-
+barostat: 1
+blocks: 5
+buffer_x: 10.0
+buffer_y: 10.0
+buffer_z: 10.0
+cation: Na+
+component_lambdas:
+  z:
+  - 0.0
+  - 0.04
+  - 0.09
+  - 0.13
+  - 0.17
+  - 0.22
+  - 0.26
+  - 0.3
+  - 0.35
+  - 0.39
+  - 0.43
+  - 0.48
+  - 0.52
+  - 0.57
+  - 0.61
+  - 0.65
+  - 0.7
+  - 0.74
+  - 0.78
+  - 0.83
+  - 0.93
+  - 0.97
+  - 0.99
+  - 1.0
+component_windows: {}
+components:
+- z
+cut: 9.0
+dec_int: mbar
+dec_method: sdr
+dic_steps1:
+  a: 0
+  c: 0
+  e: 0
+  f: 0
+  l: 0
+  m: 0
+  n: 0
+  o: 0
+  r: 0
+  s: 0
+  t: 0
+  v: 0
+  w: 0
+  x: 0
+  y: 50000
+  z: 5000
+dic_steps2:
+  a: 0
+  c: 0
+  e: 0
+  f: 0
+  l: 0
+  m: 0
+  n: 0
+  o: 0
+  r: 0
+  s: 0
+  t: 0
+  v: 0
+  w: 0
+  x: 0
+  y: 300000
+  z: 30000
+dt: 0.004
+eq_steps: 10000
+eq_steps1: 10000
+eq_steps2: 10000
+fe_type: uno_rest
+gamma_ln: 1.0
+hmr: 'yes'
+infe: false
+ion_conc: 0.15
+ion_def:
+- Na+
+- Cl-
+- 0.15
+l1_range: 6.569158908840776
+l1_x: 1.338047422116879
+l1_y: -4.967561380393464
+l1_z: 2.1327198550466804
+lambdas:
+- 0.0
+- 0.04
+- 0.09
+- 0.13
+- 0.17
+- 0.22
+- 0.26
+- 0.3
+- 0.35
+- 0.39
+- 0.43
+- 0.48
+- 0.52
+- 0.57
+- 0.61
+- 0.65
+- 0.7
+- 0.74
+- 0.78
+- 0.83
+- 0.93
+- 0.97
+- 0.99
+- 1.0
+lig_angle_force: 250.0
+lig_buffer: 15.0
+lig_com_force: 10.0
+lig_dihcf_force: 0.0
+lig_distance_force: 5.0
+ligand_dict: {}
+ligand_ff: openff-2.2.1
+lipid_ff: lipid21
+lipid_mol:
+- POPC
+- PA
+- PC
+- OL
+max_adis: 7.0
+membrane_simulation: true
+min_adis: 3.0
+n_steps_dict:
+  y_steps1: 50000
+  y_steps2: 300000
+  z_steps1: 5000
+  z_steps2: 30000
+neut: 'no'
+neutralize_only: 'no'
+ntpr: 1000
+ntwe: 0
+ntwr: 10000
+ntwx: 2500
+num_fe_range: 10
+num_waters: 0
+other_mol: []
+p1: :113@CA
+p2: :82@CA
+p3: :316@CA
+partition: rondror
+protein_align: name CA and resid 50 to 200
+rec_com_force: 10.0
+receptor_ff: protein.ff14SB
+receptor_segment: null
+num_equil_extends: 6
+release_eq:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+remd: 'no'
+rest:
+- 0.0
+- 0.0
+- 5.0
+- 250.0
+- 0.0
+- 10.0
+- 10.0
+rng: 6
+rocklin_correction: 'no'
+sdr_dist: 0.0
+solv_shell: 15.0
+system_name: adrb2_A
+temperature: 310.0
+ti_points: 0
+water_model: TIP3P

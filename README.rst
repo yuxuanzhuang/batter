@@ -1,49 +1,90 @@
 batter
 ==============================
 
-.. [//]: # (Badges)
-
 .. image:: https://github.com/yuxuanzhuang/batter/workflows/CI/badge.svg
    :target: https://github.com/yuxuanzhuang/batter/actions?query=workflow%3ACI
 
 .. image:: https://codecov.io/gh/yuxuanzhuang/batter/branch/main/graph/badge.svg
    :target: https://codecov.io/gh/yuxuanzhuang/batter/branch/main
 
-This is a refactored version of the `BAT.py` package rewritten in object-oriented style.
+``batter`` is a modern, object-oriented toolkit for free-energy workflows.
+It adds first-class support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
+with an AMBER + sdg + express pipeline to the original ``BAT.py`` package.
 
-The major changes include support for calculating the absolute binding free energy of membrane proteins, currently in AMBER+sdg+express mode.
+ABFE runs in ``batter`` follow a single-leg design that applies λ-dependent Boresch restraints,
+uses the simultaneous decoupling/recoupling (SDR) protocol with both the interacting and dummy ligands
+present in the system, and employs softcore electrostatics/van der Waals potentials to maintain smooth
+turn-on/turn-off behaviour.
 
-**Note:** Some parts of the code may still be under development, but the overall structure is in place.
+.. note::
+   The API is stabilizing. Some modules are still under active development, but the overall structure is in place.
 
 Installation
 -------------------------------
-To install, first clone the repository and then run the following command:
+
+Clone the repository, initialize submodules, and create the environment:
 
 .. code-block:: bash
 
-    git clone git@github.com:yuxuanzhuang/batter.git
-    cd batter
-    git submodule update --init --recursive
+   git clone git@github.com:yuxuanzhuang/batter.git
+   # If SSH clone fails, configure your GitHub SSH keys:
+   # https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account
 
-    conda env create -f extern/openfe/environment.yml -n batter
-    conda env update --name batter --file environment.yml
+   cd batter
+   git submodule update --init --recursive
 
-    conda activate batter
-    
-    pip install -e ./extern/alchemlyb
-    pip install -e ./extern/openfe
-    pip install -e ./extern/rocklinc
-    pip install -e .
+   conda create -n batter -y python=3.12
+   conda env update -f environment.yml -n batter
+   conda activate batter
 
-This will install the package in editable mode, so you can make changes to the code and see the changes reflected in the package.
+   # Editable installs for bundled deps
+   pip install -e ./extern/alchemlyb
+   pip install -e ./extern/rocklinc
 
-Usage
+   # Install batter (editable)
+   pip install -e .
+
+This installs in editable mode so your code changes are immediately reflected.
+
+Quickstart
 -------------------------------
-It is advisable to use the package as a Python script or inside a Jupyter notebook.
 
-See the `scripts` folder for scripts that might be helpful in running the simulations:
+Run an example configuration:
 
-- `cancel_jobs.sh`: Script to cancel all FE-related jobs on a cluster.
+.. code-block:: bash
+
+   cd examples
+   batter run mabfe.yaml
+
+Use ``--help`` to see all commands:
+
+.. code-block:: bash
+
+   batter -h
+   batter run -h
+
+Examples
+==============================
+
+YAMLs in ``examples/`` illustrate common setups:
+
+**Absolute Binding Free Energy (ABFE)**
+   1. ``mabfe.yaml`` — membrane protein (e.g., B2AR) in a lipid bilayer
+   2. ``mabfe_nonmembrane.yaml`` — soluble protein (e.g., BRD4) in water
+   3. ``extra_restraints/mabfe.yaml`` — add additional positional restraints to selected atoms
+   4. ``conformational_restraints/mabfe.yaml`` — add additional conformational restraints (distance between atoms)
+
+**Absolute Solvation Free Energy (ASFE)**
+   1. ``masfe.yaml`` — small molecule (e.g., epinephrine) in water
+
+**Plain Molecular Dynamics (MD)**
+   1. ``md.yaml`` — standard MD production run for a protein-ligand complex
+
+
+Notes
+-------------------------------
+- Backends include local execution and SLURM-based submission (see CLI options).
+- Example YAMLs are intended as starting points; adjust force fields, restraints, and sampling knobs to your system.
 
 Copyright
 -------------------------------
@@ -51,5 +92,5 @@ Copyright
 
 Acknowledgements
 -------------------------------
-This project is based on the 
-`Computational Molecular Science Python Cookiecutter <https://github.com/molssi/cookiecutter-cms>`_ version 1.10.
+Built with the
+`Computational Molecular Science Python Cookiecutter <https://github.com/molssi/cookiecutter-cms>`_ (v1.10).

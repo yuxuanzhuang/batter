@@ -1,6 +1,3 @@
-[submodule "extern/openfe"]
-	path = extern/openfe
-	url = git@github.com:yuxuanzhuang/openfe.git
 [submodule "extern/alchemlyb"]
 	path = extern/alchemlyb
 	#url = git@github.com:alchemistry/alchemlyb.git

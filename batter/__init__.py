@@ -14,6 +14,18 @@ warnings.filterwarnings(
     module="MDAnalysis.coordinates.PDB"
 )
 
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="MDAnalysis.topology.PDBParser"
+)
+
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module="MDAnalysis.topology.MOL2Parser"
+)
+
 try:
     from Bio.Application import BiopythonDeprecationWarning
 except ImportError:
@@ -34,15 +46,14 @@ def _mute_jax(record):
     return not "****** PyMBAR will use 64-bit JAX! *******" in record.msg
 def _mute_jax_2(record):
     return not "******* JAX 64-bit mode is now on! *******" in record.msg
+def _mute_jax_3(record):
+    return not "PyMBAR can run faster with JAX" in record.msg
 _mbar_log = logging.getLogger("pymbar.timeseries")
 _mbar_log.addFilter(_mute_timeseries)
 _mbar_log = logging.getLogger("pymbar.mbar_solvers")
 _mbar_log.addFilter(_mute_jax)
 _mbar_log.addFilter(_mute_jax_2)
-
-# Add imports here
-from .batter import ABFESystem, MABFESystem, RBFESystem, MASFESystem
-from .analysis import results
+_mbar_log.addFilter(_mute_jax_3)
 
 logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')

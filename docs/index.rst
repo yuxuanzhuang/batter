@@ -1,75 +1,107 @@
-.. batter documentation master file, created by
-   sphinx-quickstart on Thu Mar 15 13:55:56 2018.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+=============================
+Welcome to BATTER's Docs
+=============================
 
-Welcome to batter's documentation!
-=========================================================
+BATTER is a modular orchestration layer for absolute binding free-energy (ABFE)
+workflows—especially for membrane proteins—and
+for solvation (ASFE). This documentation includes
+user guides, configuration references,
+tutorials, and developer resources.
+
+
+Quick Links
+===========
 
 .. grid:: 1 1 2 2
 
-    .. grid-item-card:: Getting Started
-      :margin: 0 3 0 0
-      
-      Learn the basics of using batter.
+   .. grid-item-card:: Getting Started
+      :margin: 0 3 0 3
 
-      .. button-link:: ./getting_started.html
+      New to BATTER? Start here for environment setup, the core workflow, and links
+      to example inputs.
+
+      .. button-link:: getting_started.html
          :color: primary
          :outline:
          :expand:
 
-         To the Getting Started Guide
+         Go to Getting Started
 
-      
+   .. grid-item-card:: Tutorial
+      :margin: 0 3 0 3
 
-    .. grid-item-card::  User Guide
-      :margin: 0 3 0 0
-      
-      An in-depth guide for users.
+      Follow the step-by-step tutorial to run a complete ABFE calculation and become
+      familiar with the command-line entry points.
 
-      .. button-link:: ./user_guide.html
+      .. button-link:: tutorial.html
          :color: primary
          :outline:
          :expand:
 
-         To the User Guide
-      
-      
+         Explore the Tutorial
 
-    .. grid-item-card:: API Reference
-      :margin: 0 3 0 0
-      
-      How to use the API of batter.
+   .. grid-item-card:: Configuration Reference
+      :margin: 0 3 0 3
 
-      .. button-link:: ./api.html
+      Learn every option available in the run and simulation YAML schemas, including
+      SLURM controls, restraints, and REMD knobs.
+
+      .. button-link:: configuration.html
          :color: primary
          :outline:
          :expand:
 
-         To the API Reference.
+         Read the Configuration Reference
 
-      
+   .. grid-item-card:: API Reference
+      :margin: 0 3 0 3
 
-    .. grid-item-card::  Developer Guide
-      :margin: 0 3 0 0
-      
-      How to contribute to batter.
+      Browse the Python API for programmatic access to configuration helpers, artifact
+      stores, and results repositories.
 
-      .. button-link:: ./developer_guide.html
+      .. button-link:: api.html
          :color: primary
          :outline:
          :expand:
 
-         To the Developer Guide
+         View the API Reference
 
+   .. grid-item-card:: Developer Guide
+      :margin: 0 3 0 3
+
+      Dive into the internal architecture, typed pipeline payloads, and metadata model
+      when extending or contributing to BATTER.
+
+      .. button-link:: developer_guide.html
+         :color: primary
+         :outline:
+         :expand:
+
+         Open the Developer Guide
+
+   .. grid-item-card:: Command-Line Usage
+      :margin: 0 3 0 3
+
+      Learn the available ``batter`` commands, options, and SLURM utilities.
+
+      .. button-link:: cli.html
+         :color: primary
+         :outline:
+         :expand:
+
+         View the CLI Reference
+
+
+Primary Guides
+==============
 
 .. toctree::
    :maxdepth: 2
-   :hidden:
    :titlesonly:
 
    getting_started
-   user_guide
+   tutorial
+   configuration
+   cli
    api
    developer_guide
-
