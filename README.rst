@@ -7,6 +7,9 @@ batter
 .. image:: https://codecov.io/gh/yuxuanzhuang/batter/branch/main/graph/badge.svg
    :target: https://codecov.io/gh/yuxuanzhuang/batter/branch/main
 
+.. image:: https://readthedocs.org/projects/pip/badge/?version=latest&style=flat
+   :target: https://batter.readthedocs.io/en/latest/?badge=latest
+
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
 It adds first-class support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
 with an AMBER + sdg + express pipeline to the original ``BAT.py`` package.
@@ -84,7 +87,7 @@ YAMLs in ``examples/`` illustrate common setups:
 Notes
 -------------------------------
 - Backends include local execution and SLURM-based submission (see CLI options).
-- Example YAMLs are intended as starting points; adjust force fields, restraints, and sampling knobs to your system.
+- Example YAMLs are intended as starting points; adjust to your system.
 
 Copyright
 -------------------------------
