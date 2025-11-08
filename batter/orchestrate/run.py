@@ -532,14 +532,18 @@ def run_from_yaml(
     # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------
-    run_phase_skipping_done(
-        phase_prepare_fe,
-        children,
-        "prepare_fe",
-        backend,
-        max_workers=rc.run.max_workers,
-    )
-    children = handle_phase_failures(children, "prepare_fe", rc.run.on_failure)
+    if phase_fe_equil.ordered_steps():
+        run_phase_skipping_done(
+            phase_prepare_fe,
+            children,
+            "prepare_fe",
+            backend,
+            max_workers=rc.run.max_workers,
+        )
+        children = handle_phase_failures(children, "prepare_fe", rc.run.on_failure)
+    else:
+        logger.info("[skip] prepare_fe: no steps in this protocol.")
+
     # --------------------
     # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------

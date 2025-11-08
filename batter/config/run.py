@@ -571,7 +571,10 @@ class MDSimArgs(BaseModel):
     hmr: Literal["yes", "no"] = Field(
         "yes", description="Hydrogen mass repartitioning toggle."
     )
-    @field_validator("hmr", mode="before")
+    enable_mcwat: Literal["yes", "no"] = Field(
+        "yes", description="Enable MC water exchange moves during equilibration (1 = on)."
+    )
+    @field_validator("hmr", "enable_mcwat", mode="before")
     @classmethod
     def _coerce_hmr(cls, v):
         return coerce_yes_no(v) or "no"
