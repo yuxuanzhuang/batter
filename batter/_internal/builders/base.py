@@ -1,3 +1,5 @@
+"""Base class for stage-specific system builders."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,17 +15,12 @@ from batter._internal.builders.interfaces import BuildContext
 
 
 class BaseBuilder(ABC):
-    """
-    Minimal, forward-only stage/component builder.
+    """Minimal, forward-only stage/component builder.
 
-    Common responsibilities:
-      - create/reset build & window directories
-      - create or copy simulation directories
-      - expose shared context (ligand, residue_name, sim_config, etc.)
-
-    Stage-specific responsibilities (implemented in subclasses):
-      - _build_complex(), _create_box(), _restraints(),
-        _pre_sim_files(), _sim_files(), _run_files()
+    Responsibilities shared by all builders include creating/resetting
+    directories, preparing simulation inputs, and exposing the build context
+    (ligand identifiers, residue names, simulation config, etc.).
+    Subclasses customize the workflow via the protected hook methods.
     """
 
     stage: Optional[str] = None
@@ -42,6 +39,33 @@ class BaseBuilder(ABC):
         infe: bool = False,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
+        """Initialize the builder with concrete ligand/system metadata.
+
+        Parameters
+        ----------
+        ligand : str
+            Ligand identifier (matches directory layout and artifact cache).
+        residue_name : str
+            Residue name to use when referencing the ligand in structures.
+        param_dir_dict : dict[str, str]
+            Mapping of artifact keys to parameter directories.
+        sim_config : SimulationConfig
+            Resolved simulation configuration for this workflow.
+        component : str
+            Legacy component code (e.g., ``"q"``, ``"z"``) used to name outputs.
+        component_windows : dict[str, Any]
+            Component-specific lambda/window metadata.
+        working_dir : str or Path
+            Root working directory for this ligand/system.
+        system_root : str or Path
+            Root path for reusable system-level data.
+        win : int, default -1
+            Window index currently being prepared; ``-1`` indicates scaffold/equil.
+        infe : bool, default False
+            Whether INFE (intermediate nonequilibrium) artifacts should be produced.
+        extra : dict[str, Any], optional
+            Optional opaque metadata forwarded to downstream helpers.
+        """
         abs_working_dir = Path(working_dir).resolve()
         ctx_extra: Dict[str, Any] = dict(extra or {})
         ctx_extra.setdefault("infe", bool(infe))
@@ -71,27 +95,39 @@ class BaseBuilder(ABC):
     # ---- folders
     @property
     def build_dir(self) -> Path:
+        """Path where intermediate build artifacts are written."""
         return self.ctx.build_dir
 
     @property
     def window_dir(self) -> Path:
-        """
-        Naming:
-          - win == -1  →  <comp>-1   (FE equil/scaffold)
-          - win >= 0   →  <comp><win>  (lambda window directories: z0, z1, ...)
-        """
+        """Window-specific directory for the stage/component pair."""
         return self.ctx.window_dir
 
     @property
     def amber_dir(self) -> Path:
+        """Directory containing rendered AMBER templates for this component."""
         return self.ctx.amber_dir
 
     @property
     def comp(self) -> str:
+        """Return the component code backing this builder instance."""
         return self.ctx.comp
         
     @property
     def membrane_builder(self) -> bool:
+        """Return True when membrane-specific handling is required.
+
+        Returns
+        -------
+        bool
+            ``True`` when the simulation config declares a membrane system and
+            the current component is not listed in ``MEMBRANE_EXEMPT_COMPONENTS``.
+
+        Raises
+        ------
+        AttributeError
+            If the simulation config lacks the ``membrane_simulation`` flag.
+        """
         if not hasattr(self.ctx.sim, "membrane_simulation"):
             raise AttributeError(
                 "SimulationConfig is missing 'membrane_simulation'. "
@@ -102,6 +138,13 @@ class BaseBuilder(ABC):
 
     # ---- main template
     def build(self) -> "BaseBuilder":
+        """Execute the canonical build pipeline for the configured window.
+
+        Returns
+        -------
+        BaseBuilder
+            Self, to support fluent chaining if desired.
+        """
         logger.debug(
             f"building {self.ctx.ligand} [{self.stage or 'stage'}] "
             f"(comp={self.ctx.comp}, win={self.ctx.win}, residue={self.ctx.residue_name})"
@@ -140,39 +183,45 @@ class BaseBuilder(ABC):
     # ---- hooks to be specialized by subclasses
     @abstractmethod
     def _build_complex(self) -> bool:
-        """Return True if anchors found/placed; False to prune."""
+        """Build/align the receptor–ligand complex and locate anchors.
+
+        Returns
+        -------
+        bool
+            ``True`` when anchors were found; ``False`` to signal pruning.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def _create_amber_files(self) -> None:
-        """Create AMBER templates in build_dir."""
+        """Create AMBER templates in ``build_dir`` based on the simulation config."""
         raise NotImplementedError
 
     @abstractmethod
     def _create_simulation_dir(self) -> None:
-        """Create simulation directory for this stage."""
+        """Produce the stage-specific simulation directory structure."""
         raise NotImplementedError
 
     @abstractmethod
     def _create_box(self) -> None:
-        """Create solvated/ionized box, write full/vac systems."""
+        """Create the solvated/ionized box and any full/vacuum system files."""
         raise NotImplementedError
 
     @abstractmethod
     def _restraints(self) -> None:
-        """Write any stage-specific restraints."""
+        """Write any stage-specific restraints (disang, cv, or related files)."""
         raise NotImplementedError
 
     def _pre_sim_files(self) -> None:
-        """Optional pre-sim transforms."""
+        """Optional transformation step before rendering simulation input files."""
         return
 
     @abstractmethod
     def _sim_files(self) -> None:
-        """Write stage-specific MD input files."""
+        """Write MD engine input files for this stage/window."""
         raise NotImplementedError
 
     @abstractmethod
     def _run_files(self) -> None:
-        """Emit run scripts for this stage."""
+        """Emit run scripts or job submission files for this stage/window."""
         raise NotImplementedError

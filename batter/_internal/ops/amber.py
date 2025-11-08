@@ -1,4 +1,5 @@
-# batter/_internal/ops/amber_templates.py
+"""AMBER template handling for builder workflows."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,8 +13,17 @@ from batter._internal.templates import AMBER_FILES_DIR as amber_files_orig  # ty
 
 
 def _resolve_ligand_ff(sim: SimulationConfig) -> str:
-    """
-    If user picked an OpenFF for the ligand, the legacy AMBER decks expect GAFF2 for build.
+    """Normalize ligand force field selection for legacy AMBER decks.
+
+    Parameters
+    ----------
+    sim : SimulationConfig
+        Simulation configuration that may specify ``ligand_ff``.
+
+    Returns
+    -------
+    str
+        ``gaff2`` when an OpenFF family is requested; otherwise the original value.
     """
     lig_ff = getattr(sim, "ligand_ff", "gaff2")
     if lig_ff and "openff" in str(lig_ff).lower():
@@ -28,19 +38,25 @@ def write_amber_templates(
     membrane: bool,
     production: bool,
 ) -> None:
-    """
-    Render AMBER template files into `out_dir`.
+    """Render AMBER template files with simulation-specific substitutions.
+
+    Parameters
+    ----------
+    out_dir : Path
+        Destination directory where rendered templates are written.
+    sim : SimulationConfig
+        Simulation configuration providing thermostat, barostat, and FF knobs.
+    membrane : bool
+        Whether to apply membrane-specific settings (semi-isotropic pressure, etc.).
+    production : bool
+        If ``True``, enforce production-style coupling constants.
 
     Notes
     -----
-    This function ports your original `_create_amber_files` logic:
-    - copy the template tree
-    - perform string substitutions (dt, ntpr, ntwr, ntwe, ntwx, cut, gamma_ln, barostat, ff, p_coupling, c_surften, etc.)
-    - handle `hmr` and membrane branches
-
-    Placeholders supported (as in your legacy decks):
-      _step_, _ntpr_, _ntwr_, _ntwe_, _ntwx_, _cutoff_, _gamma_ln_, _barostat_,
-      _receptor_ff_, _ligand_ff_, _lipid_ff_, _p_coupling_, _c_surften_
+    Supported placeholder tokens include ``_step_``, ``_ntpr_``, ``_ntwr_``,
+    ``_ntwe_``, ``_ntwx_``, ``_cutoff_``, ``_gamma_ln_``, ``_barostat_``,
+    ``_receptor_ff_``, ``_ligand_ff_``, ``_lipid_ff_``, ``_p_coupling_``,
+    and ``_c_surften_``.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

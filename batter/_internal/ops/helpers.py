@@ -1,8 +1,14 @@
-# batter/_internal/ops/helpers.py
+"""Helper utilities for system preparation internals.
+
+This module centralizes frequently reused routines that operate on MDAnalysis
+universes, RDKit molecules, or simple file artifacts produced during system
+building.  Most helpers revolve around anchor detection, solvent handling,
+and mask formatting for downstream AMBER tooling.
+"""
 from __future__ import annotations
-from dataclasses import asdict, dataclass 
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 import json
 
 import MDAnalysis as mda
@@ -16,36 +22,60 @@ except Exception as e:  # pragma: no cover
     logger.warning("RDKit not available; get_ligand_candidates will fail if called. ({})", e)
 
 __all__ = [
+    "Anchors",
     "get_buffer_z",
     "get_sdr_dist",
     "get_ligand_candidates",
+    "load_anchors",
+    "num_to_mask",
+    "save_anchors",
     "select_ions_away_from_complex",
 ]
 
 
 @dataclass(frozen=True)
 class Anchors:
-    P1: str; P2: str; P3: str; L1: str; L2: str; L3: str; lig_res: str
+    """Atom masks that define the three protein and ligand anchor atoms."""
+
+    P1: str
+    P2: str
+    P3: str
+    L1: str
+    L2: str
+    L3: str
+    lig_res: str
 
 def _anchors_path(working_dir: Path) -> Path:
-    # single source of truth for where we persist them
+    """Return the canonical on-disk location for anchor metadata."""
     return working_dir / "anchors.json"
 
 def save_anchors(working_dir: Path, anchors: Anchors) -> None:
+    """Persist anchor metadata to ``anchors.json`` under ``working_dir``."""
     p = _anchors_path(working_dir)
     p.write_text(json.dumps(asdict(anchors), indent=2))
     logger.debug(f"[simprep] wrote anchors → {p}")
 
 def load_anchors(working_dir: Path) -> Anchors:
+    """Load and deserialize previously stored anchor masks."""
     p = _anchors_path(working_dir)
     data = json.loads(p.read_text())
     return Anchors(**data)
 
 
 def get_buffer_z(protein_file: str | Path, targeted_buf: float = 20.0) -> float:
-    """
-    Extra z-buffer (Å) required to reach ``targeted_buf`` water thickness on BOTH
-    sides of the protein along z.
+    """Return the extra z-buffer needed to meet a target solvent thickness.
+
+    Parameters
+    ----------
+    protein_file : str or Path
+        Path to the receptor-only structure (PDB, GRO, etc.).
+    targeted_buf : float, default 20.0
+        Desired minimal water thickness (Å) above and below the protein.
+
+    Returns
+    -------
+    float
+        Additional buffer (Å) to add in both z directions.
     """
     u = mda.Universe(str(protein_file))
     protein = u.select_atoms("protein")
@@ -69,9 +99,23 @@ def get_sdr_dist(
     buffer_z: float,
     extra_buffer: float = 5.0,
 ) -> float:
-    """
-    Compute a vertical (z) shift that places the ligand mid-solvent above the protein.
-    Returns the distance (Å) to add to the ligand z coordinates.
+    """Compute the ligand z-translation that centers it within the solvent.
+
+    Parameters
+    ----------
+    protein_file : str or Path
+        Path to the receptor structure (with ligand coordinates present).
+    lig_resname : str
+        Residue name used to select the ligand atoms.
+    buffer_z : float
+        Pre-computed buffer (Å) to maintain between protein surface and solvent.
+    extra_buffer : float, default 5.0
+        Additional spacing (Å) to keep the ligand slightly above the protein.
+
+    Returns
+    -------
+    float
+        Translation distance (Å) to add to ligand z coordinates.
     """
     u = mda.Universe(str(protein_file))
     ligand = u.select_atoms(f"resname {lig_resname}")
@@ -90,11 +134,32 @@ def get_sdr_dist(
 
 
 def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = True) -> List[int]:
-    """
-    Candidate atoms for Boresch restraints:
-    non-H atoms bonded to >= 2 heavy atoms; if <3 found, return all non-H atoms.
+    """Return ligand atom indices suitable for anchor selection.
 
-    Returns 0-based atom indices in the RDKit molecule.
+    Criteria:
+
+    * heavy atoms bound to at least two other heavy atoms (to avoid terminal atoms)
+    * sp-hybridized carbons are skipped
+    * if fewer than three candidates remain, all heavy atoms are used
+
+    Parameters
+    ----------
+    ligand_sdf : str or Path
+        Path to the ligand SDF file.
+    removeHs : bool, default True
+        Whether RDKit should remove hydrogens while reading the SDF.
+
+    Returns
+    -------
+    list[int]
+        Zero-based atom indices within the RDKit molecule.
+
+    Raises
+    ------
+    RuntimeError
+        If RDKit is unavailable.
+    ValueError
+        If the SDF file cannot be read.
     """
     if Chem is None:
         raise RuntimeError("RDKit is required for get_ligand_candidates but is not available.")
@@ -126,10 +191,31 @@ def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = True) -> List
     return anchor_candidates
 
 
-def select_ions_away_from_complex(u: mda.Universe, total_charge: int, lig_resname: str) -> Optional[List[int]]:
-    """
-    Pick ion indices (Na+ or Cl-) at least ~15 Å from the complex (protein + ligand + P31).
-    Falls back to 10 Å if needed; raises if still insufficient.
+def select_ions_away_from_complex(
+    u: mda.Universe,
+    total_charge: int,
+    lig_resname: str,
+) -> Optional[List[int]]:
+    """Select ion indices that neutralize the system while staying distant.
+
+    Parameters
+    ----------
+    u : MDAnalysis.Universe
+        Universe containing the solvated system.
+    total_charge : int
+        Total system charge to neutralize; positive selects Na+, negative Cl-.
+    lig_resname : str
+        Residue name used for ligand selection when defining the complex.
+
+    Returns
+    -------
+    list[int] or None
+        Zero-based atom indices of chosen ions, or ``None`` when no ions are required.
+
+    Raises
+    ------
+    ValueError
+        If insufficient ions are available or none satisfy the distance criteria.
     """
     if total_charge == 0:
         return None
@@ -172,11 +258,10 @@ def select_ions_away_from_complex(u: mda.Universe, total_charge: int, lig_resnam
 
 
 def num_to_mask(pdb_file: str | Path) -> list[str]:
-    """
-    Build a list mapping atom numbers to Amber-style masks (':resid@atomname').
+    """Map PDB atom indices to Amber-style mask strings.
 
-    The first entry is a dummy `0` to align 1-based atom numbering with indices.
-    So `atm_num[i]` corresponds to atom i in the PDB file.
+    The first entry is a dummy ``"0"`` to align with 1-based indexing so that
+    ``atm_num[i]`` corresponds to atom ``i`` in the source file.
 
     Parameters
     ----------
@@ -204,13 +289,18 @@ def num_to_mask(pdb_file: str | Path) -> list[str]:
     return atm_num
 
 
-def format_ranges(numbers):
-    """
-    Convert a list of numbers into a string of ranges.
-    For example, [1, 2, 3, 5, 6] will be converted to "1-3,5-6".
+def format_ranges(numbers: Iterable[int]) -> str:
+    """Compact integer sequences into comma-delimited ranges.
 
-    This is to avoid the nasty AMBER issue that restraintmask can
-    only be 256 characters long. -.-
+    Parameters
+    ----------
+    numbers : Iterable[int]
+        Integer values (typically atom numbers) to compress.
+
+    Returns
+    -------
+    str
+        Comma-separated range specification (e.g., ``"1-3,5-6"``).
     """
     from itertools import groupby
     numbers = sorted(set(numbers))
@@ -225,4 +315,4 @@ def format_ranges(numbers):
         else:
             ranges.append(f"{start}-{end}")
     
-    return ','.join(ranges)
+    return ",".join(ranges)

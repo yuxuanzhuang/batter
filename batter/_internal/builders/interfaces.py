@@ -1,4 +1,5 @@
-# batter/_internal/builders/interfaces.py
+"""Interfaces and context objects shared by builder implementations."""
+
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable, Callable, Mapping, Tuple, Optional, Any
@@ -25,6 +26,35 @@ Component = str  # e.g., "q", "e", "v", "n", "m", "x", "o", "z", "s", "y"
 
 @dataclass(frozen=True)
 class BuildContext:
+    """Immutable container describing the current build invocation.
+
+    Attributes
+    ----------
+    ligand : str
+        Ligand identifier used throughout the workflow.
+    residue_name : str
+        Resolved ligand residue name in topology files.
+    param_dir_dict : Mapping[str, str]
+        Artifact mapping that points to parameter directories.
+    working_dir : Path
+        Staging directory containing all build/run artifacts.
+    system_root : Path
+        Root directory shared across builders for the same system.
+    comp : str
+        Component code (legacy single-letter identifier).
+    win : int
+        Window index; ``-1`` denotes pre-window scaffolding.
+    sim : SimulationConfig
+        Simulation configuration resolved from user input.
+    anchors : tuple[str, str, str] | None
+        Optional anchor atom masks once detected.
+    lipid_mol : tuple[str, ...]
+        Optional lipid residue names required for membrane systems.
+    other_mol : tuple[str, ...]
+        Other molecule residue names tracked alongside the ligand.
+    extra : Mapping[str, Any] | None
+        Builder-specific metadata (opaque to the interface layer).
+    """
     ligand: str
     residue_name: str
     param_dir_dict: Mapping[str, str]
@@ -41,13 +71,15 @@ class BuildContext:
 
     @property
     def window_dir(self) -> Path:
-        """
-        Compute the subdirectory for the current window:
-          - win == -1 → <comp>-1  (FE equil/scaffold)
-          - win >= 0  → <comp><win> (lambda window directories: z0, z1, ...)
+        """Return the window-specific directory for the current component.
+
+        Returns
+        -------
+        Path
+            ``<comp>-1`` for scaffold/equil windows; ``<comp><win>`` otherwise.
         """
         if self.comp == "q":
-            return self.working_dir # equilibration has no subdir
+            return self.working_dir  # equilibration has no subdir
         name = f"{self.comp}{self.win:02d}" if self.win >= 0 else f"{self.comp}-1"
         return self.working_dir / name
 
