@@ -523,6 +523,7 @@ def create_box_y(ctx: BuildContext) -> None:
     work = ctx.working_dir
     sim = ctx.sim
     amber_dir = ctx.amber_dir
+    build_dir = ctx.build_dir
     window_dir = ctx.window_dir
     window_dir.mkdir(parents=True, exist_ok=True)
 
@@ -543,6 +544,8 @@ def create_box_y(ctx: BuildContext) -> None:
     if not hasattr(sim, "ion_def"):
         raise AttributeError("SimulationConfig missing 'ion_def'.")
     ion_def = sim.ion_def
+    if len(ion_def) < 3:
+        raise ValueError("`ion_def` must contain [cation, anion, concentration].")
 
     if not hasattr(sim, "neut"):
         raise AttributeError("SimulationConfig missing 'neut'.")
@@ -551,16 +554,24 @@ def create_box_y(ctx: BuildContext) -> None:
     comp = ctx.comp
     param_dir = (work.parent.parent / "params") if comp != "q" else (work.parent / "params")
 
+    build_pdb = window_dir / "build.pdb"
+    if not build_pdb.exists():
+        fallback = build_dir / "build.pdb"
+        if fallback.exists():
+            _cp(fallback, build_pdb)
+        else:
+            raise FileNotFoundError(
+                f"[create_box_y] build.pdb missing in {window_dir} (fallback: {fallback})."
+            )
+
     # --- stage required ligand artifacts into window_dir ---
     for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "pdb", "json"):
         src = param_dir / f"{mol}.{ext}"
         if src.exists():
             _cp(src, window_dir / src.name)
         else:
-            # frcmod, lib, mol2, prmtop/inpcrd/pdb should exist for ligand
             logger.debug(f"[create_box_y] Optional/absent: {src}")
 
-    # Convenience copies used elsewhere (mirror your default function)
     for ext in ("prmtop", "mol2", "sdf", "inpcrd"):
         src = param_dir / f"{mol}.{ext}"
         if src.exists():
@@ -575,7 +586,7 @@ def create_box_y(ctx: BuildContext) -> None:
     _cp(src_tleap, window_dir / "tleap.in")
 
     # --- build the vacuum unit from ligand PDB (vac.*) ---
-    tleap_lig_txt = open(window_dir / "tleap.in").read().splitlines()
+    tleap_lig_txt = (window_dir / "tleap.in").read_text().splitlines()
     tleap_lig_txt += [
         "# ligand-only vacuum topology",
         f"loadamberparams {mol}.frcmod",
@@ -615,26 +626,24 @@ def create_box_y(ctx: BuildContext) -> None:
         return int(round(q))
 
     lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
-    # number of ions for concentration (before neutralization adjustment)
-    # Box built as cube with side = 2*solv_shell (Å)
     side = 2.0 * solv_shell  # Å
     box_volume_A3 = side ** 3
-    num_per_species = max(1, round(float(ion_def[2]) * 6.02e23 * box_volume_A3 * 1e-27))
+    num_per_species = max(
+        0,
+        round(float(ion_def[2]) * 6.02e23 * box_volume_A3 * 1e-27),
+    )
 
-    # If neut == "yes", add counterions to neutralize; if "no", add by concentration only.
-    add_neu_cat = max(0, -lig_charge)  # if ligand is negative, add cations
-    add_neu_ani = max(0, lig_charge)   # if ligand is positive, add anions
+    add_neu_cat = max(0, -lig_charge)
+    add_neu_ani = max(0, lig_charge)
 
-    # --- write tleap to solvate and ionize ligand-only system (full.*) ---
-    # first read lines from tleap.in
-    tleap_solv_lines = open(window_dir / "tleap.in").read().splitlines()
+    tleap_solv_lines = (window_dir / "tleap.in").read_text().splitlines()
     tleap_solv_lines += [
         "# ligand-only solvation",
         f"loadamberparams {mol}.frcmod",
         f"{mol} = loadmol2 {mol}.mol2",
         f"source {water_leaprc}",
         f'set {{{mol}.1}} name "{mol}"',
-        f'model = loadpdb build.pdb',
+        f"model = loadpdb {build_pdb.name}",
         "",
         f"# cubic box with {solv_shell:.3f} Å padding each side",
         f"solvatebox model {water_box} {{ {solv_shell:.3f} {solv_shell:.3f} {solv_shell:.3f} }} 1",
@@ -642,12 +651,12 @@ def create_box_y(ctx: BuildContext) -> None:
         "# ions",
     ]
     if neut == "no":
-        tleap_solv_lines += [
-            f"addionsrand model {ion_def[0]} {num_per_species+add_neu_cat}",
-            f"addionsrand model {ion_def[1]} {num_per_species+add_neu_ani}",
-        ]
+        if num_per_species > 0 or add_neu_cat > 0 or add_neu_ani > 0:
+            tleap_solv_lines += [
+                f"addionsrand model {ion_def[0]} {num_per_species + add_neu_cat}",
+                f"addionsrand model {ion_def[1]} {num_per_species + add_neu_ani}",
+            ]
     else:
-        # neutralize first, then still add concentration salt if you prefer; here we only neutralize
         if add_neu_cat:
             tleap_solv_lines.append(f"addionsrand model {ion_def[0]} {add_neu_cat}")
         if add_neu_ani:
@@ -662,53 +671,7 @@ def create_box_y(ctx: BuildContext) -> None:
     ]
     _write(window_dir / "tleap_solvate.in", "\n".join(tleap_solv_lines))
     run_with_log(f"{tleap} -s -f tleap_solvate.in > tleap_solvate.log", working_dir=window_dir)
-    
 
-    # --- tleap parts (all with working_dir=window_dir) ---
-    def _tleap_write_and_run(filename: str, body: str, logname: str) -> None:
-        _write(window_dir / filename, body)
-        run_with_log(f"{tleap} -s -f {filename} > {logname}", working_dir=window_dir)
-
-    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_dum.in")
-    with (window_dir / "tleap_solvate_dum.in").open("a") as f:
-        f.write("dum = loadpdb solvate_pre_dum.pdb\n\n")
-        f.write(f"set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
-        f.write("savepdb dum solvate_dum.pdb\n")
-        f.write("saveamberparm dum solvate_dum.prmtop solvate_dum.inpcrd\nquit\n")
-    run_with_log(f"{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log", working_dir=window_dir)
-
-    # ligands
-    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_ligands.in")
-    with (window_dir / "tleap_solvate_ligands.in").open("a") as f:
-        f.write("# Load the necessary parameters\n")
-        f.write(f"loadamberparams {mol}.frcmod\n")
-        f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
-        f.write(f'set {{{mol}.1}} name "{mol}"\n')
-        f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
-        f.write(f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
-        f.write("savepdb ligands solvate_ligands.pdb\n")
-        f.write("saveamberparm ligands solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n")
-    run_with_log(f"{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log", working_dir=window_dir)
-
-    dum_p = pmd.load_file(str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd"))
-    ligand_p = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
-    ligand_p.residues[0].name = mol
-    ligand_p.save(str(window_dir / f"{mol}.prmtop"), overwrite=True)
-    ligand_p = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
-
-    combined = dum_p + ligand_p
-    vac = dum_p + ligand_p
-
-    combined.save(str(window_dir / "full.prmtop"), overwrite=True)
-    combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
-    combined.save(str(window_dir / "full.pdb"), overwrite=True)
-
-    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
-    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
-    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
-
-
-    # --- HMR (optional) ---
     parmed_hmr = amber_dir / "parmed-hmr.in"
     if parmed_hmr.exists():
         _cp(parmed_hmr, window_dir / "parmed-hmr.in")
