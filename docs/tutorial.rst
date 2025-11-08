@@ -100,7 +100,7 @@ You may supply a custom SLURM header template (for account, partition, etc.) usi
 Optional: Additional Conformational Restraints
 ----------------------------------------------
 
-1. Use ``examples/conformational_restraints/rest.json`` as a template to generate a
+1. Use ``https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb`` as a template to generate a
    ``restraints.json`` file that captures the distances you want restrained.
 
 2. Enable these restraints by adding the following line under the ``create`` section
