@@ -78,6 +78,7 @@ class SimulationConfig(BaseModel):
             "dec_int": fe.dec_int,
             "remd": coerce_yes_no(fe.remd),
             "rocklin_correction": coerce_yes_no(fe.rocklin_correction),
+            "enable_mcwat": coerce_yes_no(fe.enable_mcwat),
             "lambdas": list(fe.lambdas or []),
             "sdr_dist": float(fe.sdr_dist),
             "blocks": int(fe.blocks),
@@ -187,6 +188,10 @@ class SimulationConfig(BaseModel):
 
     # --- Simulation params ---
     hmr: Literal["yes","no"] = Field("no", description="Hydrogen mass repartitioning")
+    enable_mcwat: Literal["yes","no"] = Field(
+        "yes",
+        description="Enable MC water exchange moves during equilibration templates.",
+    )
     temperature: float = Field(310.0, description="Temperature (K)")
     eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps")
     eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps")
@@ -245,7 +250,7 @@ class SimulationConfig(BaseModel):
     def _lower_enums(cls, v: Any) -> Any:
         return v if v is None else str(v).lower()
 
-    @field_validator("remd", "neutralize_only", "hmr", "rocklin_correction", mode="before")
+    @field_validator("remd", "neutralize_only", "hmr", "rocklin_correction", "enable_mcwat", mode="before")
     @classmethod
     def _coerce_yes_no(cls, v: Any) -> str | None:
         if v is None: return None

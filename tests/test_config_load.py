@@ -189,3 +189,15 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     cfg2 = SimulationConfig.from_sections(create2, FESimArgs(lambdas=[0, 1], release_eq=[0, 1]))
     assert cfg2.infe is False
     assert cfg2.barostat == 1
+
+
+def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
+    cfg = SimulationConfig(**base_sim_kwargs())
+    assert cfg.enable_mcwat == "yes"
+
+
+def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(lambdas=[0, 1], release_eq=[0, 1], enable_mcwat="no")
+    cfg = SimulationConfig.from_sections(create, fe_args)
+    assert cfg.enable_mcwat == "no"

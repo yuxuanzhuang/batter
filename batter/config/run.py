@@ -486,10 +486,14 @@ class FESimArgs(BaseModel):
     hmr: Literal["yes", "no"] = Field(
         "no", description="Hydrogen mass repartitioning toggle."
     )
+    enable_mcwat: Literal["yes", "no"] = Field(
+        "yes",
+        description="Enable MC water exchange moves during equilibration (1 = on).",
+    )
     temperature: float = Field(310.0, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
 
-    @field_validator("remd", "rocklin_correction", "hmr", mode="before")
+    @field_validator("remd", "rocklin_correction", "hmr", "enable_mcwat", mode="before")
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)

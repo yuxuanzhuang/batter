@@ -93,6 +93,8 @@ def write_amber_templates(
     if production:
         p_coupling = "0"
 
+    enable_mcwat_flag = "1" if getattr(sim, "enable_mcwat", "yes") == "yes" else "0"
+
     replacements = {
         "_step_": str(dt),
         "_ntpr_": str(ntpr),
@@ -107,6 +109,7 @@ def write_amber_templates(
         "_lipid_ff_": str(lipid_ff),
         "_p_coupling_": str(p_coupling),
         "_c_surften_": str(c_surften),
+        "_enable_mcwat_": enable_mcwat_flag,
     }
 
     # 3) Apply substitutions to all text files under out_dir
