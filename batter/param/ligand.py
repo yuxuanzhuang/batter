@@ -398,7 +398,6 @@ class LigandProcessing(ABC):
             raise ValueError("Unsupported force field; expected 'amber' or 'openff'.")
 
         metadata = self.to_dict()
-        charge = metadata.get("ligand_charge")
         json_path = Path(self.output_dir) / f"{self.name}.json"
         with json_path.open("w") as f:
             json.dump(metadata, f, indent=4)
@@ -863,6 +862,7 @@ def batch_ligand_process(
             "canonical_smiles": smi,
             "retain_lig_prot": bool(retain_lig_prot),
             "ligand_ff": ligand_ff,
+            "ligand_charge": lig.ligand_charge,
             "prepared_base": lig_name,
         }
         (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
