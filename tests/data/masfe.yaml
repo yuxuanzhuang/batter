@@ -3,7 +3,6 @@ protocol: asfe
 backend: local
 
 system:
-  type: MASFE
   output_folder: adrb2_A_masfe
 
 create:
