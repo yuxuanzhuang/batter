@@ -2,9 +2,12 @@
 Welcome to BATTER's Docs
 =============================
 
-BATTER is a modular orchestration layer for absolute binding (ABFE) and solvation
-(ASFE) free-energy workflows. This documentation collects user guides, configuration
-references, tutorials, and developer resources.
+BATTER is a modular orchestration layer for absolute binding free-energy (ABFE)
+workflows—especially for membrane proteins—and
+for solvation (ASFE). This documentation includes
+user guides, configuration references,
+tutorials, and developer resources.
+
 
 Quick Links
 ===========

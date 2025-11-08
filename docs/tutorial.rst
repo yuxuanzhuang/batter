@@ -105,6 +105,17 @@ Handy CLI Flags
 
 Run ``batter run --help`` anytime you need the full list of switches and defaults.
 
+You can check the status of running jobs with::
+
+    batter report-jobs
+
+Note if you kill your current batter process,
+the SLURM jobs will continue running in the background.
+You have to manually cancel them via::
+
+    batter cancel-jobs --contains <system_path_reported_above>
+
+
 Optional: Additional Conformational Restraints
 ----------------------------------------------
 
@@ -126,4 +137,5 @@ Use the CLI helpers to inspect them::
 
 ``fe list`` prints a high-level table (ΔG, SE, components) for every stored run, while
 ``fe show`` dives into per-window data. CSV/JSON exports live alongside the results on disk.
+Also inspect the convergence plots saved under ``results/<run-id>/<ligand-name>/Results``
 See :doc:`developer_guide/analysis` for deeper post-processing (plots, REMD diagnostics, etc.).

@@ -31,20 +31,6 @@ steps or integrating a custom backend—read the :doc:`developer_guide` (and the
 the architecture, typed payloads, metadata model, and orchestration flow used by the
 codebase.
 
-Public API
-==========
-
-The main user-facing entry points live in :mod:`batter.api`. Highlights include:
-
-* :func:`batter.api.run_from_yaml` – Execute a full workflow from a top-level YAML.
-* :func:`batter.api.load_sim_config` / :func:`batter.api.save_sim_config` – Read and
-  write simulation configurations.
-* :class:`batter.api.ArtifactStore`, :class:`batter.api.FEResultsRepository` – Inspect
-  or reuse portable results.
-
-Each function includes docstrings and type hints; consult the module for up-to-date
-signatures.
-
 Additional Resources
 ====================
 
