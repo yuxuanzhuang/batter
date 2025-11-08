@@ -439,24 +439,23 @@ class SlurmJobManager:
                 jobid = _read_text(s.jobid_path())
                 state = _slurm_state(jobid)
 
-                # handle terminal bad states immediately
-                if state in SLURM_FINAL_BAD:
-                    logger.error(f"[SLURM] {wd.name}: terminal state={state}; marking FAILED")
-                    s.failed_path().touch()
-                    failed_cnt += 1
-                    done_now.append(wd)
-                    continue
-
                 if state in SLURM_OK_STATES:
                     running_cnt += 1
                     continue
 
                 # job missing or ended without sentinel → resubmit
+                resub_reason = state or "MISSING"
+                if state in SLURM_FINAL_BAD:
+                    logger.warning(
+                        f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} reached state={state}; "
+                        "attempting resubmit"
+                    )
+
                 r = retries[wd]
                 if r >= self.max_retries:
                     logger.error(
                         f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} "
-                        f"(state={state or 'MISSING'}); marking FAILED"
+                        f"(state={resub_reason}); marking FAILED"
                     )
                     s.failed_path().touch()
                     failed_cnt += 1
@@ -466,7 +465,7 @@ class SlurmJobManager:
                 resub_cnt += 1
                 logger.warning(
                     f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} "
-                    f"state={state or 'MISSING'}; resubmitting ({r+1}/{self.max_retries})"
+                    f"state={resub_reason}; resubmitting ({r+1}/{self.max_retries})"
                 )
                 time.sleep(self.resubmit_backoff_s)
                 try:
