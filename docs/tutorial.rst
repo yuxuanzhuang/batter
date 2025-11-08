@@ -69,8 +69,19 @@ Generating Simulation Inputs
 #. Copy ``examples/mabfe.yaml`` to your own path:
 
    - Set ``create.system_name`` and ``system.output_folder`` so outputs land in a dedicated folder.
-   - Update ``create.anchor_atoms`` with receptor-specific selections.
    - Point the ``create.*`` paths at your protein/ligand/system inputs.
+   - Update ``create.anchor_atoms`` with receptor-specific selections. Pick the anchor atoms (P1, P2, P3) based on the following criteria:
+        - They should be backbone atoms (CA, C or N) and part of stable secondary structure
+          such as an alpha-helix or a beta sheet. Avoid loop regions.
+        - P1: preferably choose a residue that forms consistent
+          electrostatics interactions with the ligand (e.g., a salt bridge).
+        - P2, P3: P1-P2 and P2-P3 distances should be at least 8 Å.
+        - P1-P2_P3 angle should NOT be close to 0 or 180 degrees. preferably
+            around 90 degrees.
+        - For GPCR-orthosteric ligand, I often choose
+            P1: 3x32
+            P2: 2x53
+            P3: 7x42
 
 #. From the repository root, validate the configuration before launching real work::
 
