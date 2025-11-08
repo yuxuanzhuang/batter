@@ -17,7 +17,7 @@ The compiled docs will be in the `_build` directory and can be viewed by opening
 be inside a directory called `html/` depending on what version of Sphinx is installed).
 
 
-A configuration file for [Read The Docs](https://readthedocs.org/) (readthedocs.yaml) is included in the top level of the repository. To use Read the Docs to host your documentation, go to https://readthedocs.org/ and connect this repository. You may need to change your default branch to `main` under Advanced Settings for the project.
-
-If you would like to use Read The Docs with `autodoc` (included automatically) and your package has dependencies, you will need to include those dependencies in your documentation yaml file (`docs/requirements.yaml`).
-
+To host the docs on [Read the Docs](https://readthedocs.org/), create a ``.readthedocs.yaml``
+configuration in the repository root that points to this directory and installs
+``docs/requirements.yaml``. After connecting the repo on RTD, update the default branch
+as needed under the project settings.

@@ -54,7 +54,7 @@ Required Files
 2. **Ligand structures** – One or more ligand ``.sdf`` files  
    Ensure that all hydrogens are present and protonation states are correct.  
    Multiple poses of the same ligand are acceptable.  
-   Helper scripts such as ``get_protonation.ipynb`` can assist with protonation.
+   Use your preferred cheminformatics toolkit (RDKit, OpenEye, etc.) to verify protonation.
 
 3. **Membrane system (optional)** – Dabble-generated system files  
    ``system_input.pdb`` and ``system_input.inpcrd`` describing the protein–membrane complex.  
@@ -71,16 +71,16 @@ Generating Simulation Inputs
 
 2. From the repository root, run::
 
-       batter run mabfe.yaml --dry-run
+       batter run examples/mabfe.yaml --dry-run
 
    Replace ``mabfe.yaml`` with your own configuration path.  
    Remove ``--dry-run`` to start the actual workflow.
 
-3. When no errors are reported, simulation input files will appear under::
+3. When no errors are reported, the run directory will be created under::
 
-       output/mabfe/create/
+       <system.output_folder>/executions/<run_id>/
 
-   Inspect these files to confirm correctness:
+   Inspect the staged files at ``simulations/<LIGAND>/`` and ``artifacts/`` to confirm correctness:
    - Verify protein–ligand placement in the binding site.
    - Check box dimensions, ions, and solvent configuration.
    - Check if membrane lipids are correctly placed (if applicable).
@@ -100,8 +100,8 @@ You may supply a custom SLURM header template (for account, partition, etc.) usi
 Optional: Additional Conformational Restraints
 ----------------------------------------------
 
-1. Use ``generate_restraints.ipynb`` as a template to generate a
-   ``restraints.json`` file.
+1. Use ``https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb`` as a template to generate a
+   ``restraints.json`` file that captures the distances you want restrained.
 
 2. Enable these restraints by adding the following line under the ``create`` section
    of your YAML file::
@@ -111,5 +111,5 @@ Optional: Additional Conformational Restraints
 Analysis
 --------
 
-Future tutorials will describe how to run analysis notebooks (e.g.,
-``analysis.ipynb``) to visualize and interpret results from completed workflows.
+Refer to :doc:`analysis` for guidance on running MBAR post-processing, REMD diagnostics,
+and inspecting legacy ``results.dat`` outputs once your simulations finish.

@@ -59,7 +59,9 @@ def _normalize_for_hash(obj: Any) -> Any:
 
 
 def _compute_run_signature(
-    yaml_path: Path, system_overrides: Dict[str, Any] | None, run_overrides: Dict[str, Any] | None
+    yaml_path: Path,
+    system_overrides: Dict[str, Any] | None,
+    run_overrides: Dict[str, Any] | None,
 ) -> str:
     data = Path(yaml_path).read_bytes()
     payload = {
@@ -91,7 +93,9 @@ def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]
     try:
         return mapping[name]
     except KeyError:
-        raise ValueError(f"Unsupported protocol '{protocol}' for system builder selection.")
+        raise ValueError(
+            f"Unsupported protocol '{protocol}' for system builder selection."
+        )
 
 
 def _select_system_builder(protocol: str, system_type: str | None) -> SystemBuilder:
@@ -166,7 +170,7 @@ def generate_run_id(protocol: str, system_name: str) -> str:
 
 def run_from_yaml(
     path: Path | str,
-    on_failure: Literal["prune", "raise"] = None,
+    on_failure: Literal["prune", "raise", "retry"] = None,
     system_overrides: Dict[str, Any] = None,
     run_overrides: Dict[str, Any] | None = None,
 ) -> None:
@@ -176,7 +180,7 @@ def run_from_yaml(
     ----------
     path : str or pathlib.Path
         Path to the top-level run YAML file.
-    on_failure : {"prune", "raise"}, optional
+    on_failure : {"prune", "raise", "retry"}, optional
         Override for the failure policy applied to ligand pipelines.
     system_overrides : dict, optional
         Mapping of fields that should override ``system`` section values at load time.
@@ -251,7 +255,10 @@ def run_from_yaml(
 
     while True:
         run_id, run_dir = select_run_id(
-            rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id
+            rc.system.output_folder,
+            rc.protocol,
+            rc.create.system_name,
+            requested_run_id,
         )
         stored_sig, sig_path = _stored_signature(run_dir)
         if stored_sig is None or stored_sig == config_signature:

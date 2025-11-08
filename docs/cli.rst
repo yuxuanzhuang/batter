@@ -15,8 +15,8 @@ Run Workflows
 
 Options:
 
-``--on-failure {prune,raise}``
-   Control how ligand failures are handled (default: ``raise``).
+``--on-failure {prune,raise,retry}``
+   Control how ligand failures are handled (default: ``raise``). ``retry`` clears FAILED sentinels and reruns that phase once.
 ``--output-folder PATH``
    Override the system output directory.
 ``--run-id TEXT``
