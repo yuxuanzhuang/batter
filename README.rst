@@ -89,6 +89,17 @@ Notes
 - Backends include local execution and SLURM-based submission (see CLI options).
 - Example YAMLs are intended as starting points; adjust to your system.
 
+Results Interpretation
+----------------------
+
+Runs store FE outputs under ``<system.output_folder>/executions/<run_id>/results``.
+Use the CLI helpers to inspect and export them:
+
+- ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).
+- ``batter fe show <system_root> <run_id>`` – prints per-window data and metadata for a specific execution.
+
+Each row in ``fe list`` corresponds to a single ligand leg (“one leg” SDR). Components reflect the lambda-dependent Boresch restraints and softcore electrostatics/van der Waals contributions described earlier. CSV/JSON files saved alongside the results can be ingested into notebooks for further analysis; see :doc:`developer_guide/analysis` for MBAR and REMD tooling.
+
 Copyright
 -------------------------------
 **Copyright (c) 2024, Yuxuan Zhuang**
