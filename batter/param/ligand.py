@@ -862,7 +862,6 @@ def batch_ligand_process(
             "canonical_smiles": smi,
             "retain_lig_prot": bool(retain_lig_prot),
             "ligand_ff": ligand_ff,
-            "ligand_charge": lig.ligand_charge,
             "prepared_base": lig_name,
         }
         (target_dir / "metadata.json").write_text(json.dumps(meta, indent=2))

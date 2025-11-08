@@ -134,11 +134,6 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         meta = json.loads(meta_path.read_text())
         residue_name = unique_resnames[i]
         title = meta.get("title", name)
-        charge_val = meta.get("ligand_charge")
-        charge_display = f"{charge_val:+.0f}"
-        logger.info(
-            f"[param_ligands] {name} (resname={residue_name}) net charge = {charge_display}",
-        )
 
         copy_ligand_params(src_dir, lig_root / Path(name), residue_name)
 
