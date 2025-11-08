@@ -246,9 +246,7 @@ def run_from_yaml(
                 "Choose a different --run-id or update the existing run."
             )
         logger.info(
-            "Existing execution %s uses different configuration hash (%s); creating a fresh run.",
-            run_dir,
-            stored_sig[:12],
+            f"Existing execution {run_dir} uses different configuration hash ({stored_sig[:12]}); creating a fresh run.",
         )
         requested_run_id = "auto"
         run_id = generate_run_id(rc.protocol, rc.create.system_name)

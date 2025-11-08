@@ -415,7 +415,7 @@ def CptKullbackLeibler(xs,ys):
 
     Given probability distributions p(x) and q(x),
 
-    KL(p,q) = \int p(x) ln(q(x)/p(x)) dx
+    KL(p,q) = p(x) ln(q(x)/p(x)) dx
 
     Parameters
     ----------
@@ -797,32 +797,7 @@ class SymParamMap(ParamMap):
 ##############################################################################
 
 class GaussianParamMap(SymParamMap):
-    """A class that controls the mapping between the free parameters and the
-    lambda schedule. This version uses 2 parameters (a and d) to define the 
-    following density function:
-
-    \rho(x) = { 1, if x < d or x > 1-d
-                \frac{ (1-2d) \sqrt{a/\pi} }{ erf( \sqrt{a} (1-2d)/2 ) }
-                \times exp(-a (x-1/2)^2), 
-                    otherwise
-
-    The integrated density function is:
-
-    idf(x) = \int_{0}^{x} \rho(y) dy
-           = { x, if  x < d or x > 1-d
-               (1/2) (1 + (2d-1) erf(\sqrt{a}(1-2x)/2)/erf(\sqrt{a}(1-2d)/2)),
-                    otherwise
-
-    The inverse function of the of the integrated density is:
-
-    idf^{-1}(x) 
-           = { x, if x < d or x > 1-d
-               1/2 - InverseErf[((2x-1) Erf[\sqrt{a}(1-2d)/2])/(2d-1)]/\sqrt{a},
-                    otherwise
-
-    So, given a linear spacing, x0, x1, x2 ..., then mapped points are:
-    idf^{-1}(x0), idf^{-1}(x1), idf^{-1}(x2), ...
-
+    """
     Attributes
     ----------
     N : int
