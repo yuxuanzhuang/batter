@@ -12,6 +12,7 @@ single param job ("param_ligands") → per-ligand pipelines → FE record save.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 
@@ -44,6 +45,39 @@ from batter.orchestrate.markers import (
 )
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.orchestrate.results_io import fallback_totals_from_json, parse_results_dat
+
+
+def _normalize_for_hash(obj: Any) -> Any:
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: _normalize_for_hash(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_normalize_for_hash(v) for v in obj]
+    return obj
+
+
+def _compute_run_signature(
+    yaml_path: Path, system_overrides: Dict[str, Any] | None, run_overrides: Dict[str, Any] | None
+) -> str:
+    data = Path(yaml_path).read_bytes()
+    payload = {
+        "system_overrides": _normalize_for_hash(system_overrides or {}),
+        "run_overrides": _normalize_for_hash(run_overrides or {}),
+    }
+    frozen = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    h = hashlib.sha256()
+    h.update(data)
+    h.update(b"\0")
+    h.update(frozen)
+    return h.hexdigest()
+
+
+def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
+    sig_path = run_dir / "artifacts" / "config" / "run_config.hash"
+    if sig_path.exists():
+        return sig_path.read_text().strip(), sig_path
+    return None, sig_path
 
 
 def select_run_id(
@@ -196,10 +230,33 @@ def run_from_yaml(
         )
 
     requested_run_id = getattr(rc.run, "run_id", "auto")
-    run_id, run_dir = select_run_id(
-        rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id
-    )
+    config_signature = _compute_run_signature(path, system_overrides, run_overrides)
+
+    while True:
+        run_id, run_dir = select_run_id(
+            rc.system.output_folder, rc.protocol, rc.create.system_name, requested_run_id
+        )
+        stored_sig, sig_path = _stored_signature(run_dir)
+        if stored_sig is None or stored_sig == config_signature:
+            break
+        if requested_run_id != "auto":
+            raise RuntimeError(
+                f"Execution '{run_id}' already exists with a different configuration. "
+                "Choose a different --run-id or update the existing run."
+            )
+        logger.info(
+            "Existing execution %s uses different configuration hash (%s); creating a fresh run.",
+            run_dir,
+            stored_sig[:12],
+        )
+        requested_run_id = "auto"
+        run_id = generate_run_id(rc.protocol, rc.create.system_name)
+        run_dir = Path(rc.system.output_folder) / "executions" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        continue
+
     logger.info(f"Using run_id='{run_id}' under {run_dir}")
+    _, sig_path = _stored_signature(run_dir)
 
     # Ligands
     staged_lig_map = discover_staged_ligands(run_dir)
@@ -216,6 +273,8 @@ def run_from_yaml(
 
     sys_exec = SimSystem(name=rc.create.system_name, root=run_dir)
     sys_exec = builder.build(sys_exec, rc.create)
+    sig_path.parent.mkdir(parents=True, exist_ok=True)
+    sig_path.write_text(config_signature + "\n")
 
     # Per-execution run directory (auto-resume latest when 'auto')
     logger.add(run_dir / "batter.run.log", level="DEBUG")
