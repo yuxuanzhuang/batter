@@ -23,7 +23,7 @@ Key capabilities:
   :func:`pymbar.timeseries.detect_equilibration` by setting
   ``detect_equil=True``.
 * **Convergence summaries** – MBAR diagnostics (forward/backward convergence,
-  block averages, window overlap) are stored in ``analysis.results`` and can be
+  block averages, window overlap) are stored alongside the analysis object and can be
   plotted via helper methods such as :meth:`MBARAnalysis.plot_convergence`.
 
 Minimal example::
@@ -63,30 +63,14 @@ custom plots.
 For quick visual checks, call :func:`batter.analysis.remd.plot_trajectory`, which
 renders either a single combined plot or a grid of per-replica subplots.
 
-Legacy Result Files
-===================
-
-Many BAT.py workflows still emit human-readable ``results.dat`` summaries.
-``batter.analysis.results.FEResult`` parses those files into a structured form:
-
-* Component values are exposed as properties (``fe``, ``attach``, ``elec``, …).
-* ``FEResult.is_unbound`` tells you whether the analysis flagged an unbound
-  complex.
-* ``FEResult.to_dict`` produces a JSON-friendly representation that you can
-  embed in reports or store alongside the newer portable artifacts.
-
 Testing the Analysis Layer
 ==========================
 
-Unit tests covering the analysis helpers live in ``tests/test_analysis_*.py``:
+Unit tests covering the analysis helpers live alongside the code:
 
-* ``test_analysis_utils.py`` validates ``exclude_outliers`` chunking and NaN
-  handling.
-* ``test_analysis_remd.py`` checks the round-trip metrics computed by
-  ``RemdLog``.
-* ``test_analysis_results.py`` exercises the legacy result parser, including the
-  unbound sentinel.
+* ``tests/test_analysis_remd.py`` checks the round-trip metrics computed by
+  :class:`batter.analysis.remd.RemdLog`.
 
-Add new regression tests next to these files whenever you extend the analysis
+Add new regression tests next to this module whenever you extend the analysis
 toolkit. The fixtures only depend on ``numpy``/``pandas`` so they run without a
 full MD stack.

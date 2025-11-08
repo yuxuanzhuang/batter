@@ -216,9 +216,12 @@ def make_asfe_pipeline(
         )
     )
     if only_fe_preparation:
-        keep = {"system_prep", "param_ligands",
-                "prepare_fe", "prepare_fe_windows",
-                "fe_equil"
+        keep = {
+            "system_prep_asfe",
+            "param_ligands",
+            "prepare_fe",
+            "prepare_fe_windows",
+            "fe_equil",
         }
         steps = [s for s in steps if s.name in keep]
     return Pipeline(steps)

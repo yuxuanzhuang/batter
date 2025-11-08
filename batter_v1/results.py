@@ -1,6 +1,6 @@
 import warnings
 warnings.warn(
-    "batter.results is deprecated; use batter.analysis.results",
+    "batter_v1.results is deprecated; use batter_v1.analysis.results",
     DeprecationWarning,
     stacklevel=2,
 )

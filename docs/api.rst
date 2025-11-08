@@ -196,11 +196,6 @@ Analysis Modules
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: batter.analysis.results
-   :noindex:
-   :members:
-   :undoc-members:
-
 .. automodule:: batter.analysis.utils
    :noindex:
    :members:

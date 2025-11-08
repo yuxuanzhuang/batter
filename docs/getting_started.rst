@@ -8,8 +8,7 @@ developers should consult in order to become productive quickly.
 Follow the Tutorial
 ===================
 
-The best way to see BATTER in action is to follow the tutorial contained in
-``docs/tutorials/`` (or the rendered documentation site). It walks through setting up
+The best way to see BATTER in action is to follow :doc:`tutorial`. It walks through setting up
 an environment, preparing input files, and running a full ABFE example. Completing
 the tutorial ensures all required dependencies are installed and introduces the core
 workflow.
@@ -18,8 +17,7 @@ Configuration Reference
 =======================
 
 For a complete description of the YAML schemas, default values, and validation rules,
-refer to the configuration overview under ``docs/configuration_overview.rst`` (or the
-equivalent section of the HTML docs). It details every field in
+refer to :doc:`configuration`. It details every field in
 :class:`~batter.config.run.RunConfig` and :class:`~batter.config.simulation.SimulationConfig`,
 including advanced options such as restraint overrides, REMD setup, or SLURM-specific
 controls.
@@ -50,7 +48,7 @@ signatures.
 Additional Resources
 ====================
 
-* ``docs/examples/`` – Ready-to-run YAML configurations demonstrating ABFE (membrane
+* ``examples/`` – Ready-to-run YAML configurations demonstrating ABFE (membrane
   and soluble) and ASFE scenarios.
 * ``tests/`` – A suite of unit tests that exercise pipeline handlers, state registry,
   and metadata helpers; useful for understanding expected behaviour.
