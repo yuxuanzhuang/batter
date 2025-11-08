@@ -11,6 +11,11 @@ batter
 It adds first-class support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
 with an AMBER + sdg + express pipeline to the original ``BAT.py`` package.
 
+ABFE runs in ``batter`` follow a single-leg design that applies λ-dependent Boresch restraints,
+uses the simultaneous decoupling/recoupling (SDR) protocol with both the interacting and dummy ligands
+present in the system, and employs softcore electrostatics/van der Waals potentials to maintain smooth
+turn-on/turn-off behaviour.
+
 .. note::
    The API is stabilizing. Some modules are still under active development, but the overall structure is in place.
 
@@ -71,6 +76,10 @@ YAMLs in ``examples/`` illustrate common setups:
 
 **Absolute Solvation Free Energy (ASFE)**
    1. ``masfe.yaml`` — small molecule (e.g., epinephrine) in water
+
+**Plain Molecular Dynamics (MD)**
+   1. ``md.yaml`` — standard MD production run for a protein-ligand complex
+
 
 Notes
 -------------------------------

@@ -7,8 +7,12 @@ Absolute Binding Free Energy (ABFE) Workflow with ``batter``
 ------------------------------------------------------------
 
 This tutorial walks through a typical membrane ABFE run powered by ``batter``.
-We will reference the maintained example configuration (``examples/mabfe.yaml``)
-so you can reproduce the steps locally and later adapt them to your own system.
+The workflow applies λ-dependent Boresch restraints, runs the simultaneous decoupling/
+recoupling (SDR) protocol with both interacting and dummy ligands present, and uses
+softcore electrostatics/van der Waals potentials so the entire calculation completes
+in a single leg. We will reference the maintained example configuration
+(``examples/mabfe.yaml``) so you can reproduce the steps locally and later adapt them
+to your own system.
 
 Installation
 ------------
