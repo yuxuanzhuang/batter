@@ -135,7 +135,7 @@ Orchestration
 :func:`~batter.orchestrate.run.run_from_yaml` wires every layer together:
 
 1. Load the run YAML and apply optional overrides.
-2. Instantiate a system builder based on ``system.type``.
+2. Instantiate a system builder inferred from the selected protocol (abfe/md → MABFE, asfe → MASFE; overrides via ``system.type`` remain for backward compatibility).
 3. Resolve staged ligands (supporting resume) and regenerate the system if required.
 4. Construct the ABFE/ASFE pipeline using :func:`select_pipeline
    <batter.orchestrate.pipeline_utils.select_pipeline>`.

@@ -93,9 +93,12 @@ class SlurmConfig(BaseModel):
 
 
 class SystemSection(BaseModel):
-    type: Literal["MABFE", "MASFE"] = Field(
-        "MABFE",
-        description="System builder type. ``MABFE`` supports membrane ABFE workflows; ``MASFE`` enables ASFE.",
+    type: Literal["MABFE", "MASFE"] | None = Field(
+        None,
+        description=(
+            "Optional override for the system builder. When omitted, the orchestrator "
+            "chooses based on the protocol (``abfe``/``md`` → MABFE, ``asfe`` → MASFE)."
+        ),
     )
     output_folder: Path = Field(
         ...,
@@ -117,6 +120,16 @@ class SystemSection(BaseModel):
         if v is None or (isinstance(v, str) and not v.strip()):
             raise ValueError("`system.output_folder` is required.")
         return Path(v)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _normalize_type(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        if text not in {"MABFE", "MASFE"}:
+            raise ValueError("system.type must be 'MABFE', 'MASFE', or omitted.")
+        return text
 
 
 class CreateArgs(BaseModel):

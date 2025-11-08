@@ -14,14 +14,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Tuple, Type
 
 import json
 
 from loguru import logger
 
 from batter.config.run import RunConfig
-from batter.systems.core import SimSystem
+from batter.systems.core import SimSystem, SystemBuilder
 from batter.systems.mabfe import MABFEBuilder
 from batter.systems.masfe import MASFEBuilder
 from batter.exec.local import LocalBackend
@@ -79,6 +79,29 @@ def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
     if sig_path.exists():
         return sig_path.read_text().strip(), sig_path
     return None, sig_path
+
+
+def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]:
+    name = (protocol or "abfe").lower()
+    mapping: Dict[str, tuple[Type[SystemBuilder], str]] = {
+        "abfe": (MABFEBuilder, "MABFE"),
+        "md": (MABFEBuilder, "MABFE"),
+        "asfe": (MASFEBuilder, "MASFE"),
+    }
+    try:
+        return mapping[name]
+    except KeyError:
+        raise ValueError(f"Unsupported protocol '{protocol}' for system builder selection.")
+
+
+def _select_system_builder(protocol: str, system_type: str | None) -> SystemBuilder:
+    builder_cls, expected_type = _builder_info_for_protocol(protocol)
+    if system_type and system_type != expected_type:
+        raise ValueError(
+            f"system.type={system_type!r} is incompatible with protocol '{protocol}'. "
+            f"Expected '{expected_type}'. Remove or update 'system.type'."
+        )
+    return builder_cls()
 
 
 def select_run_id(
@@ -221,14 +244,7 @@ def run_from_yaml(
         register_local_handlers(backend)
 
     # Shared System Build (system-level assets live under sys.root)
-    if rc.system.type == "MABFE":
-        builder = MABFEBuilder()
-    elif rc.system.type == "MASFE":
-        builder = MASFEBuilder()
-    else:
-        raise ValueError(
-            f"Unsupported system.type={rc.system.type!r}. Only 'MABFE' is implemented."
-        )
+    builder = _select_system_builder(rc.protocol, rc.system.type)
 
     requested_run_id = getattr(rc.run, "run_id", "auto")
     config_signature = _compute_run_signature(path, system_overrides, run_overrides)
