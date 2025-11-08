@@ -110,7 +110,7 @@ class SimulationConfig(BaseModel):
             "ntpr": int(_fe_attr("ntpr", lambda: 1000)),
             "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
             "ntwe": int(_fe_attr("ntwe", lambda: 0)),
-            "ntwx": int(_fe_attr("ntwx", lambda: 2500)),
+            "ntwx": int(_fe_attr("ntwx", lambda: 50_000)),
             "cut": float(_fe_attr("cut", lambda: 9.0)),
             "gamma_ln": float(_fe_attr("gamma_ln", lambda: 1.0)),
             "barostat": int(_fe_attr("barostat", lambda: 2)),

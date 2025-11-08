@@ -93,7 +93,7 @@ if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
 # Initial MD run
-pmemd.cuda -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md00.nc -ref eqnpt04.rst7 >> $log_file 2>&1
+pmemd.cuda -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md-00.nc -ref eqnpt04.rst7 >> $log_file 2>&1
 check_sim_failure "MD stage 0" "$log_file"
 fi
 
