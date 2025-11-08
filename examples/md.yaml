@@ -1,9 +1,9 @@
 version: 1
-protocol: abfe
+protocol: md
 backend: local
 
 system:
-  output_folder: adrb2_A_mabfe
+  output_folder: adrb2_A_md
 
 create:
   system_name: adrb2_A
@@ -11,12 +11,11 @@ create:
   system_input: reference/adrb2_A_membrane.pdb
   system_coordinate: reference/adrb2_A_membrane.rst7
   protein_align: name CA and resid 50 to 200
-  ligand_paths:
-    - reference/ligands/7XKA.sdf
-    - reference/ligands/2RH1.sdf
+  ligand_input: reference/ligands_dict.json
   ligand_ff: openff-2.2.1
   retain_lig_prot: true
   param_charge: am1bcc
+
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
@@ -39,16 +38,11 @@ run:
     time: "4:00:00"
 
 fe_sim:
-  fe_type: uno_rest
-  remd: no
-  lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]
-  blocks: 5
   eq_steps: 10000
   num_equil_extends: 6
-  z_steps1: 5000
-  z_steps2: 300000
   cut: 9.0
   barostat: 1
+  enable_mcwat: no
   hmr: yes
   dt: 0.004
   temperature: 310.0

@@ -3,7 +3,6 @@ protocol: abfe
 backend: local
 
 system:
-  type: MABFE
   output_folder: brd4_mabfe
 
 create:
