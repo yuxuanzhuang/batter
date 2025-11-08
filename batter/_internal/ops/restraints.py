@@ -390,15 +390,19 @@ def write_equil_restraints(ctx: BuildContext) -> None:
 
                 # ligand dihedrals
                 if n == 4:
-                    iat = (
-                        f"{atm_num.index(fields[0])},"
-                        f"{atm_num.index(fields[1])},"
-                        f"{atm_num.index(fields[2])},"
-                        f"{atm_num.index(fields[3])},"
-                    )
-                    df.write(f"&rst iat={iat:<23s} ")
-                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                             % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                    try:
+                        iat = (
+                            f"{atm_num.index(fields[0])},"
+                            f"{atm_num.index(fields[1])},"
+                            f"{atm_num.index(fields[2])},"
+                            f"{atm_num.index(fields[3])},"
+                        )
+                        df.write(f"&rst iat={iat:<23s} ")
+                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                                % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                    except:
+                        logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
+
 
     # copy last stage as disang.rest
     (work / "disang.rest").write_text((work / f"disang{len(release_eq)-1:02d}.rest").read_text())
