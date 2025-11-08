@@ -11,7 +11,8 @@ def _base_sim(**overrides) -> SimulationConfig:
         "system_name": "sys",
         "fe_type": "rest",
         "lambdas": [0.0, 1.0],
-        "release_eq": [0.0, 1.0],
+        "num_equil_extends": 1,
+        "eq_steps": 100,
     }
     data.update(overrides)
     return SimulationConfig(**data)

@@ -48,8 +48,8 @@ fe_sim:
   buffer_x: 12.0
   buffer_y: 12.0
   buffer_z: 12.0
-  eq_steps1: 5000
-  eq_steps2: 10000
+  eq_steps: 10000
+  num_equil_extends: 6
   z_steps1: 5000
   z_steps2: 100000
   cut: 9.0
@@ -57,4 +57,3 @@ fe_sim:
   hmr: yes
   dt: 0.004
   temperature: 310.0
-  release_eq: [ 10.0, 2.5, 0.5, 0.0, 0.0, 0.0, 0.0 ]

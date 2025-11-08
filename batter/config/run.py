@@ -478,13 +478,17 @@ class FESimArgs(BaseModel):
     buffer_y: float = Field(10.0, description="Box padding along Y (Å).")
     buffer_z: float = Field(10.0, description="Box padding along Z (Å).")
 
-    # Step counts / reporting
-    release_eq: list[float] = Field(
-        default_factory=list,
-        description="Release-equilibration schedule weights.",
+    # Equilibration schedule
+    num_equil_extends: int = Field(
+        6,
+        ge=0,
+        description="Number of additional equilibration segments (all run fully released).",
     )
-    eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps.")
-    eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps.")
+    eq_steps: int = Field(
+        1_000_000,
+        gt=0,
+        description="Steps per equilibration segment (applied to the initial run and each extend).",
+    )
     z_steps1: int = Field(50_000, description="Stage 1 steps for the 'z' component.")
     z_steps2: int = Field(300_000, description="Stage 2 steps for the 'z' component.")
     y_steps1: int = Field(50_000, description="Stage 1 steps for the 'y' component.")
@@ -547,8 +551,16 @@ class MDSimArgs(BaseModel):
 
     dt: float = Field(0.004, description="MD timestep (ps).")
     temperature: float = Field(310.0, description="Simulation temperature (K).")
-    eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps.")
-    eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps.")
+    num_equil_extends: int = Field(
+        2,
+        ge=0,
+        description="Number of additional equilibration segments (all run fully released).",
+    )
+    eq_steps: int = Field(
+        100_000,
+        gt=0,
+        description="Steps per equilibration segment.",
+    )
     ntpr: int = Field(1000, description="Energy print frequency.")
     ntwr: int = Field(10_000, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
@@ -559,12 +571,6 @@ class MDSimArgs(BaseModel):
     hmr: Literal["yes", "no"] = Field(
         "yes", description="Hydrogen mass repartitioning toggle."
     )
-    # Step counts / reporting
-    release_eq: list[float] = Field(
-        default_factory=list,
-        description="Release-equilibration schedule weights.",
-    )
-
     @field_validator("hmr", mode="before")
     @classmethod
     def _coerce_hmr(cls, v):

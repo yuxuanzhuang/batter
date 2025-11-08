@@ -73,7 +73,8 @@ dic_steps2:
   y: 300000
   z: 30000
 dt: 0.004
-eq_steps1: 5000
+eq_steps: 10000
+eq_steps1: 10000
 eq_steps2: 10000
 fe_type: uno_rest
 gamma_ln: 1.0
@@ -151,10 +152,11 @@ protein_align: name CA and resid 50 to 200
 rec_com_force: 10.0
 receptor_ff: protein.ff14SB
 receptor_segment: null
+num_equil_extends: 6
 release_eq:
-- 10.0
-- 2.5
-- 0.5
+- 0.0
+- 0.0
+- 0.0
 - 0.0
 - 0.0
 - 0.0

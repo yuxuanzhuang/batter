@@ -73,7 +73,10 @@ class SimulationConfig(BaseModel):
                 return getattr(fe, name)
             return default() if callable(default) else default
 
-        fe_release_eq = list(_fe_attr("release_eq", list) or [0.0])
+        num_equil_extends = max(0, int(_fe_attr("num_equil_extends", lambda: 0)))
+        eq_steps_value = int(_fe_attr("eq_steps", lambda: 1_000_000))
+        release_count = max(1, num_equil_extends + 1)
+        fe_release_eq = [0.0] * release_count
 
         extra_conf_rest = create.extra_conformation_restraints
         extra_restraints = create.extra_restraints
@@ -100,8 +103,10 @@ class SimulationConfig(BaseModel):
             "dt": float(_fe_attr("dt", lambda: 0.004)),
             "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "no")),
             "release_eq": fe_release_eq,
-            "eq_steps1": int(_fe_attr("eq_steps1", lambda: 500_000)),
-            "eq_steps2": int(_fe_attr("eq_steps2", lambda: 1_000_000)),
+            "num_equil_extends": num_equil_extends,
+            "eq_steps": eq_steps_value,
+            "eq_steps1": eq_steps_value,
+            "eq_steps2": eq_steps_value,
             "ntpr": int(_fe_attr("ntpr", lambda: 1000)),
             "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
             "ntwe": int(_fe_attr("ntwe", lambda: 0)),
@@ -162,7 +167,8 @@ class SimulationConfig(BaseModel):
     rocklin_correction: Literal["yes","no"] = Field("no", description="Rocklin correction")
 
     # --- FE controls / analysis ---
-    release_eq: List[float] = Field(default_factory=list, description="Equilibration release weights")
+    release_eq: List[float] = Field(default_factory=list, description="Equilibration release weights (derived)")
+    num_equil_extends: int = Field(0, description="Number of equilibration extends (derived)")
     ti_points: Optional[int] = Field(0, description="(#) TI points (not implemented)")
     lambdas: List[float] = Field(default_factory=list, description="default lambda values")
     component_windows: Dict[str, List[float]] = Field(default_factory=dict, description="Per-component lambda values for overrides")
@@ -198,8 +204,9 @@ class SimulationConfig(BaseModel):
         description="Enable MC water exchange moves during equilibration templates.",
     )
     temperature: float = Field(310.0, description="Temperature (K)")
-    eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps")
-    eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps")
+    eq_steps: int = Field(1_000_000, description="Steps per equilibration segment (derived)")
+    eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps (legacy mirror of eq_steps)")
+    eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps (legacy mirror of eq_steps)")
     n_steps_dict: Dict[str, int] = Field(
         default_factory=lambda: {
             f"{comp}_steps{ind}": 50_000 if ind == "1" else 1_000_000

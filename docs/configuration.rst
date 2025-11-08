@@ -24,7 +24,10 @@ The run YAML file is divided into four top-level sections:
     Overrides and controls for free-energy simulation stages. For ABFE/ASFE runs
     these map to :class:`batter.config.run.FESimArgs`. MD-only runs automatically
     coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
-    ``lambdas`` or SDR restraints are no longer required.
+    ``lambdas`` or SDR restraints are no longer required.  Equilibration controls
+    are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
+    (how many additional segments to run); release weights are derived internally
+    and kept at zero for every extend.
 ``run``
     Execution behaviour such as SLURM options, dry-run toggles, and failure
     policies. These fields populate :class:`batter.config.run.RunSection`.

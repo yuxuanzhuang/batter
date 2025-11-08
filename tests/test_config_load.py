@@ -46,7 +46,8 @@ def test_load_simulation_config(tmp_path: Path) -> None:
 system_name: sim-example
 fe_type: uno_rest
 lambdas: [0.0, 1.0]
-release_eq: [0.0, 1.0]
+num_equil_extends: 2
+eq_steps: 1000
 neutralize_only: "YES"
 """
     )
@@ -90,7 +91,8 @@ def base_sim_kwargs(**overrides):
         "system_name": "sys",
         "fe_type": "rest",
         "lambdas": [0.0, 1.0],
-        "release_eq": [0.0, 1.0],
+        "num_equil_extends": 2,
+        "eq_steps": 1000,
     }
     data.update(overrides)
     return data
@@ -139,7 +141,7 @@ def test_args_negative_force():
         ({"remd": "yes"}, "REMD not implemented"),
         ({"dec_int": "ti"}, "TI integration not implemented"),
         ({"num_waters": 10}, "num_waters"),
-        ({"fe_type": "custom", "lambdas": [0.0], "release_eq": [0.0]}, "dec_method"),
+        ({"fe_type": "custom", "lambdas": [0.0], "num_equil_extends": 1}, "dec_method"),
         (
             {
                 "fe_type": "uno_rest",
@@ -148,10 +150,7 @@ def test_args_negative_force():
             },
             "stage 1 steps must be > 0",
         ),
-        (
-            {"fe_type": "uno_rest", "lambdas": [], "release_eq": [0.0, 1.0]},
-            "No lambdas defined",
-        ),
+        ({"fe_type": "uno_rest", "lambdas": []}, "No lambdas defined"),
         (
             {"buffer_x": 4.0, "buffer_y": 6.0, "buffer_z": 6.0},
             "buffer_x must be >= 5.0",
@@ -181,12 +180,17 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     conf_json = tmp_path / "conf.json"
     conf_json.write_text("[]")
     create = _minimal_create(tmp_path, extra_conformation_restraints=conf_json)
-    cfg = SimulationConfig.from_sections(create, FESimArgs(lambdas=[0, 1], release_eq=[0, 1]))
+    fe_args = FESimArgs(lambdas=[0, 1], num_equil_extends=1, eq_steps=100)
+    cfg = SimulationConfig.from_sections(create, fe_args)
     assert cfg.infe is True
     assert cfg.barostat == 2
+    assert cfg.release_eq == [0.0, 0.0]
+    assert cfg.eq_steps1 == cfg.eq_steps2 == cfg.eq_steps == 100
 
     create2 = create.model_copy(update={"extra_conformation_restraints": None, "extra_restraints": "mask"})
-    cfg2 = SimulationConfig.from_sections(create2, FESimArgs(lambdas=[0, 1], release_eq=[0, 1]))
+    cfg2 = SimulationConfig.from_sections(
+        create2, FESimArgs(lambdas=[0, 1], num_equil_extends=1, eq_steps=100)
+    )
     assert cfg2.infe is False
     assert cfg2.barostat == 1
 
@@ -198,7 +202,9 @@ def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
 
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
-    fe_args = FESimArgs(lambdas=[0, 1], release_eq=[0, 1], enable_mcwat="no")
+    fe_args = FESimArgs(
+        lambdas=[0, 1], num_equil_extends=0, eq_steps=100, enable_mcwat="no"
+    )
     cfg = SimulationConfig.from_sections(create, fe_args)
     assert cfg.enable_mcwat == "no"
 
