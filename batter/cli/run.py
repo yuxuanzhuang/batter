@@ -535,6 +535,7 @@ def report_jobs(partition=None, detailed=False):
             "status": status,
             "stage": meta["stage"],
             "run_id": meta["run_id"],
+            "identifier": meta['system_root'] + "/" + meta['run_id'] if meta['run_id'] else meta['system_root'],
             "system_root": meta["system_root"],
             "ligand": meta["ligand"],
             "comp": meta["comp"],
@@ -554,8 +555,7 @@ def report_jobs(partition=None, detailed=False):
     pending = (df["status"] == "PENDING").sum()
     click.echo(click.style(f"Total jobs: {total}, Running: {running}, Pending: {pending}", bold=True))
 
-    # group by run_id (fallback to system_root)
-    grp_key = df["run_id"].where(df["run_id"].notna(), df["system_root"])
+    grp_key = df["identifier"].where(df["identifier"].notna())
     df = df.assign(_group=grp_key)
     for gid, sub in df.groupby("_group"):
         sys_root = sub["system_root"].dropna().unique()
