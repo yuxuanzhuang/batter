@@ -509,18 +509,18 @@ class FESimArgs(BaseModel):
     )
     temperature: float = Field(310.0, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
+    num_fe_extends: int = Field(
+        10,
+        ge=1,
+        description="# restarts per λ (controls how many FE simulations run per window).",
+    )
     unbound_threshold: float = Field(
         8.0,
         ge=0.0,
         description="Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
     )
-    analysis_n_workers: int = Field(
-        4,
-        gt=0,
-        description="Parallel workers used by the FE analysis stage.",
-    )
     analysis_fe_range: Optional[Tuple[int, int]] = Field(
-        (2, -1),
+        None,
         description="Optional (start, end) simulation index range to analyze per FE window.",
     )
 

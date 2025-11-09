@@ -35,6 +35,7 @@ run:
     time: "10:00:00"
 
 fe_sim:
+  num_fe_extends: 10
   fe_type: uno_rest
   remd: no
   lambdas: [

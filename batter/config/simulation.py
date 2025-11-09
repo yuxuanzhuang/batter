@@ -86,11 +86,15 @@ class SimulationConfig(BaseModel):
         def _analysis_range_default():
             if num_fe_extends_value < 4:
                 logger.warning(
-                    "num_fe_extends=%s is < 4; default analysis_fe_range will start at 0.",
+                    "num_fe_extends={} is < 4; default analysis_fe_range will start at 0.",
                     num_fe_extends_value,
                 )
                 return (0, -1)
             return (2, -1)
+
+        analysis_fe_range_value = getattr(fe, "analysis_fe_range", None) if hasattr(fe, "analysis_fe_range") else None
+        if analysis_fe_range_value is None:
+            analysis_fe_range_value = _analysis_range_default()
 
         fe_data: dict[str, Any] = {
             "fe_type": _fe_attr("fe_type", lambda: "md"),
@@ -126,8 +130,7 @@ class SimulationConfig(BaseModel):
             "gamma_ln": float(_fe_attr("gamma_ln", lambda: 1.0)),
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
-            "analysis_n_workers": int(_fe_attr("analysis_n_workers", lambda: 4)),
-            "analysis_fe_range": _fe_attr("analysis_fe_range", _analysis_range_default),
+            "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
         }
 
@@ -194,11 +197,6 @@ class SimulationConfig(BaseModel):
         8.0,
         ge=0.0,
         description="Distance (Å) between ligand COMs that classifies equilibration as unbound.",
-    )
-    analysis_n_workers: int = Field(
-        4,
-        gt=0,
-        description="Parallel workers for FE analysis tasks (loky backend).",
     )
     analysis_fe_range: Optional[Tuple[int, int]] = Field(
         (2, -1),
