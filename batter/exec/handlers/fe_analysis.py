@@ -99,7 +99,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         rocklin_correction = bool(sim_cfg.rocklin_correction)
         rest = tuple(sim_cfg.rest)
         n_workers = int(getattr(sim_cfg, "analysis_n_workers", n_workers))
-        sim_range_default = getattr(sim_cfg, "analysis_sim_range", None)
+        sim_range_default = getattr(sim_cfg, "analysis_fe_range", None)
 
     components = list(payload.get("components", components))
     temperature = float(payload.get("temperature", temperature))
