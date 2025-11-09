@@ -6,18 +6,17 @@ Tutorial
 Absolute Binding Free Energy (ABFE) Workflow with ``batter``
 ------------------------------------------------------------
 
-This tutorial walks through a typical membrane ABFE run powered by ``batter``.
-The workflow applies λ-dependent Boresch restraints, runs the simultaneous decoupling/
-recoupling (SDR) protocol with both interacting and dummy ligands present, and uses
-softcore electrostatics/van der Waals potentials so the entire calculation completes
-in a single leg. We will reference the maintained example configuration
-(``examples/mabfe.yaml``) so you can reproduce the steps locally and later adapt them
-to your own system.
+This tutorial walks through a membrane ABFE run powered by ``batter``. The workflow
+applies λ-dependent Boresch restraints, uses the simultaneous decoupling/recoupling
+(SDR) protocol with both interacting and dummy ligands present, and relies on softcore
+electrostatics/van der Waals potentials so the entire calculation completes in a
+single leg. We reference ``examples/mabfe.yaml`` so you can reproduce the run locally
+before adapting it to your own system.
 
 Installation
 ------------
 
-#. *(Optional)* Set a persistent pip cache (helps on shared clusters)::
+#. *(Optional)* set a persistent pip cache (helpful on shared clusters)::
 
        export PIP_CACHE_DIR=$SCRATCH/.cache
 
@@ -33,65 +32,99 @@ Installation
        conda env update -n batter_env -f environment.yml
        conda activate batter_env
 
-#. Install editable copies of bundled dependencies and ``batter`` itself::
+#. Install editable copies of the bundled dependencies plus ``batter`` itself::
 
        pip install -e ./extern/alchemlyb
        pip install -e ./extern/rocklinc
        pip install -e .
 
+#. Verify the installation::
+
+       batter --help
+
 Preparing the System
 --------------------
 
-We will use ``examples/mabfe.yaml`` as our starting configuration. Each field is
-documented in :mod:`batter.config.run`, but you should review the following inputs
-before running anything:
+Use ``examples/mabfe.yaml`` as the starting configuration. Each field is documented in
+``batter.config.run``, but review the inputs below before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
 
 1. **Protein structure** – ``protein_input.pdb``  
-   Protonated protein exported from Maestro (or an equivalent pipeline).  
-   Water and ligand coordinates may be included but will be removed during preparation.
+   It can be prepared from e.g. Maestro or an equivalent software. Protonation states are
+   inferred from the residue name (AMBER conventions, e.g., ASH denotes protonated ASP).
+   Water or ligand coordinates may remain in the file—they are stripped during staging.
 
-2. **Ligand structures** – One or more ligand ``.sdf`` files  
-   Ensure that all hydrogens are present and protonation states are correct.  
-   Multiple poses of the same ligand are acceptable.  
-   Use your preferred cheminformatics toolkit (RDKit, OpenEye, etc.) to verify protonation.
+2. **Ligand structures** – one ligand per ``.sdf`` file with 3D coordinates.  
+   Docked poses, aligned experimental structures, or co-folding models all work as
+   long as the coordinates align with the provided ``protein_input.pdb``. Ensure hydrogens/protonation states
+   are correct (Open Babel, `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_, or a similar tool can help).
 
-3. **Membrane system (optional)** – Dabble-generated system files  
-   ``system_input.pdb`` and ``system_input.inpcrd`` describing the protein–membrane complex.  
-   Only the topology is required if ``system_coordinate`` is provided.  
-   Refer to the `Dabble repository <https://github.com/Eigenstate/dabble>`_ for membrane generation.
+3. **Membrane system (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``  
+   Generated via Dabble (preferred with ``protein_input.pdb``).
+   ``system_input.pdb`` must encode the correct unit-cell vectors (box information).
+   If ``system_input.inpcrd`` is provided its coordinates take precedence.
+   Systems from other builders (CHARMM-GUI, Maestro, etc.) may work but are not extensively tested.
+
 
 Generating Simulation Inputs
 ----------------------------
 
-#. Copy ``examples/mabfe.yaml`` to your own path:
+1. **Copy and edit the template.**  
+   Start from `examples/mabfe.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe.yaml>`_
+   and save a copy beside your project data. Update:
 
-   - Set ``create.system_name`` and ``system.output_folder`` so outputs land in a dedicated folder.
-   - Update ``create.anchor_atoms`` with receptor-specific selections.
-   - Point the ``create.*`` paths at your protein/ligand/system inputs.
+   - ``system.output_folder`` – dedicated directory for outputs/logs.
+   - ``create.system_name`` – label used in reports.
+   - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/ligand_dict.json``).
+   - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
+   - ``create.anchor_atoms`` – choose stable backbone atoms (CA/C/N) with the guidelines below.
 
-#. From the repository root, validate the configuration before launching real work::
+     Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
+     ∠(P1–P2–P3) near 90°.
+     
+     P1 should preferably form a consistent electrostatics interaction with available
+     bound ligands (e.g., a salt bridge).
+     
+     For GPCR orthosteric sites, a common choice is P1=3x32,
+     P2=2x53, P3=7x42.
+
+2. **Validate the configuration before heavy computation (Optional)**::
 
        batter run examples/mabfe.yaml --dry-run
 
-#. Once staging completes, inspect ``<system.output_folder>/executions/<run_id>/``:
+   This command runs ligand parameterisation (WARNING: heavy load), and equilibration system preparation.
+   On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
 
-   - ``executions/<run_id>/simulations/<LIGAND>/inputs`` contains per-ligand copies of your structures.
-   - ``executions/<run_id>/artifacts`` holds shared topology/coordinate assets.
-   - Review “build.pdb” and intermediate logs before moving on to production sampling.
+3. **Inspect the staged system (Optional)**  
+   Once the dry-run completes, review ``<system.output_folder>/executions/<run_id>/``:
 
-Running on SLURM
-~~~~~~~~~~~~~~~~
+   - ``simulations/<LIGAND>/equil/full.pdb`` – ligand-specific equilibration systems.
+   Check if the ligand is correctly placed in the binding site,
+    and that membranes/solvent boxes look reasonable.
 
-To submit via SLURM instead of running locally::
+4. **Launch the full workflow manager (local execution)**::
+
+       batter run examples/mabfe.yaml
+
+   Production runs take hours to days depending on system size, the number of ligands,
+   and available hardware. Progress is streamed to the terminal and to
+   ``executions/<run_id>/logs/batter.log``.
+
+Submitting the manager job via SLURM (RECOMMENDED)
+~~~~~~~~~~~~~~~~~~~~
+
+To submit the same run through SLURM::
 
     batter run examples/mabfe.yaml --slurm-submit
 
-Provide ``--slurm-manager-path`` if you keep a custom SLURM header template (accounts,
-modules, partitions, etc.). The job manager will stage the system locally, write an
-``sbatch`` script derived from the YAML hash, and stream status updates as windows finish.
+Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
+(accounts, modules, partitions, etc.).
+
+The job manager stages the system locally,
+writes an ``sbatch`` script based on the YAML hash, and streams updates as windows
+finish.
 
 Handy CLI Flags
 ---------------
@@ -109,13 +142,15 @@ Handy CLI Flags
 
 Run ``batter run --help`` anytime you need the full list of switches and defaults.
 
-You can check the status of running jobs with::
+Monitoring Jobs
+~~~~~~~~~~~~~~~
+
+Keep an eye on SLURM progress with::
 
     batter report-jobs
 
-Note if you kill your current batter process,
-the SLURM jobs will continue running in the background.
-You have to manually cancel them via::
+It summarises queued, running, and completed windows per system. If you stop the
+manager process but the SLURM jobs keep running, cancel them via::
 
     batter cancel-jobs --contains <system_path_reported_above>
 
@@ -123,8 +158,10 @@ You have to manually cancel them via::
 Optional: Additional Conformational Restraints
 ----------------------------------------------
 
-#. Use the restraint-generation notebook from `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
-   (or an equivalent script) to author a ``restraints.json`` describing the distance constraints you need.
+#. Use the restraint-generation notebook from
+   `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
+   (or an equivalent script) to build a ``restraints.json`` describing the distance
+   constraints you need.
 
 #. Point ``create.extra_conformation_restraints`` at the resulting JSON file::
 
@@ -140,6 +177,7 @@ Use the CLI helpers to inspect them::
     batter fe show <system.output_folder> <run_id>
 
 ``fe list`` prints a high-level table (ΔG, SE, components) for every stored run, while
-``fe show`` dives into per-window data. CSV/JSON exports live alongside the results on disk.
-Also inspect the convergence plots saved under ``results/<run-id>/<ligand-name>/Results``
-See :doc:`developer_guide/analysis` for deeper post-processing (plots, REMD diagnostics, etc.).
+``fe show`` dives into per-window data. CSV/JSON exports live alongside the results on
+disk, and convergence plots appear under ``results/<run_id>/<ligand>/Results``. See
+:doc:`developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
+parsing).

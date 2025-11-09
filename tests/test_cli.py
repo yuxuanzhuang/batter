@@ -19,9 +19,33 @@ def test_cli_run_invokes_run_from_yaml(monkeypatch, tmp_path: Path, runner: CliR
     yaml_path = tmp_path / "run.yaml"
     yaml_path.write_text("dummy: true\n")
 
+    class DummySection:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+        def model_copy(self, update: dict | None = None):
+            data = dict(self.__dict__)
+            if update:
+                data.update(update)
+            return DummySection(**data)
+
+    class DummyRunConfig:
+        def __init__(self, system=None, run=None):
+            self.system = system or DummySection(output_folder="out")
+            self.run = run or DummySection(run_id="auto", dry_run=False)
+
+        def model_copy(self, update: dict | None = None):
+            data = {"system": self.system, "run": self.run}
+            if update:
+                data.update(update)
+            return DummyRunConfig(system=data["system"], run=data["run"])
+
+        def resolved_sim_config(self):
+            return object()
+
     monkeypatch.setattr(
         "batter.cli.run.RunConfig.load",
-        staticmethod(lambda path: object()),
+        staticmethod(lambda path: DummyRunConfig()),
     )
 
     called = {}

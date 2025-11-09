@@ -117,9 +117,31 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
     slurm_manager_path : Path, optional
         Optional path to a SLURM header/template file.
     """
-    # first do a basic validation of the YAML
+    system_overrides = {}
+    if output_folder:
+        system_overrides["output_folder"] = output_folder
+    run_over = {}
+    if run_id is not None:
+        run_over["run_id"] = run_id
+    if dry_run is not None:
+        run_over["dry_run"] = dry_run
+    if only_equil is not None:
+        run_over["only_fe_preparation"] = only_equil
+
+    # first do a basic validation of the YAML (with any CLI overrides applied)
     try:
-        _ = RunConfig.load(yaml_path)
+        base_cfg = RunConfig.load(yaml_path)
+        cfg_for_validation = base_cfg
+        if system_overrides:
+            cfg_for_validation = cfg_for_validation.model_copy(
+                update={"system": cfg_for_validation.system.model_copy(update=system_overrides)}
+            )
+        if run_over:
+            cfg_for_validation = cfg_for_validation.model_copy(
+                update={"run": cfg_for_validation.run.model_copy(update=run_over)}
+            )
+        # Force resolution so missing/invalid fields are surfaced before submitting
+        cfg_for_validation.resolved_sim_config()
     except Exception as e:
         raise click.ClickException(f"Invalid SimulationConfig YAML: {e}")
 
@@ -165,20 +187,10 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
         click.echo(f"STDERR: {result.stderr}")
         return
 
-    overrides = {}
-    if output_folder:
-        overrides["output_folder"] = output_folder
-    run_over = {}
-    if run_id is not None:
-        run_over["run_id"] = run_id
-    if dry_run is not None:
-        run_over["dry_run"] = dry_run
-    if only_equil is not None:
-        run_over["only_fe_preparation"] = only_equil
     run_from_yaml(
         yaml_path,
         on_failure=on_failure.lower(),
-        system_overrides=(overrides or None),
+        system_overrides=(system_overrides or None),
         run_overrides=(run_over or None),
     )
 

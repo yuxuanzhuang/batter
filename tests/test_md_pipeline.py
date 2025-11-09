@@ -1,12 +1,11 @@
-from pathlib import Path
-
 from batter.config import load_run_config
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.pipeline.factory import make_md_pipeline
+from tests.data import MABFE_YAML
 
 
 def _sim_cfg():
-    cfg = load_run_config(Path("tests/data/mabfe.yaml"))
+    cfg = load_run_config(MABFE_YAML)
     return cfg.resolved_sim_config()
 
 
