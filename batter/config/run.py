@@ -596,6 +596,11 @@ class RunSection(BaseModel):
         None,
         description="Parallel workers for local backend (None = auto, 0 = serial).",
     )
+    max_active_jobs: int | None = Field(
+        2000,
+        ge=0,
+        description="Max concurrent SLURM jobs for FE submissions (0 disables throttling).",
+    )
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
     )

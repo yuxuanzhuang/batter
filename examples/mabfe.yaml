@@ -31,6 +31,7 @@ run:
   dry_run: false
   run_id: auto
   max_workers: 8
+  max_active_jobs: 2000
   on_failure: prune
   slurm:
     partition: rondror

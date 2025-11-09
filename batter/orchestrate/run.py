@@ -489,7 +489,11 @@ def run_from_yaml(
     def _inject_mgr(p: Pipeline) -> Pipeline:
         patched = []
         for s in p.ordered_steps():
-            payload = (s.payload or StepPayload()).copy_with(job_mgr=job_mgr)
+            base_payload = s.payload or StepPayload()
+            updates = {"job_mgr": job_mgr}
+            if rc.run.max_active_jobs is not None:
+                updates["max_active_jobs"] = rc.run.max_active_jobs
+            payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
 
