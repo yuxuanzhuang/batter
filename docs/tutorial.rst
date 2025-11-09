@@ -10,7 +10,7 @@ This tutorial walks through a membrane ABFE run powered by ``batter``. The workf
 applies λ-dependent Boresch restraints, uses the simultaneous decoupling/recoupling
 (SDR) protocol with both interacting and dummy ligands present, and relies on softcore
 electrostatics/van der Waals potentials so the entire calculation completes in a
-single leg. We reference ``examples/mabfe.yaml`` so you can reproduce the run locally
+single leg. We reference ``examples/mabfe_example.yaml`` so you can reproduce the run locally
 before adapting it to your own system.
 
 Quick walkthrough
@@ -34,10 +34,7 @@ protein binding site. The main steps are:
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
-#. **FE equilbration** - very short equilibration runs to allow water relaxation
-
-If flag ``--only-equil`` is provided, the workflow stops after step 6.
-
+#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after step 6.
 #. **FE production runs** – Each window is submitted as an independent SLURM job.
    The main process monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
@@ -77,7 +74,7 @@ Installation
 Preparing the System
 --------------------
 
-Use ``examples/mabfe.yaml`` as the starting configuration. Each field is documented in
+Use ``examples/mabfe_example.yaml`` as the starting configuration. Each field is documented in
 ``batter.config.run``, but review the inputs below before running anything:
 
 Required Files
@@ -106,7 +103,7 @@ Generating Simulation Inputs
 ----------------------------
 
 1. **Copy and edit the template.**  
-   Start from `examples/mabfe.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe.yaml>`_
+   Start from `examples/mabfe_example.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe_example.yaml>`_
    and save a copy beside your project data. Update:
 
    - ``system.output_folder`` – dedicated directory for outputs/logs.
@@ -126,7 +123,7 @@ Generating Simulation Inputs
 
 2. **Validate the configuration before heavy computation (Optional)**::
 
-       batter run examples/mabfe.yaml --dry-run
+       batter run examples/mabfe_example.yaml --dry-run
 
    This command runs ligand parameterisation (WARNING: heavy load), and equilibration system preparation.
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
@@ -140,7 +137,7 @@ Generating Simulation Inputs
 
 4. **Launch the full workflow manager (local execution)**::
 
-       batter run examples/mabfe.yaml
+       batter run examples/mabfe_example.yaml
 
    Production runs take hours to days depending on system size, the number of ligands,
    and available hardware. Progress is streamed to the terminal and to
@@ -151,7 +148,7 @@ Submitting the manager job via SLURM (RECOMMENDED)
 
 To submit the same run through SLURM::
 
-    batter run examples/mabfe.yaml --slurm-submit
+    batter run examples/mabfe_example.yaml --slurm-submit
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.).
