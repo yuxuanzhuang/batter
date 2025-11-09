@@ -51,3 +51,5 @@ fe_sim:
   hmr: yes
   dt: 0.004
   temperature: 310.0
+  unbound_threshold: 8.0
+  analysis_n_workers: 4

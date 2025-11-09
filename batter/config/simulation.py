@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Literal, TYPE_CHECKING, Tuple
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr, field_validator, model_validator
 import re
 from loguru import logger
@@ -114,6 +114,9 @@ class SimulationConfig(BaseModel):
             "cut": float(_fe_attr("cut", lambda: 9.0)),
             "gamma_ln": float(_fe_attr("gamma_ln", lambda: 1.0)),
             "barostat": int(_fe_attr("barostat", lambda: 2)),
+            "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
+            "analysis_n_workers": int(_fe_attr("analysis_n_workers", lambda: 4)),
+            "analysis_sim_range": _fe_attr("analysis_sim_range", lambda: None),
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -175,6 +178,20 @@ class SimulationConfig(BaseModel):
     sdr_dist: Optional[float] = Field(0.0, description="SDR placement distance (Å)")
     dec_method: Optional[str] = Field(None, description="Decoupling method (set for fe_type='custom')")
     blocks: int = Field(0, description="MBAR blocks")
+    unbound_threshold: float = Field(
+        8.0,
+        ge=0.0,
+        description="Distance (Å) between ligand COMs that classifies equilibration as unbound.",
+    )
+    analysis_n_workers: int = Field(
+        4,
+        gt=0,
+        description="Parallel workers for FE analysis tasks (loky backend).",
+    )
+    analysis_sim_range: Optional[Tuple[int, int]] = Field(
+        None,
+        description="Optional tuple (start, end) limiting FE simulations analyzed per window.",
+    )
 
     # --- Force constants ---
     lig_distance_force: float = Field(0.0, description="Ligand COM distance spring (kcal/mol/Å^2)")

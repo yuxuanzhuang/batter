@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable
+from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from batter.config.simulation import SimulationConfig
@@ -509,6 +509,20 @@ class FESimArgs(BaseModel):
     )
     temperature: float = Field(310.0, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
+    unbound_threshold: float = Field(
+        8.0,
+        ge=0.0,
+        description="Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
+    )
+    analysis_n_workers: int = Field(
+        4,
+        gt=0,
+        description="Parallel workers used by the FE analysis stage.",
+    )
+    analysis_sim_range: Optional[Tuple[int, int]] = Field(
+        None,
+        description="Optional (start, end) simulation index range to analyze per window.",
+    )
 
     @field_validator("remd", "rocklin_correction", "hmr", "enable_mcwat", mode="before")
     @classmethod
@@ -523,6 +537,15 @@ class FESimArgs(BaseModel):
         if any(left > right for left, right in zip(v, v[1:])):
             raise ValueError("Lambda values must be in ascending order.")
         return v
+
+    @field_validator("analysis_sim_range")
+    @classmethod
+    def _validate_analysis_range(cls, value: Optional[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
+        if value is None:
+            return None
+        if len(value) != 2:
+            raise ValueError("analysis_sim_range must contain exactly two integers (start, end).")
+        return value
 
     @field_validator(
         "lig_distance_force",

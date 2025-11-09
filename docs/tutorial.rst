@@ -32,7 +32,7 @@ protein binding site. The main steps are:
    If the ligand unbound from the binding site during equilibration, the run
    is marked as unbound and skipped during FE production.
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
-   to start the FE windows from. RMSD analysis is also performed and saved in the equil folder.
+   to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
 #. **FE equilbration** - very short equilibration runs to allow water relaxation
 
@@ -43,7 +43,7 @@ If flag ``--only-equil`` is provided, the workflow stops after step 6.
    Set ``run.max_active_jobs`` in your YAML (default 2000, ``0`` disables throttling)
    to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
 #. **Analysis** – Once all windows complete, MBAR analysis is performed and
-   results are summarised in CSV/JSON formats with convergence plots.
+   results are summarised in CSV/JSON formats with convergence plots. Control the number of worker processes with ``fe_sim.analysis_n_workers`` and optionally limit the trajectory range per window via ``fe_sim.analysis_sim_range`` (``[start, end]``).
 
 Installation
 ------------
