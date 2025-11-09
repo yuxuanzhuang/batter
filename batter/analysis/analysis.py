@@ -901,7 +901,7 @@ def analyze_lig_task(
         fe_ts_err = np.zeros(LEN_FE_TIMESERIES) * np.nan
 
     # Optional Rocklin correction (component 'y')
-    if rocklin_correction == "yes":
+    if rocklin_correction:
         from .rocklin import run_rocklin_correction  # local import
         if "y" not in components:
             raise ValueError("Rocklin correction requires component 'y'.")
@@ -916,6 +916,7 @@ def analyze_lig_task(
         lig_netq = int(round(lig_ag.total_charge()))
         other_ag = universe.atoms - lig_ag
         other_netq = int(round(other_ag.total_charge()))
+        logger.info(f"Rocklin correction: ligand netq={lig_netq}, other netq={other_netq}")
         if lig_netq != 0:
             corr = run_rocklin_correction(
                 universe=universe,
