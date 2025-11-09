@@ -2,10 +2,9 @@
 Analysis Toolkit
 =====================
 
-BATTER ships with a small but opinionated analysis package that focuses on
-post-processing ABFE/ASFE outputs, validating replica-exchange logs, and
-parsing legacy BAT.py result files. This page summarises the most common entry
-points so you can reuse them in notebooks or bespoke pipelines.
+BATTER ships with an analysis package that focuses on
+post-processing ABFE/ASFE outputs with MBAR and alchemlyb, validating replica-exchange logs.
+This page summarises the most common entry points so you can reuse them in notebooks or bespoke pipelines.
 
 Component Free-Energy Analysis
 ==============================
@@ -62,15 +61,3 @@ custom plots.
 
 For quick visual checks, call :func:`batter.analysis.remd.plot_trajectory`, which
 renders either a single combined plot or a grid of per-replica subplots.
-
-Testing the Analysis Layer
-==========================
-
-Unit tests covering the analysis helpers live alongside the code:
-
-* ``tests/test_analysis_remd.py`` checks the round-trip metrics computed by
-  :class:`batter.analysis.remd.RemdLog`.
-
-Add new regression tests next to this module whenever you extend the analysis
-toolkit. The fixtures only depend on ``numpy``/``pandas`` so they run without a
-full MD stack.
