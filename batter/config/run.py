@@ -620,7 +620,7 @@ class RunSection(BaseModel):
         description="Parallel workers for local backend (None = auto, 0 = serial).",
     )
     max_active_jobs: int | None = Field(
-        2000,
+        1000,
         ge=0,
         description="Max concurrent SLURM jobs for FE submissions (0 disables throttling).",
     )

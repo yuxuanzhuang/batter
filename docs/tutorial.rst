@@ -40,7 +40,7 @@ If flag ``--only-equil`` is provided, the workflow stops after step 6.
 
 #. **FE production runs** – Each window is submitted as an independent SLURM job.
    The main process monitors job status and streams updates to the terminal.
-   Set ``run.max_active_jobs`` in your YAML (default 2000, ``0`` disables throttling)
+   Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
    to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
 #. **Analysis** – Once all windows complete, MBAR analysis is performed and
    results are summarised in CSV/JSON formats with convergence plots. Optionally limit the trajectory range per window via ``fe_sim.analysis_sim_range`` (``[start, end]``).
