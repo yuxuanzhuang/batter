@@ -19,8 +19,8 @@ uses the simultaneous decoupling/recoupling (SDR) protocol with both the interac
 present in the system, and employs softcore electrostatics/van der Waals potentials to maintain smooth
 turn-on/turn-off behaviour.
 
-.. note::
-   The API is stabilizing. Some modules are still under active development, but the overall structure is in place.
+``batter`` supports resuming interrupted runs, flexible system definitions via modular YAML configuration files,
+The job submission is highly parallelized, with each λ-window running as an independent job.
 
 Installation
 -------------------------------
@@ -83,11 +83,7 @@ YAMLs in ``examples/`` illustrate common setups:
 **Plain Molecular Dynamics (MD)**
    1. ``md.yaml`` — standard MD production run for a protein-ligand complex
 
-
-Notes
--------------------------------
-- Backends include local execution and SLURM-based submission (see CLI options).
-- Example YAMLs are intended as starting points; adjust to your system.
+Example YAMLs are intended as starting points; adjust to your system.
 
 Results Interpretation
 ----------------------
