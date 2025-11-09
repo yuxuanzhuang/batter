@@ -198,6 +198,8 @@ class SlurmJobManager:
         registry_file: Optional[Path] = None,
         dry_run: bool = False,
         sbatch_flags: Optional[Sequence[str]] = None,
+        submit_retry_limit: int = 3,
+        submit_retry_delay_s: float = 60.0,
     ):
         """Initialise the manager.
 
@@ -221,6 +223,8 @@ class SlurmJobManager:
         self.resubmit_backoff_s = float(resubmit_backoff_s)
         self.dry_run = dry_run
         self.triggered = False
+        self.submit_retry_limit = max(0, int(submit_retry_limit))
+        self.submit_retry_delay_s = float(submit_retry_delay_s)
 
         self.sbatch_flags: List[str] = list(sbatch_flags or [])
 
@@ -301,7 +305,26 @@ class SlurmJobManager:
 
     # ---------- Core ops ----------
     def _submit(self, spec: SlurmJobSpec) -> str:
-        """Submit ``spec`` via ``sbatch`` and persist the resulting job id."""
+        """Submit ``spec`` via ``sbatch`` retrying on failure."""
+        attempts = 0
+        while True:
+            try:
+                return self._submit_once(spec)
+            except Exception as exc:
+                if self.submit_retry_limit == 0 or attempts >= self.submit_retry_limit:
+                    raise RuntimeError(
+                        f"SLURM submission failed for {spec.workdir} after {attempts + 1} attempt(s)"
+                    ) from exc
+                attempts += 1
+                delay = self.submit_retry_delay_s
+                logger.warning(
+                    f"[SLURM] submission attempt {attempts}/{self.submit_retry_limit} "
+                    f"failed for {spec.workdir.name}: {exc}; retrying in {delay:.0f}s"
+                )
+                time.sleep(delay)
+
+    def _submit_once(self, spec: SlurmJobSpec) -> str:
+        """Submit ``spec`` via ``sbatch`` and persist the resulting job id (single attempt)."""
         script_abs = spec.resolve_script_abs()
         if not script_abs.exists():
             listing = ", ".join(sorted(p.name for p in spec.workdir.iterdir())) if spec.workdir.exists() else "(missing workdir)"
@@ -411,6 +434,7 @@ class SlurmJobManager:
                 self.ensure_running(s)
             except Exception as e:
                 logger.error(f"[SLURM] submit failed for {s.workdir}: {e}")
+                raise
 
         pending = {s.workdir: s for s in specs}
         retries = {s.workdir: self._retries.get(s.workdir, 0) for s in specs}
@@ -486,6 +510,7 @@ class SlurmJobManager:
                         self._retries[wd] = retries[wd]  # keep central book
                 except Exception as e:
                     logger.error(f"[SLURM] {wd.name}: resubmit failed: {e}")
+                    raise
 
             # remove finished from pending and update progress
             for wd in done_now:

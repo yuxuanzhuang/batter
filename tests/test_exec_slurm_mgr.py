@@ -93,3 +93,33 @@ def test_timeout_resubmits_without_failure(monkeypatch, tmp_path):
     assert not spec.failed_path().exists()
     assert manager._retries.get(spec.workdir, 0) == 0
     assert submissions["count"] == 2
+
+
+def test_submission_failure_raises(monkeypatch, tmp_path):
+    workdir = tmp_path / "fail"
+    workdir.mkdir()
+    script = workdir / "SLURMM-run"
+    script.write_text("#!/bin/bash\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        resubmit_backoff_s=0.0,
+        max_retries=0,
+        submit_retry_limit=3,
+        submit_retry_delay_s=0.0,
+    )
+
+    attempts = {"count": 0}
+
+    def fail_submit_once(spec: SlurmJobSpec) -> str:
+        attempts["count"] += 1
+        raise RuntimeError("QOS limit")
+
+    monkeypatch.setattr(manager, "_submit_once", fail_submit_once)
+
+    with pytest.raises(RuntimeError, match="after 4 attempt"):
+        manager._wait_loop([spec])
+
+    assert attempts["count"] == 4
