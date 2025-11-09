@@ -601,6 +601,16 @@ def run_from_yaml(
     # --------------------
     # PHASE 6: analyze (parallel)
     # --------------------
+    def _inject_analysis_workers(p: Pipeline) -> Pipeline:
+        patched = []
+        for s in p.ordered_steps():
+            payload = (s.payload or StepPayload()).copy_with(
+                analysis_n_workers=rc.run.max_workers
+            )
+            patched.append(Step(name=s.name, requires=s.requires, payload=payload))
+        return Pipeline(patched)
+
+    phase_analyze = _inject_analysis_workers(phase_analyze)
     if phase_analyze.ordered_steps():
         run_phase_skipping_done(
             phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers

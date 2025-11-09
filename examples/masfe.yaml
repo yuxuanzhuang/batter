@@ -24,6 +24,7 @@ run:
     time: "4:00:00"
 
 fe_sim:
+  num_fe_extends: 10
   fe_type: asfe
   rocklin_correction: yes
   dec_int: mbar

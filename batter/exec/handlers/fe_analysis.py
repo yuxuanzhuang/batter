@@ -87,7 +87,8 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     temperature: float = 310.0
     water_model: str = "tip3p"
     rocklin_correction: bool = False
-    n_workers: int = 4
+    n_workers_override = payload.get("analysis_n_workers", None)
+    n_workers: int = int(n_workers_override) if n_workers_override is not None else 4
     rest: Tuple[str, ...] = tuple()
     sim_range_default: Optional[Tuple[int, int]] = None
 
@@ -98,7 +99,6 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         water_model = str(sim_cfg.water_model).lower()
         rocklin_correction = bool(sim_cfg.rocklin_correction)
         rest = tuple(sim_cfg.rest)
-        n_workers = int(getattr(sim_cfg, "analysis_n_workers", n_workers))
         sim_range_default = getattr(sim_cfg, "analysis_fe_range", None)
 
     components = list(payload.get("components", components))
