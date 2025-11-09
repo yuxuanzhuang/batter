@@ -42,33 +42,49 @@ Installation
 Preparing the System
 --------------------
 
-We will use ``examples/mabfe.yaml`` as our starting configuration. Each field is
-documented in :mod:`batter.config.run`, but you should review the following inputs
+We will use ``examples/mabfe.yaml``
+as our starting configuration. Each field is documented in :mod:`batter.config.run`,
+but you should review the following inputs
 before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
 
 1. **Protein structure** – ``protein_input.pdb``  
-   Protonated protein exported from Maestro (or an equivalent pipeline).  
+   Protein exported from Maestro (or an equivalent pipeline). the protonation states of 
+   the titratable residues will be assigned based on the residue name (AMBER-based), e.g. ASH will be
+   protonated ASP.
    Water and ligand coordinates may be included but will be removed during preparation.
 
-2. **Ligand structures** – One or more ligand ``.sdf`` files  
+2. **Ligand structures** – One or more ligand ``.sdf`` files with its 3D coordinates.
+   The ligand can be provided from docked pose(s) to the provided ``protein_input.pdb`` structure.
+   It can also be from experimental structures and aligned to the provided ``protein_input.pdb`` structure.
+   It can also be generated from co-folding models and then aligned to the provided ``protein_input.pdb`` structure.  
+   Each ``.sdf`` file should contain only one ligand molecule.
    Ensure that all hydrogens are present and protonation states are correct.  
-   Multiple poses of the same ligand are acceptable.  
-   Use your preferred cheminformatics toolkit (RDKit, OpenEye, etc.) to verify protonation.
+   Use your preferred cheminformatics toolkit (e.g. openbabel) to determine protonation
+   or use `unipKa` in ``scripts/get_protonation.ipynb``.
 
 3. **Membrane system (optional)** – Dabble-generated system files  
-   ``system_input.pdb`` and ``system_input.inpcrd`` describing the protein–membrane complex.  
-   Only the topology is required if ``system_coordinate`` is provided.  
+   ``system_input.pdb`` and ``system_input.inpcrd`` describing the protein–membrane complex.
+   The box information is expected in the ``system_input.pdb`` file if ``system_input.inpcrd`` is not provided.
+   The coordinates from ``system_input.inpcrd`` will be used if it is provided.
+   preferably, the system is preferred with the same ``protein_input.pdb`` structure.
    Refer to the `Dabble repository <https://github.com/Eigenstate/dabble>`_ for membrane generation.
+   Embedded system prepared from other tools, e.g. CHARMM-GUI and Maestro, may be successfully used
+   but have not been extensively tested.
+
 
 Generating Simulation Inputs
 ----------------------------
 
-#. Copy ``examples/mabfe.yaml`` to your own path:
+#. Copy the content of ``examples/mabfe.yaml`` (https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe.yaml)
+   to your own path. Note all the paths in the YAML are relative to the YAML file location or absolute paths.
 
-   - Set ``create.system_name`` and ``system.output_folder`` so outputs land in a dedicated folder.
+   - Set ``system.output_folder`` so outputs land in a dedicated folder.
+   - The ``create.system_name`` is a label for your system (used in reports).
+   - Create a ``ligand_dict.json`` mapped unique ligand identifiers to their ``.sdf`` paths.
+     See ``examples/ligand_dict.json`` for formatting.
    - Point the ``create.*`` paths at your protein/ligand/system inputs.
    - Update ``create.anchor_atoms`` with receptor-specific selections. Pick the anchor atoms (P1, P2, P3) based on the following criteria:
         - They should be backbone atoms (CA, C or N) and part of stable secondary structure
@@ -86,6 +102,11 @@ Generating Simulation Inputs
 #. From the repository root, validate the configuration before launching real work::
 
        batter run examples/mabfe.yaml --dry-run
+    
+    Warning: This will also run heavy-loading steps like ligand parameterization.
+    So the job may take several minutes to complete.
+
+    You should preferably run it with a compute node if you are on a shared cluster. 
 
 #. Once staging completes, inspect ``<system.output_folder>/executions/<run_id>/``:
 
@@ -93,16 +114,21 @@ Generating Simulation Inputs
    - ``executions/<run_id>/artifacts`` holds shared topology/coordinate assets.
    - Review “build.pdb” and intermediate logs before moving on to production sampling.
 
-Running on SLURM
-~~~~~~~~~~~~~~~~
+#. If satisfied, launch the full workflow::
 
-To submit via SLURM instead of running locally::
+       batter run examples/mabfe.yaml
 
-    batter run examples/mabfe.yaml --slurm-submit
+    This will take several hours to days depending on system size, number of ligands,
+    and available hardware. It will tracks progress in the terminal and write logs to
+    ``<system.output_folder>/executions/<run_id>/logs/batter.log``.
+
+    Alternatively, you can submit this "manager job" to a SLURM scheduler::
+    
+        batter run examples/mabfe.yaml --slurm-submit
 
 Provide ``--slurm-manager-path`` if you keep a custom SLURM header template (accounts,
 modules, partitions, etc.). The job manager will stage the system locally, write an
-``sbatch`` script derived from the YAML hash, and stream status updates as windows finish.
+``sbatch`` script derived from the YAML hash, and submit the manager job to SLURM.
 
 Handy CLI Flags
 ---------------
