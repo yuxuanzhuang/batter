@@ -1,22 +1,20 @@
 name: docs_batter
 channels:
-
   - conda-forge
-
   - defaults
 dependencies:
-    # Base depends
-  - python
+  # Base
+  - python>=3.11
   - pip
-  
-  - pydata-sphinx-theme
-  - sphinx-design
-  - sphinx-copybutton
 
+  # Sphinx + theme/extensions used in conf.py
+  - sphinx>=7.2
+  - pydata-sphinx-theme>=0.15
+  - sphinx-design>=0.6
+  - sphinx-copybutton>=0.5
 
-
-
-    # Pip-only installs
+  # Pydantic autodoc (you enabled sphinxcontrib.autodoc_pydantic)
   - pip:
-    - -e ../
-
+      - autodoc_pydantic
+      - pydantic>=2.0
+      - -e ../

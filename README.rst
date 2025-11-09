@@ -7,12 +7,13 @@ batter
 .. image:: https://codecov.io/gh/yuxuanzhuang/batter/branch/main/graph/badge.svg
    :target: https://codecov.io/gh/yuxuanzhuang/batter/branch/main
 
-.. image:: https://readthedocs.org/projects/pip/badge/?version=latest&style=flat
+.. image:: https://readthedocs.org/projects/batter/badge/?version=latest&style=flat
    :target: https://batter.readthedocs.io/en/latest/?badge=latest
+   :alt: Documentation Status
 
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
-It adds first-class support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
-with an AMBER + sdg + express pipeline to the original ``BAT.py`` package.
+It adds support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
+with an AMBER + SDR pipeline to the original ``BAT.py`` package.
 
 ABFE runs in ``batter`` follow a single-leg design that applies λ-dependent Boresch restraints,
 uses the simultaneous decoupling/recoupling (SDR) protocol with both the interacting and dummy ligands
@@ -94,7 +95,7 @@ Use the CLI helpers to inspect and export them:
 - ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).
 - ``batter fe show <system_root> <run_id>`` – prints per-window data and metadata for a specific execution.
 
-Each row in ``fe list`` corresponds to a single ligand leg (“one leg” SDR). Components reflect the lambda-dependent Boresch restraints and softcore electrostatics/van der Waals contributions described earlier. CSV/JSON files saved alongside the results can be ingested into notebooks for further analysis; see :doc:`developer_guide/analysis` for MBAR and REMD tooling.
+A CSV file for all the FE results is stored under ``<system_root>/results``, see detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
 
 Copyright
 -------------------------------
