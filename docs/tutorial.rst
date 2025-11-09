@@ -13,6 +13,41 @@ electrostatics/van der Waals potentials so the entire calculation completes in a
 single leg. We reference ``examples/mabfe.yaml`` so you can reproduce the run locally
 before adapting it to your own system.
 
+Quick walkthrough
+-----------------
+
+``batter`` orchestrates an end-to-end AMBER ABFE workflow that starts from protein +
+embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the 
+protein binding site. The main steps are:
+
+0. **system staging and loading** – A executon folder will be created under ``<system.output_folder>/executions/``
+   to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based
+    unique ID is generated. If the same run ID already exists, the execution is
+    resumed from the last successful step.
+1. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with 
+    options to choose charges (AM1-BCC by default)
+2. **Equilbration system preparation** – builds solvated/membrane-embedded
+   systems with the ligand in the binding site.
+3. **Equilibration** – Steps to run before FE production run. During this phase,
+   the ligand and protein are not restrained (unless explicitly configured).
+   If the ligand unbound from the binding site during equilibration, the run
+   is marked as unbound and skipped during FE production.
+4. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
+   to start the FE windows from. RMSD analysis is also performed and saved in the
+    equil folder.
+5. **FE window generation and submission** – λ windows are created based on the
+    configuration.
+6. **FE equilbration** - very short equilibration runs to allow water relaxation
+
+If flag `--only-equil` is provided, the workflow stops after step 6.
+
+7. **FE production runs** – Each window is submitted as an independent SLURM job.
+The main process monitors job status and streams updates to the terminal.
+A maximum allowed jobs in the queue can be configured to avoid overloading.
+8. **Analysis** – Once all windows complete, MBAR analysis is performed and
+   results are summarised in CSV/JSON formats with convergence plots.
+
+
 Installation
 ------------
 
@@ -65,6 +100,9 @@ Required Files
    Generated via Dabble (preferred with ``protein_input.pdb``).
    ``system_input.pdb`` must encode the correct unit-cell vectors (box information).
    If ``system_input.inpcrd`` is provided its coordinates take precedence.
+   The protein does not need to be aligned to ``protein_input.pdb`` and the alignment
+   will be done automatically based on the ``protein_align`` config setting.
+
    Systems from other builders (CHARMM-GUI, Maestro, etc.) may work but are not extensively tested.
 
 
