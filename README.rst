@@ -13,15 +13,16 @@ batter
 
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
 It adds support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
-with an AMBER + SDR pipeline to the original ``BAT.py`` package.
+and provides a single-leg AMBER+SDR pipeline, extending the original ``BAT.py`` package.
 
 ABFE runs in ``batter`` follow a single-leg design that applies λ-dependent Boresch restraints,
 uses the simultaneous decoupling/recoupling (SDR) protocol with both the interacting and dummy ligands
 present in the system, and employs softcore electrostatics/van der Waals potentials to maintain smooth
-turn-on/turn-off behaviour.
+turn-on/turn-off behavior.
 
-``batter`` supports resuming interrupted runs, flexible system definitions via modular YAML configuration files,
-The job submission is highly parallelized, with each λ-window running as an independent job.
+``batter`` supports resuming interrupted runs, flexible system definitions via modular YAML configuration files.
+The job submission is highly parallelized, with each λ-window running as an independent job. For example, if you
+have 10 ligands for ABFE calculations, each with 24 λ-windows, ``batter`` can submit 240 jobs to your scheduler simultaneously. 
 
 Installation
 -------------------------------
@@ -53,6 +54,12 @@ This installs in editable mode so your code changes are immediately reflected.
 Quickstart
 -------------------------------
 
+.. warning::
+
+   The following command will run compute-heavy jobs.
+
+   It will also dispatch multiple MD jobs to your scheduler.
+
 Run an example configuration:
 
 .. code-block:: bash
@@ -70,13 +77,13 @@ Use ``--help`` to see all commands:
 Examples
 ==============================
 
-YAMLs in ``examples/`` illustrate common setups:
+YAML files in ``examples/`` illustrate common setups:
 
 **Absolute Binding Free Energy (ABFE)**
    1. ``mabfe.yaml`` — membrane protein (e.g., B2AR) in a lipid bilayer
    2. ``mabfe_nonmembrane.yaml`` — soluble protein (e.g., BRD4) in water
-   3. ``extra_restraints/mabfe.yaml`` — add additional positional restraints to selected atoms
-   4. ``conformational_restraints/mabfe.yaml`` — add additional conformational restraints (distance between atoms)
+   3. ``extra_restraints/mabfe.yaml`` — add positional restraints to selected atoms
+   4. ``conformational_restraints/mabfe.yaml`` — add conformational restraints (distance between atoms)
 
 **Absolute Solvation Free Energy (ASFE)**
    1. ``masfe.yaml`` — small molecule (e.g., epinephrine) in water
@@ -95,7 +102,7 @@ Use the CLI helpers to inspect and export them:
 - ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).
 - ``batter fe show <system_root> <run_id>`` – prints per-window data and metadata for a specific execution.
 
-A CSV file for all the FE results is stored under ``<system_root>/results``, see detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
+A CSV file for all the FE results is stored under ``<system_root>/results``. See detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
 
 Copyright
 -------------------------------
