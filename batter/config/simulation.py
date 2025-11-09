@@ -81,6 +81,17 @@ class SimulationConfig(BaseModel):
         extra_conf_rest = create.extra_conformation_restraints
         extra_restraints = create.extra_restraints
 
+        num_fe_extends_value = int(_fe_attr("num_fe_extends", lambda: 10))
+
+        def _analysis_range_default():
+            if num_fe_extends_value < 4:
+                logger.warning(
+                    "num_fe_extends=%s is < 4; default analysis_fe_range will start at 0.",
+                    num_fe_extends_value,
+                )
+                return (0, -1)
+            return (2, -1)
+
         fe_data: dict[str, Any] = {
             "fe_type": _fe_attr("fe_type", lambda: "md"),
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
@@ -116,7 +127,8 @@ class SimulationConfig(BaseModel):
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_n_workers": int(_fe_attr("analysis_n_workers", lambda: 4)),
-            "analysis_sim_range": _fe_attr("analysis_sim_range", lambda: None),
+            "analysis_fe_range": _fe_attr("analysis_fe_range", _analysis_range_default),
+            "num_fe_extends": num_fe_extends_value,
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -188,8 +200,8 @@ class SimulationConfig(BaseModel):
         gt=0,
         description="Parallel workers for FE analysis tasks (loky backend).",
     )
-    analysis_sim_range: Optional[Tuple[int, int]] = Field(
-        None,
+    analysis_fe_range: Optional[Tuple[int, int]] = Field(
+        (2, -1),
         description="Optional tuple (start, end) limiting FE simulations analyzed per window.",
     )
 
@@ -248,7 +260,7 @@ class SimulationConfig(BaseModel):
     gamma_ln: float = Field(1.0, description="Langevin γ (ps^-1)")
     barostat: Literal[1, 2] = Field(2, description="1=Berendsen, 2=MC barostat")
     dt: float = Field(0.004, description="Time step (ps)")
-    num_fe_range: int = Field(10, description="# restarts per λ")
+    num_fe_extends: int = Field(10, description="# restarts per λ")
     all_atoms: Literal["yes","no"] = Field("no", description="save all atoms for FE")
 
     # --- Force fields ---

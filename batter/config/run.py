@@ -519,9 +519,9 @@ class FESimArgs(BaseModel):
         gt=0,
         description="Parallel workers used by the FE analysis stage.",
     )
-    analysis_sim_range: Optional[Tuple[int, int]] = Field(
-        None,
-        description="Optional (start, end) simulation index range to analyze per window.",
+    analysis_fe_range: Optional[Tuple[int, int]] = Field(
+        (2, -1),
+        description="Optional (start, end) simulation index range to analyze per FE window.",
     )
 
     @field_validator("remd", "rocklin_correction", "hmr", "enable_mcwat", mode="before")
@@ -538,13 +538,13 @@ class FESimArgs(BaseModel):
             raise ValueError("Lambda values must be in ascending order.")
         return v
 
-    @field_validator("analysis_sim_range")
+    @field_validator("analysis_fe_range")
     @classmethod
     def _validate_analysis_range(cls, value: Optional[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
         if value is None:
             return None
         if len(value) != 2:
-            raise ValueError("analysis_sim_range must contain exactly two integers (start, end).")
+            raise ValueError("analysis_fe_range must contain exactly two integers (start, end).")
         return value
 
     @field_validator(

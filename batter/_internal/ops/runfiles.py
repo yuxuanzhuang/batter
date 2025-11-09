@@ -95,7 +95,7 @@ def write_fe_run_file(
     # replacements
     pose = ctx.ligand
     comp = ctx.comp
-    num_sim = ctx.sim.num_fe_range
+    num_sim = ctx.sim.num_fe_extends
     win_idx = ctx.win if ctx.win != -1 else 0
     hmr = ctx.sim.hmr
     n_windows = len(lambdas)
