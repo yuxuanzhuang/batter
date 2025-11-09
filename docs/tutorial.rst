@@ -17,36 +17,32 @@ Quick walkthrough
 -----------------
 
 ``batter`` orchestrates an end-to-end AMBER ABFE workflow that starts from protein +
-embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the 
+embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
 protein binding site. The main steps are:
 
-0. **system staging and loading** – A executon folder will be created under ``<system.output_folder>/executions/``
-   to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based
-    unique ID is generated. If the same run ID already exists, the execution is
-    resumed from the last successful step.
-1. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with 
-    options to choose charges (AM1-BCC by default)
-2. **Equilbration system preparation** – builds solvated/membrane-embedded
+#. **system staging and loading** – A executon folder will be created under ``<system.output_folder>/executions/``
+   to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
+   resumed from the last successful step.
+#. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
+   options to choose charges (AM1-BCC by default)
+#. **Equilbration system preparation** – builds solvated/membrane-embedded
    systems with the ligand in the binding site.
-3. **Equilibration** – Steps to run before FE production run. During this phase,
+#. **Equilibration** – Steps to run before FE production run. During this phase,
    the ligand and protein are not restrained (unless explicitly configured).
    If the ligand unbound from the binding site during equilibration, the run
    is marked as unbound and skipped during FE production.
-4. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
-   to start the FE windows from. RMSD analysis is also performed and saved in the
-    equil folder.
-5. **FE window generation and submission** – λ windows are created based on the
-    configuration.
-6. **FE equilbration** - very short equilibration runs to allow water relaxation
+#. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
+   to start the FE windows from. RMSD analysis is also performed and saved in the equil folder.
+#. **FE window generation and submission** – λ windows are created based on the configuration.
+#. **FE equilbration** - very short equilibration runs to allow water relaxation
 
-If flag `--only-equil` is provided, the workflow stops after step 6.
+If flag ``--only-equil`` is provided, the workflow stops after step 6.
 
-7. **FE production runs** – Each window is submitted as an independent SLURM job.
-The main process monitors job status and streams updates to the terminal.
-A maximum allowed jobs in the queue can be configured to avoid overloading.
-8. **Analysis** – Once all windows complete, MBAR analysis is performed and
+#. **FE production runs** – Each window is submitted as an independent SLURM job.
+   The main process monitors job status and streams updates to the terminal.
+   A maximum allowed jobs in the queue can be configured to avoid overloading.
+#. **Analysis** – Once all windows complete, MBAR analysis is performed and
    results are summarised in CSV/JSON formats with convergence plots.
-
 
 Installation
 ------------
@@ -105,7 +101,6 @@ Required Files
 
    Systems from other builders (CHARMM-GUI, Maestro, etc.) may work but are not extensively tested.
 
-
 Generating Simulation Inputs
 ----------------------------
 
@@ -121,10 +116,10 @@ Generating Simulation Inputs
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
-     
+
      P1 should preferably form a consistent electrostatics interaction with available
      bound ligands (e.g., a salt bridge).
-     
+
      For GPCR orthosteric sites, a common choice is P1=3x32,
      P2=2x53, P3=7x42.
 
@@ -139,8 +134,8 @@ Generating Simulation Inputs
    Once the dry-run completes, review ``<system.output_folder>/executions/<run_id>/``:
 
    - ``simulations/<LIGAND>/equil/full.pdb`` – ligand-specific equilibration systems.
-   Check if the ligand is correctly placed in the binding site,
-    and that membranes/solvent boxes look reasonable.
+     Check if the ligand is correctly placed in the binding site,
+     and that membranes/solvent boxes look reasonable.
 
 4. **Launch the full workflow manager (local execution)**::
 
@@ -151,7 +146,7 @@ Generating Simulation Inputs
    ``executions/<run_id>/logs/batter.log``.
 
 Submitting the manager job via SLURM (RECOMMENDED)
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To submit the same run through SLURM::
 
@@ -191,7 +186,6 @@ It summarises queued, running, and completed windows per system. If you stop the
 manager process but the SLURM jobs keep running, cancel them via::
 
     batter cancel-jobs --contains <system_path_reported_above>
-
 
 Optional: Additional Conformational Restraints
 ----------------------------------------------
