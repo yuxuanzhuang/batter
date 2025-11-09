@@ -15,6 +15,6 @@ dependencies:
 
   # Pydantic autodoc (you enabled sphinxcontrib.autodoc_pydantic)
   - pip:
-      - sphinxcontrib-autodoc-pydantic>=2.2
+      - autodoc_pydantic
       - pydantic>=2.0
       - -e ../
