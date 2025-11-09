@@ -73,11 +73,6 @@ def create_box(ctx: BuildContext) -> None:
         raise AttributeError("SimulationConfig missing 'water_model'.")
     water_model = str(sim.water_model).upper()
 
-    if not hasattr(sim, "num_waters"):
-        raise AttributeError("SimulationConfig missing 'num_waters'.")
-    num_waters = int(sim.num_waters)
-    if num_waters != 0:
-        raise NotImplementedError("Fixed number of waters not supported; use fixed z buffer.")
     if not hasattr(sim, "ion_def"):
         raise AttributeError("SimulationConfig missing 'ion_def'.")
     ion_def = sim.ion_def

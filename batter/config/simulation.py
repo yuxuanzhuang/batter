@@ -202,7 +202,6 @@ class SimulationConfig(BaseModel):
 
     # --- Solvent / box ---
     water_model: Literal["SPCE", "TIP4PEW", "TIP3P", "TIP3PF", "OPC"] = Field("TIP3P", description="Water model")
-    num_waters: int = Field(0, description="[DEPRECATED] Must remain 0 (automatic sizing)")
     buffer_x: float = Field(10.0, description="Box buffer X (Å)")
     buffer_y: float = Field(10.0, description="Box buffer Y (Å)")
     buffer_z: float = Field(10.0, description="Box buffer Z (Å)")
@@ -347,8 +346,6 @@ class SimulationConfig(BaseModel):
         # friendly notices
         if self.buffer_z == 0:
             logger.debug("buffer_z=0; automatic Z buffer will be applied for membranes.")
-        if self.num_waters != 0:
-            raise ValueError("'num_waters' is deprecated and must remain 0.")
 
         # Set components/dec_method by fe_type
         match self.fe_type:
