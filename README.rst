@@ -7,8 +7,9 @@ batter
 .. image:: https://codecov.io/gh/yuxuanzhuang/batter/branch/main/graph/badge.svg
    :target: https://codecov.io/gh/yuxuanzhuang/batter/branch/main
 
-.. image:: https://readthedocs.org/projects/pip/badge/?version=latest&style=flat
+.. image:: https://readthedocs.org/projects/batter/badge/?version=latest&style=flat
    :target: https://batter.readthedocs.io/en/latest/?badge=latest
+   :alt: Documentation Status
 
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
 It adds support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
