@@ -445,14 +445,20 @@ class SlurmJobManager:
 
                 # job missing or ended without sentinel → resubmit
                 resub_reason = state or "MISSING"
+                timeout_state = state == "TIMEOUT"
                 if state in SLURM_FINAL_BAD:
-                    logger.warning(
-                        f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} reached state={state}; "
-                        "attempting resubmit"
-                    )
+                    if timeout_state:
+                        logger.warning(
+                            f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} hit TIMEOUT; resubmitting without counting as failure"
+                        )
+                    else:
+                        logger.warning(
+                            f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} reached state={state}; "
+                            "attempting resubmit"
+                        )
 
                 r = retries[wd]
-                if r >= self.max_retries:
+                if not timeout_state and r >= self.max_retries:
                     logger.error(
                         f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} "
                         f"(state={resub_reason}); marking FAILED"
@@ -463,15 +469,21 @@ class SlurmJobManager:
                     continue
 
                 resub_cnt += 1
-                logger.warning(
-                    f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} "
-                    f"state={resub_reason}; resubmitting ({r+1}/{self.max_retries})"
-                )
+                if timeout_state:
+                    logger.warning(
+                        f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} state=TIMEOUT; resubmitting (timeout retries are unlimited)"
+                    )
+                else:
+                    logger.warning(
+                        f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} "
+                        f"state={resub_reason}; resubmitting ({r+1}/{self.max_retries})"
+                    )
                 time.sleep(self.resubmit_backoff_s)
                 try:
                     self._submit(s)
-                    retries[wd] = r + 1
-                    self._retries[wd] = retries[wd]  # keep central book
+                    if not timeout_state:
+                        retries[wd] = r + 1
+                        self._retries[wd] = retries[wd]  # keep central book
                 except Exception as e:
                     logger.error(f"[SLURM] {wd.name}: resubmit failed: {e}")
 

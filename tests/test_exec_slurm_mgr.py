@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from batter.exec.slurm_mgr import (
     SlurmJobManager,
     SlurmJobSpec,
@@ -43,3 +45,51 @@ def test_slurm_job_manager_status(tmp_path):
     manager.add(spec)
     lines = (tmp_path / "queue.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
+
+
+def test_timeout_resubmits_without_failure(monkeypatch, tmp_path):
+    workdir = tmp_path / "timeout"
+    workdir.mkdir()
+    script = workdir / "SLURMM-run"
+    script.write_text("#!/bin/bash\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        resubmit_backoff_s=0.0,
+        max_retries=0,
+    )
+
+    submissions = {"count": 0}
+
+    def fake_submit(spec: SlurmJobSpec) -> str:
+        submissions["count"] += 1
+        spec.jobid_path().write_text(str(submissions["count"]))
+        return str(submissions["count"])
+
+    class StopLoop(Exception):
+        pass
+
+    states = iter(["TIMEOUT", "TIMEOUT", "STOP"])
+
+    def fake_slurm_state(jobid: str | None):
+        if not jobid:
+            return None
+        try:
+            state = next(states)
+        except StopIteration:
+            return None
+        if state == "STOP":
+            raise StopLoop()
+        return state
+
+    monkeypatch.setattr("batter.exec.slurm_mgr._slurm_state", fake_slurm_state)
+    monkeypatch.setattr(manager, "_submit", fake_submit)
+
+    with pytest.raises(StopLoop):
+        manager._wait_loop([spec])
+
+    assert not spec.failed_path().exists()
+    assert manager._retries.get(spec.workdir, 0) == 0
+    assert submissions["count"] == 2
