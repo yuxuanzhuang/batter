@@ -22,7 +22,8 @@ membrane proteins and single-leg ABFE protocols.
 ABFE runs in ``batter`` follow a single-component design that applies lambda-dependent
 Boresch restraints, uses the simultaneous decoupling/recoupling (SDR) protocol with both
 the interacting and dummy ligands present, and employs soft-core electrostatics and van der Waals
-potentials to ensure smooth coupling/decoupling.
+potentials to ensure smooth coupling/decoupling. It also supports usage of H-REMD for enhanced sampling
+along the alchemical pathway.
 
 ``batter`` supports resuming interrupted runs and flexible system definitions via modular YAML
 configuration files. Job submission is highly parallelized, with each lambda-window
