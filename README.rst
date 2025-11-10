@@ -4,16 +4,18 @@ batter
 .. image:: https://github.com/yuxuanzhuang/batter/workflows/CI/badge.svg
    :target: https://github.com/yuxuanzhuang/batter/actions?query=workflow%3ACI
 
+
 .. image:: https://codecov.io/gh/yuxuanzhuang/batter/branch/main/graph/badge.svg
    :target: https://codecov.io/gh/yuxuanzhuang/batter/branch/main
+
 
 .. image:: https://readthedocs.org/projects/batter/badge/?version=latest&style=flat
    :target: https://batter.readthedocs.io/en/latest/?badge=latest
    :alt: Documentation Status
 
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
-It provides **absolute binding free energy (ABFE)** calculations for ligands---**including
-charged species**---bound to membrane proteins, as well as **absolute solvation free energy (ASFE)**.
+It provides **absolute binding free energy (ABFE)** calculations for ligands––**including
+charged species**–––bound to membrane proteins, as well as **absolute solvation free energy (ASFE)**.
 It also offers a single-leg AMBER+SDR pipeline that extends the original ``BAT.py`` package.
 
 ABFE runs in ``batter`` follow a single-leg design that applies :math:`\lambda`-dependent
@@ -25,6 +27,7 @@ potentials to ensure smooth coupling/decoupling.
 configuration files. Job submission is highly parallelized, with each :math:`\lambda`-window
 executed as an independent job. For example, 10 ligands × 24 :math:`\lambda`-windows yields **240** jobs submitted
 concurrently to your scheduler.
+
 
 Installation
 -------------------------------
@@ -54,7 +57,7 @@ Clone the repository, initialize submodules, and create the environment:
 This installs in editable mode so your code changes are immediately reflected.
 
 To use this package without the core components—useful for running CLI commands (e.g., ``batter report-jobs``),
-building docs, or running simple tests—install only the package itself::
+building docs, or running simple tests—install only the package itself:
 
 .. code-block:: bash
    
@@ -64,9 +67,8 @@ Quickstart
 -------------------------------
 
 .. warning::
-
    The following command will run compute-heavy jobs.
-
+   
    It will also dispatch multiple MD jobs to your SLURM scheduler.
 
 Run an example configuration:
