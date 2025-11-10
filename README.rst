@@ -19,14 +19,14 @@ charged species**–––bound to membrane proteins, as well as **absolute solv
 It extends the original `BAT.py <https://github.com/GHeinzelmann/BAT.py>`_ package with the support of
 membrane proteins and single-leg ABFE protocols.
 
-ABFE runs in ``batter`` follow a single-component design that applies :math:`\lambda`-dependent
+ABFE runs in ``batter`` follow a single-component design that applies lambda-dependent
 Boresch restraints, uses the simultaneous decoupling/recoupling (SDR) protocol with both
 the interacting and dummy ligands present, and employs soft-core electrostatics and van der Waals
 potentials to ensure smooth coupling/decoupling.
 
 ``batter`` supports resuming interrupted runs and flexible system definitions via modular YAML
-configuration files. Job submission is highly parallelized, with each :math:`\lambda`-window
-executed as an independent job. For example, 10 ligands × 24 :math:`\lambda`-windows yields **240** jobs submitted
+configuration files. Job submission is highly parallelized, with each lambda-window
+executed as an independent job. For example, 10 ligands × 24 lambda-windows yields **240** jobs submitted
 concurrently to your scheduler.
 
 
