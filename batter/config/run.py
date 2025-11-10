@@ -630,6 +630,13 @@ class RunSection(BaseModel):
     run_id: str = Field(
         "auto", description="Run identifier to use (``auto`` picks latest)."
     )
+    allow_run_id_mismatch: bool = Field(
+        False,
+        description=(
+            "When ``True``, allow reusing an explicit ``run_id`` even if the "
+            "configuration hash differs from the existing execution."
+        ),
+    )
 
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 

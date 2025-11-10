@@ -83,6 +83,44 @@ def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
     return None, sig_path
 
 
+def _resolve_signature_conflict(
+    stored_sig: str | None,
+    config_signature: str,
+    requested_run_id: str | None,
+    allow_run_id_mismatch: bool,
+    *,
+    run_id: str,
+    run_dir: Path,
+) -> bool:
+    """
+    Decide whether to continue using ``run_dir`` given the stored signature.
+
+    Returns
+    -------
+    bool
+        ``True`` if the caller should continue with ``run_dir``; ``False`` if a new
+        run directory must be created (only possible when ``requested_run_id`` is
+        ``"auto"``). Raises ``RuntimeError`` when a mismatch is not permitted.
+    """
+    if stored_sig is None or stored_sig == config_signature:
+        return True
+    if requested_run_id == "auto":
+        return False
+    if allow_run_id_mismatch:
+        logger.warning(
+            "Execution '%s' already exists with configuration hash %s (current %s); "
+            "continuing because allow_run_id_mismatch is enabled.",
+            run_id,
+            stored_sig[:12],
+            config_signature[:12],
+        )
+        return True
+    raise RuntimeError(
+        f"Execution '{run_id}' already exists with a different configuration. "
+        "Choose a different --run-id, enable allow_run_id_mismatch, or update the existing run."
+    )
+
+
 def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]:
     name = (protocol or "abfe").lower()
     mapping: Dict[str, tuple[Type[SystemBuilder], str]] = {
@@ -261,13 +299,15 @@ def run_from_yaml(
             requested_run_id,
         )
         stored_sig, sig_path = _stored_signature(run_dir)
-        if stored_sig is None or stored_sig == config_signature:
+        if _resolve_signature_conflict(
+            stored_sig,
+            config_signature,
+            requested_run_id,
+            rc.run.allow_run_id_mismatch,
+            run_id=run_id,
+            run_dir=run_dir,
+        ):
             break
-        if requested_run_id != "auto":
-            raise RuntimeError(
-                f"Execution '{run_id}' already exists with a different configuration. "
-                "Choose a different --run-id or update the existing run."
-            )
         logger.info(
             f"Existing execution {run_dir} uses different configuration hash ({stored_sig[:12]}); creating a fresh run.",
         )

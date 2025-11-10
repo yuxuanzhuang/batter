@@ -88,13 +88,19 @@ def _which_batter() -> str:
               default="raise", show_default=True)
 @click.option("--output-folder", type=click.Path(file_okay=False, path_type=Path), default=None)
 @click.option("--run-id", default=None, help="Override run_id (e.g., rep1). Use 'auto' to reuse latest.")
+@click.option(
+    "--allow-run-id-mismatch/--no-allow-run-id-mismatch",
+    default=None,
+    help="Allow reusing a provided run-id even if the stored configuration hash differs.",
+)
 @click.option("--dry-run/--no-dry-run", default=None, help="Override YAML run.dry_run.")
 @click.option("--only-equil/--full", default=None, help="Run only equil steps; override YAML.")
 @click.option("--slurm-submit/--local-run", default=False, help="Submit this run via SLURM (sbatch) instead of running locally.")
 @click.option("--slurm-manager-path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
               help="Optional path to a SLURM header/template to prepend to the generated script.")
 def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
-            run_id: Optional[str], dry_run: Optional[bool], only_equil: Optional[bool],
+            run_id: Optional[str], allow_run_id_mismatch: Optional[bool],
+            dry_run: Optional[bool], only_equil: Optional[bool],
             slurm_submit: bool, slurm_manager_path: Optional[Path]) -> None:
     """
     Execute a BATTER workflow defined in ``YAML_PATH``.
@@ -124,6 +130,8 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
     run_over = {}
     if run_id is not None:
         run_over["run_id"] = run_id
+    if allow_run_id_mismatch is not None:
+        run_over["allow_run_id_mismatch"] = allow_run_id_mismatch
     if dry_run is not None:
         run_over["dry_run"] = dry_run
     if only_equil is not None:
@@ -155,6 +163,10 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
             parts += ["--output-folder", shlex.quote(str(Path(output_folder).resolve()))]
         if run_id is not None:
             parts += ["--run-id", shlex.quote(run_id)]
+        if allow_run_id_mismatch is not None:
+            parts += [
+                "--allow-run-id-mismatch" if allow_run_id_mismatch else "--no-allow-run-id-mismatch"
+            ]
         if dry_run is not None:
             parts += ["--dry-run" if dry_run else "--no-dry-run"]
         if only_equil is not None:

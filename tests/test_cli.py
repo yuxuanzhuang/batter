@@ -65,6 +65,7 @@ def test_cli_run_invokes_run_from_yaml(monkeypatch, tmp_path: Path, runner: CliR
             "prune",
             "--run-id",
             "test",
+            "--allow-run-id-mismatch",
             "--dry-run",
         ],
     )
@@ -72,6 +73,7 @@ def test_cli_run_invokes_run_from_yaml(monkeypatch, tmp_path: Path, runner: CliR
     assert called["path"] == yaml_path
     assert called["kwargs"]["on_failure"] == "prune"
     assert called["kwargs"]["run_overrides"]["run_id"] == "test"
+    assert called["kwargs"]["run_overrides"]["allow_run_id_mismatch"] is True
     assert called["kwargs"]["run_overrides"]["dry_run"] is True
 
 
