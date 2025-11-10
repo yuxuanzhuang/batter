@@ -438,10 +438,6 @@ class FESimArgs(BaseModel):
         default_factory=list,
         description="Default lambda schedule when component-specific overrides are not provided.",
     )
-    sdr_dist: float = Field(
-        0.0,
-        description="SDR placement distance for SDR protocols (Å).",
-    )
     blocks: int = Field(
         0,
         description="Number of MBAR blocks to use during analysis.",

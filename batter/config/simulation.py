@@ -103,7 +103,6 @@ class SimulationConfig(BaseModel):
             "rocklin_correction": coerce_yes_no(_fe_attr("rocklin_correction", lambda: "no")),
             "enable_mcwat": coerce_yes_no(_fe_attr("enable_mcwat", lambda: "yes")),
             "lambdas": list(_fe_attr("lambdas", list) or []),
-            "sdr_dist": float(_fe_attr("sdr_dist", lambda: 0.0)),
             "blocks": int(_fe_attr("blocks", lambda: 0)),
             "lig_buffer": float(_fe_attr("lig_buffer", lambda: 15.0)),
             "lig_distance_force": float(_fe_attr("lig_distance_force", lambda: 5.0)),

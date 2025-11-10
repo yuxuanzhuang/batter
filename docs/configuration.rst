@@ -119,3 +119,8 @@ Quick Reference
    batter.config.dump_run_config
    batter.config.load_simulation_config
    batter.config.dump_simulation_config
+  The ``buffer_z`` value also determines the SDR translation distance: ligands are
+  shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
+  clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems
+  the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
+  bulk solvent above the membrane even if the YAML specifies a smaller buffer.
