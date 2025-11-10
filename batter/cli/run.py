@@ -27,6 +27,7 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
+from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
 
 
@@ -485,13 +486,11 @@ def _parse_jobname(jobname: str):
         "win": win,
     }
 
-_nat_split_rx = re.compile(r"(\d+)")
-
-def _natural_keys(val: str):
+def _natural_keys(val: str | None):
     """Return a tuple suitable for natural sorting of strings containing digits."""
     s = "" if val is None else str(val)
-    parts = _nat_split_rx.split(s)
-    return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
+    parts = natural_keys(s)
+    return tuple(p.lower() if isinstance(p, str) else p for p in parts)
 
 def _natkey_series(s: pd.Series) -> pd.Series:
     """Vectorised version of :func:`_natural_keys` for pandas Series."""

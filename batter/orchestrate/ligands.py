@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Dict
 
-
-def sanitize_ligand_name(name: str) -> str:
-    safe = re.sub(r"[^A-Za-z0-9_]+", "_", name.strip())
-    return safe.strip("_").upper()
+from batter.config.utils import sanitize_ligand_name
 
 
 def resolve_ligand_map(run_cfg, yaml_dir: Path) -> Dict[str, Path]:
