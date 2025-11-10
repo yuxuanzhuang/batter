@@ -90,14 +90,24 @@ Required Files
    long as the coordinates align with the provided ``protein_input.pdb``. Ensure hydrogens/protonation states
    are correct (Open Babel, `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_, or a similar tool can help).
 
-3. **Membrane system (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``  
-   Generated via Dabble (preferred with ``protein_input.pdb``).
+3. **System topology and coordinates (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``  
+   Needed for membrane protein system.
+   
+   The membrane-embedded system can be generated via `Dabble <https://github.com/Eigenstate/dabble>`_ (preferred with ``protein_input.pdb``).
    ``system_input.pdb`` must encode the correct unit-cell vectors (box information).
    If ``system_input.inpcrd`` is provided its coordinates take precedence.
-   The protein does not need to be aligned to ``protein_input.pdb`` and the alignment
-   will be done automatically based on the ``protein_align`` config setting.
+   
+   The protein **does not** need to be aligned to ``protein_input.pdb`` and the alignment
+   will be done automatically based on the ``create.protein_align`` config setting.
 
    Systems from other builders (CHARMM-GUI, Maestro, etc.) may work but are not extensively tested.
+
+   Command to generate POPC-embedded systems with Dabble::
+
+       dabble -i protein_input.mae -o system_input.prmtop --hmr -w 20 -O -ff charmm
+
+   In ``batter`` preparation process, the membrane molecules will be extracted (controlled by `create.lipid_mols`);
+   water and ion molecules around ``create.solv_shell`` will also be extracted.
 
 Generating Simulation Inputs
 ----------------------------

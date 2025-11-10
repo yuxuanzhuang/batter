@@ -65,7 +65,7 @@ Quickstart
 
    The following command will run compute-heavy jobs.
 
-   It will also dispatch multiple MD jobs to your scheduler.
+   It will also dispatch multiple MD jobs to your SLURM scheduler.
 
 Run an example configuration:
 
