@@ -38,8 +38,6 @@ run:
 
 fe_sim:
   num_fe_extends: 10
-  fe_type: uno_rest
-  remd: no
   lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
   blocks: 5
   eq_steps: 10000
@@ -47,8 +45,9 @@ fe_sim:
   z_steps1: 5000
   z_steps2: 30000
   cut: 9.0
-  barostat: 1
+  barostat: 2
   hmr: yes
   dt: 0.004
   temperature: 310.0
   unbound_threshold: 8.0
+  buffer_z: 25.0

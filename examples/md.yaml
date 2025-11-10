@@ -34,13 +34,14 @@ run:
   max_workers: 8
   on_failure: prune
   slurm:
-    partition: rondror
-    time: "4:00:00"
+    partition: owners
+    time: "12:00:00"
 
 fe_sim:
   num_fe_extends: 10
-  eq_steps: 10000
-  num_equil_extends: 6
+  eq_steps: 1000000
+  num_equil_extends: 50
+  # 200 ns
   cut: 9.0
   barostat: 1
   enable_mcwat: no

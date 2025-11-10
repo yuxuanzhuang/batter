@@ -34,9 +34,6 @@ run:
     time: "10:00:00"
 
 fe_sim:
-  num_fe_extends: 10
-  fe_type: uno_rest
-  remd: no
   lambdas: [
     0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,
     0.31188, 0.32772, 0.34359, 0.35892, 0.37497, 0.39086, 0.40584, 0.42001, 0.43453, 0.45056,
@@ -47,11 +44,12 @@ fe_sim:
   blocks: 5
   buffer_x: 12.0
   buffer_y: 12.0
-  buffer_z: 12.0
+  buffer_z: 15.0
   eq_steps: 10000
   num_equil_extends: 6
   z_steps1: 5000
   z_steps2: 100000
+  num_fe_extends: 10
   cut: 9.0
   barostat: 1
   hmr: yes

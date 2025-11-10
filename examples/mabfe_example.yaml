@@ -37,10 +37,6 @@ run:
     time: "12:00:00"
 
 fe_sim:
-  # single-leg component of SDR protocol
-  fe_type: uno_rest
-  # whether to use REMD for the ABFE windows, currently not supported.
-  remd: no
   # 48 lambda windows
   lambdas: [
     0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,
@@ -64,6 +60,8 @@ fe_sim:
   hmr: yes 
   # 4 fs time step with HMR
   dt: 0.004
+  # buffer_z for solvation layer above and below membrane
+  buffer_z: 25.0
   temperature: 310.0 
   # analysis only start from 4th extension (exclude the first three FE extensions)
   analysis_fe_range: [3, -1]
