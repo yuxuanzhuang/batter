@@ -901,10 +901,8 @@ def analyze_lig_task(
         fe_ts_err = np.zeros(LEN_FE_TIMESERIES) * np.nan
 
     # Optional Rocklin correction (component 'y')
-    if rocklin_correction:
+    if rocklin_correction and "y" in components:
         from .rocklin import run_rocklin_correction  # local import
-        if "y" not in components:
-            raise ValueError("Rocklin correction requires component 'y'.")
         universe = mda.Universe(
             f"{lig_path}/y/y-1/full.prmtop",
             f"{lig_path}/y/y-1/eq_output.pdb",
