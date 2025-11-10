@@ -94,7 +94,6 @@ Environment Notes
 
 * The CLI uses :mod:`batter.api` and is safe to call from activated conda/virtualenv
   installations.
-* ``batter run`` validates the YAML before invoking the orchestration layer and emits
-  friendly :class:`click.ClickException` error messages.
+* ``batter run`` validates the YAML before invoking the orchestration layer.
 * When submitting to SLURM, the generated script is named
   ``<hash>_job_manager.sbatch`` using a hash of the YAML contents and overrides.

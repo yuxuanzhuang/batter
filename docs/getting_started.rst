@@ -26,7 +26,7 @@ Understanding the outputs
 =========================
 
 ``batter`` generate several output files and directories during execution. To inspect
-simulations, analyze results, or troubleshoot issues, consult :doc:`developer_guide/`outputs now
+simulations, analyze results, or troubleshoot issues, consult :doc:`developer_guide` now
 and a dedicated guide will be added soon.
 
 
