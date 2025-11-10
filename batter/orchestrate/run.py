@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple, Type
 
 import json
+import yaml
 
 from loguru import logger
 
@@ -63,17 +64,15 @@ def _compute_run_signature(
     system_overrides: Dict[str, Any] | None,
     run_overrides: Dict[str, Any] | None,
 ) -> str:
-    data = Path(yaml_path).read_bytes()
+    raw = Path(yaml_path).read_text()
+    yaml_data = yaml.safe_load(raw) or {}
+    yaml_data.pop("run", None)
     payload = {
+        "config": _normalize_for_hash(yaml_data),
         "system_overrides": _normalize_for_hash(system_overrides or {}),
-        "run_overrides": _normalize_for_hash(run_overrides or {}),
     }
     frozen = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    h = hashlib.sha256()
-    h.update(data)
-    h.update(b"\0")
-    h.update(frozen)
-    return h.hexdigest()
+    return hashlib.sha256(frozen).hexdigest()
 
 
 def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
