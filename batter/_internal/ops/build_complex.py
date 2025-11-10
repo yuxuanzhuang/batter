@@ -454,7 +454,8 @@ def build_complex_z(ctx) -> bool:
     rec_res = int(recep_last) + 1;   p1_vmd  = p1_resid
 
     # 8) SDR distance
-    if not buffer_z: buffer_z = 25
+    if not buffer_z or buffer_z < 15:
+        buffer_z = 25
     sdr_dist = get_sdr_dist(str(_p("complex.pdb")), lig_resname=mol, buffer_z=buffer_z, extra_buffer=5)
 
     # 9) align & pdb4amber
