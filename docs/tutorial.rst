@@ -3,6 +3,10 @@
 Tutorial
 ========
 
+Currently, only the tutorial of absolute binding free energy (ABFE) calculation
+for the membrane protein system is available. More tutorials will be added in the future.
+
+
 Absolute Binding Free Energy (ABFE) Workflow with ``batter``
 ------------------------------------------------------------
 
@@ -55,7 +59,7 @@ Installation
        cd batter
        git submodule update --init --recursive
 
-#. Create and activate a Conda environment (matches ``environment.yml``)::
+#. Create and activate a Conda environment (with ``environment.yml``)::
 
        conda env create -n batter_env python=3.12 -y
        conda env update -n batter_env -f environment.yml
@@ -207,6 +211,17 @@ Optional: Additional Conformational Restraints
 
        extra_conformation_restraints: path/to/restraints.json
 
+See ``examples/conformational_restraints`` for a full example.
+
+Optional: Additional Positioinal Restraints
+----------------------------------------------
+
+#. Add selection string for the atoms to be positionally restraint to  ``create.extra_restraints`` at the resulting JSON file::
+
+       extra_restraints: "selection_string"
+
+See ``examples/extra_restraints`` for a full example.
+
 Analysis
 --------
 
@@ -221,3 +236,11 @@ Use the CLI helpers to inspect them::
 disk, and convergence plots appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing).
+
+Additional Resources
+--------------------
+
+- Start from SMILES and protein sequence (with or without available structures) to absolute
+binding free energy: `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/>`_
+
+- Unsure about the protonation state of the ligand: `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_.
