@@ -16,9 +16,10 @@ batter
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
 It provides **absolute binding free energy (ABFE)** calculations for ligands––**including
 charged species**–––bound to membrane proteins, as well as **absolute solvation free energy (ASFE)**.
-It also offers a single-leg AMBER+SDR pipeline that extends the original ``BAT.py`` package.
+It extends the original `BAT.py <https://github.com/GHeinzelmann/BAT.py>`_ package with the support of
+membrane proteins and single-leg ABFE protocols.
 
-ABFE runs in ``batter`` follow a single-leg design that applies :math:`\lambda`-dependent
+ABFE runs in ``batter`` follow a single-component design that applies :math:`\lambda`-dependent
 Boresch restraints, uses the simultaneous decoupling/recoupling (SDR) protocol with both
 the interacting and dummy ligands present, and employs soft-core electrostatics and van der Waals
 potentials to ensure smooth coupling/decoupling.
