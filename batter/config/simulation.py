@@ -314,6 +314,21 @@ class SimulationConfig(BaseModel):
             return [float(x) for x in parts]
         return v
 
+    @field_validator("barostat", mode="before")
+    @classmethod
+    def _coerce_barostat(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                return v
+            try:
+                return int(text)
+            except ValueError:
+                return v
+        if isinstance(v, float):
+            return int(v)
+        return v
+
     @field_validator("p1", "p2", "p3")
     @classmethod
     def _validate_anchor(cls, v: str) -> str:
