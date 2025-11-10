@@ -108,16 +108,13 @@ def _resolve_signature_conflict(
         return False
     if allow_run_id_mismatch:
         logger.warning(
-            "Execution '%s' already exists with configuration hash %s (current %s); "
-            "continuing because allow_run_id_mismatch is enabled.",
-            run_id,
-            stored_sig[:12],
-            config_signature[:12],
+            f"Execution '{run_id}' already exists with configuration hash {stored_sig[:12]} (current {config_signature[:12]}); "
+            "continuing because --allow-run-id-mismatch is enabled.",
         )
         return True
     raise RuntimeError(
         f"Execution '{run_id}' already exists with a different configuration. "
-        "Choose a different --run-id, enable allow_run_id_mismatch, or update the existing run."
+        "Choose a different --run-id, enable --allow-run-id-mismatch, or update the existing run."
     )
 
 
