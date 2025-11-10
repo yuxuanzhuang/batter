@@ -31,7 +31,7 @@ run:
   only_fe_preparation: false
   dry_run: false
   run_id: auto
-  max_workers: 8
+  max_workers: 1
   on_failure: prune
   slurm:
     partition: owners
