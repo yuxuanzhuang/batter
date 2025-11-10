@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 
 from loguru import logger
 
@@ -87,7 +87,10 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     temperature: float = 310.0
     water_model: str = "tip3p"
     rocklin_correction: bool = False
-    n_workers: int = 4
+    n_workers_override = payload.get("analysis_n_workers", None)
+    n_workers: int = int(n_workers_override) if n_workers_override is not None else 4
+    rest: Tuple[str, ...] = tuple()
+    sim_range_default: Optional[Tuple[int, int]] = None
 
     if sim_cfg is not None:
         if sim_cfg.components:
@@ -96,6 +99,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         water_model = str(sim_cfg.water_model).lower()
         rocklin_correction = bool(sim_cfg.rocklin_correction)
         rest = tuple(sim_cfg.rest)
+        sim_range_default = getattr(sim_cfg, "analysis_fe_range", None)
 
     components = list(payload.get("components", components))
     temperature = float(payload.get("temperature", temperature))
@@ -104,7 +108,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     n_workers = int(payload.get("n_workers", n_workers))
 
     # Optional: (start_idx, end_idx) subset of windows to analyze; else analyze all available
-    sim_range = payload.get("sim_range", None)
+    sim_range = payload.get("sim_range", sim_range_default)
     if sim_range is not None:
         try:
             sim_range = (int(sim_range[0]), int(sim_range[1]))

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple, Type
 
 import json
+import yaml
 
 from loguru import logger
 
@@ -63,17 +64,15 @@ def _compute_run_signature(
     system_overrides: Dict[str, Any] | None,
     run_overrides: Dict[str, Any] | None,
 ) -> str:
-    data = Path(yaml_path).read_bytes()
+    raw = Path(yaml_path).read_text()
+    yaml_data = yaml.safe_load(raw) or {}
+    yaml_data.pop("run", None)
     payload = {
+        "config": _normalize_for_hash(yaml_data),
         "system_overrides": _normalize_for_hash(system_overrides or {}),
-        "run_overrides": _normalize_for_hash(run_overrides or {}),
     }
     frozen = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    h = hashlib.sha256()
-    h.update(data)
-    h.update(b"\0")
-    h.update(frozen)
-    return h.hexdigest()
+    return hashlib.sha256(frozen).hexdigest()
 
 
 def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
@@ -81,6 +80,41 @@ def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
     if sig_path.exists():
         return sig_path.read_text().strip(), sig_path
     return None, sig_path
+
+
+def _resolve_signature_conflict(
+    stored_sig: str | None,
+    config_signature: str,
+    requested_run_id: str | None,
+    allow_run_id_mismatch: bool,
+    *,
+    run_id: str,
+    run_dir: Path,
+) -> bool:
+    """
+    Decide whether to continue using ``run_dir`` given the stored signature.
+
+    Returns
+    -------
+    bool
+        ``True`` if the caller should continue with ``run_dir``; ``False`` if a new
+        run directory must be created (only possible when ``requested_run_id`` is
+        ``"auto"``). Raises ``RuntimeError`` when a mismatch is not permitted.
+    """
+    if stored_sig is None or stored_sig == config_signature:
+        return True
+    if requested_run_id == "auto":
+        return False
+    if allow_run_id_mismatch:
+        logger.warning(
+            f"Execution '{run_id}' already exists with configuration hash {stored_sig[:12]} (current {config_signature[:12]}); "
+            "continuing because --allow-run-id-mismatch is enabled.",
+        )
+        return True
+    raise RuntimeError(
+        f"Execution '{run_id}' already exists with a different configuration. "
+        "Choose a different --run-id, enable --allow-run-id-mismatch, or update the existing run."
+    )
 
 
 def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]:
@@ -261,13 +295,15 @@ def run_from_yaml(
             requested_run_id,
         )
         stored_sig, sig_path = _stored_signature(run_dir)
-        if stored_sig is None or stored_sig == config_signature:
+        if _resolve_signature_conflict(
+            stored_sig,
+            config_signature,
+            requested_run_id,
+            rc.run.allow_run_id_mismatch,
+            run_id=run_id,
+            run_dir=run_dir,
+        ):
             break
-        if requested_run_id != "auto":
-            raise RuntimeError(
-                f"Execution '{run_id}' already exists with a different configuration. "
-                "Choose a different --run-id or update the existing run."
-            )
         logger.info(
             f"Existing execution {run_dir} uses different configuration hash ({stored_sig[:12]}); creating a fresh run.",
         )
@@ -489,7 +525,11 @@ def run_from_yaml(
     def _inject_mgr(p: Pipeline) -> Pipeline:
         patched = []
         for s in p.ordered_steps():
-            payload = (s.payload or StepPayload()).copy_with(job_mgr=job_mgr)
+            base_payload = s.payload or StepPayload()
+            updates = {"job_mgr": job_mgr}
+            if rc.run.max_active_jobs is not None:
+                updates["max_active_jobs"] = rc.run.max_active_jobs
+            payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
 
@@ -597,6 +637,16 @@ def run_from_yaml(
     # --------------------
     # PHASE 6: analyze (parallel)
     # --------------------
+    def _inject_analysis_workers(p: Pipeline) -> Pipeline:
+        patched = []
+        for s in p.ordered_steps():
+            payload = (s.payload or StepPayload()).copy_with(
+                analysis_n_workers=rc.run.max_workers
+            )
+            patched.append(Step(name=s.name, requires=s.requires, payload=payload))
+        return Pipeline(patched)
+
+    phase_analyze = _inject_analysis_workers(phase_analyze)
     if phase_analyze.ordered_steps():
         run_phase_skipping_done(
             phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers

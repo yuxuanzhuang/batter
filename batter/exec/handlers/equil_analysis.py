@@ -97,7 +97,7 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
     sim = payload.sim
     if sim is None:
         raise ValueError("[equil_analysis] Missing simulation configuration in payload.")
-    threshold = float(payload.get("unbound_threshold", 8.0))
+    threshold = float(payload.get("unbound_threshold", getattr(sim, "unbound_threshold", 8.0)))
     release_eq = list(sim.release_eq or [])
     if not release_eq:
         release_eq = [0.0]

@@ -140,7 +140,6 @@ def test_args_negative_force():
         ({"p1": "bad-anchor"}, "Anchor must look"),
         ({"remd": "yes"}, "REMD not implemented"),
         ({"dec_int": "ti"}, "TI integration not implemented"),
-        ({"num_waters": 10}, "num_waters"),
         ({"fe_type": "custom", "lambdas": [0.0], "num_equil_extends": 1}, "dec_method"),
         (
             {
@@ -198,6 +197,48 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
 def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     cfg = SimulationConfig(**base_sim_kwargs())
     assert cfg.enable_mcwat == "yes"
+
+
+def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        num_equil_extends=1,
+        eq_steps=1000,
+        num_fe_extends=2,
+    )
+    with caplog.at_level("WARNING"):
+        cfg = SimulationConfig.from_sections(create, fe_args)
+    assert cfg.analysis_fe_range == (0, -1)
+
+
+def test_analysis_fe_range_default_for_large_num_fe_extends(tmp_path: Path, caplog) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        num_equil_extends=1,
+        eq_steps=1000,
+        num_fe_extends=6,
+    )
+    with caplog.at_level("WARNING"):
+        cfg = SimulationConfig.from_sections(create, fe_args)
+    assert cfg.analysis_fe_range == (2, -1)
+    assert all("num_fe_extends" not in rec.message for rec in caplog.records)
+
+
+def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        num_equil_extends=1,
+        eq_steps=1000,
+        num_fe_extends=2,
+        analysis_fe_range=(5, 7),
+    )
+    with caplog.at_level("WARNING"):
+        cfg = SimulationConfig.from_sections(create, fe_args)
+    assert cfg.analysis_fe_range == (5, 7)
+    assert all("num_fe_extends" not in rec.message for rec in caplog.records)
 
 
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:

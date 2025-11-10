@@ -22,12 +22,19 @@ refer to :doc:`configuration`. It details every field in
 including advanced options such as restraint overrides, REMD setup, or SLURM-specific
 controls.
 
+Understanding the outputs
+=========================
+
+``batter`` generate several output files and directories during execution. To inspect
+simulations, analyze results, or troubleshoot issues, consult :doc:`developer_guide` now
+and a dedicated guide will be added soon.
+
+
 Developing Pipelines
 ====================
 
 If you plan to modify or extend BATTER's internals—for example, adding new pipeline
-steps or integrating a custom backend—read the :doc:`developer_guide` (and the focused
-:doc:`developer_guide/pipeline_payloads_and_metadata` chapter). These documents explain
+steps or integrating a custom backend—read the :doc:`developer_guide`. These documents explain
 the architecture, typed payloads, metadata model, and orchestration flow used by the
 codebase.
 

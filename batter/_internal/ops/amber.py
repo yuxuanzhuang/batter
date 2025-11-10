@@ -13,7 +13,7 @@ from batter._internal.templates import AMBER_FILES_DIR as amber_files_orig  # ty
 
 
 def _resolve_ligand_ff(sim: SimulationConfig) -> str:
-    """Normalize ligand force field selection for legacy AMBER decks.
+    """Normalize ligand force field selection for AMBER decks.
 
     Parameters
     ----------
@@ -62,7 +62,7 @@ def write_amber_templates(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     src = Path(amber_files_orig)
-    
+
     # 1) Copy template tree
     shutil.copytree(src, out_dir, dirs_exist_ok=True)
     logger.debug(f"Copied AMBER templates {src} → {out_dir}")
@@ -82,9 +82,9 @@ def write_amber_templates(
     ligand_ff = _resolve_ligand_ff(sim)
     lipid_ff = getattr(sim, "lipid_ff", "lipid21")
 
-    # Membrane-specific knobs (legacy names preserved)
+    # Membrane-specific settings
     if membrane:
-        p_coupling = getattr(sim, "p_coupling", "3")   # semiisotropic
+        p_coupling = getattr(sim, "p_coupling", "3")  # semiisotropic
         c_surften = getattr(sim, "c_surften", "3")
     else:
         p_coupling = "1"  # isotropic/anisotropic off for water only

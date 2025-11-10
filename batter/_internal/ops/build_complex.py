@@ -332,6 +332,7 @@ def build_complex_z(ctx) -> bool:
     max_adis    = sim.max_adis
     min_adis    = sim.min_adis
     buffer_z    = sim.buffer_z
+
     hmr         = sim.hmr
     membrane_builder = sim.membrane_simulation
 
@@ -454,7 +455,12 @@ def build_complex_z(ctx) -> bool:
     rec_res = int(recep_last) + 1;   p1_vmd  = p1_resid
 
     # 8) SDR distance
-    if not buffer_z: buffer_z = 25
+    if buffer_z <= 15: 
+        buffer_z = 25
+        logger.warning(f"buffer_z too small ({sim.buffer_z}); setting to 25 Å for SDR calculation.")
+    if membrane_builder:
+        buffer_z = get_buffer_z(equil_dir / f"equil-{mol}.pdb", targeted_buf=buffer_z)
+        
     sdr_dist = get_sdr_dist(str(_p("complex.pdb")), lig_resname=mol, buffer_z=buffer_z, extra_buffer=5)
 
     # 9) align & pdb4amber

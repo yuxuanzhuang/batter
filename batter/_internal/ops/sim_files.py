@@ -222,7 +222,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         )
 
     temperature = sim.temperature
-    num_sim = int(sim.num_fe_range)
+    num_sim = int(sim.num_fe_extends)
     steps1 = sim.dic_steps1[comp]
     steps2 = sim.dic_steps2[comp]
     ntwx = sim.ntwx
@@ -441,7 +441,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
 
     temperature = sim.temperature
-    num_sim = int(sim.num_fe_range)
+    num_sim = int(sim.num_fe_extends)
     steps1 = sim.dic_steps1["y"]
     steps2 = sim.dic_steps2["y"]
     ntwx = sim.ntwx

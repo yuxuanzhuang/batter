@@ -64,7 +64,7 @@ def create_box(ctx: BuildContext) -> None:
         raise ValueError("For water systems, buffer_x/y/z must be ≥ 5 Å.")
 
     if membrane_builder:
-        targeted_buffer_z = float(sim.buffer_z) or 25.0
+        targeted_buffer_z = max(float(sim.buffer_z), 25.0)
         buffer_z = get_buffer_z(window_dir / "build.pdb", targeted_buf=targeted_buffer_z)
         buffer_x = 0.0
         buffer_y = 0.0
@@ -73,11 +73,6 @@ def create_box(ctx: BuildContext) -> None:
         raise AttributeError("SimulationConfig missing 'water_model'.")
     water_model = str(sim.water_model).upper()
 
-    if not hasattr(sim, "num_waters"):
-        raise AttributeError("SimulationConfig missing 'num_waters'.")
-    num_waters = int(sim.num_waters)
-    if num_waters != 0:
-        raise NotImplementedError("Fixed number of waters not supported; use fixed z buffer.")
     if not hasattr(sim, "ion_def"):
         raise AttributeError("SimulationConfig missing 'ion_def'.")
     ion_def = sim.ion_def

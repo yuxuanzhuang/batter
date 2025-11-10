@@ -27,6 +27,7 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
+from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
 
 
@@ -87,13 +88,19 @@ def _which_batter() -> str:
               default="raise", show_default=True)
 @click.option("--output-folder", type=click.Path(file_okay=False, path_type=Path), default=None)
 @click.option("--run-id", default=None, help="Override run_id (e.g., rep1). Use 'auto' to reuse latest.")
+@click.option(
+    "--allow-run-id-mismatch/--no-allow-run-id-mismatch",
+    default=None,
+    help="Allow reusing a provided run-id even if the stored configuration hash differs.",
+)
 @click.option("--dry-run/--no-dry-run", default=None, help="Override YAML run.dry_run.")
 @click.option("--only-equil/--full", default=None, help="Run only equil steps; override YAML.")
 @click.option("--slurm-submit/--local-run", default=False, help="Submit this run via SLURM (sbatch) instead of running locally.")
 @click.option("--slurm-manager-path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
               help="Optional path to a SLURM header/template to prepend to the generated script.")
 def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
-            run_id: Optional[str], dry_run: Optional[bool], only_equil: Optional[bool],
+            run_id: Optional[str], allow_run_id_mismatch: Optional[bool],
+            dry_run: Optional[bool], only_equil: Optional[bool],
             slurm_submit: bool, slurm_manager_path: Optional[Path]) -> None:
     """
     Execute a BATTER workflow defined in ``YAML_PATH``.
@@ -108,6 +115,8 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
         Override for the system output folder.
     run_id : str, optional
         Requested execution identifier (``auto`` reuses the latest).
+    allow_run_id_mismatch : bool, optional
+        When ``True``, allow reusing a provided run-id even if the stored configuration hash differs.
     dry_run : bool, optional
         Override the ``run.dry_run`` flag from the YAML.
     only_equil : bool, optional
@@ -123,6 +132,8 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
     run_over = {}
     if run_id is not None:
         run_over["run_id"] = run_id
+    if allow_run_id_mismatch is not None:
+        run_over["allow_run_id_mismatch"] = allow_run_id_mismatch
     if dry_run is not None:
         run_over["dry_run"] = dry_run
     if only_equil is not None:
@@ -154,6 +165,10 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
             parts += ["--output-folder", shlex.quote(str(Path(output_folder).resolve()))]
         if run_id is not None:
             parts += ["--run-id", shlex.quote(run_id)]
+        if allow_run_id_mismatch is not None:
+            parts += [
+                "--allow-run-id-mismatch" if allow_run_id_mismatch else "--no-allow-run-id-mismatch"
+            ]
         if dry_run is not None:
             parts += ["--dry-run" if dry_run else "--no-dry-run"]
         if only_equil is not None:
@@ -485,13 +500,11 @@ def _parse_jobname(jobname: str):
         "win": win,
     }
 
-_nat_split_rx = re.compile(r"(\d+)")
-
-def _natural_keys(val: str):
+def _natural_keys(val: str | None):
     """Return a tuple suitable for natural sorting of strings containing digits."""
     s = "" if val is None else str(val)
-    parts = _nat_split_rx.split(s)
-    return tuple(int(p) if p.isdigit() else p.lower() for p in parts)
+    parts = natural_keys(s)
+    return tuple(p.lower() if isinstance(p, str) else p for p in parts)
 
 def _natkey_series(s: pd.Series) -> pd.Series:
     """Vectorised version of :func:`_natural_keys` for pandas Series."""
@@ -535,6 +548,7 @@ def report_jobs(partition=None, detailed=False):
             "status": status,
             "stage": meta["stage"],
             "run_id": meta["run_id"],
+            "identifier": meta['system_root'] + "/" + meta['run_id'] if meta['run_id'] else meta['system_root'],
             "system_root": meta["system_root"],
             "ligand": meta["ligand"],
             "comp": meta["comp"],
@@ -554,8 +568,7 @@ def report_jobs(partition=None, detailed=False):
     pending = (df["status"] == "PENDING").sum()
     click.echo(click.style(f"Total jobs: {total}, Running: {running}, Pending: {pending}", bold=True))
 
-    # group by run_id (fallback to system_root)
-    grp_key = df["run_id"].where(df["run_id"].notna(), df["system_root"])
+    grp_key = df["identifier"].where(df["identifier"].notna())
     df = df.assign(_group=grp_key)
     for gid, sub in df.groupby("_group"):
         sys_root = sub["system_root"].dropna().unique()

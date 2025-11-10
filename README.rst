@@ -4,24 +4,32 @@ batter
 .. image:: https://github.com/yuxuanzhuang/batter/workflows/CI/badge.svg
    :target: https://github.com/yuxuanzhuang/batter/actions?query=workflow%3ACI
 
+
 .. image:: https://codecov.io/gh/yuxuanzhuang/batter/branch/main/graph/badge.svg
    :target: https://codecov.io/gh/yuxuanzhuang/batter/branch/main
+
 
 .. image:: https://readthedocs.org/projects/batter/badge/?version=latest&style=flat
    :target: https://batter.readthedocs.io/en/latest/?badge=latest
    :alt: Documentation Status
 
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
-It adds support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
-with an AMBER + SDR pipeline to the original ``BAT.py`` package.
+It provides **absolute binding free energy (ABFE)** calculations for ligands––**including
+charged species**–––bound to membrane proteins, as well as **absolute solvation free energy (ASFE)**.
+It extends the original `BAT.py <https://github.com/GHeinzelmann/BAT.py>`_ package with the support of
+membrane proteins and single-leg ABFE protocols.
 
-ABFE runs in ``batter`` follow a single-leg design that applies λ-dependent Boresch restraints,
-uses the simultaneous decoupling/recoupling (SDR) protocol with both the interacting and dummy ligands
-present in the system, and employs softcore electrostatics/van der Waals potentials to maintain smooth
-turn-on/turn-off behaviour.
+ABFE runs in ``batter`` follow a single-component design that applies lambda-dependent
+Boresch restraints, uses the simultaneous decoupling/recoupling (SDR) protocol with both
+the interacting and dummy ligands present, and employs soft-core electrostatics and van der Waals
+potentials to ensure smooth coupling/decoupling. It also supports usage of H-REMD for enhanced sampling
+along the alchemical pathway.
 
-.. note::
-   The API is stabilizing. Some modules are still under active development, but the overall structure is in place.
+``batter`` supports resuming interrupted runs and flexible system definitions via modular YAML
+configuration files. Job submission is highly parallelized, with each lambda-window
+executed as an independent job. For example, 10 ligands × 24 lambda-windows yields **240** jobs submitted
+concurrently to your scheduler.
+
 
 Installation
 -------------------------------
@@ -50,8 +58,20 @@ Clone the repository, initialize submodules, and create the environment:
 
 This installs in editable mode so your code changes are immediately reflected.
 
+To use this package without the core components—useful for running CLI commands (e.g., ``batter report-jobs``),
+building docs, or running simple tests—install only the package itself:
+
+.. code-block:: bash
+   
+   pip install -e .
+
 Quickstart
 -------------------------------
+
+.. warning::
+   The following command will run compute-heavy jobs.
+   
+   It will also dispatch multiple MD jobs to your SLURM scheduler.
 
 Run an example configuration:
 
@@ -70,13 +90,13 @@ Use ``--help`` to see all commands:
 Examples
 ==============================
 
-YAMLs in ``examples/`` illustrate common setups:
+YAML files in ``examples/`` illustrate common setups:
 
 **Absolute Binding Free Energy (ABFE)**
    1. ``mabfe.yaml`` — membrane protein (e.g., B2AR) in a lipid bilayer
    2. ``mabfe_nonmembrane.yaml`` — soluble protein (e.g., BRD4) in water
-   3. ``extra_restraints/mabfe.yaml`` — add additional positional restraints to selected atoms
-   4. ``conformational_restraints/mabfe.yaml`` — add additional conformational restraints (distance between atoms)
+   3. ``extra_restraints/mabfe.yaml`` — add positional restraints to selected atoms
+   4. ``conformational_restraints/mabfe.yaml`` — add conformational restraints (distance between atoms)
 
 **Absolute Solvation Free Energy (ASFE)**
    1. ``masfe.yaml`` — small molecule (e.g., epinephrine) in water
@@ -84,11 +104,7 @@ YAMLs in ``examples/`` illustrate common setups:
 **Plain Molecular Dynamics (MD)**
    1. ``md.yaml`` — standard MD production run for a protein-ligand complex
 
-
-Notes
--------------------------------
-- Backends include local execution and SLURM-based submission (see CLI options).
-- Example YAMLs are intended as starting points; adjust to your system.
+Example YAMLs are intended as starting points; adjust to your system.
 
 Results Interpretation
 ----------------------
@@ -99,7 +115,7 @@ Use the CLI helpers to inspect and export them:
 - ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).
 - ``batter fe show <system_root> <run_id>`` – prints per-window data and metadata for a specific execution.
 
-A CSV file for all the FE results is stored under ``<system_root>/results``, see detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
+A CSV file for all the FE results is stored under ``<system_root>/results``. See detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
 
 Copyright
 -------------------------------

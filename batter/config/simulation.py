@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Literal, TYPE_CHECKING, Tuple
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr, field_validator, model_validator
 import re
 from loguru import logger
@@ -81,6 +81,21 @@ class SimulationConfig(BaseModel):
         extra_conf_rest = create.extra_conformation_restraints
         extra_restraints = create.extra_restraints
 
+        num_fe_extends_value = int(_fe_attr("num_fe_extends", lambda: 10))
+
+        def _analysis_range_default():
+            if num_fe_extends_value < 4:
+                logger.warning(
+                    "num_fe_extends={} is < 4; default analysis_fe_range will start at 0.",
+                    num_fe_extends_value,
+                )
+                return (0, -1)
+            return (2, -1)
+
+        analysis_fe_range_value = getattr(fe, "analysis_fe_range", None) if hasattr(fe, "analysis_fe_range") else None
+        if analysis_fe_range_value is None:
+            analysis_fe_range_value = _analysis_range_default()
+
         fe_data: dict[str, Any] = {
             "fe_type": _fe_attr("fe_type", lambda: "md"),
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
@@ -88,7 +103,6 @@ class SimulationConfig(BaseModel):
             "rocklin_correction": coerce_yes_no(_fe_attr("rocklin_correction", lambda: "no")),
             "enable_mcwat": coerce_yes_no(_fe_attr("enable_mcwat", lambda: "yes")),
             "lambdas": list(_fe_attr("lambdas", list) or []),
-            "sdr_dist": float(_fe_attr("sdr_dist", lambda: 0.0)),
             "blocks": int(_fe_attr("blocks", lambda: 0)),
             "lig_buffer": float(_fe_attr("lig_buffer", lambda: 15.0)),
             "lig_distance_force": float(_fe_attr("lig_distance_force", lambda: 5.0)),
@@ -114,6 +128,9 @@ class SimulationConfig(BaseModel):
             "cut": float(_fe_attr("cut", lambda: 9.0)),
             "gamma_ln": float(_fe_attr("gamma_ln", lambda: 1.0)),
             "barostat": int(_fe_attr("barostat", lambda: 2)),
+            "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
+            "analysis_fe_range": analysis_fe_range_value,
+            "num_fe_extends": num_fe_extends_value,
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -175,6 +192,15 @@ class SimulationConfig(BaseModel):
     sdr_dist: Optional[float] = Field(0.0, description="SDR placement distance (Å)")
     dec_method: Optional[str] = Field(None, description="Decoupling method (set for fe_type='custom')")
     blocks: int = Field(0, description="MBAR blocks")
+    unbound_threshold: float = Field(
+        8.0,
+        ge=0.0,
+        description="Distance (Å) between ligand COMs that classifies equilibration as unbound.",
+    )
+    analysis_fe_range: Optional[Tuple[int, int]] = Field(
+        (2, -1),
+        description="Optional tuple (start, end) limiting FE simulations analyzed per window.",
+    )
 
     # --- Force constants ---
     lig_distance_force: float = Field(0.0, description="Ligand COM distance spring (kcal/mol/Å^2)")
@@ -185,7 +211,6 @@ class SimulationConfig(BaseModel):
 
     # --- Solvent / box ---
     water_model: Literal["SPCE", "TIP4PEW", "TIP3P", "TIP3PF", "OPC"] = Field("TIP3P", description="Water model")
-    num_waters: int = Field(0, description="[DEPRECATED] Must remain 0 (automatic sizing)")
     buffer_x: float = Field(10.0, description="Box buffer X (Å)")
     buffer_y: float = Field(10.0, description="Box buffer Y (Å)")
     buffer_z: float = Field(10.0, description="Box buffer Z (Å)")
@@ -232,7 +257,7 @@ class SimulationConfig(BaseModel):
     gamma_ln: float = Field(1.0, description="Langevin γ (ps^-1)")
     barostat: Literal[1, 2] = Field(2, description="1=Berendsen, 2=MC barostat")
     dt: float = Field(0.004, description="Time step (ps)")
-    num_fe_range: int = Field(10, description="# restarts per λ")
+    num_fe_extends: int = Field(10, description="# restarts per λ")
     all_atoms: Literal["yes","no"] = Field("no", description="save all atoms for FE")
 
     # --- Force fields ---
@@ -289,6 +314,21 @@ class SimulationConfig(BaseModel):
             return [float(x) for x in parts]
         return v
 
+    @field_validator("barostat", mode="before")
+    @classmethod
+    def _coerce_barostat(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            text = v.strip()
+            if not text:
+                return v
+            try:
+                return int(text)
+            except ValueError:
+                return v
+        if isinstance(v, float):
+            return int(v)
+        return v
+
     @field_validator("p1", "p2", "p3")
     @classmethod
     def _validate_anchor(cls, v: str) -> str:
@@ -330,8 +370,6 @@ class SimulationConfig(BaseModel):
         # friendly notices
         if self.buffer_z == 0:
             logger.debug("buffer_z=0; automatic Z buffer will be applied for membranes.")
-        if self.num_waters != 0:
-            raise ValueError("'num_waters' is deprecated and must remain 0.")
 
         # Set components/dec_method by fe_type
         match self.fe_type:

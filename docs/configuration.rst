@@ -26,8 +26,11 @@ The run YAML file is divided into four top-level sections:
     coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
     ``lambdas`` or SDR restraints are no longer required.  Equilibration controls
     are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
-    (how many additional segments to run); release weights are derived internally
-    and kept at zero for every extend.
+    (how many additional segments to run). The total number of equilibration MD steps
+    therefore scales as ``num_equil_extends * eq_steps``. For FE production the
+    ``num_fe_extends`` field multiplies the stage-2 component steps (e.g.,
+    ``z_steps2``) so each window ultimately samples
+    ``num_fe_extends * <component>_steps2`` steps before moving on.
 ``run``
     Execution behaviour such as SLURM options, dry-run toggles, and failure
     policies. These fields populate :class:`batter.config.run.RunSection`.
@@ -116,3 +119,8 @@ Quick Reference
    batter.config.dump_run_config
    batter.config.load_simulation_config
    batter.config.dump_simulation_config
+  The ``buffer_z`` value also determines the SDR translation distance: ligands are
+  shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
+  clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems
+  the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
+  bulk solvent above the membrane even if the YAML specifies a smaller buffer.

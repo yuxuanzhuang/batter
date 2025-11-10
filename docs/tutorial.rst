@@ -3,6 +3,10 @@
 Tutorial
 ========
 
+Currently, only the tutorial of absolute binding free energy (ABFE) calculation
+for the membrane protein system is available. More tutorials will be added in the future.
+
+
 Absolute Binding Free Energy (ABFE) Workflow with ``batter``
 ------------------------------------------------------------
 
@@ -10,8 +14,37 @@ This tutorial walks through a membrane ABFE run powered by ``batter``. The workf
 applies λ-dependent Boresch restraints, uses the simultaneous decoupling/recoupling
 (SDR) protocol with both interacting and dummy ligands present, and relies on softcore
 electrostatics/van der Waals potentials so the entire calculation completes in a
-single leg. We reference ``examples/mabfe.yaml`` so you can reproduce the run locally
+single leg. We reference ``examples/mabfe_example.yaml`` so you can reproduce the run locally
 before adapting it to your own system.
+
+Quick walkthrough
+-----------------
+
+``batter`` orchestrates an end-to-end AMBER ABFE workflow that starts from protein +
+embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
+protein binding site. The main steps are:
+
+#. **system staging and loading** – A executon folder will be created under ``<system.output_folder>/executions/``
+   to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
+   resumed from the last successful step.
+#. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
+   options to choose charges (AM1-BCC by default)
+#. **Equilbration system preparation** – builds solvated/membrane-embedded
+   systems with the ligand in the binding site.
+#. **Equilibration** – Steps to run before FE production run. During this phase,
+   the ligand and protein are not restrained (unless explicitly configured).
+   If the ligand unbound from the binding site during equilibration, the run
+   is marked as unbound and skipped during FE production.
+#. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
+   to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
+#. **FE window generation and submission** – λ windows are created based on the configuration.
+#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after step 6.
+#. **FE production runs** – Each window is submitted as an independent SLURM job.
+   The main process monitors job status and streams updates to the terminal.
+   Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
+   to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
+#. **Analysis** – Once all windows complete, MBAR analysis is performed and
+   results are summarised in CSV/JSON formats with convergence plots. The worker pool for this stage follows ``run.max_workers``; optionally limit the trajectory range per window via ``fe_sim.analysis_fe_range`` (``[start, end]`` defaults to ``[2, -1]`` or ``[0, -1]`` when ``num_fe_extends < 4``).
 
 Installation
 ------------
@@ -26,7 +59,7 @@ Installation
        cd batter
        git submodule update --init --recursive
 
-#. Create and activate a Conda environment (matches ``environment.yml``)::
+#. Create and activate a Conda environment (with ``environment.yml``)::
 
        conda env create -n batter_env python=3.12 -y
        conda env update -n batter_env -f environment.yml
@@ -45,7 +78,7 @@ Installation
 Preparing the System
 --------------------
 
-Use ``examples/mabfe.yaml`` as the starting configuration. Each field is documented in
+Use ``examples/mabfe_example.yaml`` as the starting configuration. Each field is documented in
 ``batter.config.run``, but review the inputs below before running anything:
 
 Required Files
@@ -61,18 +94,30 @@ Required Files
    long as the coordinates align with the provided ``protein_input.pdb``. Ensure hydrogens/protonation states
    are correct (Open Babel, `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_, or a similar tool can help).
 
-3. **Membrane system (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``  
-   Generated via Dabble (preferred with ``protein_input.pdb``).
+3. **System topology and coordinates (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``  
+   Needed for membrane protein system.
+   
+   The membrane-embedded system can be generated via `Dabble <https://github.com/Eigenstate/dabble>`_ (preferred with ``protein_input.pdb``).
    ``system_input.pdb`` must encode the correct unit-cell vectors (box information).
    If ``system_input.inpcrd`` is provided its coordinates take precedence.
+   
+   The protein **does not** need to be aligned to ``protein_input.pdb`` and the alignment
+   will be done automatically based on the ``create.protein_align`` config setting.
+
    Systems from other builders (CHARMM-GUI, Maestro, etc.) may work but are not extensively tested.
 
+   Command to generate POPC-embedded systems with Dabble::
+
+       dabble -i protein_input.mae -o system_input.prmtop --hmr -w 20 -O -ff charmm
+
+   In ``batter`` preparation process, the membrane molecules will be extracted (controlled by `create.lipid_mols`);
+   water and ion molecules around ``create.solv_shell`` will also be extracted.
 
 Generating Simulation Inputs
 ----------------------------
 
 1. **Copy and edit the template.**  
-   Start from `examples/mabfe.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe.yaml>`_
+   Start from `examples/mabfe_example.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe_example.yaml>`_
    and save a copy beside your project data. Update:
 
    - ``system.output_folder`` – dedicated directory for outputs/logs.
@@ -83,16 +128,16 @@ Generating Simulation Inputs
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
-     
+
      P1 should preferably form a consistent electrostatics interaction with available
      bound ligands (e.g., a salt bridge).
-     
+
      For GPCR orthosteric sites, a common choice is P1=3x32,
      P2=2x53, P3=7x42.
 
 2. **Validate the configuration before heavy computation (Optional)**::
 
-       batter run examples/mabfe.yaml --dry-run
+       batter run examples/mabfe_example.yaml --dry-run
 
    This command runs ligand parameterisation (WARNING: heavy load), and equilibration system preparation.
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
@@ -101,23 +146,23 @@ Generating Simulation Inputs
    Once the dry-run completes, review ``<system.output_folder>/executions/<run_id>/``:
 
    - ``simulations/<LIGAND>/equil/full.pdb`` – ligand-specific equilibration systems.
-   Check if the ligand is correctly placed in the binding site,
-    and that membranes/solvent boxes look reasonable.
+     Check if the ligand is correctly placed in the binding site,
+     and that membranes/solvent boxes look reasonable.
 
 4. **Launch the full workflow manager (local execution)**::
 
-       batter run examples/mabfe.yaml
+       batter run examples/mabfe_example.yaml
 
    Production runs take hours to days depending on system size, the number of ligands,
    and available hardware. Progress is streamed to the terminal and to
    ``executions/<run_id>/logs/batter.log``.
 
 Submitting the manager job via SLURM (RECOMMENDED)
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To submit the same run through SLURM::
 
-    batter run examples/mabfe.yaml --slurm-submit
+    batter run examples/mabfe_example.yaml --slurm-submit
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.).
@@ -154,7 +199,6 @@ manager process but the SLURM jobs keep running, cancel them via::
 
     batter cancel-jobs --contains <system_path_reported_above>
 
-
 Optional: Additional Conformational Restraints
 ----------------------------------------------
 
@@ -166,6 +210,17 @@ Optional: Additional Conformational Restraints
 #. Point ``create.extra_conformation_restraints`` at the resulting JSON file::
 
        extra_conformation_restraints: path/to/restraints.json
+
+See ``examples/conformational_restraints`` for a full example.
+
+Optional: Additional Positioinal Restraints
+----------------------------------------------
+
+#. Add selection string for the atoms to be positionally restraint to  ``create.extra_restraints`` at the resulting JSON file::
+
+       extra_restraints: "selection_string"
+
+See ``examples/extra_restraints`` for a full example.
 
 Analysis
 --------
@@ -181,3 +236,11 @@ Use the CLI helpers to inspect them::
 disk, and convergence plots appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing).
+
+Additional Resources
+--------------------
+
+- Start from SMILES and protein sequence (with or without available structures) to absolute
+binding free energy: `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/>`_
+
+- Unsure about the protonation state of the ligand: `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_.

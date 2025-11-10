@@ -60,7 +60,7 @@ SLURM Utilities
 FE Toolkit Schedules
 ====================
 
-BATTER wraps the legacy ``fetkutils-tischedule.py`` script via ``batter fek-schedule`` so
+BATTER wraps the ``fetkutils-tischedule.py`` script from AMBERTOOLS via ``batter fek-schedule`` so
 you can optimise or analyse lambda schedules without leaving the main CLI.
 
 .. code-block:: console
@@ -94,7 +94,6 @@ Environment Notes
 
 * The CLI uses :mod:`batter.api` and is safe to call from activated conda/virtualenv
   installations.
-* ``batter run`` validates the YAML before invoking the orchestration layer and emits
-  friendly :class:`click.ClickException` error messages.
+* ``batter run`` validates the YAML before invoking the orchestration layer.
 * When submitting to SLURM, the generated script is named
   ``<hash>_job_manager.sbatch`` using a hash of the YAML contents and overrides.

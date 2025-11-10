@@ -12,6 +12,7 @@ create:
   system_coordinate: ../reference/adrb2_A_membrane.rst7
   protein_align: name CA and resid 50 to 200
   ligand_input: ../reference/ligands_dict.json
+  extra_conformation_restraints: rest.json
   ligand_ff: openff-2.2.1
   retain_lig_prot: true
   param_charge: am1bcc
@@ -19,7 +20,6 @@ create:
     - "name CA and resid 113"
     - "name CA and resid 82"
     - "name CA and resid 316"
-  extra_conformation_restraints: rest.json
   lipid_mol: ["POPC"]
   overwrite: false
   receptor_ff: protein.ff14SB
@@ -34,20 +34,19 @@ run:
   max_workers: 8
   on_failure: prune
   slurm:
-    partition: owners
+    partition: rondror
     time: "4:00:00"
 
 fe_sim:
-  fe_type: uno_rest
-  remd: no
   lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
   blocks: 5
-  eq_steps: 100000
+  eq_steps: 10000
   num_equil_extends: 6
   z_steps1: 5000
-  z_steps2: 300000
+  z_steps2: 30000
   cut: 9.0
   barostat: 1
   hmr: yes
   dt: 0.004
   temperature: 310.0
+  buffer_z: 25.0

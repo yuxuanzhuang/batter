@@ -27,7 +27,7 @@ wheels/
 examples/**/*fe
 examples/**/*md
 examples/ligand_params
-examples/**/new_api
+examples/**/ABFE_simulations
 examples/**/*job_manager.sbatch
 examples/**/*.err
 examples/**/*.out

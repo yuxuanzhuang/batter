@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable
+from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from batter.config.simulation import SimulationConfig
@@ -438,10 +438,6 @@ class FESimArgs(BaseModel):
         default_factory=list,
         description="Default lambda schedule when component-specific overrides are not provided.",
     )
-    sdr_dist: float = Field(
-        0.0,
-        description="SDR placement distance for SDR protocols (Å).",
-    )
     blocks: int = Field(
         0,
         description="Number of MBAR blocks to use during analysis.",
@@ -493,10 +489,10 @@ class FESimArgs(BaseModel):
     z_steps2: int = Field(300_000, description="Stage 2 steps for the 'z' component.")
     y_steps1: int = Field(50_000, description="Stage 1 steps for the 'y' component.")
     y_steps2: int = Field(300_000, description="Stage 2 steps for the 'y' component.")
-    ntpr: int = Field(1000, description="Energy print frequency.")
-    ntwr: int = Field(10_000, description="Restart write frequency.")
+    ntpr: int = Field(1_000, description="Energy print frequency.")
+    ntwr: int = Field(2_500, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
-    ntwx: int = Field(2500, description="Trajectory write frequency.")
+    ntwx: int = Field(25_000, description="Trajectory write frequency.")
     cut: float = Field(9.0, description="Nonbonded cutoff (Å).")
     gamma_ln: float = Field(1.0, description="Langevin gamma value (ps^-1).")
     dt: float = Field(0.004, description="MD timestep (ps).")
@@ -509,6 +505,20 @@ class FESimArgs(BaseModel):
     )
     temperature: float = Field(310.0, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
+    num_fe_extends: int = Field(
+        10,
+        ge=1,
+        description="# restarts per λ (controls how many FE simulations run per window).",
+    )
+    unbound_threshold: float = Field(
+        8.0,
+        ge=0.0,
+        description="Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
+    )
+    analysis_fe_range: Optional[Tuple[int, int]] = Field(
+        None,
+        description="Optional (start, end) simulation index range to analyze per FE window.",
+    )
 
     @field_validator("remd", "rocklin_correction", "hmr", "enable_mcwat", mode="before")
     @classmethod
@@ -523,6 +533,15 @@ class FESimArgs(BaseModel):
         if any(left > right for left, right in zip(v, v[1:])):
             raise ValueError("Lambda values must be in ascending order.")
         return v
+
+    @field_validator("analysis_fe_range")
+    @classmethod
+    def _validate_analysis_range(cls, value: Optional[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
+        if value is None:
+            return None
+        if len(value) != 2:
+            raise ValueError("analysis_fe_range must contain exactly two integers (start, end).")
+        return value
 
     @field_validator(
         "lig_distance_force",
@@ -564,10 +583,10 @@ class MDSimArgs(BaseModel):
     ntpr: int = Field(1000, description="Energy print frequency.")
     ntwr: int = Field(10_000, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
-    ntwx: int = Field(2500, description="Trajectory write frequency.")
+    ntwx: int = Field(25_000, description="Trajectory write frequency.")
     cut: float = Field(9.0, description="Nonbonded cutoff (Å).")
     gamma_ln: float = Field(1.0, description="Langevin gamma value (ps^-1).")
-    barostat: int = Field(1, description="Barostat selection (1=Berendsen, 2=MC).")
+    barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
     hmr: Literal["yes", "no"] = Field(
         "yes", description="Hydrogen mass repartitioning toggle."
     )
@@ -596,11 +615,23 @@ class RunSection(BaseModel):
         None,
         description="Parallel workers for local backend (None = auto, 0 = serial).",
     )
+    max_active_jobs: int | None = Field(
+        1000,
+        ge=0,
+        description="Max concurrent SLURM jobs for FE submissions (0 disables throttling).",
+    )
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
     )
     run_id: str = Field(
         "auto", description="Run identifier to use (``auto`` picks latest)."
+    )
+    allow_run_id_mismatch: bool = Field(
+        False,
+        description=(
+            "When ``True``, allow reusing an explicit ``run_id`` even if the "
+            "configuration hash differs from the existing execution."
+        ),
     )
 
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)

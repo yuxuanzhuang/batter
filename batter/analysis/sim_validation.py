@@ -213,7 +213,7 @@ class SimValidator:
         fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
         # Plot ligand binding site distance
         axes[0].plot(self.results['ligand_bs'], label='Ligand to binding site distance')
-        axes[0].set_ylabel('RMSD (Å)')
+        axes[0].set_ylabel('Distance (Å)')
         axes[0].legend()
         # Plot RMSD
         axes[1].plot(self.results['protein_rmsd'], label='Protein RMSD')
