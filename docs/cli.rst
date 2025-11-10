@@ -60,7 +60,7 @@ SLURM Utilities
 FE Toolkit Schedules
 ====================
 
-BATTER wraps the legacy ``fetkutils-tischedule.py`` script via ``batter fek-schedule`` so
+BATTER wraps the ``fetkutils-tischedule.py`` script from AMBERTOOLS via ``batter fek-schedule`` so
 you can optimise or analyse lambda schedules without leaving the main CLI.
 
 .. code-block:: console

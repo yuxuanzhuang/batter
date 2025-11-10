@@ -115,6 +115,8 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
         Override for the system output folder.
     run_id : str, optional
         Requested execution identifier (``auto`` reuses the latest).
+    allow_run_id_mismatch : bool, optional
+        When ``True``, allow reusing a provided run-id even if the stored configuration hash differs.
     dry_run : bool, optional
         Override the ``run.dry_run`` flag from the YAML.
     only_equil : bool, optional
