@@ -12,17 +12,19 @@ batter
    :alt: Documentation Status
 
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
-It adds support for **absolute binding free energy (ABFE)** of membrane proteins and **absolute solvation free energy (ASFE)**,
-and provides a single-leg AMBER+SDR pipeline, extending the original ``BAT.py`` package.
+It provides **absolute binding free energy (ABFE)** calculations for ligands---**including
+charged species**---bound to membrane proteins, as well as **absolute solvation free energy (ASFE)**.
+It also offers a single-leg AMBER+SDR pipeline that extends the original ``BAT.py`` package.
 
-ABFE runs in ``batter`` follow a single-leg design that applies λ-dependent Boresch restraints,
-uses the simultaneous decoupling/recoupling (SDR) protocol with both the interacting and dummy ligands
-present in the system, and employs softcore electrostatics/van der Waals potentials to maintain smooth
-turn-on/turn-off behavior.
+ABFE runs in ``batter`` follow a single-leg design that applies :math:`\lambda`-dependent
+Boresch restraints, uses the simultaneous decoupling/recoupling (SDR) protocol with both
+the interacting and dummy ligands present, and employs soft-core electrostatics and van der Waals
+potentials to ensure smooth coupling/decoupling.
 
-``batter`` supports resuming interrupted runs, flexible system definitions via modular YAML configuration files.
-The job submission is highly parallelized, with each λ-window running as an independent job. For example, if you
-have 10 ligands for ABFE calculations, each with 24 λ-windows, ``batter`` can submit 240 jobs to your scheduler simultaneously. 
+``batter`` supports resuming interrupted runs and flexible system definitions via modular YAML
+configuration files. Job submission is highly parallelized, with each :math:`\lambda`-window
+executed as an independent job. For example, 10 ligands × 24 :math:`\lambda`-windows yields **240** jobs submitted
+concurrently to your scheduler.
 
 Installation
 -------------------------------
