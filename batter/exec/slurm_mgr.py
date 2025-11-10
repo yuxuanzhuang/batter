@@ -472,7 +472,7 @@ class SlurmJobManager:
                 timeout_state = state == "TIMEOUT"
                 if state in SLURM_FINAL_BAD:
                     if timeout_state:
-                        logger.warning(
+                        logger.debug(
                             f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} hit TIMEOUT; resubmitting without counting as failure"
                         )
                     else:
@@ -494,7 +494,7 @@ class SlurmJobManager:
 
                 resub_cnt += 1
                 if timeout_state:
-                    logger.warning(
+                    logger.debug(
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} state=TIMEOUT; resubmitting (timeout retries are unlimited)"
                     )
                 else:
