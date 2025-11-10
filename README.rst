@@ -51,6 +51,13 @@ Clone the repository, initialize submodules, and create the environment:
 
 This installs in editable mode so your code changes are immediately reflected.
 
+To use this package without the core components—useful for running CLI commands (e.g., ``batter report-jobs``),
+building docs, or running simple tests—install only the package itself::
+
+.. code-block:: bash
+   
+   pip install -e .
+
 Quickstart
 -------------------------------
 
