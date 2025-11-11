@@ -124,7 +124,7 @@ def fe_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> E
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
     part = _read_partition(payload)
-    max_jobs = int(payload.get("max_active_jobs", 2000))
+    max_jobs = int(payload.get("max_active_jobs", 500))
 
     job_mgr = payload.get("job_mgr")
     if not isinstance(job_mgr, SlurmJobManager):
