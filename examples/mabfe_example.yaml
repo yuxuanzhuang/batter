@@ -35,6 +35,7 @@ run:
   slurm:
     partition: owners
     time: "12:00:00"
+  email_on_completion: yuzhuang@stanford.edu
 
 fe_sim:
   # 48 lambda windows

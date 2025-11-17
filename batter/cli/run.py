@@ -382,7 +382,7 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     "--workers",
     "-w",
     type=int,
-    default=None,
+    default=4,
     help="Number of local workers to pass to the FE analysis handler.",
 )
 @click.option(

@@ -259,6 +259,9 @@ def run_analysis_from_execution(
         payload_data["n_workers"] = n_workers
     if sim_range is not None:
         payload_data["sim_range"] = sim_range
+    logger.info(f"Running analysis for {len(children)} ligands in run '{run_id}'.")
+    logger.info(f"Number of workers: {n_workers}")
+    logger.info(f"Lambda window range: {sim_range}")
 
     payload = StepPayload(**payload_data)
     params = payload.to_mapping()
