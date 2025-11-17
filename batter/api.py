@@ -295,6 +295,8 @@ def run_analysis_from_execution(
         protocol=protocol,
     )
     if failures:
-        failed = ", ".join([f"{name} ({status}: {reason})" for name, status, reason in failures])
-        logger.warning(f"Re-analysis recorded issues for run '{run_id}': {failed}")
+        failed = ", ".join(
+            [f"{name} ({status}: {reason})" for name, status, reason in failures]
+        )
+        logger.warning(f"Analysis recorded issues for run '{run_id}': {failed}")
     logger.info(f"Analysis complete for run '{run_dir}'.")

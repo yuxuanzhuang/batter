@@ -151,7 +151,9 @@ class FEResultsRepository:
             df = pd.read_csv(self._idx)
             # Remove existing entry with same (run_id, ligand)
             if {"run_id", "ligand"}.issubset(df.columns):
-                df = df[~((df["run_id"] == row["run_id"]) & (df["ligand"] == row["ligand"]))].copy()
+                df = df[
+                    ~((df["run_id"] == row["run_id"]) & (df["ligand"] == row["ligand"]))
+                ].copy()
         else:
             # Start from an empty DataFrame with the right columns
             df = pd.DataFrame(columns=cols)
@@ -164,7 +166,10 @@ class FEResultsRepository:
         # Append the new row without using concat
         # Make sure we only write known columns; fill missing with NA
         new_row = {col: row.get(col, pd.NA) for col in cols}
-        df.loc[len(df)] = new_row
+        if df.empty:
+            df = pd.DataFrame([new_row], columns=cols)
+        else:
+            df.loc[len(df)] = new_row
 
         # Enforce column order
         df = df[cols]
