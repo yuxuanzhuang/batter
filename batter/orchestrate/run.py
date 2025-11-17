@@ -403,7 +403,9 @@ def run_from_yaml(
             backend.run(step, run_sys, step.params)
 
     # Locate sim_overrides from system_prep (under run_dir)
-    overrides_path = run_dir / "artifacts" / "config" / "sim_overrides.json"
+    config_dir = run_dir / "artifacts" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    overrides_path = config_dir / "sim_overrides.json"
     sim_cfg_updated = sim_cfg
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
@@ -411,12 +413,24 @@ def run_from_yaml(
             update={k: v for k, v in upd.items() if v is not None}
         )
 
-        from batter.config.io import write_yaml_config
+    from batter.config.io import write_yaml_config
 
-        (run_dir / "artifacts" / "config").mkdir(parents=True, exist_ok=True)
-        write_yaml_config(
-            sim_cfg_updated, run_dir / "artifacts" / "config" / "sim.resolved.yaml"
+    write_yaml_config(
+        sim_cfg_updated, config_dir / "sim.resolved.yaml"
+    )
+
+    run_meta_path = config_dir / "run_meta.json"
+    run_meta_path.write_text(
+        json.dumps(
+            {
+                "protocol": rc.protocol,
+                "backend": rc.backend,
+                "system_name": rc.create.system_name,
+                "run_id": run_id,
+            },
+            indent=2,
         )
+    )
 
     # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
     removed = {"system_prep", "system_prep_asfe", "param_ligands"}
@@ -671,87 +685,16 @@ def run_from_yaml(
         )
         return
 
-    # Store at the system store (shared across executions of this system)
     store = ArtifactStore(rc.system.output_folder)
     repo = FEResultsRepository(store)
-
-    failures: list[tuple[str, str]] = []
-    for child in children_all:
-        lig_name = child.meta["ligand"]
-        mol_name = child.meta["residue_name"]
-        results_dir = child.root / "fe" / "Results"
-        total_dG, total_se = None, None
-
-        # Preferred: parse Results.dat
-        dat = results_dir / "Results.dat"
-        if dat.exists():
-            try:
-                tdg, tse, _ = parse_results_dat(dat)
-                total_dG, total_se = tdg, tse
-            except Exception as e:
-                logger.warning(f"[{lig_name}] Failed to parse Results.dat: {e}")
-
-        # Fallback: try JSON component results
-        if total_dG is None or total_se is None:
-            tdg, tse = fallback_totals_from_json(results_dir)
-            total_dG = tdg if total_dG is None else total_dG
-            total_se = tse if total_se is None else total_se
-
-        if total_dG is None or total_se is None:
-            failures.append((lig_name, "no_totals_found"))
-            logger.warning(f"[{lig_name}] No totals found under {results_dir}")
-            continue
-
-        # Gather ligand metadata from the parameter store to report additional provenance
-        canonical_smiles = None
-        original_name = lig_name
-        original_path = None
-        param_dirs = child.meta.get("param_dir_dict", {}) or {}
-        param_dir = (
-            param_dirs.get(child.meta.residue_name) if child.meta.residue_name else None
-        )
-        if param_dir:
-            meta_path = Path(param_dir) / "metadata.json"
-            if meta_path.exists():
-                try:
-                    meta = json.loads(meta_path.read_text())
-                except Exception as exc:  # pragma: no cover - best-effort metadata
-                    logger.debug(f"Failed to read ligand metadata {meta_path}: {exc}")
-                    meta = {}
-                canonical_smiles = meta.get("canonical_smiles")
-                original_path = meta.get("input_path")
-                aliases = meta.get("aliases") or []
-                if aliases:
-                    original_name = aliases[0]
-                else:
-                    original_name = meta.get("prepared_base") or original_name
-
-        try:
-            rec = FERecord(
-                run_id=run_id,
-                ligand=lig_name,
-                mol_name=mol_name,
-                system_name=sim_cfg_updated.system_name,
-                fe_type=sim_cfg_updated.fe_type,
-                temperature=sim_cfg_updated.temperature,
-                method=sim_cfg_updated.dec_int,
-                total_dG=total_dG,
-                total_se=total_se,
-                components=list(sim_cfg_updated.components),
-                windows=[],  # optional: can be populated later
-                canonical_smiles=canonical_smiles,
-                original_name=original_name,
-                original_path=original_path,
-                protocol=rc.protocol,
-            )
-            repo.save(rec, copy_from=results_dir)
-            logger.info(
-                f"Saved FE record for ligand {lig_name}"
-                f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
-            )
-        except Exception as e:
-            logger.warning(f"Could not save FE record for {lig_name}: {e}")
-            failures.append((lig_name, f"save_failed: {e}"))
+    failures = save_fe_records(
+        run_dir=run_dir,
+        run_id=run_id,
+        children_all=children_all,
+        sim_cfg_updated=sim_cfg_updated,
+        repo=repo,
+        protocol=rc.protocol,
+    )
 
     if failures:
         failed = ", ".join([f"{n} ({m})" for n, m in failures])
@@ -825,3 +768,95 @@ def _notify_run_completion(
         logger.warning(f"Failed to send completion email to {recipient}: {exc}")
     except Exception as exc:  # pragma: no cover - best-effort notification
         logger.warning(f"Unexpected error while sending completion email: {exc}")
+
+
+def _extract_ligand_metadata(child: SimSystem) -> tuple[str | None, str | None, str | None]:
+    canonical_smiles: str | None = None
+    original_name: str | None = child.meta.get("ligand")
+    original_path: str | None = None
+
+    param_dirs = child.meta.get("param_dir_dict", {}) or {}
+    residue_name = child.meta.get("residue_name")
+    param_dir = param_dirs.get(residue_name) if residue_name else None
+    if param_dir:
+        meta_path = Path(param_dir) / "metadata.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+            except Exception as exc:  # pragma: no cover - best-effort metadata
+                logger.debug(f"Failed to read ligand metadata {meta_path}: {exc}")
+                meta = {}
+            canonical_smiles = meta.get("canonical_smiles")
+            original_path = meta.get("input_path")
+            aliases = meta.get("aliases") or []
+            if aliases:
+                original_name = aliases[0]
+            else:
+                original_name = meta.get("prepared_base") or original_name
+    return canonical_smiles, original_name, original_path
+
+
+def save_fe_records(
+    *,
+    run_dir: Path,
+    run_id: str,
+    children_all: list[SimSystem],
+    sim_cfg_updated: SimulationConfig,
+    repo: FEResultsRepository,
+    protocol: str,
+) -> list[tuple[str, str]]:
+    failures: list[tuple[str, str]] = []
+    for child in children_all:
+        lig_name = child.meta["ligand"]
+        mol_name = child.meta["residue_name"]
+        results_dir = child.root / "fe" / "Results"
+        total_dG, total_se = None, None
+
+        dat = results_dir / "Results.dat"
+        if dat.exists():
+            try:
+                tdg, tse, _ = parse_results_dat(dat)
+                total_dG, total_se = tdg, tse
+            except Exception as exc:
+                logger.warning(f"[{lig_name}] Failed to parse Results.dat: {exc}")
+
+        if total_dG is None or total_se is None:
+            tdg, tse = fallback_totals_from_json(results_dir)
+            total_dG = tdg if total_dG is None else total_dG
+            total_se = tse if total_se is None else total_se
+
+        if total_dG is None or total_se is None:
+            failures.append((lig_name, "no_totals_found"))
+            logger.warning(f"[{lig_name}] No totals found under {results_dir}")
+            continue
+
+        canonical_smiles, original_name, original_path = _extract_ligand_metadata(child)
+
+        try:
+            rec = FERecord(
+                run_id=run_id,
+                ligand=lig_name,
+                mol_name=mol_name,
+                system_name=sim_cfg_updated.system_name,
+                fe_type=sim_cfg_updated.fe_type,
+                temperature=sim_cfg_updated.temperature,
+                method=sim_cfg_updated.dec_int,
+                total_dG=total_dG,
+                total_se=total_se,
+                components=list(sim_cfg_updated.components),
+                windows=[],  # optional: can be populated later
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=protocol,
+            )
+            repo.save(rec, copy_from=results_dir)
+            logger.info(
+                f"Saved FE record for ligand {lig_name}"
+                f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
+            )
+        except Exception as exc:
+            logger.warning(f"Could not save FE record for {lig_name}: {exc}")
+            failures.append((lig_name, f"save_failed: {exc}"))
+
+    return failures

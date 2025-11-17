@@ -44,6 +44,13 @@ Display a specific FE record::
 
 If the run contains multiple ligands, pass ``--ligand`` to disambiguate.
 
+Re-run FE analysis for a saved execution::
+
+   batter fe analyze work/adrb2 run-20240101 --ligand LIG1 --workers 4
+
+Use ``--workers`` to control parallelism and ``--sim-range`` (``start,end``) to restrict
+which windows are parsed.
+
 Clone Executions
 ================
 

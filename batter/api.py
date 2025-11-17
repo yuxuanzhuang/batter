@@ -24,13 +24,21 @@ Inspect FE records stored in a work directory::
     # pass ``ligand`` when the run contains more than one ligand
     record = load_fe_run(\"work/adrb2\", latest, ligand=\"LIG1\")
 
+Re-run FE analysis on an existing execution::
+
+    from batter.api import run_analysis_from_execution
+    run_analysis_from_execution(\"work/adrb2\", latest, ligand=\"LIG1\")
+
 For more examples, refer to ``docs/getting_started.rst`` and the tutorials.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import Any, TYPE_CHECKING, Sequence, Union
+
+from loguru import logger
 
 from ._version import __version__  # semantic version string
 
@@ -45,7 +53,7 @@ from .config import (
 )
 
 # --- Orchestration entrypoint ---
-from .orchestrate.run import run_from_yaml
+from .orchestrate.run import run_from_yaml, save_fe_records
 
 # --- Portable runtime + FE results ---
 from .runtime.portable import ArtifactStore
@@ -53,7 +61,10 @@ from .runtime.fe_repo import FEResultsRepository, FERecord, WindowResult
 from .utils.exec_clone import clone_execution
 
 # --- System descriptor (read-only for users) ---
-from .systems.core import SimSystem
+from .systems.core import SimSystem, SystemMeta
+
+from batter.pipeline.payloads import StepPayload
+from batter.pipeline.step import Step
 
 if TYPE_CHECKING:
     import pandas as pd  # type: ignore[assignment]  # for type hints only
@@ -80,6 +91,7 @@ __all__ = [
     # convenience helpers
     "list_fe_runs",
     "load_fe_run",
+    "run_analysis_from_execution",
     # execution cloning
     "clone_execution",
 ]
@@ -142,3 +154,126 @@ def load_fe_run(
         )
     ligand_name = matches.iloc[0]["ligand"]
     return repo.load(run_id, ligand_name)
+
+
+def run_analysis_from_execution(
+    work_dir: Union[str, Path],
+    run_id: str,
+    *,
+    ligand: str | None = None,
+    components: Sequence[str] | None = None,
+    n_workers: int | None = None,
+    sim_range: tuple[int, int] | None = None,
+) -> None:
+    """
+    Re-run FE analysis for a partially finished execution.
+
+    Parameters
+    ----------
+    work_dir : str or Path
+        Root directory containing the portable execution store.
+    run_id : str
+        Identifier of the execution (e.g., ``run-20240101``).
+    ligand : str, optional
+        Ligand identifier to target when only a subset should be analyzed.
+    components : sequence of str, optional
+        Components to include during analysis (overrides ``sim_cfg.components``).
+    n_workers : int, optional
+        Number of worker processes requested for the analysis handler.
+    sim_range : (int, int), optional
+        (start, end) range of lambda windows to analyze.
+    """
+    work_root = Path(work_dir)
+    run_dir = work_root / "executions" / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run '{run_id}' does not exist under {work_root}.")
+
+    config_dir = run_dir / "artifacts" / "config"
+    sim_cfg_path = config_dir / "sim.resolved.yaml"
+    if not sim_cfg_path.exists():
+        raise FileNotFoundError(
+            f"Simulation configuration missing for run '{run_id}' at {sim_cfg_path}."
+        )
+    sim_cfg = load_sim_config(sim_cfg_path)
+
+    run_meta_path = config_dir / "run_meta.json"
+    run_meta: dict[str, Any] = {}
+    if run_meta_path.exists():
+        run_meta = json.loads(run_meta_path.read_text()) or {}
+    protocol = run_meta.get("protocol", "abfe")
+    system_name = run_meta.get("system_name") or sim_cfg.system_name
+
+    index_path = run_dir / "artifacts" / "ligand_params" / "index.json"
+    if not index_path.exists():
+        raise FileNotFoundError(
+            f"Ligand index missing for run '{run_id}' at {index_path}."
+        )
+    ligands_payload = json.loads(index_path.read_text()) or {}
+    entries = ligands_payload.get("ligands", [])
+    if not entries:
+        raise RuntimeError(f"No ligands recorded for run '{run_id}'.")
+
+    param_dir_dict = {
+        entry.get("residue_name"): entry.get("store_dir")
+        for entry in entries
+        if entry.get("residue_name") and entry.get("store_dir")
+    }
+
+    requested: Sequence[str] | None = [ligand] if ligand else None
+    children: list[SimSystem] = []
+    for entry in entries:
+        lig_name = entry["ligand"]
+        if requested and lig_name not in requested:
+            continue
+        child_root = run_dir / "simulations" / lig_name
+        if not child_root.is_dir():
+            raise FileNotFoundError(
+                f"Simulation directory for ligand '{lig_name}' was not found at {child_root}."
+            )
+        meta = SystemMeta(
+            ligand=lig_name,
+            residue_name=entry.get("residue_name"),
+            param_dir_dict=dict(param_dir_dict) if param_dir_dict else {},
+        )
+        children.append(
+            SimSystem(
+                name=f"{system_name}:{lig_name}:{run_id}",
+                root=child_root,
+                meta=meta,
+            )
+        )
+
+    if requested and not children:
+        raise KeyError(f"Ligand '{ligand}' not present in run '{run_id}'.")
+
+    payload_data: dict[str, Any] = {"sim": sim_cfg}
+    if components:
+        payload_data["components"] = list(components)
+    if n_workers is not None:
+        payload_data["analysis_n_workers"] = n_workers
+        payload_data["n_workers"] = n_workers
+    if sim_range is not None:
+        payload_data["sim_range"] = sim_range
+
+    payload = StepPayload(**payload_data)
+    params = payload.to_mapping()
+    analyze_step = Step(name="analyze")
+    from batter.exec.handlers.fe_analysis import analyze_handler
+
+    for child in children:
+        analyze_handler(analyze_step, child, params)
+
+    store = ArtifactStore(work_root)
+    repo = FEResultsRepository(store)
+    failures = save_fe_records(
+        run_dir=run_dir,
+        run_id=run_id,
+        children_all=children,
+        sim_cfg_updated=sim_cfg,
+        repo=repo,
+        protocol=protocol,
+    )
+    if failures:
+        failed = ", ".join([f"{name} ({reason})" for name, reason in failures])
+        logger.warning(f"Re-analysis recorded issues for run '{run_id}': {failed}")
+    logger.info(f"Analysis re-run complete for run '{run_dir}'.")

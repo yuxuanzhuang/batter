@@ -23,6 +23,7 @@ from batter.api import (
     clone_execution,
     list_fe_runs,
     load_fe_run,
+    run_analysis_from_execution,
     run_from_yaml,
 )
 from batter.config.run import RunConfig
@@ -365,6 +366,66 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
             click.echo(df.to_string(index=False))
     else:
         click.secho("\n(no per-window data saved)", fg="yellow")
+
+
+@fe.command("analyze")
+@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("run_id", type=str)
+@click.option(
+    "--ligand",
+    "-l",
+    type=str,
+    default=None,
+    help="Select a single ligand when multiple records exist for the run.",
+)
+@click.option(
+    "--workers",
+    "-w",
+    type=int,
+    default=None,
+    help="Number of local workers to pass to the FE analysis handler.",
+)
+@click.option(
+    "--sim-range",
+    type=str,
+    default=None,
+    help="Subset of lambda windows to analyze, formatted as ``start,end``.",
+)
+def fe_analyze(
+    work_dir: Path,
+    run_id: str,
+    ligand: str | None,
+    workers: int | None,
+    sim_range: str | None,
+) -> None:
+    """
+    Re-run the FE analysis stage for a stored execution.
+    """
+    parsed_range: tuple[int, int] | None = None
+    if sim_range:
+        parts = sim_range.split(",")
+        if len(parts) != 2:
+            raise click.ClickException("`--sim-range` expects two comma-separated integers.")
+        try:
+            parsed_range = (int(parts[0]), int(parts[1]))
+        except ValueError as exc:
+            raise click.ClickException(f"Invalid `--sim-range`: {exc}")
+
+    try:
+        run_analysis_from_execution(
+            work_dir,
+            run_id,
+            ligand=ligand,
+            n_workers=workers,
+            sim_range=parsed_range,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+
+    click.echo(
+        f"Analysis re-run scheduled for '{run_id}'"
+        f"{' (ligand ' + ligand + ')' if ligand else ''}."
+    )
 
 # ------------------------ execution cloning ---------------------------
 @cli.command("clone-exec")
