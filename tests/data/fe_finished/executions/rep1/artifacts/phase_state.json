@@ -1,0 +1,29 @@
+{
+  "phases": {
+    "param_ligands": {
+      "required": [
+        [
+          "artifacts/ligand_params/index.json"
+        ]
+      ],
+      "success": [
+        [
+          "artifacts/ligand_params/index.json"
+        ]
+      ]
+    },
+    "system_prep": {
+      "required": [
+        [
+          "artifacts/config/sim_overrides.json"
+        ]
+      ],
+      "success": [
+        [
+          "artifacts/config/sim_overrides.json"
+        ]
+      ]
+    }
+  },
+  "version": 1
+}

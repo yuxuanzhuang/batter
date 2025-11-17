@@ -1,0 +1,2402 @@
+
+          -------------------------------------------------------
+          Amber 24 PMEMD                              2024
+          -------------------------------------------------------
+
+| PMEMD implementation of SANDER, Release 24
+
+|  Compiled date/time: Wed Jan 15 09:38:10 2025
+| Run on 11/10/2025 at 01:28:33
+
+|   Executable path: pmemd.cuda_DPFP
+| Working directory: /oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/abfe-adrb2_A-20251110T081259Z/simulations/G1I/fe/z/z16
+|          Hostname: sh02-12n15.int
+
+  [-O]verwriting output
+
+File Assignments:
+|   MDIN: mini.in                                                               
+|  MDOUT: mini.in.out                                                           
+| INPCRD: ../z-1/eqnpt04.rst7                                                   
+|   PARM: full.hmr.prmtop                                                       
+| RESTRT: mini.in.rst7                                                          
+|   REFC: ../z-1/eqnpt04.rst7                                                   
+|  MDVEL: mdvel                                                                 
+|   MDEN: mden                                                                  
+|  MDCRD: mini.in.nc                                                            
+| MDINFO: mdinfo                                                                
+|  MDFRC: mdfrc                                                                 
+
+
+ Here is the input file:
+
+*******************************************************                        
+*****************************       mini.in                                    
+*******************************************************                        
+Minimizing.                                                                    
+ &cntrl                                                                        
+  imin = 1,                                                                    
+  ntx = 1,                                                                     
+  ntxo = 1,                                                                    
+  ntpr = 50,                                                                   
+  maxcyc = 2000,                                                               
+  ntwr = 50,                                                                   
+  ncyc = 500,                                                                  
+  irest = 0,                                                                   
+  ntmin = 2,                                                                   
+  ntf = 1,                                                                     
+  ntc = 1,                                                                     
+  ntb = 1,                                                                     
+  cut = 9.0,                                                                   
+  nmropt = 1,                                                                  
+  pencut = -1,                                                                 
+  ntr = 1,                                                                     
+  restraint_wt = 50.0,                                                         
+  restraintmask = '(@CA,C,N,P31 | :g1i | :2) & !@H=',                          
+  infe = 1,                                                                    
+  icfe = 1,                                                                    
+  clambda = 0.70000,                                                           
+  timask1 = ':287',                                                            
+  timask2 = ':288',                                                            
+  ifsc=1,                                                                      
+  scmask1=':287',                                                              
+  scmask2=':288',                                                              
+  gti_cut   = 1,                                                               
+  gti_output = 1,                                                              
+  gti_add_sc = 25,                                                             
+  gti_scale_beta  = 1,                                                         
+  gti_lam_sch = 1,                                                             
+  gti_ele_sc  = 1,                                                             
+  gti_vdw_sc  = 1,                                                             
+  gti_cut_sc  = 2,                                                             
+  scalpha = 0.5,                                                               
+  scbeta = 1.0,                                                                
+  gti_cut_sc_on   = 7,                                                         
+  gti_cut_sc_off  = 9,                                                         
+  gti_ele_exp     = 2,                                                         
+  gti_vdw_exp     = 2,                                                         
+  gti_chg_keep    = 1,                                                         
+  gti_bat_sc      = 1,                                                         
+ /                                                                             
+ &pmd                                                                          
+ output_file = 'cmass.txt'                                                     
+ output_freq = 500                                                             
+ cv_file = 'cv.in'                                                             
+ /                                                                             
+ &wt type = 'END', /                                                           
+
+
+Note: ig = -1. Setting random seed to   831771 based on wallclock time in 
+      microseconds.
+| irandom = 1, using AMBER's internal random number generator (default).
+ 
+|--------------------- INFORMATION ----------------------
+| GPU (CUDA) Version of PMEMD in use: NVIDIA GPU IN USE.
+|                    Version 18.0.0
+| 
+|                      03/25/2018
+| 
+| Implementation by:
+|                    Ross C. Walker     (SDSC)
+|                    Scott Le Grand     (nVIDIA)
+| 
+| Version 18 performance extensions by:
+|                    David Cerutti     (Rutgers)
+| 
+| Precision model in use:
+|      [DPFP] - Double Precision Forces, 64-bit Fixed point
+|               Accumulation.
+| 
+|--------------------------------------------------------
+ 
+|----------------- CITATION INFORMATION -----------------
+|
+|    When publishing work that utilized the CUDA version
+|    of AMBER, please cite the following in addition to
+|    the regular AMBER citations:
+|
+|  - Romelia Salomon-Ferrer; Andreas W. Goetz; Duncan
+|    Poole; Scott Le Grand; Ross C. Walker "Routine
+|    microsecond molecular dynamics simulations with
+|    AMBER - Part II: Particle Mesh Ewald", J. Chem.
+|    Theory Comput., 2013, 9 (9), pp3878-3888,
+|    DOI: 10.1021/ct400314y.
+|
+|  - Andreas W. Goetz; Mark J. Williamson; Dong Xu;
+|    Duncan Poole; Scott Le Grand; Ross C. Walker
+|    "Routine microsecond molecular dynamics simulations
+|    with AMBER - Part I: Generalized Born", J. Chem.
+|    Theory Comput., 2012, 8 (5), pp1542-1555.
+|
+|    When publishing work that utilized the CUDA version
+|    of TI, BAR, MBAR or FEP please cite the following 
+|    publications in addition to the regular AMBER 
+|    GPU citations:
+|
+|  - Daniel J. Mermelstein; Charles Lin; Gard Nelson; 
+|    Rachael Kretsch; J. Andrew McCammon; Ross C. Walker
+|    "Fast and Flexible GPU Accelerated Binding 
+|    Free Energy Calculations within the AMBER Molecular
+|    Dynamics Package" J. Comp. Chem., 2018,
+|    DOI: 10.1002/jcc.25187
+|
+|  - Tai-Sung Lee; Yuan Hu; Brad Sherborne; Zhuyan Guo;
+|    Darrin M. York
+|    "Toward Fast and Accurate Binding Affinity Prediction with
+|    pmemdGTI: An Efficient Implementation of GPU-Accelerated
+|    Thermodynamic Integration"
+|    J. Chem. Theory Comput., 2017, 13 (7), 3077
+|
+|
+|--------------------------------------------------------
+ 
+|------------------- GPU DEVICE INFO --------------------
+|
+|            CUDA_VISIBLE_DEVICES: 0
+|   CUDA Capable Devices Detected:      1
+|           CUDA Device ID in use:      0
+|                CUDA Device Name: NVIDIA TITAN Xp
+|     CUDA Device Global Mem Size:  12182 MB
+| CUDA Device Num Multiprocessors:     30
+|           CUDA Device Core Freq:   1.91 GHz
+|
+|--------------------------------------------------------
+ 
+ 
+| Conditional Compilation Defines Used:
+| PUBFFT
+| BINTRAJ
+| CUDA
+| EMIL
+
+| Largest sphere to fit in unit cell has radius =    40.155
+
+| New format PARM file being parsed.
+| Version =    1.000 Date = 11/10/25 Time = 00:48:20
+
+| Note: 1-4 EEL scale factors are being read from the topology file.
+
+| Note: 1-4 VDW scale factors are being read from the topology file.
+| Duplicated    0 dihedrals
+
+| Duplicated    0 dihedrals
+
+--------------------------------------------------------------------------------
+   1.  RESOURCE   USE: 
+--------------------------------------------------------------------------------
+
+ getting new box info from bottom of inpcrd
+ NATOM  =   81889 NTYPES =      83 NBONH =   70482 MBONA  =   11205
+ NTHETH =   39428 MTHETA =   13454 NPHIH =   68287 MPHIA  =   45210
+ NHPARM =       0 NPARM  =       0 NNB   =  227344 NRES   =   18868
+ NBONA  =   11205 NTHETA =   13454 NPHIA =   45210 NUMBND =     105
+ NUMANG =     199 NPTRA  =     296 NATYP =       1 NPHB   =       0
+ IFBOX  =       1 NMXRS  =      50 IFCAP =       0 NEXTRA =       0
+ NCOPY  =       0
+
+| Coordinate Index Table dimensions:    17   16   22
+| Direct force subcell size =     5.2258    5.0194    5.1174
+
+     BOX TYPE: RECTILINEAR
+
+--------------------------------------------------------------------------------
+   2.  CONTROL  DATA  FOR  THE  RUN
+--------------------------------------------------------------------------------
+
+default_name                                                                    
+
+General flags:
+     imin    =       1, nmropt  =       1
+
+Nature and format of input:
+     ntx     =       1, irest   =       0, ntrx    =       1
+
+Nature and format of output:
+     ntxo    =       1, ntpr    =      50, ntrx    =       1, ntwr    =      50
+     iwrap   =       0, ntwx    =       0, ntwv    =       0, ntwe    =       0
+     ioutfm  =       1, ntwprt  =       0, idecomp =       0, rbornstat=      0
+
+Potential function:
+     ntf     =       1, ntb     =       1, igb     =       0, nsnb    =      25
+     ipol    =       0, gbsa    =       0, iesp    =       0
+     dielc   =   1.00000, cut     =   9.00000, intdiel =   1.00000
+
+Frozen or restrained atoms:
+     ibelly  =       0, ntr     =       1
+     restraint_wt =  50.00000
+
+Energy minimization:
+     maxcyc  =    2000, ncyc    =     500, ntmin   =       2
+     dx0     =   0.01000, drms    =   0.00010
+
+NMR refinement options:
+     iscale  =       0, noeskp  =       1, ipnlty  =       1, mxsub   =       1
+     scalm   = 100.00000, pencut  =  -1.00000, tausw   =   0.10000
+
+Free energy options:
+     icfe    =       1, ifsc    =       1, klambda =       1
+     clambda =  0.7000, scalpha =  0.5000, scbeta  =  1.0000
+     sceeorder =       2
+     dynlmb =  0.0000 logdvdl =       0
+
+| Intermolecular bonds treatment:
+|     no_intermolecular_bonds =       1
+
+| Energy averages sample interval:
+|     ene_avg_sampling =       1
+
+Ewald parameters:
+     verbose =       0, ew_type =       0, nbflag  =       1, use_pme =       1
+     vdwmeth =       1, eedmeth =       1, netfrc  =       0
+     Box X =   88.838   Box Y =   80.310   Box Z =  112.583
+     Alpha =   90.000   Beta  =   90.000   Gamma =   90.000
+     NFFT1 =   96       NFFT2 =   84       NFFT3 =  120
+     Cutoff=    9.000   Tol   =0.100E-04
+     Ewald Coefficient =  0.30768
+     Interpolation order =    4
+
+    LOADING THE CONSTRAINED ATOMS AS GROUPS
+
+
+   5.  REFERENCE ATOM COORDINATES
+
+  default_name                                                                    
+     Mask (@CA,C,N,P31 | :g1i | :2) & !@H=; matches  1056 atoms
+     TI Mask 1 :287; matches     31 atoms
+     TI Mask 2 :288; matches     31 atoms
+     TI region 1:   81858 atoms
+     TI region 2:   81858 atoms
+     SC Mask 1 :287; matches     31 atoms
+     SC Mask 2 :288; matches     31 atoms
+| gti_syn_mass has been set to   1
+
+|--------------------------------------------------------------------------------------------
+| Extra TI control variables
+|     gti_add_sc     =  25, gti_ele_gauss  =   0, gti_auto_alpha =   0, gti_scale_beta =   1
+|     gti_ele_exp    =   2, gti_vdw_exp    =   2, gti_ele_sc     =   1, gti_vdw_sc     =   1
+|     gti_cut        =   1, gti_cut_sc     =   2
+|     gti_cut_sc_on    =  7.0000, gti_cut_sc_off    =  9.0000
+|--------------------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+   3.  ATOMIC COORDINATES AND VELOCITIES
+--------------------------------------------------------------------------------
+
+default_name                                                                    
+ begin time read from input coords =   103.000 ps
+
+
+
+           Begin reading energy term weight changes/NMR restraints
+ WEIGHT CHANGES:
+                         ** No weight changes given **
+
+ RESTRAINTS:
+                          ** No restraint defined **
+
+                  Done reading weight changes/NMR restraints
+
+
+ 
+ Number of triangulated 3-point waters found:    17974
+ Number of shake restraints removed in TI region  1 :        0
+ Number of shake restraints removed in TI region  2 :        0
+
+     Sum of charges for TI region  1 =   0.00000156
+     Skip neutralizing charges...
+
+
+     Sum of charges for TI region  2 =   0.00000156
+     Skip neutralizing charges...
+
+| Dynamic Memory, Types Used:
+| Reals             3272120
+| Integers          6337761
+
+| Nonbonded Pairs Initial Allocation:    18670692
+
+| GPU memory information (estimate):
+| KB of GPU memory in use:    304895
+| KB of CPU memory in use:    186623
+
+--------------------------------------------------------------------------------
+   4.  RESULTS
+--------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+      1      -2.1809E+05     1.4609E+01     1.1799E+02     C        3342
+
+ BOND    =     3772.1278  ANGLE   =    13923.7455  DIHED      =    10816.3418
+ VDWAALS =    12363.0254  EEL     =  -250372.3747  HBOND      =        0.0000
+ 1-4 VDW =     3669.0390  1-4 EEL =   -12258.7911  RESTRAINT  =        0.0000
+ DV/DL  =        33.1574
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =        27.7772
+ SC_BOND=         5.5339  SC_ANGLE=        13.1111  SC_DIHED   =        11.3672
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -2.2349
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -10.6173  SC_VDW_DER=      52.3221  SC_DERIV   =        41.7048
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+      1      -2.1809E+05     1.4609E+01     1.1799E+02     C        3342
+
+ BOND    =     3772.1278  ANGLE   =    13923.7455  DIHED      =    10816.3418
+ VDWAALS =    12363.0254  EEL     =  -250372.3747  HBOND      =        0.0000
+ 1-4 VDW =     3669.0390  1-4 EEL =   -12258.7911  RESTRAINT  =        0.0000
+ DV/DL  =        33.1574
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =        20.8882
+ SC_BOND=         4.2685  SC_ANGLE=         8.8620  SC_DIHED   =         9.6682
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9105
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -10.6173  SC_VDW_DER=      52.3221  SC_DERIV   =        41.7048
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+     50      -2.6552E+05     3.3569E+00     5.3636E+01     P31      9849
+
+ BOND    =    12107.5040  ANGLE   =     2566.8591  DIHED      =     9738.2780
+ VDWAALS =     8507.5767  EEL     =  -289510.5528  HBOND      =        0.0000
+ 1-4 VDW =     3148.0226  1-4 EEL =   -12181.4315  RESTRAINT  =      103.5762
+ EAMBER  =  -265623.7439
+ DV/DL  =        11.8153
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.9167
+ SC_BOND=         0.4818  SC_ANGLE=         2.7956  SC_DIHED   =         8.4528
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.8136
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -19.9278  SC_VDW_DER=      58.5227  SC_DERIV   =        38.5948
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+     50      -2.6552E+05     3.3569E+00     5.3636E+01     P31      9849
+
+ BOND    =    12107.5040  ANGLE   =     2566.8591  DIHED      =     9738.2780
+ VDWAALS =     8507.5767  EEL     =  -289510.5528  HBOND      =        0.0000
+ 1-4 VDW =     3148.0226  1-4 EEL =   -12181.4315  RESTRAINT  =      103.5762
+ EAMBER  =  -265623.7439
+ DV/DL  =        11.8153
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.7974
+ SC_BOND=         1.2203  SC_ANGLE=         2.2825  SC_DIHED   =         7.2491
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9545
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -19.9278  SC_VDW_DER=      58.5227  SC_DERIV   =        38.5948
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    100      -2.7370E+05     1.9848E+00     6.0530E+01     P31      9849
+
+ BOND    =    15118.5377  ANGLE   =     2199.0706  DIHED      =     9476.5207
+ VDWAALS =     9432.3474  EEL     =  -300976.1431  HBOND      =        0.0000
+ 1-4 VDW =     3081.0341  1-4 EEL =   -12153.6935  RESTRAINT  =      121.7262
+ EAMBER  =  -273822.3261
+ DV/DL  =         9.3532
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.5636
+ SC_BOND=         0.5017  SC_ANGLE=         2.6096  SC_DIHED   =         8.2257
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7733
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -25.1531  SC_VDW_DER=      66.2117  SC_DERIV   =        41.0586
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    100      -2.7370E+05     1.9848E+00     6.0530E+01     P31      9849
+
+ BOND    =    15118.5377  ANGLE   =     2199.0706  DIHED      =     9476.5207
+ VDWAALS =     9432.3474  EEL     =  -300976.1431  HBOND      =        0.0000
+ 1-4 VDW =     3081.0341  1-4 EEL =   -12153.6935  RESTRAINT  =      121.7262
+ EAMBER  =  -273822.3261
+ DV/DL  =         9.3532
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.6596
+ SC_BOND=         1.3055  SC_ANGLE=         2.1539  SC_DIHED   =         7.1342
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9340
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -25.1531  SC_VDW_DER=      66.2117  SC_DERIV   =        41.0586
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    150      -2.7758E+05     5.9050E-01     1.4603E+01     P31     20703
+
+ BOND    =    14447.1680  ANGLE   =     2086.5611  DIHED      =     9317.7133
+ VDWAALS =    10722.9225  EEL     =  -305180.7958  HBOND      =        0.0000
+ 1-4 VDW =     3051.7173  1-4 EEL =   -12145.3218  RESTRAINT  =      123.5694
+ EAMBER  =  -277700.0353
+ DV/DL  =         9.0866
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.3045
+ SC_BOND=         0.3979  SC_ANGLE=         2.5449  SC_DIHED   =         8.1425
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7808
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -28.2576  SC_VDW_DER=      71.3577  SC_DERIV   =        43.1001
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    150      -2.7758E+05     5.9050E-01     1.4603E+01     P31     20703
+
+ BOND    =    14447.1680  ANGLE   =     2086.5611  DIHED      =     9317.7133
+ VDWAALS =    10722.9225  EEL     =  -305180.7958  HBOND      =        0.0000
+ 1-4 VDW =     3051.7173  1-4 EEL =   -12145.3218  RESTRAINT  =      123.5694
+ EAMBER  =  -277700.0353
+ DV/DL  =         9.0866
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4270
+ SC_BOND=         1.2345  SC_ANGLE=         2.0261  SC_DIHED   =         7.1073
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9410
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -28.2576  SC_VDW_DER=      71.3577  SC_DERIV   =        43.1001
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    200      -2.8010E+05     4.8170E-01     1.1912E+01     P31     20703
+
+ BOND    =    14864.3115  ANGLE   =     2029.3671  DIHED      =     9197.4136
+ VDWAALS =    12022.0704  EEL     =  -309226.5123  HBOND      =        0.0000
+ 1-4 VDW =     3031.3002  1-4 EEL =   -12141.4636  RESTRAINT  =      127.3954
+ EAMBER  =  -280223.5131
+ DV/DL  =         9.0488
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.2462
+ SC_BOND=         0.3813  SC_ANGLE=         2.5373  SC_DIHED   =         8.1070
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7794
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -30.5991  SC_VDW_DER=      75.6764  SC_DERIV   =        45.0773
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    200      -2.8010E+05     4.8170E-01     1.1912E+01     P31     20703
+
+ BOND    =    14864.3115  ANGLE   =     2029.3671  DIHED      =     9197.4136
+ VDWAALS =    12022.0704  EEL     =  -309226.5123  HBOND      =        0.0000
+ 1-4 VDW =     3031.3002  1-4 EEL =   -12141.4636  RESTRAINT  =      127.3954
+ EAMBER  =  -280223.5131
+ DV/DL  =         9.0488
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4199
+ SC_BOND=         1.2380  SC_ANGLE=         2.0212  SC_DIHED   =         7.0997
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9390
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -30.5991  SC_VDW_DER=      75.6764  SC_DERIV   =        45.0773
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    250      -2.8184E+05     7.5933E-01     6.1297E+01     C        4634
+
+ BOND    =    15154.7680  ANGLE   =     1998.8415  DIHED      =     9109.7124
+ VDWAALS =    13137.9651  EEL     =  -312244.0583  HBOND      =        0.0000
+ 1-4 VDW =     3016.9692  1-4 EEL =   -12139.8635  RESTRAINT  =      130.4486
+ EAMBER  =  -281965.6656
+ DV/DL  =         9.2377
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.2245
+ SC_BOND=         0.3789  SC_ANGLE=         2.5368  SC_DIHED   =         8.0883
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7795
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -32.2387  SC_VDW_DER=      79.0833  SC_DERIV   =        46.8446
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    250      -2.8184E+05     7.5933E-01     6.1297E+01     C        4634
+
+ BOND    =    15154.7680  ANGLE   =     1998.8415  DIHED      =     9109.7124
+ VDWAALS =    13137.9651  EEL     =  -312244.0583  HBOND      =        0.0000
+ 1-4 VDW =     3016.9692  1-4 EEL =   -12139.8635  RESTRAINT  =      130.4486
+ EAMBER  =  -281965.6656
+ DV/DL  =         9.2377
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4261
+ SC_BOND=         1.2463  SC_ANGLE=         2.0181  SC_DIHED   =         7.0993
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9377
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -32.2387  SC_VDW_DER=      79.0833  SC_DERIV   =        46.8446
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    300      -2.8312E+05     1.6055E+00     3.2730E+02     C        4634
+
+ BOND    =    15447.7738  ANGLE   =     1985.4080  DIHED      =     9041.2395
+ VDWAALS =    14111.9685  EEL     =  -314713.1231  HBOND      =        0.0000
+ 1-4 VDW =     3005.8191  1-4 EEL =   -12136.7947  RESTRAINT  =      133.6982
+ EAMBER  =  -283257.7089
+ DV/DL  =         9.4202
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.2072
+ SC_BOND=         0.3793  SC_ANGLE=         2.5321  SC_DIHED   =         8.0763
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7806
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -33.4979  SC_VDW_DER=      82.0005  SC_DERIV   =        48.5026
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    300      -2.8312E+05     1.6055E+00     3.2730E+02     C        4634
+
+ BOND    =    15447.7738  ANGLE   =     1985.4080  DIHED      =     9041.2395
+ VDWAALS =    14111.9685  EEL     =  -314713.1231  HBOND      =        0.0000
+ 1-4 VDW =     3005.8191  1-4 EEL =   -12136.7947  RESTRAINT  =      133.6982
+ EAMBER  =  -283257.7089
+ DV/DL  =         9.4202
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4308
+ SC_BOND=         1.2537  SC_ANGLE=         2.0126  SC_DIHED   =         7.1014
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9370
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -33.4979  SC_VDW_DER=      82.0005  SC_DERIV   =        48.5026
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    350      -2.8429E+05     8.2575E-01     4.7347E+01     CZ       2744
+
+ BOND    =    15589.3941  ANGLE   =     1963.1646  DIHED      =     8986.5525
+ VDWAALS =    14964.0282  EEL     =  -316786.6710  HBOND      =        0.0000
+ 1-4 VDW =     2996.7571  1-4 EEL =   -12137.3203  RESTRAINT  =      131.2522
+ EAMBER  =  -284424.0948
+ DV/DL  =         9.6401
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1966
+ SC_BOND=         0.3841  SC_ANGLE=         2.5269  SC_DIHED   =         8.0677
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7821
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -34.4972  SC_VDW_DER=      84.5307  SC_DERIV   =        50.0335
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    350      -2.8429E+05     8.2575E-01     4.7347E+01     CZ       2744
+
+ BOND    =    15589.3941  ANGLE   =     1963.1646  DIHED      =     8986.5525
+ VDWAALS =    14964.0282  EEL     =  -316786.6710  HBOND      =        0.0000
+ 1-4 VDW =     2996.7571  1-4 EEL =   -12137.3203  RESTRAINT  =      131.2522
+ EAMBER  =  -284424.0948
+ DV/DL  =         9.6401
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4349
+ SC_BOND=         1.2598  SC_ANGLE=         2.0077  SC_DIHED   =         7.1042
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9367
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -34.4972  SC_VDW_DER=      84.5307  SC_DERIV   =        50.0335
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    400      -2.8519E+05     1.3652E+00     2.6328E+02     C        4634
+
+ BOND    =    15799.0072  ANGLE   =     1955.7002  DIHED      =     8940.8159
+ VDWAALS =    15731.7635  EEL     =  -318606.8521  HBOND      =        0.0000
+ 1-4 VDW =     2989.1519  1-4 EEL =   -12135.5606  RESTRAINT  =      132.8451
+ EAMBER  =  -285325.9740
+ DV/DL  =         9.6358
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1887
+ SC_BOND=         0.3827  SC_ANGLE=         2.5265  SC_DIHED   =         8.0618
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7823
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -35.3199  SC_VDW_DER=      86.7509  SC_DERIV   =        51.4311
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    400      -2.8519E+05     1.3652E+00     2.6328E+02     C        4634
+
+ BOND    =    15799.0072  ANGLE   =     1955.7002  DIHED      =     8940.8159
+ VDWAALS =    15731.7635  EEL     =  -318606.8521  HBOND      =        0.0000
+ 1-4 VDW =     2989.1519  1-4 EEL =   -12135.5606  RESTRAINT  =      132.8451
+ EAMBER  =  -285325.9740
+ DV/DL  =         9.6358
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4393
+ SC_BOND=         1.2630  SC_ANGLE=         2.0060  SC_DIHED   =         7.1069
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9366
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -35.3199  SC_VDW_DER=      86.7509  SC_DERIV   =        51.4311
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    450      -2.8608E+05     5.3157E-01     7.1185E+01     C        4634
+
+ BOND    =    15905.1776  ANGLE   =     1939.4749  DIHED      =     8901.7546
+ VDWAALS =    16432.3694  EEL     =  -320234.5906  HBOND      =        0.0000
+ 1-4 VDW =     2982.5441  1-4 EEL =   -12136.6470  RESTRAINT  =      134.0816
+ EAMBER  =  -286209.9169
+ DV/DL  =         9.5132
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1827
+ SC_BOND=         0.3814  SC_ANGLE=         2.5264  SC_DIHED   =         8.0572
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7823
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -36.0051  SC_VDW_DER=      88.6948  SC_DERIV   =        52.6898
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    450      -2.8608E+05     5.3157E-01     7.1185E+01     C        4634
+
+ BOND    =    15905.1776  ANGLE   =     1939.4749  DIHED      =     8901.7546
+ VDWAALS =    16432.3694  EEL     =  -320234.5906  HBOND      =        0.0000
+ 1-4 VDW =     2982.5441  1-4 EEL =   -12136.6470  RESTRAINT  =      134.0816
+ EAMBER  =  -286209.9169
+ DV/DL  =         9.5132
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4431
+ SC_BOND=         1.2655  SC_ANGLE=         2.0051  SC_DIHED   =         7.1093
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9368
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -36.0051  SC_VDW_DER=      88.6948  SC_DERIV   =        52.6898
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    500      -2.8674E+05     1.1102E+00     1.5573E+02     C        4634
+
+ BOND    =    16072.2884  ANGLE   =     1935.4771  DIHED      =     8869.5442
+ VDWAALS =    17043.6253  EEL     =  -321635.6012  HBOND      =        0.0000
+ 1-4 VDW =     2977.2244  1-4 EEL =   -12135.2857  RESTRAINT  =      135.3608
+ EAMBER  =  -286872.7276
+ DV/DL  =         9.2509
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1784
+ SC_BOND=         0.3811  SC_ANGLE=         2.5259  SC_DIHED   =         8.0536
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7823
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -36.5503  SC_VDW_DER=      90.3144  SC_DERIV   =        53.7641
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    500      -2.8674E+05     1.1102E+00     1.5573E+02     C        4634
+
+ BOND    =    16072.2884  ANGLE   =     1935.4771  DIHED      =     8869.5442
+ VDWAALS =    17043.6253  EEL     =  -321635.6012  HBOND      =        0.0000
+ 1-4 VDW =     2977.2244  1-4 EEL =   -12135.2857  RESTRAINT  =      135.3608
+ EAMBER  =  -286872.7276
+ DV/DL  =         9.2509
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4462
+ SC_BOND=         1.2671  SC_ANGLE=         2.0049  SC_DIHED   =         7.1113
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9372
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -36.5503  SC_VDW_DER=      90.3144  SC_DERIV   =        53.7641
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    550      -2.8741E+05     6.0563E-01     3.9823E+01     CZ       2744
+
+ BOND    =    16169.7226  ANGLE   =     1926.6736  DIHED      =     8840.8109
+ VDWAALS =    17620.4180  EEL     =  -322940.2227  HBOND      =        0.0000
+ 1-4 VDW =     2972.3551  1-4 EEL =   -12135.3930  RESTRAINT  =      134.1922
+ EAMBER  =  -287545.6354
+ DV/DL  =         9.0440
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1748
+ SC_BOND=         0.3810  SC_ANGLE=         2.5253  SC_DIHED   =         8.0507
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7822
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -37.0226  SC_VDW_DER=      91.7859  SC_DERIV   =        54.7633
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    550      -2.8741E+05     6.0563E-01     3.9823E+01     CZ       2744
+
+ BOND    =    16169.7226  ANGLE   =     1926.6736  DIHED      =     8840.8109
+ VDWAALS =    17620.4180  EEL     =  -322940.2227  HBOND      =        0.0000
+ 1-4 VDW =     2972.3551  1-4 EEL =   -12135.3930  RESTRAINT  =      134.1922
+ EAMBER  =  -287545.6354
+ DV/DL  =         9.0440
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4488
+ SC_BOND=         1.2680  SC_ANGLE=         2.0054  SC_DIHED   =         7.1132
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9378
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -37.0226  SC_VDW_DER=      91.7859  SC_DERIV   =        54.7633
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    600      -2.8795E+05     9.3494E-01     1.4601E+02     C        4634
+
+ BOND    =    16296.9885  ANGLE   =     1923.1853  DIHED      =     8816.4678
+ VDWAALS =    18132.8375  EEL     =  -324087.4891  HBOND      =        0.0000
+ 1-4 VDW =     2968.3330  1-4 EEL =   -12135.7526  RESTRAINT  =      134.6901
+ EAMBER  =  -288085.4297
+ DV/DL  =         8.8735
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1720
+ SC_BOND=         0.3808  SC_ANGLE=         2.5248  SC_DIHED   =         8.0484
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7820
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -37.4117  SC_VDW_DER=      93.0583  SC_DERIV   =        55.6466
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    600      -2.8795E+05     9.3494E-01     1.4601E+02     C        4634
+
+ BOND    =    16296.9885  ANGLE   =     1923.1853  DIHED      =     8816.4678
+ VDWAALS =    18132.8375  EEL     =  -324087.4891  HBOND      =        0.0000
+ 1-4 VDW =     2968.3330  1-4 EEL =   -12135.7526  RESTRAINT  =      134.6901
+ EAMBER  =  -288085.4297
+ DV/DL  =         8.8735
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4512
+ SC_BOND=         1.2683  SC_ANGLE=         2.0066  SC_DIHED   =         7.1148
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9385
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -37.4117  SC_VDW_DER=      93.0583  SC_DERIV   =        55.6466
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    650      -2.8848E+05     4.1538E-01     2.6906E+01     CZ       2744
+
+ BOND    =    16373.7324  ANGLE   =     1915.4552  DIHED      =     8794.9935
+ VDWAALS =    18599.8561  EEL     =  -325125.9615  HBOND      =        0.0000
+ 1-4 VDW =     2964.8508  1-4 EEL =   -12134.9395  RESTRAINT  =      135.6085
+ EAMBER  =  -288612.0129
+ DV/DL  =         8.7459
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1698
+ SC_BOND=         0.3805  SC_ANGLE=         2.5244  SC_DIHED   =         8.0466
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7817
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -37.7440  SC_VDW_DER=      94.1984  SC_DERIV   =        56.4544
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    650      -2.8848E+05     4.1538E-01     2.6906E+01     CZ       2744
+
+ BOND    =    16373.7324  ANGLE   =     1915.4552  DIHED      =     8794.9935
+ VDWAALS =    18599.8561  EEL     =  -325125.9615  HBOND      =        0.0000
+ 1-4 VDW =     2964.8508  1-4 EEL =   -12134.9395  RESTRAINT  =      135.6085
+ EAMBER  =  -288612.0129
+ DV/DL  =         8.7459
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4535
+ SC_BOND=         1.2682  SC_ANGLE=         2.0083  SC_DIHED   =         7.1162
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9393
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -37.7440  SC_VDW_DER=      94.1984  SC_DERIV   =        56.4544
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    700      -2.8894E+05     2.3722E-01     7.7152E+00     CE1      2742
+
+ BOND    =    16463.3486  ANGLE   =     1911.2089  DIHED      =     8775.5956
+ VDWAALS =    19039.2555  EEL     =  -326096.2552  HBOND      =        0.0000
+ 1-4 VDW =     2961.6590  1-4 EEL =   -12134.5525  RESTRAINT  =      135.6469
+ EAMBER  =  -289079.7401
+ DV/DL  =         8.7545
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1681
+ SC_BOND=         0.3803  SC_ANGLE=         2.5239  SC_DIHED   =         8.0452
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7812
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.0384  SC_VDW_DER=      95.2639  SC_DERIV   =        57.2255
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    700      -2.8894E+05     2.3722E-01     7.7152E+00     CE1      2742
+
+ BOND    =    16463.3486  ANGLE   =     1911.2089  DIHED      =     8775.5956
+ VDWAALS =    19039.2555  EEL     =  -326096.2552  HBOND      =        0.0000
+ 1-4 VDW =     2961.6590  1-4 EEL =   -12134.5525  RESTRAINT  =      135.6469
+ EAMBER  =  -289079.7401
+ DV/DL  =         8.7545
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4553
+ SC_BOND=         1.2676  SC_ANGLE=         2.0103  SC_DIHED   =         7.1174
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9400
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.0384  SC_VDW_DER=      95.2639  SC_DERIV   =        57.2255
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    750      -2.8936E+05     3.3779E-01     2.0918E+01     CZ       2744
+
+ BOND    =    16550.5791  ANGLE   =     1907.8545  DIHED      =     8758.4639
+ VDWAALS =    19439.3083  EEL     =  -326974.8346  HBOND      =        0.0000
+ 1-4 VDW =     2958.9197  1-4 EEL =   -12134.2559  RESTRAINT  =      135.8936
+ EAMBER  =  -289493.9650
+ DV/DL  =         8.8442
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1668
+ SC_BOND=         0.3801  SC_ANGLE=         2.5234  SC_DIHED   =         8.0440
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7808
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.2914  SC_VDW_DER=      96.2213  SC_DERIV   =        57.9299
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    750      -2.8936E+05     3.3779E-01     2.0918E+01     CZ       2744
+
+ BOND    =    16550.5791  ANGLE   =     1907.8545  DIHED      =     8758.4639
+ VDWAALS =    19439.3083  EEL     =  -326974.8346  HBOND      =        0.0000
+ 1-4 VDW =     2958.9197  1-4 EEL =   -12134.2559  RESTRAINT  =      135.8936
+ EAMBER  =  -289493.9650
+ DV/DL  =         8.8442
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4571
+ SC_BOND=         1.2668  SC_ANGLE=         2.0125  SC_DIHED   =         7.1184
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9407
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.2914  SC_VDW_DER=      96.2213  SC_DERIV   =        57.9299
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    800      -2.8975E+05     2.1454E-01     6.8404E+00     CZ       2744
+
+ BOND    =    16627.7501  ANGLE   =     1904.4071  DIHED      =     8742.7452
+ VDWAALS =    19815.4179  EEL     =  -327797.2540  HBOND      =        0.0000
+ 1-4 VDW =     2956.4359  1-4 EEL =   -12134.0615  RESTRAINT  =      136.2869
+ EAMBER  =  -289884.5594
+ DV/DL  =         9.0116
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1659
+ SC_BOND=         0.3800  SC_ANGLE=         2.5231  SC_DIHED   =         8.0431
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7803
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.5148  SC_VDW_DER=      97.1024  SC_DERIV   =        58.5877
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    800      -2.8975E+05     2.1454E-01     6.8404E+00     CZ       2744
+
+ BOND    =    16627.7501  ANGLE   =     1904.4071  DIHED      =     8742.7452
+ VDWAALS =    19815.4179  EEL     =  -327797.2540  HBOND      =        0.0000
+ 1-4 VDW =     2956.4359  1-4 EEL =   -12134.0615  RESTRAINT  =      136.2869
+ EAMBER  =  -289884.5594
+ DV/DL  =         9.0116
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4589
+ SC_BOND=         1.2661  SC_ANGLE=         2.0150  SC_DIHED   =         7.1191
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9413
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.5148  SC_VDW_DER=      97.1024  SC_DERIV   =        58.5877
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    850      -2.9011E+05     1.9960E-01     6.3326E+00     C        4634
+
+ BOND    =    16702.6772  ANGLE   =     1901.4633  DIHED      =     8728.2371
+ VDWAALS =    20171.4635  EEL     =  -328572.4132  HBOND      =        0.0000
+ 1-4 VDW =     2954.1680  1-4 EEL =   -12133.8826  RESTRAINT  =      136.5314
+ EAMBER  =  -290248.2868
+ DV/DL  =         9.2357
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1652
+ SC_BOND=         0.3798  SC_ANGLE=         2.5227  SC_DIHED   =         8.0424
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7797
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.7142  SC_VDW_DER=      97.9160  SC_DERIV   =        59.2018
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    850      -2.9011E+05     1.9960E-01     6.3326E+00     C        4634
+
+ BOND    =    16702.6772  ANGLE   =     1901.4633  DIHED      =     8728.2371
+ VDWAALS =    20171.4635  EEL     =  -328572.4132  HBOND      =        0.0000
+ 1-4 VDW =     2954.1680  1-4 EEL =   -12133.8826  RESTRAINT  =      136.5314
+ EAMBER  =  -290248.2868
+ DV/DL  =         9.2357
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4608
+ SC_BOND=         1.2655  SC_ANGLE=         2.0176  SC_DIHED   =         7.1195
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9418
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.7142  SC_VDW_DER=      97.9160  SC_DERIV   =        59.2018
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    900      -2.9044E+05     6.0979E-01     1.1867E+02     C        4634
+
+ BOND    =    16783.1893  ANGLE   =     1900.0088  DIHED      =     8715.0224
+ VDWAALS =    20503.2513  EEL     =  -329291.2843  HBOND      =        0.0000
+ 1-4 VDW =     2952.1582  1-4 EEL =   -12134.3536  RESTRAINT  =      136.9137
+ EAMBER  =  -290572.0078
+ DV/DL  =         9.5173
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1648
+ SC_BOND=         0.3797  SC_ANGLE=         2.5225  SC_DIHED   =         8.0418
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7792
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.8927  SC_VDW_DER=      98.6560  SC_DERIV   =        59.7633
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    900      -2.9044E+05     6.0979E-01     1.1867E+02     C        4634
+
+ BOND    =    16783.1893  ANGLE   =     1900.0088  DIHED      =     8715.0224
+ VDWAALS =    20503.2513  EEL     =  -329291.2843  HBOND      =        0.0000
+ 1-4 VDW =     2952.1582  1-4 EEL =   -12134.3536  RESTRAINT  =      136.9137
+ EAMBER  =  -290572.0078
+ DV/DL  =         9.5173
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4630
+ SC_BOND=         1.2653  SC_ANGLE=         2.0202  SC_DIHED   =         7.1196
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9422
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -38.8927  SC_VDW_DER=      98.6560  SC_DERIV   =        59.7633
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    950      -2.9076E+05     1.9778E-01     7.1156E+00     CZ       2744
+
+ BOND    =    16837.0497  ANGLE   =     1896.4985  DIHED      =     8702.9994
+ VDWAALS =    20811.3754  EEL     =  -329957.2173  HBOND      =        0.0000
+ 1-4 VDW =     2950.2961  1-4 EEL =   -12133.7827  RESTRAINT  =      136.9416
+ EAMBER  =  -290892.7809
+ DV/DL  =         9.7796
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1646
+ SC_BOND=         0.3796  SC_ANGLE=         2.5223  SC_DIHED   =         8.0414
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7786
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.0535  SC_VDW_DER=      99.3227  SC_DERIV   =        60.2693
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+    950      -2.9076E+05     1.9778E-01     7.1156E+00     CZ       2744
+
+ BOND    =    16837.0497  ANGLE   =     1896.4985  DIHED      =     8702.9994
+ VDWAALS =    20811.3754  EEL     =  -329957.2173  HBOND      =        0.0000
+ 1-4 VDW =     2950.2961  1-4 EEL =   -12133.7827  RESTRAINT  =      136.9416
+ EAMBER  =  -290892.7809
+ DV/DL  =         9.7796
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4653
+ SC_BOND=         1.2656  SC_ANGLE=         2.0229  SC_DIHED   =         7.1194
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9426
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.0535  SC_VDW_DER=      99.3227  SC_DERIV   =        60.2693
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1000      -2.9104E+05     5.1268E-01     3.7986E+01     C        4634
+
+ BOND    =    16906.5802  ANGLE   =     1895.1563  DIHED      =     8691.7814
+ VDWAALS =    21105.5197  EEL     =  -330589.1823  HBOND      =        0.0000
+ 1-4 VDW =     2948.5842  1-4 EEL =   -12133.9718  RESTRAINT  =      137.0814
+ EAMBER  =  -291175.5324
+ DV/DL  =        10.0645
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1646
+ SC_BOND=         0.3795  SC_ANGLE=         2.5222  SC_DIHED   =         8.0410
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7781
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.2003  SC_VDW_DER=      99.9315  SC_DERIV   =        60.7312
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1000      -2.9104E+05     5.1268E-01     3.7986E+01     C        4634
+
+ BOND    =    16906.5802  ANGLE   =     1895.1563  DIHED      =     8691.7814
+ VDWAALS =    21105.5197  EEL     =  -330589.1823  HBOND      =        0.0000
+ 1-4 VDW =     2948.5842  1-4 EEL =   -12133.9718  RESTRAINT  =      137.0814
+ EAMBER  =  -291175.5324
+ DV/DL  =        10.0645
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4679
+ SC_BOND=         1.2662  SC_ANGLE=         2.0256  SC_DIHED   =         7.1190
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9429
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.2003  SC_VDW_DER=      99.9315  SC_DERIV   =        60.7312
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1050      -2.9131E+05     2.1629E-01     1.1266E+01     CZ       2744
+
+ BOND    =    16954.7035  ANGLE   =     1892.2525  DIHED      =     8681.6572
+ VDWAALS =    21374.4342  EEL     =  -331164.4961  HBOND      =        0.0000
+ 1-4 VDW =     2947.1504  1-4 EEL =   -12134.0272  RESTRAINT  =      137.4086
+ EAMBER  =  -291448.3255
+ DV/DL  =        10.3305
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1647
+ SC_BOND=         0.3795  SC_ANGLE=         2.5221  SC_DIHED   =         8.0407
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7776
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.3279  SC_VDW_DER=     100.4660  SC_DERIV   =        61.1381
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1050      -2.9131E+05     2.1629E-01     1.1266E+01     CZ       2744
+
+ BOND    =    16954.7035  ANGLE   =     1892.2525  DIHED      =     8681.6572
+ VDWAALS =    21374.4342  EEL     =  -331164.4961  HBOND      =        0.0000
+ 1-4 VDW =     2947.1504  1-4 EEL =   -12134.0272  RESTRAINT  =      137.4086
+ EAMBER  =  -291448.3255
+ DV/DL  =        10.3305
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4707
+ SC_BOND=         1.2673  SC_ANGLE=         2.0283  SC_DIHED   =         7.1182
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9431
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.3279  SC_VDW_DER=     100.4660  SC_DERIV   =        61.1381
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1100      -2.9157E+05     2.3658E-01     1.4124E+01     CZ       2744
+
+ BOND    =    17009.2058  ANGLE   =     1890.4004  DIHED      =     8672.0177
+ VDWAALS =    21636.1383  EEL     =  -331722.1762  HBOND      =        0.0000
+ 1-4 VDW =     2945.7572  1-4 EEL =   -12134.1216  RESTRAINT  =      137.6189
+ EAMBER  =  -291702.7784
+ DV/DL  =        10.5872
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1649
+ SC_BOND=         0.3794  SC_ANGLE=         2.5220  SC_DIHED   =         8.0405
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7770
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.4402  SC_VDW_DER=     100.9541  SC_DERIV   =        61.5140
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1100      -2.9157E+05     2.3658E-01     1.4124E+01     CZ       2744
+
+ BOND    =    17009.2058  ANGLE   =     1890.4004  DIHED      =     8672.0177
+ VDWAALS =    21636.1383  EEL     =  -331722.1762  HBOND      =        0.0000
+ 1-4 VDW =     2945.7572  1-4 EEL =   -12134.1216  RESTRAINT  =      137.6189
+ EAMBER  =  -291702.7784
+ DV/DL  =        10.5872
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4735
+ SC_BOND=         1.2686  SC_ANGLE=         2.0310  SC_DIHED   =         7.1173
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9433
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.4402  SC_VDW_DER=     100.9541  SC_DERIV   =        61.5140
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1150      -2.9180E+05     7.0486E-01     1.5872E+02     C        4634
+
+ BOND    =    17074.8533  ANGLE   =     1889.9129  DIHED      =     8662.7999
+ VDWAALS =    21890.6897  EEL     =  -332262.3167  HBOND      =        0.0000
+ 1-4 VDW =     2944.4490  1-4 EEL =   -12133.6297  RESTRAINT  =      138.1325
+ EAMBER  =  -291933.2416
+ DV/DL  =        10.8332
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1651
+ SC_BOND=         0.3793  SC_ANGLE=         2.5220  SC_DIHED   =         8.0403
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7765
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.5391  SC_VDW_DER=     101.4061  SC_DERIV   =        61.8670
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1150      -2.9180E+05     7.0486E-01     1.5872E+02     C        4634
+
+ BOND    =    17074.8533  ANGLE   =     1889.9129  DIHED      =     8662.7999
+ VDWAALS =    21890.6897  EEL     =  -332262.3167  HBOND      =        0.0000
+ 1-4 VDW =     2944.4490  1-4 EEL =   -12133.6297  RESTRAINT  =      138.1325
+ EAMBER  =  -291933.2416
+ DV/DL  =        10.8332
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4764
+ SC_BOND=         1.2700  SC_ANGLE=         2.0338  SC_DIHED   =         7.1161
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9435
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.5391  SC_VDW_DER=     101.4061  SC_DERIV   =        61.8670
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1200      -2.9203E+05     2.7881E-01     1.8975E+01     CZ       2744
+
+ BOND    =    17110.1074  ANGLE   =     1887.1239  DIHED      =     8654.6452
+ VDWAALS =    22122.6627  EEL     =  -332751.6060  HBOND      =        0.0000
+ 1-4 VDW =     2943.2170  1-4 EEL =   -12134.4635  RESTRAINT  =      137.9701
+ EAMBER  =  -292168.3133
+ DV/DL  =        11.0982
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1654
+ SC_BOND=         0.3793  SC_ANGLE=         2.5219  SC_DIHED   =         8.0402
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7760
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.6180  SC_VDW_DER=     101.7971  SC_DERIV   =        62.1792
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1200      -2.9203E+05     2.7881E-01     1.8975E+01     CZ       2744
+
+ BOND    =    17110.1074  ANGLE   =     1887.1239  DIHED      =     8654.6452
+ VDWAALS =    22122.6627  EEL     =  -332751.6060  HBOND      =        0.0000
+ 1-4 VDW =     2943.2170  1-4 EEL =   -12134.4635  RESTRAINT  =      137.9701
+ EAMBER  =  -292168.3133
+ DV/DL  =        11.0982
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4790
+ SC_BOND=         1.2715  SC_ANGLE=         2.0364  SC_DIHED   =         7.1148
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9437
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.6180  SC_VDW_DER=     101.7971  SC_DERIV   =        62.1792
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1250      -2.9223E+05     5.1838E-01     5.4232E+01     C        4634
+
+ BOND    =    17163.1017  ANGLE   =     1886.2970  DIHED      =     8646.8861
+ VDWAALS =    22347.3394  EEL     =  -333223.3967  HBOND      =        0.0000
+ 1-4 VDW =     2942.0969  1-4 EEL =   -12134.8568  RESTRAINT  =      138.1524
+ EAMBER  =  -292372.5324
+ DV/DL  =        11.3799
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1657
+ SC_BOND=         0.3792  SC_ANGLE=         2.5219  SC_DIHED   =         8.0401
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7755
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.6851  SC_VDW_DER=     102.1662  SC_DERIV   =        62.4811
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1250      -2.9223E+05     5.1838E-01     5.4232E+01     C        4634
+
+ BOND    =    17163.1017  ANGLE   =     1886.2970  DIHED      =     8646.8861
+ VDWAALS =    22347.3394  EEL     =  -333223.3967  HBOND      =        0.0000
+ 1-4 VDW =     2942.0969  1-4 EEL =   -12134.8568  RESTRAINT  =      138.1524
+ EAMBER  =  -292372.5324
+ DV/DL  =        11.3799
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4815
+ SC_BOND=         1.2730  SC_ANGLE=         2.0389  SC_DIHED   =         7.1134
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9438
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.6851  SC_VDW_DER=     102.1662  SC_DERIV   =        62.4811
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1300      -2.9244E+05     2.7708E-01     1.9208E+01     CZ       2744
+
+ BOND    =    17200.1543  ANGLE   =     1884.2697  DIHED      =     8639.5890
+ VDWAALS =    22561.3105  EEL     =  -333671.3568  HBOND      =        0.0000
+ 1-4 VDW =     2941.1194  1-4 EEL =   -12134.8730  RESTRAINT  =      138.4073
+ EAMBER  =  -292579.7870
+ DV/DL  =        11.7061
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1660
+ SC_BOND=         0.3791  SC_ANGLE=         2.5220  SC_DIHED   =         8.0400
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7750
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.7437  SC_VDW_DER=     102.5234  SC_DERIV   =        62.7796
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1300      -2.9244E+05     2.7708E-01     1.9208E+01     CZ       2744
+
+ BOND    =    17200.1543  ANGLE   =     1884.2697  DIHED      =     8639.5890
+ VDWAALS =    22561.3105  EEL     =  -333671.3568  HBOND      =        0.0000
+ 1-4 VDW =     2941.1194  1-4 EEL =   -12134.8730  RESTRAINT  =      138.4073
+ EAMBER  =  -292579.7870
+ DV/DL  =        11.7061
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4840
+ SC_BOND=         1.2747  SC_ANGLE=         2.0412  SC_DIHED   =         7.1119
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9438
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.7437  SC_VDW_DER=     102.5234  SC_DERIV   =        62.7796
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1350      -2.9263E+05     4.4617E-01     5.4536E+01     C        4634
+
+ BOND    =    17246.3510  ANGLE   =     1883.3062  DIHED      =     8632.7864
+ VDWAALS =    22766.1749  EEL     =  -334098.6020  HBOND      =        0.0000
+ 1-4 VDW =     2940.2041  1-4 EEL =   -12134.9293  RESTRAINT  =      138.6490
+ EAMBER  =  -292764.7087
+ DV/DL  =        12.0673
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1664
+ SC_BOND=         0.3791  SC_ANGLE=         2.5220  SC_DIHED   =         8.0399
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7746
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.8002  SC_VDW_DER=     102.8859  SC_DERIV   =        63.0857
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1350      -2.9263E+05     4.4617E-01     5.4536E+01     C        4634
+
+ BOND    =    17246.3510  ANGLE   =     1883.3062  DIHED      =     8632.7864
+ VDWAALS =    22766.1749  EEL     =  -334098.6020  HBOND      =        0.0000
+ 1-4 VDW =     2940.2041  1-4 EEL =   -12134.9293  RESTRAINT  =      138.6490
+ EAMBER  =  -292764.7087
+ DV/DL  =        12.0673
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4862
+ SC_BOND=         1.2764  SC_ANGLE=         2.0434  SC_DIHED   =         7.1103
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9439
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.8002  SC_VDW_DER=     102.8859  SC_DERIV   =        63.0857
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1400      -2.9281E+05     1.5502E-01     5.8464E+00     CG       1874
+
+ BOND    =    17279.1497  ANGLE   =     1881.5758  DIHED      =     8626.6447
+ VDWAALS =    22956.1946  EEL     =  -334493.8270  HBOND      =        0.0000
+ 1-4 VDW =     2939.3244  1-4 EEL =   -12135.3225  RESTRAINT  =      138.7682
+ EAMBER  =  -292946.2603
+ DV/DL  =        12.4651
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1667
+ SC_BOND=         0.3790  SC_ANGLE=         2.5220  SC_DIHED   =         8.0398
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7741
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.8577  SC_VDW_DER=     103.2535  SC_DERIV   =        63.3959
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1400      -2.9281E+05     1.5502E-01     5.8464E+00     CG       1874
+
+ BOND    =    17279.1497  ANGLE   =     1881.5758  DIHED      =     8626.6447
+ VDWAALS =    22956.1946  EEL     =  -334493.8270  HBOND      =        0.0000
+ 1-4 VDW =     2939.3244  1-4 EEL =   -12135.3225  RESTRAINT  =      138.7682
+ EAMBER  =  -292946.2603
+ DV/DL  =        12.4651
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4881
+ SC_BOND=         1.2781  SC_ANGLE=         2.0452  SC_DIHED   =         7.1088
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9439
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.8577  SC_VDW_DER=     103.2535  SC_DERIV   =        63.3959
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1450      -2.9298E+05     3.9347E-01     2.9303E+01     CZ       2744
+
+ BOND    =    17323.9633  ANGLE   =     1880.7142  DIHED      =     8620.4345
+ VDWAALS =    23151.4139  EEL     =  -334899.2183  HBOND      =        0.0000
+ 1-4 VDW =     2938.4753  1-4 EEL =   -12135.4968  RESTRAINT  =      138.9625
+ EAMBER  =  -293119.7139
+ DV/DL  =        12.9106
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1671
+ SC_BOND=         0.3789  SC_ANGLE=         2.5221  SC_DIHED   =         8.0397
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7736
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.9225  SC_VDW_DER=     103.6612  SC_DERIV   =        63.7388
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1450      -2.9298E+05     3.9347E-01     2.9303E+01     CZ       2744
+
+ BOND    =    17323.9633  ANGLE   =     1880.7142  DIHED      =     8620.4345
+ VDWAALS =    23151.4139  EEL     =  -334899.2183  HBOND      =        0.0000
+ 1-4 VDW =     2938.4753  1-4 EEL =   -12135.4968  RESTRAINT  =      138.9625
+ EAMBER  =  -293119.7139
+ DV/DL  =        12.9106
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4900
+ SC_BOND=         1.2799  SC_ANGLE=         2.0471  SC_DIHED   =         7.1070
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9439
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.9225  SC_VDW_DER=     103.6612  SC_DERIV   =        63.7388
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1500      -2.9314E+05     5.8266E-01     8.9232E+01     C        4634
+
+ BOND    =    17367.0949  ANGLE   =     1880.2851  DIHED      =     8614.7708
+ VDWAALS =    23332.9302  EEL     =  -335275.0415  HBOND      =        0.0000
+ 1-4 VDW =     2937.7257  1-4 EEL =   -12136.1299  RESTRAINT  =      139.1716
+ EAMBER  =  -293278.3647
+ DV/DL  =        13.3566
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1675
+ SC_BOND=         0.3789  SC_ANGLE=         2.5221  SC_DIHED   =         8.0397
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7732
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.9894  SC_VDW_DER=     104.0708  SC_DERIV   =        64.0814
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1500      -2.9314E+05     5.8266E-01     8.9232E+01     C        4634
+
+ BOND    =    17367.0949  ANGLE   =     1880.2851  DIHED      =     8614.7708
+ VDWAALS =    23332.9302  EEL     =  -335275.0415  HBOND      =        0.0000
+ 1-4 VDW =     2937.7257  1-4 EEL =   -12136.1299  RESTRAINT  =      139.1716
+ EAMBER  =  -293278.3647
+ DV/DL  =        13.3566
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4917
+ SC_BOND=         1.2815  SC_ANGLE=         2.0488  SC_DIHED   =         7.1053
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -39.9894  SC_VDW_DER=     104.0708  SC_DERIV   =        64.0814
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1550      -2.9330E+05     2.4918E-01     2.9130E+01     C        4634
+
+ BOND    =    17392.4938  ANGLE   =     1878.2808  DIHED      =     8609.4770
+ VDWAALS =    23503.0594  EEL     =  -335627.4681  HBOND      =        0.0000
+ 1-4 VDW =     2937.1139  1-4 EEL =   -12136.2196  RESTRAINT  =      139.3432
+ EAMBER  =  -293443.2627
+ DV/DL  =        13.7865
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1679
+ SC_BOND=         0.3788  SC_ANGLE=         2.5222  SC_DIHED   =         8.0396
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7727
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.0565  SC_VDW_DER=     104.4752  SC_DERIV   =        64.4187
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1550      -2.9330E+05     2.4918E-01     2.9130E+01     C        4634
+
+ BOND    =    17392.4938  ANGLE   =     1878.2808  DIHED      =     8609.4770
+ VDWAALS =    23503.0594  EEL     =  -335627.4681  HBOND      =        0.0000
+ 1-4 VDW =     2937.1139  1-4 EEL =   -12136.2196  RESTRAINT  =      139.3432
+ EAMBER  =  -293443.2627
+ DV/DL  =        13.7865
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4932
+ SC_BOND=         1.2831  SC_ANGLE=         2.0506  SC_DIHED   =         7.1035
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.0565  SC_VDW_DER=     104.4752  SC_DERIV   =        64.4187
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1600      -2.9345E+05     5.2145E-01     1.0795E+02     C        4634
+
+ BOND    =    17432.7747  ANGLE   =     1878.0518  DIHED      =     8604.4609
+ VDWAALS =    23667.9827  EEL     =  -335968.6027  HBOND      =        0.0000
+ 1-4 VDW =     2936.4870  1-4 EEL =   -12136.7900  RESTRAINT  =      139.5771
+ EAMBER  =  -293585.6357
+ DV/DL  =        14.2226
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1682
+ SC_BOND=         0.3787  SC_ANGLE=         2.5223  SC_DIHED   =         8.0395
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7723
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.1204  SC_VDW_DER=     104.8740  SC_DERIV   =        64.7535
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1600      -2.9345E+05     5.2145E-01     1.0795E+02     C        4634
+
+ BOND    =    17432.7747  ANGLE   =     1878.0518  DIHED      =     8604.4609
+ VDWAALS =    23667.9827  EEL     =  -335968.6027  HBOND      =        0.0000
+ 1-4 VDW =     2936.4870  1-4 EEL =   -12136.7900  RESTRAINT  =      139.5771
+ EAMBER  =  -293585.6357
+ DV/DL  =        14.2226
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4948
+ SC_BOND=         1.2845  SC_ANGLE=         2.0525  SC_DIHED   =         7.1018
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.1204  SC_VDW_DER=     104.8740  SC_DERIV   =        64.7535
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1650      -2.9360E+05     2.1356E-01     2.0155E+01     C        4634
+
+ BOND    =    17457.6298  ANGLE   =     1876.2128  DIHED      =     8599.7008
+ VDWAALS =    23825.6253  EEL     =  -336295.5434  HBOND      =        0.0000
+ 1-4 VDW =     2935.8556  1-4 EEL =   -12136.3802  RESTRAINT  =      139.7197
+ EAMBER  =  -293736.8993
+ DV/DL  =        14.6261
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1686
+ SC_BOND=         0.3786  SC_ANGLE=         2.5223  SC_DIHED   =         8.0395
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7718
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.1800  SC_VDW_DER=     105.2618  SC_DERIV   =        65.0818
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1650      -2.9360E+05     2.1356E-01     2.0155E+01     C        4634
+
+ BOND    =    17457.6298  ANGLE   =     1876.2128  DIHED      =     8599.7008
+ VDWAALS =    23825.6253  EEL     =  -336295.5434  HBOND      =        0.0000
+ 1-4 VDW =     2935.8556  1-4 EEL =   -12136.3802  RESTRAINT  =      139.7197
+ EAMBER  =  -293736.8993
+ DV/DL  =        14.6261
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4963
+ SC_BOND=         1.2857  SC_ANGLE=         2.0545  SC_DIHED   =         7.1002
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.1800  SC_VDW_DER=     105.2618  SC_DERIV   =        65.0818
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1700      -2.9373E+05     1.2872E-01     4.1388E+00     CZ       2744
+
+ BOND    =    17486.6682  ANGLE   =     1875.2927  DIHED      =     8595.2823
+ VDWAALS =    23972.9779  EEL     =  -336601.2050  HBOND      =        0.0000
+ 1-4 VDW =     2935.3194  1-4 EEL =   -12136.6901  RESTRAINT  =      139.8849
+ EAMBER  =  -293872.3547
+ DV/DL  =        15.0465
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1690
+ SC_BOND=         0.3786  SC_ANGLE=         2.5224  SC_DIHED   =         8.0394
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7714
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.2341  SC_VDW_DER=     105.6352  SC_DERIV   =        65.4011
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1700      -2.9373E+05     1.2872E-01     4.1388E+00     CZ       2744
+
+ BOND    =    17486.6682  ANGLE   =     1875.2927  DIHED      =     8595.2823
+ VDWAALS =    23972.9779  EEL     =  -336601.2050  HBOND      =        0.0000
+ 1-4 VDW =     2935.3194  1-4 EEL =   -12136.6901  RESTRAINT  =      139.8849
+ EAMBER  =  -293872.3547
+ DV/DL  =        15.0465
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4979
+ SC_BOND=         1.2867  SC_ANGLE=         2.0566  SC_DIHED   =         7.0988
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9441
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.2341  SC_VDW_DER=     105.6352  SC_DERIV   =        65.4011
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1750      -2.9386E+05     1.2871E-01     4.4736E+00     CG       1874
+
+ BOND    =    17515.5641  ANGLE   =     1874.4666  DIHED      =     8591.0659
+ VDWAALS =    24114.9665  EEL     =  -336895.9002  HBOND      =        0.0000
+ 1-4 VDW =     2934.8002  1-4 EEL =   -12136.8797  RESTRAINT  =      140.0575
+ EAMBER  =  -294001.9166
+ DV/DL  =        15.4787
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1694
+ SC_BOND=         0.3785  SC_ANGLE=         2.5225  SC_DIHED   =         8.0394
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7710
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.2858  SC_VDW_DER=     106.0120  SC_DERIV   =        65.7263
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1750      -2.9386E+05     1.2871E-01     4.4736E+00     CG       1874
+
+ BOND    =    17515.5641  ANGLE   =     1874.4666  DIHED      =     8591.0659
+ VDWAALS =    24114.9665  EEL     =  -336895.9002  HBOND      =        0.0000
+ 1-4 VDW =     2934.8002  1-4 EEL =   -12136.8797  RESTRAINT  =      140.0575
+ EAMBER  =  -294001.9166
+ DV/DL  =        15.4787
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.4995
+ SC_BOND=         1.2874  SC_ANGLE=         2.0588  SC_DIHED   =         7.0974
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9441
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.2858  SC_VDW_DER=     106.0120  SC_DERIV   =        65.7263
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1800      -2.9398E+05     3.4308E-01     3.6796E+01     C        4634
+
+ BOND    =    17547.3255  ANGLE   =     1874.0864  DIHED      =     8586.9767
+ VDWAALS =    24253.6521  EEL     =  -337183.5930  HBOND      =        0.0000
+ 1-4 VDW =     2934.3141  1-4 EEL =   -12137.2388  RESTRAINT  =      140.2283
+ EAMBER  =  -294124.4769
+ DV/DL  =        15.9493
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1698
+ SC_BOND=         0.3784  SC_ANGLE=         2.5225  SC_DIHED   =         8.0393
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7705
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.3371  SC_VDW_DER=     106.4022  SC_DERIV   =        66.0651
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1800      -2.9398E+05     3.4308E-01     3.6796E+01     C        4634
+
+ BOND    =    17547.3255  ANGLE   =     1874.0864  DIHED      =     8586.9767
+ VDWAALS =    24253.6521  EEL     =  -337183.5930  HBOND      =        0.0000
+ 1-4 VDW =     2934.3141  1-4 EEL =   -12137.2388  RESTRAINT  =      140.2283
+ EAMBER  =  -294124.4769
+ DV/DL  =        15.9493
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.5012
+ SC_BOND=         1.2881  SC_ANGLE=         2.0612  SC_DIHED   =         7.0960
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.3371  SC_VDW_DER=     106.4022  SC_DERIV   =        66.0651
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1850      -2.9411E+05     1.1876E-01     4.1488E+00     C        4634
+
+ BOND    =    17569.9808  ANGLE   =     1872.8915  DIHED      =     8583.1821
+ VDWAALS =    24383.8271  EEL     =  -337453.7978  HBOND      =        0.0000
+ 1-4 VDW =     2933.8261  1-4 EEL =   -12137.1593  RESTRAINT  =      140.4071
+ EAMBER  =  -294247.2495
+ DV/DL  =        16.4061
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1701
+ SC_BOND=         0.3783  SC_ANGLE=         2.5226  SC_DIHED   =         8.0393
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7701
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.3851  SC_VDW_DER=     106.7862  SC_DERIV   =        66.4012
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1850      -2.9411E+05     1.1876E-01     4.1488E+00     C        4634
+
+ BOND    =    17569.9808  ANGLE   =     1872.8915  DIHED      =     8583.1821
+ VDWAALS =    24383.8271  EEL     =  -337453.7978  HBOND      =        0.0000
+ 1-4 VDW =     2933.8261  1-4 EEL =   -12137.1593  RESTRAINT  =      140.4071
+ EAMBER  =  -294247.2495
+ DV/DL  =        16.4061
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.5029
+ SC_BOND=         1.2885  SC_ANGLE=         2.0636  SC_DIHED   =         7.0948
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.3851  SC_VDW_DER=     106.7862  SC_DERIV   =        66.4012
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1900      -2.9422E+05     3.2629E-01     5.3644E+01     C        4634
+
+ BOND    =    17599.5110  ANGLE   =     1872.4952  DIHED      =     8579.4033
+ VDWAALS =    24514.3219  EEL     =  -337724.3784  HBOND      =        0.0000
+ 1-4 VDW =     2933.3426  1-4 EEL =   -12137.5259  RESTRAINT  =      140.5808
+ EAMBER  =  -294362.8303
+ DV/DL  =        16.9158
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1705
+ SC_BOND=         0.3782  SC_ANGLE=         2.5227  SC_DIHED   =         8.0393
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7697
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.4335  SC_VDW_DER=     107.1933  SC_DERIV   =        66.7598
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1900      -2.9422E+05     3.2629E-01     5.3644E+01     C        4634
+
+ BOND    =    17599.5110  ANGLE   =     1872.4952  DIHED      =     8579.4033
+ VDWAALS =    24514.3219  EEL     =  -337724.3784  HBOND      =        0.0000
+ 1-4 VDW =     2933.3426  1-4 EEL =   -12137.5259  RESTRAINT  =      140.5808
+ EAMBER  =  -294362.8303
+ DV/DL  =        16.9158
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.5046
+ SC_BOND=         1.2889  SC_ANGLE=         2.0661  SC_DIHED   =         7.0936
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.4335  SC_VDW_DER=     107.1933  SC_DERIV   =        66.7598
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1950      -2.9433E+05     4.6760E-01     8.4278E+01     C        4634
+
+ BOND    =    17627.7610  ANGLE   =     1872.0284  DIHED      =     8575.8363
+ VDWAALS =    24636.6770  EEL     =  -337978.4115  HBOND      =        0.0000
+ 1-4 VDW =     2932.9158  1-4 EEL =   -12137.0574  RESTRAINT  =      140.8435
+ EAMBER  =  -294470.2506
+ DV/DL  =        17.4126
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1709
+ SC_BOND=         0.3781  SC_ANGLE=         2.5228  SC_DIHED   =         8.0392
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7692
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.4777  SC_VDW_DER=     107.5913  SC_DERIV   =        67.1136
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   1950      -2.9433E+05     4.6760E-01     8.4278E+01     C        4634
+
+ BOND    =    17627.7610  ANGLE   =     1872.0284  DIHED      =     8575.8363
+ VDWAALS =    24636.6770  EEL     =  -337978.4115  HBOND      =        0.0000
+ 1-4 VDW =     2932.9158  1-4 EEL =   -12137.0574  RESTRAINT  =      140.8435
+ EAMBER  =  -294470.2506
+ DV/DL  =        17.4126
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.5063
+ SC_BOND=         1.2892  SC_ANGLE=         2.0686  SC_DIHED   =         7.0924
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.4777  SC_VDW_DER=     107.5913  SC_DERIV   =        67.1136
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   2000      -2.9444E+05     2.5121E-01     1.9969E+01     CG       1874
+
+ BOND    =    17646.9111  ANGLE   =     1871.0680  DIHED      =     8572.3882
+ VDWAALS =    24755.0344  EEL     =  -338224.1259  HBOND      =        0.0000
+ 1-4 VDW =     2932.5280  1-4 EEL =   -12137.8120  RESTRAINT  =      140.9052
+ EAMBER  =  -294584.0082
+ DV/DL  =        17.9574
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1712
+ SC_BOND=         0.3780  SC_ANGLE=         2.5228  SC_DIHED   =         8.0392
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7688
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.5197  SC_VDW_DER=     107.9952  SC_DERIV   =        67.4754
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   2000      -2.9444E+05     2.5121E-01     1.9969E+01     CG       1874
+
+ BOND    =    17646.9111  ANGLE   =     1871.0680  DIHED      =     8572.3882
+ VDWAALS =    24755.0344  EEL     =  -338224.1259  HBOND      =        0.0000
+ 1-4 VDW =     2932.5280  1-4 EEL =   -12137.8120  RESTRAINT  =      140.9052
+ EAMBER  =  -294584.0082
+ DV/DL  =        17.9574
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.5080
+ SC_BOND=         1.2894  SC_ANGLE=         2.0713  SC_DIHED   =         7.0913
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.5197  SC_VDW_DER=     107.9952  SC_DERIV   =        67.4754
+ ------------------------------------------------------------------------------
+
+
+
+  Maximum number of minimization cycles reached.
+
+
+                    FINAL RESULTS
+
+
+| TI region  1
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   2000      -2.9444E+05     2.5121E-01     1.9969E+01     CG       1874
+
+ BOND    =    17646.9111  ANGLE   =     1871.0680  DIHED      =     8572.3882
+ VDWAALS =    24755.0344  EEL     =  -338224.1259  HBOND      =        0.0000
+ 1-4 VDW =     2932.5280  1-4 EEL =   -12137.8120  RESTRAINT  =      140.9052
+ EAMBER  =  -294584.0082
+ DV/DL  =        17.9574
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         9.1712
+ SC_BOND=         0.3780  SC_ANGLE=         2.5228  SC_DIHED   =         8.0392
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7688
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.5197  SC_VDW_DER=     107.9952  SC_DERIV   =        67.4754
+ ------------------------------------------------------------------------------
+
+
+| TI region  2
+
+
+
+   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+   2000      -2.9444E+05     2.5121E-01     1.9969E+01     CG       1874
+
+ BOND    =    17646.9111  ANGLE   =     1871.0680  DIHED      =     8572.3882
+ VDWAALS =    24755.0344  EEL     =  -338224.1259  HBOND      =        0.0000
+ 1-4 VDW =     2932.5280  1-4 EEL =   -12137.8120  RESTRAINT  =      140.9052
+ EAMBER  =  -294584.0082
+ DV/DL  =        17.9574
+ NMR restraints: Bond =    0.000   Angle =     0.000   Torsion =     0.000
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.00
+ SC_Etot=         0.0000  SC_EKtot=         0.0000  SC_EPtot   =         8.5080
+ SC_BOND=         1.2894  SC_ANGLE=         2.0713  SC_DIHED   =         7.0913
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9440
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -40.5197  SC_VDW_DER=     107.9952  SC_DERIV   =        67.4754
+ ------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+   5.  TIMINGS
+--------------------------------------------------------------------------------
+
+|  NonSetup CPU Time in Major Routines:
+|
+|     Routine           Sec        %
+|     ------------------------------
+|     Nonbond          67.46   86.39
+|     Bond              0.00    0.00
+|     Angle             0.00    0.00
+|     Dihedral          0.00    0.00
+|     Shake             0.00    0.00
+|     Other            10.63   13.61
+|     ------------------------------
+|     Total            78.08
+
+|  PME Nonbond Pairlist CPU Time:
+|
+|     Routine              Sec        %
+|     ---------------------------------
+|     Set Up Cit           0.00    0.00
+|     Build List           0.00    0.00
+|     ---------------------------------
+|     Total                0.00    0.00
+
+|  PME Direct Force CPU Time:
+|
+|     Routine              Sec        %
+|     ---------------------------------
+|     NonBonded Calc       0.00    0.00
+|     Exclude Masked       0.00    0.00
+|     Other                0.01    0.01
+|     ---------------------------------
+|     Total                0.01    0.01
+
+|  PME Reciprocal Force CPU Time:
+|
+|     Routine              Sec        %
+|     ---------------------------------
+|     1D bspline           0.00    0.00
+|     Grid Charges         0.00    0.00
+|     Scalar Sum           0.00    0.00
+|     Gradient Sum         0.00    0.00
+|     FFT                  0.00    0.00
+|     ---------------------------------
+|     Total                0.00    0.00
+
+|  Setup CPU time:            1.37 seconds
+|  NonSetup CPU time:        78.08 seconds
+|  Total CPU time:           79.45 seconds     0.02 hours
+
+|  Setup wall time:           1    seconds
+|  NonSetup wall time:       78    seconds
+|  Total wall time:          79    seconds     0.02 hours

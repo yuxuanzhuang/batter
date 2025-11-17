@@ -1,0 +1,1601 @@
+
+          -------------------------------------------------------
+          Amber 24 PMEMD                              2024
+          -------------------------------------------------------
+
+| PMEMD implementation of SANDER, Release 24
+
+|  Compiled date/time: Wed Jan 15 09:38:10 2025
+| Run on 11/10/2025 at 06:59:00
+
+|   Executable path: pmemd.cuda
+| Working directory: /oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/abfe-adrb2_A-20251110T081259Z/simulations/G1I/fe/z/z18
+|          Hostname: sh03-15n13.int
+
+  [-O]verwriting output
+
+File Assignments:
+|   MDIN: mdin-00                                                               
+|  MDOUT: mdin-00.out                                                           
+| INPCRD: mini.in.rst7                                                          
+|   PARM: full.hmr.prmtop                                                       
+| RESTRT: mdin-00.rst7                                                          
+|   REFC: mini.in.rst7                                                          
+|  MDVEL: mdvel                                                                 
+|   MDEN: mden                                                                  
+|  MDCRD: mdin-00.nc                                                            
+| MDINFO: mdinfo                                                                
+|  MDFRC: mdfrc                                                                 
+
+
+ Here is the input file:
+
+*******************************************************                        
+*****************************       mdin                                       
+*******************************************************                        
+Production runs elec-LJ sdr                                                    
+ &cntrl                                                                        
+  imin = 0,                                                                    
+ntx = 1,                                                                       
+irest = 0,                                                                     
+  ntpr = 1000,                                                                 
+  ntwr = 10000,                                                                
+  ntwe = 0,                                                                    
+  ntxo = 2,                                                                    
+  ntwx = 2500,                                                                 
+  ntwprt = 27883,                                                              
+  ioutfm = 1,                                                                  
+  iwrap = 1,                                                                   
+  ntf = 1,                                                                     
+  ntc = 2,                                                                     
+  cut = 9.0,                                                                   
+  ntt = 3,                                                                     
+  temp0 = 310.0,                                                               
+  gamma_ln = 1.0,                                                              
+  ig = -1,                                                                     
+  ntp = 0,                                                                     
+  barostat = 2,                                                                
+  nstlim = 5000,                                                               
+dt = 0.001,                                                                    
+  nmropt = 1,                                                                  
+  pencut = -1,                                                                 
+  ntr = 1,                                                                     
+  restraint_wt = 50.0,                                                         
+restraintmask = '(@CA | :g1i | :1-2) & !@H='                                   
+  icfe = 1,                                                                    
+  clambda = 0.78000,                                                           
+  timask1 = ':287',                                                            
+  timask2 = ':288',                                                            
+  ifsc=1,                                                                      
+  scmask1=':287',                                                              
+  scmask2=':288',                                                              
+  ifmbar = 1,                                                                  
+  gti_cut   = 1,                                                               
+  gti_output = 1,                                                              
+  gti_add_sc = 25,                                                             
+  gti_scale_beta  = 1,                                                         
+  gti_lam_sch = 1,                                                             
+  gti_ele_sc  = 1,                                                             
+  gti_vdw_sc  = 1,                                                             
+  gti_cut_sc  = 2,                                                             
+  scalpha = 0.5,                                                               
+  scbeta = 1.0,                                                                
+  gti_cut_sc_on   = 7,                                                         
+  gti_cut_sc_off  = 9,                                                         
+  gti_ele_exp     = 2,                                                         
+  gti_vdw_exp     = 2,                                                         
+  gti_chg_keep    = 1,                                                         
+  gti_bat_sc      = 1,                                                         
+                                                                               
+  mbar_states = 24                                                             
+  mbar_lambda = 0.00000, 0.04000, 0.09000, 0.13000, 0.17000, 0.22000, 0.26000, 
+  infe = 1,                                                                    
+ /                                                                             
+ &pmd                                                                          
+  output_file = 'cmass.txt'                                                    
+  output_freq = 2500                                                           
+  cv_file = 'cv.in'                                                            
+ /                                                                             
+ &wt type = 'END' , /                                                          
+DISANG=disang.rest                                                             
+LISTOUT=POUT                                                                   
+
+
+Note: ig = -1. Setting random seed to   664574 based on wallclock time in 
+      microseconds.
+| irandom = 1, using AMBER's internal random number generator (default).
+ 
+|--------------------- INFORMATION ----------------------
+| GPU (CUDA) Version of PMEMD in use: NVIDIA GPU IN USE.
+|                    Version 18.0.0
+| 
+|                      03/25/2018
+| 
+| Implementation by:
+|                    Ross C. Walker     (SDSC)
+|                    Scott Le Grand     (nVIDIA)
+| 
+| Version 18 performance extensions by:
+|                    David Cerutti     (Rutgers)
+| 
+| Precision model in use:
+|      [SPFP] - Single Precision Forces, 64-bit Fixed Point
+|               Accumulation. (Default)
+| 
+|--------------------------------------------------------
+ 
+|----------------- CITATION INFORMATION -----------------
+|
+|    When publishing work that utilized the CUDA version
+|    of AMBER, please cite the following in addition to
+|    the regular AMBER citations:
+|
+|  - Romelia Salomon-Ferrer; Andreas W. Goetz; Duncan
+|    Poole; Scott Le Grand; Ross C. Walker "Routine
+|    microsecond molecular dynamics simulations with
+|    AMBER - Part II: Particle Mesh Ewald", J. Chem.
+|    Theory Comput., 2013, 9 (9), pp3878-3888,
+|    DOI: 10.1021/ct400314y.
+|
+|  - Andreas W. Goetz; Mark J. Williamson; Dong Xu;
+|    Duncan Poole; Scott Le Grand; Ross C. Walker
+|    "Routine microsecond molecular dynamics simulations
+|    with AMBER - Part I: Generalized Born", J. Chem.
+|    Theory Comput., 2012, 8 (5), pp1542-1555.
+|
+|  - Scott Le Grand; Andreas W. Goetz; Ross C. Walker
+|    "SPFP: Speed without compromise - a mixed precision
+|    model for GPU accelerated molecular dynamics
+|    simulations.", Comp. Phys. Comm., 2013, 184
+|    pp374-380, DOI: 10.1016/j.cpc.2012.09.022
+|
+|    When publishing work that utilized the CUDA version
+|    of TI, BAR, MBAR or FEP please cite the following 
+|    publications in addition to the regular AMBER 
+|    GPU citations:
+|
+|  - Daniel J. Mermelstein; Charles Lin; Gard Nelson; 
+|    Rachael Kretsch; J. Andrew McCammon; Ross C. Walker
+|    "Fast and Flexible GPU Accelerated Binding 
+|    Free Energy Calculations within the AMBER Molecular
+|    Dynamics Package" J. Comp. Chem., 2018,
+|    DOI: 10.1002/jcc.25187
+|
+|  - Tai-Sung Lee; Yuan Hu; Brad Sherborne; Zhuyan Guo;
+|    Darrin M. York
+|    "Toward Fast and Accurate Binding Affinity Prediction with
+|    pmemdGTI: An Efficient Implementation of GPU-Accelerated
+|    Thermodynamic Integration"
+|    J. Chem. Theory Comput., 2017, 13 (7), 3077
+|
+|
+|--------------------------------------------------------
+ 
+|------------------- GPU DEVICE INFO --------------------
+|
+|            CUDA_VISIBLE_DEVICES: 0
+|   CUDA Capable Devices Detected:      1
+|           CUDA Device ID in use:      0
+|                CUDA Device Name: NVIDIA GeForce RTX 3090
+|     CUDA Device Global Mem Size:  24252 MB
+| CUDA Device Num Multiprocessors:     82
+|           CUDA Device Core Freq:   1.70 GHz
+|
+|--------------------------------------------------------
+ 
+ 
+| Conditional Compilation Defines Used:
+| PUBFFT
+| BINTRAJ
+| CUDA
+| EMIL
+
+| Largest sphere to fit in unit cell has radius =    40.155
+
+| New format PARM file being parsed.
+| Version =    1.000 Date = 11/10/25 Time = 00:48:20
+
+| Note: 1-4 EEL scale factors are being read from the topology file.
+
+| Note: 1-4 VDW scale factors are being read from the topology file.
+| Duplicated    0 dihedrals
+
+| Duplicated    0 dihedrals
+
+--------------------------------------------------------------------------------
+   1.  RESOURCE   USE: 
+--------------------------------------------------------------------------------
+
+ getting new box info from bottom of inpcrd
+ NATOM  =   81889 NTYPES =      83 NBONH =   70482 MBONA  =   11205
+ NTHETH =   39428 MTHETA =   13454 NPHIH =   68287 MPHIA  =   45210
+ NHPARM =       0 NPARM  =       0 NNB   =  227344 NRES   =   18868
+ NBONA  =   11205 NTHETA =   13454 NPHIA =   45210 NUMBND =     105
+ NUMANG =     199 NPTRA  =     296 NATYP =       1 NPHB   =       0
+ IFBOX  =       1 NMXRS  =      50 IFCAP =       0 NEXTRA =       0
+ NCOPY  =       0
+
+| Coordinate Index Table dimensions:    17   16   22
+| Direct force subcell size =     5.2258    5.0194    5.1174
+
+     BOX TYPE: RECTILINEAR
+
+--------------------------------------------------------------------------------
+   2.  CONTROL  DATA  FOR  THE  RUN
+--------------------------------------------------------------------------------
+
+default_name                                                                    
+
+General flags:
+     imin    =       0, nmropt  =       1
+
+Nature and format of input:
+     ntx     =       1, irest   =       0, ntrx    =       1
+
+Nature and format of output:
+     ntxo    =       2, ntpr    =    1000, ntrx    =       1, ntwr    =   10000
+     iwrap   =       1, ntwx    =    2500, ntwv    =       0, ntwe    =       0
+     ioutfm  =       1, ntwprt  =   27883, idecomp =       0, rbornstat=      0
+
+Potential function:
+     ntf     =       1, ntb     =       1, igb     =       0, nsnb    =      25
+     ipol    =       0, gbsa    =       0, iesp    =       0
+     dielc   =   1.00000, cut     =   9.00000, intdiel =   1.00000
+
+Frozen or restrained atoms:
+     ibelly  =       0, ntr     =       1
+     restraint_wt =  50.00000
+
+Molecular dynamics:
+     nstlim  =      5000, nscm    =         0, nrespa  =         1
+     t       =   0.00000, dt      =   0.00100, vlimit  =  -1.00000
+
+Langevin dynamics temperature regulation:
+     ig      =  664574
+     temp0   = 310.00000, tempi   =   0.00000, gamma_ln=   1.00000
+
+SHAKE:
+     ntc     =       2, jfastw  =       0
+     tol     =   0.00001
+
+NMR refinement options:
+     iscale  =       0, noeskp  =       1, ipnlty  =       1, mxsub   =       1
+     scalm   = 100.00000, pencut  =  -1.00000, tausw   =   0.10000
+
+Free energy options:
+     icfe    =       1, ifsc    =       1, klambda =       1
+     clambda =  0.7800, scalpha =  0.5000, scbeta  =  1.0000
+     sceeorder =       2
+     dynlmb =  0.0000 logdvdl =       0
+
+FEP MBAR options:
+     ifmbar  =       1,  bar_intervall =      100
+     mbar_states =      24
+
+| Intermolecular bonds treatment:
+|     no_intermolecular_bonds =       1
+
+| Energy averages sample interval:
+|     ene_avg_sampling =    1000
+
+Ewald parameters:
+     verbose =       0, ew_type =       0, nbflag  =       1, use_pme =       1
+     vdwmeth =       1, eedmeth =       1, netfrc  =       1
+     Box X =   88.838   Box Y =   80.310   Box Z =  112.583
+     Alpha =   90.000   Beta  =   90.000   Gamma =   90.000
+     NFFT1 =   96       NFFT2 =   84       NFFT3 =  120
+     Cutoff=    9.000   Tol   =0.100E-04
+     Ewald Coefficient =  0.30768
+     Interpolation order =    4
+
+    LOADING THE CONSTRAINED ATOMS AS GROUPS
+
+
+   5.  REFERENCE ATOM COORDINATES
+
+  default_name                                                                    
+     Mask (@CA | :g1i | :1-2) & !@H=; matches   316 atoms
+     TI Mask 1 :287; matches     31 atoms
+     TI Mask 2 :288; matches     31 atoms
+     TI region 1:   81858 atoms
+     TI region 2:   81858 atoms
+     SC Mask 1 :287; matches     31 atoms
+     SC Mask 2 :288; matches     31 atoms
+
+    MBAR - lambda values considered:
+      24 total:  0.0000 0.0400 0.0900 0.1300 0.1700 0.2200 0.2600 0.3000 0.3500 0.3900 0.4300 0.4800 0.5200 0.5700 0.6100 0.6500 0.7000 0.7400 0.7800 0.8300
+ 0.9300 0.9700 0.9900 1.0000
+    Extra energies will be computed     50 times.
+| gti_syn_mass has been set to   1
+
+|--------------------------------------------------------------------------------------------
+| Extra TI control variables
+|     gti_add_sc     =  25, gti_ele_gauss  =   0, gti_auto_alpha =   0, gti_scale_beta =   1
+|     gti_ele_exp    =   2, gti_vdw_exp    =   2, gti_ele_sc     =   1, gti_vdw_sc     =   1
+|     gti_cut        =   1, gti_cut_sc     =   2
+|     gti_cut_sc_on    =  7.0000, gti_cut_sc_off    =  9.0000
+|--------------------------------------------------------------------------------------------
+
+| MONTE CARLO BAROSTAT IMPORTANT NOTE:
+|   The Monte-Carlo barostat does not require the virial to adjust the system volume.
+|   Since it is an expensive calculation, it is skipped for efficiency. A side-effect
+|   is that the reported pressure is always 0 because it is not calculated.
+
+--------------------------------------------------------------------------------
+   3.  ATOMIC COORDINATES AND VELOCITIES
+--------------------------------------------------------------------------------
+
+default_name                                                                    
+ begin time read from input coords =     0.000 ps
+
+
+
+           Begin reading energy term weight changes/NMR restraints
+ WEIGHT CHANGES:
+                         ** No weight changes given **
+
+ RESTRAINTS:
+ Requested file redirections:
+  DISANG    = disang.rest
+  LISTOUT   = POUT
+ Restraints will be read from file: disang.rest
+Here are comments from the DISANG input file:
+# Anchor atoms :93@CA :62@CA :258@CA :287@C9 :287@C3 :287@C7  comp=z            
+
+                       Number of restraints read =    21
+
+                  Done reading weight changes/NMR restraints
+
+
+ 
+ Number of triangulated 3-point waters found:    17974
+ Number of shake restraints removed in TI region  1 :        0
+ Number of shake restraints removed in TI region  2 :        0
+
+     Sum of charges for TI region  1 =   0.00000156
+     Skip neutralizing charges...
+
+
+     Sum of charges for TI region  2 =   0.00000156
+     Skip neutralizing charges...
+
+| Dynamic Memory, Types Used:
+| Reals             3535085
+| Integers          6544726
+
+| Nonbonded Pairs Initial Allocation:    18670692
+
+| GPU memory information (estimate):
+| KB of GPU memory in use:    525701
+| KB of CPU memory in use:    161669
+
+--------------------------------------------------------------------------------
+   4.  RESULTS
+--------------------------------------------------------------------------------
+
+ NFE : ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ P I N N E D  M.D. ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~
+ NFE : 
+ NFE : output_file = cmass.txt
+ NFE : output_freq = 2500 (2.5000 ps)
+ NFE : 
+ NFE : CV #1 << anchor : position = 0.000000, 0.000000, 0.000000, 999.000000
+ NFE :                   strength = 10.000000, 10.000000 >>
+ NFE :   type = 'COM_DISTANCE'
+ NFE :   group #1 = (1 [Pb])
+ NFE :   group #2 = (3 [N], 7 [CA], 15 [C], 16 [O], 17 [N],
+ NFE :               19 [CA], 31 [C], 32 [O], 33 [N], 35 [CA],
+ NFE :               45 [C], 46 [O], 47 [N], 49 [CA], 62 [C],
+ NFE :               63 [O], 64 [N], 66 [CA], 79 [C], 80 [O],
+ NFE :               81 [N], 83 [CA], 103 [C], 104 [O], 105 [N],
+ NFE :               107 [CA], 115 [C], 116 [O], 117 [N], 119 [CA],
+ NFE :               130 [C], 131 [O], 132 [N], 134 [CA], 146 [C],
+ NFE :               147 [O], 148 [N], 150 [CA], 170 [C], 171 [O],
+ NFE :               172 [N], 174 [CA], 186 [C], 187 [O], 188 [N],
+ NFE :               190 [CA], 202 [C], 203 [O], 204 [N], 206 [CA],
+ NFE :               209 [C], 210 [O], 211 [N], 213 [CA], 226 [C],
+ NFE :               227 [O], 228 [N], 230 [CA], 233 [C], 234 [O],
+ NFE :               235 [N], 237 [CA], 252 [C], 253 [O], 254 [N],
+ NFE :               256 [CA], 268 [C], 269 [O], 270 [N], 272 [CA],
+ NFE :               285 [C], 286 [O], 287 [N], 289 [CA], 296 [C],
+ NFE :               297 [O], 298 [N], 300 [CA], 315 [C], 316 [O],
+ NFE :               317 [N], 319 [CA], 334 [C], 335 [O], 336 [N],
+ NFE :               338 [CA], 350 [C], 351 [O], 352 [N], 354 [CA],
+ NFE :               369 [C], 370 [O], 371 [N], 373 [CA], 379 [C],
+ NFE :               380 [O], 381 [N], 383 [CA], 398 [C], 399 [O],
+ NFE :               400 [N], 402 [CA], 414 [C], 415 [O], 416 [N],
+ NFE :               418 [CA], 434 [C], 435 [O], 436 [N], 438 [CA],
+ NFE :               441 [C], 442 [O], 443 [N], 445 [CA], 455 [C],
+ NFE :               456 [O], 457 [N], 459 [CA], 471 [C], 472 [O],
+ NFE :               473 [N], 475 [CA], 490 [C], 491 [O], 492 [N],
+ NFE :               494 [CA], 506 [C], 507 [O], 508 [N], 510 [CA],
+ NFE :               525 [C], 526 [O], 527 [N], 529 [CA], 539 [C],
+ NFE :               540 [O], 541 [N], 543 [CA], 549 [C], 550 [O],
+ NFE :               551 [N], 553 [CA], 568 [C], 569 [O], 570 [N],
+ NFE :               572 [CA], 578 [C], 579 [O], 580 [N], 582 [CA],
+ NFE :               600 [C], 601 [O], 602 [N], 604 [CA], 620 [C],
+ NFE :               621 [O], 622 [N], 624 [CA], 635 [C], 636 [O],
+ NFE :               637 [N], 639 [CA], 659 [C], 660 [O], 661 [N],
+ NFE :               663 [CA], 678 [C], 679 [O], 680 [N], 682 [CA],
+ NFE :               695 [C], 696 [O], 697 [N], 699 [CA], 709 [C],
+ NFE :               710 [O], 711 [N], 713 [CA], 725 [C], 726 [O],
+ NFE :               727 [N], 729 [CA], 739 [C], 740 [O], 741 [N],
+ NFE :               743 [CA], 753 [C], 754 [O], 755 [N], 757 [CA],
+ NFE :               774 [C], 775 [O], 776 [N], 778 [CA], 794 [C],
+ NFE :               795 [O], 796 [N], 798 [CA], 813 [C], 814 [O],
+ NFE :               815 [N], 817 [CA], 827 [C], 828 [O], 829 [N],
+ NFE :               831 [CA], 838 [C], 839 [O], 840 [N], 842 [CA],
+ NFE :               857 [C], 858 [O], 859 [N], 861 [CA], 867 [C],
+ NFE :               868 [O], 869 [N], 871 [CA], 878 [C], 879 [O],
+ NFE :               880 [N], 882 [CA], 888 [C], 889 [O], 890 [N],
+ NFE :               892 [CA], 900 [C], 901 [O], 902 [N], 904 [CA],
+ NFE :               919 [C], 920 [O], 921 [N], 923 [CA], 935 [C],
+ NFE :               936 [O], 937 [N], 939 [CA], 952 [C], 953 [O],
+ NFE :               954 [N], 956 [CA], 959 [C], 960 [O], 961 [N],
+ NFE :               963 [CA], 978 [C], 979 [O], 980 [N], 982 [CA],
+ NFE :               988 [C], 989 [O], 990 [N], 992 [CA], 1004 [C],
+ NFE :               1005 [O], 1006 [N], 1008 [CA], 1020 [C], 1021 [O],
+ NFE :               1022 [N], 1032 [CA], 1034 [C], 1035 [O], 1036 [N],
+ NFE :               1038 [CA], 1054 [C], 1055 [O], 1056 [N], 1058 [CA],
+ NFE :               1061 [C], 1062 [O], 1063 [N], 1065 [CA], 1071 [C],
+ NFE :               1072 [O], 1073 [N], 1075 [CA], 1081 [C], 1082 [O],
+ NFE :               1083 [N], 1085 [CA], 1098 [C], 1099 [O], 1100 [N],
+ NFE :               1102 [CA], 1117 [C], 1118 [O], 1119 [N], 1121 [CA],
+ NFE :               1136 [C], 1137 [O], 1138 [N], 1140 [CA], 1153 [C],
+ NFE :               1154 [O], 1155 [N], 1157 [CA], 1175 [C], 1176 [O],
+ NFE :               1177 [N], 1179 [CA], 1192 [C], 1193 [O], 1194 [N],
+ NFE :               1196 [CA], 1216 [C], 1217 [O], 1218 [N], 1220 [CA],
+ NFE :               1230 [C], 1231 [O], 1232 [N], 1234 [CA], 1250 [C],
+ NFE :               1251 [O], 1252 [N], 1254 [CA], 1257 [C], 1258 [O],
+ NFE :               1259 [N], 1261 [CA], 1271 [C], 1272 [O], 1273 [N],
+ NFE :               1275 [CA], 1291 [C], 1292 [O], 1293 [N], 1295 [CA],
+ NFE :               1315 [C], 1316 [O], 1317 [N], 1319 [CA], 1325 [C],
+ NFE :               1326 [O], 1327 [N], 1329 [CA], 1340 [C], 1341 [O],
+ NFE :               1342 [N], 1344 [CA], 1360 [C], 1361 [O], 1362 [N],
+ NFE :               1364 [CA], 1384 [C], 1385 [O], 1386 [N], 1388 [CA],
+ NFE :               1398 [C], 1399 [O], 1400 [N], 1402 [CA], 1409 [C],
+ NFE :               1410 [O], 1411 [N], 1413 [CA], 1428 [C], 1429 [O],
+ NFE :               1430 [N], 1432 [CA], 1440 [C], 1441 [O], 1442 [N],
+ NFE :               1444 [CA], 1456 [C], 1457 [O], 1458 [N], 1460 [CA],
+ NFE :               1475 [C], 1476 [O], 1477 [N], 1479 [CA], 1486 [C],
+ NFE :               1487 [O], 1488 [N], 1490 [CA], 1502 [C], 1503 [O],
+ NFE :               1504 [N], 1506 [CA], 1516 [C], 1517 [O], 1518 [N],
+ NFE :               1520 [CA], 1526 [C], 1527 [O], 1528 [N], 1530 [CA],
+ NFE :               1537 [C], 1538 [O], 1539 [N], 1541 [CA], 1556 [C],
+ NFE :               1557 [O], 1558 [N], 1560 [CA], 1572 [C], 1573 [O],
+ NFE :               1574 [N], 1576 [CA], 1586 [C], 1587 [O], 1588 [N],
+ NFE :               1590 [CA], 1605 [C], 1606 [O], 1607 [N], 1609 [CA],
+ NFE :               1616 [C], 1617 [O], 1618 [N], 1620 [CA], 1632 [C],
+ NFE :               1633 [O], 1634 [N], 1636 [CA], 1651 [C], 1652 [O],
+ NFE :               1653 [N], 1655 [CA], 1661 [C], 1662 [O], 1663 [N],
+ NFE :               1665 [CA], 1677 [C], 1678 [O], 1679 [N], 1681 [CA],
+ NFE :               1690 [C], 1691 [O], 1692 [N], 1694 [CA], 1714 [C],
+ NFE :               1715 [O], 1716 [N], 1718 [CA], 1735 [C], 1736 [O],
+ NFE :               1737 [N], 1739 [CA], 1755 [C], 1756 [O], 1757 [N],
+ NFE :               1759 [CA], 1765 [C], 1766 [O], 1767 [N], 1769 [CA],
+ NFE :               1784 [C], 1785 [O], 1786 [N], 1788 [CA], 1798 [C],
+ NFE :               1799 [O], 1800 [N], 1802 [CA], 1809 [C], 1810 [O],
+ NFE :               1811 [N], 1821 [CA], 1823 [C], 1824 [O], 1825 [N],
+ NFE :               1827 [CA], 1843 [C], 1844 [O], 1845 [N], 1847 [CA],
+ NFE :               1865 [C], 1866 [O], 1867 [N], 1869 [CA], 1886 [C],
+ NFE :               1887 [O], 1888 [N], 1890 [CA], 1903 [C], 1904 [O],
+ NFE :               1905 [N], 1907 [CA], 1914 [C], 1915 [O], 1916 [N],
+ NFE :               1918 [CA], 1933 [C], 1934 [O], 1935 [N], 1937 [CA],
+ NFE :               1952 [C], 1953 [O], 1954 [N], 1956 [CA], 1966 [C],
+ NFE :               1967 [O], 1968 [N], 1970 [CA], 1988 [C], 1989 [O],
+ NFE :               1990 [N], 1992 [CA], 2002 [C], 2003 [O], 2004 [N],
+ NFE :               2006 [CA], 2024 [C], 2025 [O], 2026 [N], 2028 [CA],
+ NFE :               2034 [C], 2035 [O], 2036 [N], 2038 [CA], 2058 [C],
+ NFE :               2059 [O], 2060 [N], 2062 [CA], 2074 [C], 2075 [O],
+ NFE :               2076 [N], 2078 [CA], 2093 [C], 2094 [O], 2095 [N],
+ NFE :               2097 [CA], 2112 [C], 2113 [O], 2114 [N], 2116 [CA],
+ NFE :               2131 [C], 2132 [O], 2133 [N], 2135 [CA], 2148 [C],
+ NFE :               2149 [O], 2150 [N], 2152 [CA], 2164 [C], 2165 [O],
+ NFE :               2166 [N], 2168 [CA], 2188 [C], 2189 [O], 2190 [N],
+ NFE :               2192 [CA], 2207 [C], 2208 [O], 2209 [N], 2211 [CA],
+ NFE :               2223 [C], 2224 [O], 2225 [N], 2227 [CA], 2234 [C],
+ NFE :               2235 [O], 2236 [N], 2238 [CA], 2241 [C], 2242 [O],
+ NFE :               2243 [N], 2245 [CA], 2260 [C], 2261 [O], 2262 [N],
+ NFE :               2264 [CA], 2274 [C], 2275 [O], 2276 [N], 2278 [CA],
+ NFE :               2285 [C], 2286 [O], 2287 [N], 2289 [CA], 2305 [C],
+ NFE :               2306 [O], 2307 [N], 2309 [CA], 2324 [C], 2325 [O],
+ NFE :               2326 [N], 2336 [CA], 2338 [C], 2339 [O], 2340 [N],
+ NFE :               2342 [CA], 2357 [C], 2358 [O], 2359 [N], 2361 [CA],
+ NFE :               2374 [C], 2375 [O], 2376 [N], 2378 [CA], 2391 [C],
+ NFE :               2392 [O], 2393 [N], 2395 [CA], 2408 [C], 2409 [O],
+ NFE :               2410 [N], 2412 [CA], 2432 [C], 2433 [O], 2434 [N],
+ NFE :               2436 [CA], 2453 [C], 2454 [O], 2455 [N], 2457 [CA],
+ NFE :               2477 [C], 2478 [O], 2479 [N], 2481 [CA], 2487 [C],
+ NFE :               2488 [O], 2489 [N], 2491 [CA], 2501 [C], 2502 [O],
+ NFE :               2503 [N], 2505 [CA], 2518 [C], 2519 [O], 2520 [N],
+ NFE :               2522 [CA], 2535 [C], 2536 [O], 2537 [N], 2539 [CA],
+ NFE :               2550 [C], 2551 [O], 2552 [N], 2554 [CA], 2560 [C],
+ NFE :               2561 [O], 2562 [N], 2564 [CA], 2579 [C], 2580 [O],
+ NFE :               2581 [N], 2583 [CA], 2593 [C], 2594 [O], 2595 [N],
+ NFE :               2597 [CA], 2603 [C], 2604 [O], 2605 [N], 2607 [CA],
+ NFE :               2624 [C], 2625 [O], 2626 [N], 2628 [CA], 2634 [C],
+ NFE :               2635 [O], 2636 [N], 2638 [CA], 2649 [C], 2650 [O],
+ NFE :               2651 [N], 2653 [CA], 2664 [C], 2665 [O], 2666 [N],
+ NFE :               2668 [CA], 2678 [C], 2679 [O], 2680 [N], 2682 [CA],
+ NFE :               2688 [C], 2689 [O], 2690 [N], 2692 [CA], 2698 [C],
+ NFE :               2699 [O], 2700 [N], 2702 [CA], 2710 [C], 2711 [O],
+ NFE :               2712 [N], 2714 [CA], 2730 [C], 2731 [O], 2732 [N],
+ NFE :               2734 [CA], 2750 [C], 2751 [O], 2752 [N], 2754 [CA],
+ NFE :               2764 [C], 2765 [O], 2766 [N], 2768 [CA], 2778 [C],
+ NFE :               2779 [O], 2780 [N], 2782 [CA], 2795 [C], 2796 [O],
+ NFE :               2797 [N], 2799 [CA], 2805 [C], 2806 [O], 2807 [N],
+ NFE :               2809 [CA], 2826 [C], 2827 [O], 2828 [N], 2830 [CA],
+ NFE :               2836 [C], 2837 [O], 2838 [N], 2840 [CA], 2855 [C],
+ NFE :               2856 [O], 2857 [N], 2859 [CA], 2865 [C], 2866 [O],
+ NFE :               2867 [N], 2869 [CA], 2876 [C], 2877 [O], 2878 [N],
+ NFE :               2880 [CA], 2887 [C], 2888 [O], 2889 [N], 2891 [CA],
+ NFE :               2906 [C], 2907 [O], 2908 [N], 2910 [CA], 2922 [C],
+ NFE :               2923 [O], 2924 [N], 2926 [CA], 2933 [C], 2934 [O],
+ NFE :               2935 [N], 2937 [CA], 2953 [C], 2954 [O], 2955 [N],
+ NFE :               2957 [CA], 2974 [C], 2975 [O], 2976 [N], 2978 [CA],
+ NFE :               2990 [C], 2991 [O], 2992 [N], 3002 [CA], 3004 [C],
+ NFE :               3005 [O], 3006 [N], 3008 [CA], 3023 [C], 3024 [O],
+ NFE :               3025 [N], 3027 [CA], 3039 [C], 3040 [O], 3041 [N],
+ NFE :               3043 [CA], 3058 [C], 3059 [O], 3060 [N], 3062 [CA],
+ NFE :               3075 [C], 3076 [O], 3077 [N], 3079 [CA], 3091 [C],
+ NFE :               3092 [O], 3093 [N], 3095 [CA], 3111 [C], 3112 [O],
+ NFE :               3113 [N], 3115 [CA], 3127 [C], 3128 [O], 3129 [N],
+ NFE :               3131 [CA], 3148 [C], 3149 [O], 3150 [N], 3152 [CA],
+ NFE :               3159 [C], 3160 [O], 3161 [N], 3163 [CA], 3183 [C],
+ NFE :               3184 [O], 3185 [N], 3187 [CA], 3199 [C], 3200 [O],
+ NFE :               3201 [N], 3203 [CA], 3219 [C], 3220 [O], 3221 [N],
+ NFE :               3223 [CA], 3236 [C], 3237 [O], 3238 [N], 3240 [CA],
+ NFE :               3251 [C], 3252 [O], 3253 [N], 3255 [CA], 3261 [C],
+ NFE :               3262 [O], 3263 [N], 3265 [CA], 3283 [C], 3284 [O],
+ NFE :               3287 [H1], 3291 [HA], 3306 [O], 3307 [N], 3308 [H],
+ NFE :               3310 [HA], 3328 [O], 3329 [N], 3330 [H], 3332 [HA],
+ NFE :               3343 [O], 3344 [N], 3345 [H], 3347 [HA], 3360 [O],
+ NFE :               3361 [N], 3362 [H], 3364 [HA], 3382 [O], 3383 [N],
+ NFE :               3384 [H], 3386 [HA], 3392 [O], 3393 [N], 3394 [H],
+ NFE :               3396 [HA], 3411 [O], 3412 [N], 3413 [H], 3415 [HA],
+ NFE :               3433 [O], 3434 [N], 3435 [H], 3437 [HA], 3447 [O],
+ NFE :               3448 [N], 3449 [H], 3451 [HA], 3466 [O], 3467 [N],
+ NFE :               3468 [H], 3470 [HA2], 3473 [O], 3474 [N], 3475 [H],
+ NFE :               3477 [HA], 3492 [O], 3493 [N], 3494 [H], 3496 [HA],
+ NFE :               3511 [O], 3512 [N], 3513 [H], 3515 [HA], 3528 [O],
+ NFE :               3529 [N], 3530 [H], 3532 [HA2], 3535 [O], 3536 [N],
+ NFE :               3537 [H], 3539 [HA], 3549 [O], 3550 [N], 3551 [H],
+ NFE :               3553 [HA], 3569 [O], 3570 [N], 3571 [H], 3573 [HA],
+ NFE :               3583 [O], 3584 [N], 3585 [H], 3587 [HA], 3602 [O],
+ NFE :               3603 [N], 3604 [H], 3606 [HA], 3613 [O], 3614 [N],
+ NFE :               3615 [H], 3617 [HA], 3637 [O], 3638 [N], 3639 [H],
+ NFE :               3641 [HA], 3656 [O], 3657 [N], 3658 [CD], 3668 [HA],
+ NFE :               3670 [O], 3671 [N], 3672 [H], 3674 [HA], 3690 [O],
+ NFE :               3691 [N], 3692 [H], 3694 [HA], 3710 [O], 3711 [N],
+ NFE :               3712 [H], 3714 [HA], 3729 [O], 3730 [N], 3731 [H],
+ NFE :               3733 [HA], 3745 [O], 3746 [N], 3747 [H], 3749 [HA],
+ NFE :               3759 [O], 3760 [N], 3761 [H], 3763 [HA], 3778 [O],
+ NFE :               3779 [N], 3780 [H], 3782 [HA], 3794 [O], 3795 [N],
+ NFE :               3796 [H], 3798 [HA], 3811 [O], 3812 [N], 3813 [H],
+ NFE :               3815 [HA], 3827 [O], 3828 [N], 3829 [H], 3831 [HA],
+ NFE :               3846 [O], 3847 [N], 3848 [H], 3850 [HA], 3863 [O],
+ NFE :               3864 [N], 3865 [H], 3867 [HA], 3875 [O], 3876 [N],
+ NFE :               3877 [H], 3879 [HA], 3889 [O], 3890 [N], 3891 [H],
+ NFE :               3893 [HA], 3908 [O], 3909 [N], 3910 [H], 3912 [HA],
+ NFE :               3927 [O], 3928 [N], 3929 [H], 3931 [HA], 3951 [O],
+ NFE :               3952 [N], 3953 [H], 3955 [HA], 3973 [O], 3974 [N],
+ NFE :               3975 [H], 3977 [HA], 3988 [O], 3989 [N], 3990 [H],
+ NFE :               3992 [HA], 4004 [O], 4005 [N], 4006 [H], 4008 [HA],
+ NFE :               4025 [O], 4026 [N], 4027 [H], 4029 [HA], 4044 [O],
+ NFE :               4045 [N], 4046 [H], 4048 [HA], 4063 [O], 4064 [N],
+ NFE :               4065 [H], 4067 [HA], 4082 [O], 4083 [N], 4084 [H],
+ NFE :               4086 [HA], 4096 [O], 4097 [N], 4098 [H], 4100 [HA],
+ NFE :               4120 [O], 4121 [N], 4122 [H], 4124 [HA], 4139 [O],
+ NFE :               4140 [N], 4141 [H], 4143 [HA2], 4146 [O], 4147 [N],
+ NFE :               4148 [H], 4150 [HA], 4167 [O], 4168 [N], 4169 [H],
+ NFE :               4171 [HA], 4183 [O], 4184 [N], 4185 [H], 4187 [HA],
+ NFE :               4197 [O], 4198 [N], 4199 [H], 4201 [HA], 4208 [O],
+ NFE :               4209 [N], 4210 [H], 4212 [HA2], 4215 [O], 4216 [N],
+ NFE :               4217 [H], 4219 [HA], 4235 [O], 4236 [N], 4237 [H],
+ NFE :               4239 [HA], 4249 [O], 4250 [N], 4251 [CD], 4261 [HA],
+ NFE :               4263 [O], 4264 [N], 4265 [H], 4267 [HA], 4282 [O],
+ NFE :               4283 [N], 4284 [H], 4286 [HA], 4301 [O], 4302 [N],
+ NFE :               4303 [H], 4305 [HA], 4322 [O], 4323 [N], 4324 [H],
+ NFE :               4326 [HA], 4333 [O], 4334 [N], 4335 [H], 4337 [HA],
+ NFE :               4357 [O], 4358 [N], 4359 [H], 4361 [HA], 4368 [O],
+ NFE :               4369 [N], 4370 [CD], 4380 [HA], 4382 [O], 4383 [N],
+ NFE :               4384 [H], 4386 [HA], 4394 [O], 4395 [N], 4396 [H],
+ NFE :               4398 [HA], 4414 [O], 4415 [N], 4416 [H], 4418 [HA],
+ NFE :               4438 [O], 4439 [N], 4440 [H], 4442 [HA], 4457 [O],
+ NFE :               4458 [N], 4459 [H], 4461 [HA], 4467 [O], 4468 [N],
+ NFE :               4469 [H], 4471 [HA], 4487 [O], 4488 [N], 4489 [H],
+ NFE :               4491 [HA], 4504 [O], 4505 [N], 4506 [H], 4508 [HA],
+ NFE :               4519 [O], 4520 [N], 4521 [H], 4523 [HA], 4538 [O],
+ NFE :               4539 [N], 4540 [H], 4542 [HA], 4557 [O], 4558 [N],
+ NFE :               4559 [H], 4561 [HA], 4568 [O], 4569 [N], 4570 [H],
+ NFE :               4572 [HA], 4587 [O], 4588 [N], 4589 [H], 4591 [HA],
+ NFE :               4611 [O], 4612 [N], 4613 [H], 4615 [HA], 4635 [O],
+ NFE :               4636 [OXT])
+ NFE : 
+ NFE : CV #2 << anchor : position = 0.000000, 0.000000, 0.000000, 999.000000
+ NFE :                   strength = 10.000000, 10.000000 >>
+ NFE :   type = 'COM_DISTANCE'
+ NFE :   group #1 = (2 [Pb])
+ NFE :   group #2 = (4670 [C3], 4671 [C4], 4672 [C5], 4673 [C6], 4674 [C7],
+ NFE :               4675 [C8], 4676 [C9], 4677 [C10], 4678 [C11], 4679 [N1],
+ NFE :               4680 [O1], 4681 [O2], 4682 [O3], 4683 [H1], 4684 [H2])
+ NFE : 
+ NFE : ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~ ~~
+
+   DOF for the SC part  1 of the system:   77
+   SHAKE constraints in the SC region:   16
+   DOF for the SC part  2 of the system:   77
+   SHAKE constraints in the SC region:   16
+
+| TI region  1
+
+
+ NSTEP =        0   TIME(PS) =       0.000  TEMP(K) =     0.00  PRESS =     0.0
+ Etot   =   -294550.4184  EKtot   =         0.0000  EPtot      =   -294550.4184
+ BOND   =     17644.5122  ANGLE   =      1871.1164  DIHED      =      8573.0922
+ 1-4 NB =      2935.1949  1-4 EEL =    -12137.3282  VDWAALS    =     24751.2392
+ EELEC  =   -338214.4354  EHBOND  =         0.0000  RESTRAINT  =        26.1903
+ EAMBER (non-restraint)  =   -294576.6087
+ DV/DL  =        21.8767
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.41
+ SC_Etot=         9.1411  SC_EKtot=         0.0314  SC_EPtot   =         9.1097
+ SC_BOND=         0.3553  SC_ANGLE=         2.4879  SC_DIHED   =         8.0401
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.7736
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -32.4733  SC_VDW_DER=      88.6631  SC_DERIV   =        56.1898
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      5.0486
+   Dist =      0.0000  Angl =       0.4417  Tors =      4.6069
+   RMSD =      0.0000
+
+| TI region  2
+
+
+ NSTEP =        0   TIME(PS) =       0.000  TEMP(K) =     0.00  PRESS =     0.0
+ Etot   =   -294550.4184  EKtot   =         0.0000  EPtot      =   -294550.4184
+ BOND   =     17644.5122  ANGLE   =      1871.1164  DIHED      =      8573.0922
+ 1-4 NB =      2935.1949  1-4 EEL =    -12137.3282  VDWAALS    =     24751.2392
+ EELEC  =   -338214.4354  EHBOND  =         0.0000  RESTRAINT  =        26.1903
+ EAMBER (non-restraint)  =   -294576.6087
+ DV/DL  =        21.8767
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =           0.02
+ SC_Etot=         9.0743  SC_EKtot=         0.0016  SC_EPtot   =         9.0727
+ SC_BOND=         1.7214  SC_ANGLE=         2.1858  SC_DIHED   =         7.1132
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9477
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -32.4733  SC_VDW_DER=      88.6631  SC_DERIV   =        56.1898
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      5.0486
+   Dist =      0.0000  Angl =       0.4417  Tors =      4.6069
+   RMSD =      0.0000
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Detailed TI info at lambda=  0.78000000000000003     
+Region                    H           W       dH/dl       dW/dl
+TI 1 vDW             -27.73759     0.07443     8.65830    -0.88340
+TI 2 vDW              -9.44719     0.92557    95.09708     0.88340
+lambda = 0.780 : vDW      H=     -10.8086 dU/dL: L=   16.1577 NL=   88.6631 Tot=  104.82079
+ ------------------------------------------------------------------------
+TI 1 Torsion           1.19170     0.07443     0.00000    -0.88340
+TI 2 Torsion           1.18619     0.92557     0.00000     0.88340
+lambda = 0.780 : Torsion  H=       1.1866 dU/dL: L=   -0.0049 NL=    0.0000 Tot=   -0.00487
+ ------------------------------------------------------------------------
+TI 1 VDW14            -0.82587     0.07443     0.00000    -0.88340
+TI 2 VDW14             7.61621     0.92557     0.00000     0.88340
+lambda = 0.780 : VDW14    H=       6.9878 dU/dL: L=    7.4577 NL=    0.0000 Tot=    7.45771
+ ------------------------------------------------------------------------
+TI 1 Elec-Rec       1345.67578     0.07443     0.00000    -0.88340
+TI 2 Elec-Rec       1318.91064     0.92557     0.00000     0.88340
+lambda = 0.780 : Elec-Rec H=    1320.9029 dU/dL: L=  -23.6442 NL=    0.0000 Tot=  -23.64424
+ ------------------------------------------------------------------------
+TI Res_Bond    PI-TI cont:        0.00000
+lambda = 0.780 : Res_Bond  PI=    0.0000
+ ------------------------------------------------------------------------
+TI Res_Angl    PI-TI cont:        0.44175
+lambda = 0.780 : Res_Angl  PI=    0.4417
+ ------------------------------------------------------------------------
+TI Res_Tors    PI-TI cont:        4.60686
+lambda = 0.780 : Res_Tors  PI=    4.6069
+ ------------------------------------------------------------------------
+TI 1 Elec-SC           7.23431     0.07443     7.47291    -0.88340
+TI 2 Elec-SC         -42.31911     0.92557   -42.82192     0.88340
+lambda = 0.780 : Elec-SC  H=     -38.6307 dU/dL: L=  -43.7753 NL=  -39.0783 Tot=  -82.85363
+ ------------------------------------------------------------------------
+TI 1 EE14-SC         138.74449     0.07443    -6.87554    -0.88340
+TI 2 EE14-SC         143.77889     0.92557     7.68907     0.88340
+lambda = 0.780 : EE14-SC  H=     143.4042 dU/dL: L=    4.4474 NL=    6.6050 Tot=   11.05235
+ ------------------------------------------------------------------------
+TI 1 Self-Rec         -0.00000     0.07443     0.00000    -0.88340
+TI 2 Self-Rec         -0.00000     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-Rec H=      -0.0000 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+TI 1 Self-SC        -157.48392     0.07443     0.00000    -0.88340
+TI 2 Self-SC        -157.48392     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-SC  H=    -157.4839 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+lambda = 0.780 : Total dU/dl:   21.876725  L:  -39.36168  NL:   56.18979  PI:    5.04861
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ NMR restraints: Bond =    0.000   Angle =     0.463   Torsion =     4.827
+===============================================================================
+ NFE restraints:    SMD  :    0.000    PMD  :    20.901    ABMD :     0.000
+                    BBMD :    0.000    STSM :     0.000
+===============================================================================
+
+MBAR Energy analysis:
+Energy at 0.0000 =   -246248.34835927
+Energy at 0.0400 =   -246248.52293697
+Energy at 0.0900 =   -246250.15730073
+Energy at 0.1300 =   -246253.29642416
+Energy at 0.1700 =   -246258.16779919
+Energy at 0.2200 =   -246266.10838125
+Energy at 0.2600 =   -246273.16578037
+Energy at 0.3000 =   -246280.16898537
+Energy at 0.3500 =   -246288.21660935
+Energy at 0.3900 =   -246293.88889172
+Energy at 0.4300 =   -246298.89794452
+Energy at 0.4800 =   -246304.36173006
+Energy at 0.5200 =   -246308.17017881
+Energy at 0.5700 =   -246312.19411771
+Energy at 0.6100 =   -246314.69349574
+Energy at 0.6500 =   -246316.39063428
+Energy at 0.7000 =   -246317.20717159
+Energy at 0.7400 =   -246316.82152120
+Energy at 0.7800 =   -246315.70955447
+Energy at 0.8300 =   -246313.83530787
+Energy at 0.9300 =   -246311.15996768
+Energy at 0.9700 =   -246310.89327190
+Energy at 0.9900 =   -246310.86944846
+Energy at 1.0000 =   -246310.86850429
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+ NSTEP =     1000   TIME(PS) =       1.000  TEMP(K) =   199.93  PRESS =     0.0
+ Etot   =   -211530.8283  EKtot   =     34784.8812  EPtot      =   -246315.7096
+ BOND   =      2487.6223  ANGLE   =      9427.3519  DIHED      =      9893.8501
+ 1-4 NB =      3388.2904  1-4 EEL =    -12209.2245  VDWAALS    =     19206.6920
+ EELEC  =   -278643.0156  EHBOND  =         0.0000  RESTRAINT  =       132.7239
+ EAMBER (non-restraint)  =   -246448.4334
+ DV/DL  =        34.2159
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         267.57
+ SC_Etot=        39.0751  SC_EKtot=        20.4711  SC_EPtot   =        18.6040
+ SC_BOND=         3.0302  SC_ANGLE=         8.6477  SC_DIHED   =         8.4725
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.5463
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -20.0430  SC_VDW_DER=      85.3179  SC_DERIV   =        65.2749
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.3766
+   Dist =      0.0004  Angl =       0.0577  Tors =      1.3186
+   RMSD =      0.0000
+
+| TI region  2
+
+
+ NSTEP =     1000   TIME(PS) =       1.000  TEMP(K) =   199.91  PRESS =     0.0
+ Etot   =   -211534.8877  EKtot   =     34780.8218  EPtot      =   -246315.7096
+ BOND   =      2487.6223  ANGLE   =      9427.3519  DIHED      =      9893.8501
+ 1-4 NB =      3388.2904  1-4 EEL =    -12209.2245  VDWAALS    =     19206.6920
+ EELEC  =   -278643.0156  EHBOND  =         0.0000  RESTRAINT  =       132.7239
+ EAMBER (non-restraint)  =   -246448.4334
+ DV/DL  =        34.2159
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         214.51
+ SC_Etot=        34.0349  SC_EKtot=        16.4117  SC_EPtot   =        17.6232
+ SC_BOND=         3.2479  SC_ANGLE=         9.5436  SC_DIHED   =         6.9058
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -2.0741
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -20.0430  SC_VDW_DER=      85.3179  SC_DERIV   =        65.2749
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.3766
+   Dist =      0.0004  Angl =       0.0577  Tors =      1.3186
+   RMSD =      0.0000
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Detailed TI info at lambda=  0.78000000000000003     
+Region                    H           W       dH/dl       dW/dl
+TI 1 vDW             -28.35831     0.07443     8.10573    -0.88340
+TI 2 vDW              -8.85694     0.92557    91.52727     0.88340
+lambda = 0.780 : vDW      H=     -10.3085 dU/dL: L=   17.2274 NL=   85.3179 Tot=  102.54534
+ ------------------------------------------------------------------------
+TI 1 Torsion           3.95045     0.07443     0.00000    -0.88340
+TI 2 Torsion           2.94201     0.92557     0.00000     0.88340
+lambda = 0.780 : Torsion  H=       3.0171 dU/dL: L=   -0.8909 NL=    0.0000 Tot=   -0.89086
+ ------------------------------------------------------------------------
+TI 1 VDW14            -0.72491     0.07443     0.00000    -0.88340
+TI 2 VDW14             7.45983     0.92557     0.00000     0.88340
+lambda = 0.780 : VDW14    H=       6.8506 dU/dL: L=    7.2304 NL=    0.0000 Tot=    7.23037
+ ------------------------------------------------------------------------
+TI 1 Elec-Rec       1559.07751     0.07443     0.00000    -0.88340
+TI 2 Elec-Rec       1536.87415     0.92557     0.00000     0.88340
+lambda = 0.780 : Elec-Rec H=    1538.5268 dU/dL: L=  -19.6144 NL=    0.0000 Tot=  -19.61439
+ ------------------------------------------------------------------------
+TI Res_Bond    PI-TI cont:        0.00035
+lambda = 0.780 : Res_Bond  PI=    0.0004
+ ------------------------------------------------------------------------
+TI Res_Angl    PI-TI cont:        0.05770
+lambda = 0.780 : Res_Angl  PI=    0.0577
+ ------------------------------------------------------------------------
+TI Res_Tors    PI-TI cont:        1.31858
+lambda = 0.780 : Res_Tors  PI=    1.3186
+ ------------------------------------------------------------------------
+TI 1 Elec-SC          14.36515     0.07443     3.59602    -0.88340
+TI 2 Elec-SC         -30.69026     0.92557   -29.20138     0.88340
+lambda = 0.780 : Elec-SC  H=     -27.3366 dU/dL: L=  -39.8018 NL=  -26.7601 Tot=  -66.56195
+ ------------------------------------------------------------------------
+TI 1 EE14-SC         140.52280     0.07443    -7.16526    -0.88340
+TI 2 EE14-SC         144.38694     0.92557     7.83360     0.88340
+lambda = 0.780 : EE14-SC  H=     144.0993 dU/dL: L=    3.4136 NL=    6.7172 Tot=   10.13074
+ ------------------------------------------------------------------------
+TI 1 Self-Rec         -0.00000     0.07443     0.00000    -0.88340
+TI 2 Self-Rec         -0.00000     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-Rec H=      -0.0000 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+TI 1 Self-SC        -157.48392     0.07443     0.00000    -0.88340
+TI 2 Self-SC        -157.48392     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-SC  H=    -157.4839 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+lambda = 0.780 : Total dU/dl:   34.215889  L:  -32.43567  NL:   65.27493  PI:    1.37663
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ NMR restraints: Bond =    0.000   Angle =     0.060   Torsion =     1.382
+===============================================================================
+ NFE restraints:    SMD  :    0.000    PMD  :    16.512    ABMD :     0.000
+                    BBMD :    0.000    STSM :     0.000
+===============================================================================
+
+MBAR Energy analysis:
+Energy at 0.0000 =   -232322.84288224
+Energy at 0.0400 =   -232323.04300118
+Energy at 0.0900 =   -232324.92008604
+Energy at 0.1300 =   -232328.54506079
+Energy at 0.1700 =   -232334.22873405
+Energy at 0.2200 =   -232343.68327983
+Energy at 0.2600 =   -232352.34935166
+Energy at 0.3000 =   -232361.28816780
+Energy at 0.3500 =   -232372.14130007
+Energy at 0.3900 =   -232380.28131554
+Energy at 0.4300 =   -232387.86204213
+Energy at 0.4800 =   -232396.53727152
+Energy at 0.5200 =   -232402.78828631
+Energy at 0.5700 =   -232409.54218354
+Energy at 0.6100 =   -232413.85349459
+Energy at 0.6500 =   -232416.94987586
+Energy at 0.7000 =   -232418.87454160
+Energy at 0.7400 =   -232418.87840047
+Energy at 0.7800 =   -232417.79634000
+Energy at 0.8300 =   -232415.65363977
+Energy at 0.9300 =   -232412.40830403
+Energy at 0.9700 =   -232412.07880929
+Energy at 0.9900 =   -232412.04934117
+Energy at 1.0000 =   -232412.04815661
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+ NSTEP =     2000   TIME(PS) =       2.000  TEMP(K) =   265.01  PRESS =     0.0
+ Etot   =   -186309.5037  EKtot   =     46108.2926  EPtot      =   -232417.7963
+ BOND   =      3203.4869  ANGLE   =     12147.2946  DIHED      =     10415.4607
+ 1-4 NB =      3561.9407  1-4 EEL =    -12174.5350  VDWAALS    =     16169.8304
+ EELEC  =   -265921.2624  EHBOND  =         0.0000  RESTRAINT  =       179.9877
+ EAMBER (non-restraint)  =   -232597.7840
+ DV/DL  =        36.9552
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         210.58
+ SC_Etot=        49.0164  SC_EKtot=        16.1105  SC_EPtot   =        32.9060
+ SC_BOND=        10.0775  SC_ANGLE=        15.6867  SC_DIHED   =         8.6010
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.4593
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -14.6562  SC_VDW_DER=     103.4193  SC_DERIV   =        88.7631
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.4432
+   Dist =      0.0057  Angl =       0.2422  Tors =      1.1953
+   RMSD =      0.0000
+
+| TI region  2
+
+
+ NSTEP =     2000   TIME(PS) =       2.000  TEMP(K) =   265.04  PRESS =     0.0
+ Etot   =   -186303.9576  EKtot   =     46113.8388  EPtot      =   -232417.7963
+ BOND   =      3203.4869  ANGLE   =     12147.2946  DIHED      =     10415.4607
+ 1-4 NB =      3561.9407  1-4 EEL =    -12174.5350  VDWAALS    =     16169.8304
+ EELEC  =   -265921.2624  EHBOND  =         0.0000  RESTRAINT  =       179.9877
+ EAMBER (non-restraint)  =   -232597.7840
+ DV/DL  =        36.9552
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         283.07
+ SC_Etot=        43.5730  SC_EKtot=        21.6566  SC_EPtot   =        21.9164
+ SC_BOND=         3.3200  SC_ANGLE=        11.9495  SC_DIHED   =         7.5729
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -0.9260
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -14.6562  SC_VDW_DER=     103.4193  SC_DERIV   =        88.7631
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.4432
+   Dist =      0.0057  Angl =       0.2422  Tors =      1.1953
+   RMSD =      0.0000
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Detailed TI info at lambda=  0.78000000000000003     
+Region                    H           W       dH/dl       dW/dl
+TI 1 vDW             -28.38432     0.07443     8.28680    -0.88340
+TI 2 vDW              -6.53680     0.92557   111.06987     0.88340
+lambda = 0.780 : vDW      H=      -8.1630 dU/dL: L=   19.3000 NL=  103.4193 Tot=  122.71937
+ ------------------------------------------------------------------------
+TI 1 Torsion           5.62159     0.07443     0.00000    -0.88340
+TI 2 Torsion           2.26871     0.92557     0.00000     0.88340
+lambda = 0.780 : Torsion  H=       2.5183 dU/dL: L=   -2.9619 NL=    0.0000 Tot=   -2.96192
+ ------------------------------------------------------------------------
+TI 1 VDW14            -0.67932     0.07443     0.00000    -0.88340
+TI 2 VDW14             8.37882     0.92557     0.00000     0.88340
+lambda = 0.780 : VDW14    H=       7.7046 dU/dL: L=    8.0019 NL=    0.0000 Tot=    8.00194
+ ------------------------------------------------------------------------
+TI 1 Elec-Rec       1749.48865     0.07443     0.00000    -0.88340
+TI 2 Elec-Rec       1718.49329     0.92557     0.00000     0.88340
+lambda = 0.780 : Elec-Rec H=    1720.8004 dU/dL: L=  -27.3812 NL=    0.0000 Tot=  -27.38120
+ ------------------------------------------------------------------------
+TI Res_Bond    PI-TI cont:        0.00566
+lambda = 0.780 : Res_Bond  PI=    0.0057
+ ------------------------------------------------------------------------
+TI Res_Angl    PI-TI cont:        0.24219
+lambda = 0.780 : Res_Angl  PI=    0.2422
+ ------------------------------------------------------------------------
+TI Res_Tors    PI-TI cont:        1.19534
+lambda = 0.780 : Res_Tors  PI=    1.1953
+ ------------------------------------------------------------------------
+TI 1 Elec-SC          25.35794     0.07443    -0.69036    -0.88340
+TI 2 Elec-SC         -31.61495     0.92557   -22.54950     0.88340
+lambda = 0.780 : Elec-SC  H=     -27.3742 dU/dL: L=  -50.3297 NL=  -20.9224 Tot=  -71.25211
+ ------------------------------------------------------------------------
+TI 1 EE14-SC         141.95136     0.07443    -7.34255    -0.88340
+TI 2 EE14-SC         142.08687     0.92557     7.36062     0.88340
+lambda = 0.780 : EE14-SC  H=     142.0768 dU/dL: L=    0.1197 NL=    6.2662 Tot=    6.38592
+ ------------------------------------------------------------------------
+TI 1 Self-Rec         -0.00000     0.07443     0.00000    -0.88340
+TI 2 Self-Rec         -0.00000     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-Rec H=      -0.0000 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+TI 1 Self-SC        -157.48392     0.07443     0.00000    -0.88340
+TI 2 Self-SC        -157.48392     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-SC  H=    -157.4839 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+lambda = 0.780 : Total dU/dl:   36.955183  L:  -53.25111  NL:   88.76310  PI:    1.44319
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ NMR restraints: Bond =    0.006   Angle =     0.254   Torsion =     1.252
+===============================================================================
+ NFE restraints:    SMD  :    0.000    PMD  :    18.374    ABMD :     0.000
+                    BBMD :    0.000    STSM :     0.000
+===============================================================================
+
+MBAR Energy analysis:
+Energy at 0.0000 =    297008.80441640
+Energy at 0.0400 =    286242.56594669
+Energy at 0.0900 =    195728.10781223
+Energy at 0.1300 =     64620.68319276
+Energy at 0.1700 =    -62730.35711110
+Energy at 0.2200 =   -162442.25811095
+Energy at 0.2600 =   -198779.95674140
+Energy at 0.3000 =   -214321.52692997
+Energy at 0.3500 =   -221404.20188283
+Energy at 0.3900 =   -223372.81881670
+Energy at 0.4300 =   -224175.96371361
+Energy at 0.4800 =   -224566.43265658
+Energy at 0.5200 =   -224691.03717927
+Energy at 0.5700 =   -224759.09872647
+Energy at 0.6100 =   -224783.46940003
+Energy at 0.6500 =   -224795.59992597
+Energy at 0.7000 =   -224801.80563211
+Energy at 0.7400 =   -224802.70620527
+Energy at 0.7800 =   -224801.56562962
+Energy at 0.8300 =   -224798.87660521
+Energy at 0.9300 =   -224794.76045902
+Energy at 0.9700 =   -224794.34483443
+Energy at 0.9900 =   -224794.30768814
+Energy at 1.0000 =   -224794.30620117
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+ NSTEP =     3000   TIME(PS) =       3.000  TEMP(K) =   287.55  PRESS =     0.0
+ Etot   =   -174771.2870  EKtot   =     50030.2786  EPtot      =   -224801.5656
+ BOND   =      3558.2941  ANGLE   =     13398.1251  DIHED      =     10690.3330
+ 1-4 NB =      3618.1466  1-4 EEL =    -12180.1653  VDWAALS    =     14394.2540
+ EELEC  =   -258470.0111  EHBOND  =         0.0000  RESTRAINT  =       189.4580
+ EAMBER (non-restraint)  =   -224991.0236
+ DV/DL  =        44.7412
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         307.17
+ SC_Etot=        51.0555  SC_EKtot=        23.5007  SC_EPtot   =        27.5547
+ SC_BOND=         3.4987  SC_ANGLE=        14.0919  SC_DIHED   =        11.4002
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.4360
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -17.8250  SC_VDW_DER=     106.3779  SC_DERIV   =        88.5529
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      2.2772
+   Dist =      0.0003  Angl =       0.0862  Tors =      2.1907
+   RMSD =      0.0000
+
+| TI region  2
+
+
+ NSTEP =     3000   TIME(PS) =       3.000  TEMP(K) =   287.57  PRESS =     0.0
+ Etot   =   -174768.9492  EKtot   =     50032.6164  EPtot      =   -224801.5656
+ BOND   =      3558.2941  ANGLE   =     13398.1251  DIHED      =     10690.3330
+ 1-4 NB =      3618.1466  1-4 EEL =    -12180.1653  VDWAALS    =     14394.2540
+ EELEC  =   -258470.0111  EHBOND  =         0.0000  RESTRAINT  =       189.4580
+ EAMBER (non-restraint)  =   -224991.0236
+ DV/DL  =        44.7412
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         337.73
+ SC_Etot=        49.9815  SC_EKtot=        25.8386  SC_EPtot   =        24.1430
+ SC_BOND=         4.8579  SC_ANGLE=        11.1218  SC_DIHED   =        10.1235
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.9602
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -17.8250  SC_VDW_DER=     106.3779  SC_DERIV   =        88.5529
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      2.2772
+   Dist =      0.0003  Angl =       0.0862  Tors =      2.1907
+   RMSD =      0.0000
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Detailed TI info at lambda=  0.78000000000000003     
+Region                    H           W       dH/dl       dW/dl
+TI 1 vDW             -11.10018     0.07443   -90.10365    -0.88340
+TI 2 vDW              -3.35373     0.92557   122.17885     0.88340
+lambda = 0.780 : vDW      H=      -3.9303 dU/dL: L=    6.8432 NL=  106.3779 Tot=  113.22105
+ ------------------------------------------------------------------------
+TI 1 Torsion           5.66957     0.07443     0.00000    -0.88340
+TI 2 Torsion           2.10704     0.92557     0.00000     0.88340
+lambda = 0.780 : Torsion  H=       2.3722 dU/dL: L=   -3.1471 NL=    0.0000 Tot=   -3.14713
+ ------------------------------------------------------------------------
+TI 1 VDW14            -0.65222     0.07443     0.00000    -0.88340
+TI 2 VDW14             8.09368     0.92557     0.00000     0.88340
+lambda = 0.780 : VDW14    H=       7.4427 dU/dL: L=    7.7261 NL=    0.0000 Tot=    7.72610
+ ------------------------------------------------------------------------
+TI 1 Elec-Rec       1868.57373     0.07443     0.00000    -0.88340
+TI 2 Elec-Rec       1841.02344     0.92557     0.00000     0.88340
+lambda = 0.780 : Elec-Rec H=    1843.0741 dU/dL: L=  -24.3378 NL=    0.0000 Tot=  -24.33784
+ ------------------------------------------------------------------------
+TI Res_Bond    PI-TI cont:        0.00028
+lambda = 0.780 : Res_Bond  PI=    0.0003
+ ------------------------------------------------------------------------
+TI Res_Angl    PI-TI cont:        0.08624
+lambda = 0.780 : Res_Angl  PI=    0.0862
+ ------------------------------------------------------------------------
+TI Res_Tors    PI-TI cont:        2.19068
+lambda = 0.780 : Res_Tors  PI=    2.1907
+ ------------------------------------------------------------------------
+TI 1 Elec-SC          10.53032     0.07443     0.18637    -0.88340
+TI 2 Elec-SC         -27.01599     0.92557   -26.23849     0.88340
+lambda = 0.780 : Elec-SC  H=     -24.2213 dU/dL: L=  -33.1683 NL=  -24.2716 Tot=  -57.43987
+ ------------------------------------------------------------------------
+TI 1 EE14-SC         143.37673     0.07443    -7.63592    -0.88340
+TI 2 EE14-SC         143.37114     0.92557     7.57916     0.88340
+lambda = 0.780 : EE14-SC  H=     143.3716 dU/dL: L=   -0.0049 NL=    6.4466 Tot=    6.44170
+ ------------------------------------------------------------------------
+TI 1 Self-Rec         -0.00000     0.07443     0.00000    -0.88340
+TI 2 Self-Rec         -0.00000     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-Rec H=      -0.0000 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+TI 1 Self-SC        -157.48392     0.07443     0.00000    -0.88340
+TI 2 Self-SC        -157.48392     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-SC  H=    -157.4839 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+lambda = 0.780 : Total dU/dl:   44.741200  L:  -46.08891  NL:   88.55291  PI:    2.27720
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ NMR restraints: Bond =    0.000   Angle =     0.090   Torsion =     2.295
+===============================================================================
+ NFE restraints:    SMD  :    0.000    PMD  :    16.509    ABMD :     0.000
+                    BBMD :    0.000    STSM :     0.000
+===============================================================================
+
+MBAR Energy analysis:
+Energy at 0.0000 =    554301.50051754
+Energy at 0.0400 =    540599.82353436
+Energy at 0.0900 =    423205.81734351
+Energy at 0.1300 =    244763.17502515
+Energy at 0.1700 =     57947.94500733
+Energy at 0.2200 =   -104132.62391993
+Energy at 0.2600 =   -169789.84955339
+Energy at 0.3000 =   -199960.77191297
+Energy at 0.3500 =   -214349.78440843
+Energy at 0.3900 =   -218403.44055171
+Energy at 0.4300 =   -220036.56830357
+Energy at 0.4800 =   -220807.60818480
+Energy at 0.5200 =   -221044.16204384
+Energy at 0.5700 =   -221168.88692265
+Energy at 0.6100 =   -221212.62612969
+Energy at 0.6500 =   -221234.92727558
+Energy at 0.7000 =   -221248.28620261
+Energy at 0.7400 =   -221252.90045426
+Energy at 0.7800 =   -221254.55768809
+Energy at 0.8300 =   -221254.47264347
+Energy at 0.9300 =   -221252.93303043
+Energy at 0.9700 =   -221252.73986393
+Energy at 0.9900 =   -221252.72238124
+Energy at 1.0000 =   -221252.72167504
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+ NSTEP =     4000   TIME(PS) =       4.000  TEMP(K) =   297.51  PRESS =     0.0
+ Etot   =   -169490.9920  EKtot   =     51763.5656  EPtot      =   -221254.5577
+ BOND   =      3727.5668  ANGLE   =     13846.3525  DIHED      =     10750.1348
+ 1-4 NB =      3601.9978  1-4 EEL =    -12283.2090  VDWAALS    =     13705.8561
+ EELEC  =   -254792.6397  EHBOND  =         0.0000  RESTRAINT  =       189.3830
+ EAMBER (non-restraint)  =   -221443.9407
+ DV/DL  =       -16.6279
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         406.82
+ SC_Etot=        60.1568  SC_EKtot=        31.1241  SC_EPtot   =        29.0326
+ SC_BOND=         9.4303  SC_ANGLE=        12.0968  SC_DIHED   =         8.8901
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.3846
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -20.9311  SC_VDW_DER=      81.7606  SC_DERIV   =        60.8295
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.2575
+   Dist =      0.0005  Angl =       0.1327  Tors =      1.1244
+   RMSD =      0.0000
+
+| TI region  2
+
+
+ NSTEP =     4000   TIME(PS) =       4.000  TEMP(K) =   297.48  PRESS =     0.0
+ Etot   =   -169496.5529  EKtot   =     51758.0048  EPtot      =   -221254.5577
+ BOND   =      3727.5668  ANGLE   =     13846.3525  DIHED      =     10750.1348
+ 1-4 NB =      3601.9978  1-4 EEL =    -12283.2090  VDWAALS    =     13705.8561
+ EELEC  =   -254792.6397  EHBOND  =         0.0000  RESTRAINT  =       189.3830
+ EAMBER (non-restraint)  =   -221443.9407
+ DV/DL  =       -16.6279
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         334.13
+ SC_Etot=        50.3532  SC_EKtot=        25.5633  SC_EPtot   =        24.7900
+ SC_BOND=         6.9238  SC_ANGLE=        12.3473  SC_DIHED   =         7.3766
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.8578
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -20.9311  SC_VDW_DER=      81.7606  SC_DERIV   =        60.8295
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.2575
+   Dist =      0.0005  Angl =       0.1327  Tors =      1.1244
+   RMSD =      0.0000
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Detailed TI info at lambda=  0.78000000000000003     
+Region                    H           W       dH/dl       dW/dl
+TI 1 vDW               2.63312     0.07443  -157.78687    -0.88340
+TI 2 vDW              -4.61252     0.92557   101.02499     0.88340
+lambda = 0.780 : vDW      H=      -4.0732 dU/dL: L=   -6.4008 NL=   81.7606 Tot=   75.35988
+ ------------------------------------------------------------------------
+TI 1 Torsion           5.70359     0.07443     0.00000    -0.88340
+TI 2 Torsion           3.92229     0.92557     0.00000     0.88340
+lambda = 0.780 : Torsion  H=       4.0549 dU/dL: L=   -1.5736 NL=    0.0000 Tot=   -1.57359
+ ------------------------------------------------------------------------
+TI 1 VDW14            -0.79498     0.07443     0.00000    -0.88340
+TI 2 VDW14             7.50706     0.92557     0.00000     0.88340
+lambda = 0.780 : VDW14    H=       6.8891 dU/dL: L=    7.3340 NL=    0.0000 Tot=    7.33400
+ ------------------------------------------------------------------------
+TI 1 Elec-Rec       1907.33801     0.07443     0.00000    -0.88340
+TI 2 Elec-Rec       1861.41956     0.92557     0.00000     0.88340
+lambda = 0.780 : Elec-Rec H=    1864.8374 dU/dL: L=  -40.5642 NL=    0.0000 Tot=  -40.56422
+ ------------------------------------------------------------------------
+TI Res_Bond    PI-TI cont:        0.00053
+lambda = 0.780 : Res_Bond  PI=    0.0005
+ ------------------------------------------------------------------------
+TI Res_Angl    PI-TI cont:        0.13266
+lambda = 0.780 : Res_Angl  PI=    0.1327
+ ------------------------------------------------------------------------
+TI Res_Tors    PI-TI cont:        1.12436
+lambda = 0.780 : Res_Tors  PI=    1.1244
+ ------------------------------------------------------------------------
+TI 1 Elec-SC          18.34042     0.07443    -0.85661    -0.88340
+TI 2 Elec-SC         -27.65939     0.92557   -29.29148     0.88340
+lambda = 0.780 : Elec-SC  H=     -24.2355 dU/dL: L=  -40.6361 NL=  -27.1750 Tot=  -67.81105
+ ------------------------------------------------------------------------
+TI 1 EE14-SC         137.99247     0.07443    -6.71696    -0.88340
+TI 2 EE14-SC         141.53074     0.92557     7.28613     0.88340
+lambda = 0.780 : EE14-SC  H=     141.2674 dU/dL: L=    3.1257 NL=    6.2438 Tot=    9.36952
+ ------------------------------------------------------------------------
+TI 1 Self-Rec         -0.00000     0.07443     0.00000    -0.88340
+TI 2 Self-Rec         -0.00000     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-Rec H=      -0.0000 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+TI 1 Self-SC        -157.48392     0.07443     0.00000    -0.88340
+TI 2 Self-SC        -157.48392     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-SC  H=    -157.4839 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+lambda = 0.780 : Total dU/dl:  -16.627918  L:  -78.71497  NL:   60.82951  PI:    1.25755
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ NMR restraints: Bond =    0.001   Angle =     0.139   Torsion =     1.178
+===============================================================================
+ NFE restraints:    SMD  :    0.000    PMD  :    17.826    ABMD :     0.000
+                    BBMD :    0.000    STSM :     0.000
+===============================================================================
+
+MBAR Energy analysis:
+Energy at 0.0000 =   -112681.11541772
+Energy at 0.0400 =   -113985.51090885
+Energy at 0.0900 =   -125533.02973420
+Energy at 0.1300 =   -144643.95515160
+Energy at 0.1700 =   -167627.17876036
+Energy at 0.2200 =   -192211.53472247
+Energy at 0.2600 =   -204987.43129168
+Energy at 0.3000 =   -212326.18150306
+Energy at 0.3500 =   -216725.96531478
+Energy at 0.3900 =   -218267.04053154
+Energy at 0.4300 =   -218996.14953788
+Energy at 0.4800 =   -219394.82161875
+Energy at 0.5200 =   -219533.83236236
+Energy at 0.5700 =   -219614.30465305
+Energy at 0.6100 =   -219644.65414445
+Energy at 0.6500 =   -219660.73078926
+Energy at 0.7000 =   -219670.46322270
+Energy at 0.7400 =   -219673.68888908
+Energy at 0.7800 =   -219674.64091675
+Energy at 0.8300 =   -219674.19946838
+Energy at 0.9300 =   -219672.58116636
+Energy at 0.9700 =   -219672.39284233
+Energy at 0.9900 =   -219672.37587101
+Energy at 1.0000 =   -219672.37518577
+ ------------------------------------------------------------------------------
+
+
+| TI region  1
+
+
+ NSTEP =     5000   TIME(PS) =       5.000  TEMP(K) =   303.57  PRESS =     0.0
+ Etot   =   -166857.1282  EKtot   =     52817.5128  EPtot      =   -219674.6409
+ BOND   =      3788.9569  ANGLE   =     13779.0618  DIHED      =     10786.7279
+ 1-4 NB =      3702.3117  1-4 EEL =    -12186.4309  VDWAALS    =     13091.8025
+ EELEC  =   -252832.3246  EHBOND  =         0.0000  RESTRAINT  =       195.2537
+ EAMBER (non-restraint)  =   -219869.8946
+ DV/DL  =        -4.7847
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         305.53
+ SC_Etot=        54.3885  SC_EKtot=        23.3750  SC_EPtot   =        31.0135
+ SC_BOND=         4.3849  SC_ANGLE=        18.2454  SC_DIHED   =         9.0848
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -0.7015
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=     -5.4660  SC_VDW_DER=      62.7430  SC_DERIV   =        57.2770
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      0.7687
+   Dist =      0.0608  Angl =       0.0265  Tors =      0.6814
+   RMSD =      0.0000
+
+| TI region  2
+
+
+ NSTEP =     5000   TIME(PS) =       5.000  TEMP(K) =   303.57  PRESS =     0.0
+ Etot   =   -166856.7308  EKtot   =     52817.9102  EPtot      =   -219674.6409
+ BOND   =      3788.9569  ANGLE   =     13779.0618  DIHED      =     10786.7279
+ 1-4 NB =      3702.3117  1-4 EEL =    -12186.4309  VDWAALS    =     13091.8025
+ EELEC  =   -252832.3246  EHBOND  =         0.0000  RESTRAINT  =       195.2537
+ EAMBER (non-restraint)  =   -219869.8946
+ DV/DL  =        -4.7847
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         310.72
+ SC_Etot=        50.0623  SC_EKtot=        23.7724  SC_EPtot   =        26.2899
+ SC_BOND=         7.3759  SC_ANGLE=        11.7971  SC_DIHED   =         8.5791
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.4623
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=     -5.4660  SC_VDW_DER=      62.7430  SC_DERIV   =        57.2770
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      0.7687
+   Dist =      0.0608  Angl =       0.0265  Tors =      0.6814
+   RMSD =      0.0000
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ Detailed TI info at lambda=  0.78000000000000003     
+Region                    H           W       dH/dl       dW/dl
+TI 1 vDW              -3.35554     0.07443  -123.49030    -0.88340
+TI 2 vDW             -13.83430     0.92557    77.71983     0.88340
+lambda = 0.780 : vDW      H=     -13.0543 dU/dL: L=   -9.2569 NL=   62.7430 Tot=   53.48609
+ ------------------------------------------------------------------------
+TI 1 Torsion           8.25156     0.07443     0.00000    -0.88340
+TI 2 Torsion           3.24085     0.92557     0.00000     0.88340
+lambda = 0.780 : Torsion  H=       3.6138 dU/dL: L=   -4.4264 NL=    0.0000 Tot=   -4.42645
+ ------------------------------------------------------------------------
+TI 1 VDW14            -0.84323     0.07443     0.00000    -0.88340
+TI 2 VDW14             8.25993     0.92557     0.00000     0.88340
+lambda = 0.780 : VDW14    H=       7.5823 dU/dL: L=    8.0417 NL=    0.0000 Tot=    8.04170
+ ------------------------------------------------------------------------
+TI 1 Elec-Rec       1926.81116     0.07443     0.00000    -0.88340
+TI 2 Elec-Rec       1886.21753     0.92557     0.00000     0.88340
+lambda = 0.780 : Elec-Rec H=    1889.2391 dU/dL: L=  -35.8603 NL=    0.0000 Tot=  -35.86028
+ ------------------------------------------------------------------------
+TI Res_Bond    PI-TI cont:        0.06079
+lambda = 0.780 : Res_Bond  PI=    0.0608
+ ------------------------------------------------------------------------
+TI Res_Angl    PI-TI cont:        0.02652
+lambda = 0.780 : Res_Angl  PI=    0.0265
+ ------------------------------------------------------------------------
+TI Res_Tors    PI-TI cont:        0.68144
+lambda = 0.780 : Res_Tors  PI=    0.6814
+ ------------------------------------------------------------------------
+TI 1 Elec-SC          13.81604     0.07443     4.02667    -0.88340
+TI 2 Elec-SC         -17.21929     0.92557   -13.39857     0.88340
+lambda = 0.780 : Elec-SC  H=     -14.9092 dU/dL: L=  -27.4165 NL=  -12.1015 Tot=  -39.51806
+ ------------------------------------------------------------------------
+TI 1 EE14-SC         136.18982     0.07443    -6.41048    -0.88340
+TI 2 EE14-SC         143.08146     0.92557     7.68468     0.88340
+lambda = 0.780 : EE14-SC  H=     142.5685 dU/dL: L=    6.0881 NL=    6.6355 Tot=   12.72358
+ ------------------------------------------------------------------------
+TI 1 Self-Rec         -0.00000     0.07443     0.00000    -0.88340
+TI 2 Self-Rec         -0.00000     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-Rec H=      -0.0000 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+TI 1 Self-SC        -157.48392     0.07443     0.00000    -0.88340
+TI 2 Self-SC        -157.48392     0.92557     0.00000     0.88340
+lambda = 0.780 : Self-SC  H=    -157.4839 dU/dL: L=    0.0000 NL=    0.0000 Tot=    0.00000
+ ------------------------------------------------------------------------
+lambda = 0.780 : Total dU/dl:   -4.784674  L:  -62.83039  NL:   57.27697  PI:    0.76874
+ +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ NMR restraints: Bond =    0.064   Angle =     0.028   Torsion =     0.714
+===============================================================================
+ NFE restraints:    SMD  :    0.000    PMD  :    17.592    ABMD :     0.000
+                    BBMD :    0.000    STSM :     0.000
+===============================================================================
+
+| TI region  1
+
+
+      A V E R A G E S   O V E R       5 S T E P S
+
+
+ NSTEP =     5000   TIME(PS) =       5.000  TEMP(K) =   270.72  PRESS =     0.0
+ Etot   =   -181791.9478  EKtot   =     47100.9062  EPtot      =   -228892.8540
+ BOND   =      3353.1854  ANGLE   =     12519.6372  DIHED      =     10507.3013
+ 1-4 NB =      3574.5374  1-4 EEL =    -12206.7129  VDWAALS    =     15313.6870
+ EELEC  =   -262131.8507  EHBOND  =         0.0000  RESTRAINT  =       177.3612
+ EAMBER (non-restraint)  =   -229070.2153
+ DV/DL  =        18.8999
+ ------------------------------------------------------------------------------
+
+ NMR restraints: Bond =    0.064   Angle =     0.028   Torsion =     0.714
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         299.53
+ SC_Etot=        50.7385  SC_EKtot=        22.9163  SC_EPtot   =        27.8222
+ SC_BOND=         6.0843  SC_ANGLE=        13.7537  SC_DIHED   =         9.2897
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.3056
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -15.7843  SC_VDW_DER=      87.9237  SC_DERIV   =        72.1395
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.4247
+   Dist =      0.0135  Angl =       0.1091  Tors =      1.3021
+   RMSD =      0.0000
+
+      R M S  F L U C T U A T I O N S
+
+
+ NSTEP =     5000   TIME(PS) =       5.000  TEMP(K) =    37.75  PRESS =     0.0
+ Etot   =     16300.0697  EKtot   =      6567.6626  EPtot      =      9757.4462
+ BOND   =       478.2754  ANGLE   =      1662.4640  DIHED      =       333.2581
+ 1-4 NB =       103.7581  1-4 EEL =        40.0238  VDWAALS    =      2202.5312
+ EELEC  =      9388.6366  EHBOND  =         0.0000  RESTRAINT  =        22.8490
+ EAMBER (non-restraint)  =      9734.5972
+ DV/DL  =        24.7044
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =          64.09
+ SC_Etot=         6.9445  SC_EKtot=         4.9034  SC_EPtot   =         4.9506
+ SC_BOND=         3.0346  SC_ANGLE=         3.2509  SC_DIHED   =         1.0768
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =         0.3065
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=      5.5952  SC_VDW_DER=      15.8714  SC_DERIV   =        13.7235
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      0.4874
+   Dist =      0.0237  Angl =       0.0752  Tors =      0.4936
+   RMSD =      0.0000
+
+| TI region  2
+
+
+      A V E R A G E S   O V E R       5 S T E P S
+
+
+ NSTEP =     5000   TIME(PS) =       5.000  TEMP(K) =   270.71  PRESS =     0.0
+ Etot   =   -181792.2156  EKtot   =     47100.6384  EPtot      =   -228892.8540
+ BOND   =      3353.1854  ANGLE   =     12519.6372  DIHED      =     10507.3013
+ 1-4 NB =      3574.5374  1-4 EEL =    -12206.7129  VDWAALS    =     15313.6870
+ EELEC  =   -262131.8507  EHBOND  =         0.0000  RESTRAINT  =       177.3612
+ EAMBER (non-restraint)  =   -229070.2153
+ DV/DL  =        18.8999
+ ------------------------------------------------------------------------------
+
+ NMR restraints: Bond =    0.064   Angle =     0.028   Torsion =     0.714
+===============================================================================
+  Softcore part of the system:      31 atoms,       TEMP(K)    =         296.03
+ SC_Etot=        45.6010  SC_EKtot=        22.6485  SC_EPtot   =        22.9525
+ SC_BOND=         5.1451  SC_ANGLE=        11.3519  SC_DIHED   =         8.1116
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =        -1.6561
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=    -15.7843  SC_VDW_DER=      87.9237  SC_DERIV   =        72.1395
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      1.4247
+   Dist =      0.0135  Angl =       0.1091  Tors =      1.3021
+   RMSD =      0.0000
+
+      R M S  F L U C T U A T I O N S
+
+
+ NSTEP =     5000   TIME(PS) =       5.000  TEMP(K) =    37.75  PRESS =     0.0
+ Etot   =     16300.6789  EKtot   =      6568.5068  EPtot      =      9757.4462
+ BOND   =       478.2754  ANGLE   =      1662.4640  DIHED      =       333.2581
+ 1-4 NB =       103.7581  1-4 EEL =        40.0238  VDWAALS    =      2202.5312
+ EELEC  =      9388.6366  EHBOND  =         0.0000  RESTRAINT  =        22.8490
+ EAMBER (non-restraint)  =      9734.5972
+ DV/DL  =        24.7044
+ ------------------------------------------------------------------------------
+
+  Softcore part of the system:      31 atoms,       TEMP(K)    =          45.21
+ SC_Etot=         6.3176  SC_EKtot=         3.4588  SC_EPtot   =         3.0135
+ SC_BOND=         1.7409  SC_ANGLE=         0.9868  SC_DIHED   =         1.1446
+ SC_14NB=         0.0000  SC_14EEL=         0.0000  SC_VDW     =         0.4192
+ SC_EEL =         0.0000
+ SC_RES_DIST=     0.0000  SC_RES_ANG=       0.0000  SC_RES_TORS=         0.0000
+ SC_EEL_DER=      5.5952  SC_VDW_DER=      15.8714  SC_DERIV   =        13.7235
+ ------------------------------------------------------------------------------
+
+ Lambda-dependent restraint contribution to dV/Dl: Total =      0.4874
+   Dist =      0.0237  Angl =       0.0752  Tors =      0.4936
+   RMSD =      0.0000
+
+      DV/DL, AVERAGES OVER       5 STEPS
+
+
+ NSTEP =     5000   TIME(PS) =       5.000  TEMP(K) =    37.75  PRESS =     0.0
+ Etot   =         0.0000  EKtot   =         0.0000  EPtot      =        18.8999
+ BOND   =         0.0000  ANGLE   =         0.0000  DIHED      =        -2.6000
+ 1-4 NB =         7.6668  1-4 EEL =         2.5484  VDWAALS    =         5.5426
+ EELEC  =       -67.8221  EHBOND  =         0.0000  RESTRAINT  =         0.0000
+ DV/DL  =        18.8999
+ ------------------------------------------------------------------------------
+
+
+ NMR restraints on final step:
+
+ ------------------------------------------------------------------------------
+
+
+ Final Restraint Analysis for coords: mdin-00.rst7                            
+
+
+ Restraints, deviations, and energy contributions:    pencut =   -1.00
+
+ ------------------------------------------------------------------------------
+     First atom        Last atom    curr. value target deviation  penalty
+ ------------------------------------------------------------------------------
+  CA   ASP   93 --  CA   MET   62:    7.245    7.423    0.178    0.000 d    0: 0
+  CA   MET   62 --  CA   TYR  258:    7.556    7.338    0.218    0.000 d    0: 0
+  CA   TYR  258 --  CA   ASP   93:   10.046   10.207    0.161    0.000 d    0: 0
+  CA   ASP   93 --  C9   g1i  287:    6.081    5.976    0.104    0.054 d    0: 0
+  CA   MET   62 --  C9   g1i  287:  116.373  116.148    0.225    0.004 a
+  CA   MET   62 --  CA   ASP   93:   10.110   13.275    3.165    0.763 t
+  CA   ASP   93 --  C3   g1i  287:   86.535   87.111    0.577    0.025 a
+  CA   ASP   93 --  C9   g1i  287: -113.387 -113.068    0.319    0.008 t
+  C9   g1i  287 --  C3   g1i  287: -155.146 -155.359    0.213    0.003 t
+  C2   g1i  287 --  C3   g1i  287:    3.187   13.105    9.918    0.000 t
+  C6   g1i  287 --  C5   g1i  287:    7.553   -3.204   10.757    0.000 t
+  C6   g1i  287 --  C10  g1i  287:  132.691  131.765    0.926    0.000 t
+  C1   g1i  287 --  C6   g1i  287:   -1.725    6.979    8.704    0.000 t
+  C3   g1i  287 --  C4   g1i  287:    2.855   -8.887   11.742    0.000 t
+  C1   g1i  287 --  C2   g1i  287:   -3.842  -12.374    8.532    0.000 t
+  C4   g1i  287 --  C5   g1i  287: -183.885 -179.915    3.971    0.000 t
+  C5   g1i  287 --  C7   g1i  287: -162.563 -153.365    9.199    0.000 t
+  C7   g1i  287 --  C8   g1i  287:    4.595    7.423    2.828    0.000 t
+  C10  g1i  287 --  C9   g1i  287: -160.981 -165.698    4.717    0.000 t
+  C8   g1i  287 --  C9   g1i  287:  -52.863  -53.361    0.499    0.000 t
+  C9   g1i  287 --  N1   g1i  287:  -55.825  -67.011   11.186    0.000 t
+                                       Total distance penalty:      0.054
+                                       Total angle    penalty:      0.029
+                                       Total torsion  penalty:      0.774
+ ------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+   5.  TIMINGS
+--------------------------------------------------------------------------------
+
+|  NonSetup CPU Time in Major Routines:
+|
+|     Routine           Sec        %
+|     ------------------------------
+|     Nonbond          48.22   96.38
+|     Bond              0.00    0.00
+|     Angle             0.00    0.00
+|     Dihedral          0.00    0.00
+|     Shake             0.03    0.06
+|     RunMD             1.76    3.51
+|     Other             0.02    0.05
+|     ------------------------------
+|     Total            50.03
+
+|  PME Nonbond Pairlist CPU Time:
+|
+|     Routine              Sec        %
+|     ---------------------------------
+|     Set Up Cit           0.00    0.00
+|     Build List           0.00    0.00
+|     ---------------------------------
+|     Total                0.00    0.00
+
+|  PME Direct Force CPU Time:
+|
+|     Routine              Sec        %
+|     ---------------------------------
+|     NonBonded Calc       0.00    0.00
+|     Exclude Masked       0.00    0.00
+|     Other                0.00    0.01
+|     ---------------------------------
+|     Total                0.00    0.01
+
+|  PME Reciprocal Force CPU Time:
+|
+|     Routine              Sec        %
+|     ---------------------------------
+|     1D bspline           0.00    0.00
+|     Grid Charges         0.00    0.00
+|     Scalar Sum           0.00    0.00
+|     Gradient Sum         0.00    0.00
+|     FFT                  0.00    0.00
+|     ---------------------------------
+|     Total                0.00    0.00
+
+|  Final Performance Info:
+|     -----------------------------------------------------
+|     Average timings for last    5000 steps:
+|     Elapsed(s) =      50.09 Per Step(ms) =      10.02
+|         ns/day =       8.62   seconds/ns =   10018.17
+|
+|     Average timings for all steps:
+|     Elapsed(s) =      50.09 Per Step(ms) =      10.02
+|         ns/day =       8.62   seconds/ns =   10018.17
+|     -----------------------------------------------------
+
+|  Setup CPU time:            1.13 seconds
+|  NonSetup CPU time:        50.03 seconds
+|  Total CPU time:           51.16 seconds     0.01 hours
+
+|  Setup wall time:           1    seconds
+|  NonSetup wall time:       50    seconds
+|  Total wall time:          51    seconds     0.01 hours

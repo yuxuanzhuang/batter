@@ -1,0 +1,125 @@
+{
+  "phases": {
+    "analyze": {
+      "required": [
+        [
+          "fe/artifacts/analyze.ok",
+          "fe/Results/Results.dat"
+        ]
+      ],
+      "success": [
+        [
+          "fe/artifacts/analyze.ok",
+          "fe/Results/Results.dat"
+        ]
+      ]
+    },
+    "equil": {
+      "failure": [
+        [
+          "equil/FAILED"
+        ]
+      ],
+      "required": [
+        [
+          "equil/FINISHED"
+        ],
+        [
+          "equil/FAILED"
+        ]
+      ],
+      "success": [
+        [
+          "equil/FINISHED"
+        ]
+      ]
+    },
+    "equil_analysis": {
+      "required": [
+        [
+          "equil/representative.pdb"
+        ],
+        [
+          "equil/UNBOUND"
+        ]
+      ],
+      "success": [
+        [
+          "equil/representative.pdb"
+        ],
+        [
+          "equil/UNBOUND"
+        ]
+      ]
+    },
+    "fe": {
+      "failure": [
+        [
+          "fe/{comp}/{comp}{win:02d}/FAILED"
+        ]
+      ],
+      "required": [
+        [
+          "fe/{comp}/{comp}{win:02d}/FINISHED"
+        ],
+        [
+          "fe/{comp}/{comp}{win:02d}/FAILED"
+        ]
+      ],
+      "success": [
+        [
+          "fe/{comp}/{comp}{win:02d}/FINISHED"
+        ]
+      ]
+    },
+    "fe_equil": {
+      "failure": [
+        [
+          "fe/{comp}/{comp}-1/FAILED"
+        ]
+      ],
+      "required": [
+        [
+          "fe/{comp}/{comp}-1/EQ_FINISHED"
+        ],
+        [
+          "fe/{comp}/{comp}-1/FAILED"
+        ]
+      ],
+      "success": [
+        [
+          "fe/{comp}/{comp}-1/EQ_FINISHED"
+        ]
+      ]
+    },
+    "prepare_equil": {
+      "required": [
+        [
+          "equil/full.prmtop",
+          "equil/artifacts/prepare_equil.ok"
+        ]
+      ],
+      "success": [
+        [
+          "equil/full.prmtop",
+          "equil/artifacts/prepare_equil.ok"
+        ]
+      ]
+    },
+    "prepare_fe": {
+      "required": [
+        [
+          "fe/artifacts/prepare_fe.ok",
+          "fe/artifacts/prepare_fe_windows.ok"
+        ]
+      ],
+      "success": [
+        [
+          "fe/artifacts/prepare_fe.ok",
+          "fe/artifacts/prepare_fe_windows.ok"
+        ]
+      ]
+    }
+  },
+  "version": 1
+}
