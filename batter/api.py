@@ -251,6 +251,8 @@ def run_analysis_from_execution(
     if requested and not children:
         raise KeyError(f"Ligand '{ligand}' not present in run '{run_id}'.")
 
+    logger.info(f"Running analysis for {len(children)} ligands in run '{run_id}'.")
+    logger.info(f"Number of workers: {n_workers}")
     payload_data: dict[str, Any] = {"sim": sim_cfg}
     if components:
         payload_data["components"] = list(components)
@@ -259,9 +261,13 @@ def run_analysis_from_execution(
         payload_data["n_workers"] = n_workers
     if sim_range is not None:
         payload_data["sim_range"] = sim_range
-    logger.info(f"Running analysis for {len(children)} ligands in run '{run_id}'.")
-    logger.info(f"Number of workers: {n_workers}")
-    logger.info(f"Lambda window range: {sim_range}")
+        logger.info(f"Lambda window range set to: {sim_range}")
+    else:
+        sim_range_cfg = getattr(sim_cfg, "analysis_fe_range", None)
+        if sim_range_cfg is not None:
+            payload_data["sim_range"] = sim_range_cfg
+        sim_range = sim_range_cfg
+        logger.info(f"Lambda window range loaded: {sim_range}")
 
     payload = StepPayload(**payload_data)
     params = payload.to_mapping()

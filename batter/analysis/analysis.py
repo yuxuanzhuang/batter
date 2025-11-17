@@ -301,7 +301,7 @@ class MBARAnalysis(FEAnalysisBase):
         n_sims = len(glob.glob(f"{win_dir}/mdin-*.out"))
         all_range = range(n_sims)
 
-        # Collect mdin-XX.out, fallback to md-03/04.out if older layout
+        # Collect mdin-XX.out
         mdouts: List[str] = []
         s0 = sim_range[0] if sim_range is not None else 0
         e0 = sim_range[1] if sim_range is not None else n_sims
@@ -316,10 +316,7 @@ class MBARAnalysis(FEAnalysisBase):
                 mdouts.append(path)
 
         if not mdouts:
-            candidates = [f"{win_dir}/md-03.out", f"{win_dir}/md-04.out"]
-            mdouts = [c for c in candidates if os.path.exists(c)]
-            if not mdouts:
-                raise FileNotFoundError(f"No Amber out files in {win_dir}")
+            raise FileNotFoundError(f"No Amber out files in {win_dir}")
 
         dfs = []
         with SilenceAlchemlybOnly():

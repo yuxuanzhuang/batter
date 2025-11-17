@@ -128,12 +128,7 @@ class FEResultsRepository:
 
     def _append_index_row(self, row: dict[str, Any]) -> None:
         row = self._normalize_row(row)
-        if self._idx.exists():
-            df = pd.read_csv(self._idx)
-            df = df[~((df.run_id == row["run_id"]) & (df.ligand == row["ligand"]))]
-            df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
-        else:
-            df = pd.DataFrame([row])
+
         cols = [
             "run_id",
             "ligand",
@@ -151,11 +146,29 @@ class FEResultsRepository:
             "failure_reason",
             "created_at",
         ]
-        if df.columns.tolist() != cols:
-            for col in cols:
-                if col not in df.columns:
-                    df[col] = pd.NA
-            df = df[cols]
+
+        if self._idx.exists():
+            df = pd.read_csv(self._idx)
+            # Remove existing entry with same (run_id, ligand)
+            if {"run_id", "ligand"}.issubset(df.columns):
+                df = df[~((df["run_id"] == row["run_id"]) & (df["ligand"] == row["ligand"]))].copy()
+        else:
+            # Start from an empty DataFrame with the right columns
+            df = pd.DataFrame(columns=cols)
+
+        # Ensure all expected columns exist
+        for col in cols:
+            if col not in df.columns:
+                df[col] = pd.NA
+
+        # Append the new row without using concat
+        # Make sure we only write known columns; fill missing with NA
+        new_row = {col: row.get(col, pd.NA) for col in cols}
+        df.loc[len(df)] = new_row
+
+        # Enforce column order
+        df = df[cols]
+
         df.to_csv(self._idx, index=False)
 
     def save(self, rec: FERecord, copy_from: Path | None = None) -> None:
