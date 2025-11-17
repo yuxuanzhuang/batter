@@ -817,8 +817,9 @@ def _extract_ligand_metadata(child: SimSystem) -> tuple[str | None, str | None, 
                 meta = {}
             canonical_smiles = meta.get("canonical_smiles")
             original_path = meta.get("input_path")
+            original_name = meta.get("title") or original_name
             aliases = meta.get("aliases") or []
-            if aliases:
+            if aliases and not meta.get("title"):
                 original_name = aliases[0]
             else:
                 original_name = meta.get("prepared_base") or original_name
