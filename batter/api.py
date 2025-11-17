@@ -24,7 +24,7 @@ Inspect FE records stored in a work directory::
     # pass ``ligand`` when the run contains more than one ligand
     record = load_fe_run(\"work/adrb2\", latest, ligand=\"LIG1\")
 
-Re-run FE analysis on an existing execution::
+Run FE analysis on an existing execution::
 
     from batter.api import run_analysis_from_execution
     run_analysis_from_execution(\"work/adrb2\", latest, ligand=\"LIG1\")
@@ -168,7 +168,7 @@ def run_analysis_from_execution(
     raise_on_error: bool = True,
 ) -> None:
     """
-    Re-run FE analysis for a partially finished execution.
+    Run FE analysis for a partially finished/finished execution.
 
     Parameters
     ----------
@@ -291,4 +291,4 @@ def run_analysis_from_execution(
     if failures:
         failed = ", ".join([f"{name} ({status}: {reason})" for name, status, reason in failures])
         logger.warning(f"Re-analysis recorded issues for run '{run_id}': {failed}")
-    logger.info(f"Analysis re-run complete for run '{run_dir}'.")
+    logger.info(f"Analysis complete for run '{run_dir}'.")

@@ -431,7 +431,7 @@ def fe_analyze(
         raise click.ClickException(str(exc))
 
     click.echo(
-        f"Analysis re-run scheduled for '{run_id}'"
+        f"Analysis run finished for '{run_id}'"
         f"{' (ligand ' + ligand + ')' if ligand else ''}."
     )
 
