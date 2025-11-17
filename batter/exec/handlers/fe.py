@@ -230,14 +230,14 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
 
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_{wd.name}_fe"
-        spec = _spec_from_dir(
-            wd,
-            finished_name="FINISHED",
-            part=part,
-            job_name=job_name,
-            extra_env=env,
-        )
-        job_mgr.add(spec, max_active=max_jobs)
+            spec = _spec_from_dir(
+                wd,
+                finished_name="FINISHED",
+                part=part,
+                job_name=job_name,
+                extra_env=env,
+            )
+            job_mgr.add(spec, max_active=max_jobs)
             count += 1
 
     if count == 0:
