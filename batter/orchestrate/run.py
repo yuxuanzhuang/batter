@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import json
+import os
+import smtplib
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple, Type
+from smtplib import SMTPException
 
-import json
 import yaml
 
 from loguru import logger
@@ -46,6 +49,10 @@ from batter.orchestrate.markers import (
 )
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.orchestrate.results_io import fallback_totals_from_json, parse_results_dat
+
+
+SENDER_ENV_VAR = "BATTER_EMAIL_SENDER"
+DEFAULT_SENDER = "nobody@stanford.edu"
 
 
 def _normalize_for_hash(obj: Any) -> Any:
@@ -724,3 +731,69 @@ def run_from_yaml(
     logger.success(
         f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/."
     )
+
+    _notify_run_completion(rc, run_id, run_dir, failures)
+
+
+def _notify_run_completion(
+    rc: RunConfig,
+    run_id: str,
+    run_dir: Path,
+    failures: list[tuple[str, str]],
+) -> None:
+    recipient = rc.run.email_on_completion
+    if not recipient:
+        return
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    subject = f"BATTER run '{run_id}' completed"
+    results_path = Path(rc.system.output_folder) / "results"
+
+    body_lines = [
+        "Hi there!",
+        "",
+        f"Your BATTER run '{rc.create.system_name}' (run_id='{run_id}') completed at {timestamp} UTC.",
+        f"Protocol: {rc.protocol} | Backend: {rc.backend}",
+        f"Output folder: {run_dir}",
+        f"FE records stored under: {results_path}",
+        "",
+    ]
+
+    if failures:
+        body_lines.append(
+            "The following ligand(s) had post-run issues (see logs for additional context):"
+        )
+        for ligand, reason in failures:
+            body_lines.append(f"- {ligand}: {reason}")
+    else:
+        body_lines.append("No ligand-level failures were detected.")
+
+    body_lines.extend(
+        [
+            "",
+            "Best wishes,",
+            "BATTER",
+        ]
+    )
+
+    message_body = "\n".join(body_lines)
+    sender = os.environ.get(SENDER_ENV_VAR, DEFAULT_SENDER)
+    if sender == DEFAULT_SENDER and SENDER_ENV_VAR not in os.environ:
+        logger.warning(
+            f"{SENDER_ENV_VAR} is not set; defaulting sender email to {DEFAULT_SENDER}"
+        )
+    message = (
+        f"From: batter <{sender}>\n"
+        f"To: {recipient}\n"
+        f"Subject: {subject}\n\n"
+        f"{message_body}"
+    )
+
+    try:
+        with smtplib.SMTP("localhost") as smtp:
+            smtp.sendmail(sender, [recipient], message)
+        logger.info(f"Sent completion notification to {recipient}")
+    except SMTPException as exc:
+        logger.warning(f"Failed to send completion email to {recipient}: {exc}")
+    except Exception as exc:  # pragma: no cover - best-effort notification
+        logger.warning(f"Unexpected error while sending completion email: {exc}")

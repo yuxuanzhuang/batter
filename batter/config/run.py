@@ -634,6 +634,14 @@ class RunSection(BaseModel):
         ),
     )
 
+    email_on_completion: str | None = Field(
+        None,
+        description=(
+            "Email address that should receive a notification once the run "
+            "finishes (successfully or with warnings)."
+        ),
+    )
+
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
 
