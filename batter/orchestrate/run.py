@@ -690,6 +690,11 @@ def run_from_yaml(
 
     store = ArtifactStore(rc.system.output_folder)
     repo = FEResultsRepository(store)
+    analysis_range = (
+        tuple(sim_cfg_updated.analysis_fe_range)
+        if sim_cfg_updated.analysis_fe_range
+        else None
+    )
     failures: list[tuple[str, str, str]] = []
     for child in unbound_children:
         ligand = child.meta["ligand"]
@@ -706,6 +711,7 @@ def run_from_yaml(
             original_name=original_name,
             original_path=original_path,
             protocol=rc.protocol,
+            sim_range=analysis_range,
         )
         failures.append((ligand, "unbound", reason))
     failures.extend(
@@ -829,6 +835,11 @@ def save_fe_records(
     protocol: str,
 ) -> list[tuple[str, str, str]]:
     failures: list[tuple[str, str, str]] = []
+    analysis_range = (
+        tuple(sim_cfg_updated.analysis_fe_range)
+        if sim_cfg_updated.analysis_fe_range
+        else None
+    )
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
@@ -863,6 +874,7 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
+                sim_range=analysis_range,
             )
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
@@ -873,20 +885,21 @@ def save_fe_records(
             rec = FERecord(
                 run_id=run_id,
                 ligand=lig_name,
-                mol_name=mol_name,
-                system_name=sim_cfg_updated.system_name,
-                fe_type=sim_cfg_updated.fe_type,
-                temperature=sim_cfg_updated.temperature,
-                method=sim_cfg_updated.dec_int,
-                total_dG=total_dG,
-                total_se=total_se,
-                components=list(sim_cfg_updated.components),
-                windows=[],  # optional: can be populated later
-                canonical_smiles=canonical_smiles,
-                original_name=original_name,
-                original_path=original_path,
-                protocol=protocol,
-            )
+            mol_name=mol_name,
+            system_name=sim_cfg_updated.system_name,
+            fe_type=sim_cfg_updated.fe_type,
+            temperature=sim_cfg_updated.temperature,
+            method=sim_cfg_updated.dec_int,
+            total_dG=total_dG,
+            total_se=total_se,
+            components=list(sim_cfg_updated.components),
+            windows=[],  # optional: can be populated later
+            canonical_smiles=canonical_smiles,
+            original_name=original_name,
+            original_path=original_path,
+            protocol=protocol,
+            sim_range=analysis_range,
+        )
             repo.save(rec, copy_from=results_dir)
             logger.info(
                 f"Saved FE record for ligand {lig_name}"
@@ -907,6 +920,7 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
+                sim_range=analysis_range,
             )
 
     return failures

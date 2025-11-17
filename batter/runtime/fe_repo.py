@@ -96,6 +96,7 @@ class FERecord(BaseModel):
     original_name: str | None = None
     original_path: str | None = None
     protocol: str = "abfe"
+    sim_range: tuple[int, int] | None = None
     status: Literal["success", "failed", "unbound"] = "success"
 
 
@@ -117,6 +118,7 @@ class FEResultsRepository:
         normalized.setdefault("original_name", "")
         normalized.setdefault("original_path", "")
         normalized.setdefault("protocol", "")
+        normalized.setdefault("sim_range", "")
         normalized.setdefault(
             "created_at", datetime.now(timezone.utc).isoformat(timespec="seconds")
         )
@@ -144,6 +146,7 @@ class FEResultsRepository:
             "original_name",
             "original_path",
             "protocol",
+            "sim_range",
             "status",
             "failure_reason",
             "created_at",
@@ -178,6 +181,7 @@ class FEResultsRepository:
             "original_name": rec.original_name or "",
             "original_path": rec.original_path or "",
             "protocol": rec.protocol,
+            "sim_range": rec.sim_range if rec.sim_range is not None else "",
             "created_at": rec.created_at,
             "status": rec.status,
             "failure_reason": "",
@@ -197,6 +201,7 @@ class FEResultsRepository:
             "original_name",
             "original_path",
             "protocol",
+            "sim_range",
             "created_at",
         ]
         if self._idx.exists():
@@ -229,6 +234,7 @@ class FEResultsRepository:
         original_name: str | None = None,
         original_path: str | None = None,
         protocol: str = "abfe",
+        sim_range: tuple[int, int] | None = None,
     ) -> None:
         lig_dir = self._lig_dir(run_id, ligand)
         lig_dir.mkdir(parents=True, exist_ok=True)
@@ -253,6 +259,7 @@ class FEResultsRepository:
             "original_name": original_name or "",
             "original_path": original_path or "",
             "protocol": protocol,
+            "sim_range": sim_range or "",
             "status": status,
             "failure_reason": reason or "",
             "created_at": failure_detail["timestamp"],
