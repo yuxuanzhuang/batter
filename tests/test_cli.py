@@ -121,9 +121,14 @@ def test_cli_fe_show(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
             WindowResult(component="elec", lam=0.0, dG=-1.0),
         ],
     )
-    monkeypatch.setattr("batter.cli.run.load_fe_run", lambda path, run_id: record)
+    monkeypatch.setattr(
+        "batter.cli.run.load_fe_run",
+        lambda path, run_id, ligand=None: record,
+    )
 
-    result = runner.invoke(cli, ["fe", "show", str(work_dir), "run1"])
+    result = runner.invoke(
+        cli, ["fe", "show", str(work_dir), "run1", "--ligand", "LIG1"]
+    )
     assert result.exit_code == 0
     assert "run_id     : run1" in result.output
     assert "total_dG   : -5.000" in result.output

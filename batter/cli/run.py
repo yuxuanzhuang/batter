@@ -292,7 +292,14 @@ def fe_list(work_dir: Path, fmt: str) -> None:
 @fe.command("show")
 @click.argument("work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.argument("run_id", type=str)
-def fe_show(work_dir: Path, run_id: str) -> None:
+@click.option(
+    "--ligand",
+    "-l",
+    type=str,
+    default=None,
+    help="Specify a ligand identifier when multiple records share the same run_id.",
+)
+def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     """
     Display a single free-energy record from ``WORK_DIR``.
 
@@ -302,9 +309,11 @@ def fe_show(work_dir: Path, run_id: str) -> None:
         Portable work directory.
     run_id : str
         Run identifier returned by :func:`fe_list`.
+    ligand : str, optional
+        Ligand identifier to disambiguate when multiple ligands are stored under the same run_id.
     """
     try:
-        rec = load_fe_run(work_dir, run_id)
+        rec = load_fe_run(work_dir, run_id, ligand=ligand)
     except FileNotFoundError:
         raise click.ClickException(f"Run '{run_id}' not found under {work_dir}.")
     except Exception as e:

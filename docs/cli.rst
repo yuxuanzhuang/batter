@@ -40,7 +40,9 @@ Use ``--format`` to output JSON/CSV/TSV instead of a table.
 
 Display a specific FE record::
 
-   batter fe show work/adrb2 run-20240101
+   batter fe show work/adrb2 run-20240101 --ligand LIG1
+
+If the run contains multiple ligands, pass ``--ligand`` to disambiguate.
 
 Clone Executions
 ================

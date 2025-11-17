@@ -21,7 +21,8 @@ Inspect FE records stored in a work directory::
     from batter.api import list_fe_runs, load_fe_run
     runs = list_fe_runs(\"work/adrb2\")
     latest = runs.iloc[-1][\"run_id\"]
-    record = load_fe_run(\"work/adrb2\", latest)
+    # pass ``ligand`` when the run contains more than one ligand
+    record = load_fe_run(\"work/adrb2\", latest, ligand=\"LIG1\")
 
 For more examples, refer to ``docs/getting_started.rst`` and the tutorials.
 """
@@ -106,7 +107,9 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
     return repo.index()
 
 
-def load_fe_run(work_dir: Union[str, Path], run_id: str) -> FERecord:
+def load_fe_run(
+    work_dir: Union[str, Path], run_id: str, ligand: str | None = None
+) -> FERecord:
     """
     Load a single FE record by ``run_id`` from a portable work directory.
 
@@ -125,4 +128,17 @@ def load_fe_run(work_dir: Union[str, Path], run_id: str) -> FERecord:
     """
     store = ArtifactStore(Path(work_dir))
     repo = FEResultsRepository(store)
-    return repo.load(run_id)
+    if ligand:
+        return repo.load(run_id, ligand)
+
+    df = repo.index()
+    matches = df[df["run_id"] == run_id]
+    if matches.empty:
+        raise KeyError(f"No FE records found for run_id '{run_id}'.")
+    if len(matches) > 1:
+        raise ValueError(
+            f"Multiple ligands stored for run_id '{run_id}'. "
+            "Call `load_fe_run` with the `ligand` argument or inspect `list_fe_runs`."
+        )
+    ligand_name = matches.iloc[0]["ligand"]
+    return repo.load(run_id, ligand_name)
