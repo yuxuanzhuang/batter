@@ -259,6 +259,7 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         "total_dG",
         "total_se",
         "original_name",
+        "status",
         "protocol",
         "created_at",
     ]

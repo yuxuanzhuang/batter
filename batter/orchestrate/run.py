@@ -574,12 +574,15 @@ def run_from_yaml(
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
     # --------------------
     # prune UNBOUND ligands before FE prep
+    unbound_children: list[SimSystem] = []
+
     def _filter_bound(children_list):
         keep = []
         for c in children_list:
             if (c.root / "equil" / "UNBOUND").exists():
                 lig = c.meta.get("ligand", c.name)
                 logger.warning(f"Pruning UNBOUND ligand after equil: {lig}")
+                unbound_children.append(c)
                 continue
             keep.append(c)
         return keep
@@ -687,17 +690,37 @@ def run_from_yaml(
 
     store = ArtifactStore(rc.system.output_folder)
     repo = FEResultsRepository(store)
-    failures = save_fe_records(
-        run_dir=run_dir,
-        run_id=run_id,
-        children_all=children_all,
-        sim_cfg_updated=sim_cfg_updated,
-        repo=repo,
-        protocol=rc.protocol,
+    failures: list[tuple[str, str, str]] = []
+    for child in unbound_children:
+        ligand = child.meta["ligand"]
+        reason = "UNBOUND detected during equilibration"
+        canonical_smiles, original_name, original_path = _extract_ligand_metadata(child)
+        repo.record_failure(
+            run_id=run_id,
+            ligand=ligand,
+            system_name=sim_cfg_updated.system_name,
+            temperature=sim_cfg_updated.temperature,
+            status="unbound",
+            reason=reason,
+            canonical_smiles=canonical_smiles,
+            original_name=original_name,
+            original_path=original_path,
+            protocol=rc.protocol,
+        )
+        failures.append((ligand, "unbound", reason))
+    failures.extend(
+        save_fe_records(
+            run_dir=run_dir,
+            run_id=run_id,
+            children_all=children_all,
+            sim_cfg_updated=sim_cfg_updated,
+            repo=repo,
+            protocol=rc.protocol,
+        )
     )
 
     if failures:
-        failed = ", ".join([f"{n} ({m})" for n, m in failures])
+        failed = ", ".join([f"{n} ({status}: {reason})" for n, status, reason in failures])
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
     logger.success(
         f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/."
@@ -710,7 +733,7 @@ def _notify_run_completion(
     rc: RunConfig,
     run_id: str,
     run_dir: Path,
-    failures: list[tuple[str, str]],
+    failures: list[tuple[str, str, str]],
 ) -> None:
     recipient = rc.run.email_on_completion
     if not recipient:
@@ -734,8 +757,8 @@ def _notify_run_completion(
         body_lines.append(
             "The following ligand(s) had post-run issues (see logs for additional context):"
         )
-        for ligand, reason in failures:
-            body_lines.append(f"- {ligand}: {reason}")
+        for ligand, status, reason in failures:
+            body_lines.append(f"- {ligand} ({status}): {reason}")
     else:
         body_lines.append("No ligand failures were detected.")
 
@@ -804,8 +827,8 @@ def save_fe_records(
     sim_cfg_updated: SimulationConfig,
     repo: FEResultsRepository,
     protocol: str,
-) -> list[tuple[str, str]]:
-    failures: list[tuple[str, str]] = []
+) -> list[tuple[str, str, str]]:
+    failures: list[tuple[str, str, str]] = []
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
@@ -826,7 +849,21 @@ def save_fe_records(
             total_se = tse if total_se is None else total_se
 
         if total_dG is None or total_se is None:
-            failures.append((lig_name, "no_totals_found"))
+            reason = "no_totals_found"
+            failures.append((lig_name, "failed", reason))
+            canonical_smiles, original_name, original_path = _extract_ligand_metadata(child)
+            repo.record_failure(
+                run_id=run_id,
+                ligand=lig_name,
+                system_name=sim_cfg_updated.system_name,
+                temperature=sim_cfg_updated.temperature,
+                status="failed",
+                reason=reason,
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=protocol,
+            )
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
 
@@ -856,7 +893,20 @@ def save_fe_records(
                 f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
             )
         except Exception as exc:
+            reason = f"save_failed: {exc}"
             logger.warning(f"Could not save FE record for {lig_name}: {exc}")
-            failures.append((lig_name, f"save_failed: {exc}"))
+            failures.append((lig_name, "failed", reason))
+            repo.record_failure(
+                run_id=run_id,
+                ligand=lig_name,
+                system_name=sim_cfg_updated.system_name,
+                temperature=sim_cfg_updated.temperature,
+                status="failed",
+                reason=reason,
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=protocol,
+            )
 
     return failures

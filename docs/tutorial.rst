@@ -232,7 +232,7 @@ Use the CLI helpers to inspect them::
     batter fe show <system.output_folder> <run_id> --ligand <ligand>
     batter fe analyze <system.output_folder> <run_id> --ligand <ligand> --workers 4
 
-``fe list`` prints a high-level table (ΔG, SE, protocol, originals) for every stored run, while
+``fe list`` prints a high-level table (ΔG, SE, protocol, originals, status) for every stored run, while
 ``fe show`` dives into per-window data. ``fe analyze`` re-runs the post-processing with
 optional worker controls; use ``--ligand`` when the run produced multiple ligand
 records. CSV/JSON exports live alongside the results on
