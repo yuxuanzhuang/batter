@@ -313,8 +313,7 @@ class SlurmJobManager:
             except Exception as exc:
                 if self.submit_retry_limit == 0 or attempts >= self.submit_retry_limit:
                     raise RuntimeError(
-                        f"SLURM submission failed for {spec.workdir} after {attempts + 1} attempt(s)"
-                    ) from exc
+                        f"SLURM submission failed for {spec.workdir} after {attempts + 1} attempt(s) due to: {exc}")
                 attempts += 1
                 delay = self.submit_retry_delay_s
                 logger.warning(

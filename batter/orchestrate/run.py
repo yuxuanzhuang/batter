@@ -536,7 +536,7 @@ def run_from_yaml(
     phase_equil = _inject_mgr(phase_equil)
     if phase_equil.ordered_steps():
         finished = run_phase_skipping_done(
-            phase_equil, children, "equil", backend, max_workers=rc.run.max_workers
+            phase_equil, children, "equil", backend, max_workers=1
         )
         if not finished:
             job_mgr.wait_all()
@@ -601,7 +601,7 @@ def run_from_yaml(
             children,
             "fe_equil",
             backend,
-            max_workers=rc.run.max_workers,
+            max_workers=1,
         )
         if not finished:
             job_mgr.wait_all()
@@ -621,7 +621,7 @@ def run_from_yaml(
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
         finished = run_phase_skipping_done(
-            phase_fe, children, "fe", backend, max_workers=rc.run.max_workers
+            phase_fe, children, "fe", backend, max_workers=1
         )
         if not finished:
             job_mgr.wait_all()
