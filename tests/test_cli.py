@@ -144,13 +144,23 @@ def test_cli_fe_show(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
 def test_cli_fe_analyze_invokes_api(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
     called: dict[str, Any] = {}
 
-    def fake_run(work_dir, run_id, *, ligand, components=None, n_workers, sim_range):
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        sim_range,
+        raise_on_error=True,
+    ):
         called["work_dir"] = work_dir
         called["run_id"] = run_id
         called["ligand"] = ligand
         called["components"] = components
         called["n_workers"] = n_workers
         called["sim_range"] = sim_range
+        called["raise_on_error"] = raise_on_error
 
     monkeypatch.setattr("batter.cli.run.run_analysis_from_execution", fake_run)
     monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
@@ -175,6 +185,38 @@ def test_cli_fe_analyze_invokes_api(monkeypatch, tmp_path: Path, runner: CliRunn
     assert called["ligand"] == "LIG1"
     assert called["n_workers"] == 3
     assert called["sim_range"] == (0, 5)
+    assert called["raise_on_error"] is True
+
+
+def test_cli_fe_analyze_can_disable_raise(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
+    called: dict[str, Any] = {}
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        sim_range,
+        raise_on_error=True,
+    ):
+        called["raise_on_error"] = raise_on_error
+
+    monkeypatch.setattr("batter.cli.run.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "analyze",
+            str(tmp_path),
+            "run1",
+            "--no-raise-on-error",
+        ],
+    )
+    assert result.exit_code == 0
+    assert called["raise_on_error"] is False
 
 
 def test_run_analysis_from_execution(monkeypatch, tmp_path: Path) -> None:

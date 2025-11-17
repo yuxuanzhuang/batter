@@ -239,6 +239,8 @@ records. CSV/JSON exports live alongside the results on
 disk, and convergence plots appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing).
+Use ``--no-raise-on-error`` if you want the analysis sweep to continue when individual
+ligand artifacts fail to parse.
 
 Additional Resources
 --------------------

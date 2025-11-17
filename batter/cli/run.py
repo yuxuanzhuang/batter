@@ -386,6 +386,11 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Number of local workers to pass to the FE analysis handler.",
 )
 @click.option(
+    "--raise-on-error/--no-raise-on-error",
+    default=True,
+    help="Whether analysis failures should raise (default) or be logged and skipped.",
+)
+@click.option(
     "--sim-range",
     type=str,
     default=None,
@@ -396,6 +401,7 @@ def fe_analyze(
     run_id: str,
     ligand: str | None,
     workers: int | None,
+    raise_on_error: bool,
     sim_range: str | None,
 ) -> None:
     """
@@ -418,6 +424,7 @@ def fe_analyze(
             ligand=ligand,
             n_workers=workers,
             sim_range=parsed_range,
+            raise_on_error=raise_on_error,
         )
     except Exception as exc:
         raise click.ClickException(str(exc))

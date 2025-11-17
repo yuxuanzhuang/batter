@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING, Sequence, Union
 
 from loguru import logger
+from tqdm import tqdm
 
 from ._version import __version__  # semantic version string
 
@@ -164,6 +165,7 @@ def run_analysis_from_execution(
     components: Sequence[str] | None = None,
     n_workers: int | None = None,
     sim_range: tuple[int, int] | None = None,
+    raise_on_error: bool = True,
 ) -> None:
     """
     Re-run FE analysis for a partially finished execution.
@@ -182,6 +184,9 @@ def run_analysis_from_execution(
         Number of worker processes requested for the analysis handler.
     sim_range : (int, int), optional
         (start, end) range of lambda windows to analyze.
+    raise_on_error : bool, optional
+        When ``True`` (default) propagate errors raised by the analysis handler.
+        Set to ``False`` to log the failure and continue with other ligands.
     """
     work_root = Path(work_dir)
     run_dir = work_root / "executions" / run_id
@@ -260,8 +265,15 @@ def run_analysis_from_execution(
     analyze_step = Step(name="analyze")
     from batter.exec.handlers.fe_analysis import analyze_handler
 
-    for child in children:
-        analyze_handler(analyze_step, child, params)
+    for child in tqdm(children, desc="Running analysis", unit="ligand"):
+        try:
+            analyze_handler(analyze_step, child, params)
+        except Exception as exc:
+            msg = f"Analysis failed for ligand '{child.meta.get('ligand')}' in run '{run_id}': {exc}"
+            if raise_on_error:
+                raise RuntimeError(msg) from exc
+            logger.warning(msg)
+            continue
 
     store = ArtifactStore(work_root)
     repo = FEResultsRepository(store)

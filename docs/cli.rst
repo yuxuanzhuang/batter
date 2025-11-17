@@ -50,6 +50,7 @@ Re-run FE analysis for a saved execution::
 
 Use ``--workers`` to control parallelism and ``--sim-range`` (``start,end``) to restrict
 which windows are parsed.
+Pass ``--no-raise-on-error`` to continue even if a ligand's analysis fails.
 
 Clone Executions
 ================
