@@ -249,7 +249,18 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         return
 
     # ensure expected cols exist
-    cols = ["system_name", "run_id", "ligand", "mol_name", "fe_type", "total_dG", "total_se", "created_at"]
+    cols = [
+        "system_name",
+        "run_id",
+        "ligand",
+        "mol_name",
+        "temperature",
+        "total_dG",
+        "total_se",
+        "original_name",
+        "protocol",
+        "created_at",
+    ]
     for c in cols:
         if c not in df.columns:
             df[c] = pd.NA

@@ -702,6 +702,28 @@ def run_from_yaml(
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
 
+        # Gather ligand metadata from the parameter store to report additional provenance
+        canonical_smiles = None
+        original_name = lig_name
+        original_path = None
+        param_dirs = child.meta.get("param_dir_dict", {}) or {}
+        param_dir = param_dirs.get(child.meta.residue_name) if child.meta.residue_name else None
+        if param_dir:
+            meta_path = Path(param_dir) / "metadata.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                except Exception as exc:  # pragma: no cover - best-effort metadata
+                    logger.debug(f"Failed to read ligand metadata {meta_path}: {exc}")
+                    meta = {}
+                canonical_smiles = meta.get("canonical_smiles")
+                original_path = meta.get("input_path")
+                aliases = meta.get("aliases") or []
+                if aliases:
+                    original_name = aliases[0]
+                else:
+                    original_name = meta.get("prepared_base") or original_name
+
         try:
             rec = FERecord(
                 run_id=run_id,
@@ -715,6 +737,10 @@ def run_from_yaml(
                 total_se=total_se,
                 components=list(sim_cfg_updated.components),
                 windows=[],  # optional: can be populated later
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=rc.protocol,
             )
             repo.save(rec, copy_from=results_dir)
             logger.info(

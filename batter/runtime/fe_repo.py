@@ -88,6 +88,10 @@ class FERecord(BaseModel):
     components: List[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     windows: List[WindowResult] = Field(default_factory=list)
+    canonical_smiles: str | None = None
+    original_name: str | None = None
+    original_path: str | None = None
+    protocol: str = "abfe"
 
 
 class FEResultsRepository:
@@ -115,12 +119,13 @@ class FEResultsRepository:
             "ligand": rec.ligand,
             "mol_name": rec.mol_name,
             "system_name": rec.system_name,
-            "fe_type": rec.fe_type,
             "temperature": rec.temperature,
-            "method": rec.method,
             "total_dG": rec.total_dG,
             "total_se": rec.total_se,
-            "components": ",".join(rec.components),
+            "canonical_smiles": rec.canonical_smiles or "",
+            "original_name": rec.original_name or "",
+            "original_path": rec.original_path or "",
+            "protocol": rec.protocol,
             "created_at": rec.created_at,
         }
         if self._idx.exists():
@@ -132,11 +137,33 @@ class FEResultsRepository:
         df.to_csv(self._idx, index=False)
 
     def index(self) -> "pd.DataFrame":
+        cols = [
+            "run_id",
+            "ligand",
+            "mol_name",
+            "system_name",
+            "temperature",
+            "total_dG",
+            "total_se",
+            "canonical_smiles",
+            "original_name",
+            "original_path",
+            "protocol",
+            "created_at",
+        ]
         if self._idx.exists():
-            return pd.read_csv(self._idx)
-        return pd.DataFrame(columns=[
-            "run_id","ligand","system_name","fe_type","temperature","method","total_dG","total_se","components","created_at"
-        ])
+            df = pd.read_csv(self._idx)
+        else:
+            df = pd.DataFrame(columns=cols)
+        # drop old columns if present
+        for drop in ("fe_type", "components", "method"):
+            if drop in df.columns:
+                df = df.drop(columns=[drop])
+        # ensure columns exist
+        for col in cols:
+            if col not in df.columns:
+                df[col] = pd.NA
+        return df[cols]
 
     def load(self, run_id: str, ligand: str) -> FERecord:
         p = self._lig_dir(run_id, ligand) / "record.json"
