@@ -59,6 +59,9 @@ Duplicate the directory structure of an execution (useful for what-if experiment
 
    batter clone-exec work/adrb2 run-20240101 run-20240101-test --mode symlink --only-equil
 
+Only metadata, inputs/params, equilibration artifacts, and a minimal ``fe/`` scaffold are copied,
+so the clone can start new simulations without recreating large FE dumps.
+
 SLURM Utilities
 ===============
 
