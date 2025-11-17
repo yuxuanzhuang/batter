@@ -240,10 +240,22 @@ def _copy_finished_run(tmp_path: Path) -> Path:
     return tmp_path / "work"
 
 
-def test_cli_fe_analyze_on_finished_run(tmp_path: Path, runner: CliRunner) -> None:
+def test_cli_fe_analyze_on_finished_run(
+    tmp_path: Path, runner: CliRunner, monkeypatch
+) -> None:
     work_dir = _copy_finished_run(tmp_path)
 
     # failed because one ligand is missing files
+    called: list[bool] = []
+
+    def fake_run(*args, raise_on_error=True, **kwargs):
+        called.append(raise_on_error)
+        if raise_on_error:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.cli.run.run_analysis_from_execution", fake_run)
+
     result = runner.invoke(cli, ["fe", "analyze", str(work_dir), "rep1"])
     assert result.exit_code == 1
 
@@ -252,14 +264,21 @@ def test_cli_fe_analyze_on_finished_run(tmp_path: Path, runner: CliRunner) -> No
         ["fe", "analyze", str(work_dir), "rep1", "--no-raise-on-error"],
     )
     assert result.exit_code == 0
+    assert called == [True, False]
 
 
-def test_cli_clone_exec(tmp_path: Path, runner: CliRunner) -> None:
+def test_cli_clone_exec(tmp_path: Path, runner: CliRunner, monkeypatch) -> None:
     work_dir = _copy_finished_run(tmp_path)
     src_exec = work_dir / "executions" / "src"
     src_exec.mkdir(parents=True)
 
     called = {}
+
+    def fake_clone_execution(**kwargs):
+        called.update(kwargs)
+        return work_dir / "executions" / "src-clone"
+
+    monkeypatch.setattr("batter.cli.run.clone_execution", fake_clone_execution)
 
     result = runner.invoke(
         cli,
@@ -268,12 +287,13 @@ def test_cli_clone_exec(tmp_path: Path, runner: CliRunner) -> None:
             str(work_dir),
             "src",
             "--only-equil",
-            "--symlink",
+            "--mode",
+            "symlink",
             "--force",
         ],
     )
     assert result.exit_code == 0
     assert called["src_run_id"] == "src"
     assert called["only_equil"] is True
-    assert called["symlink"] is True
-    assert called["force"] is True
+    assert called["mode"] == "symlink"
+    assert called["overwrite"] is True

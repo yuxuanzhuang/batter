@@ -83,6 +83,7 @@ def clone_execution(
     src_run_id: str,
     dst_run_id: Optional[str] = None,
     *,
+    dst_root: Path | None = None,
     mode: CopyMode = "hardlink",
     only_equil: bool = True,
     reset_states: bool = True,
@@ -121,13 +122,14 @@ def clone_execution(
     FileExistsError
         If the destination already exists and ``overwrite`` is ``False``.
     """
-    runs_dir = Path(work_dir) / "executions"
-    src = runs_dir / src_run_id
+    src_runs = Path(work_dir) / "executions"
+    dst_runs = Path(dst_root or work_dir) / "executions"
+    src = src_runs / src_run_id
     if not src.exists():
         raise FileNotFoundError(f"Source run_id not found: {src}")
 
     dst_run_id = dst_run_id or f"{src_run_id}-CLONE"
-    dst = runs_dir / dst_run_id
+    dst = dst_runs / dst_run_id
 
     if dst.exists():
         if not overwrite:
@@ -192,5 +194,8 @@ def clone_execution(
     # Start a fresh log for the clone
     (dst / "batter.run.log").write_text("")
 
-    logger.info(f"Cloned run '{src_run_id}' → '{dst_run_id}' in mode={mode}, only_equil={only_equil}, reset_states={reset_states}")
+    logger.info(
+        f"Cloned run '{src_run_id}' → '{dst_run_id}' "
+        f"under root '{dst_runs}' in mode={mode}, only_equil={only_equil}, reset_states={reset_states}"
+    )
     return dst

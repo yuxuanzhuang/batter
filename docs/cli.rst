@@ -57,7 +57,7 @@ Clone Executions
 
 Duplicate the directory structure of an execution (useful for what-if experiments)::
 
-   batter clone-exec work/adrb2 run-20240101 run-20240101-test --symlink --only-equil
+   batter clone-exec work/adrb2 run-20240101 run-20240101-test --mode symlink --only-equil
 
 SLURM Utilities
 ===============
