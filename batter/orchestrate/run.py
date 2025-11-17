@@ -707,7 +707,9 @@ def run_from_yaml(
         original_name = lig_name
         original_path = None
         param_dirs = child.meta.get("param_dir_dict", {}) or {}
-        param_dir = param_dirs.get(child.meta.residue_name) if child.meta.residue_name else None
+        param_dir = (
+            param_dirs.get(child.meta.residue_name) if child.meta.residue_name else None
+        )
         if param_dir:
             meta_path = Path(param_dir) / "metadata.json"
             if meta_path.exists():
@@ -772,14 +774,14 @@ def _notify_run_completion(
         return
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    subject = f"BATTER run '{run_id}' completed"
+    subject = f"BATTER run '{run_id}' of {rc.create.system_name} completed"
     results_path = Path(rc.system.output_folder) / "results"
 
     body_lines = [
         "Hi there!",
         "",
         f"Your BATTER run '{rc.create.system_name}' (run_id='{run_id}') completed at {timestamp} UTC.",
-        f"Protocol: {rc.protocol} | Backend: {rc.backend}",
+        f"Protocol: {rc.protocol}",
         f"Output folder: {run_dir}",
         f"FE records stored under: {results_path}",
         "",
@@ -792,7 +794,7 @@ def _notify_run_completion(
         for ligand, reason in failures:
             body_lines.append(f"- {ligand}: {reason}")
     else:
-        body_lines.append("No ligand-level failures were detected.")
+        body_lines.append("No ligand failures were detected.")
 
     body_lines.extend(
         [
