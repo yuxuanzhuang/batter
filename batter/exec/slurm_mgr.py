@@ -120,6 +120,17 @@ def _slurm_state(jobid: Optional[str]) -> Optional[str]:
         return None
     return _state_from_squeue(jobid) or _state_from_sacct(jobid)
 
+
+def _active_job_count(user: Optional[str] = None) -> int:
+    user = user or os.environ.get("USER")
+    if not user:
+        return 0
+    try:
+        out = subprocess.check_output(["squeue", "-h", "-u", user, "-o", "%i"], text=True)
+        return sum(1 for ln in out.splitlines() if ln.strip())
+    except Exception:
+        return 0
+
 # ---- Spec ----
 @dataclass
 class SlurmJobSpec:
@@ -259,7 +270,38 @@ class SlurmJobManager:
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
             }
-            _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
+        _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
+
+    def wait_for_slot(
+        self,
+        max_active: int,
+        *,
+        poll_s: float | None = None,
+        user: Optional[str] = None,
+    ) -> None:
+        """Block until active+queued jobs drop below ``max_active``."""
+        if max_active <= 0:
+            return
+        interval = self.poll_s if poll_s is None else poll_s
+        while True:
+            active = _active_job_count(user)
+            queued = len(self.jobs())
+            total = active + queued
+            if total < max_active:
+                if total > 0:
+                    logger.debug(
+                        "[SLURM_mgr] active+queued=%d < cap=%d, submitting", total, max_active
+                    )
+                break
+            logger.warning(
+                "[SLURM_mgr] active=%d queued=%d (total=%d) ≥ cap=%d — waiting %.0fs",
+                active,
+                queued,
+                total,
+                max_active,
+                interval,
+            )
+            time.sleep(interval)
 
     def _load_registry_specs(self) -> dict[Path, SlurmJobSpec]:
         """Load job specifications from the persistent registry."""
