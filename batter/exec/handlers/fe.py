@@ -154,7 +154,6 @@ def fe_equil_handler(
 
         env = {"ONLY_EQ": "1", "INPCRD": "full.inpcrd"}
         job_name = f"fep_{os.path.abspath(system.root)}_{comp}_fe_equil"
-        job_mgr.wait_for_slot(max_jobs)
         spec = _spec_from_dir(
             wd,
             finished_name="EQ_FINISHED",
@@ -162,7 +161,7 @@ def fe_equil_handler(
             job_name=job_name,
             extra_env=env,
         )
-        job_mgr.add(spec)
+        job_mgr.add(spec, max_active=max_jobs)
         count += 1
 
     if count == 0:
@@ -231,15 +230,14 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
 
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_{wd.name}_fe"
-            job_mgr.wait_for_slot(max_jobs)
-            spec = _spec_from_dir(
-                wd,
-                finished_name="FINISHED",
-                part=part,
-                job_name=job_name,
-                extra_env=env,
-            )
-            job_mgr.add(spec)
+        spec = _spec_from_dir(
+            wd,
+            finished_name="FINISHED",
+            part=part,
+            job_name=job_name,
+            extra_env=env,
+        )
+        job_mgr.add(spec, max_active=max_jobs)
             count += 1
 
     if count == 0:

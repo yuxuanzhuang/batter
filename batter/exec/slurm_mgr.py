@@ -114,22 +114,23 @@ def _state_from_sacct(jobid: str) -> Optional[str]:
         pass
     return None
 
+
+def _active_job_ids(user: Optional[str] = None) -> set[str]:
+    user = user or os.environ.get("USER")
+    if not user:
+        return set()
+    try:
+        out = subprocess.check_output(["squeue", "-h", "-u", user, "-o", "%i"], text=True)
+        return {ln.strip() for ln in out.splitlines() if ln.strip()}
+    except Exception:
+        return set()
+
 def _slurm_state(jobid: Optional[str]) -> Optional[str]:
     """Return the best-effort Slurm state for ``jobid``."""
     if not jobid:
         return None
     return _state_from_squeue(jobid) or _state_from_sacct(jobid)
 
-
-def _active_job_count(user: Optional[str] = None) -> int:
-    user = user or os.environ.get("USER")
-    if not user:
-        return 0
-    try:
-        out = subprocess.check_output(["squeue", "-h", "-u", user, "-o", "%i"], text=True)
-        return sum(1 for ln in out.splitlines() if ln.strip())
-    except Exception:
-        return 0
 
 # ---- Spec ----
 @dataclass
@@ -245,9 +246,10 @@ class SlurmJobManager:
         self._registry_file = registry_file
         # retry accounting (by workdir)
         self._retries: Dict[Path, int] = {}
+        self._submitted_job_ids: set[str] = set()
 
     # ---------- Registry API ----------
-    def add(self, spec: SlurmJobSpec) -> None:
+    def add(self, spec: SlurmJobSpec, max_active: int | None = None, user: Optional[str] = None) -> None:
         """Queue ``spec`` for later submission.
 
         Parameters
@@ -259,6 +261,8 @@ class SlurmJobManager:
             self.triggered = True
             return
 
+        if max_active:
+            self.wait_for_slot(max_active, user=user)
         self._inmem_specs[spec.workdir] = spec
         if self._registry_file:
             rec = {
@@ -284,19 +288,19 @@ class SlurmJobManager:
             return
         interval = self.poll_s if poll_s is None else poll_s
         while True:
-            active = _active_job_count(user)
-            queued = len(self.jobs())
-            total = active + queued
+            active_ids = _active_job_ids(user)
+            pending = self._submitted_job_ids - active_ids
+            current = active_ids | pending
+            total = len(active_ids) + len(pending)
+            self._submitted_job_ids = current
             if total < max_active:
                 if total > 0:
                     logger.debug(
-                        "[SLURM_mgr] active+queued=%d < cap=%d, submitting", total, max_active
+                        "[SLURM_mgr] outstanding=%d < cap=%d, submitting", total, max_active
                     )
                 break
             logger.warning(
-                "[SLURM_mgr] active=%d queued=%d (total=%d) ≥ cap=%d — waiting %.0fs",
-                active,
-                queued,
+                "[SLURM_mgr] outstanding=%d ≥ cap=%d — waiting %.0fs",
                 total,
                 max_active,
                 interval,
@@ -408,6 +412,7 @@ class SlurmJobManager:
             raise RuntimeError(f"Could not parse sbatch output: {out}")
         jobid = m.group(1)
         _write_text(spec.jobid_path(), f"{jobid}\n")
+        self._submitted_job_ids.add(jobid)
         logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
         return jobid
 
