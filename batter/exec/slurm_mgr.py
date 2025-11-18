@@ -22,7 +22,9 @@ from loguru import logger
 
 
 # ---------- atomic registry append ----------
-def _atomic_append_jsonl_unique(path: Path, rec: dict, unique_key: str = "workdir") -> None:
+def _atomic_append_jsonl_unique(
+    path: Path, rec: dict, unique_key: str = "workdir"
+) -> None:
     """Append ``rec`` to a JSONL file if ``unique_key`` is not already present.
 
     Parameters
@@ -205,7 +207,12 @@ class SlurmJobSpec:
     extra_env: Dict[str, str] = field(default_factory=dict)
 
     # allow a few common variants (case, alt names)
-    alt_script_names: Sequence[str] = ("SLURMM-run", "SLURMM-Run", "slurmm-run", "run.sh")
+    alt_script_names: Sequence[str] = (
+        "SLURMM-run",
+        "SLURMM-Run",
+        "slurmm-run",
+        "run.sh",
+    )
 
     # --- absolute paths for checks/sentinels ---
     def finished_path(self) -> Path:
@@ -289,7 +296,9 @@ class SlurmJobManager:
         self.triggered = False
         self.submit_retry_limit = max(0, int(submit_retry_limit))
         self.submit_retry_delay_s = float(submit_retry_delay_s)
-        self.max_active_jobs = max_active_jobs if max_active_jobs is None else int(max_active_jobs)
+        self.max_active_jobs = (
+            max_active_jobs if max_active_jobs is None else int(max_active_jobs)
+        )
         if self.max_active_jobs is not None and self.max_active_jobs <= 0:
             raise ValueError("max_active_jobs must be positive or None")
 
@@ -499,14 +508,18 @@ class SlurmJobManager:
         """Ensure the given spec is submitted or already active/done (does not register)."""
         done, status = self._status(spec)
         if done:
-            logger.debug(f"[SLURM] {spec.workdir.name}: already {status}; not submitting")
+            logger.debug(
+                f"[SLURM] {spec.workdir.name}: already {status}; not submitting"
+            )
             return
         if self.dry_run:
             self.triggered = True
             return
         state = _slurm_state(_read_text(spec.jobid_path()))
         if state in SLURM_OK_STATES:
-            logger.debug(f"[SLURM] {spec.workdir.name}: active ({state}); not submitting")
+            logger.debug(
+                f"[SLURM] {spec.workdir.name}: active ({state}); not submitting"
+            )
             return
         self._submit(spec)
 
@@ -538,6 +551,7 @@ class SlurmJobManager:
         # optional progress bar (tqdm)
         try:
             from tqdm import tqdm  # type: ignore
+
             use_tqdm = True
         except Exception:
             tqdm = None  # type: ignore
@@ -545,8 +559,15 @@ class SlurmJobManager:
 
         # Initial submissions for provided specs only (do not re-submit already active jobs)
         self.wait_for_slot()
-        for s in tqdm(specs, desc="SLURM submissions", leave=True, dynamic_ncols=True) if use_tqdm else specs:
-            if self.max_active_jobs is not None and self.n_active >= self.max_active_jobs:
+        for s in (
+            tqdm(specs, desc="SLURM submissions", leave=True, dynamic_ncols=True)
+            if use_tqdm
+            else specs
+        ):
+            if (
+                self.max_active_jobs is not None
+                and self.n_active >= self.max_active_jobs
+            ):
                 logger.info(
                     f"[SLURM] reached max_active_jobs={self.max_active_jobs}; "
                     f"deferring further submissions"
@@ -564,7 +585,11 @@ class SlurmJobManager:
         total = len(specs)
         completed: set[Path] = set()
         last_log = 0.0
-        pbar = tqdm(total=total, desc="SLURM jobs", leave=True, dynamic_ncols=True) if use_tqdm else None
+        pbar = (
+            tqdm(total=total, desc="SLURM jobs", leave=True, dynamic_ncols=True)
+            if use_tqdm
+            else None
+        )
 
         while pending:
             done_now: List[Path] = []

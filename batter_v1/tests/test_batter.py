@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from batter import ABFESystem, MABFESystem
+from batter_v1 import ABFESystem, MABFESystem
 
 from .data import B2AR_CAU_INPUT
 

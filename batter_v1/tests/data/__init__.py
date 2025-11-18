@@ -1,6 +1,6 @@
 from importlib import resources
 
-_base_ref = resources.files('batter.tests.data')
+_base_ref = resources.files('batter_v1.tests.data')
 
 # Input files
 example_input_files = (_base_ref / 'example_input')

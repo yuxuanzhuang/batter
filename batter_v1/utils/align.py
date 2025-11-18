@@ -11,10 +11,8 @@ from pathlib import Path
 import sys
 import os
 
-from importlib import resources
-
-# usalign is in batter.utils
-usalign = resources.files('batter.utils').joinpath('USalign')
+_repo_root = Path(__file__).resolve().parents[2]
+usalign = _repo_root / "batter" / "utils" / "USalign"
 
 def align_with_usalign(input_file, reference_file, remove_residues=[], output_file=None):
     """Align the structures in the input files to the reference file"""
