@@ -39,12 +39,12 @@ def resolve_ligand_map(
         else:
             raise TypeError(f"{jpath} must be a dict or list, got {type(data).__name__}")
 
-            for name, value in items:
-                lig_path = Path(value)
-                lig_path = lig_path if lig_path.is_absolute() else (jpath.parent / lig_path)
-                sanitized = sanitize_ligand_name(str(name))
-                lig_map[sanitized] = lig_path.resolve()
-                original_names[sanitized] = str(name)
+        for name, value in items:
+            lig_path = Path(value)
+            lig_path = lig_path if lig_path.is_absolute() else (jpath.parent / lig_path)
+            sanitized = sanitize_ligand_name(str(name))
+            lig_map[sanitized] = lig_path.resolve()
+            original_names[sanitized] = str(name)
 
     if not lig_map:
         raise ValueError(

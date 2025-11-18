@@ -899,7 +899,7 @@ def analyze_lig_task(
 
     # Optional Rocklin correction (component 'y')
     if rocklin_correction and "y" in components:
-        from .rocklin import run_rocklin_correction  # local import
+        from .rocklin import run_rocklin_correction
         universe = mda.Universe(
             f"{lig_path}/y/y-1/full.prmtop",
             f"{lig_path}/y/y-1/eq_output.pdb",
@@ -911,8 +911,10 @@ def analyze_lig_task(
         lig_netq = int(round(lig_ag.total_charge()))
         other_ag = universe.atoms - lig_ag
         other_netq = int(round(other_ag.total_charge()))
-        logger.info(f"Rocklin correction: ligand netq={lig_netq}, other netq={other_netq}")
+        if lig_netq == 0:
+            logger.info(f"Rocklin correction skipped: ligand netq={lig_netq}, other netq={other_netq}")
         if lig_netq != 0:
+            logger.info(f"Rocklin correction with ligand netq={lig_netq}, other netq={other_netq}")
             corr = run_rocklin_correction(
                 universe=universe,
                 mol_name=mol,
