@@ -45,11 +45,6 @@ def _write_res_blocks(selection, out_pdb: Path) -> None:
     out_pdb.write_text("".join(lines))
 
 
-def _tleap_write_and_run(filename: str, body: str, logname: str) -> None:
-    _write(window_dir / filename, body)
-    run_with_log(f"{tleap} -s -f {filename} > {logname}", working_dir=window_dir)
-
-
 def create_box(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
@@ -799,7 +794,9 @@ def create_box_y(ctx: BuildContext) -> None:
             f"set lig box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
         )
         f.write("savepdb lig solvate_ligands.pdb\n")
-        f.write("saveamberparm lig solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n")
+        f.write(
+            "saveamberparm lig solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n"
+        )
     run_with_log(
         f"{tleap} -s -f tleap_solvate_lig.in > tleap_lig.log", working_dir=window_dir
     )
