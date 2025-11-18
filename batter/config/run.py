@@ -536,11 +536,15 @@ class FESimArgs(BaseModel):
 
     @field_validator("analysis_fe_range")
     @classmethod
-    def _validate_analysis_range(cls, value: Optional[Tuple[int, int]]) -> Optional[Tuple[int, int]]:
+    def _validate_analysis_range(
+        cls, value: Optional[Tuple[int, int]]
+    ) -> Optional[Tuple[int, int]]:
         if value is None:
             return None
         if len(value) != 2:
-            raise ValueError("analysis_fe_range must contain exactly two integers (start, end).")
+            raise ValueError(
+                "analysis_fe_range must contain exactly two integers (start, end)."
+            )
         return value
 
     @field_validator(
@@ -591,8 +595,10 @@ class MDSimArgs(BaseModel):
         "yes", description="Hydrogen mass repartitioning toggle."
     )
     enable_mcwat: Literal["yes", "no"] = Field(
-        "yes", description="Enable MC water exchange moves during equilibration (1 = on)."
+        "yes",
+        description="Enable MC water exchange moves during equilibration (1 = on).",
     )
+
     @field_validator("hmr", "enable_mcwat", mode="before")
     @classmethod
     def _coerce_hmr(cls, v):
@@ -744,9 +750,22 @@ class RunConfig(BaseModel):
         SimulationConfig
             Simulation parameters derived from ``create`` and ``fe_sim`` sections.
         """
+        fe_args = self.fe_sim
+        fields_set = getattr(fe_args, "__pydantic_fields_set__", set())
+        protocol_to_fe_type = {
+            "abfe": "uno_rest",
+            "asfe": "asfe",
+            "md": "md",
+        }
+        desired_fe_type = protocol_to_fe_type.get(self.protocol)
+        updates: dict[str, Any] = {}
+        if desired_fe_type and "fe_type" not in fields_set:
+            updates["fe_type"] = desired_fe_type
+        if updates:
+            fe_args = fe_args.model_copy(update=updates)
         return SimulationConfig.from_sections(
             self.create,
-            self.fe_sim,
+            fe_args,
             partition=self.run.slurm.partition,
         )
 

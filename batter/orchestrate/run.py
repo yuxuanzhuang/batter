@@ -328,7 +328,6 @@ def run_from_yaml(
 
     # Ligands
     lig_original_names: Dict[str, str] = {}
-    lig_original_names: Dict[str, str] = {}
     staged_lig_map = discover_staged_ligands(run_dir)
     if staged_lig_map:
         lig_map = staged_lig_map
@@ -362,7 +361,6 @@ def run_from_yaml(
         registry_file=(run_dir / ".slurm" / "queue.jsonl"),
         dry_run=dry_run,
         sbatch_flags=slurm_flags,
-        max_active_jobs=rc.run.max_active_jobs,
     )
 
     # Build pipeline with explicit sys_params
@@ -421,9 +419,7 @@ def run_from_yaml(
 
     from batter.config.io import write_yaml_config
 
-    write_yaml_config(
-        sim_cfg_updated, config_dir / "sim.resolved.yaml"
-    )
+    write_yaml_config(sim_cfg_updated, config_dir / "sim.resolved.yaml")
 
     run_meta_path = config_dir / "run_meta.json"
     run_meta_path.write_text(
@@ -554,6 +550,8 @@ def run_from_yaml(
         for s in p.ordered_steps():
             base_payload = s.payload or StepPayload()
             updates = {"job_mgr": job_mgr}
+            if rc.run.max_active_jobs is not None:
+                updates["max_active_jobs"] = rc.run.max_active_jobs
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
@@ -720,20 +718,21 @@ def run_from_yaml(
             sim_range=analysis_range,
         )
         failures.append((ligand, "unbound", reason))
-        failures.extend(
-            save_fe_records(
-                run_dir=run_dir,
-                run_id=run_id,
-                children_all=children_all,
-                sim_cfg_updated=sim_cfg_updated,
-                repo=repo,
-                protocol=rc.protocol,
-                original_map=lig_original_names,
-            )
+    failures.extend(
+        save_fe_records(
+            run_dir=run_dir,
+            run_id=run_id,
+            children_all=children_all,
+            sim_cfg_updated=sim_cfg_updated,
+            repo=repo,
+            protocol=rc.protocol,
         )
+    )
 
     if failures:
-        failed = ", ".join([f"{n} ({status}: {reason})" for n, status, reason in failures])
+        failed = ", ".join(
+            [f"{n} ({status}: {reason})" for n, status, reason in failures]
+        )
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
     logger.success(
         f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/."
@@ -902,21 +901,21 @@ def save_fe_records(
             rec = FERecord(
                 run_id=run_id,
                 ligand=lig_name,
-            mol_name=mol_name,
-            system_name=sim_cfg_updated.system_name,
-            fe_type=sim_cfg_updated.fe_type,
-            temperature=sim_cfg_updated.temperature,
-            method=sim_cfg_updated.dec_int,
-            total_dG=total_dG,
-            total_se=total_se,
-            components=list(sim_cfg_updated.components),
-            windows=[],  # optional: can be populated later
-            canonical_smiles=canonical_smiles,
-            original_name=original_name,
-            original_path=original_path,
-            protocol=protocol,
-            sim_range=analysis_range,
-        )
+                mol_name=mol_name,
+                system_name=sim_cfg_updated.system_name,
+                fe_type=sim_cfg_updated.fe_type,
+                temperature=sim_cfg_updated.temperature,
+                method=sim_cfg_updated.dec_int,
+                total_dG=total_dG,
+                total_se=total_se,
+                components=list(sim_cfg_updated.components),
+                windows=[],  # optional: can be populated later
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=protocol,
+                sim_range=analysis_range,
+            )
             repo.save(rec, copy_from=results_dir)
             logger.info(
                 f"Saved FE record for ligand {lig_name}"
