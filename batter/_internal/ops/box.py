@@ -1,4 +1,6 @@
 from __future__ import annotations
+from __future__ import annotations
+
 
 import glob
 import shutil
@@ -18,6 +20,7 @@ from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
 
+
 def _cp(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(src), str(dst))
@@ -27,13 +30,35 @@ def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
 
+
+def _write_res_blocks(selection, out_pdb: Path) -> None:
+    lines = []
+    if len(selection.residues) != 0:
+        prev = selection.residues.resids[0]
+        for res in selection.residues:
+            if res.resid != prev:
+                lines.append("TER\n")
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb")
+            res.atoms.write(tmp.name)
+            tmp.close()
+            with open(tmp.name) as f:
+                lines += [ln for ln in f if ln.startswith("ATOM")]
+            prev = res.resid
+    out_pdb.write_text("".join(lines))
+
+
+def _tleap_write_and_run(filename: str, body: str, logname: str) -> None:
+    _write(window_dir / filename, body)
+    run_with_log(f"{tleap} -s -f {filename} > {logname}", working_dir=window_dir)
+
+
 def create_box(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
     """
     work = ctx.working_dir
     comp = ctx.comp
-    param_dir = work.parent.parent / "params" if comp != 'q' else work.parent / "params"
+    param_dir = work.parent.parent / "params" if comp != "q" else work.parent / "params"
     sim = ctx.sim
     build_dir = ctx.build_dir
     window_dir = ctx.window_dir
@@ -48,7 +73,9 @@ def create_box(ctx: BuildContext) -> None:
     mol = ctx.residue_name
 
     if comp == "x":
-        raise NotImplementedError("Comp=x (rbfe) not supported in box.py; use box_dimer.py.")
+        raise NotImplementedError(
+            "Comp=x (rbfe) not supported in box.py; use box_dimer.py."
+        )
     else:
         molr = mol
 
@@ -64,8 +91,10 @@ def create_box(ctx: BuildContext) -> None:
         raise ValueError("For water systems, buffer_x/y/z must be ≥ 5 Å.")
 
     if membrane_builder:
-        targeted_buffer_z = max(float(sim.buffer_z), 25.0)
-        buffer_z = get_buffer_z(window_dir / "build.pdb", targeted_buf=targeted_buffer_z)
+        targeted_buffer_z = float(sim.buffer_z) or 25.0
+        buffer_z = get_buffer_z(
+            window_dir / "build.pdb", targeted_buf=targeted_buffer_z
+        )
         buffer_x = 0.0
         buffer_y = 0.0
 
@@ -73,6 +102,13 @@ def create_box(ctx: BuildContext) -> None:
         raise AttributeError("SimulationConfig missing 'water_model'.")
     water_model = str(sim.water_model).upper()
 
+    if not hasattr(sim, "num_waters"):
+        raise AttributeError("SimulationConfig missing 'num_waters'.")
+    num_waters = int(sim.num_waters)
+    if num_waters != 0:
+        raise NotImplementedError(
+            "Fixed number of waters not supported; use fixed z buffer."
+        )
     if not hasattr(sim, "ion_def"):
         raise AttributeError("SimulationConfig missing 'ion_def'.")
     ion_def = sim.ion_def
@@ -89,29 +125,32 @@ def create_box(ctx: BuildContext) -> None:
     for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
         src = param_dir / f"{ctx.residue_name}.{ext}"
         shutil.copy2(src, window_dir / src.name)
-    
+
     for ext in ("prmtop", "mol2", "sdf", "inpcrd"):
         src = param_dir / f"{ctx.residue_name}.{ext}"
         shutil.copy2(src, window_dir / f"vac_ligand.{ext}")
-    
+
     shutil.copy2(build_dir / f"{ligand}.pdb", window_dir / f"{ligand}.pdb")
 
-    
     # molr
     if comp == "x":
         # need FIX
-        raise NotImplementedError("Comp=x (rbfe) not supported in box.py; use box_dimer.py.")
+        raise NotImplementedError(
+            "Comp=x (rbfe) not supported in box.py; use box_dimer.py."
+        )
         param_dir = work.parent.parent / lig2 / "param"
         if not param_dir:
-            raise FileNotFoundError(f"Param dir not found for ligand {ctx.ligandr} in param_dir_dict")
+            raise FileNotFoundError(
+                f"Param dir not found for ligand {ctx.ligandr} in param_dir_dict"
+            )
         for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
             src = param_dir / f"{ctx.residuer}.{ext}"
             shutil.copy2(src, window_dir / src.name)
-    
+
     # other_mol
     if other_mol:
         raise NotImplementedError("Other molecules not supported now.")
-    
+
     # tleap template
     src_tleap = amber_dir / "tleap.in.amber16"
     if not src_tleap.exists():
@@ -147,14 +186,21 @@ def create_box(ctx: BuildContext) -> None:
         else:
             f.write("source leaprc.water.fb3\n\n")
         f.write("model = loadpdb build.pdb\n\n")
-        f.write(f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z} }} 1\n\n")
+        f.write(
+            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z} }} 1\n\n"
+        )
         f.write("desc model\n")
         f.write("savepdb model full_pre.pdb\n")
         f.write("quit\n")
-    run_with_log(f"{tleap} -s -f {tleap_solv_pre.name} > tleap_solvate_pre.log", working_dir=window_dir)
+    run_with_log(
+        f"{tleap} -s -f {tleap_solv_pre.name} > tleap_solvate_pre.log",
+        working_dir=window_dir,
+    )
 
     # Count waters in build.pdb
-    num_waters = sum(1 for ln in (window_dir / "build.pdb").read_text().splitlines() if "WAT" in ln)
+    num_waters = sum(
+        1 for ln in (window_dir / "build.pdb").read_text().splitlines() if "WAT" in ln
+    )
 
     # pdb4amber
     run_with_log("pdb4amber -i build.pdb -o build_amber.pdb -y", working_dir=window_dir)
@@ -164,7 +210,9 @@ def create_box(ctx: BuildContext) -> None:
         header=None,
         names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
-    renum_df["old_resname"] = renum_df["old_resname"].replace(["HIS", "HIE", "HIP", "HID"], "HIS")
+    renum_df["old_resname"] = renum_df["old_resname"].replace(
+        ["HIS", "HIE", "HIP", "HID"], "HIS"
+    )
     revised_resids = []
     resid_counter = 1
     prev_resid = 0
@@ -234,25 +282,14 @@ def create_box(ctx: BuildContext) -> None:
     final_system_prot = final_system.select_atoms("protein")
     final_system_others = final_system - final_system_prot - final_system_dum
     final_system_ligs = final_system.select_atoms(f"resname {mol} or resname {molr}")
-    final_system_other_mol = final_system_others.select_atoms("not resname WAT") - final_system_ligs
+    final_system_other_mol = (
+        final_system_others.select_atoms("not resname WAT") - final_system_ligs
+    )
     final_system_water = final_system_others.select_atoms("resname WAT")
-    final_system_water_notaround = final_system.select_atoms("byres (resname WAT and not (around 6 protein))")
+    final_system_water_notaround = final_system.select_atoms(
+        "byres (resname WAT and not (around 6 protein))"
+    )
     final_system_water_around = final_system_water - final_system_water_notaround
-
-    def _write_res_blocks(selection, out_pdb: Path) -> None:
-        lines = []
-        if len(selection.residues) != 0:
-            prev = selection.residues.resids[0]
-            for res in selection.residues:
-                if res.resid != prev:
-                    lines.append("TER\n")
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb")
-                res.atoms.write(tmp.name)
-                tmp.close()
-                with open(tmp.name) as f:
-                    lines += [ln for ln in f if ln.startswith("ATOM")]
-                prev = res.resid
-        out_pdb.write_text("".join(lines))
 
     # write parts
     _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
@@ -260,7 +297,11 @@ def create_box(ctx: BuildContext) -> None:
     # set chainIDs using renum_df and write protein by chains
     for residue in u.select_atoms("protein").residues:
         resid_str = residue.resid
-        resid_resname = "HIS" if residue.resname in ["HIS", "HIE", "HIP", "HID"] else residue.resname
+        resid_resname = (
+            "HIS"
+            if residue.resname in ["HIS", "HIE", "HIP", "HID"]
+            else residue.resname
+        )
         residue.atoms.chainIDs = renum_df.query(
             "old_resid == @resid_str and old_resname == @resid_resname"
         ).old_chain.values[0]
@@ -282,33 +323,42 @@ def create_box(ctx: BuildContext) -> None:
 
     outside_wat_exist = len(final_system_water_notaround.residues) != 0
     if outside_wat_exist:
-        _write_res_blocks(final_system_water_notaround, window_dir / "solvate_pre_outside_wat.pdb")
+        _write_res_blocks(
+            final_system_water_notaround, window_dir / "solvate_pre_outside_wat.pdb"
+        )
 
     around_wat_exist = len(final_system_water_around.residues) != 0
     if around_wat_exist:
-        _write_res_blocks(final_system_water_around, window_dir / "solvate_pre_around_water.pdb")
+        _write_res_blocks(
+            final_system_water_around, window_dir / "solvate_pre_around_water.pdb"
+        )
 
     # --- tleap parts (all with working_dir=window_dir) ---
-    def _tleap_write_and_run(filename: str, body: str, logname: str) -> None:
-        _write(window_dir / filename, body)
-        run_with_log(f"{tleap} -s -f {filename} > {logname}", working_dir=window_dir)
 
     _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_dum.in")
     with (window_dir / "tleap_solvate_dum.in").open("a") as f:
         f.write("dum = loadpdb solvate_pre_dum.pdb\n\n")
-        f.write(f"set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+        f.write(
+            f"set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
         f.write("savepdb dum solvate_dum.pdb\n")
         f.write("saveamberparm dum solvate_dum.prmtop solvate_dum.inpcrd\nquit\n")
-    run_with_log(f"{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log", working_dir=window_dir)
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log", working_dir=window_dir
+    )
 
     # prot
     _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_prot.in")
     with (window_dir / "tleap_solvate_prot.in").open("a") as f:
         f.write("prot = loadpdb solvate_pre_prot.pdb\n\n")
-        f.write(f"set prot box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+        f.write(
+            f"set prot box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
         f.write("savepdb prot solvate_prot.pdb\n")
         f.write("saveamberparm prot solvate_prot.prmtop solvate_prot.inpcrd\nquit\n")
-    run_with_log(f"{tleap} -s -f tleap_solvate_prot.in > tleap_prot.log", working_dir=window_dir)
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_prot.in > tleap_prot.log", working_dir=window_dir
+    )
 
     # ligands
     _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_ligands.in")
@@ -321,10 +371,17 @@ def create_box(ctx: BuildContext) -> None:
             f.write(f"loadamberparams {molr}.frcmod\n")
             f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
         f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
-        f.write(f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+        f.write(
+            f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
         f.write("savepdb ligands solvate_ligands.pdb\n")
-        f.write("saveamberparm ligands solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n")
-    run_with_log(f"{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log", working_dir=window_dir)
+        f.write(
+            "saveamberparm ligands solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n"
+        )
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log",
+        working_dir=window_dir,
+    )
 
     # others
     if other_lines_exist:
@@ -338,10 +395,17 @@ def create_box(ctx: BuildContext) -> None:
             else:
                 f.write("source leaprc.water.fb3\n\n")
             f.write("others = loadpdb solvate_pre_others.pdb\n\n")
-            f.write(f"set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+            f.write(
+                f"set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+            )
             f.write("savepdb others solvate_others.pdb\n")
-            f.write("saveamberparm others solvate_others.prmtop solvate_others.inpcrd\nquit\n")
-        run_with_log(f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log", working_dir=window_dir)
+            f.write(
+                "saveamberparm others solvate_others.prmtop solvate_others.inpcrd\nquit\n"
+            )
+        run_with_log(
+            f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log",
+            working_dir=window_dir,
+        )
 
     # charge accounting
     def _sum_unit_charge_from_log(logfile: Path) -> Tuple[int, int]:
@@ -403,10 +467,17 @@ def create_box(ctx: BuildContext) -> None:
                     f.write(f"addionsrand outside_wat {ion_def[0]} {neu_cat}\n")
                 if neu_ani:
                     f.write(f"addionsrand outside_wat {ion_def[1]} {neu_ani}\n")
-            f.write(f"set outside_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+            f.write(
+                f"set outside_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+            )
             f.write("savepdb outside_wat solvate_outside_wat.pdb\n")
-            f.write("saveamberparm outside_wat solvate_outside_wat.prmtop solvate_outside_wat.inpcrd\nquit\n")
-        run_with_log(f"{tleap} -s -f tleap_solvate_outside_wat.in > tleap_outside_wat.log", working_dir=window_dir)
+            f.write(
+                "saveamberparm outside_wat solvate_outside_wat.prmtop solvate_outside_wat.inpcrd\nquit\n"
+            )
+        run_with_log(
+            f"{tleap} -s -f tleap_solvate_outside_wat.in > tleap_outside_wat.log",
+            working_dir=window_dir,
+        )
 
     # around water
     if (window_dir / "solvate_pre_around_water.pdb").exists():
@@ -417,14 +488,25 @@ def create_box(ctx: BuildContext) -> None:
             else:
                 f.write("source leaprc.water.fb3\n\n")
             f.write("around_wat = loadpdb solvate_pre_around_water.pdb\n\n")
-            f.write(f"set around_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n")
+            f.write(
+                f"set around_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+            )
             f.write("savepdb around_wat solvate_around_wat.pdb\n")
-            f.write("saveamberparm around_wat solvate_around_wat.prmtop solvate_around_wat.inpcrd\nquit\n")
-        run_with_log(f"{tleap} -s -f tleap_solvate_around_wat.in > tleap_around_wat.log", working_dir=window_dir)
+            f.write(
+                "saveamberparm around_wat solvate_around_wat.prmtop solvate_around_wat.inpcrd\nquit\n"
+            )
+        run_with_log(
+            f"{tleap} -s -f tleap_solvate_around_wat.in > tleap_around_wat.log",
+            working_dir=window_dir,
+        )
 
     # combine with ParmEd
-    dum_p = pmd.load_file(str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd"))
-    prot_p = pmd.load_file(str(window_dir / "solvate_prot.prmtop"), str(window_dir / "solvate_prot.inpcrd"))
+    dum_p = pmd.load_file(
+        str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd")
+    )
+    prot_p = pmd.load_file(
+        str(window_dir / "solvate_prot.prmtop"), str(window_dir / "solvate_prot.inpcrd")
+    )
     ligand_p_1 = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
     ligand_p_1.residues[0].name = mol
     ligand_p_1.save(str(window_dir / f"{mol}.prmtop"), overwrite=True)
@@ -441,19 +523,30 @@ def create_box(ctx: BuildContext) -> None:
         ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1 + ligand_p_1
         ligands_p.coordinates = lig_inp
     else:
-        raise ValueError(f"Unsupported comp={comp} with dec={dec_method} for custom ligand params.")
+        raise ValueError(
+            f"Unsupported comp={comp} with dec={dec_method} for custom ligand params."
+        )
 
     combined = dum_p + prot_p + ligands_p
     vac = dum_p + prot_p + ligands_p
 
     if (window_dir / "solvate_others.prmtop").exists():
-        others_p = pmd.load_file(str(window_dir / "solvate_others.prmtop"), str(window_dir / "solvate_others.inpcrd"))
+        others_p = pmd.load_file(
+            str(window_dir / "solvate_others.prmtop"),
+            str(window_dir / "solvate_others.inpcrd"),
+        )
         combined += others_p
         vac += others_p
     if (window_dir / "solvate_outside_wat.prmtop").exists():
-        combined += pmd.load_file(str(window_dir / "solvate_outside_wat.prmtop"), str(window_dir / "solvate_outside_wat.inpcrd"))
+        combined += pmd.load_file(
+            str(window_dir / "solvate_outside_wat.prmtop"),
+            str(window_dir / "solvate_outside_wat.inpcrd"),
+        )
     if (window_dir / "solvate_around_wat.prmtop").exists():
-        combined += pmd.load_file(str(window_dir / "solvate_around_wat.prmtop"), str(window_dir / "solvate_around_wat.inpcrd"))
+        combined += pmd.load_file(
+            str(window_dir / "solvate_around_wat.prmtop"),
+            str(window_dir / "solvate_around_wat.inpcrd"),
+        )
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
@@ -467,7 +560,7 @@ def create_box(ctx: BuildContext) -> None:
     u_vac = mda.Universe(str(window_dir / "vac.pdb"))
 
     # renumber protein residues back to original ids
-    renum_txt = (build_dir / "protein_renum.txt")
+    renum_txt = build_dir / "protein_renum.txt"
     if not renum_txt.exists():
         renum_txt = build_dir.parent / build_dir.name / "protein_renum.txt"
     renum_df2 = pd.read_csv(
@@ -499,9 +592,12 @@ def create_box(ctx: BuildContext) -> None:
     parmed_hmr = amber_dir / "parmed-hmr.in"
     if parmed_hmr.exists():
         _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-        run_with_log("parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir)
+        run_with_log(
+            "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
+        )
     else:
         logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+    return
 
 
 @register_create_box("z")
@@ -547,7 +643,9 @@ def create_box_y(ctx: BuildContext) -> None:
     neut = str(sim.neut).lower()
 
     comp = ctx.comp
-    param_dir = (work.parent.parent / "params") if comp != "q" else (work.parent / "params")
+    param_dir = (
+        (work.parent.parent / "params") if comp != "q" else (work.parent / "params")
+    )
 
     build_pdb = window_dir / "build.pdb"
     if not build_pdb.exists():
@@ -577,7 +675,9 @@ def create_box_y(ctx: BuildContext) -> None:
     if not src_tleap.exists():
         src_tleap = amber_dir / "tleap.in"
     if not src_tleap.exists():
-        raise FileNotFoundError("No tleap template found (tleap.in[.amber16]) in amber_dir.")
+        raise FileNotFoundError(
+            "No tleap template found (tleap.in[.amber16]) in amber_dir."
+        )
     _cp(src_tleap, window_dir / "tleap.in")
 
     # --- build the vacuum unit from ligand PDB (vac.*) ---
@@ -587,14 +687,16 @@ def create_box_y(ctx: BuildContext) -> None:
         f"loadamberparams {mol}.frcmod",
         f"{mol} = loadmol2 {mol}.mol2",
         f'set {{{mol}.1}} name "{mol}"\n',
-        f'lig = loadpdb {mol}.pdb',
+        f"lig = loadpdb {mol}.pdb",
         "desc lig",
         "savepdb lig vac.pdb",
         "saveamberparm lig vac.prmtop vac.inpcrd",
         "quit",
     ]
     _write(window_dir / "tleap_ligands.in", "\n".join(tleap_lig_txt) + "\n")
-    run_with_log(f"{tleap} -s -f tleap_ligands.in > tleap_ligands.log", working_dir=window_dir)
+    run_with_log(
+        f"{tleap} -s -f tleap_ligands.in > tleap_ligands.log", working_dir=window_dir
+    )
 
     # --- determine water box keyword ---
     if water_model == "TIP3PF":
@@ -622,7 +724,7 @@ def create_box_y(ctx: BuildContext) -> None:
 
     lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
     side = 2.0 * solv_shell  # Å
-    box_volume_A3 = side ** 3
+    box_volume_A3 = side**3
     num_per_species = max(
         0,
         round(float(ion_def[2]) * 6.02e23 * box_volume_A3 * 1e-27),
@@ -659,17 +761,109 @@ def create_box_y(ctx: BuildContext) -> None:
 
     tleap_solv_lines += [
         "desc model",
-        "savepdb model full.pdb",
-        "saveamberparm model full.prmtop full.inpcrd",
+        "savepdb model full_pre.pdb",
         "quit",
         "",
     ]
     _write(window_dir / "tleap_solvate.in", "\n".join(tleap_solv_lines))
-    run_with_log(f"{tleap} -s -f tleap_solvate.in > tleap_solvate.log", working_dir=window_dir)
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate.in > tleap_solvate.log", working_dir=window_dir
+    )
 
+    # --- process full_pre.pdb into final full.{prmtop,inpcrd,pdb} ---
+    #
+    u = mda.Universe(str(window_dir / "full_pre.pdb"))
+    final_system = u.atoms
+    system_dimensions = u.dimensions[:3]
+    final_system_dum = final_system.select_atoms("resname DUM")
+    final_system_lig = final_system.select_atoms(f"resname {mol}")
+    final_system_others = final_system - final_system_dum - final_system_lig
+
+    _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
+    _write_res_blocks(final_system_lig, window_dir / "solvate_pre_lig.pdb")
+    _write_res_blocks(final_system_others, window_dir / "solvate_pre_others.pdb")
+
+    # tleap parts
+    # dum
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_dum.in")
+    with (window_dir / "tleap_solvate_dum.in").open("a") as f:
+        f.write("dum = loadpdb solvate_pre_dum.pdb\n\n")
+        f.write(
+            f"set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
+        f.write("savepdb dum solvate_dum.pdb\n")
+        f.write("saveamberparm dum solvate_dum.prmtop solvate_dum.inpcrd\nquit\n")
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log", working_dir=window_dir
+    )
+
+    # ligand
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_lig.in")
+    with (window_dir / "tleap_solvate_lig.in").open("a") as f:
+        f.write(f"loadamberparams {mol}.frcmod\n")
+        f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
+        f.write(f'set {{{mol}.1}} name "{mol}"\n')
+        f.write("lig = loadpdb solvate_pre_lig.pdb\n\n")
+        f.write(
+            f"set lig box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
+        f.write("savepdb lig solvate_lig.pdb\n")
+        f.write("saveamberparm lig solvate_lig.prmtop solvate_lig.inpcrd\nquit\n")
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_lig.in > tleap_lig.log", working_dir=window_dir
+    )
+
+    # others
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_others.in")
+    with (window_dir / "tleap_solvate_others.in").open("a") as f:
+        if water_model != "TIP3PF":
+            f.write(f"source leaprc.water.{water_model.lower()}\n\n")
+        else:
+            f.write("source leaprc.water.fb3\n\n")
+        f.write("others = loadpdb solvate_pre_others.pdb\n\n")
+        f.write(
+            f"set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
+        f.write("savepdb others solvate_others.pdb\n")
+        f.write(
+            "saveamberparm others solvate_others.prmtop solvate_others.inpcrd\nquit\n"
+        )
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log",
+        working_dir=window_dir,
+    )
+
+    # combine with ParmEd
+    dum_p = pmd.load_file(
+        str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd")
+    )
+    ligand_p = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
+    ligand_p.residues[0].name = mol
+    lig_inp = pmd.load_file(str(window_dir / "solvate_ligands.inpcrd")).coordinates
+    ligand_p.coordinates = lig_inp
+    ligand_p.save(str(window_dir / f"{mol}.prmtop"), overwrite=True)
+
+    others = pmd.load_file(
+        str(window_dir / "solvate_others.prmtop"),
+        str(window_dir / "solvate_others.inpcrd"),
+    )
+    combined = dum_p + ligand_p + others
+    combined.save(str(window_dir / "full.prmtop"), overwrite=True)
+    combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
+    combined.save(str(window_dir / "full.pdb"), overwrite=True)
+
+    vac = dum_p + ligand_p
+    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
+    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
+    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+
+    # HMR
     parmed_hmr = amber_dir / "parmed-hmr.in"
     if parmed_hmr.exists():
         _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-        run_with_log("parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir)
+        run_with_log(
+            "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
+        )
     else:
-        logger.warning("[create_box_y] parmed-hmr.in not found in amber_dir; skipping HMR.")
+        logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+    return
