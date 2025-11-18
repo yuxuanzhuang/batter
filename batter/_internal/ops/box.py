@@ -89,7 +89,7 @@ def create_box(ctx: BuildContext) -> None:
         raise ValueError("For water systems, buffer_x/y/z must be ≥ 5 Å.")
 
     if membrane_builder:
-        targeted_buffer_z = float(sim.buffer_z) or 25.0
+        targeted_buffer_z = max([float(sim.buffer_z), 25.0])
         buffer_z = get_buffer_z(
             window_dir / "build.pdb", targeted_buf=targeted_buffer_z
         )

@@ -455,9 +455,9 @@ def build_complex_z(ctx) -> bool:
     rec_res = int(recep_last) + 1;   p1_vmd  = p1_resid
 
     # 8) SDR distance
-    if buffer_z <= 15: 
+    if buffer_z <= 25: 
         buffer_z = 25
-        logger.warning(f"buffer_z too small ({sim.buffer_z}); setting to 25 Å for SDR calculation.")
+        logger.debug(f"buffer_z too small ({sim.buffer_z}); setting to 25 Å for SDR calculation.")
     if membrane_builder:
         buffer_z = get_buffer_z(equil_dir / f"equil-{mol}.pdb", targeted_buf=buffer_z)
         
