@@ -92,6 +92,26 @@ def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
     return None, sig_path
 
 
+def _ligand_names_path(run_dir: Path) -> Path:
+    return run_dir / "artifacts" / "ligand_names.json"
+
+
+def _load_stored_ligand_names(run_dir: Path) -> Dict[str, str]:
+    path = _ligand_names_path(run_dir)
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception as exc:
+            logger.warning("Failed to load ligand names from %s: %s", path, exc)
+    return {}
+
+
+def _store_ligand_names(run_dir: Path, mapping: Dict[str, str]) -> None:
+    path = _ligand_names_path(run_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(mapping, sort_keys=True))
+
+
 def _resolve_signature_conflict(
     stored_sig: str | None,
     config_signature: str,
@@ -329,14 +349,20 @@ def run_from_yaml(
     # Ligands
     lig_original_names: Dict[str, str] = {}
     staged_lig_map = discover_staged_ligands(run_dir)
+    stored_names = _load_stored_ligand_names(run_dir)
     if staged_lig_map:
         lig_map = staged_lig_map
+        lig_original_names = stored_names
+        if lig_original_names:
+            logger.debug("Loaded %d original ligand names from %s", len(lig_original_names), _ligand_names_path(run_dir))
         logger.info(
             f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}"
         )
     else:
         # Fall back to YAML resolution (requires original paths/files to exist)
         lig_map, lig_original_names = resolve_ligand_map(rc, yaml_dir)
+        if lig_original_names:
+            _store_ligand_names(run_dir, lig_original_names)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
     sys_params.update({"ligand_paths": rc.create.ligand_paths})
 
