@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 from batter.config.utils import sanitize_ligand_name
 
 
-def resolve_ligand_map(run_cfg, yaml_dir: Path) -> Dict[str, Path]:
+def resolve_ligand_map(
+    run_cfg, yaml_dir: Path
+) -> Tuple[Dict[str, Path], Dict[str, str]]:
     """
     Resolve ligands from RunConfig sources (paths list or JSON mapping).
     """
     lig_map: Dict[str, Path] = {}
+    original_names: Dict[str, str] = {}
 
     paths = getattr(run_cfg.create, "ligand_paths", None) or dict()
     for name, value in paths.items():
         lig_path = Path(value)
         lig_path = lig_path if lig_path.is_absolute() else (yaml_dir / lig_path)
-        lig_map[sanitize_ligand_name(str(name))] = lig_path.resolve()
+        sanitized = sanitize_ligand_name(str(name))
+        lig_map[sanitized] = lig_path.resolve()
+        original_names[sanitized] = str(name)
 
     lig_json = getattr(run_cfg.create, "ligand_input", None)
     if lig_json:
@@ -34,10 +39,12 @@ def resolve_ligand_map(run_cfg, yaml_dir: Path) -> Dict[str, Path]:
         else:
             raise TypeError(f"{jpath} must be a dict or list, got {type(data).__name__}")
 
-        for name, value in items:
-            lig_path = Path(value)
-            lig_path = lig_path if lig_path.is_absolute() else (jpath.parent / lig_path)
-            lig_map[sanitize_ligand_name(str(name))] = lig_path.resolve()
+            for name, value in items:
+                lig_path = Path(value)
+                lig_path = lig_path if lig_path.is_absolute() else (jpath.parent / lig_path)
+                sanitized = sanitize_ligand_name(str(name))
+                lig_map[sanitized] = lig_path.resolve()
+                original_names[sanitized] = str(name)
 
     if not lig_map:
         raise ValueError(
@@ -48,7 +55,7 @@ def resolve_ligand_map(run_cfg, yaml_dir: Path) -> Dict[str, Path]:
     if missing:
         raise FileNotFoundError(f"Ligand file(s) not found: {missing}")
 
-    return lig_map
+    return lig_map, original_names
 
 
 def discover_staged_ligands(run_dir: Path) -> Dict[str, Path]:

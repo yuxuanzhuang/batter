@@ -41,7 +41,10 @@ from batter.runtime.fe_repo import FEResultsRepository, FERecord
 from batter.exec.slurm_mgr import SlurmJobManager
 
 from batter.orchestrate.backend import register_local_handlers
-from batter.orchestrate.ligands import discover_staged_ligands, resolve_ligand_map
+from batter.orchestrate.ligands import (
+    discover_staged_ligands,
+    resolve_ligand_map,
+)
 from batter.orchestrate.markers import (
     handle_phase_failures,
     run_phase_skipping_done,
@@ -324,6 +327,8 @@ def run_from_yaml(
     _, sig_path = _stored_signature(run_dir)
 
     # Ligands
+    lig_original_names: Dict[str, str] = {}
+    lig_original_names: Dict[str, str] = {}
     staged_lig_map = discover_staged_ligands(run_dir)
     if staged_lig_map:
         lig_map = staged_lig_map
@@ -332,7 +337,7 @@ def run_from_yaml(
         )
     else:
         # Fall back to YAML resolution (requires original paths/files to exist)
-        lig_map = resolve_ligand_map(rc, yaml_dir)
+        lig_map, lig_original_names = resolve_ligand_map(rc, yaml_dir)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
     sys_params.update({"ligand_paths": rc.create.ligand_paths})
 
@@ -698,7 +703,9 @@ def run_from_yaml(
     for child in unbound_children:
         ligand = child.meta["ligand"]
         reason = "UNBOUND detected during equilibration"
-        canonical_smiles, original_name, original_path = _extract_ligand_metadata(child)
+        canonical_smiles, original_name, original_path = _extract_ligand_metadata(
+            child, lig_original_names
+        )
         repo.record_failure(
             run_id=run_id,
             ligand=ligand,
@@ -713,16 +720,17 @@ def run_from_yaml(
             sim_range=analysis_range,
         )
         failures.append((ligand, "unbound", reason))
-    failures.extend(
-        save_fe_records(
-            run_dir=run_dir,
-            run_id=run_id,
-            children_all=children_all,
-            sim_cfg_updated=sim_cfg_updated,
-            repo=repo,
-            protocol=rc.protocol,
+        failures.extend(
+            save_fe_records(
+                run_dir=run_dir,
+                run_id=run_id,
+                children_all=children_all,
+                sim_cfg_updated=sim_cfg_updated,
+                repo=repo,
+                protocol=rc.protocol,
+                original_map=lig_original_names,
+            )
         )
-    )
 
     if failures:
         failed = ", ".join([f"{n} ({status}: {reason})" for n, status, reason in failures])
@@ -798,7 +806,9 @@ def _notify_run_completion(
         logger.warning(f"Unexpected error while sending completion email: {exc}")
 
 
-def _extract_ligand_metadata(child: SimSystem) -> tuple[str | None, str | None, str | None]:
+def _extract_ligand_metadata(
+    child: SimSystem, original_map: Dict[str, str] | None = None
+) -> tuple[str | None, str | None, str | None]:
     canonical_smiles: str | None = None
     original_name: str | None = child.meta.get("ligand")
     original_path: str | None = None
@@ -822,6 +832,8 @@ def _extract_ligand_metadata(child: SimSystem) -> tuple[str | None, str | None, 
                 original_name = aliases[0]
             else:
                 original_name = meta.get("prepared_base") or original_name
+    if original_map and child.meta.get("ligand"):
+        original_name = original_map.get(child.meta.get("ligand"), original_name)
     return canonical_smiles, original_name, original_path
 
 
@@ -833,6 +845,7 @@ def save_fe_records(
     sim_cfg_updated: SimulationConfig,
     repo: FEResultsRepository,
     protocol: str,
+    original_map: Dict[str, str] | None = None,
 ) -> list[tuple[str, str, str]]:
     failures: list[tuple[str, str, str]] = []
     analysis_range = (
@@ -862,7 +875,9 @@ def save_fe_records(
         if total_dG is None or total_se is None:
             reason = "no_totals_found"
             failures.append((lig_name, "failed", reason))
-            canonical_smiles, original_name, original_path = _extract_ligand_metadata(child)
+            canonical_smiles, original_name, original_path = _extract_ligand_metadata(
+                child, original_map
+            )
             repo.record_failure(
                 run_id=run_id,
                 ligand=lig_name,
@@ -879,7 +894,9 @@ def save_fe_records(
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
 
-        canonical_smiles, original_name, original_path = _extract_ligand_metadata(child)
+        canonical_smiles, original_name, original_path = _extract_ligand_metadata(
+            child, original_map
+        )
 
         try:
             rec = FERecord(

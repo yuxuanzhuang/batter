@@ -534,13 +534,6 @@ def fe_analyze(
     is_flag=True,
     help="Overwrite destination execution folder if it exists.",
 )
-@click.option(
-    "--mode",
-    type=click.Choice(["copy", "hardlink", "symlink"], case_sensitive=False),
-    default="symlink",
-    show_default=True,
-    help="Copy strategy for cloning files.",
-)
 def cmd_clone_exec(
     work_dir: Path,
     src_run_id: str,
@@ -592,7 +585,7 @@ def cmd_clone_exec(
 # ----------------------------- check status -------------------------------
 
 
-def _parse_jobname(jobname: str):
+def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
     """
     Parse BATTER job names emitted by SLURM handlers.
     """
@@ -707,6 +700,8 @@ def report_jobs(partition=None, detailed=False):
         if not jobname.startswith("fep_"):
             continue
         meta = _parse_jobname(jobname)
+        if meta is None:
+            continue
         rows.append(
             {
                 "jobid": jobid,
