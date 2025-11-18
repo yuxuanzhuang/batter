@@ -357,6 +357,7 @@ def run_from_yaml(
         registry_file=(run_dir / ".slurm" / "queue.jsonl"),
         dry_run=dry_run,
         sbatch_flags=slurm_flags,
+        max_active_jobs=rc.run.max_active_jobs,
     )
 
     # Build pipeline with explicit sys_params
@@ -548,8 +549,6 @@ def run_from_yaml(
         for s in p.ordered_steps():
             base_payload = s.payload or StepPayload()
             updates = {"job_mgr": job_mgr}
-            if rc.run.max_active_jobs is not None:
-                updates["max_active_jobs"] = rc.run.max_active_jobs
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)

@@ -161,7 +161,7 @@ def fe_equil_handler(
             job_name=job_name,
             extra_env=env,
         )
-        job_mgr.add(spec, max_active=max_jobs)
+        job_mgr.add(spec)
         count += 1
 
     if count == 0:
@@ -237,7 +237,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 job_name=job_name,
                 extra_env=env,
             )
-            job_mgr.add(spec, max_active=max_jobs)
+            job_mgr.add(spec)
             count += 1
 
     if count == 0:
