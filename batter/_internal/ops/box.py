@@ -1,6 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
-
 
 import glob
 import shutil
@@ -102,13 +100,6 @@ def create_box(ctx: BuildContext) -> None:
         raise AttributeError("SimulationConfig missing 'water_model'.")
     water_model = str(sim.water_model).upper()
 
-    if not hasattr(sim, "num_waters"):
-        raise AttributeError("SimulationConfig missing 'num_waters'.")
-    num_waters = int(sim.num_waters)
-    if num_waters != 0:
-        raise NotImplementedError(
-            "Fixed number of waters not supported; use fixed z buffer."
-        )
     if not hasattr(sim, "ion_def"):
         raise AttributeError("SimulationConfig missing 'ion_def'.")
     ion_def = sim.ion_def
@@ -807,8 +798,8 @@ def create_box_y(ctx: BuildContext) -> None:
         f.write(
             f"set lig box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
         )
-        f.write("savepdb lig solvate_lig.pdb\n")
-        f.write("saveamberparm lig solvate_lig.prmtop solvate_lig.inpcrd\nquit\n")
+        f.write("savepdb lig solvate_ligands.pdb\n")
+        f.write("saveamberparm lig solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n")
     run_with_log(
         f"{tleap} -s -f tleap_solvate_lig.in > tleap_lig.log", working_dir=window_dir
     )
