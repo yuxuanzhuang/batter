@@ -92,15 +92,6 @@ class SimulationConfig(BaseModel):
             resolved_fe_type = "md"
 
         proto_key = (protocol or "").lower()
-<<<<<<< HEAD
-        _component_steps_requirements = {
-            "abfe": ["z_steps1", "z_steps2"],
-            "asfe": ["y_steps1", "y_steps2", "m_steps1", "m_steps2"],
-        }
-        for field in _component_steps_requirements.get(proto_key, []):
-            value = _fe_attr(field, lambda: 0)
-            if value is None or value <= 0:
-=======
 
         def _coerce_step_dict(name: str, mapping: Mapping[str, Any]) -> dict[str, int]:
             out: dict[str, int] = {}
