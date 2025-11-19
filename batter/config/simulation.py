@@ -126,14 +126,16 @@ class SimulationConfig(BaseModel):
             "steps2", dict(_fe_attr("steps2", lambda: {"x": 300_000, "y": 300_000}) or {})
         )
 
-        required_component = {"abfe": "z", "asfe": "y"}.get(proto_key)
-        if required_component:
-            steps1.setdefault(required_component, 50_000)
-            steps2.setdefault(required_component, 300_000)
-            if steps1[required_component] <= 0 or steps2[required_component] <= 0:
->>>>>>> ff561b4 (new step input)
+        required_components = {
+            "abfe": ["z"],
+            "asfe": ["y", "m"],
+        }.get(proto_key, [])
+        for comp in required_components:
+            steps1.setdefault(comp, 50_000)
+            steps2.setdefault(comp, 300_000)
+            if steps1[comp] <= 0 or steps2[comp] <= 0:
                 raise ValueError(
-                    f"{proto_key.upper()} protocol requires positive steps for component '{required_component}'."
+                    f"{proto_key.upper()} protocol requires positive steps for component '{comp}'."
                 )
 
         num_equil_extends = max(0, int(_fe_attr("num_equil_extends", lambda: 0)))
