@@ -109,7 +109,7 @@ Example YAMLs are intended as starting points; adjust to your system.
 Results Interpretation
 ----------------------
 
-Runs store FE outputs under ``<system.output_folder>/executions/<run_id>/results``.
+Runs store FE outputs under ``<run.output_folder>/executions/<run_id>/results``.
 Use the CLI helpers to inspect and export them:
 
 - ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).

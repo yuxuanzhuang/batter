@@ -2,9 +2,6 @@ version: 1
 protocol: asfe
 backend: local
 
-system:
-  output_folder: adrb2_A_masfe
-
 create:
   ligand_input: reference/ligands_dict.json
   ligand_ff: openff-2.2.1
@@ -15,6 +12,7 @@ create:
   water_model: TIP3P
 
 run:
+  output_folder: adrb2_A_masfe
   only_fe_preparation: false
   dry_run: false
   run_id: auto
@@ -26,7 +24,6 @@ run:
 
 fe_sim:
   num_fe_extends: 10
-  fe_type: asfe
   rocklin_correction: yes
   dec_int: mbar
   remd: no

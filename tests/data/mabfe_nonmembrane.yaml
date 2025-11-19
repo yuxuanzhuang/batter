@@ -2,9 +2,6 @@ version: 1
 protocol: abfe
 backend: local
 
-system:
-  output_folder: brd4_mabfe
-
 create:
   system_name: BRD4
   protein_input: reference/nonmembrane/protein.pdb
@@ -25,6 +22,7 @@ create:
   water_model: TIP3P
 
 run:
+  output_folder: brd4_mabfe
   only_fe_preparation: false
   dry_run: false
   run_id: auto
@@ -36,7 +34,6 @@ run:
 
 fe_sim:
   num_fe_extends: 10
-  fe_type: uno_rest
   remd: no
   lambdas: [
     0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,

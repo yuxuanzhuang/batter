@@ -2,9 +2,6 @@ version: 1
 protocol: abfe
 backend: local
 
-system:
-  output_folder: adrb2_A_mabfe
-
 create:
   system_name: adrb2_A
   protein_input: reference/adrb2_A.pdb
@@ -15,6 +12,7 @@ create:
   ligand_ff: openff-2.2.1
   retain_lig_prot: true
   param_charge: am1bcc
+  param_outdir: ligand_params
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
@@ -27,6 +25,7 @@ create:
   water_model: TIP3P
 
 run:
+  output_folder: adrb2_A_mabfe
   only_fe_preparation: false
   dry_run: false
   run_id: auto

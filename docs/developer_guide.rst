@@ -100,15 +100,19 @@ Configuration Layer
 
 *Module:* ``batter.config``
 
-- :class:`~batter.config.run.SystemSection` – Static system metadata (type, output folder).
+- :class:`~batter.config.run.RunSection` – Execution controls that include the
+  artifact destination (``run.output_folder``) and optional builder override
+  (``run.system_type``), along with backend/dry-run/failure policy knobs.
 - :class:`~batter.config.run.CreateArgs` – Inputs required to stage the system
   (protein, topology, ligands, restraints).
-- :class:`~batter.config.run.RunSection` – Execution controls
-  (backend, dry-run, failure policy).
-- :class:`~batter.config.run.RunConfig` – Aggregates the sections and exposes helpers
-  such as :meth:`load` and :meth:`resolved_sim_config`.
+- :class:`~batter.config.run.RunConfig` – Aggregates the sections, exposes helpers such as
+  :meth:`load`, :meth:`model_validate_yaml`, and :meth:`resolved_sim_config`, and resolves
+  relative paths when a YAML is loaded.
 - :class:`~batter.config.simulation.SimulationConfig` – Fully merged simulation
-  specification used by handlers (temperature, λ-schedule, REMD, restraints).
+  specification produced by :meth:`RunConfig.resolved_sim_config`. The
+  developer-facing configuration never includes this model directly, but the
+  developer guide documents available fields and the protocol-specific
+  validations (e.g., ABFE requires ``z_steps*``; ASFE requires ``y_steps*``).
 
 Systems and Builders
 ====================
@@ -171,7 +175,7 @@ Orchestration
 :func:`~batter.orchestrate.run.run_from_yaml` wires every layer together:
 
 1. Load the run YAML and apply optional overrides.
-2. Instantiate a system builder inferred from the selected protocol (abfe/md → MABFE, asfe → MASFE; overrides via ``system.type`` remain for backward compatibility).
+2. Instantiate a system builder inferred from the selected protocol (abfe/md → MABFE, asfe → MASFE; overrides via ``run.system_type`` remain for backward compatibility).
 3. Resolve staged ligands (supporting resume) and regenerate the system if required.
 4. Construct the ABFE/ASFE pipeline using :func:`select_pipeline
    <batter.orchestrate.pipeline_utils.select_pipeline>`.

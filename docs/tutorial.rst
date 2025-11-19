@@ -24,7 +24,7 @@ Quick walkthrough
 embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
 protein binding site. The main steps are:
 
-#. **system staging and loading** – A executon folder will be created under ``<system.output_folder>/executions/``
+#. **system staging and loading** – A executon folder will be created under ``<run.output_folder>/executions/``
    to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
    resumed from the last successful step.
 #. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
@@ -120,7 +120,7 @@ Generating Simulation Inputs
    Start from `examples/mabfe_example.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe_example.yaml>`_
    and save a copy beside your project data. Update:
 
-   - ``system.output_folder`` – dedicated directory for outputs/logs.
+   - ``run.output_folder`` – dedicated directory for outputs/logs.
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
@@ -143,7 +143,7 @@ Generating Simulation Inputs
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
 
 3. **Inspect the staged system (Optional)**  
-   Once the dry-run completes, review ``<system.output_folder>/executions/<run_id>/``:
+   Once the dry-run completes, review ``<run.output_folder>/executions/<run_id>/``:
 
    - ``simulations/<LIGAND>/equil/full.pdb`` – ligand-specific equilibration systems.
      Check if the ligand is correctly placed in the binding site,
@@ -228,9 +228,9 @@ Analysis
 Completed runs automatically write MBAR summaries under ``executions/<run_id>/results``.
 Use the CLI helpers to inspect them::
 
-    batter fe list <system.output_folder>
-    batter fe show <system.output_folder> <run_id> --ligand <ligand>
-    batter fe analyze <system.output_folder> <run_id> --ligand <ligand> --workers 4
+    batter fe list <run.output_folder>
+    batter fe show <run.output_folder> <run_id> --ligand <ligand>
+    batter fe analyze <run.output_folder> <run_id> --ligand <ligand> --workers 4
 
 ``fe list`` prints a high-level table (ΔG, SE, protocol, originals, status) for every stored run, while
 ``fe show`` dives into per-window data. ``fe analyze`` re-runs the post-processing with

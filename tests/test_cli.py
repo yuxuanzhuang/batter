@@ -40,15 +40,23 @@ def test_cli_run_invokes_run_from_yaml(
             return DummySection(**data)
 
     class DummyRunConfig:
-        def __init__(self, system=None, run=None):
-            self.system = system or DummySection(output_folder="out")
-            self.run = run or DummySection(run_id="auto", dry_run=False)
+        def __init__(self, run=None):
+            default_run = {"output_folder": "out", "run_id": "auto", "dry_run": False}
+            run_data = dict(default_run)
+            if run:
+                run_data.update(run)
+            self.run = DummySection(**run_data)
 
         def model_copy(self, update: dict | None = None):
-            data = {"system": self.system, "run": self.run}
+            data = {"run": self.run}
             if update:
                 data.update(update)
-            return DummyRunConfig(system=data["system"], run=data["run"])
+            run_payload = data["run"]
+            if isinstance(run_payload, DummySection):
+                run_values = dict(run_payload.__dict__)
+            else:
+                run_values = dict(run_payload)
+            return DummyRunConfig(run=run_values)
 
         def resolved_sim_config(self):
             return object()

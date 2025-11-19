@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
-from batter.config.run import CreateArgs, FESimArgs, SystemSection, RunConfig, MDSimArgs
+from batter.config.run import CreateArgs, FESimArgs, RunConfig, RunSection, MDSimArgs
 from batter.config.simulation import SimulationConfig
 from batter.config.utils import coerce_yes_no
 
@@ -21,22 +21,20 @@ def test_load_run_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
     run_yaml = tmp_path / "run.yaml"
     run_yaml.write_text(
         f"""
-system:
-  type: MABFE
+run:
   output_folder: "{tmp_path / 'work'}"
+  run_id: auto
 create:
   system_name: example
   ligand_paths:
     lig1: "${{LIG_FILE}}"
 fe_sim: {{}}
-run:
-  run_id: auto
 """
     )
 
     cfg = load_run_config(run_yaml)
     assert cfg.create.ligand_paths["LIG1"] == lig_file
-    assert cfg.system.output_folder == tmp_path / "work"
+    assert cfg.run.output_folder == tmp_path / "work"
 
 
 def test_load_simulation_config(tmp_path: Path) -> None:
@@ -68,16 +66,14 @@ def test_run_config_relative_paths(tmp_path: Path) -> None:
     run_yaml = tmp_path / "run_rel.yaml"
     run_yaml.write_text(
         """
-system:
-  type: MABFE
+run:
   output_folder: work
+  run_id: auto
 create:
   system_name: example
   protein_input: reference/protein.pdb
   ligand_input: reference/ligands.json
 fe_sim: {}
-run:
-  run_id: auto
 """
     )
 
@@ -103,9 +99,9 @@ def test_coerce_yes_no_invalid():
         coerce_yes_no("maybe")
 
 
-def test_system_section_requires_output_folder():
+def test_run_section_requires_output_folder():
     with pytest.raises(ValidationError):
-        SystemSection(type="MABFE", output_folder="")
+        RunSection(output_folder="")
 
 
 def test_create_args_requires_ligand_spec():
@@ -180,7 +176,7 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     conf_json.write_text("[]")
     create = _minimal_create(tmp_path, extra_conformation_restraints=conf_json)
     fe_args = FESimArgs(lambdas=[0, 1], num_equil_extends=1, eq_steps=100)
-    cfg = SimulationConfig.from_sections(create, fe_args)
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.infe is True
     assert cfg.barostat == 2
     assert cfg.release_eq == [0.0, 0.0]
@@ -188,7 +184,9 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
 
     create2 = create.model_copy(update={"extra_conformation_restraints": None, "extra_restraints": "mask"})
     cfg2 = SimulationConfig.from_sections(
-        create2, FESimArgs(lambdas=[0, 1], num_equil_extends=1, eq_steps=100)
+        create2,
+        FESimArgs(lambdas=[0, 1], num_equil_extends=1, eq_steps=100),
+        protocol="abfe",
     )
     assert cfg2.infe is False
     assert cfg2.barostat == 1
@@ -199,12 +197,38 @@ def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     assert cfg.enable_mcwat == "yes"
 
 
+def test_sim_config_abfe_requires_z_steps(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        num_equil_extends=1,
+        eq_steps=100,
+        z_steps1=0,
+        z_steps2=50,
+    )
+    with pytest.raises(ValueError, match="ABFE protocol requires.*z_steps1"):
+        SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+
+def test_sim_config_asfe_requires_y_steps(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        num_equil_extends=1,
+        eq_steps=100,
+        y_steps1=0,
+        y_steps2=0,
+    )
+    with pytest.raises(ValueError, match="ASFE protocol requires.*y_steps1"):
+        SimulationConfig.from_sections(create, fe_args, protocol="asfe")
+
+
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
     payload = {
         "protocol": protocol,
         "backend": "local",
-        "system": {"output_folder": str(tmp_path / "out")},
+        "run": {"output_folder": str(tmp_path / "out")},
         "create": create.model_dump(),
         "fe_sim": {"lambdas": [0.0, 1.0], "num_equil_extends": 1, "eq_steps": 1000},
     }
@@ -233,7 +257,7 @@ def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) 
         num_fe_extends=2,
     )
     with caplog.at_level("WARNING"):
-        cfg = SimulationConfig.from_sections(create, fe_args)
+        cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.analysis_fe_range == (0, -1)
 
 
@@ -246,7 +270,7 @@ def test_analysis_fe_range_default_for_large_num_fe_extends(tmp_path: Path, capl
         num_fe_extends=6,
     )
     with caplog.at_level("WARNING"):
-        cfg = SimulationConfig.from_sections(create, fe_args)
+        cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.analysis_fe_range == (2, -1)
     assert all("num_fe_extends" not in rec.message for rec in caplog.records)
 
@@ -261,7 +285,7 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
         analysis_fe_range=(5, 7),
     )
     with caplog.at_level("WARNING"):
-        cfg = SimulationConfig.from_sections(create, fe_args)
+        cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.analysis_fe_range == (5, 7)
     assert all("num_fe_extends" not in rec.message for rec in caplog.records)
 
@@ -271,7 +295,7 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     fe_args = FESimArgs(
         lambdas=[0, 1], num_equil_extends=0, eq_steps=100, enable_mcwat="no"
     )
-    cfg = SimulationConfig.from_sections(create, fe_args)
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.enable_mcwat == "no"
 
 
@@ -282,7 +306,7 @@ def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:
         version=1,
         protocol="md",
         backend="local",
-        system=SystemSection(output_folder=tmp_path / "work"),
+        run=RunSection(output_folder=tmp_path / "work"),
         create=CreateArgs(system_name="sys", ligand_paths={"LIG": lig}),
         fe_sim={},  # intentionally empty; lambdas not required for MD
     )
