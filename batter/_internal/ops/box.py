@@ -426,14 +426,16 @@ def create_box(ctx: BuildContext) -> None:
     neu_ani = max(0, -charge_neut)
 
     box_volume = system_dimensions[0] * system_dimensions[1] * system_dimensions[2]
-    num_cations = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+    num_ions = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+    # put a minimum of 5 ions
+    num_ions = max(5, num_ions)
     if membrane_builder:
-        num_cations //= 2
-    num_cat = num_cations
-    num_ani = num_cations - neu_cat + neu_ani
+        num_ions //= 2
+    num_cat = num_ions
+    num_ani = num_ions - neu_cat + neu_ani
     if num_ani < 0:
         num_cat = neu_cat
-        num_cations = neu_cat
+        num_ions = neu_cat
         num_ani = 0
 
     # outside water — ionization
@@ -605,15 +607,11 @@ def create_box_y(ctx: BuildContext) -> None:
     window_dir.mkdir(parents=True, exist_ok=True)
 
     mol = ctx.residue_name
-    if not hasattr(sim, "solv_shell"):
-        raise AttributeError("SimulationConfig missing 'solv_shell'.")
-    solv_shell = float(sim.solv_shell)
-    if solv_shell < 10.0:
-        raise ValueError(
-            "Buffer size (`solv_shell`) too small for ligand-only box; "
-            "use ≥ 10 Å to avoid GPU PME/neighbor-list issues."
-        )
-
+    buffer_x = float(sim.buffer_x)
+    buffer_y = float(sim.buffer_y)
+    buffer_z = float(sim.buffer_z)
+    if buffer_x < 15 or buffer_y < 15 or buffer_z < 15:
+        raise ValueError(f"For water systems, buffer_x/y/z must be ≥ 15 Å; got {buffer_x}/{buffer_y}/{buffer_z}.")
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
     water_model = str(sim.water_model).upper()
@@ -709,11 +707,11 @@ def create_box_y(ctx: BuildContext) -> None:
         return int(round(q))
 
     lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
-    side = 2.0 * solv_shell  # Å
-    box_volume_A3 = side**3
-    num_per_species = max(
-        0,
-        round(float(ion_def[2]) * 6.02e23 * box_volume_A3 * 1e-27),
+    # put a minimum of 5 ions
+    box_volume_A3 = 2 * buffer_x * 2 * buffer_y * 2 * buffer_z
+    num_ions = max(
+        5,
+        round(ion_def[2] * 6.02e23 * box_volume_A3 * 1e-27),
     )
 
     add_neu_cat = max(0, -lig_charge)
@@ -729,15 +727,15 @@ def create_box_y(ctx: BuildContext) -> None:
         f"model = loadpdb {build_pdb.name}",
         "",
         f"# cubic box with {solv_shell:.3f} Å padding each side",
-        f"solvatebox model {water_box} {{ {solv_shell:.3f} {solv_shell:.3f} {solv_shell:.3f} }} 1",
+        f"solvatebox model {water_box} {{ {buffer_x:.3f} {buffer_y:.3f} {buffer_z:.3f} }} 1",
         "",
         "# ions",
     ]
     if neut == "no":
-        if num_per_species > 0 or add_neu_cat > 0 or add_neu_ani > 0:
+        if num_ions > 0 or add_neu_cat > 0 or add_neu_ani > 0:
             tleap_solv_lines += [
-                f"addionsrand model {ion_def[0]} {num_per_species + add_neu_cat}",
-                f"addionsrand model {ion_def[1]} {num_per_species + add_neu_ani}",
+                f"addionsrand model {ion_def[0]} {num_ions + add_neu_cat}",
+                f"addionsrand model {ion_def[1]} {num_ions + add_neu_ani}",
             ]
     else:
         if add_neu_cat:

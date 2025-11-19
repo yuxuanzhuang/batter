@@ -427,9 +427,9 @@ class FESimArgs(BaseModel):
     )
 
     # Box padding (used by some builders)
-    buffer_x: float = Field(10.0, description="Box padding along X (Å).")
-    buffer_y: float = Field(10.0, description="Box padding along Y (Å).")
-    buffer_z: float = Field(10.0, description="Box padding along Z (Å).")
+    buffer_x: float = Field(20.0, description="Box padding along X (Å).")
+    buffer_y: float = Field(20.0, description="Box padding along Y (Å).")
+    buffer_z: float = Field(20.0, description="Box padding along Z (Å).")
 
     # Equilibration schedule
     num_equil_extends: int = Field(
