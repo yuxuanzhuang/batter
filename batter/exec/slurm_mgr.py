@@ -478,12 +478,19 @@ class SlurmJobManager:
             return "0"
 
         logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
-        out = subprocess.check_output(
+        proc = subprocess.run(
             cmd,
             cwd=spec.workdir,
             text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            stdout = proc.stdout.strip()
+            stderr = proc.stderr.strip()
+            raise RuntimeError(
+                f"sbatch returned {proc.returncode}; stdout={stdout!r} stderr={stderr!r}"
+            )
+        out = proc.stdout.strip()
         m = JOBID_RE.search(out)
         if not m:
             raise RuntimeError(f"Could not parse sbatch output: {out}")
