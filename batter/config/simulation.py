@@ -92,6 +92,7 @@ class SimulationConfig(BaseModel):
             resolved_fe_type = "md"
 
         proto_key = (protocol or "").lower()
+<<<<<<< HEAD
         _component_steps_requirements = {
             "abfe": ["z_steps1", "z_steps2"],
             "asfe": ["y_steps1", "y_steps2", "m_steps1", "m_steps2"],
@@ -99,8 +100,40 @@ class SimulationConfig(BaseModel):
         for field in _component_steps_requirements.get(proto_key, []):
             value = _fe_attr(field, lambda: 0)
             if value is None or value <= 0:
+=======
+
+        def _coerce_step_dict(name: str, mapping: Mapping[str, Any]) -> dict[str, int]:
+            out: dict[str, int] = {}
+            for comp, value in (mapping or {}).items():
+                if not isinstance(comp, str):
+                    raise ValueError(
+                        f"{name} keys must be single-letter component codes; got {comp!r}"
+                    )
+                comp_key = comp.strip().lower()
+                if len(comp_key) != 1:
+                    raise ValueError(
+                        f"{name} keys must be single letters (got {comp!r})."
+                    )
+                if comp_key not in FEP_COMPONENTS:
+                    raise ValueError(
+                        f"Unknown component '{comp_key}' in {name}; valid components: {', '.join(sorted(FEP_COMPONENTS))}."
+                    )
+                out[comp_key] = int(value)
+            return out
+
+        steps1 = _coerce_step_dict("steps1", dict(_fe_attr("steps1", dict) or {}))
+        steps2 = _coerce_step_dict(
+            "steps2", dict(_fe_attr("steps2", lambda: {"x": 300_000, "y": 300_000}) or {})
+        )
+
+        required_component = {"abfe": "z", "asfe": "y"}.get(proto_key)
+        if required_component:
+            steps1.setdefault(required_component, 50_000)
+            steps2.setdefault(required_component, 300_000)
+            if steps1[required_component] <= 0 or steps2[required_component] <= 0:
+>>>>>>> ff561b4 (new step input)
                 raise ValueError(
-                    f"{proto_key.upper()} protocol requires `{field}` to be positive, got {value!r}."
+                    f"{proto_key.upper()} protocol requires positive steps for component '{required_component}'."
                 )
 
         num_equil_extends = max(0, int(_fe_attr("num_equil_extends", lambda: 0)))
@@ -169,12 +202,10 @@ class SimulationConfig(BaseModel):
         elif extra_restraints is not None:
             fe_data["barostat"] = 1
 
-        n_steps_dict = {
-            "z_steps1": int(_fe_attr("z_steps1", lambda: 50_000)),
-            "z_steps2": int(_fe_attr("z_steps2", lambda: 300_000)),
-            "y_steps1": int(_fe_attr("y_steps1", lambda: 50_000)),
-            "y_steps2": int(_fe_attr("y_steps2", lambda: 300_000)),
-        }
+        n_steps_dict: dict[str, int] = {}
+        for comp in sorted(set(steps1) | set(steps2)):
+            n_steps_dict[f"{comp}_steps1"] = int(steps1.get(comp, 0))
+            n_steps_dict[f"{comp}_steps2"] = int(steps2.get(comp, 0))
 
         merged: dict[str, Any] = {
             **create_data,

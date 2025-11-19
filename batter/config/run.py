@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import re
 from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
@@ -442,10 +443,14 @@ class FESimArgs(BaseModel):
         gt=0,
         description="Steps per equilibration segment (applied to the initial run and each extend).",
     )
-    z_steps1: int = Field(50_000, description="Stage 1 steps for the 'z' component.")
-    z_steps2: int = Field(300_000, description="Stage 2 steps for the 'z' component.")
-    y_steps1: int = Field(50_000, description="Stage 1 steps for the 'y' component.")
-    y_steps2: int = Field(300_000, description="Stage 2 steps for the 'y' component.")
+    steps1: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Stage 1 steps per component (key = letter).",
+    )
+    steps2: Dict[str, int] = Field(
+        default_factory=lambda: {"x": 300_000, "y": 300_000},
+        description="Stage 2 steps per component (key = letter).",
+    )
     ntpr: int = Field(1_000, description="Energy print frequency.")
     ntwr: int = Field(2_500, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
@@ -517,6 +522,33 @@ class FESimArgs(BaseModel):
         if value <= 0.0:
             raise ValueError("Force constants must be non-zero and positive.")
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ingest_legacy_step_fields(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        payload = dict(data)
+        steps1 = dict(payload.get("steps1") or {})
+        steps2 = dict(payload.get("steps2") or {})
+
+        for key in list(payload.keys()):
+            m = re.match(r"^([a-z])_steps([12])$", key)
+            if not m:
+                continue
+            comp, stage = m.groups()
+            val = payload.pop(key)
+            try:
+                val = int(val)
+            except Exception:
+                pass
+            target = steps1 if stage == "1" else steps2
+            target.setdefault(comp, val)
+
+        payload["steps1"] = steps1
+        payload["steps2"] = steps2
+        return payload
 
 
 class MDSimArgs(BaseModel):
