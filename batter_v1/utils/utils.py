@@ -21,9 +21,8 @@ cpptraj = 'cpptraj'
 parmchk2 = 'parmchk2'
 charmmlipid2amber = 'charmmlipid2amber.py'
 
-import importlib.resources as pkg_resources
-
-usalign = str(pkg_resources.files("batter") / "utils" / "USalign")
+_repo_root = Path(__file__).resolve().parents[2]
+usalign = str(_repo_root / "batter" / "utils" / "USalign")
 
 #obabel = '/home/groups/rondror/software/openbabel/bin/obabel'
 obabel = 'obabel'

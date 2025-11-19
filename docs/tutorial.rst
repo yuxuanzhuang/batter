@@ -229,13 +229,18 @@ Completed runs automatically write MBAR summaries under ``executions/<run_id>/re
 Use the CLI helpers to inspect them::
 
     batter fe list <system.output_folder>
-    batter fe show <system.output_folder> <run_id>
+    batter fe show <system.output_folder> <run_id> --ligand <ligand>
+    batter fe analyze <system.output_folder> <run_id> --ligand <ligand> --workers 4
 
-``fe list`` prints a high-level table (ΔG, SE, components) for every stored run, while
-``fe show`` dives into per-window data. CSV/JSON exports live alongside the results on
+``fe list`` prints a high-level table (ΔG, SE, protocol, originals, status) for every stored run, while
+``fe show`` dives into per-window data. ``fe analyze`` re-runs the post-processing with
+optional worker controls; use ``--ligand`` when the run produced multiple ligand
+records. CSV/JSON exports live alongside the results on
 disk, and convergence plots appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing).
+Use ``--no-raise-on-error`` if you want the analysis sweep to continue when individual
+ligand artifacts fail to parse.
 
 Additional Resources
 --------------------

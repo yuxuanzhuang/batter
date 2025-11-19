@@ -32,6 +32,7 @@ run:
   run_id: rep1
   max_workers: 8
   on_failure: prune
+  email_on_completion: yuzhuang@stanford.edu
   slurm:
     partition: owners
     time: "12:00:00"

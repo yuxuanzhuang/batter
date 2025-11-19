@@ -1,6 +1,15 @@
 API Documentation
 =================
 
+Public API
+----------
+
+.. automodule:: batter.api
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Config Modules
 --------------
 
@@ -20,15 +29,6 @@ Config Modules
    :noindex:
    :members:
    :undoc-members:
-
-Public API
-----------
-
-.. automodule:: batter.api
-   :noindex:
-   :members:
-   :undoc-members:
-   :show-inheritance:
 
 Orchestrator Modules
 --------------------

@@ -1,0 +1,49 @@
+JobId=9403593 JobName=fep_/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/abfe-adrb2_A-20251110T151924Z/simulations/G1I_z_z00_fe
+   UserId=yuzhuang(443694) GroupId=rondror(247017) MCS_label=N/A
+   Priority=2314609 Nice=0 Account=rondror QOS=normal
+   JobState=RUNNING Reason=None Dependency=(null)
+   Requeue=1 Restarts=1 BatchFlag=2 Reboot=0 ExitCode=0:0
+   RunTime=00:00:18 TimeLimit=04:00:00 TimeMin=N/A
+   SubmitTime=2025-11-10T13:06:29 EligibleTime=2025-11-10T13:08:30
+   AccrueTime=Unknown
+   StartTime=2025-11-10T13:32:05 EndTime=2025-11-10T17:32:08 Deadline=N/A
+   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2025-11-10T13:32:05 Scheduler=Main
+   Partition=rondror AllocNode:Sid=sh03-11n05:14837
+   ReqNodeList=(null) ExcNodeList=(null)
+   NodeList=sh02-12n15
+   BatchHost=sh02-12n15
+   StepMgrEnabled=Yes
+   NumNodes=1 NumCPUs=2 NumTasks=1 CPUs/Task=2 ReqB:S:C:T=0:0:*:*
+   ReqTRES=cpu=2,mem=16000M,node=1,billing=20,gres/gpu=1
+   AllocTRES=cpu=2,mem=16000M,node=1,billing=20,gres/gpu=1
+   Socks/Node=* NtasksPerN:B:S:C=0:0:*:* CoreSpec=*
+   MinCPUsNode=2 MinMemoryCPU=8000M MinTmpDiskNode=0
+   Features=GPU_GEN:AMP|GPU_GEN:PSC DelayBoot=00:00:00
+   OverSubscribe=OK Contiguous=0 Licenses=fs_oak Network=(null)
+   Command=/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/abfe-adrb2_A-20251110T151924Z/simulations/G1I/fe/z/z00/SLURMM-run
+   WorkDir=/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/abfe-adrb2_A-20251110T151924Z/simulations/G1I/fe/z/z00
+   StdErr=/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/abfe-adrb2_A-20251110T151924Z/simulations/G1I/fe/z/z00/G1I-z00-9403593.err
+   StdIn=/dev/null
+   StdOut=/oak/stanford/groups/rondror/users/yuzhuang/software/batter_dev/examples/adrb2_A_mabfe/executions/abfe-adrb2_A-20251110T151924Z/simulations/G1I/fe/z/z00/G1I-z00-9403593.out
+   TresPerNode=gres/gpu:1
+   TresPerTask=cpu=2
+   
+
+Job started at Mon Nov 10 13:32:23 PST 2025
+OVERWRITE: 0
+ONLY_EQ: 0
+Current attempt: 1
+Attempt 1 to run simulations...
+[INFO] MD stage 0 completed successfully at Mon Nov 10 13:33:23 PST 2025
+[INFO] MD stage 1 completed successfully at Mon Nov 10 13:38:58 PST 2025
+[INFO] MD stage 2 completed successfully at Mon Nov 10 13:44:33 PST 2025
+[INFO] MD stage 3 completed successfully at Mon Nov 10 13:50:08 PST 2025
+[INFO] MD stage 4 completed successfully at Mon Nov 10 13:55:44 PST 2025
+[INFO] MD stage 5 completed successfully at Mon Nov 10 14:01:21 PST 2025
+[INFO] MD stage 6 completed successfully at Mon Nov 10 14:06:57 PST 2025
+[INFO] MD stage 7 completed successfully at Mon Nov 10 14:12:31 PST 2025
+[INFO] MD stage 8 completed successfully at Mon Nov 10 14:17:59 PST 2025
+[INFO] MD stage 9 completed successfully at Mon Nov 10 14:23:36 PST 2025
+[INFO] MD stage 10 completed successfully at Mon Nov 10 14:28:55 PST 2025
+Simulation completed successfully on attempt 1.
+Job completed at Mon Nov 10 14:28:56 PST 2025

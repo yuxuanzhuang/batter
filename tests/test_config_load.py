@@ -199,6 +199,31 @@ def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     assert cfg.enable_mcwat == "yes"
 
 
+def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
+    create = _minimal_create(tmp_path)
+    payload = {
+        "protocol": protocol,
+        "backend": "local",
+        "system": {"output_folder": str(tmp_path / "out")},
+        "create": create.model_dump(),
+        "fe_sim": {"lambdas": [0.0, 1.0], "num_equil_extends": 1, "eq_steps": 1000},
+    }
+    return RunConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("protocol", "expected"),
+    [
+        ("asfe", "asfe"),
+        ("abfe", "uno_rest"),
+    ],
+)
+def test_resolved_sim_config_sets_fe_type(protocol: str, expected: str, tmp_path: Path) -> None:
+    cfg = _minimal_run_config(tmp_path, protocol)
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.fe_type == expected
+
+
 def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(

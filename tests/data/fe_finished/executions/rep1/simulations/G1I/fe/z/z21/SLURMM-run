@@ -1,0 +1,101 @@
+#!/bin/bash
+
+#SBATCH --job-name="adrb2_A-G1I-z21"
+#SBATCH --partition=rondror
+#SBATCH --nodes=1
+#SBATCH --open-mode=append
+#SBATCH --output=G1I-z21-%j.out
+#SBATCH --error=G1I-z21-%j.err
+#SBATCH --gres=gpu:1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH -t 16:00:00
+#SBATCH -d singleton
+#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
+
+scontrol show job $SLURM_JOB_ID
+# start time
+echo "Job started at $(date)"
+
+OVERWRITE=${OVERWRITE:-0}  # Default to 0 if not set
+ONLY_EQ=${ONLY_EQ:-0}  # Default to 0 if not set
+echo "OVERWRITE: $OVERWRITE"
+echo "ONLY_EQ: $ONLY_EQ"
+
+# Set a path for the retry count file on a shared filesystem.
+# Change this path as needed.
+ATTEMPT_FILE="job_attempt.txt"
+
+# Initialize the attempt count file if it doesn't exist.
+if [ ! -f "$ATTEMPT_FILE" ]; then
+    echo "1" > "$ATTEMPT_FILE"
+fi
+
+# Read the current retry count.
+RETRY_COUNT=$(cat "$ATTEMPT_FILE")
+echo "Current attempt: $RETRY_COUNT"
+
+# Define the maximum number of attempts.
+MAX_ATTEMPTS=5
+
+source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
+
+# Run the simulation
+echo "Attempt $RETRY_COUNT to run simulations..."
+OVERWRITE=$OVERWRITE ONLY_EQ=$ONLY_EQ source run-local.bash 2>&1 | tee run.log
+error_code=${PIPESTATUS[0]}  # Capture the exit status of 'source run-local.bash'
+
+if [ $error_code -eq 0 ]; then
+    echo "Simulation completed successfully on attempt $RETRY_COUNT."
+else
+    echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
+
+    if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
+        NEXT_RETRY=$((RETRY_COUNT + 1))
+        # Update the file with the new retry count.
+        echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
+        echo "Requeuing the job for attempt $NEXT_RETRY..."
+        # Requeue the same job (retains the same job ID).
+        # Exclude the node where the job failed.
+        # wait for 2 min
+        sleep 30
+        bad_node=$(
+        scontrol show job $SLURM_JOB_ID |
+            grep -m1 '^[[:space:]]*NodeList=' |
+            awk -F= '{print $2}' |
+            tr -d '[:space:]'
+        )
+        #echo "$bad_node"
+        echo "Bad node: $bad_node"
+        if [ -z "$bad_node" ]; then
+            scontrol requeue "$SLURM_JOB_ID"
+        else
+            scontrol update JobId=$SLURM_JOB_ID ExcNodeList=="$bad_node"
+            scontrol requeue "$SLURM_JOB_ID"
+        fi
+        
+        exit 0
+    else
+        echo "FAILED" > FAILED
+        echo "Maximum attempts ($MAX_ATTEMPTS) reached. Simulation failed."
+        exit 1
+    fi
+fi
+
+if [ $ONLY_EQ -eq 1 ]; then
+    echo "ONLY_EQ is set to 1. Simulation is complete."
+    if [[ ! -f EQ_FINISHED ]]; then
+        echo "EQ failed for some unknown reason."
+        scontrol requeue $SLURM_JOB_ID
+        exit 0
+    fi
+    echo "Job completed at $(date)"
+    exit 0
+fi
+if [[ ! -f FINISHED ]]; then
+    echo "Simulation is not complete."
+    scontrol requeue $SLURM_JOB_ID
+    exit 0
+fi
+echo "Job completed at $(date)"
+exit 0

@@ -59,7 +59,6 @@ def run_rocklin_correction(universe, mol_name, box, lig_netq, other_netq, temp, 
             # Build APBS input for the ligand selection
             rc.make_APBS_input(universe, f"resname {mol_name}")
 
-            # Run APBS quietly (stdout+stderr). Use stderr=False if you want to see errors.
             with suppress_output_fds(stderr=True):
                 rc.run_APBS(apbs_exe=apbs_exe)
 

@@ -18,6 +18,7 @@ __all__ = [
     "LIGANDS_DIR",
     "REFERENCE_DIR",
     "EQUIL_FINISHED_DIR",
+    "FE_FINISHED_EXECUTION_DIR",
     # YAML fixtures
     "MABFE_YAML",
     "MABFE_LIGAND_YAML",
@@ -65,11 +66,12 @@ LIGAND_PARAMS_DIR = data_path("ligand_params")
 LIGANDS_DIR = data_path("ligands")
 REFERENCE_DIR = data_path("reference")
 EQUIL_FINISHED_DIR = data_path("equil_finished")
+FE_FINISHED_EXECUTION_DIR = data_path("fe_finished", "executions", "rep1")
 
 MABFE_YAML = data_path("mabfe.yaml")
 MABFE_LIGAND_YAML = data_path("mabfe_ligand.yaml")
 MABFE_NONMEMBRANE_YAML = data_path("mabfe_nonmembrane.yaml")
 MABFE_END2END_YAML = data_path("mabfe_end2end.yaml")
 MABFE_GAFF2_END2END_YAML = data_path("mabfe_gaff2_end2end.yaml")
-MASFE_YAML = data_path("masfe.yaml")
+MASFE_YAML = data_path("masfe_nofe_type.yaml")
 MD_YAML = data_path("md.yaml")

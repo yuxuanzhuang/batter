@@ -3,3 +3,8 @@
 - beeter choice of atoms for Boresch restraints based on interactions
 - add flat-bottom restraint aside from Boresch to have a well-defined binding site
 - add supports and documentation to build membrane protein systems without dabble.
+- correction for symmetry.
+- error reporting based on blocks
+
+BUG
+- some ligands get wrong charge somewhere in the process

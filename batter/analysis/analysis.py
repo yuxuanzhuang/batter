@@ -301,7 +301,7 @@ class MBARAnalysis(FEAnalysisBase):
         n_sims = len(glob.glob(f"{win_dir}/mdin-*.out"))
         all_range = range(n_sims)
 
-        # Collect mdin-XX.out, fallback to md-03/04.out if older layout
+        # Collect mdin-XX.out
         mdouts: List[str] = []
         s0 = sim_range[0] if sim_range is not None else 0
         e0 = sim_range[1] if sim_range is not None else n_sims
@@ -316,10 +316,7 @@ class MBARAnalysis(FEAnalysisBase):
                 mdouts.append(path)
 
         if not mdouts:
-            candidates = [f"{win_dir}/md-03.out", f"{win_dir}/md-04.out"]
-            mdouts = [c for c in candidates if os.path.exists(c)]
-            if not mdouts:
-                raise FileNotFoundError(f"No Amber out files in {win_dir}")
+            raise FileNotFoundError(f"No Amber out files in {win_dir}")
 
         dfs = []
         with SilenceAlchemlybOnly():
@@ -902,7 +899,7 @@ def analyze_lig_task(
 
     # Optional Rocklin correction (component 'y')
     if rocklin_correction and "y" in components:
-        from .rocklin import run_rocklin_correction  # local import
+        from .rocklin import run_rocklin_correction
         universe = mda.Universe(
             f"{lig_path}/y/y-1/full.prmtop",
             f"{lig_path}/y/y-1/eq_output.pdb",
@@ -914,8 +911,10 @@ def analyze_lig_task(
         lig_netq = int(round(lig_ag.total_charge()))
         other_ag = universe.atoms - lig_ag
         other_netq = int(round(other_ag.total_charge()))
-        logger.info(f"Rocklin correction: ligand netq={lig_netq}, other netq={other_netq}")
+        if lig_netq == 0:
+            logger.info(f"Rocklin correction skipped: ligand netq={lig_netq}, other netq={other_netq}")
         if lig_netq != 0:
+            logger.info(f"Rocklin correction with ligand netq={lig_netq}, other netq={other_netq}")
             corr = run_rocklin_correction(
                 universe=universe,
                 mol_name=mol,

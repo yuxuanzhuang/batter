@@ -34,6 +34,11 @@ The run YAML file is divided into four top-level sections:
 ``run``
     Execution behaviour such as SLURM options, dry-run toggles, and failure
     policies. These fields populate :class:`batter.config.run.RunSection`.
+    You can also request a completion notification by setting
+    ``run.email_on_completion`` to the desired recipient. The notification is sent
+    through whichever SMTP daemon is reachable via ``localhost``, with the sender
+    address taken from the ``BATTER_EMAIL_SENDER`` environment variable (defaults
+    to ``nobody@stanford.edu`` when unset, and BATTER logs a warning in that case).
 
 The helper :func:`batter.config.load_run_config` loads a YAML file into a
 validated :class:`~batter.config.run.RunConfig`, expanding environment variables

@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import json
+import os
+import smtplib
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple, Type
+from smtplib import SMTPException
 
-import json
 import yaml
 
 from loguru import logger
@@ -38,7 +41,10 @@ from batter.runtime.fe_repo import FEResultsRepository, FERecord
 from batter.exec.slurm_mgr import SlurmJobManager
 
 from batter.orchestrate.backend import register_local_handlers
-from batter.orchestrate.ligands import discover_staged_ligands, resolve_ligand_map
+from batter.orchestrate.ligands import (
+    discover_staged_ligands,
+    resolve_ligand_map,
+)
 from batter.orchestrate.markers import (
     handle_phase_failures,
     run_phase_skipping_done,
@@ -46,6 +52,10 @@ from batter.orchestrate.markers import (
 )
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.orchestrate.results_io import fallback_totals_from_json, parse_results_dat
+
+
+SENDER_ENV_VAR = "BATTER_EMAIL_SENDER"
+DEFAULT_SENDER = "nobody@stanford.edu"
 
 
 def _normalize_for_hash(obj: Any) -> Any:
@@ -80,6 +90,26 @@ def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
     if sig_path.exists():
         return sig_path.read_text().strip(), sig_path
     return None, sig_path
+
+
+def _ligand_names_path(run_dir: Path) -> Path:
+    return run_dir / "artifacts" / "ligand_names.json"
+
+
+def _load_stored_ligand_names(run_dir: Path) -> Dict[str, str]:
+    path = _ligand_names_path(run_dir)
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception as exc:
+            logger.warning("Failed to load ligand names from %s: %s", path, exc)
+    return {}
+
+
+def _store_ligand_names(run_dir: Path, mapping: Dict[str, str]) -> None:
+    path = _ligand_names_path(run_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(mapping, sort_keys=True))
 
 
 def _resolve_signature_conflict(
@@ -317,15 +347,22 @@ def run_from_yaml(
     _, sig_path = _stored_signature(run_dir)
 
     # Ligands
+    lig_original_names: Dict[str, str] = {}
     staged_lig_map = discover_staged_ligands(run_dir)
+    stored_names = _load_stored_ligand_names(run_dir)
     if staged_lig_map:
         lig_map = staged_lig_map
+        lig_original_names = stored_names
+        if lig_original_names:
+            logger.debug("Loaded %d original ligand names from %s", len(lig_original_names), _ligand_names_path(run_dir))
         logger.info(
             f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}"
         )
     else:
         # Fall back to YAML resolution (requires original paths/files to exist)
-        lig_map = resolve_ligand_map(rc, yaml_dir)
+        lig_map, lig_original_names = resolve_ligand_map(rc, yaml_dir)
+        if lig_original_names:
+            _store_ligand_names(run_dir, lig_original_names)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
     sys_params.update({"ligand_paths": rc.create.ligand_paths})
 
@@ -396,7 +433,9 @@ def run_from_yaml(
             backend.run(step, run_sys, step.params)
 
     # Locate sim_overrides from system_prep (under run_dir)
-    overrides_path = run_dir / "artifacts" / "config" / "sim_overrides.json"
+    config_dir = run_dir / "artifacts" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    overrides_path = config_dir / "sim_overrides.json"
     sim_cfg_updated = sim_cfg
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
@@ -404,12 +443,22 @@ def run_from_yaml(
             update={k: v for k, v in upd.items() if v is not None}
         )
 
-        from batter.config.io import write_yaml_config
+    from batter.config.io import write_yaml_config
 
-        (run_dir / "artifacts" / "config").mkdir(parents=True, exist_ok=True)
-        write_yaml_config(
-            sim_cfg_updated, run_dir / "artifacts" / "config" / "sim.resolved.yaml"
+    write_yaml_config(sim_cfg_updated, config_dir / "sim.resolved.yaml")
+
+    run_meta_path = config_dir / "run_meta.json"
+    run_meta_path.write_text(
+        json.dumps(
+            {
+                "protocol": rc.protocol,
+                "backend": rc.backend,
+                "system_name": rc.create.system_name,
+                "run_id": run_id,
+            },
+            indent=2,
         )
+    )
 
     # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
     removed = {"system_prep", "system_prep_asfe", "param_ligands"}
@@ -536,7 +585,7 @@ def run_from_yaml(
     phase_equil = _inject_mgr(phase_equil)
     if phase_equil.ordered_steps():
         finished = run_phase_skipping_done(
-            phase_equil, children, "equil", backend, max_workers=rc.run.max_workers
+            phase_equil, children, "equil", backend, max_workers=1
         )
         if not finished:
             job_mgr.wait_all()
@@ -553,12 +602,15 @@ def run_from_yaml(
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
     # --------------------
     # prune UNBOUND ligands before FE prep
+    unbound_children: list[SimSystem] = []
+
     def _filter_bound(children_list):
         keep = []
         for c in children_list:
             if (c.root / "equil" / "UNBOUND").exists():
                 lig = c.meta.get("ligand", c.name)
                 logger.warning(f"Pruning UNBOUND ligand after equil: {lig}")
+                unbound_children.append(c)
                 continue
             keep.append(c)
         return keep
@@ -601,7 +653,7 @@ def run_from_yaml(
             children,
             "fe_equil",
             backend,
-            max_workers=rc.run.max_workers,
+            max_workers=1,
         )
         if not finished:
             job_mgr.wait_all()
@@ -621,7 +673,7 @@ def run_from_yaml(
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
         finished = run_phase_skipping_done(
-            phase_fe, children, "fe", backend, max_workers=rc.run.max_workers
+            phase_fe, children, "fe", backend, max_workers=1
         )
         if not finished:
             job_mgr.wait_all()
@@ -664,36 +716,212 @@ def run_from_yaml(
         )
         return
 
-    # Store at the system store (shared across executions of this system)
     store = ArtifactStore(rc.system.output_folder)
     repo = FEResultsRepository(store)
+    analysis_range = (
+        tuple(sim_cfg_updated.analysis_fe_range)
+        if sim_cfg_updated.analysis_fe_range
+        else None
+    )
+    failures: list[tuple[str, str, str]] = []
+    for child in unbound_children:
+        ligand = child.meta["ligand"]
+        reason = "UNBOUND detected during equilibration"
+        canonical_smiles, original_name, original_path = _extract_ligand_metadata(
+            child, lig_original_names
+        )
+        repo.record_failure(
+            run_id=run_id,
+            ligand=ligand,
+            system_name=sim_cfg_updated.system_name,
+            temperature=sim_cfg_updated.temperature,
+            status="unbound",
+            reason=reason,
+            canonical_smiles=canonical_smiles,
+            original_name=original_name,
+            original_path=original_path,
+            protocol=rc.protocol,
+            sim_range=analysis_range,
+        )
+        failures.append((ligand, "unbound", reason))
+    failures.extend(
+        save_fe_records(
+            run_dir=run_dir,
+            run_id=run_id,
+            children_all=children_all,
+            sim_cfg_updated=sim_cfg_updated,
+            repo=repo,
+            protocol=rc.protocol,
+        )
+    )
 
-    failures: list[tuple[str, str]] = []
+    if failures:
+        failed = ", ".join(
+            [f"{n} ({status}: {reason})" for n, status, reason in failures]
+        )
+        logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
+    logger.success(
+        f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/."
+    )
+
+    _notify_run_completion(rc, run_id, run_dir, failures)
+
+
+def _notify_run_completion(
+    rc: RunConfig,
+    run_id: str,
+    run_dir: Path,
+    failures: list[tuple[str, str, str]],
+) -> None:
+    recipient = rc.run.email_on_completion
+    if not recipient:
+        return
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    subject = f"BATTER run '{run_id}' of {rc.create.system_name} completed"
+    results_path = Path(rc.system.output_folder) / "results"
+
+    body_lines = [
+        "Hi there!",
+        "",
+        f"Your BATTER run '{rc.create.system_name}' (run_id='{run_id}') completed at {timestamp} UTC.",
+        f"Protocol: {rc.protocol}",
+        f"Output folder: {run_dir}",
+        f"FE records stored under: {results_path}",
+        "",
+    ]
+
+    if failures:
+        body_lines.append(
+            "The following ligand(s) had post-run issues (see logs for additional context):"
+        )
+        for ligand, status, reason in failures:
+            body_lines.append(f"- {ligand} ({status}): {reason}")
+    else:
+        body_lines.append("No ligand failures were detected.")
+
+    body_lines.extend(
+        [
+            "",
+            "Best wishes,",
+            "BATTER",
+        ]
+    )
+
+    message_body = "\n".join(body_lines)
+    sender = os.environ.get(SENDER_ENV_VAR, DEFAULT_SENDER)
+    if sender == DEFAULT_SENDER and SENDER_ENV_VAR not in os.environ:
+        logger.warning(
+            f"{SENDER_ENV_VAR} is not set; defaulting sender email to {DEFAULT_SENDER}"
+        )
+    message = (
+        f"From: batter <{sender}>\n"
+        f"To: {recipient}\n"
+        f"Subject: {subject}\n\n"
+        f"{message_body}"
+    )
+
+    try:
+        with smtplib.SMTP("localhost") as smtp:
+            smtp.sendmail(sender, [recipient], message)
+        logger.info(f"Sent completion notification to {recipient}")
+    except SMTPException as exc:
+        logger.warning(f"Failed to send completion email to {recipient}: {exc}")
+    except Exception as exc:  # pragma: no cover - best-effort notification
+        logger.warning(f"Unexpected error while sending completion email: {exc}")
+
+
+def _extract_ligand_metadata(
+    child: SimSystem, original_map: Dict[str, str] | None = None
+) -> tuple[str | None, str | None, str | None]:
+    canonical_smiles: str | None = None
+    original_name: str | None = child.meta.get("ligand")
+    original_path: str | None = None
+
+    param_dirs = child.meta.get("param_dir_dict", {}) or {}
+    residue_name = child.meta.get("residue_name")
+    param_dir = param_dirs.get(residue_name) if residue_name else None
+    if param_dir:
+        meta_path = Path(param_dir) / "metadata.json"
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text())
+            except Exception as exc:  # pragma: no cover - best-effort metadata
+                logger.debug(f"Failed to read ligand metadata {meta_path}: {exc}")
+                meta = {}
+            canonical_smiles = meta.get("canonical_smiles")
+            original_path = meta.get("input_path")
+            original_name = meta.get("title") or original_name
+            aliases = meta.get("aliases") or []
+            if aliases and not meta.get("title"):
+                original_name = aliases[0]
+            else:
+                original_name = meta.get("prepared_base") or original_name
+    if original_map and child.meta.get("ligand"):
+        original_name = original_map.get(child.meta.get("ligand"), original_name)
+    return canonical_smiles, original_name, original_path
+
+
+def save_fe_records(
+    *,
+    run_dir: Path,
+    run_id: str,
+    children_all: list[SimSystem],
+    sim_cfg_updated: SimulationConfig,
+    repo: FEResultsRepository,
+    protocol: str,
+    original_map: Dict[str, str] | None = None,
+) -> list[tuple[str, str, str]]:
+    failures: list[tuple[str, str, str]] = []
+    analysis_range = (
+        tuple(sim_cfg_updated.analysis_fe_range)
+        if sim_cfg_updated.analysis_fe_range
+        else None
+    )
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
         results_dir = child.root / "fe" / "Results"
         total_dG, total_se = None, None
 
-        # Preferred: parse Results.dat
         dat = results_dir / "Results.dat"
         if dat.exists():
             try:
                 tdg, tse, _ = parse_results_dat(dat)
                 total_dG, total_se = tdg, tse
-            except Exception as e:
-                logger.warning(f"[{lig_name}] Failed to parse Results.dat: {e}")
+            except Exception as exc:
+                logger.warning(f"[{lig_name}] Failed to parse Results.dat: {exc}")
 
-        # Fallback: try JSON component results
         if total_dG is None or total_se is None:
             tdg, tse = fallback_totals_from_json(results_dir)
             total_dG = tdg if total_dG is None else total_dG
             total_se = tse if total_se is None else total_se
 
         if total_dG is None or total_se is None:
-            failures.append((lig_name, "no_totals_found"))
+            reason = "no_totals_found"
+            failures.append((lig_name, "failed", reason))
+            canonical_smiles, original_name, original_path = _extract_ligand_metadata(
+                child, original_map
+            )
+            repo.record_failure(
+                run_id=run_id,
+                ligand=lig_name,
+                system_name=sim_cfg_updated.system_name,
+                temperature=sim_cfg_updated.temperature,
+                status="failed",
+                reason=reason,
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=protocol,
+                sim_range=analysis_range,
+            )
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
+
+        canonical_smiles, original_name, original_path = _extract_ligand_metadata(
+            child, original_map
+        )
 
         try:
             rec = FERecord(
@@ -708,19 +936,33 @@ def run_from_yaml(
                 total_se=total_se,
                 components=list(sim_cfg_updated.components),
                 windows=[],  # optional: can be populated later
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=protocol,
+                sim_range=analysis_range,
             )
             repo.save(rec, copy_from=results_dir)
             logger.info(
                 f"Saved FE record for ligand {lig_name}"
                 f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
             )
-        except Exception as e:
-            logger.warning(f"Could not save FE record for {lig_name}: {e}")
-            failures.append((lig_name, f"save_failed: {e}"))
+        except Exception as exc:
+            reason = f"save_failed: {exc}"
+            logger.warning(f"Could not save FE record for {lig_name}: {exc}")
+            failures.append((lig_name, "failed", reason))
+            repo.record_failure(
+                run_id=run_id,
+                ligand=lig_name,
+                system_name=sim_cfg_updated.system_name,
+                temperature=sim_cfg_updated.temperature,
+                status="failed",
+                reason=reason,
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=protocol,
+                sim_range=analysis_range,
+            )
 
-    if failures:
-        failed = ", ".join([f"{n} ({m})" for n, m in failures])
-        logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
-    logger.success(
-        f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/."
-    )
+    return failures

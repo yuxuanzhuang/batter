@@ -23,6 +23,7 @@ from batter.api import (
     clone_execution,
     list_fe_runs,
     load_fe_run,
+    run_analysis_from_execution,
     run_from_yaml,
 )
 from batter.config.run import RunConfig
@@ -38,6 +39,7 @@ def cli() -> None:
 
 
 # -------------------------------- run ----------------------------------
+
 
 def hash_run_input(yaml_path: Path, **options) -> str:
     """
@@ -61,9 +63,9 @@ def hash_run_input(yaml_path: Path, **options) -> str:
     frozen = json.dumps(options, sort_keys=True, separators=(",", ":")).encode("utf-8")
     h = hashlib.sha256()
     h.update(data)
-    h.update(b"\0")         # separator byte to avoid accidental concatenation collisions
+    h.update(b"\0")  # separator byte to avoid accidental concatenation collisions
     h.update(frozen)
-    return h.hexdigest()[:12]    
+    return h.hexdigest()[:12]
 
 
 def _which_batter() -> str:
@@ -76,32 +78,63 @@ def _which_batter() -> str:
         Shell-escaped token (``batter`` path or ``python -m batter.cli``).
     """
     import shutil
-    exe = shutil.which('batter')
+
+    exe = shutil.which("batter")
     if exe:
         return shlex.quote(exe)
     # last resort: run module (works inside editable installs)
     return shlex.quote(sys.executable) + " -m batter.cli"
 
+
 @cli.command("run")
-@click.argument("yaml_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
-@click.option("--on-failure", type=click.Choice(["prune","raise","retry"], case_sensitive=False),
-              default="raise", show_default=True)
-@click.option("--output-folder", type=click.Path(file_okay=False, path_type=Path), default=None)
-@click.option("--run-id", default=None, help="Override run_id (e.g., rep1). Use 'auto' to reuse latest.")
+@click.argument(
+    "yaml_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option(
+    "--on-failure",
+    type=click.Choice(["prune", "raise", "retry"], case_sensitive=False),
+    default="raise",
+    show_default=True,
+)
+@click.option(
+    "--output-folder", type=click.Path(file_okay=False, path_type=Path), default=None
+)
+@click.option(
+    "--run-id",
+    default=None,
+    help="Override run_id (e.g., rep1). Use 'auto' to reuse latest.",
+)
 @click.option(
     "--allow-run-id-mismatch/--no-allow-run-id-mismatch",
     default=None,
     help="Allow reusing a provided run-id even if the stored configuration hash differs.",
 )
 @click.option("--dry-run/--no-dry-run", default=None, help="Override YAML run.dry_run.")
-@click.option("--only-equil/--full", default=None, help="Run only equil steps; override YAML.")
-@click.option("--slurm-submit/--local-run", default=False, help="Submit this run via SLURM (sbatch) instead of running locally.")
-@click.option("--slurm-manager-path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
-              help="Optional path to a SLURM header/template to prepend to the generated script.")
-def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
-            run_id: Optional[str], allow_run_id_mismatch: Optional[bool],
-            dry_run: Optional[bool], only_equil: Optional[bool],
-            slurm_submit: bool, slurm_manager_path: Optional[Path]) -> None:
+@click.option(
+    "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
+)
+@click.option(
+    "--slurm-submit/--local-run",
+    default=False,
+    help="Submit this run via SLURM (sbatch) instead of running locally.",
+)
+@click.option(
+    "--slurm-manager-path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional path to a SLURM header/template to prepend to the generated script.",
+)
+def cmd_run(
+    yaml_path: Path,
+    on_failure: str,
+    output_folder: Optional[Path],
+    run_id: Optional[str],
+    allow_run_id_mismatch: Optional[bool],
+    dry_run: Optional[bool],
+    only_equil: Optional[bool],
+    slurm_submit: bool,
+    slurm_manager_path: Optional[Path],
+) -> None:
     """
     Execute a BATTER workflow defined in ``YAML_PATH``.
 
@@ -145,7 +178,11 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
         cfg_for_validation = base_cfg
         if system_overrides:
             cfg_for_validation = cfg_for_validation.model_copy(
-                update={"system": cfg_for_validation.system.model_copy(update=system_overrides)}
+                update={
+                    "system": cfg_for_validation.system.model_copy(
+                        update=system_overrides
+                    )
+                }
             )
         if run_over:
             cfg_for_validation = cfg_for_validation.model_copy(
@@ -162,12 +199,19 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
         parts += ["--on-failure", shlex.quote(on_failure)]
 
         if output_folder:
-            parts += ["--output-folder", shlex.quote(str(Path(output_folder).resolve()))]
+            parts += [
+                "--output-folder",
+                shlex.quote(str(Path(output_folder).resolve())),
+            ]
         if run_id is not None:
             parts += ["--run-id", shlex.quote(run_id)]
         if allow_run_id_mismatch is not None:
             parts += [
-                "--allow-run-id-mismatch" if allow_run_id_mismatch else "--no-allow-run-id-mismatch"
+                (
+                    "--allow-run-id-mismatch"
+                    if allow_run_id_mismatch
+                    else "--no-allow-run-id-mismatch"
+                )
             ]
         if dry_run is not None:
             parts += ["--dry-run" if dry_run else "--no-dry-run"]
@@ -187,16 +231,21 @@ def cmd_run(yaml_path: Path, on_failure: str, output_folder: Optional[Path],
         )
         with open(slurm_manager_path or job_manager, "r") as f:
             manager_code = f.read()
-        with open(f'{run_hash}_job_manager.sbatch', 'w') as f:
+        with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")
             f.write(run_cmd)
             f.write("\n")
             f.write("echo 'Job completed.'\n")
             f.write("\n")
-        
+
         # submit slurm job
-        result = subprocess.run(['sbatch', f'{run_hash}_job_manager.sbatch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(
+            ["sbatch", f"{run_hash}_job_manager.sbatch"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         click.echo(f"Submitted jobscript: {run_hash}_job_manager.sbatch")
         click.echo(f"STDOUT: {result.stdout}")
         click.echo(f"STDERR: {result.stderr}")
@@ -219,7 +268,9 @@ def fe() -> None:
 
 
 @fe.command("list")
-@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
 @click.option(
     "--format",
     "fmt",
@@ -249,14 +300,30 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         return
 
     # ensure expected cols exist
-    cols = ["system_name", "run_id", "ligand", "mol_name", "fe_type", "total_dG", "total_se", "created_at"]
+    cols = [
+        "system_name",
+        "run_id",
+        "ligand",
+        "mol_name",
+        "temperature",
+        "total_dG",
+        "total_se",
+        "original_name",
+        "status",
+        "protocol",
+        "created_at",
+    ]
     for c in cols:
         if c not in df.columns:
             df[c] = pd.NA
 
     # parse datetime for stable sort, but keep original text if non-parseable
     created = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-    df = df.assign(_created=created).sort_values("_created", na_position="last").drop(columns=["_created"])
+    df = (
+        df.assign(_created=created)
+        .sort_values("_created", na_position="last")
+        .drop(columns=["_created"])
+    )
     df = df[cols]
 
     if fmt.lower() == "json":
@@ -281,6 +348,7 @@ def fe_list(work_dir: Path, fmt: str) -> None:
             except Exception:
                 pass
             return v
+
         show = df.copy()
         if "total_dG" in show.columns:
             show["total_dG"] = show["total_dG"].map(_fmt)
@@ -290,9 +358,18 @@ def fe_list(work_dir: Path, fmt: str) -> None:
 
 
 @fe.command("show")
-@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
 @click.argument("run_id", type=str)
-def fe_show(work_dir: Path, run_id: str) -> None:
+@click.option(
+    "--ligand",
+    "-l",
+    type=str,
+    default=None,
+    help="Specify a ligand identifier when multiple records share the same run_id.",
+)
+def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     """
     Display a single free-energy record from ``WORK_DIR``.
 
@@ -302,9 +379,11 @@ def fe_show(work_dir: Path, run_id: str) -> None:
         Portable work directory.
     run_id : str
         Run identifier returned by :func:`fe_list`.
+    ligand : str, optional
+        Ligand identifier to disambiguate when multiple ligands are stored under the same run_id.
     """
     try:
-        rec = load_fe_run(work_dir, run_id)
+        rec = load_fe_run(work_dir, run_id, ligand=ligand)
     except FileNotFoundError:
         raise click.ClickException(f"Run '{run_id}' not found under {work_dir}.")
     except Exception as e:
@@ -335,20 +414,100 @@ def fe_show(work_dir: Path, run_id: str) -> None:
         click.secho("\nPer-window", fg="cyan", bold=True)
         df = pd.DataFrame([w.model_dump() for w in rec.windows])
         # stable, readable column order
-        order = [c for c in ["component", "lam", "dG", "dG_se", "n_samples"] if c in df.columns]
+        order = [
+            c
+            for c in ["component", "lam", "dG", "dG_se", "n_samples"]
+            if c in df.columns
+        ]
         df = df[order + [c for c in df.columns if c not in order]]
         # format numbers
         for col in ["dG", "dG_se"]:
             if col in df.columns:
-                df[col] = df[col].map(lambda v: f"{float(v):.3f}" if pd.notna(v) else "")
+                df[col] = df[col].map(
+                    lambda v: f"{float(v):.3f}" if pd.notna(v) else ""
+                )
         with pd.option_context("display.max_columns", None, "display.width", 120):
             click.echo(df.to_string(index=False))
     else:
         click.secho("\n(no per-window data saved)", fg="yellow")
 
+
+@fe.command("analyze")
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.argument("run_id", type=str)
+@click.option(
+    "--ligand",
+    "-l",
+    type=str,
+    default=None,
+    help="Select a single ligand when multiple records exist for the run.",
+)
+@click.option(
+    "--workers",
+    "-w",
+    type=int,
+    default=4,
+    help="Number of local workers to pass to the FE analysis handler.",
+)
+@click.option(
+    "--raise-on-error/--no-raise-on-error",
+    default=True,
+    help="Whether analysis failures should raise (default) or be logged and skipped.",
+)
+@click.option(
+    "--sim-range",
+    type=str,
+    default=None,
+    help="Subset of lambda windows to analyze, formatted as ``start,end``.",
+)
+def fe_analyze(
+    work_dir: Path,
+    run_id: str,
+    ligand: str | None,
+    workers: int | None,
+    raise_on_error: bool,
+    sim_range: str | None,
+) -> None:
+    """
+    Re-run the FE analysis stage for a stored execution.
+    """
+    parsed_range: tuple[int, int] | None = None
+    if sim_range:
+        parts = sim_range.split(",")
+        if len(parts) != 2:
+            raise click.ClickException(
+                "`--sim-range` expects two comma-separated integers."
+            )
+        try:
+            parsed_range = (int(parts[0]), int(parts[1]))
+        except ValueError as exc:
+            raise click.ClickException(f"Invalid `--sim-range`: {exc}")
+
+    try:
+        run_analysis_from_execution(
+            work_dir,
+            run_id,
+            ligand=ligand,
+            n_workers=workers,
+            sim_range=parsed_range,
+            raise_on_error=raise_on_error,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+
+    click.echo(
+        f"Analysis run finished for '{run_id}'"
+        f"{' (ligand ' + ligand + ')' if ligand else ''}."
+    )
+
+
 # ------------------------ execution cloning ---------------------------
 @cli.command("clone-exec")
-@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
 @click.argument("src_run_id", type=str)
 @click.argument("dst_run_id", required=False)
 @click.option(
@@ -364,10 +523,11 @@ def fe_show(work_dir: Path, run_id: str) -> None:
     help="Clone only equilibration artifacts or the full FE layout.",
 )
 @click.option(
-    "--symlink/--copy",
-    default=True,
+    "--mode",
+    type=click.Choice(["copy", "hardlink", "symlink"], case_sensitive=False),
+    default="symlink",
     show_default=True,
-    help="Use symlinks instead of copying files where possible.",
+    help="Copy strategy for cloning files.",
 )
 @click.option(
     "--force",
@@ -380,28 +540,11 @@ def cmd_clone_exec(
     dst_run_id: str | None,
     dst_root: Path | None,
     only_equil: bool,
-    symlink: bool,
     force: bool,
+    mode: str,
 ) -> None:
     """
     Clone an existing execution directory.
-
-    Parameters
-    ----------
-    work_dir : Path
-        Source work directory containing ``executions/<run_id>/``.
-    src_run_id : str
-        Source execution identifier.
-    dst_run_id : str, optional
-        Destination execution identifier (defaults to ``<SRC>-clone``).
-    dst_root : Path, optional
-        Destination work directory (defaults to ``work_dir``).
-    only_equil : bool
-        Clone only equilibration artifacts when ``True``.
-    symlink : bool
-        Use symlinks instead of copying files whenever possible.
-    force : bool
-        Overwrite the destination folder if it already exists.
     """
     dst_root = dst_root or work_dir
     if dst_run_id is None:
@@ -421,13 +564,14 @@ def cmd_clone_exec(
     # Delegate to your existing implementation
     try:
         clone_execution(
-            src_root=work_dir,
+            work_dir=work_dir,
             src_run_id=src_run_id,
             dst_root=dst_root,
             dst_run_id=dst_run_id,
+            mode=mode,
             only_equil=only_equil,
-            symlink=symlink,
-            force=force,
+            reset_states=True,
+            overwrite=force,
         )
     except Exception as e:
         raise click.ClickException(str(e)) from e
@@ -440,7 +584,8 @@ def cmd_clone_exec(
 
 # ----------------------------- check status -------------------------------
 
-def _parse_jobname(jobname: str):
+
+def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
     """
     Parse BATTER job names emitted by SLURM handlers.
     """
@@ -500,11 +645,13 @@ def _parse_jobname(jobname: str):
         "win": win,
     }
 
+
 def _natural_keys(val: str | None):
     """Return a tuple suitable for natural sorting of strings containing digits."""
     s = "" if val is None else str(val)
     parts = natural_keys(s)
     return tuple(p.lower() if isinstance(p, str) else p for p in parts)
+
 
 def _natkey_series(s: pd.Series) -> pd.Series:
     """Vectorised version of :func:`_natural_keys` for pandas Series."""
@@ -512,6 +659,7 @@ def _natkey_series(s: pd.Series) -> pd.Series:
     if pd.api.types.is_numeric_dtype(s):
         return s
     return s.astype(str).map(_natural_keys)
+
 
 @cli.command("report-jobs")
 @click.option("--partition", "-p", default=None, help="SLURM partition filter.")
@@ -521,8 +669,17 @@ def report_jobs(partition=None, detailed=False):
     try:
         cmd = ["squeue", "--user", os.getenv("USER"), "--format=%i %j %T"]
         if partition:
-            cmd = ["squeue", "--partition", partition, "--user", os.getenv("USER"), "--format=%i %j %T"]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            cmd = [
+                "squeue",
+                "--partition",
+                partition,
+                "--user",
+                os.getenv("USER"),
+                "--format=%i %j %T",
+            ]
+        res = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+        )
     except subprocess.CalledProcessError as e:
         click.echo(f"Failed to get SLURM job list: {e.stderr}")
         return
@@ -543,18 +700,26 @@ def report_jobs(partition=None, detailed=False):
         if not jobname.startswith("fep_"):
             continue
         meta = _parse_jobname(jobname)
-        rows.append({
-            "jobid": jobid,
-            "status": status,
-            "stage": meta["stage"],
-            "run_id": meta["run_id"],
-            "identifier": meta['system_root'] + "/" + meta['run_id'] if meta['run_id'] else meta['system_root'],
-            "system_root": meta["system_root"],
-            "ligand": meta["ligand"],
-            "comp": meta["comp"],
-            "win": meta["win"],
-            "jobname": jobname,
-        })
+        if meta is None:
+            continue
+        rows.append(
+            {
+                "jobid": jobid,
+                "status": status,
+                "stage": meta["stage"],
+                "run_id": meta["run_id"],
+                "identifier": (
+                    meta["system_root"] + "/" + meta["run_id"]
+                    if meta["run_id"]
+                    else meta["system_root"]
+                ),
+                "system_root": meta["system_root"],
+                "ligand": meta["ligand"],
+                "comp": meta["comp"],
+                "win": meta["win"],
+                "jobname": jobname,
+            }
+        )
 
     if not rows:
         click.echo("No BATTER jobs (fep_*) found.")
@@ -566,7 +731,11 @@ def report_jobs(partition=None, detailed=False):
     total = len(df)
     running = (df["status"] == "RUNNING").sum()
     pending = (df["status"] == "PENDING").sum()
-    click.echo(click.style(f"Total jobs: {total}, Running: {running}, Pending: {pending}", bold=True))
+    click.echo(
+        click.style(
+            f"Total jobs: {total}, Running: {running}, Pending: {pending}", bold=True
+        )
+    )
 
     grp_key = df["identifier"].where(df["identifier"].notna())
     df = df.assign(_group=grp_key)
@@ -582,7 +751,13 @@ def report_jobs(partition=None, detailed=False):
 
         label_col = "ligand"
 
-        summary = sub.assign(label=sub[label_col]).groupby(["label"])["status"].value_counts().unstack(fill_value=0).reset_index()
+        summary = (
+            sub.assign(label=sub[label_col])
+            .groupby(["label"])["status"]
+            .value_counts()
+            .unstack(fill_value=0)
+            .reset_index()
+        )
 
         for need_col in ("RUNNING", "PENDING"):
             if need_col not in summary.columns:
@@ -597,19 +772,23 @@ def report_jobs(partition=None, detailed=False):
             label = r["label"]
             p = int(r.get("PENDING", 0))
             r_ = int(r.get("RUNNING", 0))
-            colored = click.style(f"{label}(P={p},R={r_})",
-                                  fg=("green" if r_ > 0 else "yellow" if p > 0 else "red"),
-                                  bold=(r_ > 0))
+            colored = click.style(
+                f"{label}(P={p},R={r_})",
+                fg=("green" if r_ > 0 else "yellow" if p > 0 else "red"),
+                bold=(r_ > 0),
+            )
             line_buf.append(colored)
 
         for i in range(0, len(line_buf), 4):
-            click.echo("   ".join(line_buf[i:i+4]))
+            click.echo("   ".join(line_buf[i : i + 4]))
 
         if detailed:
             click.echo(click.style("\nDetailed:", bold=True))
-            det = (sub[["jobid", "status", "stage", "ligand", "comp", "win"]]
+            det = (
+                sub[["jobid", "status", "stage", "ligand", "comp", "win"]]
                 .assign(win=sub["win"])
-                .sort_values(["stage", "ligand", "comp", "win"], key=_natkey_series))
+                .sort_values(["stage", "ligand", "comp", "win"], key=_natkey_series)
+            )
             with pd.option_context("display.width", 140, "display.max_columns", None):
                 click.echo(det.to_string(index=False))
         click.echo("-" * 70)
@@ -618,14 +797,21 @@ def report_jobs(partition=None, detailed=False):
 
 
 @cli.command("cancel-jobs")
-@click.option("--contains", "-c", required=True,
-              help="Cancel all jobs whose SLURM job name contains this substring (match against full 'fep_...').")
+@click.option(
+    "--contains",
+    "-c",
+    required=True,
+    help="Cancel all jobs whose SLURM job name contains this substring (match against full 'fep_...').",
+)
 def cancel_jobs(contains: str):
     """Cancel all SLURM jobs whose names contain ``contains``."""
     try:
         res = subprocess.run(
             ["squeue", "--user", os.getenv("USER"), "--format=%i %j"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
         )
     except subprocess.CalledProcessError as e:
         click.echo(f"Error querying SLURM: {e.stderr}")
@@ -646,7 +832,7 @@ def cancel_jobs(contains: str):
 
     click.echo(f"Cancelling {len(ids)} job(s)")
     for i in range(0, len(ids), 30):
-        batch = ids[i:i+30]
+        batch = ids[i : i + 30]
         try:
             subprocess.run(["scancel"] + batch, check=True)
         except subprocess.CalledProcessError as e:

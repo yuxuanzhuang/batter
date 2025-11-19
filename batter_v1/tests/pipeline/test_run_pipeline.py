@@ -4,7 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from datetime import datetime
-from batter import MABFESystem
+from batter_v1 import MABFESystem
 
 import pytest
 from batter_v1.tests.data import (pipeline_ligands_files,

@@ -30,7 +30,7 @@ def make_abfe_pipeline(
     only_fe_preparation: bool = False,
 ) -> Pipeline:
     """
-    ABFE pipeline (expanded):
+    ABFE pipeline:
 
     system_prep → param_ligands → prepare_equil → equil → equil_analysis
     → prepare_fe → prepare_fe_windows → fe_equil → fe → analyze
@@ -121,7 +121,6 @@ def make_abfe_pipeline(
         _step(
             "analyze",
             requires=["fe"],
-            mode="abfe",
             sim=sim,
             sys_params=params_model,
         )
@@ -148,9 +147,10 @@ def make_asfe_pipeline(
     only_fe_preparation: bool = False,
 ) -> Pipeline:
     """
-    ASFE pipeline (unchanged here for completeness):
+    ASFE pipeline:
 
-    param_ligands → prepare_fe → solvation → analyze
+    param_ligands → prepare_fe → prepare_fe_windows
+    → fe_equil → fe → analyze
     """
     steps: List[Step] = []
     params_model = (
@@ -210,7 +210,6 @@ def make_asfe_pipeline(
         _step(
             "analyze",
             requires=["fe"],
-            mode="asfe",
             sim=sim,
             sys_params=params_model,
         )

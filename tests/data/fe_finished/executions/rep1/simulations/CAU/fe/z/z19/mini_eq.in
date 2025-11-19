@@ -1,0 +1,32 @@
+*******************************************************
+*****************************       mini.in
+*******************************************************
+Minimizing.
+ &cntrl
+  imin = 1,
+  ntx = 1, 
+  ntxo = 1,
+  ntpr = 50,
+  maxcyc = 2000,
+  ncyc = 500,
+  irest = 0,
+  ntf = 1,
+  ntc = 1,
+  ntb = 1,
+  cut = 9.0,
+  nmropt = 1,
+  pencut = -1,
+  ntr = 1,
+  restraint_wt = 50.0,
+  restraintmask = '(@CA,C,N,P31 | :cau | :1) & !@H=',
+  infe = 1,
+ /
+ &pmd
+ output_file = 'cmass.txt'
+ output_freq = 500
+ cv_file = 'cv.in'
+ /
+ &wt type = 'END', /
+DISANG=disang.rest
+LISTOUT=POUT
+

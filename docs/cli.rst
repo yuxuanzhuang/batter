@@ -40,14 +40,27 @@ Use ``--format`` to output JSON/CSV/TSV instead of a table.
 
 Display a specific FE record::
 
-   batter fe show work/adrb2 run-20240101
+   batter fe show work/adrb2 run-20240101 --ligand LIG1
+
+If the run contains multiple ligands, pass ``--ligand`` to disambiguate.
+
+Re-run FE analysis for a saved execution::
+
+   batter fe analyze work/adrb2 run-20240101 --ligand LIG1 --workers 4
+
+Use ``--workers`` to control parallelism and ``--sim-range`` (``start,end``) to restrict
+which windows are parsed.
+Pass ``--no-raise-on-error`` to continue even if a ligand's analysis fails.
 
 Clone Executions
 ================
 
 Duplicate the directory structure of an execution (useful for what-if experiments)::
 
-   batter clone-exec work/adrb2 run-20240101 run-20240101-test --symlink --only-equil
+   batter clone-exec work/adrb2 run-20240101 run-20240101-test --mode symlink --only-equil
+
+Only metadata, inputs/params, equilibration artifacts, and a minimal ``fe/`` scaffold are copied,
+so the clone can start new simulations without recreating large FE dumps.
 
 SLURM Utilities
 ===============
