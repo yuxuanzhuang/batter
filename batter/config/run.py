@@ -396,6 +396,10 @@ class FESimArgs(BaseModel):
         default_factory=list,
         description="Default lambda schedule when component-specific overrides are not provided.",
     )
+    component_lambdas: Dict[str, List[float]] = Field(
+        default_factory=dict,
+        description="Per-component lambda overrides (key = letter).",
+    )
     blocks: int = Field(
         0,
         description="Number of MBAR blocks to use during analysis.",
@@ -522,6 +526,35 @@ class FESimArgs(BaseModel):
         if value <= 0.0:
             raise ValueError("Force constants must be non-zero and positive.")
         return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ingest_component_lambda_fields(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        payload = dict(data)
+        comp_map = dict(payload.get("component_lambdas") or {})
+
+        def _parse_lambda_value(val: Any) -> List[float]:
+            if val is None:
+                return []
+            if isinstance(val, str):
+                parts = [p for p in re.split(r"[,\s]+", val.strip()) if p]
+                return [float(p) for p in parts]
+            if isinstance(val, (list, tuple)):
+                return [float(v) for v in val]
+            return [float(val)]
+
+        for key in list(payload.keys()):
+            m = re.match(r"^([a-z])_lambdas$", key)
+            if not m:
+                continue
+            comp = m.group(1)
+            comp_map.setdefault(comp, _parse_lambda_value(payload.pop(key)))
+
+        payload["component_lambdas"] = comp_map
+        return payload
 
     @model_validator(mode="before")
     @classmethod

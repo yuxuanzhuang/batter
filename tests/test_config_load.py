@@ -47,6 +47,9 @@ lambdas: [0.0, 1.0]
 num_equil_extends: 2
 eq_steps: 1000
 neutralize_only: "YES"
+buffer_x: 20.0
+buffer_y: 20.0
+buffer_z: 20.0
 """
     )
 
@@ -89,6 +92,9 @@ def base_sim_kwargs(**overrides):
         "lambdas": [0.0, 1.0],
         "num_equil_extends": 2,
         "eq_steps": 1000,
+        "buffer_x": 15.0,
+        "buffer_y": 15.0,
+        "buffer_z": 15.0,
     }
     data.update(overrides)
     return data
@@ -119,6 +125,17 @@ def test_fesim_args_unsorted_lambdas():
         FESimArgs(lambdas=[0.5, 0.1])
 
 
+def test_fesim_args_ingests_legacy_step_keys():
+    args = FESimArgs.model_validate({"lambdas": [0, 1], "z_steps1": 60_000, "z_steps2": 70_000})
+    assert args.steps1["z"] == 60_000
+    assert args.steps2["z"] == 70_000
+
+
+def test_fesim_args_ingests_legacy_component_lambdas():
+    args = FESimArgs.model_validate({"lambdas": [0, 1], "z_lambdas": "0 0.5 1.0"})
+    assert args.component_lambdas["z"] == [0.0, 0.5, 1.0]
+
+
 def test_args_negative_force():
     with pytest.raises(ValidationError):
         FESimArgs(lig_distance_force=0.0)
@@ -147,8 +164,8 @@ def test_args_negative_force():
         ),
         ({"fe_type": "uno_rest", "lambdas": []}, "No lambdas defined"),
         (
-            {"buffer_x": 4.0, "buffer_y": 6.0, "buffer_z": 6.0},
-            "buffer_x must be >= 5.0",
+            {"buffer_x": 4.0, "buffer_y": 15.0, "buffer_z": 15.0},
+            "buffer_x must be >= 15.0",
         ),
         ({"neutralize_only": "maybe"}, "Invalid yes/no"),
     ],
@@ -197,16 +214,27 @@ def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     assert cfg.enable_mcwat == "yes"
 
 
+def test_component_lambdas_override_and_default() -> None:
+    base = base_sim_kwargs(
+        component_windows={"c": [0.0, 0.25, 1.0]},
+        lambdas=[0.0, 0.5, 1.0],
+    )
+    cfg = SimulationConfig(**base)
+    assert cfg.component_lambdas["c"] == [0.0, 0.25, 1.0]
+    # another active component should inherit the base lambdas
+    assert cfg.component_lambdas["a"] == [0.0, 0.5, 1.0]
+
+
 def test_sim_config_abfe_requires_z_steps(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         num_equil_extends=1,
         eq_steps=100,
-        z_steps1=0,
-        z_steps2=50,
+        steps1={"z": 0},
+        steps2={"z": 50},
     )
-    with pytest.raises(ValueError, match="ABFE protocol requires.*z_steps1"):
+    with pytest.raises(ValueError, match="requires positive steps for component 'z'"):
         SimulationConfig.from_sections(create, fe_args, protocol="abfe")
 
 
@@ -216,11 +244,25 @@ def test_sim_config_asfe_requires_y_steps(tmp_path: Path) -> None:
         lambdas=[0.0, 1.0],
         num_equil_extends=1,
         eq_steps=100,
-        y_steps1=0,
-        y_steps2=0,
+        steps1={"y": 0, "m": 10},
+        steps2={"y": 0, "m": 20},
     )
-    with pytest.raises(ValueError, match="ASFE protocol requires.*y_steps1"):
+    with pytest.raises(ValueError, match="requires positive steps for component 'y'"):
         SimulationConfig.from_sections(create, fe_args, protocol="asfe")
+
+
+def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        num_equil_extends=1,
+        eq_steps=100,
+        component_lambdas={"z": [0.0, 0.2, 0.4, 1.0]},
+        steps1={"z": 50_000},
+        steps2={"z": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.component_lambdas["z"] == [0.0, 0.2, 0.4, 1.0]
 
 
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:

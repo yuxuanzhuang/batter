@@ -33,9 +33,9 @@ The run YAML file is divided into three sections grouped inside
     are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
     (how many additional segments to run). The total number of equilibration MD
     steps therefore scales as ``num_equil_extends * eq_steps``. For FE production
-    the ``num_fe_extends`` field multiplies the stage-2 component steps (e.g.,
-    ``z_steps2``) so each window ultimately samples
-    ``num_fe_extends * <component>_steps2`` steps before moving on.
+    the ``num_fe_extends`` field multiplies the stage-2 component steps defined in
+    ``steps2`` so each window ultimately samples
+    ``num_fe_extends * steps2[component]`` steps before moving on.
 
 The helper :func:`batter.config.load_run_config` loads a YAML file into a
 validated :class:`~batter.config.run.RunConfig`, expanding environment variables
@@ -44,8 +44,22 @@ and ``~`` home shortcuts along the way.
 ``RunConfig.resolved_sim_config()`` produces the
 :class:`~batter.config.simulation.SimulationConfig` that downstream components
 consume. The developer guide documents this merged model in detail, including
-the protocol-specific validations that ensure ABFE runs define ``z_steps`` and
-ASFE runs define ``y_steps`` before simulation pipelines start.
+the protocol-specific validations that ensure ABFE runs define steps for ``z`` and
+ASFE runs define steps for ``y`` and ``m`` before simulation pipelines start.
+
+Per-component steps and lambdas
+-------------------------------
+
+Stage-1/Stage-2 component steps are supplied via ``fe_sim.steps1`` and
+``fe_sim.steps2`` as dicts keyed by the single-letter component (e.g. ``z: 50000``).
+Legacy keys like ``z_steps1``/``y_steps2`` are still accepted and folded into these
+maps automatically. Each protocol enforces the required components: ABFE fills
+``z`` defaults if omitted, and ASFE fills ``y``/``m`` defaults.
+
+Lambda schedules can be customized per component using ``fe_sim.component_lambdas``
+(or legacy ``<comp>_lambdas`` keys). When a component is missing from that map, it
+inherits the top-level ``fe_sim.lambdas`` list. Values can be written as YAML lists
+or comma/space separated strings; validation ensures ascending order.
 
 Component-Specific Inputs
 -------------------------

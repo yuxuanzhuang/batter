@@ -112,10 +112,36 @@ class SimulationConfig(BaseModel):
                 out[comp_key] = int(value)
             return out
 
+        def _coerce_lambda_list(name: str, seq: Any) -> List[float]:
+            if seq is None:
+                return []
+            if isinstance(seq, str):
+                parts = [p for p in re.split(r"[,\s]+", seq.strip()) if p]
+                out = [float(p) for p in parts]
+            elif isinstance(seq, (list, tuple)):
+                out = [float(x) for x in seq]
+            else:
+                out = [float(seq)]
+            if out and any(left > right for left, right in zip(out, out[1:])):
+                raise ValueError(f"{name} values must be in ascending order.")
+            return out
+
         steps1 = _coerce_step_dict("steps1", dict(_fe_attr("steps1", dict) or {}))
         steps2 = _coerce_step_dict(
             "steps2", dict(_fe_attr("steps2", lambda: {"x": 300_000, "y": 300_000}) or {})
         )
+        base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
+        component_lambda_map: dict[str, List[float]] = {}
+        raw_component_lambdas = dict(_fe_attr("component_lambdas", dict) or {})
+        for comp, seq in raw_component_lambdas.items():
+            comp_key = str(comp).strip().lower()
+            if comp_key not in FEP_COMPONENTS:
+                raise ValueError(
+                    f"Unknown component '{comp_key}' in component_lambdas; valid components: {', '.join(sorted(FEP_COMPONENTS))}."
+                )
+            component_lambda_map[comp_key] = _coerce_lambda_list(
+                f"component_lambdas['{comp_key}']", seq
+            )
 
         required_components = {
             "abfe": ["z"],
@@ -158,7 +184,8 @@ class SimulationConfig(BaseModel):
             "remd": coerce_yes_no(_fe_attr("remd", lambda: "no")),
             "rocklin_correction": coerce_yes_no(_fe_attr("rocklin_correction", lambda: "no")),
             "enable_mcwat": coerce_yes_no(_fe_attr("enable_mcwat", lambda: "yes")),
-            "lambdas": list(_fe_attr("lambdas", list) or []),
+            "lambdas": base_lambdas,
+            "component_windows": component_lambda_map,
             "blocks": int(_fe_attr("blocks", lambda: 0)),
             "lig_buffer": float(_fe_attr("lig_buffer", lambda: 15.0)),
             "lig_distance_force": float(_fe_attr("lig_distance_force", lambda: 5.0)),
