@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 _ANCHOR_RE = re.compile(r"^:?\d+@[\w\d]+$")  # e.g., ":85@CA" or "85@CA"
 
-MEMBRANE_EXEMPT_COMPONENTS = {"y"}
+MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
 PROTOCOL_TO_FE_TYPE = {
     "abfe": "uno_rest",
@@ -94,7 +94,7 @@ class SimulationConfig(BaseModel):
         proto_key = (protocol or "").lower()
         _component_steps_requirements = {
             "abfe": ["z_steps1", "z_steps2"],
-            "asfe": ["y_steps1", "y_steps2"],
+            "asfe": ["y_steps1", "y_steps2", "m_steps1", "m_steps2"],
         }
         for field in _component_steps_requirements.get(proto_key, []):
             value = _fe_attr(field, lambda: 0)
@@ -140,12 +140,12 @@ class SimulationConfig(BaseModel):
             "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
             "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
             "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
-            "buffer_x": float(_fe_attr("buffer_x", lambda: 10.0)),
-            "buffer_y": float(_fe_attr("buffer_y", lambda: 10.0)),
-            "buffer_z": float(_fe_attr("buffer_z", lambda: 10.0)),
+            "buffer_x": float(_fe_attr("buffer_x", lambda: 15.0)),
+            "buffer_y": float(_fe_attr("buffer_y", lambda: 15.0)),
+            "buffer_z": float(_fe_attr("buffer_z", lambda: 15.0)),
             "temperature": float(_fe_attr("temperature", lambda: 310.0)),
             "dt": float(_fe_attr("dt", lambda: 0.004)),
-            "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "no")),
+            "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "yes")),
             "release_eq": fe_release_eq,
             "num_equil_extends": num_equil_extends,
             "eq_steps": eq_steps_value,
@@ -432,7 +432,7 @@ class SimulationConfig(BaseModel):
             case "uno_dd":
                 self.components, self.dec_method = ['z', 'y'], "dd"
             case "asfe":
-                self.components, self.dec_method = ['y'], "sdr"
+                self.components, self.dec_method = ['y', 'm'], "sdr"
             case "md":
                 self.components, self.dec_method = [], None
 
@@ -470,8 +470,8 @@ class SimulationConfig(BaseModel):
     def _check_water_compatibility(self) -> None:
         # make sure buffer_x/y/z is > 5.0 Å
         for dim, buf in zip(("X","Y","Z"), (self.buffer_x, self.buffer_y, self.buffer_z)):
-            if buf < 5.0:
-                raise ValueError(f"For water simulations, buffer_{dim.lower()} must be >= 5.0 Å (got {buf}).")
+            if buf < 15.0:
+                raise ValueError(f"For water simulations, buffer_{dim.lower()} must be >= 15.0 Å (got {buf}).")
 
     # convenience
     def to_dict(self) -> Dict[str, Any]:

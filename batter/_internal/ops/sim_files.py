@@ -522,3 +522,95 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("LISTOUT=POUT\n")
 
     logger.debug(f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}")
+
+@register_sim_files("m")
+def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
+    """
+    Generate MD input files for vaccum ligand-only component 'm'.
+    """
+    sim = ctx.sim
+    mol = ctx.residue_name
+    windows_dir = ctx.window_dir
+
+    temperature = sim.temperature
+    num_sim = int(sim.num_fe_extends)
+    steps1 = sim.dic_steps1["m"]
+    steps2 = sim.dic_steps2["m"]
+    ntwx = sim.ntwx
+
+    weight = lambdas[ctx.win if ctx.win != -1 else 0]
+    mk1 = 2  # ligand-only marker convention
+
+    amber_dir = ctx.amber_dir
+
+    # mini.in from ligand template
+    with (amber_dir / "mini-unorest-vacuum").open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
+        for line in fin:
+            line = (
+                line.replace("_temperature_", str(temperature))
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                    .replace("_lig_name_", mol)
+            )
+            fout.write(line)
+
+    # mini_eq.in from generic mini template
+    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open("wt") as fout:
+        for line in fin:
+            fout.write(line.replace("_lig_name_", mol))
+
+    # eqnpt.in / eqnpt0.in from ligand templates
+    with (amber_dir / "eqnpt-vacuum.in").open("rt") as fin, (windows_dir / "eqnpt.in").open("wt") as fout:
+        for line in fin:
+            fout.write(
+                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
+            )
+    with (amber_dir / "eqnpt0-vacuum.in").open("rt") as fin, (windows_dir / "eqnpt0.in").open("wt") as fout:
+        for line in fin:
+            fout.write(
+                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
+            )
+
+    # per-window production inputs
+    template = amber_dir / "mdin-unorest-vacuum"
+    for i in range(0, num_sim + 1):
+        out_path = windows_dir / f"mdin-{i:02d}"
+        n_steps_run = str(steps1) if i == 0 else str(steps2)
+
+        with template.open("rt") as fin, out_path.open("wt") as fout:
+            for line in fin:
+                if i == 0:
+                    if "ntx = 5" in line:
+                        line = "ntx = 1,\n"
+                    elif "irest" in line:
+                        line = "irest = 0,\n"
+                    elif "dt = " in line:
+                        line = "dt = 0.001,\n"
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                        .replace("_num-steps_", n_steps_run)
+                        .replace("lbd_val", f"{float(weight):6.5f}")
+                        .replace("mk1", str(mk1))
+                        .replace("disang_file", "disang")
+                        .replace("_lig_name_", mol)
+                )
+                fout.write(line)
+
+        with out_path.open("a") as mdin:
+            mdin.write(f"  mbar_states = {len(lambdas)}\n")
+            mdin.write("  mbar_lambda =")
+            for lbd in lambdas:
+                mdin.write(f" {lbd:6.5f},")
+            mdin.write("\n")
+            mdin.write("  infe = 0,\n")
+            mdin.write(" /\n")
+            mdin.write(" &pmd \n")
+            mdin.write("  output_file = 'cmass.txt'\n")
+            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+            mdin.write("  cv_file = 'cv.in'\n")
+            mdin.write(" /\n")
+            mdin.write(" &wt type = 'END' , /\n")
+            mdin.write("DISANG=disang.rest\n")
+            mdin.write("LISTOUT=POUT\n")
+
+    logger.debug(f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}")

@@ -643,6 +643,55 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
 
     logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
 
+@register_restraints("m")
+def _build_restraints_m(builder, ctx: BuildContext) -> None:
+    """
+    Ligand-only (vacuum FE) restraints:
+      - disang.rest: empty (no AMBER &rst blocks)
+      - restraints.in: minimal analysis driver (optional)
+    """
+    windows_dir = ctx.window_dir
+    lig = ctx.ligand
+    mol = ctx.residue_name
+
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"[restraints:y] Missing ligand-only vac.pdb: {vac_pdb}")
+
+    # read ligand-only coords and collect heavy atom serials (1-based) for AMBER
+    u_lig = mda.Universe(vac_pdb.as_posix())
+    # prefer selecting by resname if present, otherwise just take all non-H
+    try:
+        lig_atoms = u_lig.select_atoms(f"resname {mol} and not name H*")
+        if lig_atoms.n_atoms == 0:
+            lig_atoms = u_lig.select_atoms("not name H*")
+    except Exception:
+        lig_atoms = u_lig.select_atoms("not name H*")
+
+    if lig_atoms.n_atoms == 0:
+        raise RuntimeError("[restraints:y] Found zero ligand heavy atoms in vac.pdb")
+
+    hvy_serials = [str(a.ix + 1) for a in lig_atoms]  # 1-based serials for AMBER masks
+
+    # strengths from sim.rest: [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
+    rest = ctx.sim.rest
+    try:
+        lcom = float(rest[6])
+    except Exception:
+        raise ValueError(f"[restraints:y] Invalid sim.rest; expected length ≥ 7, got: {rest}")
+
+    # ---- disang.rest: empty (legacy behavior) ----
+    (windows_dir / "disang.rest").write_text("\n")
+
+    # (Optional) very small analysis driver to keep downstream scripts happy
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write("# ligand-only; no &rst metrics\nnoexitonerror\nparm vac.prmtop\n")
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+
+    logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
+
 
 @register_restraints("x")
 def _build_restraints_x(builder, ctx: BuildContext) -> None:
