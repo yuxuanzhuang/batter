@@ -71,7 +71,6 @@ def _normalize_for_hash(obj: Any) -> Any:
 
 def _compute_run_signature(
     yaml_path: Path,
-    system_overrides: Dict[str, Any] | None,
     run_overrides: Dict[str, Any] | None,
 ) -> str:
     raw = Path(yaml_path).read_text()
@@ -79,7 +78,7 @@ def _compute_run_signature(
     yaml_data.pop("run", None)
     payload = {
         "config": _normalize_for_hash(yaml_data),
-        "system_overrides": _normalize_for_hash(system_overrides or {}),
+        "run_overrides": _normalize_for_hash(run_overrides or {}),
     }
     frozen = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(frozen).hexdigest()
@@ -166,8 +165,8 @@ def _select_system_builder(protocol: str, system_type: str | None) -> SystemBuil
     builder_cls, expected_type = _builder_info_for_protocol(protocol)
     if system_type and system_type != expected_type:
         raise ValueError(
-            f"system.type={system_type!r} is incompatible with protocol '{protocol}'. "
-            f"Expected '{expected_type}'. Remove or update 'system.type'."
+            f"run.system_type={system_type!r} is incompatible with protocol '{protocol}'. "
+            f"Expected '{expected_type}'. Remove or update 'run.system_type'."
         )
     return builder_cls()
 
@@ -235,7 +234,6 @@ def generate_run_id(protocol: str, system_name: str) -> str:
 def run_from_yaml(
     path: Path | str,
     on_failure: Literal["prune", "raise", "retry"] = None,
-    system_overrides: Dict[str, Any] = None,
     run_overrides: Dict[str, Any] | None = None,
 ) -> None:
     """Execute a BATTER workflow described by a YAML file.
@@ -246,8 +244,6 @@ def run_from_yaml(
         Path to the top-level run YAML file.
     on_failure : {"prune", "raise", "retry"}, optional
         Override for the failure policy applied to ligand pipelines.
-    system_overrides : dict, optional
-        Mapping of fields that should override ``system`` section values at load time.
     run_overrides : dict, optional
         Overrides applied to the ``run`` section (e.g., only FE preparation).
     """
@@ -256,11 +252,6 @@ def run_from_yaml(
 
     # Configs
     rc = RunConfig.load(path)
-    if system_overrides:
-        logger.info(f"Applying system overrides: {system_overrides}")
-        rc = rc.model_copy(
-            update={"system": rc.system.model_copy(update=system_overrides)}
-        )
     if run_overrides:
         logger.info(f"Applying run overrides: {run_overrides}")
         rc = rc.model_copy(update={"run": rc.run.model_copy(update=run_overrides)})
@@ -272,7 +263,7 @@ def run_from_yaml(
 
     # ligand params output directory
     if rc.create.param_outdir is None:
-        rc.create.param_outdir = str(Path(rc.system.output_folder) / "ligand_params")
+        rc.create.param_outdir = str(rc.run.output_folder / "ligand_params")
     else:
         logger.info(
             f"Using user-specified ligand param_outdir: {rc.create.param_outdir}"
@@ -312,14 +303,14 @@ def run_from_yaml(
         register_local_handlers(backend)
 
     # Shared System Build (system-level assets live under sys.root)
-    builder = _select_system_builder(rc.protocol, rc.system.type)
+    builder = _select_system_builder(rc.protocol, rc.run.system_type)
 
     requested_run_id = getattr(rc.run, "run_id", "auto")
-    config_signature = _compute_run_signature(path, system_overrides, run_overrides)
+    config_signature = _compute_run_signature(path, run_overrides)
 
     while True:
         run_id, run_dir = select_run_id(
-            rc.system.output_folder,
+            rc.run.output_folder,
             rc.protocol,
             rc.create.system_name,
             requested_run_id,
@@ -339,7 +330,7 @@ def run_from_yaml(
         )
         requested_run_id = "auto"
         run_id = generate_run_id(rc.protocol, rc.create.system_name)
-        run_dir = Path(rc.system.output_folder) / "executions" / run_id
+        run_dir = Path(rc.run.output_folder) / "executions" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         continue
 
@@ -716,7 +707,7 @@ def run_from_yaml(
         )
         return
 
-    store = ArtifactStore(rc.system.output_folder)
+    store = ArtifactStore(rc.run.output_folder)
     repo = FEResultsRepository(store)
     analysis_range = (
         tuple(sim_cfg_updated.analysis_fe_range)
@@ -761,7 +752,7 @@ def run_from_yaml(
         )
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
     logger.success(
-        f"All phases completed {run_dir}. FE records saved to repository {rc.system.output_folder}/results/."
+        f"All phases completed {run_dir}. FE records saved to repository {rc.run.output_folder}/results/."
     )
 
     _notify_run_completion(rc, run_id, run_dir, failures)
@@ -779,7 +770,7 @@ def _notify_run_completion(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     subject = f"BATTER run '{run_id}' of {rc.create.system_name} completed"
-    results_path = Path(rc.system.output_folder) / "results"
+    results_path = Path(rc.run.output_folder) / "results"
 
     body_lines = [
         "Hi there!",

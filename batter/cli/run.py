@@ -145,7 +145,7 @@ def cmd_run(
     on_failure : {"prune", "raise"}
         Failure policy for ligand pipelines.
     output_folder : Path, optional
-        Override for the system output folder.
+        Override for the run output folder.
     run_id : str, optional
         Requested execution identifier (``auto`` reuses the latest).
     allow_run_id_mismatch : bool, optional
@@ -159,10 +159,9 @@ def cmd_run(
     slurm_manager_path : Path, optional
         Optional path to a SLURM header/template file.
     """
-    system_overrides = {}
-    if output_folder:
-        system_overrides["output_folder"] = output_folder
     run_over = {}
+    if output_folder:
+        run_over["output_folder"] = output_folder
     if run_id is not None:
         run_over["run_id"] = run_id
     if allow_run_id_mismatch is not None:
@@ -176,14 +175,6 @@ def cmd_run(
     try:
         base_cfg = RunConfig.load(yaml_path)
         cfg_for_validation = base_cfg
-        if system_overrides:
-            cfg_for_validation = cfg_for_validation.model_copy(
-                update={
-                    "system": cfg_for_validation.system.model_copy(
-                        update=system_overrides
-                    )
-                }
-            )
         if run_over:
             cfg_for_validation = cfg_for_validation.model_copy(
                 update={"run": cfg_for_validation.run.model_copy(update=run_over)}
@@ -254,7 +245,6 @@ def cmd_run(
     run_from_yaml(
         yaml_path,
         on_failure=on_failure.lower(),
-        system_overrides=(system_overrides or None),
         run_overrides=(run_over or None),
     )
 

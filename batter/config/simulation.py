@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Literal, TYPE_CHECKING, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Literal, TYPE_CHECKING, Tuple
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr, field_validator, model_validator
 import re
 from loguru import logger
@@ -15,6 +15,12 @@ _ANCHOR_RE = re.compile(r"^:?\d+@[\w\d]+$")  # e.g., ":85@CA" or "85@CA"
 
 MEMBRANE_EXEMPT_COMPONENTS = {"y"}
 
+PROTOCOL_TO_FE_TYPE = {
+    "abfe": "uno_rest",
+    "asfe": "asfe",
+    "md": "md",
+}
+
 class SimulationConfig(BaseModel):
     """
     Simulation configuration for ABFE/ASFE workflows.
@@ -28,6 +34,8 @@ class SimulationConfig(BaseModel):
         fe: "FESimArgs",
         *,
         partition: str | None = None,
+        protocol: str | None = None,
+        fe_type: str | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -71,7 +79,29 @@ class SimulationConfig(BaseModel):
         def _fe_attr(name: str, default):
             if hasattr(fe, name):
                 return getattr(fe, name)
+            if isinstance(fe, Mapping) and name in fe:
+                return fe[name]
             return default() if callable(default) else default
+
+        resolved_fe_type = fe_type
+        if resolved_fe_type is None and protocol:
+            resolved_fe_type = PROTOCOL_TO_FE_TYPE.get(protocol.lower())
+        if resolved_fe_type is None:
+            resolved_fe_type = _fe_attr("fe_type", lambda: None)
+        if resolved_fe_type is None:
+            resolved_fe_type = "md"
+
+        proto_key = (protocol or "").lower()
+        _component_steps_requirements = {
+            "abfe": ["z_steps1", "z_steps2"],
+            "asfe": ["y_steps1", "y_steps2"],
+        }
+        for field in _component_steps_requirements.get(proto_key, []):
+            value = _fe_attr(field, lambda: 0)
+            if value is None or value <= 0:
+                raise ValueError(
+                    f"{proto_key.upper()} protocol requires `{field}` to be positive, got {value!r}."
+                )
 
         num_equil_extends = max(0, int(_fe_attr("num_equil_extends", lambda: 0)))
         eq_steps_value = int(_fe_attr("eq_steps", lambda: 1_000_000))
@@ -97,7 +127,7 @@ class SimulationConfig(BaseModel):
             analysis_fe_range_value = _analysis_range_default()
 
         fe_data: dict[str, Any] = {
-            "fe_type": _fe_attr("fe_type", lambda: "md"),
+            "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
             "remd": coerce_yes_no(_fe_attr("remd", lambda: "no")),
             "rocklin_correction": coerce_yes_no(_fe_attr("rocklin_correction", lambda: "no")),

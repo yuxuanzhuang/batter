@@ -5,7 +5,7 @@ import json
 from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
-from batter.config.simulation import SimulationConfig
+from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
 from batter.config.utils import (
     coerce_yes_no,
     expand_env_vars,
@@ -91,45 +91,6 @@ class SlurmConfig(BaseModel):
 
 # ----------------------------- Sections ---------------------------------
 
-
-class SystemSection(BaseModel):
-    type: Literal["MABFE", "MASFE"] | None = Field(
-        None,
-        description=(
-            "Optional override for the system builder. When omitted, the orchestrator "
-            "chooses based on the protocol (``abfe``/``md`` → MABFE, ``asfe`` → MASFE)."
-        ),
-    )
-    output_folder: Path = Field(
-        ...,
-        description="Directory where system artifacts and executions will be written.",
-    )
-
-    def resolve_paths(self, base: Path) -> "SystemSection":
-        """
-        Return a copy where ``output_folder`` is absolute relative to ``base``.
-        """
-        folder = self.output_folder
-        if not folder.is_absolute():
-            folder = (base / folder).resolve()
-        return self.model_copy(update={"output_folder": folder})
-
-    @field_validator("output_folder", mode="before")
-    @classmethod
-    def _coerce_path(cls, v):
-        if v is None or (isinstance(v, str) and not v.strip()):
-            raise ValueError("`system.output_folder` is required.")
-        return Path(v)
-
-    @field_validator("type", mode="before")
-    @classmethod
-    def _normalize_type(cls, value):
-        if value is None:
-            return None
-        text = str(value).strip().upper()
-        if text not in {"MABFE", "MASFE"}:
-            raise ValueError("system.type must be 'MABFE', 'MASFE', or omitted.")
-        return text
 
 
 class CreateArgs(BaseModel):
@@ -410,17 +371,13 @@ class FESimArgs(BaseModel):
     """
     Free-energy simulation knobs loaded from the ``fe_sim`` section.
 
-    The fields map directly onto :class:`batter.config.simulation.SimulationConfig`
-    overrides. Most values are optional and fall back to the defaults assembled in
-    :class:`SimulationConfig`.
+    The fields feed directly into :class:`batter.config.simulation.SimulationConfig`
+    overrides. ``fe_type`` is resolved internally from ``protocol`` rather than
+    being set by users.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    fe_type: str = Field(
-        "uno_rest",
-        description="Free-energy protocol type passed to the simulation configuration.",
-    )
     dec_int: str = Field(
         "mbar",
         description="Free-energy integration scheme (``mbar`` or ``ti``).",
@@ -606,9 +563,20 @@ class MDSimArgs(BaseModel):
 
 
 class RunSection(BaseModel):
-    """Run-related settings."""
+    """Run-related settings, including where outputs land."""
 
     model_config = ConfigDict(extra="forbid")
+    output_folder: Path = Field(
+        ...,
+        description="Directory where system artifacts and executions are stored.",
+    )
+    system_type: Literal["MABFE", "MASFE"] | None = Field(
+        None,
+        description=(
+            "Optional override for the system builder. When omitted, the orchestrator "
+            "chooses the builder based on the protocol."
+        ),
+    )
     only_fe_preparation: bool = Field(
         False,
         description="When true, stop the workflow after FE preparation.",
@@ -650,6 +618,32 @@ class RunSection(BaseModel):
 
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
+    def resolve_paths(self, base: Path) -> "RunSection":
+        """
+        Return a copy where ``output_folder`` is absolute relative to ``base``.
+        """
+        folder = self.output_folder
+        if not folder.is_absolute():
+            folder = (base / folder).resolve()
+        return self.model_copy(update={"output_folder": folder})
+
+    @field_validator("output_folder", mode="before")
+    @classmethod
+    def _coerce_output_folder(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("`run.output_folder` is required.")
+        return Path(v)
+
+    @field_validator("system_type", mode="before")
+    @classmethod
+    def _normalize_system_type(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip().upper()
+        if text not in {"MABFE", "MASFE"}:
+            raise ValueError("run.system_type must be 'MABFE', 'MASFE', or omitted.")
+        return text
+
 
 class RunConfig(BaseModel):
     """Top-level YAML config."""
@@ -664,13 +658,12 @@ class RunConfig(BaseModel):
         "local", description="Execution backend."
     )
 
-    system: SystemSection = Field(..., description="System-level configuration block.")
     create: CreateArgs = Field(..., description="Settings for system creation/staging.")
     fe_sim: Dict[str, Any] | FESimArgs | MDSimArgs = Field(
         default_factory=dict, description="Simulation parameter overrides."
     )
     run: RunSection = Field(
-        default_factory=RunSection, description="Execution controls."
+        ..., description="Execution controls and artifact destination."
     )
 
     @model_validator(mode="after")
@@ -751,21 +744,12 @@ class RunConfig(BaseModel):
             Simulation parameters derived from ``create`` and ``fe_sim`` sections.
         """
         fe_args = self.fe_sim
-        fields_set = getattr(fe_args, "__pydantic_fields_set__", set())
-        protocol_to_fe_type = {
-            "abfe": "uno_rest",
-            "asfe": "asfe",
-            "md": "md",
-        }
-        desired_fe_type = protocol_to_fe_type.get(self.protocol)
-        updates: dict[str, Any] = {}
-        if desired_fe_type and "fe_type" not in fields_set:
-            updates["fe_type"] = desired_fe_type
-        if updates:
-            fe_args = fe_args.model_copy(update=updates)
+        desired_fe_type = PROTOCOL_TO_FE_TYPE.get(self.protocol)
         return SimulationConfig.from_sections(
             self.create,
             fe_args,
+            protocol=self.protocol,
+            fe_type=desired_fe_type,
             partition=self.run.slurm.partition,
         )
 
@@ -773,11 +757,9 @@ class RunConfig(BaseModel):
         """
         Return a copy with relative paths resolved against ``base_dir``.
         """
-        resolved_system = self.system.resolve_paths(base_dir)
         resolved_create = self.create.resolve_paths(base_dir)
-        return self.model_copy(
-            update={"system": resolved_system, "create": resolved_create}
-        )
+        resolved_run = self.run.resolve_paths(base_dir)
+        return self.model_copy(update={"create": resolved_create, "run": resolved_run})
 
 
 RunConfig.model_rebuild()
