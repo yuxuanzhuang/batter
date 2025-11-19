@@ -72,7 +72,7 @@ def _normalize_for_hash(obj: Any) -> Any:
 def _compute_run_signature(
     yaml_path: Path,
     run_overrides: Dict[str, Any] | None,
-) -> str:
+) -> tuple[str, Dict[str, Any]]:
     raw = Path(yaml_path).read_text()
     yaml_data = yaml.safe_load(raw) or {}
     yaml_data.pop("run", None)
@@ -81,7 +81,7 @@ def _compute_run_signature(
         "run_overrides": _normalize_for_hash(run_overrides or {}),
     }
     frozen = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(frozen).hexdigest()
+    return hashlib.sha256(frozen).hexdigest(), payload
 
 
 def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
@@ -89,6 +89,21 @@ def _stored_signature(run_dir: Path) -> tuple[str | None, Path]:
     if sig_path.exists():
         return sig_path.read_text().strip(), sig_path
     return None, sig_path
+
+
+def _stored_payload(run_dir: Path) -> Dict[str, Any] | None:
+    path = _payload_path(run_dir)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning("Failed to load stored run payload from %s: %s", path, exc)
+        return None
+
+
+def _payload_path(run_dir: Path) -> Path:
+    return run_dir / "artifacts" / "config" / "run_config.normalized.json"
 
 
 def _ligand_names_path(run_dir: Path) -> Path:
@@ -117,6 +132,8 @@ def _resolve_signature_conflict(
     requested_run_id: str | None,
     allow_run_id_mismatch: bool,
     *,
+    stored_payload: Dict[str, Any] | None,
+    current_payload: Dict[str, Any] | None,
     run_id: str,
     run_dir: Path,
 ) -> bool:
@@ -132,13 +149,65 @@ def _resolve_signature_conflict(
     """
     if stored_sig is None or stored_sig == config_signature:
         return True
+
+    def _diff_dicts(
+        left: Any, right: Any, prefix: str = ""
+    ) -> list[tuple[str, Any, Any]]:
+        if type(left) != type(right):
+            return [(prefix or ".", left, right)]
+        if isinstance(left, dict):
+            out: list[tuple[str, Any, Any]] = []
+            keys = set(left) | set(right)
+            for k in sorted(keys):
+                lp = prefix + ("." if prefix else "") + str(k)
+                if k not in left:
+                    out.append((lp, None, right[k]))
+                elif k not in right:
+                    out.append((lp, left[k], None))
+                else:
+                    out.extend(_diff_dicts(left[k], right[k], lp))
+            return out
+        if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+            out: list[tuple[str, Any, Any]] = []
+            max_len = max(len(left), len(right))
+            for idx in range(max_len):
+                lp = prefix + f"[{idx}]"
+                lval = left[idx] if idx < len(left) else None
+                rval = right[idx] if idx < len(right) else None
+                out.extend(_diff_dicts(lval, rval, lp))
+            return out
+        return [] if left == right else [(prefix or ".", left, right)]
+
+    diffs = []
+    if stored_payload and current_payload:
+        diffs = _diff_dicts(stored_payload, current_payload, prefix="config")
+
     if requested_run_id == "auto":
+        if diffs:
+            logger.info(
+                "Existing execution %s does not match current configuration; differences: %s",
+                run_dir,
+                "; ".join(f"{p}: stored={l!r}, current={r!r}" for p, l, r in diffs[:8]),
+            )
         return False
     if allow_run_id_mismatch:
-        logger.warning(
-            f"Execution '{run_id}' already exists with configuration hash {stored_sig[:12]} (current {config_signature[:12]}); "
-            "continuing because --allow-run-id-mismatch is enabled.",
-        )
+        if diffs:
+            logger.warning(
+                "Execution '%s' already exists with configuration hash %s (current %s); "
+                "continuing because --allow-run-id-mismatch is enabled. Differences: %s",
+                run_id,
+                stored_sig[:12],
+                config_signature[:12],
+                "; ".join(f"{p}: stored={l!r}, current={r!r}" for p, l, r in diffs[:8]),
+            )
+        else:
+            logger.warning(
+                "Execution '%s' already exists with configuration hash %s (current %s); "
+                "continuing because --allow-run-id-mismatch is enabled.",
+                run_id,
+                stored_sig[:12],
+                config_signature[:12],
+            )
         return True
     raise RuntimeError(
         f"Execution '{run_id}' already exists with a different configuration. "
@@ -306,7 +375,7 @@ def run_from_yaml(
     builder = _select_system_builder(rc.protocol, rc.run.system_type)
 
     requested_run_id = getattr(rc.run, "run_id", "auto")
-    config_signature = _compute_run_signature(path, run_overrides)
+    config_signature, config_payload = _compute_run_signature(path, run_overrides)
 
     while True:
         run_id, run_dir = select_run_id(
@@ -316,6 +385,7 @@ def run_from_yaml(
             requested_run_id,
         )
         stored_sig, sig_path = _stored_signature(run_dir)
+        stored_payload = _stored_payload(run_dir)
         if _resolve_signature_conflict(
             stored_sig,
             config_signature,
@@ -323,6 +393,8 @@ def run_from_yaml(
             rc.run.allow_run_id_mismatch,
             run_id=run_id,
             run_dir=run_dir,
+            stored_payload=stored_payload,
+            current_payload=config_payload,
         ):
             break
         logger.info(
@@ -361,6 +433,9 @@ def run_from_yaml(
     sys_exec = builder.build(sys_exec, rc.create)
     sig_path.parent.mkdir(parents=True, exist_ok=True)
     sig_path.write_text(config_signature + "\n")
+    _payload_path(run_dir).write_text(
+        json.dumps(config_payload, sort_keys=True, indent=2)
+    )
 
     # Per-execution run directory (auto-resume latest when 'auto')
     logger.add(run_dir / "batter.run.log", level="DEBUG")
