@@ -684,10 +684,9 @@ class RunSection(BaseModel):
         ),
     )
     amber_setup_sh: str | None = Field(
-        None,
+        "$GROUP_HOME/software/amber24/setup_amber.sh",
         description=(
-            "Optional path to a shell script used to load AMBER in generated SLURM scripts "
-            "(defaults to $GROUP_HOME/software/amber24/setup_amber.sh)."
+            "Path to a shell script used to load AMBER simulation environment."
         ),
     )
 

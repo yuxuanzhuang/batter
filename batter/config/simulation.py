@@ -183,12 +183,9 @@ class SimulationConfig(BaseModel):
         if analysis_fe_range_value is None:
             analysis_fe_range_value = _analysis_range_default()
 
-        amber_setup = (
-            amber_setup_sh
-            or cls.model_fields.get("amber_setup_sh", {}).default
-            or "$GROUP_HOME/software/amber24/setup_amber.sh"
-        )
-        expanded_amber_setup = Path(os.path.expandvars(amber_setup)).expanduser()
+        default_amber = cls.model_fields.get("amber_setup_sh").default
+        raw_amber_setup = amber_setup_sh or default_amber
+        expanded_amber_setup = Path(os.path.expandvars(raw_amber_setup)).expanduser()
         if not expanded_amber_setup.exists():
             logger.warning(
                 "amber_setup_sh points to {}, but the file was not found. "
@@ -232,7 +229,7 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
-            "amber_setup_sh": amber_setup,
+            "amber_setup_sh": str(expanded_amber_setup),
         }
 
         infe_flag = bool(extra_conf_rest)

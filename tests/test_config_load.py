@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -390,9 +391,8 @@ def test_amber_setup_sh_defaults_and_override(tmp_path: Path) -> None:
         steps2={"z": 20},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert (
-        cfg.amber_setup_sh == "$GROUP_HOME/software/amber24/setup_amber.sh"
-    )
+    default_path = Path(os.path.expandvars("$GROUP_HOME/software/amber24/setup_amber.sh")).expanduser()
+    assert cfg.amber_setup_sh == str(default_path)
 
     setup_sh = tmp_path / "amber.sh"
     setup_sh.write_text("#!/bin/bash\necho amber\n")
