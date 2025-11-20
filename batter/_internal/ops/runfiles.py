@@ -87,10 +87,6 @@ def write_fe_run_file(
     dst_dir = ctx.window_dir
     dst_dir.mkdir(parents=True, exist_ok=True)
 
-    # templates (fail clearly if missing)
-    tpl_check = src_dir / "check_run.bash"
-    tpl_local = src_dir / "run-local.bash"
-    tpl_slurm = src_dir / "SLURMM-Am"
 
     # replacements
     pose = ctx.ligand
@@ -100,6 +96,14 @@ def write_fe_run_file(
     hmr = ctx.sim.hmr
     n_windows = len(lambdas)
 
+    # templates (fail clearly if missing)
+    tpl_check = src_dir / "check_run.bash"
+    if comp != "m":
+        tpl_local = src_dir / "run-local.bash"
+    else:
+        tpl_local = src_dir / "run-local-vacuum.bash"
+
+    tpl_slurm = src_dir / "SLURMM-Am"
     if not hasattr(ctx.sim, "system_name"):
         raise AttributeError(
             "SimulationConfig is missing 'system_name'. "

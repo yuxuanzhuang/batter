@@ -544,7 +544,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     amber_dir = ctx.amber_dir
 
     # mini.in from ligand template
-    with (amber_dir / "mini-unorest-vacuum").open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
+    with (amber_dir / "mini-unorest-vacuum").open("rt") as fin, (windows_dir / "mini_eq.in").open("wt") as fout:
         for line in fin:
             line = (
                 line.replace("_temperature_", str(temperature))
@@ -553,23 +553,6 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     .replace("_lig_name_", mol)
             )
             fout.write(line)
-
-    # mini_eq.in from generic mini template
-    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open("wt") as fout:
-        for line in fin:
-            fout.write(line.replace("_lig_name_", mol))
-
-    # eqnpt.in / eqnpt0.in from ligand templates
-    with (amber_dir / "eqnpt-vacuum.in").open("rt") as fin, (windows_dir / "eqnpt.in").open("wt") as fout:
-        for line in fin:
-            fout.write(
-                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
-            )
-    with (amber_dir / "eqnpt0-vacuum.in").open("rt") as fin, (windows_dir / "eqnpt0.in").open("wt") as fout:
-        for line in fin:
-            fout.write(
-                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
-            )
 
     # per-window production inputs
     template = amber_dir / "mdin-unorest-vacuum"
@@ -613,4 +596,4 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("DISANG=disang.rest\n")
             mdin.write("LISTOUT=POUT\n")
 
-    logger.debug(f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}")
+    logger.debug(f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}")

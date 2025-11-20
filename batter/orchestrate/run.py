@@ -181,7 +181,10 @@ def _resolve_signature_conflict(
     diffs = []
     if stored_payload and current_payload:
         diffs = _diff_dicts(stored_payload, current_payload, prefix="config")
-
+        
+    diff_str = "; ".join(
+        f"{p}: stored={l!r}, current={r!r}" for p, l, r in diffs[:8]
+    )
     if requested_run_id == "auto":
         if diffs:
             logger.info(
@@ -190,29 +193,29 @@ def _resolve_signature_conflict(
                 "; ".join(f"{p}: stored={l!r}, current={r!r}" for p, l, r in diffs[:8]),
             )
         return False
+
     if allow_run_id_mismatch:
         if diffs:
+
             logger.warning(
-                "Execution '%s' already exists with configuration hash %s (current %s); "
-                "continuing because --allow-run-id-mismatch is enabled. Differences: %s",
-                run_id,
-                stored_sig[:12],
-                config_signature[:12],
-                "; ".join(f"{p}: stored={l!r}, current={r!r}" for p, l, r in diffs[:8]),
+                f"Execution '{run_id}' already exists with configuration hash "
+                f"{stored_sig[:12]} (current {config_signature[:12]}); continuing because "
+                f"--allow-run-id-mismatch is enabled. Differences: {diff_str}"
             )
         else:
             logger.warning(
-                "Execution '%s' already exists with configuration hash %s (current %s); "
-                "continuing because --allow-run-id-mismatch is enabled.",
-                run_id,
-                stored_sig[:12],
-                config_signature[:12],
+                f"Execution '{run_id}' already exists with configuration hash "
+                f"{stored_sig[:12]} (current {config_signature[:12]}); continuing because "
+                f"--allow-run-id-mismatch is enabled."
             )
         return True
-    raise RuntimeError(
-        f"Execution '{run_id}' already exists with a different configuration. "
-        "Choose a different --run-id, enable --allow-run-id-mismatch, or update the existing run."
+
+    logger.error(
+        f"Execution '{run_id}' already exists with configuration hash "
+        f"{stored_sig[:12]} (current {config_signature[:12]}); use a different --run-id, "
+        f"enable --allow-run-id-mismatch, or update the existing run. Differences: {diff_str}"
     )
+    raise RuntimeError("Run ID configuration mismatch detected.")
 
 
 def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]:

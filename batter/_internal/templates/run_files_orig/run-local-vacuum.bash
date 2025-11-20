@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# Define constants for filenames
+PRMTOP="full.hmr.prmtop"
+log_file="run.log"
+INPCRD="full.inpcrd"
+overwrite=${OVERWRITE:-0}
+only_eq=${ONLY_EQ:-0}
+
+if [[ -f FINISHED ]]; then
+    echo "Simulation is complete."
+    exit 0
+fi
+
+if [[ -f FAILED ]]; then
+    rm FAILED
+fi
+
+source check_run.bash
+
+if [[ $only_eq -eq 1 ]]; then
+    # Minimization
+    # if mini_eq is found use mini_eq.in
+    if [[ -f mini_eq.in ]]; then
+        echo "Using mini_eq.in for minimization."
+    else
+        echo "mini_eq.in not found, using mini.in instead."
+        cp mini.in mini_eq.in
+    fi
+    pmemd -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    check_sim_failure "Minimization" "$log_file"
+
+    # run minimization for each windows at this stage
+    for i in $(seq 0 $((NWINDOWS - 1))); do
+        win_folder=$(printf "../COMPONENT%02d" $i)
+        if [[ -s $win_folder/mini.rst7 ]]; then
+            echo "Skipping minimization for window $i, already exists."
+        else
+            echo "Running minimization for window $i"
+            cd $win_folder
+            cp ../COMPONENT-1/mini.rst7 mini.in.rst7
+            cd ../COMPONENT-1
+        fi
+    done
+
+    cpptraj -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> "$log_file" 2>&1
+
+    echo "Only equilibration requested and finished."
+    if [[ -s eq_output.pdb ]]; then
+        echo "EQ_FINISHED" > EQ_FINISHED
+        echo "Job completed at $(date)"
+    fi
+    exit 0
+fi
+
+if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
+    echo "Skipping md00 steps."
+else
+    # Initial MD production run
+    pmemd.cuda -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 -AllowSmallBox >> "$log_file" 2>&1
+    check_sim_failure "MD stage 0" "$log_file"
+fi
+
+i=1
+while [ $i -le FERANGE ]; do
+    j=$((i - 1))
+    k=$((i + 1))
+    x=$(printf "%02d" $i)
+    y=$(printf "%02d" $j)
+    z=$(printf "%02d" $k)
+    # x is the current step, y is the previous step, z is the next step
+    if [[ $overwrite -eq 0 && -s mdin-$z.rst7 ]]; then
+        echo "Skipping md$x steps."
+    else
+        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 -AllowSmallBox >> $log_file 2>&1
+        check_sim_failure "MD stage $i" "$log_file"
+    fi
+    i=$((i + 1))
+done
+
+cpptraj -p $PRMTOP -y mdin-$x.rst7 -x output.pdb >> "$log_file" 2>&1
+
+# check output.pdb exists
+# to catch cases where the simulation did not run to completion
+if [[ -s output.pdb ]]; then
+    echo "FINISHED" > FINISHED
+    exit 0
+fi

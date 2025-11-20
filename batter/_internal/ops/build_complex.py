@@ -588,9 +588,9 @@ def build_complex_lig(ctx) -> bool:
     # Resolve locations
     ligand = ctx.ligand
     mol = ctx.residue_name
-    sys_root   = ctx.system_root                         # .../work/<system>
+    sys_root   = ctx.system_root
     all_ligand_folder = sys_root / "all-ligands"
-    ff_dir = sys_root / "simulations" / ligand / "params"  # .../work/<system>/simulations/<LIG>/params
+    ff_dir = sys_root / "simulations" / ligand / "params"
 
     shutil.copytree(build_files_orig, build_dir, dirs_exist_ok=True)
 
