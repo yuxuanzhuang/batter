@@ -38,7 +38,7 @@ protein binding site. The main steps are:
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
-#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after step 6.
+#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window is submitted as an independent SLURM job.
    The main process monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
@@ -63,8 +63,6 @@ Installation
 
        cd batter
        git submodule update --init --recursive
-       # Set ``run.amber_setup_sh`` in your YAML if your cluster loads AMBER from a
-       # different location (defaults to $GROUP_HOME/software/amber24/setup_amber.sh).
 
 #. Create and activate a Conda environment (with ``environment.yml``)::
 
@@ -86,7 +84,7 @@ Preparing the System
 --------------------
 
 Use ``examples/mabfe_example.yaml`` as the starting configuration. Each field is documented in
-``batter.config.run``, but review the inputs below before running anything:
+:doc:`configuration` , but review the inputs below before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
@@ -142,11 +140,11 @@ Generating Simulation Inputs
      For GPCR orthosteric sites, a common choice is P1=3x32,
      P2=2x53, P3=7x42.
    
-   Additional field that may need adjustment based on your system:
+   Additional field that may need adjustment based on your cluster environment:
 
-   - ``run.amber_setup_sh`` – path to a script that loads AMBER on your cluster (defaults to ``$GROUP_HOME/software/amber24/setup_amber.sh``). A warning is emitted if the path does not exist.
+   - ``run.amber_setup_sh`` – path to a script that loads AMBER on your cluster (defaults to ``$GROUP_HOME/software/amber24/setup_amber.sh``).
    - ``run.email_on_completion`` – email address to notify when SLURM jobs complete.
-   - ``run.email_sender`` – email address to send notifications from. Default to "nobody@stanford.edu" if unset.
+   - ``run.email_sender`` – email address to send notifications from. Default to ``nobody@stanford.edu`` if unset.
    - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
    - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
    
@@ -181,7 +179,8 @@ To submit the same run through SLURM::
     batter run examples/mabfe_example.yaml --slurm-submit
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
-(accounts, modules, partitions, etc.).
+(accounts, modules, partitions, etc.). Copy and modify the default template from
+``batter/data/job_manager.sbatch``.
 
 The job manager stages the system locally,
 writes an ``sbatch`` script based on the YAML hash, and streams updates as windows
@@ -196,6 +195,8 @@ Handy CLI Flags
     Decide how to handle per-ligand failures. ``retry`` clears ``FAILED`` sentinels and reruns that phase once.
 ``--only-equil / --full``
     Stop after shared prep/equilibration—useful for debugging system setup before FE windows.
+``--dry-run``
+    Stage the system and prepare equilibration inputs without running any MD.
 ``--run-id`` and ``--output-folder``
     Override execution paths without touching ``system.*`` fields.
 ``--slurm-submit`` / ``--slurm-manager-path``
@@ -246,17 +247,13 @@ Use the CLI helpers to inspect them::
 
     batter fe list <run.output_folder>
     batter fe show <run.output_folder> <run_id> --ligand <ligand>
-    batter fe analyze <run.output_folder> <run_id> --ligand <ligand> --workers 4
 
 ``fe list`` prints a high-level table (ΔG, SE, protocol, originals, status) for every stored run, while
-``fe show`` dives into per-window data. ``fe analyze`` re-runs the post-processing with
-optional worker controls; use ``--ligand`` when the run produced multiple ligand
+``fe show`` dives into per-window data; use ``--ligand`` when the run produced multiple ligand
 records. CSV/JSON exports live alongside the results on
 disk, and convergence plots appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing).
-Use ``--no-raise-on-error`` if you want the analysis sweep to continue when individual
-ligand artifacts fail to parse.
 
 Additional Resources
 --------------------
