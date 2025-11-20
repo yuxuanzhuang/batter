@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import json
@@ -13,6 +14,7 @@ from batter.runtime.fe_repo import FEResultsRepository
 from batter.runtime.portable import ArtifactStore
 from batter.systems.core import SimSystem, SystemMeta
 from batter.orchestrate import run as run_mod
+from batter.orchestrate import run_support as rs
 
 
 def _make_sim_cfg() -> SimulationConfig:
@@ -109,6 +111,66 @@ def test_resolve_signature_conflict_reports_diffs(tmp_path: Path, caplog) -> Non
         current_payload=current_payload,
     )
     assert keep is False
+
+
+def test_normalize_for_hash_strips_output_folder_and_paths(tmp_path: Path) -> None:
+    payload = {
+        "create": {"output_folder": "/tmp/out", "protein": tmp_path / "pdb.pdb"},
+        "extra": [Path("/a/b"), {"c": "d"}],
+    }
+    normalized = rs.normalize_for_hash(payload)
+    assert "output_folder" not in normalized["create"]
+    assert normalized["create"]["protein"] == str(tmp_path / "pdb.pdb")
+    assert normalized["extra"][0] == "/a/b"
+
+
+def test_resolve_signature_conflict_allows_mismatch_when_flag(tmp_path: Path, caplog) -> None:
+    keep = rs.resolve_signature_conflict(
+        stored_sig="old",
+        config_signature="new",
+        requested_run_id="run1",
+        allow_run_id_mismatch=True,
+        run_id="run1",
+        run_dir=tmp_path,
+        stored_payload={"config": {"x": 1}},
+        current_payload={"config": {"x": 2}},
+    )
+    assert keep is True
+
+
+def test_resolve_signature_conflict_raises_on_mismatch(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError):
+        rs.resolve_signature_conflict(
+            stored_sig="old",
+            config_signature="new",
+            requested_run_id="run1",
+            allow_run_id_mismatch=False,
+            run_id="run1",
+            run_dir=tmp_path,
+            stored_payload={"config": {"y": 1}},
+            current_payload={"config": {"y": 2}},
+        )
+
+
+def test_select_system_builder_validates_system_type() -> None:
+    builder = rs.select_system_builder("abfe", system_type=None)
+    assert builder is not None
+    with pytest.raises(ValueError):
+        rs.select_system_builder("abfe", system_type="MASFE")
+
+
+def test_select_run_id_reuses_latest(tmp_path: Path) -> None:
+    exec_dir = tmp_path / "executions"
+    old = exec_dir / "old"
+    new = exec_dir / "new"
+    old.mkdir(parents=True)
+    new.mkdir(parents=True)
+    os.utime(old, (1, 1))
+    os.utime(new, (2, 2))
+
+    run_id, run_dir = rs.select_run_id(tmp_path, "abfe", "sys", requested=None)
+    assert run_id == "new"
+    assert run_dir == new
 
 
 def _dummy_smtp(sent: dict[str, str | list[str]]):
