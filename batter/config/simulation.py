@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 _ANCHOR_RE = re.compile(r"^:?\d+@[\w\d]+$")  # e.g., ":85@CA" or "85@CA"
+DEFAULT_AMBER_SETUP = "source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1"
 
 MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
@@ -36,6 +37,7 @@ class SimulationConfig(BaseModel):
         partition: str | None = None,
         protocol: str | None = None,
         fe_type: str | None = None,
+        amber_setup_command: str | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -216,6 +218,7 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
+            "amber_setup_command": amber_setup_command or DEFAULT_AMBER_SETUP,
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -347,6 +350,10 @@ class SimulationConfig(BaseModel):
     receptor_ff: str = Field("protein.ff14SB", description="Receptor FF")
     ligand_ff: str = Field("gaff2", description="Ligand FF")
     lipid_ff: str = Field("lipid21", description="Lipid FF")
+    amber_setup_command: str = Field(
+        DEFAULT_AMBER_SETUP,
+        description="Shell snippet used to load AMBER; injected into SLURM run scripts.",
+    )
 
     # --- Derived/public state (not user-set) ---
     ligand_dict: Dict[str, Any] = Field(default_factory=dict, description="Ligand dictionary")

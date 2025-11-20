@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
 from batter.config.run import CreateArgs, FESimArgs, RunConfig, RunSection, MDSimArgs
-from batter.config.simulation import SimulationConfig
+from batter.config.simulation import SimulationConfig, DEFAULT_AMBER_SETUP
 from batter.config.utils import coerce_yes_no
 
 
@@ -376,6 +376,33 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.enable_mcwat == "no"
+
+
+def test_amber_setup_command_defaults_and_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0, 1],
+        num_equil_extends=0,
+        eq_steps=10,
+        steps1={"z": 10},
+        steps2={"z": 20},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.amber_setup_command == DEFAULT_AMBER_SETUP
+
+    run = RunConfig(
+        version=1,
+        protocol="abfe",
+        backend="local",
+        run=RunSection(
+            output_folder=tmp_path / "out",
+            amber_setup_command="module load amber/22",
+        ),
+        create=create,
+        fe_sim=fe_args,
+    )
+    sim_cfg = run.resolved_sim_config()
+    assert sim_cfg.amber_setup_command == "module load amber/22"
 
 
 def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:

@@ -93,7 +93,6 @@ class SlurmConfig(BaseModel):
 # ----------------------------- Sections ---------------------------------
 
 
-
 class CreateArgs(BaseModel):
     """
     Inputs for system creation and staging.
@@ -687,6 +686,13 @@ class RunSection(BaseModel):
             "finishes (successfully or with warnings)."
         ),
     )
+    amber_setup_command: str | None = Field(
+        None,
+        description=(
+            "Optional shell snippet used to load AMBER in generated SLURM scripts "
+            "(defaults to sourcing $GROUP_HOME/software/amber24/setup_amber.sh)."
+        ),
+    )
 
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
@@ -823,6 +829,7 @@ class RunConfig(BaseModel):
             protocol=self.protocol,
             fe_type=desired_fe_type,
             partition=self.run.slurm.partition,
+            amber_setup_command=self.run.amber_setup_command,
         )
 
     def with_base_dir(self, base_dir: Path) -> "RunConfig":

@@ -80,6 +80,9 @@ Run an example configuration:
 .. code-block:: bash
 
    cd examples
+
+   # If your cluster loads AMBER differently, set ``run.amber_setup_command`` in
+   # your YAML (defaults to sourcing $GROUP_HOME/software/amber24/setup_amber.sh).
    batter run mabfe.yaml
 
 Use ``--help`` to see all commands:

@@ -139,6 +139,15 @@ Generating Simulation Inputs
 
      For GPCR orthosteric sites, a common choice is P1=3x32,
      P2=2x53, P3=7x42.
+   
+   Additional field that may need adjustment based on your system:
+
+   - ``run.amber_setup_command`` – command to load AMBER on your cluster (e.g., source a setup script). Default to ``source $GROUP_HOME/software/amber24/setup_amber.sh``.
+   - ``run.email_on_completion`` – email address to notify when SLURM jobs complete.
+   - ``run.email_sender`` – email address to send notifications from. Default to "nobody@stanford.edu" if unset.
+   - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
+   - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
+   
 
 2. **Validate the configuration before heavy computation (Optional)**::
 

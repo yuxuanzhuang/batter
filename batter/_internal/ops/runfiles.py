@@ -46,6 +46,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
                 .replace("PARTITIONNAME", sim.partition)
+                .replace("AMBER_SETUP_COMMAND", sim.amber_setup_command)
         )
 
         if hmr:
@@ -150,6 +151,7 @@ def write_fe_run_file(
             .replace("POSE", f"{comp}{int(win_idx):02d}")
             .replace("SYSTEMNAME", system_name)
             .replace("PARTITIONNAME", partition)
+            .replace("AMBER_SETUP_COMMAND", ctx.sim.amber_setup_command)
     )
     out_slurm.write_text(stxt)
     os.chmod(out_slurm, 0o755)
