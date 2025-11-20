@@ -75,10 +75,13 @@ def _compute_run_signature(
 ) -> tuple[str, Dict[str, Any]]:
     raw = Path(yaml_path).read_text()
     yaml_data = yaml.safe_load(raw) or {}
-    yaml_data.pop("run", None)
+    # Only hash the simulation inputs; execution settings (run) are excluded.
+    sim_only = {
+        k: v for k, v in yaml_data.items() if k in {"create", "fe_sim", "fe"}
+    }
     payload = {
-        "config": _normalize_for_hash(yaml_data),
-        "run_overrides": _normalize_for_hash(run_overrides or {}),
+        "config": _normalize_for_hash(sim_only),
+        "run_overrides": {},  # run overrides intentionally excluded from signature
     }
     frozen = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(frozen).hexdigest(), payload

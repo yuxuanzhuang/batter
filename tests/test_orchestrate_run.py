@@ -75,12 +75,14 @@ run:
 create:
   system_name: sys
 fe_sim: {}
+protocol: abfe
 """
     )
     sig, payload = run_mod._compute_run_signature(yaml_path, {"override": 1})
     assert isinstance(sig, str) and len(sig) == 64
     assert "run" not in payload["config"]
-    assert payload["run_overrides"] == {"override": 1}
+    assert set(payload["config"].keys()) <= {"create", "fe_sim", "fe"}
+    assert payload["run_overrides"] == {}
 
 
 def test_stored_payload_roundtrip(tmp_path: Path) -> None:
