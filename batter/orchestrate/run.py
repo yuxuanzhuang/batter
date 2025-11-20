@@ -343,7 +343,7 @@ def run_from_yaml(
         "param_outdir": str(rc.create.param_outdir),
         "system_name": rc.create.system_name,
         "protein_input": str(rc.create.protein_input),
-        "system_input": str(rc.create.system_input),
+        "system_input": str(rc.create.system_input) if rc.create.system_input else None,
         "system_coordinate": (
             str(rc.create.system_coordinate) if rc.create.system_coordinate else None
         ),
