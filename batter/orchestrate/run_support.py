@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+"""
+Helper utilities shared by orchestrator entrypoints.
+
+This module centralises signature hashing, run_id resolution, and small bookkeeping
+helpers to keep ``run.py`` focused on orchestration flow.
+"""
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -31,7 +38,11 @@ def compute_run_signature(
     yaml_path: Path,
     run_overrides: Dict[str, Any] | None,
 ) -> tuple[str, Dict[str, Any]]:
-    """Hash the user-facing config (create/fe_sim/fe) to detect run_id reuse conflicts."""
+    """Hash the user-facing config (create/fe_sim/fe) to detect run_id reuse conflicts.
+
+    ``run_overrides`` are intentionally excluded from the hash because they only adjust
+    execution behaviour, not the physical simulation setup.
+    """
     raw = Path(yaml_path).read_text()
     yaml_data = yaml.safe_load(raw) or {}
     sim_only = {k: v for k, v in yaml_data.items() if k in {"create", "fe_sim", "fe"}}

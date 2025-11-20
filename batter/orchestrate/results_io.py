@@ -14,7 +14,7 @@ from batter.systems.core import SimSystem
 
 def parse_results_dat(path: Path) -> Tuple[float | None, float | None, Dict[str, float]]:
     """
-    Parse fe/Results/Results.dat and return totals plus per-component values.
+    Parse ``fe/Results/Results.dat`` and return totals plus per-component values.
     """
     per_comp: Dict[str, float] = {}
     total_dG, total_se = None, None
