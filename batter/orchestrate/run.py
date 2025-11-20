@@ -646,10 +646,11 @@ def _notify_run_completion(
     )
 
     message_body = "\n".join(body_lines)
-    sender = os.environ.get(SENDER_ENV_VAR, DEFAULT_SENDER)
-    if sender == DEFAULT_SENDER and SENDER_ENV_VAR not in os.environ:
+    sender = rc.run.email_sender or os.environ.get(SENDER_ENV_VAR)
+    if not sender:
+        sender = DEFAULT_SENDER
         logger.warning(
-            f"{SENDER_ENV_VAR} is not set; defaulting sender email to {DEFAULT_SENDER}"
+            f"{SENDER_ENV_VAR} is not set and no sender configured; defaulting sender email to {DEFAULT_SENDER}"
         )
     message = (
         f"From: batter <{sender}>\n"

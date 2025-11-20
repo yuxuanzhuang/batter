@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 import json
 
 import pandas as pd
@@ -108,3 +109,41 @@ def test_resolve_signature_conflict_reports_diffs(tmp_path: Path, caplog) -> Non
         current_payload=current_payload,
     )
     assert keep is False
+
+
+def test_notify_run_completion_prefers_config_sender(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, str | list[str]] = {}
+
+    class DummySMTP:
+        def __init__(self, host: str) -> None:
+            sent["host"] = host
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+        def sendmail(self, sender: str, recipients: list[str], message: str) -> None:
+            sent["sender"] = sender
+            sent["recipients"] = recipients
+            sent["message"] = message
+
+    monkeypatch.setenv(run_mod.SENDER_ENV_VAR, "env@example.com")
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: DummySMTP(host))
+
+    rc = SimpleNamespace(
+        protocol="abfe",
+        create=SimpleNamespace(system_name="sys"),
+        run=SimpleNamespace(
+            email_on_completion="dest@example.com",
+            email_sender="config@example.com",
+            output_folder=tmp_path,
+        ),
+    )
+
+    run_mod._notify_run_completion(rc, "run1", tmp_path, [])
+
+    assert sent["sender"] == "config@example.com"
+    assert sent["recipients"] == ["dest@example.com"]
+    assert "From: batter <config@example.com>" in sent["message"]
