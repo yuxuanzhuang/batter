@@ -110,10 +110,11 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
     Returns
     -------
     pandas.DataFrame
-        DataFrame with one row per stored FE run. Columns typically include
-        ``run_id``, ``system_name``, ``ligand``, ``mol_name``,
-        ``fe_type``, ``temperature``,
-        ``method``, ``total_dG``, ``total_se``, ``components``, and ``created_at``.
+        DataFrame with one row per stored FE run. Columns include ``run_id``,
+        ``ligand``, ``mol_name``, ``system_name``, ``temperature``, ``total_dG``,
+        ``total_se``, ``canonical_smiles``, ``original_name``, ``original_path``,
+        ``protocol``, ``sim_range``, ``status``, ``failure_reason``, and
+        ``created_at``.
     """
     store = ArtifactStore(Path(work_dir))
     repo = FEResultsRepository(store)
@@ -132,6 +133,10 @@ def load_fe_run(
         Root directory of the BATTER execution.
     run_id : str
         Identifier of the FE run to load (as returned by :func:`list_fe_runs`).
+    ligand : str, optional
+        Ligand identifier when multiple ligands were processed in the run. If omitted,
+        the sole ligand is selected automatically or a ValueError is raised when
+        multiple matches exist.
 
     Returns
     -------

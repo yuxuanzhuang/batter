@@ -572,7 +572,8 @@ def build_complex_z(ctx) -> bool:
     return True
 
 @register_build_complex("y")
-def build_complex_y(ctx) -> bool:
+@register_build_complex("m")
+def build_complex_lig(ctx) -> bool:
     """
     Component 'y' (ligand-only) build_complex:
     - No receptor complexing; just stage the ligand structural files.
@@ -587,9 +588,9 @@ def build_complex_y(ctx) -> bool:
     # Resolve locations
     ligand = ctx.ligand
     mol = ctx.residue_name
-    sys_root   = ctx.system_root                         # .../work/<system>
+    sys_root   = ctx.system_root
     all_ligand_folder = sys_root / "all-ligands"
-    ff_dir = sys_root / "simulations" / ligand / "params"  # .../work/<system>/simulations/<LIG>/params
+    ff_dir = sys_root / "simulations" / ligand / "params"
 
     shutil.copytree(build_files_orig, build_dir, dirs_exist_ok=True)
 
@@ -612,7 +613,6 @@ def build_complex_y(ctx) -> bool:
     lig_u.atoms.names = ante_mol.atoms.names
     lig_u.atoms.residues.resnames = mol
     lig_u.atoms.write(str(build_dir / f"{mol}.pdb"))
-
 
     mol = ctx.residue_name
 

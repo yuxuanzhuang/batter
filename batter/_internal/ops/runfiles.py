@@ -46,6 +46,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
                 .replace("PARTITIONNAME", sim.partition)
+                .replace("AMBER_SETUP_SH", sim.amber_setup_sh)
         )
 
         if hmr:
@@ -87,10 +88,6 @@ def write_fe_run_file(
     dst_dir = ctx.window_dir
     dst_dir.mkdir(parents=True, exist_ok=True)
 
-    # templates (fail clearly if missing)
-    tpl_check = src_dir / "check_run.bash"
-    tpl_local = src_dir / "run-local.bash"
-    tpl_slurm = src_dir / "SLURMM-Am"
 
     # replacements
     pose = ctx.ligand
@@ -100,6 +97,14 @@ def write_fe_run_file(
     hmr = ctx.sim.hmr
     n_windows = len(lambdas)
 
+    # templates (fail clearly if missing)
+    tpl_check = src_dir / "check_run.bash"
+    if comp != "m":
+        tpl_local = src_dir / "run-local.bash"
+    else:
+        tpl_local = src_dir / "run-local-vacuum.bash"
+
+    tpl_slurm = src_dir / "SLURMM-Am"
     if not hasattr(ctx.sim, "system_name"):
         raise AttributeError(
             "SimulationConfig is missing 'system_name'. "
@@ -146,6 +151,7 @@ def write_fe_run_file(
             .replace("POSE", f"{comp}{int(win_idx):02d}")
             .replace("SYSTEMNAME", system_name)
             .replace("PARTITIONNAME", partition)
+            .replace("AMBER_SETUP_SH", ctx.sim.amber_setup_sh)
     )
     out_slurm.write_text(stxt)
     os.chmod(out_slurm, 0o755)

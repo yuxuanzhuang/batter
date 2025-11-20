@@ -478,12 +478,19 @@ class SlurmJobManager:
             return "0"
 
         logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
-        out = subprocess.check_output(
+        proc = subprocess.run(
             cmd,
             cwd=spec.workdir,
             text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            stdout = proc.stdout.strip()
+            stderr = proc.stderr.strip()
+            raise RuntimeError(
+                f"sbatch returned {proc.returncode}; stdout={stdout!r} stderr={stderr!r}"
+            )
+        out = proc.stdout.strip()
         m = JOBID_RE.search(out)
         if not m:
             raise RuntimeError(f"Could not parse sbatch output: {out}")
@@ -617,6 +624,8 @@ class SlurmJobManager:
                 # job missing or ended without sentinel → resubmit
                 resub_reason = state or "MISSING"
                 timeout_state = state == "TIMEOUT"
+                completed_state = state == "COMPLETED"
+
                 if state in SLURM_FINAL_BAD:
                     if timeout_state:
                         logger.debug(
@@ -628,9 +637,18 @@ class SlurmJobManager:
                             f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} reached "
                             f"state={state}; attempting resubmit"
                         )
+                elif completed_state:
+                    logger.info(
+                        f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} completed without FINISHED; "
+                        "resubmitting without counting against retries"
+                    )
 
                 r = retries[wd]
-                if not timeout_state and r >= self.max_retries:
+                if (
+                    not timeout_state
+                    and not completed_state
+                    and r >= self.max_retries
+                ):
                     logger.error(
                         f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} "
                         f"(state={resub_reason}); marking FAILED"
@@ -646,7 +664,7 @@ class SlurmJobManager:
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} state=TIMEOUT; "
                         "resubmitting (timeout retries are unlimited)"
                     )
-                else:
+                elif not completed_state:
                     logger.warning(
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} "
                         f"state={resub_reason}; resubmitting ({r + 1}/{self.max_retries})"
@@ -654,7 +672,7 @@ class SlurmJobManager:
                 time.sleep(self.resubmit_backoff_s)
                 try:
                     self._submit(s)
-                    if not timeout_state:
+                    if not timeout_state and not completed_state:
                         retries[wd] = r + 1
                         self._retries[wd] = retries[wd]  # keep central book
                 except Exception as e:

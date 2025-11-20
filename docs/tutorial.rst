@@ -24,7 +24,7 @@ Quick walkthrough
 embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
 protein binding site. The main steps are:
 
-#. **system staging and loading** – A executon folder will be created under ``<system.output_folder>/executions/``
+#. **system staging and loading** – A executon folder will be created under ``<run.output_folder>/executions/``
    to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
    resumed from the last successful step.
 #. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
@@ -38,7 +38,7 @@ protein binding site. The main steps are:
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
-#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after step 6.
+#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window is submitted as an independent SLURM job.
    The main process monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
@@ -53,9 +53,14 @@ Installation
 
        export PIP_CACHE_DIR=$SCRATCH/.cache
 
-#. Clone the repository and initialize submodules::
+#. Clone the repository with ssh (or HTTPS if SSH is unavailable) and initialize submodules::
 
-       git clone https://github.com/yuxuanzhuang/batter.git
+       git clone git@github.com:yuxuanzhuang/batter.git
+       # If SSH is unavailable, use HTTPS instead:
+       # git clone https://github.com/yuxuanzhuang/batter.git
+       # For SSH setup tips:
+       # https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account
+
        cd batter
        git submodule update --init --recursive
 
@@ -79,7 +84,7 @@ Preparing the System
 --------------------
 
 Use ``examples/mabfe_example.yaml`` as the starting configuration. Each field is documented in
-``batter.config.run``, but review the inputs below before running anything:
+:doc:`configuration` , but review the inputs below before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
@@ -120,7 +125,7 @@ Generating Simulation Inputs
    Start from `examples/mabfe_example.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe_example.yaml>`_
    and save a copy beside your project data. Update:
 
-   - ``system.output_folder`` – dedicated directory for outputs/logs.
+   - ``run.output_folder`` – dedicated directory for outputs/logs.
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
@@ -134,6 +139,15 @@ Generating Simulation Inputs
 
      For GPCR orthosteric sites, a common choice is P1=3x32,
      P2=2x53, P3=7x42.
+   
+   Additional field that may need adjustment based on your cluster environment:
+
+   - ``run.amber_setup_sh`` – path to a script that loads AMBER on your cluster (defaults to ``$GROUP_HOME/software/amber24/setup_amber.sh``).
+   - ``run.email_on_completion`` – email address to notify when SLURM jobs complete.
+   - ``run.email_sender`` – email address to send notifications from. Default to ``nobody@stanford.edu`` if unset.
+   - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
+   - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
+   
 
 2. **Validate the configuration before heavy computation (Optional)**::
 
@@ -143,7 +157,7 @@ Generating Simulation Inputs
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
 
 3. **Inspect the staged system (Optional)**  
-   Once the dry-run completes, review ``<system.output_folder>/executions/<run_id>/``:
+   Once the dry-run completes, review ``<run.output_folder>/executions/<run_id>/``:
 
    - ``simulations/<LIGAND>/equil/full.pdb`` – ligand-specific equilibration systems.
      Check if the ligand is correctly placed in the binding site,
@@ -165,7 +179,8 @@ To submit the same run through SLURM::
     batter run examples/mabfe_example.yaml --slurm-submit
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
-(accounts, modules, partitions, etc.).
+(accounts, modules, partitions, etc.). Copy and modify the default template from
+``batter/data/job_manager.sbatch``.
 
 The job manager stages the system locally,
 writes an ``sbatch`` script based on the YAML hash, and streams updates as windows
@@ -180,6 +195,8 @@ Handy CLI Flags
     Decide how to handle per-ligand failures. ``retry`` clears ``FAILED`` sentinels and reruns that phase once.
 ``--only-equil / --full``
     Stop after shared prep/equilibration—useful for debugging system setup before FE windows.
+``--dry-run``
+    Stage the system and prepare equilibration inputs without running any MD.
 ``--run-id`` and ``--output-folder``
     Override execution paths without touching ``system.*`` fields.
 ``--slurm-submit`` / ``--slurm-manager-path``
@@ -228,19 +245,15 @@ Analysis
 Completed runs automatically write MBAR summaries under ``executions/<run_id>/results``.
 Use the CLI helpers to inspect them::
 
-    batter fe list <system.output_folder>
-    batter fe show <system.output_folder> <run_id> --ligand <ligand>
-    batter fe analyze <system.output_folder> <run_id> --ligand <ligand> --workers 4
+    batter fe list <run.output_folder>
+    batter fe show <run.output_folder> <run_id> --ligand <ligand>
 
 ``fe list`` prints a high-level table (ΔG, SE, protocol, originals, status) for every stored run, while
-``fe show`` dives into per-window data. ``fe analyze`` re-runs the post-processing with
-optional worker controls; use ``--ligand`` when the run produced multiple ligand
+``fe show`` dives into per-window data; use ``--ligand`` when the run produced multiple ligand
 records. CSV/JSON exports live alongside the results on
 disk, and convergence plots appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing).
-Use ``--no-raise-on-error`` if you want the analysis sweep to continue when individual
-ligand artifacts fail to parse.
 
 Additional Resources
 --------------------

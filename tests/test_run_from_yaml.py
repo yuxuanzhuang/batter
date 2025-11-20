@@ -69,6 +69,7 @@ def test_yaml_parse_and_validate(yaml_path: Path) -> None:
     sim_cfg: SimulationConfig = SimulationConfig.from_sections(
         create=cfg.create,
         fe=fe_section,
+        protocol=cfg.protocol,
         partition=getattr(cfg, "partition", None),
     )
 
@@ -192,8 +193,7 @@ def test_runs_prepare_fe(tmp_path: Path) -> None:
     run_from_yaml(
         yaml_path,
         on_failure="raise",
-        system_overrides={"output_folder": work_dir},
-        run_overrides={"run_id": "rep1", "dry_run": True},
+        run_overrides={"output_folder": work_dir, "run_id": "rep1", "dry_run": True},
     )
 
     # both ligands should have FE prep markers emitted

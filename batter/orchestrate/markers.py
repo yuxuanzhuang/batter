@@ -66,7 +66,7 @@ def _remove_patterns(root: Path, spec: List[List[str]]) -> bool:
 
 
 def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str) -> List[SimSystem]:
-    """Post-process phase results, pruning or raising on failure.
+    """Post-process phase results, pruning/retrying/raising on failure.
 
     Parameters
     ----------
@@ -75,8 +75,9 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
     phase_name
         Name of the phase being processed.
     mode
-        Failure-handling strategy. ``"prune"`` removes failed systems, otherwise an
-        exception is raised.
+        Failure-handling strategy. ``"prune"`` removes failed systems, ``"retry"``
+        clears success/failure sentinels so the systems rerun, and any other value
+        raises an exception when failures are present.
 
     Returns
     -------

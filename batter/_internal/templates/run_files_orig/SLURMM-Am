@@ -38,7 +38,7 @@ echo "Current attempt: $RETRY_COUNT"
 # Define the maximum number of attempts.
 MAX_ATTEMPTS=5
 
-source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
+source AMBER_SETUP_SH > /dev/null 2>&1
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."

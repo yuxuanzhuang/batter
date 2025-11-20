@@ -420,7 +420,8 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     logger.debug(f"[simprep:z] simulation directory created → {dest_dir}")
 
 @register_create_simulation('y')
-def create_simulation_dir_y(ctx: BuildContext) -> None:
+@register_create_simulation('m')
+def create_simulation_dir_lig(ctx: BuildContext) -> None:
     mol = ctx.residue_name
     ligand = ctx.ligand
 

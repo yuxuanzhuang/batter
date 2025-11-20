@@ -76,6 +76,18 @@ class FERecord(BaseModel):
         ISO-8601 timestamp (UTC, Z-suffix).
     windows : list[WindowResult]
         Per-window results.
+    canonical_smiles : str, optional
+        Canonicalised ligand SMILES captured during parameterization.
+    original_name : str, optional
+        Original ligand identifier or title when known.
+    original_path : str, optional
+        Source path of the ligand before staging.
+    protocol : str
+        Logical protocol used to generate the result (e.g., ``"abfe"``).
+    sim_range : tuple[int, int], optional
+        (start, end) lambda range used for analysis.
+    status : {"success","failed","unbound"}
+        Final status recorded for the ligand.
     """
 
     run_id: str

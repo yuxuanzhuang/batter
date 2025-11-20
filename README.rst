@@ -39,7 +39,9 @@ Clone the repository, initialize submodules, and create the environment:
 .. code-block:: bash
 
    git clone git@github.com:yuxuanzhuang/batter.git
-   # If SSH clone fails, configure your GitHub SSH keys:
+   # If SSH clone fails (or SSH is unavailable), use HTTPS instead:
+   # git clone https://github.com/yuxuanzhuang/batter.git
+   # For SSH setup tips:
    # https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account
 
    cd batter
@@ -78,6 +80,9 @@ Run an example configuration:
 .. code-block:: bash
 
    cd examples
+
+   # If your cluster loads AMBER differently, set ``run.amber_setup_sh`` in
+   # your YAML (defaults to $GROUP_HOME/software/amber24/setup_amber.sh).
    batter run mabfe.yaml
 
 Use ``--help`` to see all commands:
@@ -109,13 +114,45 @@ Example YAMLs are intended as starting points; adjust to your system.
 Results Interpretation
 ----------------------
 
-Runs store FE outputs under ``<system.output_folder>/executions/<run_id>/results``.
+Runs store FE outputs under ``<run.output_folder>/executions/<run_id>/results``.
 Use the CLI helpers to inspect and export them:
 
 - ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).
 - ``batter fe show <system_root> <run_id>`` – prints per-window data and metadata for a specific execution.
 
 A CSV file for all the FE results is stored under ``<system_root>/results``. See detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
+
+Run IDs and config changes
+--------------------------
+
+When reusing a ``run_id``, BATTER compares the current ``create``/``fe_sim`` settings
+against the stored signature. If they differ and you explicitly set ``run_id``,
+execution will abort unless ``--allow-run-id-mismatch`` is enabled. Changing only
+``run`` execution knobs (SLURM flags, output location, etc.) does not alter the
+signature; pick a new ``run_id`` if you want a clean workspace for those changes.
+
+Email notifications
+-------------------
+
+BATTER can send a completion email when ``run.email_on_completion`` is set in your YAML.
+Configure the sender with ``run.email_sender`` or the ``BATTER_EMAIL_SENDER`` environment
+variable; otherwise it falls back to ``nobody@stanford.edu``. Example:
+
+.. code-block:: yaml
+
+   run:
+     output_folder: work/adrb2
+     email_sender: batter@example.com
+     email_on_completion: you@example.com
+
+Component steps and lambdas
+---------------------------
+
+Stage-1/Stage-2 steps are provided via ``fe_sim.steps1``/``steps2`` as dicts keyed by
+component letters (e.g., ``z: 5000``). Required components (``z`` for ABFE, ``y`` and
+``m`` for ASFE) must be positive. Lambda schedules default to the top-level
+``fe_sim.lambdas`` list and can be overridden per component via
+``fe_sim.component_lambdas``.
 
 Copyright
 -------------------------------

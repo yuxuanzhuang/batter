@@ -123,3 +123,43 @@ def test_submission_failure_raises(monkeypatch, tmp_path):
         manager._wait_loop([spec])
 
     assert attempts["count"] == 4
+
+
+def test_completed_resubmit_does_not_count_retry(monkeypatch, tmp_path):
+    workdir = tmp_path / "completed"
+    workdir.mkdir()
+    script = workdir / "SLURMM-run"
+    script.write_text("#!/bin/bash\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        resubmit_backoff_s=0.0,
+        max_retries=0,  # would fail immediately if counted
+    )
+
+    submissions = {"count": 0}
+
+    def fake_submit(spec: SlurmJobSpec) -> str:
+        submissions["count"] += 1
+        spec.jobid_path().write_text(str(submissions["count"]))
+        # simulate the resubmitted job writing FINISHED
+        if submissions["count"] >= 2:
+            spec.finished_path().write_text("")
+        return str(submissions["count"])
+
+    def fake_slurm_state(jobid: str | None):
+        if not jobid:
+            return None
+        return "COMPLETED"
+
+    monkeypatch.setattr("batter.exec.slurm_mgr._slurm_state", fake_slurm_state)
+    monkeypatch.setattr(manager, "_submit", fake_submit)
+    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
+
+    manager._wait_loop([spec])
+
+    assert submissions["count"] == 2  # initial + resubmission
+    assert manager._retries.get(spec.workdir, 0) == 0
+    assert spec.failed_path().exists() is False

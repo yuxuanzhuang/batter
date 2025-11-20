@@ -12,8 +12,12 @@ from batter.config.utils import sanitize_ligand_name
 def resolve_ligand_map(
     run_cfg, yaml_dir: Path
 ) -> Tuple[Dict[str, Path], Dict[str, str]]:
-    """
-    Resolve ligands from RunConfig sources (paths list or JSON mapping).
+    """Resolve ligands from RunConfig sources (paths list or JSON mapping).
+
+    Entries from ``create.ligand_paths`` are merged with (and can be overridden by)
+    ``create.ligand_input``; relative paths are resolved against the YAML location
+    (or JSON file parent). Ligand identifiers are sanitized for filesystem safety and
+    the original names are returned alongside the resolved paths.
     """
     lig_map: Dict[str, Path] = {}
     original_names: Dict[str, str] = {}
@@ -59,8 +63,11 @@ def resolve_ligand_map(
 
 
 def discover_staged_ligands(run_dir: Path) -> Dict[str, Path]:
-    """
-    Inspect the run directory to reconstruct {LIGAND_NAME: path}.
+    """Inspect an execution directory to reconstruct ``{ligand: path}``.
+
+    This is used to resume or continue runs without the original ligand inputs by
+    scanning staged per-ligand simulation folders (or legacy ``inputs/`` layouts)
+    under ``run_dir``.
     """
     lig_map: Dict[str, Path] = {}
 

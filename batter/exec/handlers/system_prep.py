@@ -88,7 +88,7 @@ class _SystemPrepRunner:
         # state
         self._system_name: str = ""
         self._protein_input: str = ""
-        self._system_topology: str = ""
+        self._system_topology: str | None = None
         self._system_coordinate: str | None = None
 
         self.receptor_segment: str | None = None
@@ -439,9 +439,9 @@ class _SystemPrepRunner:
         *,
         system_name: str,
         protein_input: str,
-        system_topology: str,
         ligand_paths: Dict[str, str],
         anchor_atoms: List[str],
+        system_topology: str | None = None,
         ligand_anchor_atom: str | None = None,
         receptor_segment: str | None = None,
         system_coordinate: str | None = None,
@@ -456,7 +456,7 @@ class _SystemPrepRunner:
     ) -> Dict[str, Any]:
         self._system_name = system_name
         self._protein_input = self._convert_2_relative_path(protein_input)
-        self._system_topology = self._convert_2_relative_path(system_topology)
+        self._system_topology = self._convert_2_relative_path(system_topology) if system_topology else None
         self._system_coordinate = (
             self._convert_2_relative_path(system_coordinate)
             if system_coordinate
@@ -483,8 +483,6 @@ class _SystemPrepRunner:
         # sanity checks
         if not Path(self._protein_input).exists():
             raise FileNotFoundError(f"Protein input file not found: {protein_input}")
-        if not Path(self._system_topology).exists():
-            raise FileNotFoundError(f"System input file not found: {system_topology}")
         for p in self.ligand_dict.values():
             if not Path(p).exists():
                 raise FileNotFoundError(f"Ligand file not found: {p}")
@@ -497,43 +495,48 @@ class _SystemPrepRunner:
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
 
         # Box dimensions
-        u_sys = mda.Universe(self._system_topology, format="XPDB")
-        if self._system_coordinate:
-            with open(self._system_coordinate) as f:
-                lines = f.readlines()
-                box = np.array([float(x) for x in lines[-1].split()])
-            self.system_dimensions = box
-            u_sys.load_new(self._system_coordinate, format="INPCRD")
-        else:
-            try:
-                self.system_dimensions = u_sys.dimensions[:3]
-            except TypeError:
-                if self.membrane_simulation:
-                    raise ValueError(
-                        "No box dimensions found in system_topology; required for membrane systems."
+        if self.membrane_simulation or self._system_topology is not None:
+            u_sys = mda.Universe(self._system_topology, format="XPDB")
+            if self._system_coordinate:
+                with open(self._system_coordinate) as f:
+                    lines = f.readlines()
+                    box = np.array([float(x) for x in lines[-1].split()])
+                self.system_dimensions = box
+                u_sys.load_new(self._system_coordinate, format="INPCRD")
+            else:
+                try:
+                    self.system_dimensions = u_sys.dimensions[:3]
+                except TypeError:
+                    if self.membrane_simulation:
+                        raise ValueError(
+                            "No box dimensions found in system_topology; required for membrane systems."
+                        )
+                    protein = u_sys.select_atoms("protein")
+                    padding = 10.0
+                    box_x = (
+                        protein.positions[:, 0].max()
+                        - protein.positions[:, 0].min()
+                        + 2 * padding
                     )
-                protein = u_sys.select_atoms("protein")
-                padding = 10.0
-                box_x = (
-                    protein.positions[:, 0].max()
-                    - protein.positions[:, 0].min()
-                    + 2 * padding
-                )
-                box_y = (
-                    protein.positions[:, 1].max()
-                    - protein.positions[:, 1].min()
-                    + 2 * padding
-                )
-                box_z = (
-                    protein.positions[:, 2].max()
-                    - protein.positions[:, 2].min()
-                    + 2 * padding
-                )
-                self.system_dimensions = np.array([box_x, box_y, box_z])
-                logger.warning(
-                    "No box dimensions in system_topology. Using default 10 Å padding around protein. "
-                    f"Box dimensions: {self.system_dimensions}"
-                )
+                    box_y = (
+                        protein.positions[:, 1].max()
+                        - protein.positions[:, 1].min()
+                        + 2 * padding
+                    )
+                    box_z = (
+                        protein.positions[:, 2].max()
+                        - protein.positions[:, 2].min()
+                        + 2 * padding
+                    )
+                    self.system_dimensions = np.array([box_x, box_y, box_z])
+                    logger.warning(
+                        "No box dimensions in system_topology. Using default 10 Å padding around protein. "
+                        f"Box dimensions: {self.system_dimensions}"
+                    )
+            u_sys.atoms.write(f"{self.ligands_folder}/system_input.pdb")
+            self._system_input_pdb = f"{self.ligands_folder}/system_input.pdb"
+        else:
+            self._system_input_pdb = self._protein_input
         if (
             self.membrane_simulation
             and (u_sys.atoms.dimensions is None or not u_sys.atoms.dimensions.any())
@@ -542,8 +545,7 @@ class _SystemPrepRunner:
             raise ValueError(
                 "No box dimensions found in system_topology or system_coordinate when lipid system is on."
             )
-        u_sys.atoms.write(f"{self.ligands_folder}/system_input.pdb")
-        self._system_input_pdb = f"{self.ligands_folder}/system_input.pdb"
+
 
         # membrane remapping (if any)
         if self.membrane_simulation:
@@ -625,14 +627,11 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     sys_params = payload.sys_params or SystemParams()
     yaml_dir = Path(sys_params["yaml_dir"]).resolve()
 
-    # accept new key `system_input` or legacy `system_topology`
-    system_topology = sys_params["system_input"]
-
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
         system_name=sys_params["system_name"],
         protein_input=sys_params["protein_input"],
-        system_topology=system_topology,
+        system_topology= sys_params.get("system_input", None),
         ligand_paths=sys_params["ligand_paths"],
         anchor_atoms=list(sys_params.get("anchor_atoms", [])),
         ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),

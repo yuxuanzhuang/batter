@@ -22,11 +22,11 @@ def select_pipeline(
     Parameters
     ----------
     protocol : str
-        Name of the requested protocol (e.g., ``"abfe"``).
+        Name of the requested protocol (``"abfe"``, ``"asfe"``, or ``"md"``).
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
-        When ``True``, stop after FE preparation steps.
+        When ``True``, truncate the pipeline after FE preparation steps.
     sys_params : SystemParams or dict, optional
         Extra parameters passed to system-level pipeline steps.
 

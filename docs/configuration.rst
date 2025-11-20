@@ -1,67 +1,57 @@
 Configuration Overview
 ======================
 
-BATTER's configuration layer is split into two complementary models:
-
-* :class:`batter.config.run.RunConfig` describes a *run* – the system to build,
-  the FE protocol to execute, runtime options, and any backend preferences.
-* :class:`batter.config.simulation.SimulationConfig` represents the fully
-  resolved simulation knobs consumed by the orchestrator and execution engines.
+BATTER's configuration layer is driven by :class:`batter.config.run.RunConfig`,
+the user-facing schema that describes the system to build, the FE protocol to
+execute, runtime options, and backend preferences. Derived simulation knobs are
+produced by :meth:`RunConfig.resolved_sim_config`; the resulting
+:class:`~batter.config.simulation.SimulationConfig` is documented in the
+developer guide (:doc:`../developer_guide`).
 
 Run Configuration Schema
 ------------------------
 
-The run YAML file is divided into four top-level sections:
+The run YAML file is divided into three sections grouped inside
+``RunConfig``:
 
-``system``
-    Paths and metadata that identify where artifacts are written. This section
-    is validated by :class:`batter.config.run.SystemSection`.
+``run``
+    Execution controls that include runtime behaviour, SLURM settings,
+    notification preferences, and artifact destination. ``run.output_folder`` is
+    required and becomes the base path for ``<run.output_folder>/executions/<run_id>/``.
+    ``run.system_type`` optionally overrides the builder selection inferred from the
+    protocol (``MABFE`` for ABFE/MD, ``MASFE`` for ASFE). This section is validated
+    by :class:`batter.config.run.RunSection`.
 ``create``
-    Inputs for system preparation (paths to protein/ligand files, force-field
-    selections, optional restraint files). The structure maps directly to
+    Inputs required for system staging (protein/topology paths, ligands, force fields,
+    optional restraints). The structure maps directly to
     :class:`batter.config.run.CreateArgs`.
 ``fe_sim``
     Overrides and controls for free-energy simulation stages. For ABFE/ASFE runs
     these map to :class:`batter.config.run.FESimArgs`. MD-only runs automatically
     coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
-    ``lambdas`` or SDR restraints are no longer required.  Equilibration controls
+    ``lambdas`` or SDR restraints are no longer required. Equilibration controls
     are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
-    (how many additional segments to run). The total number of equilibration MD steps
-    therefore scales as ``num_equil_extends * eq_steps``. For FE production the
-    ``num_fe_extends`` field multiplies the stage-2 component steps (e.g.,
-    ``z_steps2``) so each window ultimately samples
-    ``num_fe_extends * <component>_steps2`` steps before moving on.
-``run``
-    Execution behaviour such as SLURM options, dry-run toggles, and failure
-    policies. These fields populate :class:`batter.config.run.RunSection`.
-    You can also request a completion notification by setting
-    ``run.email_on_completion`` to the desired recipient. The notification is sent
-    through whichever SMTP daemon is reachable via ``localhost``, with the sender
-    address taken from the ``BATTER_EMAIL_SENDER`` environment variable (defaults
-    to ``nobody@stanford.edu`` when unset, and BATTER logs a warning in that case).
+    (how many additional segments to run). The total number of equilibration MD
+    steps therefore scales as ``num_equil_extends * eq_steps``. For FE production
+    the ``num_fe_extends`` field multiplies the stage-2 component steps defined in
+    ``steps2`` so each window ultimately samples
+    ``num_fe_extends * steps2[component]`` steps before moving on.
 
-The helper :func:`batter.config.load_run_config` loads a YAML file into a
-validated :class:`~batter.config.run.RunConfig`, expanding environment variables
-and ``~`` home shortcuts along the way.
+See Quick Reference below for links to individual config classes.
 
-Simulation Configuration Derivation
------------------------------------
+Per-component steps and lambdas
+-------------------------------
 
-``RunConfig.resolved_sim_config()`` produces the
-:class:`batter.config.simulation.SimulationConfig` that downstream components
-expect. Internally this delegates to
-:meth:`batter.config.simulation.SimulationConfig.from_sections`, merging the
-``create`` and ``fe_sim`` sections while performing additional coercions such as
-normalising yes/no flags and expanding lambda schedules.
+Stage-1/Stage-2 component steps are supplied via ``fe_sim.steps1`` and
+``fe_sim.steps2`` as dicts keyed by the single-letter component (e.g. ``z: 50000``).
+Keys like ``z_steps1``/``y_steps2`` are also accepted and folded into these
+maps automatically. Each protocol enforces the required components: ABFE fills
+``z`` defaults if omitted, and ASFE fills ``y``/``m`` defaults.
 
-When you need to persist or reload a resolved simulation configuration, use the
-helper functions:
-
-* :func:`batter.config.load_simulation_config`
-* :func:`batter.config.dump_simulation_config`
-
-They mirror the behaviour of :func:`load_run_config`, ensuring environment
-variables and user-relative paths are expanded consistently.
+Lambda schedules can be customized per component using ``fe_sim.component_lambdas``
+(or ``<comp>_lambdas`` keys). When a component is missing from that map, it
+inherits the top-level ``fe_sim.lambdas`` list. Values can be written as YAML lists
+or comma/space separated strings; validation ensures ascending order.
 
 Component-Specific Inputs
 -------------------------
@@ -119,11 +109,9 @@ Quick Reference
    batter.config.run.CreateArgs
    batter.config.run.FESimArgs
    batter.config.run.MDSimArgs
-   batter.config.simulation.SimulationConfig
+   batter.config.run.RunSection
    batter.config.load_run_config
    batter.config.dump_run_config
-   batter.config.load_simulation_config
-   batter.config.dump_simulation_config
   The ``buffer_z`` value also determines the SDR translation distance: ligands are
   shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
   clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems

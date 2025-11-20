@@ -2,9 +2,6 @@ version: 1
 protocol: md
 backend: local
 
-system:
-  output_folder: adrb2_A_md
-
 create:
   system_name: adrb2_A
   protein_input: ../reference/adrb2_A.pdb
@@ -29,6 +26,7 @@ create:
   water_model: TIP3P
 
 run:
+  output_folder: adrb2_A_md
   only_fe_preparation: false
   dry_run: false
   run_id: auto
