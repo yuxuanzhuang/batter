@@ -148,7 +148,7 @@ class CreateArgs(BaseModel):
         "amber",
         description="Parameterization backend to use for ligands.",
     )
-    param_charge: Literal["bcc", "gas", "am1bcc"] = Field(
+    param_charge: str = Field(
         "am1bcc",
         description="Charge derivation method for ligands.",
     )
