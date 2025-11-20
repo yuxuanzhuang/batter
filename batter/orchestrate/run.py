@@ -67,10 +67,6 @@ from batter.orchestrate.run_support import (
 )
 
 
-SENDER_ENV_VAR = "BATTER_EMAIL_SENDER"
-DEFAULT_SENDER = "nobody@stanford.edu"
-
-
 def run_from_yaml(
     path: Path | str,
     on_failure: Literal["prune", "raise", "retry"] = None,
@@ -188,7 +184,11 @@ def run_from_yaml(
         lig_map = staged_lig_map
         lig_original_names = stored_names
         if lig_original_names:
-            logger.debug("Loaded %d original ligand names from %s", len(lig_original_names), _ligand_names_path(run_dir))
+            logger.debug(
+                "Loaded %d original ligand names from %s",
+                len(lig_original_names),
+                _ligand_names_path(run_dir),
+            )
         logger.info(
             f"Resuming with {len(lig_map)} staged ligands discovered under {run_dir}"
         )
@@ -646,12 +646,12 @@ def _notify_run_completion(
     )
 
     message_body = "\n".join(body_lines)
-    sender = rc.run.email_sender or os.environ.get(SENDER_ENV_VAR)
+    sender = rc.run.email_sender
     if not sender:
-        sender = DEFAULT_SENDER
         logger.warning(
-            f"{SENDER_ENV_VAR} is not set and no sender configured; defaulting sender email to {DEFAULT_SENDER}"
+            "No sender email configured; cannot send completion notification. set `run.email_sender` in your YAML."
         )
+        return
     message = (
         f"From: batter <{sender}>\n"
         f"To: {recipient}\n"

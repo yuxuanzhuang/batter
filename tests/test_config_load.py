@@ -36,6 +36,7 @@ fe_sim: {{}}
     cfg = load_run_config(run_yaml)
     assert cfg.create.ligand_paths["LIG1"] == lig_file
     assert cfg.run.output_folder == tmp_path / "work"
+    assert cfg.run.email_sender == "nobody@stanford.edu"
 
 
 def test_load_simulation_config(tmp_path: Path) -> None:

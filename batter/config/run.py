@@ -673,11 +673,8 @@ class RunSection(BaseModel):
     )
 
     email_sender: str | None = Field(
-        None,
-        description=(
-            "Sender address used for completion email notifications. Falls back to "
-            "the BATTER_EMAIL_SENDER environment variable or a built-in default."
-        ),
+        "nobody@stanford.edu",
+        description=("Sender address used for completion email notifications."),
     )
     email_on_completion: str | None = Field(
         None,
