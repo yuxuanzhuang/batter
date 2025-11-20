@@ -624,6 +624,8 @@ class SlurmJobManager:
                 # job missing or ended without sentinel → resubmit
                 resub_reason = state or "MISSING"
                 timeout_state = state == "TIMEOUT"
+                completed_state = state == "COMPLETED"
+
                 if state in SLURM_FINAL_BAD:
                     if timeout_state:
                         logger.debug(
@@ -635,9 +637,18 @@ class SlurmJobManager:
                             f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} reached "
                             f"state={state}; attempting resubmit"
                         )
+                elif completed_state:
+                    logger.info(
+                        f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} completed without FINISHED; "
+                        "resubmitting without counting against retries"
+                    )
 
                 r = retries[wd]
-                if not timeout_state and r >= self.max_retries:
+                if (
+                    not timeout_state
+                    and not completed_state
+                    and r >= self.max_retries
+                ):
                     logger.error(
                         f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} "
                         f"(state={resub_reason}); marking FAILED"
@@ -653,7 +664,7 @@ class SlurmJobManager:
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} state=TIMEOUT; "
                         "resubmitting (timeout retries are unlimited)"
                     )
-                else:
+                elif not completed_state:
                     logger.warning(
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} "
                         f"state={resub_reason}; resubmitting ({r + 1}/{self.max_retries})"
@@ -661,7 +672,7 @@ class SlurmJobManager:
                 time.sleep(self.resubmit_backoff_s)
                 try:
                     self._submit(s)
-                    if not timeout_state:
+                    if not timeout_state and not completed_state:
                         retries[wd] = r + 1
                         self._retries[wd] = retries[wd]  # keep central book
                 except Exception as e:
