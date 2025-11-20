@@ -4,11 +4,12 @@ import json
 from pathlib import Path
 
 import pytest
+from loguru import logger
 from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
 from batter.config.run import CreateArgs, FESimArgs, RunConfig, RunSection, MDSimArgs
-from batter.config.simulation import SimulationConfig, DEFAULT_AMBER_SETUP
+from batter.config.simulation import SimulationConfig, DEFAULT_AMBER_SETUP_SH
 from batter.config.utils import coerce_yes_no
 
 
@@ -378,7 +379,7 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     assert cfg.enable_mcwat == "no"
 
 
-def test_amber_setup_command_defaults_and_override(tmp_path: Path) -> None:
+def test_amber_setup_sh_defaults_and_override(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0, 1],
@@ -388,7 +389,10 @@ def test_amber_setup_command_defaults_and_override(tmp_path: Path) -> None:
         steps2={"z": 20},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.amber_setup_command == DEFAULT_AMBER_SETUP
+    assert cfg.amber_setup_sh == DEFAULT_AMBER_SETUP_SH
+
+    setup_sh = tmp_path / "amber.sh"
+    setup_sh.write_text("#!/bin/bash\necho amber\n")
 
     run = RunConfig(
         version=1,
@@ -396,13 +400,35 @@ def test_amber_setup_command_defaults_and_override(tmp_path: Path) -> None:
         backend="local",
         run=RunSection(
             output_folder=tmp_path / "out",
-            amber_setup_command="module load amber/22",
+            amber_setup_sh=str(setup_sh),
         ),
         create=create,
         fe_sim=fe_args,
     )
     sim_cfg = run.resolved_sim_config()
-    assert sim_cfg.amber_setup_command == "module load amber/22"
+    assert sim_cfg.amber_setup_sh == str(setup_sh)
+
+
+def test_amber_setup_sh_warns_when_missing(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0, 1],
+        num_equil_extends=0,
+        eq_steps=10,
+        steps1={"z": 10},
+        steps2={"z": 20},
+    )
+    missing = tmp_path / "missing.sh"
+    messages = []
+    token = logger.add(lambda m: messages.append(m), level="WARNING")
+    try:
+        cfg = SimulationConfig.from_sections(
+            create, fe_args, protocol="abfe", amber_setup_sh=str(missing)
+        )
+    finally:
+        logger.remove(token)
+    assert any("amber_setup_sh" in str(m) for m in messages)
+    assert cfg.amber_setup_sh == str(missing)
 
 
 def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:

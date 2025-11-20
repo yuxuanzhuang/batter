@@ -686,11 +686,11 @@ class RunSection(BaseModel):
             "finishes (successfully or with warnings)."
         ),
     )
-    amber_setup_command: str | None = Field(
+    amber_setup_sh: str | None = Field(
         None,
         description=(
-            "Optional shell snippet used to load AMBER in generated SLURM scripts "
-            "(defaults to sourcing $GROUP_HOME/software/amber24/setup_amber.sh)."
+            "Optional path to a shell script used to load AMBER in generated SLURM scripts "
+            "(defaults to $GROUP_HOME/software/amber24/setup_amber.sh)."
         ),
     )
 
@@ -829,7 +829,7 @@ class RunConfig(BaseModel):
             protocol=self.protocol,
             fe_type=desired_fe_type,
             partition=self.run.slurm.partition,
-            amber_setup_command=self.run.amber_setup_command,
+            amber_setup_sh=self.run.amber_setup_sh,
         )
 
     def with_base_dir(self, base_dir: Path) -> "RunConfig":

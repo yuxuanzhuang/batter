@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Literal, TYPE_CHECKING, Tuple
+from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, PrivateAttr, field_validator, model_validator
 import re
+import os
 from loguru import logger
 from batter.utils import COMPONENTS_LAMBDA_DICT
 from batter.config.utils import coerce_yes_no
@@ -12,7 +14,7 @@ if TYPE_CHECKING:
 
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 _ANCHOR_RE = re.compile(r"^:?\d+@[\w\d]+$")  # e.g., ":85@CA" or "85@CA"
-DEFAULT_AMBER_SETUP = "source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1"
+DEFAULT_AMBER_SETUP_SH = "$GROUP_HOME/software/amber24/setup_amber.sh"
 
 MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
@@ -37,7 +39,7 @@ class SimulationConfig(BaseModel):
         partition: str | None = None,
         protocol: str | None = None,
         fe_type: str | None = None,
-        amber_setup_command: str | None = None,
+        amber_setup_sh: str | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -182,6 +184,15 @@ class SimulationConfig(BaseModel):
         if analysis_fe_range_value is None:
             analysis_fe_range_value = _analysis_range_default()
 
+        amber_setup = amber_setup_sh or DEFAULT_AMBER_SETUP_SH
+        expanded_amber_setup = Path(os.path.expandvars(amber_setup)).expanduser()
+        if not expanded_amber_setup.exists():
+            logger.warning(
+                "amber_setup_sh points to {}, but the file was not found. "
+                "Ensure your AMBER environment is loaded inside SLURM scripts.",
+                expanded_amber_setup,
+            )
+
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
@@ -218,7 +229,7 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
-            "amber_setup_command": amber_setup_command or DEFAULT_AMBER_SETUP,
+            "amber_setup_sh": amber_setup,
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -350,9 +361,9 @@ class SimulationConfig(BaseModel):
     receptor_ff: str = Field("protein.ff14SB", description="Receptor FF")
     ligand_ff: str = Field("gaff2", description="Ligand FF")
     lipid_ff: str = Field("lipid21", description="Lipid FF")
-    amber_setup_command: str = Field(
-        DEFAULT_AMBER_SETUP,
-        description="Shell snippet used to load AMBER; injected into SLURM run scripts.",
+    amber_setup_sh: str = Field(
+        DEFAULT_AMBER_SETUP_SH,
+        description="Path to a shell script that loads AMBER; sourced in SLURM run scripts.",
     )
 
     # --- Derived/public state (not user-set) ---

@@ -63,6 +63,8 @@ Installation
 
        cd batter
        git submodule update --init --recursive
+       # Set ``run.amber_setup_sh`` in your YAML if your cluster loads AMBER from a
+       # different location (defaults to $GROUP_HOME/software/amber24/setup_amber.sh).
 
 #. Create and activate a Conda environment (with ``environment.yml``)::
 
@@ -142,7 +144,7 @@ Generating Simulation Inputs
    
    Additional field that may need adjustment based on your system:
 
-   - ``run.amber_setup_command`` – command to load AMBER on your cluster (e.g., source a setup script). Default to ``source $GROUP_HOME/software/amber24/setup_amber.sh``.
+   - ``run.amber_setup_sh`` – path to a script that loads AMBER on your cluster (defaults to ``$GROUP_HOME/software/amber24/setup_amber.sh``). A warning is emitted if the path does not exist.
    - ``run.email_on_completion`` – email address to notify when SLURM jobs complete.
    - ``run.email_sender`` – email address to send notifications from. Default to "nobody@stanford.edu" if unset.
    - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
