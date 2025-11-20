@@ -14,7 +14,6 @@ if TYPE_CHECKING:
 
 FEP_COMPONENTS = list(COMPONENTS_LAMBDA_DICT.keys())
 _ANCHOR_RE = re.compile(r"^:?\d+@[\w\d]+$")  # e.g., ":85@CA" or "85@CA"
-DEFAULT_AMBER_SETUP_SH = "$GROUP_HOME/software/amber24/setup_amber.sh"
 
 MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
@@ -184,7 +183,11 @@ class SimulationConfig(BaseModel):
         if analysis_fe_range_value is None:
             analysis_fe_range_value = _analysis_range_default()
 
-        amber_setup = amber_setup_sh or DEFAULT_AMBER_SETUP_SH
+        amber_setup = (
+            amber_setup_sh
+            or cls.model_fields.get("amber_setup_sh", {}).default
+            or "$GROUP_HOME/software/amber24/setup_amber.sh"
+        )
         expanded_amber_setup = Path(os.path.expandvars(amber_setup)).expanduser()
         if not expanded_amber_setup.exists():
             logger.warning(
@@ -362,7 +365,7 @@ class SimulationConfig(BaseModel):
     ligand_ff: str = Field("gaff2", description="Ligand FF")
     lipid_ff: str = Field("lipid21", description="Lipid FF")
     amber_setup_sh: str = Field(
-        DEFAULT_AMBER_SETUP_SH,
+        "$GROUP_HOME/software/amber24/setup_amber.sh",
         description="Path to a shell script that loads AMBER; sourced in SLURM run scripts.",
     )
 

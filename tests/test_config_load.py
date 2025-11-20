@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
 from batter.config.run import CreateArgs, FESimArgs, RunConfig, RunSection, MDSimArgs
-from batter.config.simulation import SimulationConfig, DEFAULT_AMBER_SETUP_SH
+from batter.config.simulation import SimulationConfig
 from batter.config.utils import coerce_yes_no
 
 
@@ -389,7 +389,9 @@ def test_amber_setup_sh_defaults_and_override(tmp_path: Path) -> None:
         steps2={"z": 20},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.amber_setup_sh == DEFAULT_AMBER_SETUP_SH
+    assert (
+        cfg.amber_setup_sh == "$GROUP_HOME/software/amber24/setup_amber.sh"
+    )
 
     setup_sh = tmp_path / "amber.sh"
     setup_sh.write_text("#!/bin/bash\necho amber\n")
