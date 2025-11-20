@@ -23,7 +23,11 @@ from batter.systems.masfe import MASFEBuilder
 
 # -------------------- hashing / signatures -------------------- #
 def normalize_for_hash(obj: Any) -> Any:
-    """Recursively normalize a payload for stable hashing."""
+    """Recursively normalize a payload for stable hashing.
+
+    Paths are coerced to strings and run-specific fields like ``output_folder`` are
+    stripped so the signature only reflects the physical simulation inputs.
+    """
     if isinstance(obj, Path):
         return str(obj)
     if isinstance(obj, dict):
@@ -40,8 +44,9 @@ def compute_run_signature(
 ) -> tuple[str, Dict[str, Any]]:
     """Hash the user-facing config (create/fe_sim/fe) to detect run_id reuse conflicts.
 
-    ``run_overrides`` are intentionally excluded from the hash because they only adjust
-    execution behaviour, not the physical simulation setup.
+    The hash excludes the ``run`` section (including ``output_folder``) and ignores
+    ``run_overrides`` because they adjust execution behaviour, not the physical
+    simulation setup captured by the artifact store.
     """
     raw = Path(yaml_path).read_text()
     yaml_data = yaml.safe_load(raw) or {}
@@ -136,7 +141,12 @@ def resolve_signature_conflict(
     run_id: str,
     run_dir: Path,
 ) -> bool:
-    """Decide whether to reuse an existing run_dir given the stored signature."""
+    """Decide whether to reuse an existing run_dir given the stored signature.
+
+    When ``requested_run_id`` is ``"auto"``, a mismatch forces creation of a new
+    execution directory; otherwise a mismatch raises unless
+    ``allow_run_id_mismatch`` is set.
+    """
     if stored_sig is None or stored_sig == config_signature:
         return True
 
@@ -200,7 +210,12 @@ def select_system_builder(protocol: str, system_type: str | None) -> SystemBuild
 def select_run_id(
     sys_root: Path | str, protocol: str, system_name: str, requested: str | None
 ) -> Tuple[str, Path]:
-    """Resolve the execution run identifier and backing directory."""
+    """Resolve the execution run identifier and backing directory.
+
+    An explicit ``requested`` value is used as-is; otherwise the most recently
+    modified execution directory is reused when present, and a fresh timestamped
+    identifier is generated as a fallback.
+    """
     runs_dir = Path(sys_root) / "executions"
     runs_dir.mkdir(parents=True, exist_ok=True)
 

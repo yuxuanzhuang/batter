@@ -19,6 +19,11 @@ def register_local_handlers(backend: LocalBackend) -> None:
     ----------
     backend : LocalBackend
         Backend instance that should receive the default handler mapping.
+
+    Raises
+    ------
+    RuntimeError
+        If optional handler dependencies (for example ``openff-toolkit``) are missing.
     """
     try:
         from batter.exec.handlers.system_prep import system_prep as _system_prep

@@ -13,8 +13,10 @@ from batter.runtime.fe_repo import FEResultsRepository, FERecord
 from batter.systems.core import SimSystem
 
 def parse_results_dat(path: Path) -> Tuple[float | None, float | None, Dict[str, float]]:
-    """
-    Parse ``fe/Results/Results.dat`` and return totals plus per-component values.
+    """Parse ``fe/Results/Results.dat`` and return totals plus per-component values.
+
+    The file is expected to contain rows with ``LABEL FE SE``. ``total`` rows set the
+    aggregate dG/SE, while other labels populate ``{label}_fe``/``{label}_se`` entries.
     """
     per_comp: Dict[str, float] = {}
     total_dG, total_se = None, None
@@ -40,8 +42,10 @@ def parse_results_dat(path: Path) -> Tuple[float | None, float | None, Dict[str,
 
 
 def fallback_totals_from_json(results_dir: Path) -> Tuple[float | None, float | None]:
-    """
-    Look for totals in JSON outputs produced by analysis.
+    """Look for totals in JSON outputs produced by analysis.
+
+    Attempts ``z_results.json`` first (for REST components), then searches for
+    ``*_results.json`` siblings that expose ``fe``/``fe_error`` keys.
     """
     zjson = results_dir / "z_results.json"
     if zjson.exists():
@@ -69,8 +73,10 @@ def fallback_totals_from_json(results_dir: Path) -> Tuple[float | None, float | 
 def extract_ligand_metadata(
     child: SimSystem, original_map: Dict[str, str] | None = None
 ) -> tuple[str | None, str | None, str | None]:
-    """
-    Gather ligand metadata (canonical SMILES, original name/path) for FE exports.
+    """Gather ligand metadata (canonical SMILES, original name/path) for FE exports.
+
+    Metadata is pulled from the parameterization artifact (``metadata.json``) when
+    available and combined with any original ligand-name mapping stored on disk.
     """
     canonical_smiles: str | None = None
     original_name: str | None = child.meta.get("ligand")
@@ -110,8 +116,12 @@ def save_fe_records(
     protocol: str,
     original_map: Dict[str, str] | None = None,
 ) -> list[tuple[str, str, str]]:
-    """
-    Persist FE totals for all ligands to the FE repository, recording failures.
+    """Persist FE totals for all ligands to the FE repository, recording failures.
+
+    For each ligand, totals are pulled from ``Results.dat`` (or JSON fallbacks) and
+    written to the portable FE repository alongside the raw ``Results/`` artifacts.
+    Missing totals or save errors are captured as failures and returned as
+    ``(ligand, status, reason)`` tuples.
     """
     failures: list[tuple[str, str, str]] = []
     analysis_range = (
