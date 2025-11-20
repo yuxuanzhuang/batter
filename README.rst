@@ -39,7 +39,9 @@ Clone the repository, initialize submodules, and create the environment:
 .. code-block:: bash
 
    git clone git@github.com:yuxuanzhuang/batter.git
-   # If SSH clone fails, configure your GitHub SSH keys:
+   # If SSH clone fails (or SSH is unavailable), use HTTPS instead:
+   # git clone https://github.com/yuxuanzhuang/batter.git
+   # For SSH setup tips:
    # https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account
 
    cd batter

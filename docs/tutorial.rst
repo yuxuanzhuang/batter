@@ -53,9 +53,14 @@ Installation
 
        export PIP_CACHE_DIR=$SCRATCH/.cache
 
-#. Clone the repository and initialize submodules::
+#. Clone the repository with ssh (or HTTPS if SSH is unavailable) and initialize submodules::
 
-       git clone https://github.com/yuxuanzhuang/batter.git
+       git clone git@github.com:yuxuanzhuang/batter.git
+       # If SSH is unavailable, use HTTPS instead:
+       # git clone https://github.com/yuxuanzhuang/batter.git
+       # For SSH setup tips:
+       # https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account
+
        cd batter
        git submodule update --init --recursive
 
