@@ -117,6 +117,24 @@ Use the CLI helpers to inspect and export them:
 
 A CSV file for all the FE results is stored under ``<system_root>/results``. See detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
 
+Run IDs and config changes
+--------------------------
+
+When reusing a ``run_id``, BATTER compares the current ``create``/``fe_sim`` settings
+against the stored signature. If they differ and you explicitly set ``run_id``,
+execution will abort unless ``--allow-run-id-mismatch`` is enabled. Changing only
+``run`` execution knobs (SLURM flags, output location, etc.) does not alter the
+signature; pick a new ``run_id`` if you want a clean workspace for those changes.
+
+Component steps and lambdas
+---------------------------
+
+Stage-1/Stage-2 steps are provided via ``fe_sim.steps1``/``steps2`` as dicts keyed by
+component letters (e.g., ``z: 5000``). Required components (``z`` for ABFE, ``y`` and
+``m`` for ASFE) must be positive. Lambda schedules default to the top-level
+``fe_sim.lambdas`` list and can be overridden per component via
+``fe_sim.component_lambdas``.
+
 Copyright
 -------------------------------
 **Copyright (c) 2024, Yuxuan Zhuang**

@@ -127,6 +127,14 @@ Systems and Builders
 - :class:`~batter.systems.masfe.MASFEBuilder` – MASFE counterpart that stages ligands
   without a protein topology.
 
+Binding (ABFE) components
+-------------------------
+
+ABFE simulations decouple the ligand from the bound complex using the ``z`` component
+(restraints + decoupling in complex). Both ``z_steps1``/``z_steps2`` are required
+via ``fe_sim.steps1/steps2``. Ensure the
+restraints and lambdas in the run YAML align with your chosen decoupling scheme.
+
 Solvation (ASFE) components
 ---------------------------
 
@@ -135,9 +143,20 @@ ASFE simulations run two FE components:
 - ``y`` – ligand-in-solvent decoupling.
 - ``m`` – ligand-in-vacuum decoupling.
 
-Both components require step counts in ``fe_sim.steps1``/``steps2`` (legacy
-``y_steps*``/``m_steps*`` keys are still accepted). The orchestrator enforces that both
-are positive before pipeline execution.
+Both components require step counts in ``fe_sim.steps1``/``steps2``. The orchestrator
+enforces that both are positive before pipeline execution.
+
+Practical constraints
+---------------------
+
+- Water boxes require ``buffer_x/y/z >= 15 Å``; the validator will reject smaller
+  padding to avoid vacuum artifacts. For membranes, automatic Z padding is applied if
+  needed.
+- Resume semantics rely on ``run_id`` plus the stored configuration signature (only
+  ``create`` and ``fe_sim`` fields). Changing execution knobs under ``run`` will not
+  trigger a new run_id, so bump the run_id yourself when you want a clean workspace.
+- Lambda overrides: provide a default ``lambdas`` list and override per component via
+  ``component_lambdas`` when needed. Missing components inherit the default schedule.
 
 Parameterisation
 ================
@@ -155,13 +174,13 @@ Pipelines and Payloads
 ``batter.pipeline.factory``, ``batter.pipeline.payloads``
 
 - :class:`~batter.pipeline.step.Step` – Encapsulates a DAG node with ``name``,
-  ``requires`` and a :class:`StepPayload <batter.pipeline.payloads.StepPayload>`.
+  ``requires`` and a :class:`~batter.pipeline.payloads.StepPayload`.
   ``step.params`` remains as a compatibility alias.
-- :class:`~batter.pipeline.pipeline.Pipeline`` – Topologically orders steps and invokes
+- :class:`~batter.pipeline.pipeline.Pipeline` – Topologically orders steps and invokes
   the backend through :meth:`run`.
 - :mod:`batter.pipeline.factory` – Builds canonical ABFE/ASFE pipelines. Pipelines are
-  expressed in terms of :class:`StepPayload` and :class:`SystemParams
-  <batter.pipeline.payloads.SystemParams>`.
+  expressed in terms of :class:`~batter.pipeline.payloads.StepPayload` and
+  :class:`~batter.pipeline.payloads.SystemParams`.
 - :mod:`batter.pipeline.payloads` – Defines the typed payload and system-parameter models.
   See :doc:`developer_guide/pipeline_payloads_and_metadata` for details.
 
@@ -177,7 +196,8 @@ Execution Backends
   :class:`~batter.exec.slurm_mgr.SlurmJobManager`.
 - Handler modules under ``batter/exec/handlers`` implement step-specific logic
   (system prep, parameterisation, equilibration, FE production, analysis). Each handler
-  receives a :class:`StepPayload` and a :class:`SimSystem`.
+  receives a :class:`~batter.pipeline.payloads.StepPayload` and a
+  :class:`~batter.systems.core.SimSystem`.
 
 Orchestration
 =============
