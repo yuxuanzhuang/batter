@@ -127,6 +127,18 @@ Systems and Builders
 - :class:`~batter.systems.masfe.MASFEBuilder` – MASFE counterpart that stages ligands
   without a protein topology.
 
+Solvation (ASFE) components
+---------------------------
+
+ASFE simulations run two FE components:
+
+- ``y`` – ligand-in-solvent decoupling.
+- ``m`` – ligand-in-vacuum decoupling.
+
+Both components require step counts in ``fe_sim.steps1``/``steps2`` (legacy
+``y_steps*``/``m_steps*`` keys are still accepted). The orchestrator enforces that both
+are positive before pipeline execution.
+
 Parameterisation
 ================
 
@@ -184,6 +196,19 @@ Orchestration
 7. Run phases sequentially, enforcing skip/resume semantics via
    :mod:`batter.orchestrate.markers`.
 8. Persist FE results using :class:`~batter.runtime.fe_repo.FEResultsRepository`.
+
+Run identifiers and config signatures
+-------------------------------------
+
+Each execution lives under ``<output_folder>/executions/<run_id>/``. When a run_id
+already exists, :func:`batter.orchestrate.run._compute_run_signature` compares the
+current YAML against the stored signature under ``artifacts/config/run_config.hash``.
+Only the simulation inputs are hashed (``create`` and ``fe_sim``/``fe``); ``run`` and
+override flags do not affect the signature. A normalized JSON snapshot of the hashed
+payload is also written to ``artifacts/config/run_config.normalized.json`` to aid
+debugging. If the signatures differ and ``run_id`` was requested explicitly, the
+orchestrator raises unless ``--allow-run-id-mismatch`` is set; in ``auto`` mode it
+will automatically pick a fresh run_id and log a brief diff of the mismatched fields.
 
 Runtime & Portability
 =====================
