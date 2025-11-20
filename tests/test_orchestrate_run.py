@@ -111,9 +111,7 @@ def test_resolve_signature_conflict_reports_diffs(tmp_path: Path, caplog) -> Non
     assert keep is False
 
 
-def test_notify_run_completion_prefers_config_sender(tmp_path: Path, monkeypatch) -> None:
-    sent: dict[str, str | list[str]] = {}
-
+def _dummy_smtp(sent: dict[str, str | list[str]]):
     class DummySMTP:
         def __init__(self, host: str) -> None:
             sent["host"] = host
@@ -129,21 +127,60 @@ def test_notify_run_completion_prefers_config_sender(tmp_path: Path, monkeypatch
             sent["recipients"] = recipients
             sent["message"] = message
 
-    monkeypatch.setenv(run_mod.SENDER_ENV_VAR, "env@example.com")
-    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: DummySMTP(host))
+    return DummySMTP
 
-    rc = SimpleNamespace(
+
+def _make_rc(tmp_path: Path, email_sender: str | None) -> SimpleNamespace:
+    return SimpleNamespace(
         protocol="abfe",
         create=SimpleNamespace(system_name="sys"),
         run=SimpleNamespace(
             email_on_completion="dest@example.com",
-            email_sender="config@example.com",
+            email_sender=email_sender,
             output_folder=tmp_path,
         ),
     )
+
+
+def test_notify_run_completion_prefers_config_sender(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, str | list[str]] = {}
+
+    monkeypatch.setenv(run_mod.SENDER_ENV_VAR, "env@example.com")
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
 
     run_mod._notify_run_completion(rc, "run1", tmp_path, [])
 
     assert sent["sender"] == "config@example.com"
     assert sent["recipients"] == ["dest@example.com"]
     assert "From: batter <config@example.com>" in sent["message"]
+
+
+def test_notify_run_completion_uses_env_sender_when_set(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, str | list[str]] = {}
+    monkeypatch.setenv(run_mod.SENDER_ENV_VAR, "env@example.com")
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender=None)
+
+    run_mod._notify_run_completion(rc, "run1", tmp_path, [])
+
+    assert sent["sender"] == "env@example.com"
+    assert "From: batter <env@example.com>" in sent["message"]
+
+
+def test_notify_run_completion_warns_when_defaulting_sender(tmp_path: Path, monkeypatch) -> None:
+    sent: dict[str, str | list[str]] = {}
+    warnings: list[str] = []
+
+    monkeypatch.delenv(run_mod.SENDER_ENV_VAR, raising=False)
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+    monkeypatch.setattr(run_mod.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
+
+    rc = _make_rc(tmp_path, email_sender=None)
+
+    run_mod._notify_run_completion(rc, "run1", tmp_path, [])
+
+    assert sent["sender"] == run_mod.DEFAULT_SENDER
+    assert any("defaulting sender email" in w for w in warnings)

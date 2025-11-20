@@ -126,6 +126,20 @@ execution will abort unless ``--allow-run-id-mismatch`` is enabled. Changing onl
 ``run`` execution knobs (SLURM flags, output location, etc.) does not alter the
 signature; pick a new ``run_id`` if you want a clean workspace for those changes.
 
+Email notifications
+-------------------
+
+BATTER can send a completion email when ``run.email_on_completion`` is set in your YAML.
+Configure the sender with ``run.email_sender`` or the ``BATTER_EMAIL_SENDER`` environment
+variable; otherwise it falls back to ``nobody@stanford.edu``. Example:
+
+.. code-block:: yaml
+
+   run:
+     output_folder: work/adrb2
+     email_sender: batter@example.com
+     email_on_completion: you@example.com
+
 Component steps and lambdas
 ---------------------------
 
