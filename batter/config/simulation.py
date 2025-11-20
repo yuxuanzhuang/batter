@@ -196,6 +196,13 @@ class SimulationConfig(BaseModel):
         if analysis_fe_range_value is None:
             analysis_fe_range_value = _analysis_range_default()
 
+        if not os.path.exists(amber_setup_sh):
+            logger.warning(
+                f"run.amber_setup_sh points to {amber_setup_sh}, but the file was not found. "
+                "Please ensure the path points to a valid AMBER setup script "
+                "where you run the simulations.",
+            )
+
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
