@@ -31,6 +31,8 @@ fe_sim:
   rocklin_correction: yes
   y_steps1: 5000
   y_steps2: 30000
+  m_steps1: 5000
+  m_steps2: 30000
   # total 10 * 30000 = 300000 steps -> 1.2 ns per window
   num_fe_extends: 10
   # non-bonded cutoff in Angstrom

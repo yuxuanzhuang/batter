@@ -148,8 +148,10 @@ class SimulationConfig(BaseModel):
             "asfe": ["y", "m"],
         }.get(proto_key, [])
         for comp in required_components:
-            steps1.setdefault(comp, 50_000)
-            steps2.setdefault(comp, 300_000)
+            if comp not in steps1 or comp not in steps2:
+                raise ValueError(
+                    f"{proto_key.upper()} protocol requires steps for component '{comp}'. Add {comp}_steps1 and {comp}_steps2."
+                )
             if steps1[comp] <= 0 or steps2[comp] <= 0:
                 raise ValueError(
                     f"{proto_key.upper()} protocol requires positive steps for component '{comp}'."
