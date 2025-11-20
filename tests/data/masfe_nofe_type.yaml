@@ -32,6 +32,8 @@ fe_sim:
   temperature: 310.0
   y_steps1: 5000
   y_steps2: 30000
+  m_steps1: 5000
+  m_steps2: 30000
   cut: 9.0
   barostat: 1
   hmr: yes

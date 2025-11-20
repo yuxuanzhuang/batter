@@ -192,17 +192,31 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     conf_json = tmp_path / "conf.json"
     conf_json.write_text("[]")
     create = _minimal_create(tmp_path, extra_conformation_restraints=conf_json)
-    fe_args = FESimArgs(lambdas=[0, 1], num_equil_extends=1, eq_steps=100)
+    fe_args = FESimArgs(
+        lambdas=[0, 1],
+        num_equil_extends=1,
+        eq_steps=100,
+        steps1={"z": 50_000},
+        steps2={"z": 300_000},
+    )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.infe is True
     assert cfg.barostat == 2
     assert cfg.release_eq == [0.0, 0.0]
     assert cfg.eq_steps1 == cfg.eq_steps2 == cfg.eq_steps == 100
 
-    create2 = create.model_copy(update={"extra_conformation_restraints": None, "extra_restraints": "mask"})
+    create2 = create.model_copy(
+        update={"extra_conformation_restraints": None, "extra_restraints": "mask"}
+    )
     cfg2 = SimulationConfig.from_sections(
         create2,
-        FESimArgs(lambdas=[0, 1], num_equil_extends=1, eq_steps=100),
+        FESimArgs(
+            lambdas=[0, 1],
+            num_equil_extends=1,
+            eq_steps=100,
+            steps1={"z": 50_000},
+            steps2={"z": 300_000},
+        ),
         protocol="abfe",
     )
     assert cfg2.infe is False
@@ -267,12 +281,24 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
 
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
+    if protocol == "abfe":
+        steps1 = {"z": 50_000}
+        steps2 = {"z": 300_000}
+    else:
+        steps1 = {"y": 50_000, "m": 50_000}
+        steps2 = {"y": 300_000, "m": 300_000}
     payload = {
         "protocol": protocol,
         "backend": "local",
         "run": {"output_folder": str(tmp_path / "out")},
         "create": create.model_dump(),
-        "fe_sim": {"lambdas": [0.0, 1.0], "num_equil_extends": 1, "eq_steps": 1000},
+        "fe_sim": {
+            "lambdas": [0.0, 1.0],
+            "num_equil_extends": 1,
+            "eq_steps": 1000,
+            "steps1": steps1,
+            "steps2": steps2,
+        },
     }
     return RunConfig.model_validate(payload)
 
@@ -297,6 +323,8 @@ def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) 
         num_equil_extends=1,
         eq_steps=1000,
         num_fe_extends=2,
+        steps1={"z": 50_000},
+        steps2={"z": 300_000},
     )
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
@@ -310,6 +338,8 @@ def test_analysis_fe_range_default_for_large_num_fe_extends(tmp_path: Path, capl
         num_equil_extends=1,
         eq_steps=1000,
         num_fe_extends=6,
+        steps1={"z": 50_000},
+        steps2={"z": 300_000},
     )
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
@@ -325,6 +355,8 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
         eq_steps=1000,
         num_fe_extends=2,
         analysis_fe_range=(5, 7),
+        steps1={"z": 50_000},
+        steps2={"z": 300_000},
     )
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
@@ -335,7 +367,12 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
-        lambdas=[0, 1], num_equil_extends=0, eq_steps=100, enable_mcwat="no"
+        lambdas=[0, 1],
+        num_equil_extends=0,
+        eq_steps=100,
+        enable_mcwat="no",
+        steps1={"z": 50_000},
+        steps2={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.enable_mcwat == "no"
