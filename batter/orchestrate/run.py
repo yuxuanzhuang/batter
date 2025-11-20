@@ -101,7 +101,7 @@ def run_from_yaml(
             "max_workers": rc.run.max_workers,
             "max_active_jobs": rc.run.max_active_jobs,
             "slurm_partition": rc.run.slurm.partition if rc.run.slurm else None,
-            "amber_setup_sh": getattr(rc.run, "amber_setup_sh", None),
+            "amber_setup_sh": rc.run.amber_setup_sh,
         },
     )
     if run_overrides:

@@ -672,7 +672,7 @@ class RunSection(BaseModel):
         ),
     )
 
-    email_sender: str | None = Field(
+    email_sender: str = Field(
         "nobody@stanford.edu",
         description=("Sender address used for completion email notifications."),
     )
@@ -683,7 +683,7 @@ class RunSection(BaseModel):
             "finishes (successfully or with warnings)."
         ),
     )
-    amber_setup_sh: str | None = Field(
+    amber_setup_sh: str = Field(
         "$GROUP_HOME/software/amber24/setup_amber.sh",
         description=(
             "Path to a shell script used to load AMBER simulation environment."

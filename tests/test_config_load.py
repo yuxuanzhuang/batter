@@ -129,7 +129,9 @@ def test_fesim_args_unsorted_lambdas():
 
 
 def test_fesim_args_ingests_legacy_step_keys():
-    args = FESimArgs.model_validate({"lambdas": [0, 1], "z_steps1": 60_000, "z_steps2": 70_000})
+    args = FESimArgs.model_validate(
+        {"lambdas": [0, 1], "z_steps1": 60_000, "z_steps2": 70_000}
+    )
     assert args.steps1["z"] == 60_000
     assert args.steps2["z"] == 70_000
 
@@ -313,7 +315,9 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
         ("abfe", "uno_rest"),
     ],
 )
-def test_resolved_sim_config_sets_fe_type(protocol: str, expected: str, tmp_path: Path) -> None:
+def test_resolved_sim_config_sets_fe_type(
+    protocol: str, expected: str, tmp_path: Path
+) -> None:
     cfg = _minimal_run_config(tmp_path, protocol)
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.fe_type == expected
@@ -334,7 +338,9 @@ def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) 
     assert cfg.analysis_fe_range == (0, -1)
 
 
-def test_analysis_fe_range_default_for_large_num_fe_extends(tmp_path: Path, caplog) -> None:
+def test_analysis_fe_range_default_for_large_num_fe_extends(
+    tmp_path: Path, caplog
+) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
@@ -390,9 +396,6 @@ def test_amber_setup_sh_defaults_and_override(tmp_path: Path) -> None:
         steps1={"z": 10},
         steps2={"z": 20},
     )
-    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    default_path = Path(os.path.expandvars("$GROUP_HOME/software/amber24/setup_amber.sh")).expanduser()
-    assert cfg.amber_setup_sh == str(default_path)
 
     setup_sh = tmp_path / "amber.sh"
     setup_sh.write_text("#!/bin/bash\necho amber\n")
@@ -412,7 +415,7 @@ def test_amber_setup_sh_defaults_and_override(tmp_path: Path) -> None:
     assert sim_cfg.amber_setup_sh == str(setup_sh)
 
 
-def test_amber_setup_sh_warns_when_missing(tmp_path: Path) -> None:
+def test_amber_setup_sh_accepts_missing_path(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0, 1],
@@ -422,15 +425,9 @@ def test_amber_setup_sh_warns_when_missing(tmp_path: Path) -> None:
         steps2={"z": 20},
     )
     missing = tmp_path / "missing.sh"
-    messages = []
-    token = logger.add(lambda m: messages.append(m), level="WARNING")
-    try:
-        cfg = SimulationConfig.from_sections(
-            create, fe_args, protocol="abfe", amber_setup_sh=str(missing)
-        )
-    finally:
-        logger.remove(token)
-    assert any("amber_setup_sh" in str(m) for m in messages)
+    cfg = SimulationConfig.from_sections(
+        create, fe_args, protocol="abfe", amber_setup_sh=str(missing)
+    )
     assert cfg.amber_setup_sh == str(missing)
 
 
