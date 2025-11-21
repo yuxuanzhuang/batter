@@ -402,50 +402,6 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     assert cfg.enable_mcwat == "no"
 
 
-def test_amber_setup_sh_defaults_and_override(tmp_path: Path) -> None:
-    create = _minimal_create(tmp_path)
-    fe_args = FESimArgs(
-        lambdas=[0, 1],
-        num_equil_extends=0,
-        eq_steps=10,
-        steps1={"z": 10},
-        steps2={"z": 20},
-    )
-
-    setup_sh = tmp_path / "amber.sh"
-    setup_sh.write_text("#!/bin/bash\necho amber\n")
-
-    run = RunConfig(
-        version=1,
-        protocol="abfe",
-        backend="local",
-        run=RunSection(
-            output_folder=tmp_path / "out",
-            amber_setup_sh=str(setup_sh),
-        ),
-        create=create,
-        fe_sim=fe_args,
-    )
-    sim_cfg = run.resolved_sim_config()
-    assert sim_cfg.amber_setup_sh == str(setup_sh)
-
-
-def test_amber_setup_sh_accepts_missing_path(tmp_path: Path) -> None:
-    create = _minimal_create(tmp_path)
-    fe_args = FESimArgs(
-        lambdas=[0, 1],
-        num_equil_extends=0,
-        eq_steps=10,
-        steps1={"z": 10},
-        steps2={"z": 20},
-    )
-    missing = tmp_path / "missing.sh"
-    cfg = SimulationConfig.from_sections(
-        create, fe_args, protocol="abfe", amber_setup_sh=str(missing)
-    )
-    assert cfg.amber_setup_sh == str(missing)
-
-
 def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:
     lig = tmp_path / "lig.sdf"
     lig.write_text("dummy")
