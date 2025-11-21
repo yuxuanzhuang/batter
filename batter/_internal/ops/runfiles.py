@@ -27,11 +27,10 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     logger.debug(f"[Equil] Creating run scripts in {work}")
 
     # Copy templates from internal RUN_FILES_DIR
-    for template_name in ["check_run.bash", "check_penetration.py", "run-equil.bash", "SLURMM-Am"]:
+    for template_name in ["check_run.bash", "check_penetration.py", "run-equil.bash"]:
         src = run_files_orig / template_name
         dst = work / (
             "run-local.bash" if template_name == "run-equil.bash" else
-            "SLURMM-run" if template_name == "SLURMM-Am" else
             template_name
         )
         if not src.exists():
@@ -59,6 +58,25 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
             dst.chmod(0o755)
         except Exception as e:
             logger.debug(f"chmod +x failed for {dst}: {e}")
+
+    # SLURM submit script assembled from header/body
+    out_slurm = work / "SLURMM-run"
+    stxt = render_slurm_with_header_body(
+        "SLURMM-Am.header",
+        run_files_orig / "SLURMM-Am.header",
+        run_files_orig / "SLURMM-Am.body",
+        {
+            "STAGE": stage,
+            "POSE": ligand_name,
+            "SYSTEMNAME": sim.system_name,
+            "PARTITIONNAME": sim.partition,
+        },
+    )
+    out_slurm.write_text(stxt)
+    try:
+        out_slurm.chmod(0o755)
+    except Exception as e:
+        logger.debug(f"chmod +x failed for {out_slurm}: {e}")
 
     logger.debug(f"[Equil] Run scripts ready at {work}")
 

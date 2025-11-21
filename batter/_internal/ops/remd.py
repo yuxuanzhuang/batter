@@ -311,7 +311,6 @@ def write_remd_run_scripts(
     run_local.chmod(0o755)
     out.append(run_local)
 
-    slurm_tpl = RUN_TPL["slurm"]
     slurm = comp_dir / "SLURMM-BATCH-remd"
     slurm_text = render_slurm_with_header_body(
         "SLURMM-BATCH-remd.header",
@@ -324,18 +323,7 @@ def write_remd_run_scripts(
             "FERANGE": str(num_extends),
         },
     )
-    _copy_template(
-        slurm_tpl,
-        slurm,
-        {
-            "COMPONENT": comp,
-            "PARTITIONNAME": part,
-            "NWINDOWS": str(gpus),
-            "FERANGE": str(num_extends),
-            "AMBER_SETUP_SH": sim.amber_setup_sh,
-        },
-        override_text=slurm_text,
-    )
+    slurm.write_text(slurm_text)
     slurm.chmod(0o755)
     out.append(slurm)
 
