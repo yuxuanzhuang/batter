@@ -1166,8 +1166,8 @@ def create_box_m(ctx: BuildContext) -> None:
         f"{mol} = loadmol2 {mol}.mol2",
         f'set {{{mol}.1}} name "{mol}"\n',
         f"lig = loadpdb {mol}.pdb",
-        # set box to 20
-        "set lig box {20.000000 20.000000 20.000000}",
+        # set box to 40
+        "set lig box {40.000000 40.000000 40.000000}",
         "desc lig",
         "savepdb lig vac.pdb",
         "saveamberparm lig vac.prmtop vac.inpcrd",

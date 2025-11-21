@@ -41,7 +41,7 @@ def _cpptraj_export_rep(rep_idx: int, prmtop: str,
     """Export a representative frame to PDB/RST7 using cpptraj."""
     # Build cpptraj input
     lines: List[str] = [f"parm {prmtop}"]
-    for i in range(start_eq, end_eq):  # skip the first equil traj (assumes md-00.nc exists and is skipped)
+    for i in range(start_eq, end_eq):
         lines.append(f"trajin md-{i:02d}.nc")
     # cpptraj is 1-indexed for frames
     one_based_frame = rep_idx + 1
@@ -102,7 +102,7 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
     if not release_eq:
         release_eq = [0.0]
     n_eq = len(release_eq)
-    hmr = str(sim.hmr)  # "yes"/"no"
+    hmr = str(sim.hmr)
 
     # hard requirements
     if not p["finished"].exists():
@@ -122,8 +122,8 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
     if not p["full_pdb"].exists():
         raise FileNotFoundError(f"[equil_check:{lig}] missing {p['full_pdb']}")
 
-    # Build trajectory list (skip the eq runs where release_eq is not 0
-    start = int(np.where(np.array(release_eq, float) == 0.0)[0][0]) if np.any(np.array(release_eq) == 0.0) else None
+    # Build trajectory list from the second segment onward
+    start = 1
 
     trajs = [p["equil_dir"] / f"md-{i:02d}.nc" for i in range(start, n_eq)]
     trajs = [t for t in trajs if t.exists()]

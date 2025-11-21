@@ -17,7 +17,8 @@ batter
 It provides **absolute binding free energy (ABFE)** calculations for ligands––**including
 charged species**–––bound to membrane proteins, as well as **absolute solvation free energy (ASFE)**.
 It extends the original `BAT.py <https://github.com/GHeinzelmann/BAT.py>`_ package with the support of
-membrane proteins and single-leg ABFE protocols.
+membrane proteins, single-leg ABFE protocols, enhanced sampling via Hamiltonian replica exchange MD (H-REMD),
+OpenFF, and a revamped codebase for maintainability and extensibility.
 
 ABFE runs in ``batter`` follow a single-component design that applies lambda-dependent
 Boresch restraints, uses the simultaneous decoupling/recoupling (SDR) protocol with both
