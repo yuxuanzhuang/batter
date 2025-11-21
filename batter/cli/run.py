@@ -656,6 +656,13 @@ def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
                 except ValueError:
                     win = None
         stage = "fe"
+    elif tail.endswith("_remd"):
+        core = tail[: -len("_remd")]
+        m = re.match(r"(?P<lig>.+)_(?P<comp>[A-Za-z]+)$", core)
+        if m:
+            ligand = m.group("lig")
+            comp = m.group("comp")
+        stage = "remd"
 
     run_id = None
     mrun = re.search(r"/executions/([^/]+)$", system_root)

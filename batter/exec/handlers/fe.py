@@ -71,14 +71,16 @@ def _spec_from_dir(
     finished_name: str,
     part: str,
     job_name: str,
+    failed_name: str = "FAILED",
+    script_rel: str = "SLURMM-run",
     extra_env: Optional[Dict[str, str]] = None,
 ) -> SlurmJobSpec:
     """Build a :class:`SlurmJobSpec` for ``workdir``."""
     return SlurmJobSpec(
         workdir=workdir,
-        script_rel="SLURMM-run",
+        script_rel=script_rel,
         finished_name=finished_name,
-        failed_name="FAILED",
+        failed_name=failed_name,
         name=job_name,
         extra_sbatch=["-p", part],
         extra_env=extra_env or {},
@@ -193,6 +195,9 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     lig = system.meta.get("ligand", system.name)
     part = _read_partition(payload)
     max_jobs = int(payload.get("max_active_jobs", 500))
+    remd_enabled = False
+    if payload.sim is not None:
+        remd_enabled = str(getattr(payload.sim, "remd", "no")).lower() == "yes"
 
     job_mgr = payload.get("job_mgr")
     if not isinstance(job_mgr, SlurmJobManager):
@@ -206,21 +211,51 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             f"[fe:{lig}] No components found under {system.root/'fe'}"
         )
 
-    register_phase_state(
-        system.root,
-        "fe",
-        required=[
-            ["fe/{comp}/{comp}{win:02d}/FINISHED"],
-            ["fe/{comp}/{comp}{win:02d}/FAILED"],
-        ],
-        success=[["fe/{comp}/{comp}{win:02d}/FINISHED"]],
-        failure=[["fe/{comp}/{comp}{win:02d}/FAILED"]],
-    )
+    if remd_enabled:
+        register_phase_state(
+            system.root,
+            "fe",
+            required=[["fe/{comp}/remd_FINISHED"], ["fe/{comp}/remd_FAILED"]],
+            success=[["fe/{comp}/remd_FINISHED"]],
+            failure=[["fe/{comp}/remd_FAILED"]],
+        )
+    else:
+        register_phase_state(
+            system.root,
+            "fe",
+            required=[
+                ["fe/{comp}/{comp}{win:02d}/FINISHED"],
+                ["fe/{comp}/{comp}{win:02d}/FAILED"],
+            ],
+            success=[["fe/{comp}/{comp}{win:02d}/FINISHED"]],
+            failure=[["fe/{comp}/{comp}{win:02d}/FAILED"]],
+        )
 
     count = 0
     for comp in comps:
+        if remd_enabled:
+            comp_dir = system.root / "fe" / comp
+            failed = comp_dir / "remd_FAILED"
+            if failed.exists():
+                try:
+                    failed.unlink()
+                except Exception:
+                    pass
+
+            job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
+            spec = _spec_from_dir(
+                comp_dir,
+                finished_name="remd_FINISHED",
+                failed_name="remd_FAILED",
+                script_rel="SLURMM-BATCH-remd",
+                part=part,
+                job_name=job_name,
+            )
+            job_mgr.add(spec)
+            count += 1
+            continue
+
         for wd in _production_window_dirs(system.root, comp):
-            # clear FAILED if present
             failed = wd / "FAILED"
             if failed.exists():
                 try:
