@@ -1,0 +1,31 @@
+#!/bin/bash
+
+#SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
+#SBATCH --partition=PARTITIONNAME
+#SBATCH --nodes=1
+#SBATCH --open-mode=append
+#SBATCH --output=STAGE-POSE-%j.out
+#SBATCH --error=STAGE-POSE-%j.err
+#SBATCH --gres=gpu:1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH -t 16:00:00
+#SBATCH -d singleton
+#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
+source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
+
+# Optional overrides for executables:
+#   PMEMD_EXEC        (default: pmemd.cuda)
+#   PMEMD_MPI_EXEC    (default: pmemd.cuda.MPI)
+#   PMEMD_DPFP_EXEC   (default: pmemd.cuda_DPFP)
+#   PMEMD_CPU_EXEC    (default: pmemd)
+#   SANDER_EXEC       (default: sander)
+#   MPI_EXEC          (default: mpirun)
+
+# Uncomment and edit to override
+# export PMEMD_EXEC=pmemd.cuda
+# export PMEMD_MPI_EXEC=pmemd.cuda.MPI
+# export PMEMD_DPFP_EXEC=pmemd.cuda_DPFP
+# export PMEMD_CPU_EXEC=pmemd
+# export SANDER_EXEC=sander
+# export MPI_EXEC=mpirun

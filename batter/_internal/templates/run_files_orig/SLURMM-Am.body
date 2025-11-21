@@ -1,18 +1,3 @@
-#!/bin/bash
-
-#SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
-#SBATCH --partition=PARTITIONNAME
-#SBATCH --nodes=1
-#SBATCH --open-mode=append
-#SBATCH --output=STAGE-POSE-%j.out
-#SBATCH --error=STAGE-POSE-%j.err
-#SBATCH --gres=gpu:1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=2
-#SBATCH -t 16:00:00
-#SBATCH -d singleton
-#SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
-
 scontrol show job $SLURM_JOB_ID
 # start time
 echo "Job started at $(date)"
@@ -63,7 +48,7 @@ else
         scontrol show job $SLURM_JOB_ID |
             grep -m1 '^[[:space:]]*NodeList=' |
             awk -F= '{print $2}' |
-            tr -d '[:space:]'
+            tr -d '[:space:}'
         )
         #echo "$bad_node"
         echo "Bad node: $bad_node"

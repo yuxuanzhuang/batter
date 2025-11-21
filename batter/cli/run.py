@@ -28,6 +28,7 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
+from batter.utils.slurm_templates import render_slurm_with_header_body
 from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
 
@@ -220,8 +221,12 @@ def cmd_run(
             dry_run=("1" if dry_run else "0") if dry_run is not None else "",
             only_equil=("1" if only_equil else "0") if only_equil is not None else "",
         )
-        with open(slurm_manager_path or job_manager, "r") as f:
-            manager_code = f.read()
+        base_path = Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
+        tpl_header = base_path.with_suffix(".header")
+        tpl_body = base_path.with_suffix(".body")
+        manager_code = render_slurm_with_header_body(
+            "job_manager.header", tpl_header, tpl_body, {}
+        )
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")

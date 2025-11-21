@@ -7,6 +7,7 @@ from loguru import logger
 
 from batter.config.simulation import SimulationConfig
 from batter.utils.components import COMPONENTS_DICT
+from batter.utils.slurm_templates import render_slurm_with_header_body
 
 # Default REMD exchange settings to mirror legacy batching behaviour (overridden by config).
 NUMEXCHG_DEFAULT = 3000
@@ -294,8 +295,8 @@ def write_remd_run_scripts(
     part = getattr(sim, "partition", "normal")
     gpus = n_windows if n_windows > 0 else 1
 
-    def _copy_template(src: Path, dst: Path, repl: dict[str, str]) -> None:
-        text = src.read_text()
+    def _copy_template(src: Path, dst: Path, repl: dict[str, str], override_text: str | None = None) -> None:
+        text = override_text if override_text is not None else src.read_text()
         for k, v in repl.items():
             text = text.replace(k, v)
         dst.write_text(text)
@@ -312,6 +313,17 @@ def write_remd_run_scripts(
 
     slurm_tpl = RUN_TPL["slurm"]
     slurm = comp_dir / "SLURMM-BATCH-remd"
+    slurm_text = render_slurm_with_header_body(
+        "SLURMM-BATCH-remd.header",
+        TEMPLATE_DIR / "SLURMM-BATCH-remd.header",
+        TEMPLATE_DIR / "SLURMM-BATCH-remd.body",
+        {
+            "COMPONENT": comp,
+            "PARTITIONNAME": part,
+            "NWINDOWS": str(gpus),
+            "FERANGE": str(num_extends),
+        },
+    )
     _copy_template(
         slurm_tpl,
         slurm,
@@ -322,6 +334,7 @@ def write_remd_run_scripts(
             "FERANGE": str(num_extends),
             "AMBER_SETUP_SH": sim.amber_setup_sh,
         },
+        override_text=slurm_text,
     )
     slurm.chmod(0o755)
     out.append(slurm)

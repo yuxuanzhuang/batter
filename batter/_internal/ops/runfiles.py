@@ -10,6 +10,7 @@ from loguru import logger
 from batter.config.simulation import SimulationConfig
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
+from batter.utils.slurm_templates import render_slurm_with_header_body
 
 def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     """
@@ -46,7 +47,6 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
                 .replace("PARTITIONNAME", sim.partition)
-                .replace("AMBER_SETUP_SH", sim.amber_setup_sh)
         )
 
         if hmr:
@@ -143,15 +143,18 @@ def write_fe_run_file(
     out_local.write_text(txt)
     os.chmod(out_local, 0o755)
 
-    # -------- SLURMM-run (from SLURMM-Am template)
+    # -------- SLURMM-run (from SLURMM-Am template, with optional user override)
     out_slurm = dst_dir / "SLURMM-run"
-    stxt = tpl_slurm.read_text()
-    stxt = (
-        stxt.replace("STAGE", pose)
-            .replace("POSE", f"{comp}{int(win_idx):02d}")
-            .replace("SYSTEMNAME", system_name)
-            .replace("PARTITIONNAME", partition)
-            .replace("AMBER_SETUP_SH", ctx.sim.amber_setup_sh)
+    stxt = render_slurm_with_header_body(
+        "SLURMM-Am.header",
+        run_files_orig / "SLURMM-Am.header",
+        run_files_orig / "SLURMM-Am.body",
+        {
+            "STAGE": pose,
+            "POSE": f"{comp}{int(win_idx):02d}",
+            "SYSTEMNAME": system_name,
+            "PARTITIONNAME": partition,
+        },
     )
     out_slurm.write_text(stxt)
     os.chmod(out_slurm, 0o755)

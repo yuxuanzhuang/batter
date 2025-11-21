@@ -47,7 +47,6 @@ class SimulationConfig(BaseModel):
         partition: str | None = None,
         protocol: str | None = None,
         fe_type: str | None = None,
-        amber_setup_sh: str = "",
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -209,16 +208,6 @@ class SimulationConfig(BaseModel):
             remd_nstlim = int(_fe_attr("remd_nstlim", lambda: 100))
             remd_numexchg = int(_fe_attr("remd_numexchg", lambda: 3000))
 
-        if not os.path.exists(amber_setup_sh):
-            # try to expand vars
-            amber_setup_sh = os.path.expandvars(amber_setup_sh)
-            if not os.path.exists(amber_setup_sh):
-                logger.warning(
-                    f"run.amber_setup_sh points to {amber_setup_sh}, but the file was not found. "
-                    "Please ensure the path points to a valid AMBER setup script "
-                    "where you run the simulations.",
-                )
-
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
@@ -259,7 +248,6 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
-            "amber_setup_sh": amber_setup_sh,
         }
 
         infe_flag = bool(extra_conf_rest)

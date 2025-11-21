@@ -2,6 +2,11 @@
 
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
+PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
+PMEMD_MPI_EXEC=${PMEMD_MPI_EXEC:-pmemd.cuda.MPI}
+PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
+PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
+SANDER_EXEC=${SANDER_EXEC:-sander}
 log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
@@ -28,7 +33,7 @@ if [[ $only_eq -eq 1 ]]; then
         cp mini.in mini_eq.in
     fi
     # not use pmemd as sometimes it fails.
-    sander -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    $SANDER_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 
     # run minimization for each windows at this stage
@@ -58,7 +63,7 @@ if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     # Initial MD production run
-    pmemd.cuda -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 -AllowSmallBox >> "$log_file" 2>&1
+    $PMEMD_EXEC -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 -AllowSmallBox >> "$log_file" 2>&1
     check_sim_failure "MD stage 0" "$log_file"
 fi
 
@@ -73,7 +78,7 @@ while [ $i -le FERANGE ]; do
     if [[ $overwrite -eq 0 && -s mdin-$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
-        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 -AllowSmallBox >> $log_file 2>&1
+        $PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 -AllowSmallBox >> $log_file 2>&1
         check_sim_failure "MD stage $i" "$log_file"
     fi
     i=$((i + 1))

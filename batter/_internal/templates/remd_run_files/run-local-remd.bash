@@ -6,6 +6,9 @@ NWINDOWS=NWINDOWS
 FERANGE=FERANGE
 PFOLDER="."
 REMD=1
+PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
+PMEMD_MPI_EXEC=${PMEMD_MPI_EXEC:-pmemd.cuda.MPI}
+MPI_EXEC=${MPI_EXEC:-mpirun}
 overwrite=${OVERWRITE:-0}
 log_file="${PFOLDER}/${COMP}_run.remd.log"
 
@@ -22,7 +25,7 @@ if [[ -s ${PFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${COMP}_0.log"
-    mpirun -np ${NWINDOWS} --oversubscribe pmemd.cuda.MPI -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.remd.groupfile >> "$log_file" 2>&1
+    $MPI_EXEC -np ${NWINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.remd.groupfile >> "$log_file" 2>&1
     if [[ -f check_run.bash ]]; then source check_run.bash; check_sim_failure "md00" "$log_file"; fi
 fi
 
@@ -34,7 +37,7 @@ while [ $i -le ${FERANGE} ]; do
         echo "Skipping md${x} steps."
     else
         REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${COMP}_${x}.log"
-        mpirun -np ${NWINDOWS} --oversubscribe pmemd.cuda.MPI -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${x}.remd.groupfile >> "$log_file" 2>&1
+        $MPI_EXEC -np ${NWINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${x}.remd.groupfile >> "$log_file" 2>&1
         if [[ -f check_run.bash ]]; then source check_run.bash; check_sim_failure "md${x}" "$log_file"; fi
     fi
     i=$((i + 1))

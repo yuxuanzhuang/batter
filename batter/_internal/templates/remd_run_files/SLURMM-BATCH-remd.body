@@ -1,0 +1,13 @@
+scontrol show job ${SLURM_JOB_ID}
+echo "Job started at $(date)"
+
+export COMP="COMPONENT"
+export NWINDOWS="NWINDOWS"
+export FERANGE="FERANGE"
+export PFOLDER="."
+export OVERWRITE=${OVERWRITE:-0}
+
+source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
+
+./run-local-remd.bash
+exit $?

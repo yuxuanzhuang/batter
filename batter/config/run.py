@@ -693,13 +693,6 @@ class RunSection(BaseModel):
             "finishes (successfully or with warnings)."
         ),
     )
-    amber_setup_sh: str = Field(
-        "$GROUP_HOME/software/amber24/setup_amber.sh",
-        description=(
-            "Path to a shell script used to load AMBER simulation environment."
-        ),
-    )
-
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
     def resolve_paths(self, base: Path) -> "RunSection":
@@ -835,7 +828,6 @@ class RunConfig(BaseModel):
             protocol=self.protocol,
             fe_type=desired_fe_type,
             partition=self.run.slurm.partition,
-            amber_setup_sh=self.run.amber_setup_sh,
         )
 
     def with_base_dir(self, base_dir: Path) -> "RunConfig":
