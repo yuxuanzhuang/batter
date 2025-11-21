@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.resources as pkg_resources
+from importlib import resources
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
@@ -55,6 +55,7 @@ def render_slurm_with_header_body(
 def seed_default_headers(
     header_root: Optional[Path] = None,
     resource_map: Optional[Mapping[str, str]] = None,
+    overwrite: bool = False,
 ) -> list[Path]:
     """
     Copy packaged Slurm header templates into ``header_root`` (default: ~/.batter).
@@ -74,7 +75,7 @@ def seed_default_headers(
     copied: list[Path] = []
     for name, ref in targets.items():
         dst = root / name
-        if dst.exists():
+        if dst.exists() and not overwrite:
             continue
         try:
             ref_path = Path(ref)
@@ -83,7 +84,7 @@ def seed_default_headers(
                 copied.append(dst)
                 continue
             pkg_name, rel = ref.split("/", 1)
-            with pkg_resources.as_file(pkg_resources.files(pkg_name) / rel) as src_path:
+            with resources.as_file(resources.files(pkg_name) / rel) as src_path:
                 dst.write_text(src_path.read_text())
                 copied.append(dst)
         except Exception as e:

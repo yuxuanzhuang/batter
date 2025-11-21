@@ -28,7 +28,7 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
-from batter.utils.slurm_templates import render_slurm_with_header_body
+from batter.utils.slurm_templates import render_slurm_with_header_body, seed_default_headers
 from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
 
@@ -37,6 +37,33 @@ from batter.cli.fek import fek_schedule
 @click.version_option(version=__version__, prog_name="batter")
 def cli() -> None:
     """Root command group for BATTER."""
+    seed_default_headers()
+
+
+@cli.command("seed-headers")
+@click.option(
+    "--dest",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    default=None,
+    help="Destination directory for Slurm headers (defaults to ~/.batter).",
+)
+@click.option(
+    "--force/--no-force",
+    default=False,
+    help="Overwrite existing headers if present.",
+)
+def seed_headers(dest: Path | None, force: bool) -> None:
+    """Copy packaged Slurm headers into dest (default: ~/.batter)."""
+    copied = seed_default_headers(dest, overwrite=force)
+    dest_dir = dest or Path.home() / ".batter"
+    if copied:
+        click.echo(f"Seeded headers into {dest_dir}:")
+        for path in copied:
+            click.echo(f"  - {path}")
+    else:
+        click.echo(f"No headers copied; existing headers already present under {dest_dir}.")
+        if not force:
+            click.echo("Use --force to overwrite existing header files.")
 
 
 # -------------------------------- run ----------------------------------

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from batter.utils.slurm_templates import render_slurm_with_header_body
+from batter.utils.slurm_templates import (
+    render_slurm_with_header_body,
+    seed_default_headers,
+)
 
 
 def test_slurm_template_seeds_user_header(monkeypatch, tmp_path):
@@ -99,3 +102,35 @@ def test_slurm_template_reads_existing_header_root(tmp_path):
 
     assert "#USER" in rendered
     assert "#PKG" not in rendered
+
+
+def test_seed_default_headers_with_resource_map(tmp_path):
+    """
+    seed_default_headers should write missing headers into header_root using provided resources.
+    """
+    hdr_root = tmp_path / "hdrs"
+    resource_map = {
+        "a.header": str((tmp_path / "pkg" / "a.header").as_posix()),
+    }
+    pkg_file = tmp_path / "pkg" / "a.header"
+    pkg_file.parent.mkdir(parents=True, exist_ok=True)
+    pkg_file.write_text("#A\n")
+
+    copied = seed_default_headers(header_root=hdr_root, resource_map=resource_map)
+    assert (hdr_root / "a.header") in copied
+    assert (hdr_root / "a.header").read_text() == "#A\n"
+
+
+def test_cli_seed_headers(tmp_path, monkeypatch):
+    """The CLI command should copy headers into the requested destination."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    from click.testing import CliRunner
+    from batter.cli.run import seed_headers
+
+    runner = CliRunner()
+    dest = tmp_path / "custom"
+    res = runner.invoke(seed_headers, ["--dest", str(dest)])
+    assert res.exit_code == 0, res.output
+    assert (dest / "SLURMM-Am.header").exists()
+    assert (dest / "SLURMM-BATCH-remd.header").exists()
+    assert (dest / "job_manager.header").exists()

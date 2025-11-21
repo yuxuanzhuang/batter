@@ -8,7 +8,7 @@ from typing import Mapping, Sequence
 
 from loguru import logger
 
-import importlib.resources as pkg_resources
+from importlib import resources
 
 __all__ = [
     "run_with_log",
@@ -28,7 +28,7 @@ tleap = "tleap"
 cpptraj = "cpptraj"
 parmchk2 = "parmchk2"
 charmmlipid2amber = "charmmlipid2amber.py"
-usalign = str(pkg_resources.files("batter") / "utils" / "USalign")
+usalign = str(resources.files("batter") / "utils" / "USalign")
 obabel = "obabel"
 vmd = "vmd"
 

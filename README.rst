@@ -82,7 +82,7 @@ Run an example configuration:
 
    cd examples
 
-   batter --help   # first run to create ~/.batter with SLURM headers
+   batter seed-headers   # create ~/.batter with SLURM headers
 
    # modify ~/.batter/***.header to suit your cluster if needed
 
@@ -127,6 +127,16 @@ Customize queue/partition or executable overrides by editing:
 
 If the files are missing, run any ``batter`` command once to seed them, then edit the
 headers; bodies remain managed by the package.
+
+You can also seed headers explicitly with:
+
+.. code-block:: bash
+
+   batter seed-headers           # seeds into ~/.batter
+   batter seed-headers --dest /path/to/dir
+
+After seeding, edit the header files to match your cluster defaults; they will be
+used whenever BATTER renders SLURM scripts.
 
 Results Interpretation
 ----------------------
