@@ -135,6 +135,7 @@ def make_abfe_pipeline(
             "equil_analysis",
             "prepare_fe",
             "prepare_fe_windows",
+            "fe_equil"
         }
         steps = [s for s in steps if s.name in keep]
 

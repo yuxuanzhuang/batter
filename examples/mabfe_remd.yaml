@@ -1,0 +1,71 @@
+version: 1
+protocol: abfe
+backend: local
+
+create:
+  system_name: adrb2_A
+  protein_input: reference/adrb2_A.pdb
+  system_input: reference/adrb2_A_membrane.pdb
+  system_coordinate: reference/adrb2_A_membrane.rst7
+  protein_align: name CA and resid 50 to 200
+  ligand_input: reference/ligands_dict.json
+  ligand_ff: openff-2.2.1
+  retain_lig_prot: true
+  param_charge: am1bcc
+  anchor_atoms:
+    - "name CA and resid 113"
+    - "name CA and resid 82"
+    - "name CA and resid 316"
+  lipid_mol: ["POPC"]
+  overwrite: false
+  receptor_ff: protein.ff14SB
+  lipid_ff: lipid21
+  solv_shell: 15.0
+  water_model: TIP3P
+
+run:
+  output_folder: ABFE_simulations
+  only_fe_preparation: true
+  dry_run: false
+  run_id: rep4
+  max_workers: 8
+  on_failure: prune
+
+  email_on_completion: yuzhuang@stanford.edu
+  amber_setup_sh: $GROUP_HOME/software/amber24/setup_amber.sh
+  slurm:
+    partition: rondror
+    time: "4:00:00"
+
+fe_sim:
+  remd: true
+  # 48 lambda windows
+  lambdas: [
+    0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,
+    0.31188, 0.32772, 0.34359, 0.35892, 0.37497, 0.39086, 0.40584, 0.42001, 0.43453, 0.45056,
+    0.46585, 0.47913, 0.49085, 0.5015, 0.51177, 0.52289, 0.53652, 0.55271, 0.56723, 0.58061,
+    0.59453, 0.60923, 0.62468, 0.63991, 0.65631, 0.67222, 0.68487, 0.69656, 0.70897, 0.72458,
+    0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
+  ]
+  eq_steps: 100000
+  # total 10 * 100000 = 1000000 steps -> 4 ns
+  num_equil_extends: 10
+  z_steps1: 5000
+  z_steps2: 100000
+  # total 10 * 100000 = 1000000 steps -> 4 ns per window
+  num_fe_extends: 10
+  # non-bonded cutoff in Angstrom
+  cut: 9.0
+  # Monte Carlo barostat
+  barostat: 2
+  # use hydrogen mass repartitioning
+  hmr: yes 
+  # 4 fs time step with HMR
+  dt: 0.004
+  # buffer_z for solvation layer above and below membrane
+  buffer_z: 25.0
+  temperature: 310.0 
+  # analysis only start from 4th extension (exclude the first three FE extensions)
+  analysis_fe_range: [3, -1]
+  # MBAR analysis blocks
+  blocks: 5

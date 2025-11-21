@@ -638,7 +638,7 @@ class SlurmJobManager:
                             f"state={state}; attempting resubmit"
                         )
                 elif completed_state:
-                    logger.info(
+                    logger.debug(
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} completed without FINISHED; "
                         "resubmitting without counting against retries"
                     )
