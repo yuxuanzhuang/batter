@@ -66,7 +66,7 @@ Installation
 
 #. Create and activate a Conda environment (with ``environment.yml``)::
 
-       conda env create -n batter_env python=3.12 -y
+       conda create -n batter_env python=3.12 -y
        conda env update -n batter_env -f environment.yml
        conda activate batter_env
 
