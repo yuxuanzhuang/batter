@@ -1,7 +1,6 @@
 scontrol show job ${SLURM_JOB_ID}
 echo "Job started at $(date)"
 
-export COMP=COMPONENT
 export N_WINDOWS=NWINDOWS
 export FERANGE=FERANGE
 export PFOLDER="."

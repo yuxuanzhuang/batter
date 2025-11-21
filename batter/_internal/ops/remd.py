@@ -228,7 +228,7 @@ def write_remd_groupfiles(
     if n_windows <= 0:
         return []
 
-    group_dir = comp_dir / "groupfiles"
+    group_dir = comp_dir / "remd"
     prmtop = "full.hmr.prmtop" if str(sim.hmr).lower() == "yes" else "full.prmtop"
     prmtop_path = f"{comp}-1/{prmtop}"
     eq_restart = f"{comp}-1/eqnpt04.rst7"
@@ -265,16 +265,16 @@ def write_remd_groupfiles(
         )
 
     out_files: List[Path] = []
-    mini_path = group_dir / f"{comp}_mini.in.remd.groupfile"
+    mini_path = group_dir / "mini.in.remd.groupfile"
     _write_groupfile(mini_path, n_windows, mini_line)
     out_files.append(mini_path)
 
-    prod0_path = group_dir / f"{comp}_mdin.in.remd.groupfile"
+    prod0_path = group_dir / "mdin.in.remd.groupfile"
     _write_groupfile(prod0_path, n_windows, lambda idx: prod_line(idx, 0))
     out_files.append(prod0_path)
 
     for stage in range(1, num_extends + 1):
-        path = group_dir / f"{comp}_mdin.in.stage{stage:02d}.remd.groupfile"
+        path = group_dir / f"mdin.in.stage{stage:02d}.remd.groupfile"
         _write_groupfile(path, n_windows, lambda idx, st=stage: prod_line(idx, st))
         out_files.append(path)
 
