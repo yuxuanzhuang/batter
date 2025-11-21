@@ -25,6 +25,7 @@ wheels/
 .installed.cfg
 *.egg
 examples/**/*fe
+examples/**/*fe_ashgc
 examples/**/*md
 examples/ligand_params
 examples/**/ABFE_simulations
