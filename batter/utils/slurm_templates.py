@@ -18,8 +18,23 @@ def render_slurm_with_header_body(
     """
     Concatenate a user (or default) Slurm header with a packaged body.
 
-    The default header is copied to ``header_root/name`` (default: ~/.batter)
-    if no user file exists. Replacement tokens are applied at the end.
+    Parameters
+    ----------
+    name : str
+        Header filename to look for (e.g., ``SLURMM-Am.header``).
+    header_path : Path
+        Packaged header template path.
+    body_path : Path
+        Packaged body template path.
+    replacements : dict
+        Token substitutions applied to the concatenated text.
+    header_root : Path, optional
+        Root directory containing user headers; defaults to ``~/.batter``.
+
+    Returns
+    -------
+    str
+        Rendered Slurm script text.
     """
     root = header_root or (Path.home() / ".batter")
     user_header = root / name
@@ -60,8 +75,19 @@ def seed_default_headers(
     """
     Copy packaged Slurm header templates into ``header_root`` (default: ~/.batter).
 
-    ``resource_map`` may map header names to either package resource refs
-    ("pkg.module/path") or absolute file paths (useful in tests).
+    Parameters
+    ----------
+    header_root : Path, optional
+        Destination directory for headers; defaults to ``~/.batter``.
+    resource_map : Mapping[str, str], optional
+        Map of header name → resource ref (``pkg.module/path``) or absolute path.
+    overwrite : bool, default False
+        When True, replace existing headers in ``header_root``.
+
+    Returns
+    -------
+    list[Path]
+        List of header paths copied/overwritten.
     """
     root = header_root or (Path.home() / ".batter")
     root.mkdir(parents=True, exist_ok=True)
