@@ -10,8 +10,8 @@ MPI_EXEC=${MPI_EXEC:-mpirun}
 
 PRMTOP="full.hmr.prmtop"
 COMP="COMPONENT"
-NWINDOWS=N_WINDOWS
-FE_RANGE=FE_RANGE
+N_WINDOWS=NWINDOWS
+FE_RANGE=FERANGE
 PFOLDER="."
 REMD=1
 overwrite=${OVERWRITE:-0}
@@ -30,25 +30,25 @@ if [[ -s ${PFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${COMP}_0.log"
-    $MPI_EXEC -np ${NWINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.remd.groupfile >> "$log_file" 2>&1
+    $MPI_EXEC -np ${N_WINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.remd.groupfile >> "$log_file" 2>&1
     if [[ -f check_run.bash ]]; then source check_run.bash; check_sim_failure "md00" "$log_file"; fi
 fi
 
 i=1
-while [ $i -le ${FERANGE} ]; do
+while [ $i -le ${FE_RANGE} ]; do
     x=$(printf "%02d" $i)
     z=$(printf "%02d" $((i + 1)))
     if [[ $overwrite -eq 0 && -s ${PFOLDER}/${COMP}00/mdin-${z}.rst7 ]]; then
         echo "Skipping md${x} steps."
     else
         REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${COMP}_${x}.log"
-        $MPI_EXEC -np ${NWINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${NWINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${x}.remd.groupfile >> "$log_file" 2>&1
+        $MPI_EXEC -np ${N_WINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/groupfiles/${COMP}_mdin.in.stage${x}.remd.groupfile >> "$log_file" 2>&1
         if [[ -f check_run.bash ]]; then source check_run.bash; check_sim_failure "md${x}" "$log_file"; fi
     fi
     i=$((i + 1))
 done
 
-final_stage=$(printf "%02d" $FERANGE)
+final_stage=$(printf "%02d" $FE_RANGE)
 if [[ -s ${PFOLDER}/${COMP}00/mdin-${final_stage}.rst7 ]]; then
     echo "FINISHED" > ${PFOLDER}/${COMP}_FINISHED
     exit 0

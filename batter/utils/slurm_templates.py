@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import importlib.resources as pkg_resources
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Mapping, Optional
 
 from loguru import logger
 
@@ -17,28 +18,27 @@ def render_slurm_with_header_body(
     """
     Concatenate a user (or default) Slurm header with a packaged body.
 
-    The default header is copied to ~/.batter/<name> if no user file exists.
+    The default header is copied to ``header_root/name`` (default: ~/.batter)
+    if no user file exists. Replacement tokens are applied at the end.
     """
     root = header_root or (Path.home() / ".batter")
     user_header = root / name
-    header_text: str
+
+    def _read_header() -> str:
+        try:
+            return user_header.read_text()
+        except Exception as exc:
+            logger.warning(f"[slurm] Failed to read {user_header}: {exc}; using packaged header.")
+            return header_path.read_text()
 
     if user_header.exists():
-        try:
-            header_text = user_header.read_text()
-        except Exception as e:
-            logger.warning(
-                f"[slurm] Failed to read {user_header}: {e}; using packaged header."
-            )
-            header_text = header_path.read_text()
+        header_text = _read_header()
     else:
-        # seed ~/.batter with the packaged header for easy customization
-        logger.info(f"[slurm] Adding {user_header}.")
         try:
             user_header.parent.mkdir(parents=True, exist_ok=True)
             user_header.write_text(header_path.read_text())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"[slurm] Could not seed header {user_header}: {exc}")
         header_text = header_path.read_text()
 
     body_text = body_path.read_text()
@@ -50,3 +50,42 @@ def render_slurm_with_header_body(
     for k, v in replacements.items():
         text = text.replace(k, v)
     return text
+
+
+def seed_default_headers(
+    header_root: Optional[Path] = None,
+    resource_map: Optional[Mapping[str, str]] = None,
+) -> list[Path]:
+    """
+    Copy packaged Slurm header templates into ``header_root`` (default: ~/.batter).
+
+    ``resource_map`` may map header names to either package resource refs
+    ("pkg.module/path") or absolute file paths (useful in tests).
+    """
+    root = header_root or (Path.home() / ".batter")
+    root.mkdir(parents=True, exist_ok=True)
+
+    targets = resource_map or {
+        "SLURMM-Am.header": "batter._internal.templates.run_files_orig/SLURMM-Am.header",
+        "SLURMM-BATCH-remd.header": "batter._internal.templates.remd_run_files/SLURMM-BATCH-remd.header",
+        "job_manager.header": "batter.data/job_manager.header",
+    }
+
+    copied: list[Path] = []
+    for name, ref in targets.items():
+        dst = root / name
+        if dst.exists():
+            continue
+        try:
+            ref_path = Path(ref)
+            if ref_path.exists():
+                dst.write_text(ref_path.read_text())
+                copied.append(dst)
+                continue
+            pkg_name, rel = ref.split("/", 1)
+            with pkg_resources.as_file(pkg_resources.files(pkg_name) / rel) as src_path:
+                dst.write_text(src_path.read_text())
+                copied.append(dst)
+        except Exception as e:
+            logger.warning(f"[slurm] Failed to seed header {dst}: {e}")
+    return copied

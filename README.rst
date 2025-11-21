@@ -82,8 +82,10 @@ Run an example configuration:
 
    cd examples
 
-   # If your cluster loads AMBER differently, set ``run.amber_setup_sh`` in
-   # your YAML (defaults to $GROUP_HOME/software/amber24/setup_amber.sh).
+   batter --help   # first run to create ~/.batter with SLURM headers
+
+   # modify ~/.batter/***.header to suit your cluster if needed
+
    batter run mabfe.yaml
 
 Use ``--help`` to see all commands:
@@ -111,6 +113,20 @@ YAML files in ``examples/`` illustrate common setups:
    1. ``md.yaml`` — standard MD production run for a protein-ligand complex
 
 Example YAMLs are intended as starting points; adjust to your system.
+
+SLURM header templates
+----------------------
+
+BATTER renders SLURM scripts by combining a header (user-editable) and a packaged body.
+On first use (run `batter`), the headers are copied into ``~/.batter`` (or ``run.slurm_header_dir`` if set).
+Customize queue/partition or executable overrides by editing:
+
+- ``~/.batter/SLURMM-Am.header`` (equil/FE runs)
+- ``~/.batter/SLURMM-BATCH-remd.header`` (REMD runs)
+- ``~/.batter/job_manager.header`` (manager script for ``batter --slurm-submit``)
+
+If the files are missing, run any ``batter`` command once to seed them, then edit the
+headers; bodies remain managed by the package.
 
 Results Interpretation
 ----------------------
