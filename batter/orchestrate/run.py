@@ -22,6 +22,7 @@ from smtplib import SMTPException
 from loguru import logger
 
 from batter.config.run import RunConfig
+from batter.utils.process import apply_executable_overrides
 from batter.systems.core import SimSystem
 from batter.exec.local import LocalBackend
 from batter.exec.slurm import SlurmBackend
@@ -109,6 +110,7 @@ def run_from_yaml(
     if on_failure:
         logger.info(f"on_failure behavior: {on_failure}")
         rc.run.on_failure = on_failure
+    apply_executable_overrides(rc.run.executables)
 
     yaml_dir = path.parent
 

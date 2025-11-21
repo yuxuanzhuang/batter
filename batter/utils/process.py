@@ -33,6 +33,28 @@ obabel = "obabel"
 vmd = "vmd"
 
 
+def apply_executable_overrides(exe_map: Mapping[str, str]) -> None:
+    """
+    Override default executable paths/names using a mapping from config.
+
+    Recognised keys: antechamber, tleap, cpptraj, parmchk2, charmmlipid2amber,
+    usalign, obabel, vmd.
+    """
+    global antechamber, tleap, cpptraj, parmchk2, charmmlipid2amber, usalign, obabel, vmd
+
+    def _maybe(key: str, current: str) -> str:
+        return exe_map.get(key, current)
+
+    antechamber = _maybe("antechamber", antechamber)
+    tleap = _maybe("tleap", tleap)
+    cpptraj = _maybe("cpptraj", cpptraj)
+    parmchk2 = _maybe("parmchk2", parmchk2)
+    charmmlipid2amber = _maybe("charmmlipid2amber", charmmlipid2amber)
+    usalign = _maybe("usalign", usalign)
+    obabel = _maybe("obabel", obabel)
+    vmd = _maybe("vmd", vmd)
+
+
 def run_with_log(
     command: str | Sequence[str],
     level: str = "debug",

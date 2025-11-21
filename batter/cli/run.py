@@ -28,7 +28,11 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
-from batter.utils.slurm_templates import render_slurm_with_header_body, seed_default_headers
+from batter.utils.slurm_templates import (
+    render_slurm_with_header_body,
+    seed_default_headers,
+)
+from batter.utils.process import apply_executable_overrides
 from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
 
@@ -209,6 +213,7 @@ def cmd_run(
             )
         # Force resolution so missing/invalid fields are surfaced before submitting
         cfg_for_validation.resolved_sim_config()
+        apply_executable_overrides(cfg_for_validation.run.executables)
     except Exception as e:
         raise click.ClickException(f"Invalid SimulationConfig YAML: {e}")
 

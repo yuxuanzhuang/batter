@@ -135,6 +135,25 @@ resources per run via the ``run.slurm`` block (partition, time, nodes, ntasks_pe
 Those values are substituted into SLURM scripts when rendered. Combine the two mechanisms by
 setting cluster defaults in the headers and per-run overrides in the YAML when needed.
 
+Executable overrides
+--------------------
+
+External executables (antechamber, tleap, cpptraj, parmchk2, charmmlipid2amber, usalign,
+obabel, vmd) can be overridden via ``run.executables``:
+
+.. code-block:: yaml
+
+   run:
+     executables:
+       cpptraj: /opt/amber/bin/cpptraj
+       obabel: obabel_dev
+       vmd: /path/to/custom/vmd
+
+These overrides are applied at runtime before invoking the tools. This can be helpful
+if you have problem running the default binaries bundled with BATTER, e.g. vmd, or
+if you want to use a custom build of the tools.
+
+
 Quick Reference
 ---------------
 
