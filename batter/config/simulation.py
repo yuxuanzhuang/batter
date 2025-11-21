@@ -47,6 +47,7 @@ class SimulationConfig(BaseModel):
         partition: str | None = None,
         protocol: str | None = None,
         fe_type: str | None = None,
+        slurm_header_dir: Path | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -248,6 +249,7 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
+            "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
         }
 
         infe_flag = bool(extra_conf_rest)

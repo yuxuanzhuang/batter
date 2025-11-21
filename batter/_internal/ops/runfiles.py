@@ -71,6 +71,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
             "SYSTEMNAME": sim.system_name,
             "PARTITIONNAME": sim.partition,
         },
+        header_root=Path(getattr(sim, "slurm_header_dir", Path.home() / ".batter")),
     )
     out_slurm.write_text(stxt)
     try:

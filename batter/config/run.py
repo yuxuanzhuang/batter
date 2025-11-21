@@ -681,6 +681,10 @@ class RunSection(BaseModel):
             "configuration hash differs from the existing execution."
         ),
     )
+    slurm_header_dir: Path | None = Field(
+        None,
+        description="Optional directory containing user Slurm headers (defaults to ~/.batter).",
+    )
 
     email_sender: str = Field(
         "nobody@stanford.edu",
@@ -702,7 +706,10 @@ class RunSection(BaseModel):
         folder = self.output_folder
         if not folder.is_absolute():
             folder = (base / folder).resolve()
-        return self.model_copy(update={"output_folder": folder})
+        hdr = self.slurm_header_dir
+        if hdr is not None and not hdr.is_absolute():
+            hdr = (base / hdr).resolve()
+        return self.model_copy(update={"output_folder": folder, "slurm_header_dir": hdr})
 
     @field_validator("output_folder", mode="before")
     @classmethod
@@ -828,6 +835,7 @@ class RunConfig(BaseModel):
             protocol=self.protocol,
             fe_type=desired_fe_type,
             partition=self.run.slurm.partition,
+            slurm_header_dir=self.run.slurm_header_dir,
         )
 
     def with_base_dir(self, base_dir: Path) -> "RunConfig":

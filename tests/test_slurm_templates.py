@@ -52,3 +52,50 @@ def test_slurm_template_uses_user_header(monkeypatch, tmp_path):
     assert "#SBATCH --user" in rendered
     assert "#SBATCH --default" not in rendered
     assert "BODY X" in rendered
+
+
+def test_slurm_template_honors_header_root(tmp_path):
+    """
+    header_root should override the default ~/.batter lookup/seed location.
+    """
+    hdr_root = tmp_path / "custom_headers"
+    name = "hdr.header"
+    header = tmp_path / "pkg.header"
+    body = tmp_path / "pkg.body"
+    header.write_text("#!/bin/bash\n#PKG\nTOKEN\n")
+    body.write_text("BODY TOKEN\n")
+
+    rendered = render_slurm_with_header_body(
+        name,
+        header,
+        body,
+        {"TOKEN": "Z"},
+        header_root=hdr_root,
+    )
+
+    assert (hdr_root / name).exists(), "header should be seeded under header_root"
+    assert "#PKG" in rendered
+    assert "BODY Z" in rendered
+
+
+def test_slurm_template_reads_existing_header_root(tmp_path):
+    """
+    If a header exists under header_root, it should be used and not overwritten.
+    """
+    hdr_root = tmp_path / "hdrs"
+    name = "hdr.header"
+    user_hdr = hdr_root / name
+    user_hdr.parent.mkdir(parents=True, exist_ok=True)
+    user_hdr.write_text("#!/bin/bash\n#USER\n")
+
+    pkg_header = tmp_path / "pkg.header"
+    pkg_body = tmp_path / "pkg.body"
+    pkg_header.write_text("#!/bin/bash\n#PKG\n")
+    pkg_body.write_text("BODY\n")
+
+    rendered = render_slurm_with_header_body(
+        name, pkg_header, pkg_body, {}, header_root=hdr_root
+    )
+
+    assert "#USER" in rendered
+    assert "#PKG" not in rendered

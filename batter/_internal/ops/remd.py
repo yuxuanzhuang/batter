@@ -322,6 +322,7 @@ def write_remd_run_scripts(
             "NWINDOWS": str(gpus),
             "FERANGE": str(num_extends),
         },
+        header_root=Path(getattr(sim, "slurm_header_dir", Path.home() / ".batter")),
     )
     slurm.write_text(slurm_text)
     slurm.chmod(0o755)

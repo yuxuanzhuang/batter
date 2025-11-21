@@ -225,7 +225,11 @@ def cmd_run(
         tpl_header = base_path.with_suffix(".header")
         tpl_body = base_path.with_suffix(".body")
         manager_code = render_slurm_with_header_body(
-            "job_manager.header", tpl_header, tpl_body, {}
+            "job_manager.header",
+            tpl_header,
+            tpl_body,
+            {},
+            header_root=rc.run.slurm_header_dir,
         )
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
