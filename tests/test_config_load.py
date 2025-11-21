@@ -156,7 +156,6 @@ def test_args_negative_force():
     "overrides, message",
     [
         ({"p1": "bad-anchor"}, "Anchor must look"),
-        ({"remd": "yes"}, "REMD not implemented"),
         ({"dec_int": "ti"}, "TI integration not implemented"),
         ({"fe_type": "custom", "lambdas": [0.0], "num_equil_extends": 1}, "dec_method"),
         (
@@ -180,6 +179,11 @@ def test_simulation_config_errors(overrides, message):
     with pytest.raises(Exception) as excinfo:
         SimulationConfig(**kwargs)
     assert message in str(excinfo.value)
+
+
+def test_simulation_config_remd_enabled():
+    cfg = SimulationConfig(**base_sim_kwargs(remd="yes"))
+    assert cfg.remd == "yes"
 
 
 def _minimal_create(tmp_path: Path, **updates) -> CreateArgs:

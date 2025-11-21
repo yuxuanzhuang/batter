@@ -533,9 +533,6 @@ class SimulationConfig(BaseModel):
 
     @model_validator(mode="after")
     def _finalize(self) -> "SimulationConfig":
-        # REMD not implemented
-        if self.remd == "yes":
-            raise NotImplementedError("REMD not implemented; set remd to 'no'.")
         # TI not implemented
         if self.dec_int == "ti":
             raise NotImplementedError("TI integration not implemented; use 'mbar'.")

@@ -11,6 +11,7 @@ from loguru import logger
 from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
+from batter._internal.ops import remd as remd_ops
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
@@ -229,6 +230,11 @@ def prepare_fe_windows_handler(
             builder.build()
 
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}
+
+        if sim.remd == "yes":
+            remd_ops.prepare_remd_component(
+                workdir, comp=comp, sim=sim, n_windows=len(lambdas)
+            )
 
     # write a canonical windows.json under artifacts/fe/
     windows_json = child_root / "fe" / "artifacts" / "windows.json"
