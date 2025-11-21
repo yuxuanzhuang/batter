@@ -1,11 +1,6 @@
 scontrol show job ${SLURM_JOB_ID}
 echo "Job started at $(date)"
 
-export N_WINDOWS=NWINDOWS
-export FERANGE=FERANGE
-export PFOLDER="."
-export OVERWRITE=${OVERWRITE:-0}
-
 ATTEMPT_FILE="${PFOLDER}/${COMP}_job_attempt.txt"
 if [ ! -f "$ATTEMPT_FILE" ]; then
     echo "1" > "$ATTEMPT_FILE"
