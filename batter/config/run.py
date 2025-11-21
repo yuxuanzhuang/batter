@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
+from batter.config.remd import RemdArgs
 from batter.config.utils import (
     coerce_yes_no,
     expand_env_vars,
@@ -382,9 +383,9 @@ class FESimArgs(BaseModel):
         "mbar",
         description="Free-energy integration scheme (``mbar`` or ``ti``).",
     )
-    remd: Literal["yes", "no"] = Field(
-        "no",
-        description='Enable replica-exchange MD (currently unsupported; must remain ``"no"``).',
+    remd: RemdArgs = Field(
+        default_factory=RemdArgs,
+        description="Replica-exchange MD controls (enable/nstlim/numexchg).",
     )
     rocklin_correction: Literal["yes", "no"] = Field(
         "no",
@@ -485,7 +486,16 @@ class FESimArgs(BaseModel):
         description="Optional (start, end) simulation index range to analyze per FE window.",
     )
 
-    @field_validator("remd", "rocklin_correction", "hmr", "enable_mcwat", mode="before")
+    @field_validator("remd", mode="before")
+    @classmethod
+    def _coerce_remd(cls, v):
+        if isinstance(v, RemdArgs):
+            return v
+        if isinstance(v, dict):
+            return RemdArgs(**v)
+        return RemdArgs(enable=coerce_yes_no(v))
+
+    @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)

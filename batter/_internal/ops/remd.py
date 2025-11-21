@@ -8,7 +8,7 @@ from loguru import logger
 from batter.config.simulation import SimulationConfig
 from batter.utils.components import COMPONENTS_DICT
 
-# Default REMD exchange settings to mirror legacy batching behaviour.
+# Default REMD exchange settings to mirror legacy batching behaviour (overridden by config).
 NUMEXCHG_DEFAULT = 3000
 BAR_INTERVAL_DEFAULT = 100
 
@@ -53,13 +53,14 @@ def _rewrite_path_line(line: str, key: str, prefix: str) -> tuple[str, bool]:
     return new_line, True
 
 
-def _inject_numexchg(lines: List[str]) -> tuple[List[str], bool]:
+def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str], bool]:
     """
     Insert numexchg/bar_intervall into the &cntrl block if missing.
     """
     out: List[str] = []
     in_cntrl = False
     inserted = False
+    num_val = numexchg or NUMEXCHG_DEFAULT
 
     for line in lines:
         lower = line.lower().strip()
@@ -70,7 +71,7 @@ def _inject_numexchg(lines: List[str]) -> tuple[List[str], bool]:
 
         if in_cntrl and lower == "/":
             if not inserted:
-                out.append(f"  numexchg = {NUMEXCHG_DEFAULT},\n")
+                out.append(f"  numexchg = {num_val},\n")
                 out.append(f"  bar_intervall = {BAR_INTERVAL_DEFAULT},\n")
                 inserted = True
             in_cntrl = False
@@ -80,12 +81,20 @@ def _inject_numexchg(lines: List[str]) -> tuple[List[str], bool]:
     return out, inserted
 
 
-def patch_mdin_file(mdin_path: Path, prefix: str, *, add_numexchg: bool) -> bool:
+def patch_mdin_file(
+    mdin_path: Path,
+    prefix: str,
+    *,
+    add_numexchg: bool,
+    remd_nstlim: int | None = None,
+    remd_numexchg: int | None = None,
+) -> bool:
     """
     Update mdin-like files so embedded file paths are relative to ``prefix``.
 
     When ``add_numexchg`` is True, numexchg/bar_intervall are injected into
-    the &cntrl block if not already present.
+    the &cntrl block if not already present. When ``remd_nstlim`` is set,
+    override nstlim to this value.
     """
     try:
         lines = mdin_path.read_text().splitlines(keepends=True)
@@ -106,10 +115,19 @@ def patch_mdin_file(mdin_path: Path, prefix: str, *, add_numexchg: bool) -> bool
         elif lower.startswith("disang"):
             line, did_change = _rewrite_path_line(line, "disang", prefix)
             changed = changed or did_change
+        elif remd_numexchg is not None and "numexchg" in lower:
+            line = f"  numexchg = {remd_numexchg},\n"
+            changed = True
+        elif remd_numexchg is not None and "bar_intervall" in lower:
+            line = f"  bar_intervall = {BAR_INTERVAL_DEFAULT},\n"
+            changed = True
+        elif remd_nstlim is not None and "nstlim" in lower:
+            line = f"  nstlim = {remd_nstlim},\n"
+            changed = True
         new_lines.append(line)
 
     if add_numexchg:
-        new_lines, inserted = _inject_numexchg(new_lines)
+        new_lines, inserted = _inject_numexchg(new_lines, remd_numexchg)
         changed = changed or inserted
 
     if changed:
@@ -137,7 +155,13 @@ def _component_window_dirs(comp_dir: Path, comp: str) -> Iterable[Path]:
             yield p
 
 
-def patch_component_inputs(comp_dir: Path, comp: str, *, add_numexchg: bool) -> List[Path]:
+def patch_component_inputs(
+    comp_dir: Path,
+    comp: str,
+    sim: SimulationConfig,
+    *,
+    add_numexchg: bool,
+) -> List[Path]:
     """
     Prepare REMD-specific mdin copies:
       - mdin-00      → mdin-00-remd  (first stage)
@@ -151,18 +175,34 @@ def patch_component_inputs(comp_dir: Path, comp: str, *, add_numexchg: bool) -> 
         if window_dir.name == f"{comp}-1":
             continue
         prefix = window_dir.relative_to(comp_dir).as_posix()
+        nstlim = getattr(sim, "remd_nstlim", None)
+        nstlim_val = int(nstlim) if nstlim else None
+        numexchg_val = getattr(sim, "remd_numexchg", None)
+        numexchg_val = int(numexchg_val) if numexchg_val else None
         src00 = window_dir / "mdin-00"
         dst00 = window_dir / "mdin-00-remd"
         if src00.exists():
             dst00.write_text(src00.read_text())
-            if patch_mdin_file(dst00, prefix, add_numexchg=add_numexchg):
+            if patch_mdin_file(
+                dst00,
+                prefix,
+                add_numexchg=add_numexchg,
+                remd_nstlim=nstlim_val,
+                remd_numexchg=numexchg_val,
+            ):
                 patched.append(dst00)
 
         src01 = window_dir / "mdin-01"
         dst01 = window_dir / "mdin-remd"
         if src01.exists():
             dst01.write_text(src01.read_text())
-            if patch_mdin_file(dst01, prefix, add_numexchg=add_numexchg):
+            if patch_mdin_file(
+                dst01,
+                prefix,
+                add_numexchg=add_numexchg,
+                remd_nstlim=nstlim_val,
+                remd_numexchg=numexchg_val,
+            ):
                 patched.append(dst01)
 
     if patched:
@@ -224,16 +264,16 @@ def write_remd_groupfiles(
         )
 
     out_files: List[Path] = []
-    mini_path = group_dir / f"{comp}_mini.in.groupfile"
+    mini_path = group_dir / f"{comp}_mini.in.remd.groupfile"
     _write_groupfile(mini_path, n_windows, mini_line)
     out_files.append(mini_path)
 
-    prod0_path = group_dir / f"{comp}_mdin.in.groupfile"
+    prod0_path = group_dir / f"{comp}_mdin.in.remd.groupfile"
     _write_groupfile(prod0_path, n_windows, lambda idx: prod_line(idx, 0))
     out_files.append(prod0_path)
 
     for stage in range(1, num_extends + 1):
-        path = group_dir / f"{comp}_mdin.in.stage{stage:02d}.groupfile"
+        path = group_dir / f"{comp}_mdin.in.stage{stage:02d}.remd.groupfile"
         _write_groupfile(path, n_windows, lambda idx, st=stage: prod_line(idx, st))
         out_files.append(path)
 
@@ -251,5 +291,10 @@ def prepare_remd_component(
         return []
 
     add_numexchg = comp in COMPONENTS_DICT["dd"]
-    patch_component_inputs(comp_dir, comp, add_numexchg=add_numexchg)
+    patch_component_inputs(comp_dir, comp, sim, add_numexchg=add_numexchg)
+
+    # lambda schedule needed for amber REMD runs
+    lambda_sch = comp_dir / "lambda.sch"
+    lambda_sch.write_text("TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n")
+
     return write_remd_groupfiles(comp_dir, comp, sim, n_windows)

@@ -15,6 +15,7 @@ import os
 from loguru import logger
 from batter.utils import COMPONENTS_LAMBDA_DICT
 from batter.config.utils import coerce_yes_no
+from batter.config.remd import RemdArgs
 
 if TYPE_CHECKING:
     from batter.config.run import CreateArgs, FESimArgs
@@ -196,6 +197,18 @@ class SimulationConfig(BaseModel):
         if analysis_fe_range_value is None:
             analysis_fe_range_value = _analysis_range_default()
 
+        remd_settings = _fe_attr("remd", lambda: RemdArgs())
+        if isinstance(remd_settings, dict):
+            remd_settings = RemdArgs(**remd_settings)
+        if isinstance(remd_settings, RemdArgs):
+            remd_enable = remd_settings.enable
+            remd_nstlim = int(remd_settings.nstlim)
+            remd_numexchg = int(remd_settings.numexchg)
+        else:
+            remd_enable = coerce_yes_no(remd_settings)
+            remd_nstlim = int(_fe_attr("remd_nstlim", lambda: 100))
+            remd_numexchg = int(_fe_attr("remd_numexchg", lambda: 3000))
+
         if not os.path.exists(amber_setup_sh):
             # try to expand vars
             amber_setup_sh = os.path.expandvars(amber_setup_sh)
@@ -209,7 +222,9 @@ class SimulationConfig(BaseModel):
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
-            "remd": coerce_yes_no(_fe_attr("remd", lambda: "no")),
+            "remd": remd_enable,
+            "remd_nstlim": remd_nstlim,
+            "remd_numexchg": remd_numexchg,
             "rocklin_correction": coerce_yes_no(
                 _fe_attr("rocklin_correction", lambda: "no")
             ),
@@ -296,6 +311,12 @@ class SimulationConfig(BaseModel):
         "mbar", description="Integration method (mbar/ti)"
     )
     remd: Literal["yes", "no"] = Field("no", description="H-REMD toggle")
+    remd_nstlim: int = Field(
+        100, description="Steps per REMD segment (applied to mdin-*-remd copies)."
+    )
+    remd_numexchg: int = Field(
+        3000, description="Exchange attempt interval for REMD (numexchg)."
+    )
     partition: str = Field("owners", description="Cluster partition/queue")
     infe: bool = Field(
         False, description="Enable NFE (infinite) equilibration when true."

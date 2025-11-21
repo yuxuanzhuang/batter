@@ -184,6 +184,17 @@ def test_simulation_config_errors(overrides, message):
 def test_simulation_config_remd_enabled():
     cfg = SimulationConfig(**base_sim_kwargs(remd="yes"))
     assert cfg.remd == "yes"
+    assert cfg.remd_nstlim == 100
+    assert cfg.remd_numexchg == 3000
+
+
+def test_fesim_remd_block():
+    args = FESimArgs.model_validate(
+        {"remd": {"enable": "yes", "nstlim": 200, "numexchg": 1500}}
+    )
+    assert args.remd.enable == "yes"
+    assert args.remd.nstlim == 200
+    assert args.remd.numexchg == 1500
 
 
 def _minimal_create(tmp_path: Path, **updates) -> CreateArgs:
