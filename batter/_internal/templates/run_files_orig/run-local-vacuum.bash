@@ -27,7 +27,8 @@ if [[ $only_eq -eq 1 ]]; then
         echo "mini_eq.in not found, using mini.in instead."
         cp mini.in mini_eq.in
     fi
-    pmemd -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    # not use pmemd as sometimes it fails.
+    sander -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
 
     # run minimization for each windows at this stage
