@@ -139,15 +139,32 @@ def _component_window_dirs(comp_dir: Path, comp: str) -> Iterable[Path]:
 
 def patch_component_inputs(comp_dir: Path, comp: str, *, add_numexchg: bool) -> List[Path]:
     """
-    Patch all mdin-like files for REMD execution under ``comp_dir``.
+    Prepare REMD-specific mdin copies:
+      - mdin-00      → mdin-00-remd  (first stage)
+      - mdin-01      → mdin-remd     (re-used for all subsequent stages)
+
+    Only production windows (comp00, comp01, ...) are touched; the scaffold
+    window (comp-1) is left intact.
     """
     patched: List[Path] = []
     for window_dir in _component_window_dirs(comp_dir, comp):
+        if window_dir.name == f"{comp}-1":
+            continue
         prefix = window_dir.relative_to(comp_dir).as_posix()
-        for mdin in sorted(window_dir.glob("*.in")):
-            is_production = mdin.name.startswith("mdin-")
-            if patch_mdin_file(mdin, prefix, add_numexchg=add_numexchg and is_production):
-                patched.append(mdin)
+        src00 = window_dir / "mdin-00"
+        dst00 = window_dir / "mdin-00-remd"
+        if src00.exists():
+            dst00.write_text(src00.read_text())
+            if patch_mdin_file(dst00, prefix, add_numexchg=add_numexchg):
+                patched.append(dst00)
+
+        src01 = window_dir / "mdin-01"
+        dst01 = window_dir / "mdin-remd"
+        if src01.exists():
+            dst01.write_text(src01.read_text())
+            if patch_mdin_file(dst01, prefix, add_numexchg=add_numexchg):
+                patched.append(dst01)
+
     if patched:
         logger.debug(f"[remd] Patched {len(patched)} mdin files under {comp_dir}")
     return patched
@@ -191,10 +208,16 @@ def write_remd_groupfiles(
 
     def prod_line(idx: int, stage: int) -> str:
         win = _window_name(idx)
-        curr = f"mdin-{stage:02d}"
-        prev = "mini.in" if stage == 0 else f"mdin-{stage - 1:02d}"
+        if stage == 0:
+            inp = "mdin-00-remd"
+            curr = "mdin-00"
+            prev = "mini.in"
+        else:
+            inp = "mdin-remd"
+            curr = f"mdin-{stage:02d}"
+            prev = f"mdin-{stage - 1:02d}"
         return (
-            f"-O -i {win}/{curr} -p {prmtop_path} -c {win}/{prev}.rst7 "
+            f"-O -i {win}/{inp} -p {prmtop_path} -c {win}/{prev}.rst7 "
             f"-o {win}/{curr}.out -r {win}/{curr}.rst7 -x {win}/{curr}.nc "
             f"-ref {win}/mini.in.rst7 -inf {win}/mdinfo -l {win}/{curr}.log "
             f"-e {win}/{curr}.mden{allow_small_box}\n"
