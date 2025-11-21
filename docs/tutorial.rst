@@ -142,7 +142,6 @@ Generating Simulation Inputs
    
    Additional field that may need adjustment based on your cluster environment:
 
-   - ``run.amber_setup_sh`` – path to a script that loads AMBER on your cluster (defaults to ``$GROUP_HOME/software/amber24/setup_amber.sh``).
    - ``run.email_on_completion`` – email address to notify when SLURM jobs complete.
    - ``run.email_sender`` – email address to send notifications from. Default to ``nobody@stanford.edu`` if unset.
    - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.

@@ -433,10 +433,6 @@ class SimulationConfig(BaseModel):
     receptor_ff: str = Field("protein.ff14SB", description="Receptor FF")
     ligand_ff: str = Field("gaff2", description="Ligand FF")
     lipid_ff: str = Field("lipid21", description="Lipid FF")
-    amber_setup_sh: str = Field(
-        "$GROUP_HOME/software/amber24/setup_amber.sh",
-        description="Path to a shell script that loads AMBER; sourced in SLURM run scripts.",
-    )
 
     # --- Derived/public state (not user-set) ---
     ligand_dict: Dict[str, Any] = Field(
