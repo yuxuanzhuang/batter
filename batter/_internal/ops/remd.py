@@ -281,6 +281,61 @@ def write_remd_groupfiles(
     return out_files
 
 
+def write_remd_run_scripts(
+    comp_dir: Path, comp: str, sim: SimulationConfig, n_windows: int
+) -> List[Path]:
+    """
+    Write REMD run helper scripts (local + SLURM) into the component folder.
+    """
+    out: List[Path] = []
+    comp_dir.mkdir(parents=True, exist_ok=True)
+
+    num_extends = int(getattr(sim, "num_fe_extends", 0))
+    part = getattr(sim, "partition", "normal")
+    gpus = n_windows if n_windows > 0 else 1
+
+    def _copy_template(src: Path, dst: Path, repl: dict[str, str]) -> None:
+        text = src.read_text()
+        for k, v in repl.items():
+            text = text.replace(k, v)
+        dst.write_text(text)
+
+    run_local_tpl = RUN_TPL["local"]
+    run_local = comp_dir / "run-local-remd.bash"
+    _copy_template(
+        run_local_tpl,
+        run_local,
+        {"COMPONENT": comp, "NWINDOWS": str(n_windows), "FERANGE": str(num_extends)},
+    )
+    run_local.chmod(0o755)
+    out.append(run_local)
+
+    slurm_tpl = RUN_TPL["slurm"]
+    slurm = comp_dir / "SLURMM-BATCH-remd"
+    _copy_template(
+        slurm_tpl,
+        slurm,
+        {
+            "COMPONENT": comp,
+            "PARTITIONNAME": part,
+            "NWINDOWS": str(gpus),
+            "FERANGE": str(num_extends),
+            "AMBER_SETUP_SH": sim.amber_setup_sh,
+        },
+    )
+    slurm.chmod(0o755)
+    out.append(slurm)
+
+    # copy check_run.bash alongside for failure checks
+    check_src = Path(__file__).resolve().parent.parent / "templates" / "run_files_orig" / "check_run.bash"
+    check_dst = comp_dir / "check_run.bash"
+    if check_src.exists():
+        check_dst.write_text(check_src.read_text())
+        out.append(check_dst)
+
+    return out
+
+
 def prepare_remd_component(
     comp_dir: Path, comp: str, sim: SimulationConfig, n_windows: int
 ) -> List[Path]:
@@ -294,7 +349,21 @@ def prepare_remd_component(
     patch_component_inputs(comp_dir, comp, sim, add_numexchg=add_numexchg)
 
     # lambda schedule needed for amber REMD runs
-    lambda_sch = comp_dir / "lambda.sch"
-    lambda_sch.write_text("TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n")
+    lambda_tpl = RUN_TPL["lambda"]
+    lambda_dst = comp_dir / "lambda.sch"
+    if lambda_tpl.exists():
+        lambda_dst.write_text(lambda_tpl.read_text())
+    else:
+        lambda_dst.write_text("TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n")
 
-    return write_remd_groupfiles(comp_dir, comp, sim, n_windows)
+    scripts = write_remd_groupfiles(comp_dir, comp, sim, n_windows)
+    scripts.extend(write_remd_run_scripts(comp_dir, comp, sim, n_windows))
+    return scripts
+
+
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "remd_run_files"
+RUN_TPL = {
+    "local": TEMPLATE_DIR / "run-local-remd.bash",
+    "slurm": TEMPLATE_DIR / "SLURMM-BATCH-remd",
+    "lambda": TEMPLATE_DIR / "lambda.sch",
+}
