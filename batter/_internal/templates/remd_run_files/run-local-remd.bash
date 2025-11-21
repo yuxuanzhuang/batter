@@ -1,14 +1,19 @@
 #!/bin/bash
 
+# # AMBER Constants
+PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
+PMEMD_MPI_EXEC=${PMEMD_MPI_EXEC:-pmemd.cuda.MPI}
+PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
+PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
+SANDER_EXEC=${SANDER_EXEC:-sander}
+MPI_EXEC=${MPI_EXEC:-mpirun}
+
 PRMTOP="full.hmr.prmtop"
 COMP="COMPONENT"
 NWINDOWS=NWINDOWS
 FERANGE=FERANGE
 PFOLDER="."
 REMD=1
-PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
-PMEMD_MPI_EXEC=${PMEMD_MPI_EXEC:-pmemd.cuda.MPI}
-MPI_EXEC=${MPI_EXEC:-mpirun}
 overwrite=${OVERWRITE:-0}
 log_file="${PFOLDER}/${COMP}_run.remd.log"
 

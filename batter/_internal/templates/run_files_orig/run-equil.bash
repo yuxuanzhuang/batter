@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# AMBER Constants
+PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
+PMEMD_MPI_EXEC=${PMEMD_MPI_EXEC:-pmemd.cuda.MPI}
+PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
+PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
+SANDER_EXEC=${SANDER_EXEC:-sander}
+MPI_EXEC=${MPI_EXEC:-mpirun}
+
 # Constants
 PRMTOP="full.hmr.prmtop"
 INPCRD="full.inpcrd"
@@ -22,16 +30,16 @@ source check_run.bash
 if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping EM steps." 
 else
-    pmemd.cuda_DPFP -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    $PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
     check_sim_failure "Minimization" "$log_file"
     if ! check_min_energy "mini.out" -1000; then
         echo "Minimization not passed with cuda; trying CPU"
         rm -f "$log_file"
         rm -f mini.rst7 mini.nc mini.out
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+            $MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         else
-            pmemd -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+            $PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         fi
         check_sim_failure "Minimization" "$log_file"
         if ! check_min_energy "mini.out" -1000; then
@@ -53,7 +61,7 @@ else
 
         # Equilbration with gradually-incrase lambda of the ligand
         # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
-        pmemd.cuda -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
+        $PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
         check_sim_failure "NVT" "$log_file"
         python check_penetration.py eqnvt.rst7
         if [[ -f RING_PENETRATION ]]; then
@@ -68,19 +76,19 @@ else
     # Equilibration with protein and ligand restrained
     # this is to equilibrate the density of water
     if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        mpirun --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE pmemd.MPI -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
+        $MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
     else
-        pmemd -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
+        $PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
     fi
     check_sim_failure "Pre equilibration" "$log_file"
 
     # Equilibration with C-alpha restrained
-    pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> "$log_file" 2>&1
+    $PMEMD_DPFP_EXEC -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> "$log_file" 2>&1
     check_sim_failure "Equilibration stage 0" "$log_file"
     for step in {1..4}; do
         prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
         curr=$(printf "eqnpt%02d" $step)
-        pmemd.cuda -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> "$log_file" 2>&1
+        $PMEMD_DPFP_EXEC -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> "$log_file" 2>&1
         check_sim_failure "Equilibration stage $step" "$log_file"
     done
 fi
@@ -93,7 +101,7 @@ if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
 # Initial MD run
-pmemd.cuda -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md-00.nc -ref eqnpt04.rst7 >> $log_file 2>&1
+$PMEMD_DPFP_EXEC -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md-00.nc -ref eqnpt04.rst7 >> $log_file 2>&1
 check_sim_failure "MD stage 0" "$log_file"
 fi
 
@@ -108,7 +116,7 @@ while [ $i -le RANGE ]; do
     if [[ $overwrite -eq 0 && -s md$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
-        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 >> $log_file 2>&1
+        $PMEMD_DPFP_EXEC -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 >> $log_file 2>&1
         check_sim_failure "MD stage $i" "$log_file"
     fi
     i=$((i + 1))
