@@ -1,11 +1,60 @@
 scontrol show job ${SLURM_JOB_ID}
 echo "Job started at $(date)"
 
-export COMP="COMPONENT"
-export NWINDOWS="NWINDOWS"
-export FERANGE="FERANGE"
+export COMP=COMPONENT
+export N_WINDOWS=NWINDOWS
+export FERANGE=FERANGE
 export PFOLDER="."
 export OVERWRITE=${OVERWRITE:-0}
 
+ATTEMPT_FILE="${PFOLDER}/${COMP}_job_attempt.txt"
+if [ ! -f "$ATTEMPT_FILE" ]; then
+    echo "1" > "$ATTEMPT_FILE"
+fi
+RETRY_COUNT=$(cat "$ATTEMPT_FILE")
+echo "Current attempt: $RETRY_COUNT"
+MAX_ATTEMPTS=5
+
+echo "Attempt $RETRY_COUNT to run simulations..."
 ./run-local-remd.bash
-exit $?
+error_code=$?
+
+if [ $error_code -eq 0 ]; then
+    echo "Simulation completed successfully on attempt $RETRY_COUNT."
+else
+    echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
+
+    if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
+        NEXT_RETRY=$((RETRY_COUNT + 1))
+        echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
+        echo "Requeuing the job for attempt $NEXT_RETRY..."
+        sleep 30
+        bad_node=$(
+        scontrol show job $SLURM_JOB_ID |
+            grep -m1 '^[[:space:]]*NodeList=' |
+            awk -F= '{print $2}' |
+            tr -d '[:space:}'
+        )
+        echo "Bad node: $bad_node"
+        if [ -z "$bad_node" ]; then
+            scontrol requeue "$SLURM_JOB_ID"
+        else
+            scontrol update JobId=$SLURM_JOB_ID ExcNodeList=="$bad_node"
+            scontrol requeue "$SLURM_JOB_ID"
+        fi
+        
+        exit 0
+    else
+        echo "FAILED" > "${PFOLDER}/${COMP}_FAILED"
+        echo "Maximum attempts (${MAX_ATTEMPTS}) reached. Simulation failed."
+        exit 1
+    fi
+fi
+
+if [[ ! -f "${PFOLDER}/${COMP}_FAILED" ]]; then
+    echo "Simulation is not complete."
+    scontrol requeue $SLURM_JOB_ID
+    exit 0
+fi
+echo "Job completed at $(date)"
+exit 0
