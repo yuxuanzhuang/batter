@@ -15,15 +15,15 @@ PFOLDER="."
 REMD=1
 overwrite=${OVERWRITE:-0}
 COMP=${COMP:-$(basename "$PWD")}
-log_file="${PFOLDER}/remd_run.log"
+log_file="${PFOLDER}/run.log"
 
-if [[ -f ${PFOLDER}/remd_FINISHED ]]; then
+if [[ -f ${PFOLDER}/FINISHED ]]; then
     echo "REMD is complete."
     exit 0
 fi
 
-if [[ -f ${PFOLDER}/remd_FAILED ]]; then
-    rm -f ${PFOLDER}/remd_FAILED
+if [[ -f ${PFOLDER}/FAILED ]]; then
+    rm -f ${PFOLDER}/FAILED
 fi
 
 if [[ -s ${PFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
@@ -50,6 +50,6 @@ done
 
 final_stage=$(printf "%02d" $FE_RANGE)
 if [[ -s ${PFOLDER}/${COMP}00/mdin-${final_stage}.rst7 ]]; then
-    echo "FINISHED" > ${PFOLDER}/remd_FINISHED
+    echo "FINISHED" > ${PFOLDER}/FINISHED
     exit 0
 fi

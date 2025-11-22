@@ -185,9 +185,9 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         register_phase_state(
             system.root,
             "fe",
-            required=[["fe/{comp}/remd_FINISHED"], ["fe/{comp}/remd_FAILED"]],
-            success=[["fe/{comp}/remd_FINISHED"]],
-            failure=[["fe/{comp}/remd_FAILED"]],
+            required=[["fe/{comp}/FINISHED"], ["fe/{comp}/FAILED"]],
+            success=[["fe/{comp}/FINISHED"]],
+            failure=[["fe/{comp}/FAILED"]],
         )
     else:
         register_phase_state(
@@ -205,7 +205,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     for comp in comps:
         if remd_enabled:
             comp_dir = system.root / "fe" / comp
-            failed = comp_dir / "remd_FAILED"
+            failed = comp_dir / "FAILED"
             if failed.exists():
                 try:
                     failed.unlink()
@@ -215,8 +215,8 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
             spec = _spec_from_dir(
                 comp_dir,
-                finished_name="remd_FINISHED",
-                failed_name="remd_FAILED",
+                finished_name="FINISHED",
+                failed_name="FAILED",
                 script_rel="SLURMM-BATCH-remd",
                 job_name=job_name,
             )

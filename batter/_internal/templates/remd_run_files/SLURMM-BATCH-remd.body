@@ -1,7 +1,7 @@
 scontrol show job ${SLURM_JOB_ID}
 echo "Job started at $(date)"
 
-ATTEMPT_FILE="${PFOLDER}/${COMP}_job_attempt.txt"
+ATTEMPT_FILE="${PFOLDER}/job_attempt.txt"
 if [ ! -f "$ATTEMPT_FILE" ]; then
     echo "1" > "$ATTEMPT_FILE"
 fi
@@ -39,13 +39,13 @@ else
         
         exit 0
     else
-        echo "FAILED" > "${PFOLDER}/${COMP}_FAILED"
+        echo "FAILED" > "${PFOLDER}/FAILED"
         echo "Maximum attempts (${MAX_ATTEMPTS}) reached. Simulation failed."
         exit 1
     fi
 fi
 
-if [[ ! -f "${PFOLDER}/${COMP}_FAILED" ]]; then
+if [[ ! -f "${PFOLDER}/FAILED" ]]; then
     echo "Simulation is not complete."
     scontrol requeue $SLURM_JOB_ID
     exit 0
