@@ -1,9 +1,8 @@
 #!/bin/bash
 
-# COMPONENT, PARTITIONNAME are placeholders to be replaced when generating the script
+# COMPONENT is a placeholder to be replaced when generating the script
 
 #SBATCH --job-name="COMPONENT-remd"
-#SBATCH --partition=PARTITIONNAME
 #SBATCH --open-mode=append
 #SBATCH --output=COMPONENT-remd-%j.out
 #SBATCH --error=COMPONENT-remd-%j.err

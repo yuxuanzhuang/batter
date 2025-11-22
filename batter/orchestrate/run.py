@@ -243,7 +243,11 @@ def run_from_yaml(
 
     # Build pipeline with explicit sys_params
     tpl = select_pipeline(
-        rc.protocol, sim_cfg, rc.run.only_fe_preparation, sys_params=sys_params
+        rc.protocol,
+        sim_cfg,
+        rc.run.only_fe_preparation,
+        sys_params=sys_params,
+        partition=rc.run.slurm.partition if rc.run.slurm else None,
     )
 
     # Run parent-only steps at run_dir by using a run-scoped SimSystem

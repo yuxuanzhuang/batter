@@ -72,6 +72,7 @@ def prepare_fe_handler(
     if payload.sim is None:
         raise ValueError("[prepare_fe] Missing simulation configuration in payload.")
     sim = payload.sim
+    partition = payload.get("partition") or payload.get("queue") or "normal"
     components = list(getattr(sim, "components", []) or [])
     if not components:
         raise ValueError("No components specified in sim config.")
@@ -121,6 +122,7 @@ def prepare_fe_handler(
                 "extra_restraints": extra_restraints,
                 "extra_restraints_fc": extra_restraints_fc,
                 "extra_conformation_restraints": extra_conformation_restraints,
+                "partition": partition,
             },
         )
         builder.build()  # will create <comp>-1, amber templates, run files, etc.
@@ -164,6 +166,7 @@ def prepare_fe_windows_handler(
             "[prepare_fe_windows] Missing simulation configuration in payload."
         )
     sim = payload.sim
+    partition = payload.get("partition") or payload.get("queue") or "normal"
     components = list(getattr(sim, "components", []) or [])
     if not components:
         raise RuntimeError(
@@ -225,6 +228,7 @@ def prepare_fe_windows_handler(
                     "extra_restraints": extra_restraints,
                     "extra_restraints_fc": extra_restraints_fc,
                     "extra_conformation_restraints": extra_conformation_restraints,
+                    "partition": partition,
                 },
             )
             builder.build()
@@ -233,7 +237,11 @@ def prepare_fe_windows_handler(
 
         if sim.remd == "yes":
             remd_ops.prepare_remd_component(
-                workdir, comp=comp, sim=sim, n_windows=len(lambdas)
+                workdir,
+                comp=comp,
+                sim=sim,
+                n_windows=len(lambdas),
+                partition=partition,
             )
 
     # write a canonical windows.json under artifacts/fe/

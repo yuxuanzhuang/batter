@@ -7,7 +7,6 @@ from typing import Sequence, Optional
 from pathlib import Path
 from loguru import logger
 
-from batter.config.simulation import SimulationConfig
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
 from batter.utils.slurm_templates import render_slurm_with_header_body
@@ -17,7 +16,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     Port of `_run_files` for equilibration.
 
     Copies run scripts and substitutes variables
-    like RANGE, STAGE, POSE, SYSTEMNAME, PARTITIONNAME, etc.
+    like RANGE, STAGE, POSE, SYSTEMNAME, etc.
     """
     sim = ctx.sim
     ligand_name = ctx.ligand
@@ -45,7 +44,6 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("STAGE", stage)
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
-                .replace("PARTITIONNAME", sim.partition)
         )
 
         if hmr:
@@ -69,7 +67,6 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
             "STAGE": stage,
             "POSE": ligand_name,
             "SYSTEMNAME": sim.system_name,
-            "PARTITIONNAME": sim.partition,
         },
         header_root=Path(getattr(sim, "slurm_header_dir", Path.home() / ".batter")),
     )
@@ -84,24 +81,8 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
 def write_fe_run_file(
     ctx: BuildContext,
     lambdas: Sequence[float],
-    *,
-    partition_override: Optional[str] = None,
 ) -> None:
-    """
-    Materialize run scripts for a given component/window:
-
-    Reads templates from:   <working_dir>/<comp>_run_files/
-      - check_run.bash
-      - run-local.bash
-      - SLURMM-Am
-
-    Writes to the window dir: <working_dir>/<comp>-<win or 1>/
-      - check_run.bash
-      - run-local.bash     (FERANGE/NWINDOWS/COMPONENT replaced)
-      - SLURMM-run         (STAGE/POSE/SYSTEMNAME/PARTITIONNAME replaced)
-
-    Makes outputs executable.
-    """
+    """Materialize run scripts for a given component/window."""
     # --- source/dest paths
     src_dir = run_files_orig
     dst_dir = ctx.window_dir
@@ -130,18 +111,6 @@ def write_fe_run_file(
             "Please update the run configuration."
         )
     system_name = ctx.sim.system_name
-
-    if partition_override is not None:
-        partition = partition_override
-    elif hasattr(ctx.sim, "partition"):
-        partition = ctx.sim.partition
-    elif hasattr(ctx.sim, "queue"):
-        partition = ctx.sim.queue
-    else:
-        raise AttributeError(
-            "SimulationConfig is missing 'partition' (or legacy 'queue'). "
-            "Specify a partition in the simulation configuration or pass partition_override."
-        )
 
     # -------- check_run.bash (verbatim copy)
     out_check = dst_dir / "check_run.bash"
@@ -172,7 +141,6 @@ def write_fe_run_file(
             "STAGE": pose,
             "POSE": f"{comp}{int(win_idx):02d}",
             "SYSTEMNAME": system_name,
-            "PARTITIONNAME": partition,
         },
     )
     out_slurm.write_text(stxt)
@@ -180,5 +148,5 @@ def write_fe_run_file(
 
     logger.debug(
         f"[runfiles] wrote run scripts → {dst_dir} "
-        f"(FERANGE={num_sim}, NWINDOWS={n_windows}, COMPONENT={comp}, PARTITION={partition})"
+        f"(FERANGE={num_sim}, NWINDOWS={n_windows}, COMPONENT={comp})"
     )

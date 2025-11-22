@@ -44,7 +44,6 @@ class SimulationConfig(BaseModel):
         create: "CreateArgs",
         fe: "FESimArgs",
         *,
-        partition: str | None = None,
         protocol: str | None = None,
         fe_type: str | None = None,
         slurm_header_dir: Path | None = None,
@@ -57,8 +56,6 @@ class SimulationConfig(BaseModel):
             System creation inputs taken from the ``create`` YAML section.
         fe : FESimArgs
             Free-energy simulation overrides from the ``fe_sim`` section.
-        partition : str, optional
-            Cluster partition specified in the run section.
 
         Returns
         -------
@@ -269,8 +266,6 @@ class SimulationConfig(BaseModel):
             "n_steps_dict": n_steps_dict,
             "infe": infe_flag,
         }
-        if partition:
-            merged["partition"] = partition
 
         return cls(**merged)
 
@@ -307,7 +302,6 @@ class SimulationConfig(BaseModel):
     remd_numexchg: int = Field(
         3000, description="Exchange attempt interval for REMD (numexchg)."
     )
-    partition: str = Field("owners", description="Cluster partition/queue")
     infe: bool = Field(
         False, description="Enable NFE (infinite) equilibration when true."
     )

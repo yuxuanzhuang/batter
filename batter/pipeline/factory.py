@@ -28,6 +28,8 @@ def make_abfe_pipeline(
     sim: SimulationConfig,
     sys_params: SystemParams | dict | None,
     only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
 ) -> Pipeline:
     """
     ABFE pipeline:
@@ -49,6 +51,7 @@ def make_abfe_pipeline(
             requires=[],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -57,6 +60,7 @@ def make_abfe_pipeline(
             requires=["system_prep"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
 
@@ -67,6 +71,7 @@ def make_abfe_pipeline(
             requires=["param_ligands"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -75,6 +80,7 @@ def make_abfe_pipeline(
             requires=["prepare_equil"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -83,6 +89,7 @@ def make_abfe_pipeline(
             requires=["equil"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -91,6 +98,7 @@ def make_abfe_pipeline(
             requires=["equil_analysis"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -99,6 +107,7 @@ def make_abfe_pipeline(
             requires=["prepare_fe"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -107,6 +116,7 @@ def make_abfe_pipeline(
             requires=["prepare_fe_windows"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -115,6 +125,7 @@ def make_abfe_pipeline(
             requires=["fe_equil"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -123,6 +134,7 @@ def make_abfe_pipeline(
             requires=["fe"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
 
@@ -146,6 +158,8 @@ def make_asfe_pipeline(
     sim: SimulationConfig,
     sys_params: SystemParams | dict | None,
     only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
 ) -> Pipeline:
     """
     ASFE pipeline:
@@ -165,6 +179,7 @@ def make_asfe_pipeline(
             requires=[],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -173,6 +188,7 @@ def make_asfe_pipeline(
             requires=["system_prep_asfe"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -181,6 +197,7 @@ def make_asfe_pipeline(
             requires=["param_ligands"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -189,6 +206,7 @@ def make_asfe_pipeline(
             requires=["prepare_fe"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -197,6 +215,7 @@ def make_asfe_pipeline(
             requires=["prepare_fe_windows"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -205,6 +224,7 @@ def make_asfe_pipeline(
             requires=["fe_equil"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     steps.append(
@@ -213,6 +233,7 @@ def make_asfe_pipeline(
             requires=["fe"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         )
     )
     if only_fe_preparation:
@@ -231,6 +252,8 @@ def make_md_pipeline(
     sim: SimulationConfig,
     sys_params: SystemParams | dict | None,
     only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
 ) -> Pipeline:
     """
     MD-only pipeline focused on equilibration:
@@ -248,30 +271,35 @@ def make_md_pipeline(
             requires=[],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         ),
         _step(
             name="param_ligands",
             requires=["system_prep"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         ),
         _step(
             "prepare_equil",
             requires=["param_ligands"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         ),
         _step(
             "equil",
             requires=["prepare_equil"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         ),
         _step(
             "equil_analysis",
             requires=["equil"],
             sim=sim,
             sys_params=params_model,
+            **(extra or {}),
         ),
     ]
     # only_fe_preparation has no effect here because the MD pipeline stops before FE.

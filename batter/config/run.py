@@ -834,7 +834,6 @@ class RunConfig(BaseModel):
             fe_args,
             protocol=self.protocol,
             fe_type=desired_fe_type,
-            partition=self.run.slurm.partition,
             slurm_header_dir=self.run.slurm_header_dir,
         )
 

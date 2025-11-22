@@ -70,7 +70,6 @@ def test_yaml_parse_and_validate(yaml_path: Path) -> None:
         create=cfg.create,
         fe=fe_section,
         protocol=cfg.protocol,
-        partition=getattr(cfg, "partition", None),
     )
 
     # A few light sanity checks that derived fields were computed.

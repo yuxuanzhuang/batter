@@ -115,7 +115,7 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     if not script.exists():
         raise FileNotFoundError(f"[equil:{lig}] SLURM submit script missing: {script}")
 
-    # Build job spec (submit from equil/ directory; pass partition)
+    # Build job spec (submit from equil/ directory; pass partition via sbatch flags)
     job_name = f"fep_{os.path.abspath(system.root)}_eq"
     spec = SlurmJobSpec(
         workdir=paths["phase_dir"],

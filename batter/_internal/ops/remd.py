@@ -283,7 +283,12 @@ def write_remd_groupfiles(
 
 
 def write_remd_run_scripts(
-    comp_dir: Path, comp: str, sim: SimulationConfig, n_windows: int
+    comp_dir: Path,
+    comp: str,
+    sim: SimulationConfig,
+    n_windows: int,
+    *,
+    partition: str | None = None,
 ) -> List[Path]:
     """
     Write REMD run helper scripts (local + SLURM) into the component folder.
@@ -292,7 +297,6 @@ def write_remd_run_scripts(
     comp_dir.mkdir(parents=True, exist_ok=True)
 
     num_extends = int(getattr(sim, "num_fe_extends", 0))
-    part = getattr(sim, "partition", "normal")
     gpus = n_windows if n_windows > 0 else 1
 
     def _copy_template(src: Path, dst: Path, repl: dict[str, str], override_text: str | None = None) -> None:
@@ -318,7 +322,6 @@ def write_remd_run_scripts(
         TEMPLATE_DIR / "SLURMM-BATCH-remd.body",
         {
             "COMPONENT": comp,
-            "PARTITIONNAME": part,
             "NWINDOWS": str(gpus),
             "FERANGE": str(num_extends),
         },
@@ -339,7 +342,12 @@ def write_remd_run_scripts(
 
 
 def prepare_remd_component(
-    comp_dir: Path, comp: str, sim: SimulationConfig, n_windows: int
+    comp_dir: Path,
+    comp: str,
+    sim: SimulationConfig,
+    n_windows: int,
+    *,
+    partition: str | None = None,
 ) -> List[Path]:
     """
     Patch mdin files and emit groupfiles so REMD can run from ``comp_dir``.
@@ -359,7 +367,11 @@ def prepare_remd_component(
         lambda_dst.write_text("TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n")
 
     scripts = write_remd_groupfiles(comp_dir, comp, sim, n_windows)
-    scripts.extend(write_remd_run_scripts(comp_dir, comp, sim, n_windows))
+    scripts.extend(
+        write_remd_run_scripts(
+            comp_dir, comp, sim, n_windows, partition=partition
+        )
+    )
     return scripts
 
 

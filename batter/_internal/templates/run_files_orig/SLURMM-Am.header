@@ -1,10 +1,9 @@
 #!/bin/bash
 
-# SYSTEMNAME, STAGE, POSE, PARTITIONNAME are placeholders to be replaced when generating the script
+# SYSTEMNAME, STAGE, POSE are placeholders to be replaced when generating the script
 # Modify as needed for your specific SLURM environment
 
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
-#SBATCH --partition=PARTITIONNAME
 #SBATCH --nodes=1
 #SBATCH --open-mode=append
 #SBATCH --output=STAGE-POSE-%j.out
