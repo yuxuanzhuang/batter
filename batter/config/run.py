@@ -685,10 +685,6 @@ class RunSection(BaseModel):
         None,
         description="Optional directory containing user Slurm headers (defaults to ~/.batter).",
     )
-    executables: dict[str, str] = Field(
-        default_factory=dict,
-        description="Optional overrides for external executables (keys: antechamber, tleap, cpptraj, parmchk2, charmmlipid2amber, usalign, obabel, vmd).",
-    )
 
     email_sender: str = Field(
         "nobody@stanford.edu",
@@ -713,7 +709,7 @@ class RunSection(BaseModel):
         hdr = self.slurm_header_dir
         if hdr is not None and not hdr.is_absolute():
             hdr = (base / hdr).resolve()
-        return self.model_copy(update={"output_folder": folder, "slurm_header_dir": hdr, "executables": dict(self.executables)})
+        return self.model_copy(update={"output_folder": folder, "slurm_header_dir": hdr})
 
     @field_validator("output_folder", mode="before")
     @classmethod

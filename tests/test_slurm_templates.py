@@ -134,3 +134,25 @@ def test_cli_seed_headers(tmp_path, monkeypatch):
     assert (dest / "SLURMM-Am.header").exists()
     assert (dest / "SLURMM-BATCH-remd.header").exists()
     assert (dest / "job_manager.header").exists()
+
+
+def test_cli_seed_headers_skips_existing(tmp_path, monkeypatch):
+    """When headers already exist, the CLI should skip and hint about --force."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    hdr_root = tmp_path / "home" / ".batter"
+    hdr_root.mkdir(parents=True, exist_ok=True)
+    names = ["SLURMM-Am.header", "SLURMM-BATCH-remd.header", "job_manager.header"]
+    for name in names:
+        (hdr_root / name).write_text(f"# existing {name}\n")
+
+    from click.testing import CliRunner
+    from batter.cli.run import seed_headers
+
+    runner = CliRunner()
+    res = runner.invoke(seed_headers, [])
+    assert res.exit_code == 0, res.output
+    assert "No headers copied" in res.output
+    assert "Use --force" in res.output
+    # files should be left untouched
+    for name in names:
+        assert (hdr_root / name).read_text() == f"# existing {name}\n"

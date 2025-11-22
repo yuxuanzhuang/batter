@@ -135,23 +135,24 @@ resources per run via the ``run.slurm`` block (partition, time, nodes, ntasks_pe
 Those values are substituted into SLURM scripts when rendered. Combine the two mechanisms by
 setting cluster defaults in the headers and per-run overrides in the YAML when needed.
 
-Executable overrides
---------------------
+Executable resolution
+---------------------
 
-External executables (antechamber, tleap, cpptraj, parmchk2, charmmlipid2amber, usalign,
-obabel, vmd) can be overridden via ``run.executables``:
+BATTER launches external tools by name (e.g., ``pmemd.cuda``, ``pmemd.cuda.MPI``,
+``pmemd``, ``sander``, ``tleap``, ``antechamber``, ``cpptraj``, ``parmchk2``,
+``obabel``, ``vmd``). Ensure they are on ``PATH`` or exported in your SLURM headers
+if cluster modules are required. The package ships ``USalign`` internally and calls
+it via the baked-in path. For the Python-side tooling you can override executables
+via environment variables so overrides propagate into subprocesses:
 
-.. code-block:: yaml
-
-   run:
-     executables:
-       cpptraj: /opt/amber/bin/cpptraj
-       obabel: obabel_dev
-       vmd: /path/to/custom/vmd
-
-These overrides are applied at runtime before invoking the tools. This can be helpful
-if you have problem running the default binaries bundled with BATTER, e.g. vmd, or
-if you want to use a custom build of the tools.
+* ``BATTER_ANTECHAMBER`` (default: ``antechamber``)
+* ``BATTER_TLEAP`` (default: ``tleap``)
+* ``BATTER_CPPTRAJ`` (default: ``cpptraj``)
+* ``BATTER_PARMCHK2`` (default: ``parmchk2``)
+* ``BATTER_CHARMM_LIPID2AMBER`` (default: ``charmmlipid2amber.py``)
+* ``BATTER_USALIGN`` (default: packaged ``USalign``)
+* ``BATTER_OBABEL`` (default: ``obabel``)
+* ``BATTER_VMD`` (default: ``vmd``)
 
 
 Quick Reference

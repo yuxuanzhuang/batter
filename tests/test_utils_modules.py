@@ -47,3 +47,27 @@ def test_run_with_log_failure_raises(tmp_path):
             shell=False,
             working_dir=str(tmp_path),
         )
+
+
+def test_process_exec_env_overrides(monkeypatch):
+    import importlib
+    from batter.utils import process
+
+    overrides = {
+        "BATTER_TLEAP": "/opt/tleap",
+        "BATTER_CPPTRAJ": "/opt/cpptraj",
+        "BATTER_USALIGN": "/custom/USalign",
+    }
+    for k, v in overrides.items():
+        monkeypatch.setenv(k, v)
+
+    reloaded = importlib.reload(process)
+    assert reloaded.tleap == "/opt/tleap"
+    assert reloaded.cpptraj == "/opt/cpptraj"
+    assert reloaded.usalign == "/custom/USalign"
+
+    # cleanup: remove env and restore defaults
+    for k in overrides:
+        monkeypatch.delenv(k, raising=False)
+    restored = importlib.reload(process)
+    assert restored.tleap != "/opt/tleap"

@@ -22,37 +22,25 @@ __all__ = [
     "vmd",
 ]
 
-# External executables used throughout BATTER.
-antechamber = "antechamber"
-tleap = "tleap"
-cpptraj = "cpptraj"
-parmchk2 = "parmchk2"
-charmmlipid2amber = "charmmlipid2amber.py"
-usalign = str(resources.files("batter") / "utils" / "USalign")
-obabel = "obabel"
-vmd = "vmd"
+def _exec_from_env(key: str, default: str) -> str:
+    """Resolve an executable name/path from the environment."""
+    return os.environ.get(key, default)
 
 
-def apply_executable_overrides(exe_map: Mapping[str, str]) -> None:
-    """
-    Override default executable paths/names using a mapping from config.
-
-    Recognised keys: antechamber, tleap, cpptraj, parmchk2, charmmlipid2amber,
-    usalign, obabel, vmd.
-    """
-    global antechamber, tleap, cpptraj, parmchk2, charmmlipid2amber, usalign, obabel, vmd
-
-    def _maybe(key: str, current: str) -> str:
-        return exe_map.get(key, current)
-
-    antechamber = _maybe("antechamber", antechamber)
-    tleap = _maybe("tleap", tleap)
-    cpptraj = _maybe("cpptraj", cpptraj)
-    parmchk2 = _maybe("parmchk2", parmchk2)
-    charmmlipid2amber = _maybe("charmmlipid2amber", charmmlipid2amber)
-    usalign = _maybe("usalign", usalign)
-    obabel = _maybe("obabel", obabel)
-    vmd = _maybe("vmd", vmd)
+# External executables used throughout BATTER. These derive from environment
+# variables so overrides propagate into subprocesses.
+antechamber = _exec_from_env("BATTER_ANTECHAMBER", "antechamber")
+tleap = _exec_from_env("BATTER_TLEAP", "tleap")
+cpptraj = _exec_from_env("BATTER_CPPTRAJ", "cpptraj")
+parmchk2 = _exec_from_env("BATTER_PARMCHK2", "parmchk2")
+charmmlipid2amber = _exec_from_env(
+    "BATTER_CHARMM_LIPID2AMBER", "charmmlipid2amber.py"
+)
+usalign = _exec_from_env(
+    "BATTER_USALIGN", str(resources.files("batter") / "utils" / "USalign")
+)
+obabel = _exec_from_env("BATTER_OBABEL", "obabel")
+vmd = _exec_from_env("BATTER_VMD", "vmd")
 
 
 def run_with_log(

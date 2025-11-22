@@ -134,6 +134,7 @@ You can also seed headers explicitly with:
 
    batter seed-headers           # seeds into ~/.batter
    batter seed-headers --dest /path/to/dir
+   batter seed-headers --force   # overwrite existing headers
 
 After seeding, edit the header files to match your cluster defaults; they will be
 used whenever BATTER renders SLURM scripts.

@@ -48,7 +48,6 @@ class SimulationConfig(BaseModel):
         protocol: str | None = None,
         fe_type: str | None = None,
         slurm_header_dir: Path | None = None,
-        executables: dict[str, str] | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -251,7 +250,6 @@ class SimulationConfig(BaseModel):
             "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
             "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
-            "executables": dict(executables or {}),
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -465,9 +463,6 @@ class SimulationConfig(BaseModel):
     )
     component_lambdas: Dict[str, List[float]] = Field(
         default_factory=dict, description="Lambda schedule for each component"
-    )
-    executables: Dict[str, str] = Field(
-        default_factory=dict, description="Optional overrides for external executables."
     )
     membrane_simulation: bool = Field(
         default=True, description="Whether system includes a membrane"
