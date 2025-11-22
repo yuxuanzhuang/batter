@@ -4,6 +4,7 @@
 # Modify as needed for your specific SLURM environment
 
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
+
 #SBATCH --nodes=1
 #SBATCH --open-mode=append
 #SBATCH --output=STAGE-POSE-%j.out
