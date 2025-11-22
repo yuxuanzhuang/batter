@@ -29,26 +29,6 @@ def _phase_paths(root: Path) -> dict[str, Path]:
     }
 
 
-def _read_partition(payload: StepPayload) -> str:
-    """Resolve the desired Slurm partition from ``payload``."""
-    if payload.sim is not None:
-        sim_cfg = payload.sim
-        part = getattr(sim_cfg, "partition", None) or getattr(sim_cfg, "queue", None)
-        if part:
-            return str(part)
-        sim_dict = sim_cfg.model_dump()
-        part = sim_dict.get("partition") or sim_dict.get("queue")
-        if part:
-            return str(part)
-    sim_extra = payload.get("sim", {})
-    if isinstance(sim_extra, dict):
-        part = sim_extra.get("partition") or sim_extra.get("queue")
-        if part:
-            return str(part)
-    part = payload.get("partition") or payload.get("queue")
-    return str(part) if part else "normal"
-
-
 def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """Submit and register the equilibration job with the Slurm manager.
 
@@ -77,7 +57,6 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     payload = StepPayload.model_validate(params)
     paths = _phase_paths(system.root)
     lig = system.meta.get("ligand", system.name)
-    part = _read_partition(payload)
 
     finished_rel = paths["finished"].relative_to(system.root).as_posix()
     failed_rel = paths["failed"].relative_to(system.root).as_posix()
@@ -123,7 +102,6 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         finished_name=paths["finished"].name,
         failed_name=paths["failed"].name,
         name=job_name,
-        extra_sbatch=["-p", part],
     )
 
     mgr = payload.get("job_mgr")
