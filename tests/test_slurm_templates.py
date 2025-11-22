@@ -156,3 +156,16 @@ def test_cli_seed_headers_skips_existing(tmp_path, monkeypatch):
     # files should be left untouched
     for name in names:
         assert (hdr_root / name).read_text() == f"# existing {name}\n"
+
+
+def test_non_remd_templates_use_cpu_mpi_exec():
+    """Non-REMD templates should rely on the CPU MPI executable override."""
+    run_local = Path("batter/_internal/templates/run_files_orig/run-local.bash")
+    run_equil = Path("batter/_internal/templates/run_files_orig/run-equil.bash")
+    text_local = run_local.read_text()
+    text_equil = run_equil.read_text()
+
+    assert "PMEMD_CPU_MPI_EXEC" in text_local
+    assert "PMEMD_CPU_MPI_EXEC" in text_equil
+    assert "PMEMD_MPI_EXEC" not in text_local
+    assert "PMEMD_MPI_EXEC" not in text_equil

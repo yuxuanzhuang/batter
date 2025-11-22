@@ -22,6 +22,7 @@ source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 #   PMEMD_MPI_EXEC    (default: pmemd.cuda.MPI)
 #   PMEMD_DPFP_EXEC   (default: pmemd.cuda_DPFP)
 #   PMEMD_CPU_EXEC    (default: pmemd)
+#   PMEMD_CPU_MPI_EXEC (default: pmemd.MPI)
 #   SANDER_EXEC       (default: sander)
 #   MPI_EXEC          (default: mpirun)
 
@@ -30,5 +31,6 @@ source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
 # export PMEMD_MPI_EXEC=pmemd.cuda.MPI
 # export PMEMD_DPFP_EXEC=pmemd.cuda_DPFP
 # export PMEMD_CPU_EXEC=pmemd
+# export PMEMD_CPU_MPI_EXEC=pmemd.MPI
 # export SANDER_EXEC=sander
 # export MPI_EXEC=mpirun

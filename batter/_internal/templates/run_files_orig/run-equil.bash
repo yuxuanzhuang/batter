@@ -2,7 +2,7 @@
 
 # AMBER Constants
 PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
-PMEMD_MPI_EXEC=${PMEMD_MPI_EXEC:-pmemd.cuda.MPI}
+PMEMD_CPU_MPI_EXEC=${PMEMD_CPU_MPI_EXEC:-pmemd.MPI}
 PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
 PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
 SANDER_EXEC=${SANDER_EXEC:-sander}
@@ -37,7 +37,7 @@ else
         rm -f "$log_file"
         rm -f mini.rst7 mini.nc mini.out
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            $MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+            $MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         else
             $PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         fi
@@ -76,7 +76,7 @@ else
     # Equilibration with protein and ligand restrained
     # this is to equilibrate the density of water
     if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        $MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
+        $MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
     else
         $PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
     fi
