@@ -101,6 +101,7 @@ def test_yaml_has_minimal_keys(yaml_path: Path) -> None:
     )
 
 
+@pytest.mark.heavy
 @pytest.mark.parametrize("yaml_path", _iter_yaml_files(), ids=lambda p: p.name)
 def test_cli_batter_run_dry(
     yaml_path: Path, tmp_path: Path,
@@ -125,8 +126,7 @@ def test_cli_batter_run_dry(
     - If ``batter`` is not on PATH, the test is skipped.
     - If no dry-run-like flag is detected, the test is skipped to avoid running full simulations.
     """
-    if os.environ.get("BATTER_TEST_RUN_CLI", "0") != "1":
-        pytest.skip("Set BATTER_TEST_RUN_CLI=1 to enable CLI smoke tests.")
+    # heavy marker handles skipping unless BATTER_TEST_RUN_CLI=1
 
     # Ensure 'batter' is invokable
     try:
@@ -172,6 +172,7 @@ def test_cli_batter_run_dry(
     assert proc.returncode == 0, f"CLI failed for {yaml_path.name} (see logs above)"
 
 
+@pytest.mark.heavy
 def test_runs_prepare_fe(tmp_path: Path) -> None:
     """
     test that --only-equil reuse of a pre-equilibrated folder drives only FE prep.
@@ -179,8 +180,7 @@ def test_runs_prepare_fe(tmp_path: Path) -> None:
     This test is **skipped by default** to avoid heavy work. Enable it by setting:
         BATTER_TEST_RUN_CLI=1
     """
-    if os.environ.get("BATTER_TEST_RUN_CLI", "0") != "1":
-        pytest.skip("Set BATTER_TEST_RUN_CLI=1 to enable CLI tests.")
+    # heavy marker handles skipping unless BATTER_TEST_RUN_CLI=1
 
     src = DATA_DIR / "equil_finished"
     work_dir = tmp_path / "equil_finished"
