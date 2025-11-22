@@ -31,7 +31,7 @@ if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping EM steps." 
 else
     $PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    check_sim_failure "Minimization" "$log_file"
+    check_sim_failure "Minimization" "$log_file" mini.rst7
     if ! check_min_energy "mini.out" -1000; then
         echo "Minimization not passed with cuda; trying CPU"
         rm -f "$log_file"
@@ -41,7 +41,7 @@ else
         else
             $PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         fi
-        check_sim_failure "Minimization" "$log_file"
+        check_sim_failure "Minimization" "$log_file" mini.rst7
         if ! check_min_energy "mini.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
             rm -f mini.rst7 mini.nc mini.out
@@ -61,8 +61,8 @@ else
 
         # Equilbration with gradually-incrase lambda of the ligand
         # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
-        $PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
-        check_sim_failure "NVT" "$log_file"
+    $PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> "$log_file" 2>&1
+        check_sim_failure "NVT" "$log_file" eqnvt.rst7
         python check_penetration.py eqnvt.rst7
         if [[ -f RING_PENETRATION ]]; then
             echo "Ligand ring penetration still detected after NVT; exiting."
@@ -80,7 +80,7 @@ else
     else
         $PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> "$log_file" 2>&1
     fi
-    check_sim_failure "Pre equilibration" "$log_file"
+    check_sim_failure "Pre equilibration" "$log_file" eqnpt_pre.rst7
 
     # Equilibration with C-alpha restrained
     $PMEMD_DPFP_EXEC -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> "$log_file" 2>&1
@@ -102,7 +102,7 @@ if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
 else
 # Initial MD run
 $PMEMD_DPFP_EXEC -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md-00.nc -ref eqnpt04.rst7 >> $log_file 2>&1
-check_sim_failure "MD stage 0" "$log_file"
+check_sim_failure "MD stage 0" "$log_file" md00.rst7
 fi
 
 i=1
@@ -117,7 +117,7 @@ while [ $i -le RANGE ]; do
         echo "Skipping md$x steps."
     else
         $PMEMD_DPFP_EXEC -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 >> $log_file 2>&1
-        check_sim_failure "MD stage $i" "$log_file"
+        check_sim_failure "MD stage $i" "$log_file" md$x.rst7
     fi
     i=$((i + 1))
 done

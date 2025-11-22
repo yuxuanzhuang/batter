@@ -213,12 +213,12 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                     pass
 
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
-            spec = _spec_from_dir(
-                comp_dir,
+            spec = SlurmJobSpec(
+                workdir=comp_dir,
+                script_rel="SLURMM-BATCH-remd",
                 finished_name="FINISHED",
                 failed_name="FAILED",
-                script_rel="SLURMM-BATCH-remd",
-                job_name=job_name,
+                name=job_name,
             )
             job_mgr.add(spec)
             count += 1

@@ -49,5 +49,5 @@ def test_fe_handler_remd_submits_per_component(remd_system):
     spec = mgr.add_calls[0]
     assert spec.workdir == remd_system.root / "fe" / "z"
     assert spec.script_rel == "SLURMM-BATCH-remd"
-    assert spec.finished_name == "remd_FINISHED"
-    assert spec.failed_name == "remd_FAILED"
+    assert spec.finished_name == "FINISHED"
+    assert spec.failed_name == "FAILED"

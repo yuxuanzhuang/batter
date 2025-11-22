@@ -36,7 +36,7 @@ if [[ $only_eq -eq 1 ]]; then
         cp mini.in mini_eq.in
     fi
     $PMEMD_DPFP_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    check_sim_failure "Minimization" "$log_file"
+    check_sim_failure "Minimization" "$log_file" mini.rst7
 
     if ! check_min_energy "mini.out" -1000; then
         echo "Minimization not passed with cuda; try CPU"
@@ -47,7 +47,7 @@ if [[ $only_eq -eq 1 ]]; then
         else
             $PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
         fi
-        check_sim_failure "Minimization" "$log_file"
+        check_sim_failure "Minimization" "$log_file" mini.rst7
 
         if ! check_min_energy "mini.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
@@ -68,16 +68,16 @@ if [[ $only_eq -eq 1 ]]; then
         else
             $PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 >> "$log_file" 2>&1
         fi
-        check_sim_failure "Pre equilibration" "$log_file"
+        check_sim_failure "Pre equilibration" "$log_file" eqnpt_pre.rst7
 
         # Equilibration with protein restrained
         $PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> "$log_file" 2>&1
-        check_sim_failure "Equilibration stage 0" "$log_file"
+        check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
         for step in {1..4}; do
             prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
             curr=$(printf "eqnpt%02d" $step)
             $PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> "$log_file" 2>&1
-            check_sim_failure "Equilibration stage $step" "$log_file"
+            check_sim_failure "Equilibration stage $step" "$log_file" ${curr}.rst7
         done
     fi
 
@@ -90,7 +90,7 @@ if [[ $only_eq -eq 1 ]]; then
             echo "Running minimization for window $i"
             cd $win_folder
     $PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
-            check_sim_failure "Minimization for window $i" "$log_file"
+            check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
             if ! check_min_energy "mini.in.out" -1000; then
                 echo "Minimization not passed with cuda; try CPU"
                 rm -f "$log_file"
@@ -100,7 +100,7 @@ if [[ $only_eq -eq 1 ]]; then
                 else
                     $PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> "$log_file" 2>&1
                 fi
-                check_sim_failure "Minimization for window $i" "$log_file"
+                check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
                 if ! check_min_energy "mini.in.out" -1000; then
                     echo "Minimization with CPU also failed for window $i, exiting."
                     rm -f mini.in.rst7 mini.in.nc mini.in.out
@@ -126,7 +126,7 @@ if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
 else
     # Initial MD production run
     $PMEMD_EXEC -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 >> "$log_file" 2>&1
-    check_sim_failure "MD stage 0" "$log_file"
+    check_sim_failure "MD stage 0" "$log_file" mdin-00.rst7
 fi
 
 i=1
@@ -141,7 +141,7 @@ while [ $i -le FERANGE ]; do
         echo "Skipping md$x steps."
     else
         $PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 >> $log_file 2>&1
-        check_sim_failure "MD stage $i" "$log_file"
+        check_sim_failure "MD stage $i" "$log_file" mdin-$x.rst7
     fi
     i=$((i + 1))
 done
