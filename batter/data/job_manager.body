@@ -1,0 +1,2 @@
+# print out node information
+scontrol show job $SLURM_JOB_ID

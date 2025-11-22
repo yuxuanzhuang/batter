@@ -1,5 +1,15 @@
 """A python package that set up FEP simulations with bat.py"""
 
+# Seed default SLURM headers on import as a convenience so users find editable
+# copies under ~/.batter (or configured header root) even outside the CLI.
+try:
+    from .utils.slurm_templates import seed_default_headers
+
+    seed_default_headers()
+except Exception:
+    # non-fatal; seeding will also occur when running the CLI
+    pass
+
 from ._version import __version__
 
 __author__ = """Yuxuan Zhuang"""

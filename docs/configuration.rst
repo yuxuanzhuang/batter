@@ -98,6 +98,63 @@ Linking configuration fields to their downstream consumers makes it easier to re
 about which parts of the file structure (build directories, solvation scripts,
 restraint writers) are affected when you toggle individual knobs.
 
+The ``buffer_z`` value also determines the SDR translation distance: ligands are
+shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
+clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems
+the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
+bulk solvent above the membrane even if the YAML specifies a smaller buffer.
+
+SLURM header templates
+----------------------
+
+BATTER renders SLURM scripts by combining a user-editable header with a packaged body.
+Headers are copied into ``~/.batter`` on first use.
+You can also seed them explicitly:
+
+.. code-block:: bash
+
+   batter seed-headers           # seeds into ~/.batter
+   batter seed-headers --dest /path/to/dir
+   batter seed-headers --force   # overwrite existing headers
+
+Edit the headers to match your cluster defaults (queue/partition, env exports,
+executable paths). Bodies remain managed by the package. Header files:
+
+* ``SLURMM-Am.header`` (equil/FE runs)
+* ``SLURMM-BATCH-remd.header`` (REMD runs)
+* ``job_manager.header`` (manager script for ``batter --slurm-submit``)
+
+The header lookup/seed location is controlled by ``run.slurm_header_dir``; when omitted it
+defaults to ``~/.batter``.
+
+Per-run SLURM overrides
+-----------------------
+
+Simulation submit scripts inherit the header settings above, but you can also control SLURM
+resources per run via the ``run.slurm`` block (partition, time, nodes, ntasks_per_node, mem, etc.).
+Those values are substituted into SLURM scripts when rendered. Combine the two mechanisms by
+setting cluster defaults in the headers and per-run overrides in the YAML when needed.
+
+Executable resolution
+---------------------
+
+BATTER launches external tools by name (e.g., ``pmemd.cuda``, ``pmemd.cuda.MPI``,
+``pmemd``, ``sander``, ``tleap``, ``antechamber``, ``cpptraj``, ``parmchk2``,
+``obabel``, ``vmd``). Ensure they are on ``PATH`` or exported in your SLURM headers
+if cluster modules are required. The package ships ``USalign`` internally and calls
+it via the baked-in path. For the Python-side tooling you can override executables
+via environment variables so overrides propagate into subprocesses:
+
+* ``BATTER_ANTECHAMBER`` (default: ``antechamber``)
+* ``BATTER_TLEAP`` (default: ``tleap``)
+* ``BATTER_CPPTRAJ`` (default: ``cpptraj``)
+* ``BATTER_PARMCHK2`` (default: ``parmchk2``)
+* ``BATTER_CHARMM_LIPID2AMBER`` (default: ``charmmlipid2amber.py``)
+* ``BATTER_USALIGN`` (default: packaged ``USalign``)
+* ``BATTER_OBABEL`` (default: ``obabel``)
+* ``BATTER_VMD`` (default: ``vmd``)
+
+
 Quick Reference
 ---------------
 
@@ -112,8 +169,3 @@ Quick Reference
    batter.config.run.RunSection
    batter.config.load_run_config
    batter.config.dump_run_config
-  The ``buffer_z`` value also determines the SDR translation distance: ligands are
-  shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
-  clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems
-  the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
-  bulk solvent above the membrane even if the YAML specifies a smaller buffer.

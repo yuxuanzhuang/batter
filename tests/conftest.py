@@ -1,30 +1,19 @@
-from __future__ import annotations
-
 import os
-from pathlib import Path
-from typing import Iterator
-
 import pytest
 
+HEAVY_ENV = "BATTER_TEST_RUN_CLI"
 
-@pytest.fixture(autouse=True)
-def _chdir_to_repo_root() -> Iterator[None]:
-    """
-    Autouse fixture to run tests from the repo root.
 
-    This keeps relative paths (e.g., ``tests/data/*.yaml``) stable regardless of
-    how pytest is invoked.
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "heavy: marks tests that are slow or resource-intensive (env: BATTER_TEST_RUN_CLI)"
+    )
 
-    Yields
-    ------
-    None
-        Context manager effect only.
-    """
-    here = Path(__file__).resolve().parent
-    repo_root = here.parent
-    old = Path.cwd()
-    os.chdir(repo_root)
-    try:
-        yield
-    finally:
-        os.chdir(old)
+
+def pytest_collection_modifyitems(config, items):
+    heavy_enabled = os.environ.get(HEAVY_ENV) == "1"
+    for item in items:
+        if "heavy" in item.keywords and not heavy_enabled:
+            item.add_marker(
+                pytest.mark.skip(reason="Set BATTER_TEST_RUN_CLI=1 to enable heavy CLI tests.")
+            )

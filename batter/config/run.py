@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Literal, List, Mapping, Iterable, Tuple
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
+from batter.config.remd import RemdArgs
 from batter.config.utils import (
     coerce_yes_no,
     expand_env_vars,
@@ -382,9 +383,9 @@ class FESimArgs(BaseModel):
         "mbar",
         description="Free-energy integration scheme (``mbar`` or ``ti``).",
     )
-    remd: Literal["yes", "no"] = Field(
-        "no",
-        description='Enable replica-exchange MD (currently unsupported; must remain ``"no"``).',
+    remd: RemdArgs = Field(
+        default_factory=RemdArgs,
+        description="Replica-exchange MD controls (enable/nstlim/numexchg).",
     )
     rocklin_correction: Literal["yes", "no"] = Field(
         "no",
@@ -485,7 +486,16 @@ class FESimArgs(BaseModel):
         description="Optional (start, end) simulation index range to analyze per FE window.",
     )
 
-    @field_validator("remd", "rocklin_correction", "hmr", "enable_mcwat", mode="before")
+    @field_validator("remd", mode="before")
+    @classmethod
+    def _coerce_remd(cls, v):
+        if isinstance(v, RemdArgs):
+            return v
+        if isinstance(v, dict):
+            return RemdArgs(**v)
+        return RemdArgs(enable=coerce_yes_no(v))
+
+    @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
@@ -671,6 +681,10 @@ class RunSection(BaseModel):
             "configuration hash differs from the existing execution."
         ),
     )
+    slurm_header_dir: Path | None = Field(
+        None,
+        description="Optional directory containing user Slurm headers (defaults to ~/.batter).",
+    )
 
     email_sender: str = Field(
         "nobody@stanford.edu",
@@ -683,13 +697,6 @@ class RunSection(BaseModel):
             "finishes (successfully or with warnings)."
         ),
     )
-    amber_setup_sh: str = Field(
-        "$GROUP_HOME/software/amber24/setup_amber.sh",
-        description=(
-            "Path to a shell script used to load AMBER simulation environment."
-        ),
-    )
-
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)
 
     def resolve_paths(self, base: Path) -> "RunSection":
@@ -699,7 +706,10 @@ class RunSection(BaseModel):
         folder = self.output_folder
         if not folder.is_absolute():
             folder = (base / folder).resolve()
-        return self.model_copy(update={"output_folder": folder})
+        hdr = self.slurm_header_dir
+        if hdr is not None and not hdr.is_absolute():
+            hdr = (base / hdr).resolve()
+        return self.model_copy(update={"output_folder": folder, "slurm_header_dir": hdr})
 
     @field_validator("output_folder", mode="before")
     @classmethod
@@ -824,8 +834,7 @@ class RunConfig(BaseModel):
             fe_args,
             protocol=self.protocol,
             fe_type=desired_fe_type,
-            partition=self.run.slurm.partition,
-            amber_setup_sh=self.run.amber_setup_sh,
+            slurm_header_dir=self.run.slurm_header_dir,
         )
 
     def with_base_dir(self, base_dir: Path) -> "RunConfig":

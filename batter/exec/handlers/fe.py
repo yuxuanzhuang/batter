@@ -16,29 +16,6 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils import components_under
 
-# ---------------- utilities ----------------
-
-
-def _read_partition(payload: StepPayload) -> str:
-    """Resolve the desired Slurm partition from ``payload``."""
-    if payload.sim is not None:
-        sim_cfg = payload.sim
-        part = getattr(sim_cfg, "partition", None) or getattr(sim_cfg, "queue", None)
-        if part:
-            return str(part)
-        sim_dict = sim_cfg.model_dump()
-        part = sim_dict.get("partition") or sim_dict.get("queue")
-        if part:
-            return str(part)
-    sim_extra = payload.get("sim", {})
-    if isinstance(sim_extra, dict):
-        part = sim_extra.get("partition") or sim_extra.get("queue")
-        if part:
-            return str(part)
-    part = payload.get("partition") or payload.get("queue")
-    return str(part) if part else "normal"
-
-
 # ---------------- discovery helpers ----------------
 
 
@@ -69,18 +46,18 @@ def _spec_from_dir(
     workdir: Path,
     *,
     finished_name: str,
-    part: str,
     job_name: str,
+    failed_name: str = "FAILED",
+    script_rel: str = "SLURMM-run",
     extra_env: Optional[Dict[str, str]] = None,
 ) -> SlurmJobSpec:
     """Build a :class:`SlurmJobSpec` for ``workdir``."""
     return SlurmJobSpec(
         workdir=workdir,
-        script_rel="SLURMM-run",
+        script_rel=script_rel,
         finished_name=finished_name,
-        failed_name="FAILED",
+        failed_name=failed_name,
         name=job_name,
-        extra_sbatch=["-p", part],
         extra_env=extra_env or {},
     )
 
@@ -107,7 +84,6 @@ def fe_equil_handler(
     """
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
-    part = _read_partition(payload)
     max_jobs = int(payload.get("max_active_jobs", 500))
 
     job_mgr = payload.get("job_mgr")
@@ -157,7 +133,6 @@ def fe_equil_handler(
         spec = _spec_from_dir(
             wd,
             finished_name="EQ_FINISHED",
-            part=part,
             job_name=job_name,
             extra_env=env,
         )
@@ -167,9 +142,7 @@ def fe_equil_handler(
     if count == 0:
         raise RuntimeError(f"[fe_equil:{lig}] No component equil windows to submit.")
 
-    logger.debug(
-        f"[fe_equil:{lig}] enqueued {count} component equil job(s) (partition={part})."
-    )
+    logger.debug(f"[fe_equil:{lig}] enqueued {count} component equil job(s).")
     # Don’t claim success/terminal state; we’re not waiting here.
     return ExecResult(job_ids=[], artifacts={"count": count})
 
@@ -191,8 +164,10 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     """
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
-    part = _read_partition(payload)
     max_jobs = int(payload.get("max_active_jobs", 500))
+    remd_enabled = False
+    if payload.sim is not None:
+        remd_enabled = str(getattr(payload.sim, "remd", "no")).lower() == "yes"
 
     job_mgr = payload.get("job_mgr")
     if not isinstance(job_mgr, SlurmJobManager):
@@ -206,21 +181,50 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             f"[fe:{lig}] No components found under {system.root/'fe'}"
         )
 
-    register_phase_state(
-        system.root,
-        "fe",
-        required=[
-            ["fe/{comp}/{comp}{win:02d}/FINISHED"],
-            ["fe/{comp}/{comp}{win:02d}/FAILED"],
-        ],
-        success=[["fe/{comp}/{comp}{win:02d}/FINISHED"]],
-        failure=[["fe/{comp}/{comp}{win:02d}/FAILED"]],
-    )
+    if remd_enabled:
+        register_phase_state(
+            system.root,
+            "fe",
+            required=[["fe/{comp}/FINISHED"], ["fe/{comp}/FAILED"]],
+            success=[["fe/{comp}/FINISHED"]],
+            failure=[["fe/{comp}/FAILED"]],
+        )
+    else:
+        register_phase_state(
+            system.root,
+            "fe",
+            required=[
+                ["fe/{comp}/{comp}{win:02d}/FINISHED"],
+                ["fe/{comp}/{comp}{win:02d}/FAILED"],
+            ],
+            success=[["fe/{comp}/{comp}{win:02d}/FINISHED"]],
+            failure=[["fe/{comp}/{comp}{win:02d}/FAILED"]],
+        )
 
     count = 0
     for comp in comps:
+        if remd_enabled:
+            comp_dir = system.root / "fe" / comp
+            failed = comp_dir / "FAILED"
+            if failed.exists():
+                try:
+                    failed.unlink()
+                except Exception:
+                    pass
+
+            job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
+            spec = SlurmJobSpec(
+                workdir=comp_dir,
+                script_rel="SLURMM-BATCH-remd",
+                finished_name="FINISHED",
+                failed_name="FAILED",
+                name=job_name,
+            )
+            job_mgr.add(spec)
+            count += 1
+            continue
+
         for wd in _production_window_dirs(system.root, comp):
-            # clear FAILED if present
             failed = wd / "FAILED"
             if failed.exists():
                 try:
@@ -233,7 +237,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             spec = _spec_from_dir(
                 wd,
                 finished_name="FINISHED",
-                part=part,
                 job_name=job_name,
                 extra_env=env,
             )
@@ -243,6 +246,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     if count == 0:
         raise RuntimeError(f"[fe:{lig}] No production windows to submit.")
 
-    logger.debug(f"[fe:{lig}] enqueued {count} production job(s) (partition={part}).")
+    logger.debug(f"[fe:{lig}] enqueued {count} production job(s).")
     # Don’t claim success/terminal state; we’re not waiting here.
     return ExecResult(job_ids=[], artifacts={"count": count})
