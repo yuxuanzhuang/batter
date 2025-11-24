@@ -157,6 +157,11 @@ Additional knobs:
 * ``run.batch_gpus_per_task`` – GPUs to hand to each ``srun`` (defaults to 1).
 * ``run.batch_srun_extra`` – extra flags appended to ``srun`` (e.g., ``["--exclusive"]``).
 
+When batch mode is enabled a helper ``batch_run`` directory is created under each
+``executions/<run_id>/`` with ``*_batch.sh`` wrappers. They ``cd`` into the component/window
+folders and launch ``run-local.bash`` (or ``run-local-remd.bash``) with ``/bin/bash``. These
+wrappers are what the manager executes inline; you can also run them manually for debugging.
+
 Remember to request GPUs in your job manager header (``job_manager.header``) so the manager
 allocation has the resources it needs.
 

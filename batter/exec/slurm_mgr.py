@@ -223,6 +223,8 @@ class SlurmJobSpec:
         Additional ``sbatch`` flags appended during submission.
     extra_env : dict, optional
         Additional environment variables exported before submission.
+    batch_script : pathlib.Path, optional
+        Optional wrapper script used when batch_mode is enabled.
     """
 
     workdir: Path
@@ -232,6 +234,7 @@ class SlurmJobSpec:
     name: Optional[str] = None
     extra_sbatch: Sequence[str] = field(default_factory=list)
     extra_env: Dict[str, str] = field(default_factory=dict)
+    batch_script: Path | None = None
 
     # allow a few common variants (case, alt names)
     alt_script_names: Sequence[str] = (
@@ -385,6 +388,7 @@ class SlurmJobManager:
                 "name": spec.name,
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
+                "batch_script": str(spec.batch_script) if spec.batch_script else None,
             }
             _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
 
@@ -443,6 +447,7 @@ class SlurmJobManager:
                     name=rec.get("name"),
                     extra_sbatch=rec.get("extra_sbatch") or [],
                     extra_env=rec.get("extra_env") or {},
+                    batch_script=Path(rec["batch_script"]) if rec.get("batch_script") else None,
                 )
         return out
 
@@ -486,12 +491,13 @@ class SlurmJobManager:
     def _batch_script(spec: SlurmJobSpec) -> Path:
         """Choose an executable script to run inline for a job spec."""
         candidates = [
+            spec.batch_script,
             spec.workdir / "run-local.bash",
             spec.workdir / "run-local-remd.bash",
             spec.resolve_script_abs(),
         ]
         for path in candidates:
-            if path.exists():
+            if path and path.exists():
                 return path
         # fall back to the preferred relative location even if missing
         return spec.workdir / spec.script_rel
@@ -502,15 +508,16 @@ class SlurmJobManager:
 
     def _batch_cmd(self, script: Path) -> List[str]:
         """Build the command used to launch a job inline."""
+        shell = "/bin/bash"
         if self._use_srun():
             cmd = ["srun", "-N", "1", "-n", "1"]
             if self.gpus_per_task:
                 cmd += ["--gpus-per-task", str(self.gpus_per_task)]
             if self.srun_extra:
                 cmd += list(self.srun_extra)
-            cmd += ["bash", script.name]
+            cmd += [shell, script.name]
             return cmd
-        return ["bash", script.name]
+        return [shell, script.name]
 
     def _launch_batch(self, spec: SlurmJobSpec, script: Path) -> subprocess.Popen:
         """Start a single spec inline and return the running process."""

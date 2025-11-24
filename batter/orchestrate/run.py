@@ -440,6 +440,8 @@ def run_from_yaml(
             updates = {"job_mgr": job_mgr}
             if rc.run.max_active_jobs is not None:
                 updates["max_active_jobs"] = rc.run.max_active_jobs
+            updates["batch_mode"] = batch_mode
+            updates["batch_run_root"] = run_dir / "batch_run"
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)

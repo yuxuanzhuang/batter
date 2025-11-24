@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shlex
 from typing import Any, Dict
 
 from loguru import logger
@@ -13,6 +14,33 @@ from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
+
+def _batch_script_path(system_root: Path, batch_root: Path | None, target_dir: Path, env: Dict[str, str] | None = None) -> Path:
+    """
+    Create a batch wrapper script under ``batch_root`` that runs the local payload.
+    """
+    # assume system_root = .../executions/<run>/simulations/<ligand>
+    run_root = system_root.parent.parent if system_root.name else system_root
+    batch_dir = batch_root or (run_root / "batch_run")
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        rel = target_dir.relative_to(run_root)
+        name = rel.as_posix().replace("/", "_")
+    except Exception:
+        name = target_dir.name
+    script_path = batch_dir / f"{name}_batch.sh"
+
+    lines = ["#!/usr/bin/env bash", "set -euo pipefail", f'cd "{target_dir}"']
+    for k, v in (env or {}).items():
+        lines.append(f'export {k}={shlex.quote(str(v))}')
+    lines.append("exec /bin/bash run-local.bash")
+    script_path.write_text("\n".join(lines) + "\n")
+    try:
+        script_path.chmod(0o755)
+    except Exception:
+        pass
+    return script_path
 
 def _phase_paths(root: Path) -> dict[str, Path]:
     """Return resolved paths for equilibration artifacts under ``root``."""
@@ -96,12 +124,20 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
     # Build job spec (submit from equil/ directory; pass partition via sbatch flags)
     job_name = f"fep_{os.path.abspath(system.root)}_eq"
+    batch_script = None
+    if payload.get("batch_mode"):
+        batch_script = _batch_script_path(
+            system.root,
+            payload.get("batch_run_root"),
+            paths["phase_dir"],
+        )
     spec = SlurmJobSpec(
         workdir=paths["phase_dir"],
         script_rel=script.name,                   # relative (submitted with cwd=workdir)
         finished_name=paths["finished"].name,
         failed_name=paths["failed"].name,
         name=job_name,
+        batch_script=batch_script,
     )
 
     mgr = payload.get("job_mgr")

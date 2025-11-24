@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import shlex
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -50,6 +51,7 @@ def _spec_from_dir(
     failed_name: str = "FAILED",
     script_rel: str = "SLURMM-run",
     extra_env: Optional[Dict[str, str]] = None,
+    batch_script: Path | None = None,
 ) -> SlurmJobSpec:
     """Build a :class:`SlurmJobSpec` for ``workdir``."""
     return SlurmJobSpec(
@@ -59,6 +61,7 @@ def _spec_from_dir(
         failed_name=failed_name,
         name=job_name,
         extra_env=extra_env or {},
+        batch_script=batch_script,
     )
 
 
@@ -130,11 +133,21 @@ def fe_equil_handler(
 
         env = {"ONLY_EQ": "1", "INPCRD": "full.inpcrd"}
         job_name = f"fep_{os.path.abspath(system.root)}_{comp}_fe_equil"
+        batch_script = None
+        if payload.get("batch_mode"):
+            batch_script = _write_batch_wrapper(
+                system_root=system.root,
+                batch_root=payload.get("batch_run_root"),
+                target_dir=wd,
+                target_script="run-local.bash",
+                env=env,
+            )
         spec = _spec_from_dir(
             wd,
             finished_name="EQ_FINISHED",
             job_name=job_name,
             extra_env=env,
+            batch_script=batch_script,
         )
         job_mgr.add(spec)
         count += 1
@@ -213,12 +226,22 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                     pass
 
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
+            batch_script = None
+            if payload.get("batch_mode"):
+                batch_script = _write_batch_wrapper(
+                    system_root=system.root,
+                    batch_root=payload.get("batch_run_root"),
+                    target_dir=comp_dir,
+                    target_script="run-local-remd.bash",
+                    env=None,
+                )
             spec = SlurmJobSpec(
                 workdir=comp_dir,
                 script_rel="SLURMM-BATCH-remd",
                 finished_name="FINISHED",
                 failed_name="FAILED",
                 name=job_name,
+                batch_script=batch_script,
             )
             job_mgr.add(spec)
             count += 1
@@ -234,11 +257,21 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
 
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_{wd.name}_fe"
+            batch_script = None
+            if payload.get("batch_mode"):
+                batch_script = _write_batch_wrapper(
+                    system_root=system.root,
+                    batch_root=payload.get("batch_run_root"),
+                    target_dir=wd,
+                    target_script="run-local.bash",
+                    env=env,
+                )
             spec = _spec_from_dir(
                 wd,
                 finished_name="FINISHED",
                 job_name=job_name,
                 extra_env=env,
+                batch_script=batch_script,
             )
             job_mgr.add(spec)
             count += 1
@@ -249,3 +282,36 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     logger.debug(f"[fe:{lig}] enqueued {count} production job(s).")
     # Don’t claim success/terminal state; we’re not waiting here.
     return ExecResult(job_ids=[], artifacts={"count": count})
+
+
+def _write_batch_wrapper(
+    *,
+    system_root: Path,
+    batch_root: Path | None,
+    target_dir: Path,
+    target_script: str,
+    env: Optional[Dict[str, str]] = None,
+) -> Path:
+    """Create a batch wrapper under batch_run that launches the local script."""
+    run_root = system_root.parent.parent if system_root.name else system_root
+    batch_dir = batch_root or (run_root / "batch_run")
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        rel = target_dir.relative_to(run_root)
+        base = rel.as_posix().replace("/", "_")
+    except Exception:
+        base = target_dir.name
+
+    script_path = batch_dir / f"{base}_batch.sh"
+    lines = ["#!/usr/bin/env bash", "set -euo pipefail", f'cd "{target_dir}"']
+    for k, v in (env or {}).items():
+        lines.append(f'export {k}={shlex.quote(str(v))}')
+    lines.append(f"exec /bin/bash {target_script}")
+
+    script_path.write_text("\n".join(lines) + "\n")
+    try:
+        script_path.chmod(0o755)
+    except Exception:
+        pass
+    return script_path
