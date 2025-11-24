@@ -104,6 +104,16 @@ clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane sy
 the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
 bulk solvent above the membrane even if the YAML specifies a smaller buffer.
 
+REMD runs
+---------
+
+Set ``fe_sim.remd: yes`` to enable per-component replica-exchange submissions. Use
+``fe_sim.remd_nstlim`` for segment length and ``fe_sim.remd_numexchg`` for exchange
+intervals; both values are copied into the REMD ``mdin`` inputs and groupfiles generated
+under ``fe/<comp>/remd/``. REMD jobs submit one Slurm job per component via
+``SLURMM-BATCH-remd`` and monitor ``FINISHED``/``FAILED`` sentinels in the component
+folder. See :doc:`remd_submission` for operational details.
+
 SLURM header templates
 ----------------------
 
