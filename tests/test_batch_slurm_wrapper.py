@@ -34,7 +34,8 @@ def test_write_equil_batch_runner(tmp_path):
     (sim / "run-local.bash").write_text("#!/bin/bash\ntouch FINISHED\n")
     batch_root = tmp_path / "batch_run"
 
-    helper = _write_equil_batch_runner(run_root, batch_root)
+    helper = _write_equil_batch_runner(run_root, batch_root, batch_gpus=4, gpus_per_task=2)
     content = helper.read_text()
     assert "run-local.bash" in content
     assert "equil_all.FINISHED" in content
+    assert "gpus-per-task" in content

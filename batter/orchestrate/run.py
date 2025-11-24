@@ -442,6 +442,8 @@ def run_from_yaml(
                 updates["max_active_jobs"] = rc.run.max_active_jobs
             updates["batch_mode"] = batch_mode
             updates["batch_run_root"] = run_dir / "batch_run"
+            updates["batch_gpus"] = getattr(rc.run, "batch_gpus", None)
+            updates["batch_gpus_per_task"] = getattr(rc.run, "batch_gpus_per_task", 1)
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
