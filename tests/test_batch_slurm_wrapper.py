@@ -2,6 +2,7 @@ from pathlib import Path
 
 from batter.exec.handlers.batch import render_batch_slurm_script
 from batter.exec.handlers.equil import _write_equil_batch_runner
+from batter.exec.handlers.fe import _write_fe_batch_runner
 
 
 def test_render_batch_slurm_script(tmp_path):
@@ -40,3 +41,18 @@ def test_write_equil_batch_runner(tmp_path):
     assert "equil_all.FINISHED" in content
     assert "gpus-per-task" in content
     assert "cd \"$d\"" in content
+
+
+def test_write_fe_batch_runner(tmp_path):
+    run_root = tmp_path / "exec"
+    comp_dir = run_root / "simulations" / "lig1" / "fe" / "z"
+    (comp_dir / "z-1").mkdir(parents=True)
+    (comp_dir / "z00").mkdir(parents=True)
+    (comp_dir / "z00" / "run-local.bash").write_text("#!/bin/bash\n")
+    batch_root = tmp_path / "batch_run"
+
+    helper = _write_fe_batch_runner(run_root, batch_root, batch_gpus=2, gpus_per_task=1)
+    text = helper.read_text()
+    assert "fe_all.FINISHED" in text
+    assert "gpus-per-task" in text
+    assert "srun" in text

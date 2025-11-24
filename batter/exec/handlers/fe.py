@@ -17,6 +17,7 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils import components_under
 from batter.exec.handlers.batch import render_batch_slurm_script
+from textwrap import dedent
 
 # ---------------- discovery helpers ----------------
 
@@ -92,6 +93,7 @@ def fe_equil_handler(
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
     max_jobs = int(payload.get("max_active_jobs", 500))
+    batch_mode = bool(payload.get("batch_mode"))
 
     job_mgr = payload.get("job_mgr")
     if not isinstance(job_mgr, SlurmJobManager):
@@ -119,6 +121,38 @@ def fe_equil_handler(
     )
 
     count = 0
+    if batch_mode and not getattr(job_mgr, "_fe_equil_batch_added", False):
+        run_root = system.root.parent.parent if system.root.name else system.root
+        batch_root = payload.get("batch_run_root") or (run_root / "batch_run")
+        helper = _write_fe_equil_batch_runner(
+            run_root,
+            batch_root,
+            batch_gpus=payload.get("batch_gpus"),
+            gpus_per_task=payload.get("batch_gpus_per_task") or 1,
+        )
+        batch_script = render_batch_slurm_script(
+            batch_root=batch_root,
+            target_dir=batch_root,
+            run_script=helper.name,
+            env=None,
+            system_name=getattr(payload.get("sim"), "system_name", system.name),
+            stage="fe_equil",
+            pose="all",
+            header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
+        )
+        spec = SlurmJobSpec(
+            workdir=batch_root,
+            script_rel=batch_script.name,
+            finished_name="fe_equil_all.FINISHED",
+            failed_name="fe_equil_all.FAILED",
+            name="fe_equil_all",
+            batch_script=batch_script,
+            submit_dir=batch_root,
+        )
+        job_mgr.add(spec)
+        setattr(job_mgr, "_fe_equil_batch_added", True)
+        return ExecResult(job_ids=[], artifacts={"batch_run": batch_root})
+
     for comp in comps:
         wd = _equil_window_dir(system.root, comp)
         if not wd.exists():
@@ -138,8 +172,10 @@ def fe_equil_handler(
         env = {"ONLY_EQ": "1", "INPCRD": "full.inpcrd"}
         job_name = f"fep_{os.path.abspath(system.root)}_{comp}_fe_equil"
         batch_script = None
-        if payload.get("batch_mode"):
-            batch_root = payload.get("batch_run_root") or (system.root.parent.parent / "batch_run")
+        if batch_mode:
+            batch_root = payload.get("batch_run_root") or (
+                system.root.parent.parent / "batch_run"
+            )
             batch_script = render_batch_slurm_script(
                 batch_root=batch_root,
                 target_dir=wd,
@@ -190,6 +226,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     remd_enabled = False
     if payload.sim is not None:
         remd_enabled = str(getattr(payload.sim, "remd", "no")).lower() == "yes"
+    batch_mode = bool(payload.get("batch_mode"))
 
     job_mgr = payload.get("job_mgr")
     if not isinstance(job_mgr, SlurmJobManager):
@@ -224,6 +261,42 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         )
 
     count = 0
+    if (
+        batch_mode
+        and not remd_enabled
+        and not getattr(job_mgr, "_fe_batch_added", False)
+    ):
+        run_root = system.root.parent.parent if system.root.name else system.root
+        batch_root = payload.get("batch_run_root") or (run_root / "batch_run")
+        helper = _write_fe_batch_runner(
+            run_root,
+            batch_root,
+            batch_gpus=payload.get("batch_gpus"),
+            gpus_per_task=payload.get("batch_gpus_per_task") or 1,
+        )
+        batch_script = render_batch_slurm_script(
+            batch_root=batch_root,
+            target_dir=batch_root,
+            run_script=helper.name,
+            env=None,
+            system_name=getattr(payload.get("sim"), "system_name", system.name),
+            stage="fe",
+            pose="all",
+            header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
+        )
+        spec = SlurmJobSpec(
+            workdir=batch_root,
+            script_rel=batch_script.name,
+            finished_name="fe_all.FINISHED",
+            failed_name="fe_all.FAILED",
+            name="fe_all",
+            batch_script=batch_script,
+            submit_dir=batch_root,
+        )
+        job_mgr.add(spec)
+        setattr(job_mgr, "_fe_batch_added", True)
+        return ExecResult(job_ids=[], artifacts={"batch_run": batch_root})
+
     for comp in comps:
         if remd_enabled:
             comp_dir = system.root / "fe" / comp
@@ -235,27 +308,12 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                     pass
 
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
-            batch_script = None
-            if payload.get("batch_mode"):
-                batch_root = payload.get("batch_run_root") or (system.root.parent.parent / "batch_run")
-                batch_script = render_batch_slurm_script(
-                    batch_root=batch_root,
-                    target_dir=comp_dir,
-                    run_script="run-local-remd.bash",
-                    env=None,
-                    system_name=getattr(payload.get("sim"), "system_name", system.name),
-                    stage="fe",
-                    pose=f"{system.meta.get('ligand', system.name)}_{comp}",
-                    header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
-                )
             spec = SlurmJobSpec(
                 workdir=comp_dir,
-                script_rel=batch_script.name if batch_script else "SLURMM-BATCH-remd",
+                script_rel="SLURMM-BATCH-remd",
                 finished_name="FINISHED",
                 failed_name="FAILED",
                 name=job_name,
-                batch_script=batch_script,
-                submit_dir=batch_script.parent if batch_script else None,
             )
             job_mgr.add(spec)
             count += 1
@@ -272,8 +330,10 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_{wd.name}_fe"
             batch_script = None
-            if payload.get("batch_mode"):
-                batch_root = payload.get("batch_run_root") or (system.root.parent.parent / "batch_run")
+            if batch_mode:
+                batch_root = payload.get("batch_run_root") or (
+                    system.root.parent.parent / "batch_run"
+                )
                 batch_script = render_batch_slurm_script(
                     batch_root=batch_root,
                     target_dir=wd,
@@ -301,3 +361,158 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     logger.debug(f"[fe:{lig}] enqueued {count} production job(s).")
     # Don’t claim success/terminal state; we’re not waiting here.
     return ExecResult(job_ids=[], artifacts={"count": count})
+
+
+def _write_fe_equil_batch_runner(
+    run_root: Path,
+    batch_root: Path,
+    *,
+    batch_gpus: int | None = None,
+    gpus_per_task: int = 1,
+) -> Path:
+    """Render a helper that launches all component equil runs in parallel."""
+    batch_root.mkdir(parents=True, exist_ok=True)
+    helper = batch_root / "run_all_fe_equil.sh"
+    gpus_per_task = max(1, int(gpus_per_task))
+    gpu_line = (
+        f'TOTAL_GPUS="{batch_gpus}"'
+        if batch_gpus
+        else 'TOTAL_GPUS="${SLURM_GPUS_ON_NODE:-1}"'
+    )
+    text = (
+        dedent(
+            f"""
+        #!/usr/bin/env bash
+        set -euo pipefail
+        {gpu_line}
+        GPUS_PER_TASK={gpus_per_task}
+        if [[ -z "$TOTAL_GPUS" ]]; then
+            if [[ -n "${{SLURM_GPUS:-}}" ]]; then TOTAL_GPUS="${{SLURM_GPUS}}"; else TOTAL_GPUS="1"; fi
+        fi
+        slots=$((TOTAL_GPUS / GPUS_PER_TASK))
+        if [[ $slots -lt 1 ]]; then slots=1; fi
+
+        status=0
+        declare -a pids=()
+        running=0
+        for d in "{(run_root / 'simulations').as_posix()}"/*/fe/*/*; do
+            base=$(basename "$d")
+            comp_dir=$(dirname "$d")
+            comp=$(basename "$comp_dir")
+            if [[ "$base" != "$comp-1" ]]; then
+                continue
+            fi
+            if [[ -x "$d/run-local.bash" ]]; then
+                echo "[batter-batch] fe_equil running $d"
+                (
+                    cd "$d"
+                    export ONLY_EQ=1
+                    export INPCRD=full.inpcrd
+                    $MPI_EXEC -N 1 -n 1 /bin/bash run-local.bash
+                ) &
+                pids+=($!)
+                running=$((running + 1))
+                if [[ $running -ge $slots ]]; then
+                    if wait -n; then :; else status=$?; fi
+                    running=$((running - 1))
+                fi
+            fi
+        done
+
+        for pid in "${{pids[@]:-}}"; do
+            if wait "$pid"; then :; else status=$?; fi
+        done
+
+        if [[ $status -eq 0 ]]; then
+            touch "{(batch_root / 'fe_equil_all.FINISHED').as_posix()}"
+        else
+            touch "{(batch_root / 'fe_equil_all.FAILED').as_posix()}"
+        fi
+        exit $status
+        """
+        ).strip()
+        + "\n"
+    )
+    helper.write_text(text)
+    try:
+        helper.chmod(0o755)
+    except Exception:
+        pass
+    return helper
+
+
+def _write_fe_batch_runner(
+    run_root: Path,
+    batch_root: Path,
+    *,
+    batch_gpus: int | None = None,
+    gpus_per_task: int = 1,
+) -> Path:
+    """Render a helper that launches all production windows in parallel."""
+    batch_root.mkdir(parents=True, exist_ok=True)
+    helper = batch_root / "run_all_fe.sh"
+    gpus_per_task = max(1, int(gpus_per_task))
+    gpu_line = (
+        f'TOTAL_GPUS="{batch_gpus}"'
+        if batch_gpus
+        else 'TOTAL_GPUS="${SLURM_GPUS_ON_NODE:-1}"'
+    )
+    text = (
+        dedent(
+            f"""
+        #!/usr/bin/env bash
+        set -euo pipefail
+        {gpu_line}
+        GPUS_PER_TASK={gpus_per_task}
+        if [[ -z "$TOTAL_GPUS" ]]; then
+            if [[ -n "${{SLURM_GPUS:-}}" ]]; then TOTAL_GPUS="${{SLURM_GPUS}}"; else TOTAL_GPUS="1"; fi
+        fi
+        slots=$((TOTAL_GPUS / GPUS_PER_TASK))
+        if [[ $slots -lt 1 ]]; then slots=1; fi
+
+        status=0
+        declare -a pids=()
+        running=0
+        for w in "{(run_root / 'simulations').as_posix()}"/*/fe/*/*; do
+            comp_dir=$(dirname "$w")
+            comp=$(basename "$comp_dir")
+            base=$(basename "$w")
+            if [[ "$base" == "$comp-1" ]]; then
+                continue
+            fi
+            if [[ -x "$w/run-local.bash" ]]; then
+                echo "[batter-batch] fe running $w"
+                (
+                    cd "$w"
+                    export INPCRD="../${{comp}}-1/eqnpt04.rst7"
+                    $MPI_EXEC -N 1 -n 1 /bin/bash run-local.bash
+                ) &
+                pids+=($!)
+                running=$((running + 1))
+                if [[ $running -ge $slots ]]; then
+                    if wait -n; then :; else status=$?; fi
+                    running=$((running - 1))
+                fi
+            fi
+        done
+
+        for pid in "${{pids[@]:-}}"; do
+            if wait "$pid"; then :; else status=$?; fi
+        done
+
+        if [[ $status -eq 0 ]]; then
+            touch "{(batch_root / 'fe_all.FINISHED').as_posix()}"
+        else
+            touch "{(batch_root / 'fe_all.FAILED').as_posix()}"
+        fi
+        exit $status
+        """
+        ).strip()
+        + "\n"
+    )
+    helper.write_text(text)
+    try:
+        helper.chmod(0o755)
+    except Exception:
+        pass
+    return helper

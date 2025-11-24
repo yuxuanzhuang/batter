@@ -102,12 +102,16 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     batch_mode = bool(payload.get("batch_mode"))
     mgr = payload.get("job_mgr")
     if not isinstance(mgr, SlurmJobManager):
-        raise RuntimeError("Equilibration handler requires payload['job_mgr'] to be a SlurmJobManager instance")
+        raise RuntimeError(
+            "Equilibration handler requires payload['job_mgr'] to be a SlurmJobManager instance"
+        )
 
     # Batch path: submit one SLURM script that loops over all ligand equil dirs
     if batch_mode:
         if getattr(mgr, "_equil_batch_added", False):
-            return ExecResult(job_ids=[], artifacts={"batch_run": payload.get("batch_run_root")})
+            return ExecResult(
+                job_ids=[], artifacts={"batch_run": payload.get("batch_run_root")}
+            )
         run_root = system.root.parent.parent if system.root.name else system.root
         batch_root = payload.get("batch_run_root") or (run_root / "batch_run")
         helper_script = _write_equil_batch_runner(
@@ -153,15 +157,24 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
 
 def _write_equil_batch_runner(
-    run_root: Path, batch_root: Path, *, batch_gpus: int | None = None, gpus_per_task: int = 1
+    run_root: Path,
+    batch_root: Path,
+    *,
+    batch_gpus: int | None = None,
+    gpus_per_task: int = 1,
 ) -> Path:
-    """Create a helper script that runs all ligand equil jobs in parallel via srun."""
+    """Create a helper script that runs all ligand equil jobs in parallel."""
     batch_root.mkdir(parents=True, exist_ok=True)
     helper = batch_root / "run_all_equil.sh"
     gpus_per_task = max(1, int(gpus_per_task))
-    gpu_line = f'TOTAL_GPUS="{batch_gpus}"' if batch_gpus else 'TOTAL_GPUS="${SLURM_GPUS_ON_NODE:-1}"'
-    text = dedent(
-        f"""
+    gpu_line = (
+        f'TOTAL_GPUS="{batch_gpus}"'
+        if batch_gpus
+        else 'TOTAL_GPUS="${SLURM_GPUS_ON_NODE:-1}"'
+    )
+    text = (
+        dedent(
+            f"""
         #!/usr/bin/env bash
         set -euo pipefail
         {gpu_line}
@@ -180,7 +193,7 @@ def _write_equil_batch_runner(
                 echo "[batter-batch] running $d"
                 (
                     cd "$d"
-                    srun -N 1 -n 1 --gpus-per-task $GPUS_PER_TASK /bin/bash run-local.bash
+                    $MPI_EXEC -N 1 -n 1 --gpus-per-task $GPUS_PER_TASK /bin/bash run-local.bash
                 ) &
                 pids+=($!)
                 running=$((running + 1))
@@ -202,7 +215,9 @@ def _write_equil_batch_runner(
         fi
         exit $status
         """
-    ).strip() + "\n"
+        ).strip()
+        + "\n"
+    )
     helper.write_text(text)
     try:
         helper.chmod(0o755)
