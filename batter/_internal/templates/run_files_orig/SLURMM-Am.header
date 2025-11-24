@@ -4,8 +4,8 @@
 # Modify as needed for your specific SLURM environment
 
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
-
 #SBATCH --nodes=1
+#SBATCH --partition=owners
 #SBATCH --open-mode=append
 #SBATCH --output=STAGE-POSE-%j.out
 #SBATCH --error=STAGE-POSE-%j.err

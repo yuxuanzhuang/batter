@@ -6,15 +6,16 @@
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
 
 #SBATCH --nodes=1
+#SBATCH --partition=owners
 #SBATCH --open-mode=append
 #SBATCH --output=STAGE-POSE-%j.out
 #SBATCH --error=STAGE-POSE-%j.err
 #SBATCH --gres=gpu:4
-#SBATCH --ntasks=1
 #SBATCH --cpus-per-task=2
 #SBATCH -t 16:00:00
 #SBATCH -d singleton
 #SBATCH -C "GPU_GEN:AMP|GPU_GEN:PSC"
+#SBATCH --gpu_cmode="shared"
 #SBATCH --mem=60G
 
 # Change to the way you load Amber as needed for your system

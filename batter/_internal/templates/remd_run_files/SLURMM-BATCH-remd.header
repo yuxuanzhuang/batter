@@ -5,6 +5,7 @@
 
 #SBATCH --job-name="SYSTEMNAME-STAGE-POSE"
 
+#SBATCH --partition=owners
 #SBATCH --open-mode=append
 #SBATCH --output=STAGE-POSE-%j.out
 #SBATCH --error=STAGE-POSE-%j.err
