@@ -16,6 +16,7 @@ from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils import components_under
+from batter.exec.handlers.batch import render_batch_slurm_script
 
 # ---------------- discovery helpers ----------------
 
@@ -135,12 +136,16 @@ def fe_equil_handler(
         job_name = f"fep_{os.path.abspath(system.root)}_{comp}_fe_equil"
         batch_script = None
         if payload.get("batch_mode"):
-            batch_script = _write_batch_wrapper(
-                system_root=system.root,
-                batch_root=payload.get("batch_run_root"),
+            batch_root = payload.get("batch_run_root") or (system.root.parent.parent / "batch_run")
+            batch_script = render_batch_slurm_script(
+                batch_root=batch_root,
                 target_dir=wd,
-                target_script="run-local.bash",
+                run_script="run-local.bash",
                 env=env,
+                system_name=getattr(payload.get("sim"), "system_name", system.name),
+                stage="fe_equil",
+                pose=f"{system.meta.get('ligand', system.name)}_{comp}",
+                header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
             )
         spec = _spec_from_dir(
             wd,
@@ -228,12 +233,16 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
             batch_script = None
             if payload.get("batch_mode"):
-                batch_script = _write_batch_wrapper(
-                    system_root=system.root,
-                    batch_root=payload.get("batch_run_root"),
+                batch_root = payload.get("batch_run_root") or (system.root.parent.parent / "batch_run")
+                batch_script = render_batch_slurm_script(
+                    batch_root=batch_root,
                     target_dir=comp_dir,
-                    target_script="run-local-remd.bash",
+                    run_script="run-local-remd.bash",
                     env=None,
+                    system_name=getattr(payload.get("sim"), "system_name", system.name),
+                    stage="fe",
+                    pose=f"{system.meta.get('ligand', system.name)}_{comp}",
+                    header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
                 )
             spec = SlurmJobSpec(
                 workdir=comp_dir,
@@ -259,12 +268,16 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_{wd.name}_fe"
             batch_script = None
             if payload.get("batch_mode"):
-                batch_script = _write_batch_wrapper(
-                    system_root=system.root,
-                    batch_root=payload.get("batch_run_root"),
+                batch_root = payload.get("batch_run_root") or (system.root.parent.parent / "batch_run")
+                batch_script = render_batch_slurm_script(
+                    batch_root=batch_root,
                     target_dir=wd,
-                    target_script="run-local.bash",
+                    run_script="run-local.bash",
                     env=env,
+                    system_name=getattr(payload.get("sim"), "system_name", system.name),
+                    stage="fe",
+                    pose=f"{system.meta.get('ligand', system.name)}_{comp}_{wd.name}",
+                    header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
                 )
             spec = _spec_from_dir(
                 wd,
@@ -282,36 +295,3 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     logger.debug(f"[fe:{lig}] enqueued {count} production job(s).")
     # Don’t claim success/terminal state; we’re not waiting here.
     return ExecResult(job_ids=[], artifacts={"count": count})
-
-
-def _write_batch_wrapper(
-    *,
-    system_root: Path,
-    batch_root: Path | None,
-    target_dir: Path,
-    target_script: str,
-    env: Optional[Dict[str, str]] = None,
-) -> Path:
-    """Create a batch wrapper under batch_run that launches the local script."""
-    run_root = system_root.parent.parent if system_root.name else system_root
-    batch_dir = batch_root or (run_root / "batch_run")
-    batch_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        rel = target_dir.relative_to(run_root)
-        base = rel.as_posix().replace("/", "_")
-    except Exception:
-        base = target_dir.name
-
-    script_path = batch_dir / f"{base}_batch.sh"
-    lines = ["#!/usr/bin/env bash", "set -euo pipefail", f'cd "{target_dir}"']
-    for k, v in (env or {}).items():
-        lines.append(f'export {k}={shlex.quote(str(v))}')
-    lines.append(f"exec /bin/bash {target_script}")
-
-    script_path.write_text("\n".join(lines) + "\n")
-    try:
-        script_path.chmod(0o755)
-    except Exception:
-        pass
-    return script_path

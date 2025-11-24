@@ -14,6 +14,7 @@ from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
+from batter.exec.handlers.batch import render_batch_slurm_script
 
 def _batch_script_path(system_root: Path, batch_root: Path | None, target_dir: Path, env: Dict[str, str] | None = None) -> Path:
     """
@@ -126,10 +127,16 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     job_name = f"fep_{os.path.abspath(system.root)}_eq"
     batch_script = None
     if payload.get("batch_mode"):
-        batch_script = _batch_script_path(
-            system.root,
-            payload.get("batch_run_root"),
-            paths["phase_dir"],
+        batch_root = payload.get("batch_run_root")
+        batch_script = render_batch_slurm_script(
+            batch_root=batch_root or (system.root.parent.parent / "batch_run"),
+            target_dir=paths["phase_dir"],
+            run_script="run-local.bash",
+            env=None,
+            system_name=getattr(payload.get("sim"), "system_name", system.name),
+            stage="equil",
+            pose=system.meta.get("ligand", system.name),
+            header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
         )
     spec = SlurmJobSpec(
         workdir=paths["phase_dir"],

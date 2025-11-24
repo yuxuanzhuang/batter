@@ -96,6 +96,7 @@ def seed_default_headers(
         "SLURMM-Am.header": "batter._internal.templates.run_files_orig/SLURMM-Am.header",
         "SLURMM-BATCH-remd.header": "batter._internal.templates.remd_run_files/SLURMM-BATCH-remd.header",
         "job_manager.header": "batter.data/job_manager.header",
+        "SLURMM-BATCH.header": "batter._internal.templates.batch_run/SLURMM-BATCH.header",
     }
 
     copied: list[Path] = []
