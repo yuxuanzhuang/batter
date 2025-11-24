@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict
+from textwrap import dedent
 
 from loguru import logger
 
@@ -14,6 +15,7 @@ from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.exec.handlers.batch import render_batch_slurm_script
+
 
 def _phase_paths(root: Path) -> dict[str, Path]:
     """Return resolved paths for equilibration artifacts under ``root``."""
@@ -97,33 +99,80 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
     # Build job spec (submit from equil/ directory; pass partition via sbatch flags)
     job_name = f"fep_{os.path.abspath(system.root)}_eq"
-    batch_script = None
-    if payload.get("batch_mode"):
-        batch_root = payload.get("batch_run_root")
-        batch_script = render_batch_slurm_script(
-            batch_root=batch_root or (system.root.parent.parent / "batch_run"),
-            target_dir=paths["phase_dir"],
-            run_script="run-local.bash",
-            env=None,
-            system_name=getattr(payload.get("sim"), "system_name", system.name),
-            stage="equil",
-            pose=system.meta.get("ligand", system.name),
-            header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
-        )
-    script_rel = batch_script.name if batch_script else script.name
-    submit_dir = batch_script.parent if batch_script else None
-    spec = SlurmJobSpec(
-        workdir=paths["phase_dir"],
-        script_rel=script_rel,
-        finished_name=paths["finished"].name,
-        failed_name=paths["failed"].name,
-        name=job_name,
-        batch_script=batch_script,
-        submit_dir=submit_dir,
-    )
-
+    batch_mode = bool(payload.get("batch_mode"))
     mgr = payload.get("job_mgr")
     if not isinstance(mgr, SlurmJobManager):
         raise RuntimeError("Equilibration handler requires payload['job_mgr'] to be a SlurmJobManager instance")
+
+    # Batch path: submit one SLURM script that loops over all ligand equil dirs
+    if batch_mode:
+        if getattr(mgr, "_equil_batch_added", False):
+            return ExecResult(job_ids=[], artifacts={"batch_run": payload.get("batch_run_root")})
+        run_root = system.root.parent.parent if system.root.name else system.root
+        batch_root = payload.get("batch_run_root") or (run_root / "batch_run")
+        helper_script = _write_equil_batch_runner(run_root, batch_root)
+        batch_script = render_batch_slurm_script(
+            batch_root=batch_root,
+            target_dir=batch_root,
+            run_script=helper_script.name,
+            env=None,
+            system_name=getattr(payload.get("sim"), "system_name", system.name),
+            stage="equil",
+            pose="all",
+            header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
+        )
+        spec = SlurmJobSpec(
+            workdir=batch_root,
+            script_rel=batch_script.name,
+            finished_name="equil_all.FINISHED",
+            failed_name="equil_all.FAILED",
+            name=job_name,
+            batch_script=batch_script,
+            submit_dir=batch_root,
+        )
+        mgr.add(spec)
+        setattr(mgr, "_equil_batch_added", True)
+        return ExecResult(job_ids=[], artifacts={"batch_run": batch_root})
+
+    # Default per-ligand submit
+    spec = SlurmJobSpec(
+        workdir=paths["phase_dir"],
+        script_rel=script.name,
+        finished_name=paths["finished"].name,
+        failed_name=paths["failed"].name,
+        name=job_name,
+    )
+
     mgr.add(spec)
     return ExecResult(job_ids=[], artifacts={"workdir": paths["phase_dir"]})
+
+
+def _write_equil_batch_runner(run_root: Path, batch_root: Path) -> Path:
+    """Create a helper script that runs all ligand equil jobs sequentially."""
+    batch_root.mkdir(parents=True, exist_ok=True)
+    helper = batch_root / "run_all_equil.sh"
+    text = dedent(
+        f"""
+        #!/usr/bin/env bash
+        set -euo pipefail
+        status=0
+        for d in "{(run_root / 'simulations').as_posix()}"/*/equil; do
+            if [[ -x "$d/run-local.bash" ]]; then
+                echo "[batter-batch] running $d"
+                (cd "$d" && /bin/bash run-local.bash) || status=$?
+            fi
+        done
+        if [[ $status -eq 0 ]]; then
+            touch "{(batch_root / 'equil_all.FINISHED').as_posix()}"
+        else
+            touch "{(batch_root / 'equil_all.FAILED').as_posix()}"
+        fi
+        exit $status
+        """
+    ).strip() + "\n"
+    helper.write_text(text)
+    try:
+        helper.chmod(0o755)
+    except Exception:
+        pass
+    return helper

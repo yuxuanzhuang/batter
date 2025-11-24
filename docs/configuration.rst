@@ -152,6 +152,7 @@ If you prefer to request a multi-GPU allocation once and submit per-window jobs 
 manager process, set ``run.batch_mode: true``. The manager will render ``SLURMM-BATCH``
 scripts into ``executions/<run_id>/batch_run`` and submit them with ``sbatch``; each script
 ``cd``s into the component/window folder and runs ``run-local.bash`` (or ``run-local-remd.bash``).
+Equilibration is bundled into a single batch submission covering all ligands.
 
 The batch wrapper header is seeded to ``~/.batter/SLURMM-BATCH.header`` (similar to other
 headers); edit it to match your cluster defaults (GPUs, partition, modules).
