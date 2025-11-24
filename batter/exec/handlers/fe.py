@@ -385,6 +385,7 @@ def _write_fe_equil_batch_runner(
         #!/usr/bin/env bash
         set -euo pipefail
         {gpu_line}
+        MPI_EXEC=${{MPI_EXEC:-"mpirun"}}
         GPUS_PER_TASK={gpus_per_task}
         if [[ -z "$TOTAL_GPUS" ]]; then
             if [[ -n "${{SLURM_GPUS:-}}" ]]; then TOTAL_GPUS="${{SLURM_GPUS}}"; else TOTAL_GPUS="1"; fi
@@ -464,6 +465,7 @@ def _write_fe_batch_runner(
         set -euo pipefail
         {gpu_line}
         GPUS_PER_TASK={gpus_per_task}
+        MPI_EXEC=${{MPI_EXEC:-"mpirun"}}
         if [[ -z "$TOTAL_GPUS" ]]; then
             if [[ -n "${{SLURM_GPUS:-}}" ]]; then TOTAL_GPUS="${{SLURM_GPUS}}"; else TOTAL_GPUS="1"; fi
         fi

@@ -178,6 +178,7 @@ def _write_equil_batch_runner(
         #!/usr/bin/env bash
         set -euo pipefail
         {gpu_line}
+        MPI_EXEC=${{MPI_EXEC:-"mpirun"}}
         GPUS_PER_TASK={gpus_per_task}
         if [[ -z "$TOTAL_GPUS" ]]; then
             if [[ -n "${{SLURM_GPUS:-}}" ]]; then TOTAL_GPUS="${{SLURM_GPUS}}"; else TOTAL_GPUS="1"; fi
@@ -193,7 +194,7 @@ def _write_equil_batch_runner(
                 echo "[batter-batch] running $d"
                 (
                     cd "$d"
-                    $MPI_EXEC -N 1 -n 1 --gpus-per-task $GPUS_PER_TASK /bin/bash run-local.bash
+                    $MPI_EXEC -N 1 -n 1 /bin/bash run-local.bash
                 ) &
                 pids+=($!)
                 running=$((running + 1))
