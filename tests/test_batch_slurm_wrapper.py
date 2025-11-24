@@ -39,3 +39,4 @@ def test_write_equil_batch_runner(tmp_path):
     assert "run-local.bash" in content
     assert "equil_all.FINISHED" in content
     assert "gpus-per-task" in content
+    assert "cd \"$d\"" in content

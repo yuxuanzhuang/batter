@@ -178,7 +178,10 @@ def _write_equil_batch_runner(
         for d in "{(run_root / 'simulations').as_posix()}"/*/equil; do
             if [[ -x "$d/run-local.bash" ]]; then
                 echo "[batter-batch] running $d"
-                srun -N 1 -n 1 --gpus-per-task $GPUS_PER_TASK /bin/bash run-local.bash &
+                (
+                    cd "$d"
+                    srun -N 1 -n 1 --gpus-per-task $GPUS_PER_TASK /bin/bash run-local.bash
+                ) &
                 pids+=($!)
                 running=$((running + 1))
                 if [[ $running -ge $slots ]]; then
