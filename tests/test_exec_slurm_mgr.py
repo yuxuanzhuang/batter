@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -173,39 +174,37 @@ def test_parse_gpu_env_variants():
     assert _parse_gpu_env("") is None
 
 
-def test_batch_mode_runs_inline(tmp_path):
-    w1 = tmp_path / "w1"
-    w2 = tmp_path / "w2"
-    for w in (w1, w2):
-        w.mkdir()
-        script = w / "run-local.bash"
-        script.write_text("#!/bin/bash\ntouch FINISHED\n")
-        script.chmod(0o755)
-
-    specs = [SlurmJobSpec(workdir=w1), SlurmJobSpec(workdir=w2)]
-    manager = SlurmJobManager(
-        batch_mode=True, batch_gpus=2, gpus_per_task=1, poll_s=0.0
-    )
-
-    manager._run_batch(specs)
-
-    for w in (w1, w2):
-        assert (w / "FINISHED").exists()
-        assert not (w / "FAILED").exists()
-
-
-def test_batch_mode_marks_failure(tmp_path):
-    workdir = tmp_path / "fail"
+def test_submit_uses_submit_dir(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
     workdir.mkdir()
-    script = workdir / "run-local.bash"
-    script.write_text("#!/bin/bash\nexit 1\n")
-    script.chmod(0o755)
+    submit_dir = tmp_path / "batch"
+    submit_dir.mkdir()
+    script = submit_dir / "batch.sh"
+    script.write_text("#!/bin/bash\necho hi\n")
 
-    spec = SlurmJobSpec(workdir=workdir)
-    manager = SlurmJobManager(
-        batch_mode=True, batch_gpus=1, gpus_per_task=1, poll_s=0.0
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel=script.name,
+        batch_script=script,
+        submit_dir=submit_dir,
     )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0)
 
-    manager._run_batch([spec])
+    calls = {}
 
-    assert spec.failed_path().exists()
+    class Dummy:
+        returncode = 0
+        stdout = "Submitted batch job 42"
+        stderr = ""
+
+    def fake_run(cmd, cwd=None, text=None, capture_output=None):
+        calls["cmd"] = cmd
+        calls["cwd"] = cwd
+        return Dummy()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    jobid = manager._submit_once(spec)
+    assert jobid == "42"
+    assert calls["cwd"] == submit_dir
+    assert script.name in calls["cmd"]

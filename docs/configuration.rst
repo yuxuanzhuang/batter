@@ -148,19 +148,13 @@ setting cluster defaults in the headers and per-run overrides in the YAML when n
 Batch mode (single allocation)
 ------------------------------
 
-If you prefer to request a multi-GPU allocation once and launch windows inside it, set
-``run.batch_mode: true``. In this mode the manager uses ``srun`` to run the per-window
-``run-local.bash`` scripts directly instead of submitting each one with ``sbatch``.
-Additional knobs:
+If you prefer to request a multi-GPU allocation once and submit per-window jobs from a
+manager process, set ``run.batch_mode: true``. The manager will render ``SLURMM-BATCH``
+scripts into ``executions/<run_id>/batch_run`` and submit them with ``sbatch``; each script
+``cd``s into the component/window folder and runs ``run-local.bash`` (or ``run-local-remd.bash``).
 
-* ``run.batch_gpus`` – GPUs available to the manager job (auto-detected from SLURM env when omitted).
-* ``run.batch_gpus_per_task`` – GPUs to hand to each ``srun`` (defaults to 1).
-* ``run.batch_srun_extra`` – extra flags appended to ``srun`` (e.g., ``["--exclusive"]``).
-
-When batch mode is enabled a helper ``batch_run`` directory is created under each
-``executions/<run_id>/`` with ``*_batch.sh`` wrappers. They ``cd`` into the component/window
-folders and launch ``run-local.bash`` (or ``run-local-remd.bash``) with ``/bin/bash``. These
-wrappers are what the manager executes inline; you can also run them manually for debugging.
+The batch wrapper header is seeded to ``~/.batter/SLURMM-BATCH.header`` (similar to other
+headers); edit it to match your cluster defaults (GPUs, partition, modules).
 
 Remember to request GPUs in your job manager header (``job_manager.header``) so the manager
 allocation has the resources it needs.

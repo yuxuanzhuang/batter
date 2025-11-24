@@ -14,8 +14,6 @@ import os
 import re
 import subprocess
 import time
-import shutil
-from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -225,6 +223,8 @@ class SlurmJobSpec:
         Additional environment variables exported before submission.
     batch_script : pathlib.Path, optional
         Optional wrapper script used when batch_mode is enabled.
+    submit_dir : pathlib.Path, optional
+        Working directory used when submitting (defaults to ``workdir``).
     """
 
     workdir: Path
@@ -235,6 +235,7 @@ class SlurmJobSpec:
     extra_sbatch: Sequence[str] = field(default_factory=list)
     extra_env: Dict[str, str] = field(default_factory=dict)
     batch_script: Path | None = None
+    submit_dir: Path | None = None
 
     # allow a few common variants (case, alt names)
     alt_script_names: Sequence[str] = (
@@ -270,9 +271,11 @@ class SlurmJobSpec:
 
     def script_arg(self) -> str:
         """Return the workdir-relative script argument for ``sbatch``."""
-        abs_script = self.resolve_script_abs()
+        base = self.submit_dir or self.workdir
+        candidate = base / self.script_rel
+        abs_script = candidate if candidate.exists() else self.resolve_script_abs()
         try:
-            return str(abs_script.relative_to(self.workdir))
+            return str(abs_script.relative_to(base))
         except ValueError:
             return abs_script.name
 
@@ -323,15 +326,14 @@ class SlurmJobManager:
             Maximum number of active jobs allowed for the user. When ``None``,
             no limit is enforced.
         batch_mode : bool, optional
-            When ``True``, execute jobs inline via ``srun`` instead of submitting
-            with ``sbatch``. Intended for use inside a multi-GPU manager allocation.
+            When ``True``, batch scripts (e.g., SLURMM-BATCH) may be supplied via
+            ``batch_script``/``submit_dir`` on the job specs.
         batch_gpus : int, optional
-            Number of GPUs available to the manager process. Defaults to autodetect
-            from SLURM/CUDA environment variables.
+            Reserved for future inline execution modes.
         gpus_per_task : int, optional
-            GPUs to assign per launched task when ``batch_mode`` is enabled.
+            Reserved for future inline execution modes.
         srun_extra : Sequence[str], optional
-            Extra flags appended to ``srun`` invocations in ``batch_mode``.
+            Reserved for future inline execution modes.
         """
         self.poll_s = float(poll_s)
         self.max_retries = int(max_retries)
@@ -389,6 +391,7 @@ class SlurmJobManager:
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
                 "batch_script": str(spec.batch_script) if spec.batch_script else None,
+                "submit_dir": str(spec.submit_dir) if spec.submit_dir else None,
             }
             _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
 
@@ -448,6 +451,7 @@ class SlurmJobManager:
                     extra_sbatch=rec.get("extra_sbatch") or [],
                     extra_env=rec.get("extra_env") or {},
                     batch_script=Path(rec["batch_script"]) if rec.get("batch_script") else None,
+                    submit_dir=Path(rec["submit_dir"]) if rec.get("submit_dir") else None,
                 )
         return out
 
@@ -466,72 +470,6 @@ class SlurmJobManager:
                 self._registry_file.unlink()
             except Exception:
                 pass
-
-    # ---------- batch helpers ----------
-    def _detected_gpus(self) -> int:
-        """Infer GPU count from env when batch_mode is used."""
-        for key in ("SLURM_GPUS_ON_NODE", "SLURM_GPUS", "CUDA_VISIBLE_DEVICES"):
-            parsed = _parse_gpu_env(os.environ.get(key, ""))
-            if parsed:
-                return parsed
-        return 1
-
-    def _batch_slots(self) -> int:
-        """Return the number of concurrent tasks to launch in batch mode."""
-        total = self.batch_gpus if self.batch_gpus is not None else self._detected_gpus()
-        total = max(1, total)
-        slots = max(1, total // max(1, self.gpus_per_task))
-        if self.max_active_jobs:
-            if self.max_active_jobs <= 0:
-                return slots
-            slots = min(slots, self.max_active_jobs)
-        return slots
-
-    @staticmethod
-    def _batch_script(spec: SlurmJobSpec) -> Path:
-        """Choose an executable script to run inline for a job spec."""
-        candidates = [
-            spec.batch_script,
-            spec.workdir / "run-local.bash",
-            spec.workdir / "run-local-remd.bash",
-            spec.resolve_script_abs(),
-        ]
-        for path in candidates:
-            if path and path.exists():
-                return path
-        # fall back to the preferred relative location even if missing
-        return spec.workdir / spec.script_rel
-
-    def _use_srun(self) -> bool:
-        """Return True when srun should be used for inline execution."""
-        return shutil.which("srun") is not None and bool(os.environ.get("SLURM_JOB_ID"))
-
-    def _batch_cmd(self, script: Path) -> List[str]:
-        """Build the command used to launch a job inline."""
-        shell = "/bin/bash"
-        if self._use_srun():
-            cmd = ["srun", "-N", "1", "-n", "1"]
-            if self.gpus_per_task:
-                cmd += ["--gpus-per-task", str(self.gpus_per_task)]
-            if self.srun_extra:
-                cmd += list(self.srun_extra)
-            cmd += [shell, script.name]
-            return cmd
-        return [shell, script.name]
-
-    def _launch_batch(self, spec: SlurmJobSpec, script: Path) -> subprocess.Popen:
-        """Start a single spec inline and return the running process."""
-        env = os.environ.copy()
-        if getattr(spec, "extra_env", None):
-            env.update({str(k): str(v) for k, v in (spec.extra_env or {}).items()})
-        cmd = self._batch_cmd(script)
-        logger.debug(f"[SLURM-batch] launch ({spec.workdir.name}): {' '.join(cmd)}")
-        return subprocess.Popen(
-            cmd,
-            cwd=script.parent,
-            text=True,
-            env=env,
-        )
 
     # ---------- Core ops ----------
     def _submit(self, spec: SlurmJobSpec) -> str:
@@ -556,7 +494,12 @@ class SlurmJobManager:
 
     def _submit_once(self, spec: SlurmJobSpec) -> str:
         """Submit ``spec`` via ``sbatch`` and persist the resulting job id (single attempt)."""
-        script_abs = spec.resolve_script_abs()
+        # resolve script path (allow separate submission directory)
+        if spec.submit_dir:
+            candidate = Path(spec.submit_dir) / spec.script_rel
+            script_abs = candidate if candidate.exists() else spec.resolve_script_abs()
+        else:
+            script_abs = spec.resolve_script_abs()
         if not script_abs.exists():
             listing = (
                 ", ".join(sorted(p.name for p in spec.workdir.iterdir()))
@@ -589,16 +532,18 @@ class SlurmJobManager:
 
         cmd.append(spec.script_arg())
 
+        submit_cwd = spec.submit_dir or spec.workdir
+
         if self.dry_run:
-            logger.info(f"[DRY-RUN] sbatch (cwd={spec.workdir}): {' '.join(cmd)}")
+            logger.info(f"[DRY-RUN] sbatch (cwd={submit_cwd}): {' '.join(cmd)}")
             # fabricate a dummy JOBID to keep downstream logic harmless
             _write_text(spec.jobid_path(), "0\n")
             return "0"
 
-        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
+        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={submit_cwd})")
         proc = subprocess.run(
             cmd,
-            cwd=spec.workdir,
+            cwd=submit_cwd,
             text=True,
             capture_output=True,
         )
@@ -653,11 +598,7 @@ class SlurmJobManager:
         if self.dry_run:
             self.triggered = True
             return
-        spec_list = list(specs)
-        if self.batch_mode:
-            self._run_batch(spec_list)
-        else:
-            self._wait_loop(spec_list)
+        self._wait_loop(list(specs))
 
     # ---------- Global wait ----------
     def wait_all(self) -> None:
@@ -671,96 +612,9 @@ class SlurmJobManager:
             self.triggered = True
             return
         specs = list(specs_map.values())
-        if self.batch_mode:
-            self._run_batch(specs)
-        else:
-            self._wait_loop(specs)
+        self._wait_loop(specs)
         # clear registry for next phase
         self.clear()
-
-    def _run_batch(self, specs: List[SlurmJobSpec]) -> None:
-        """Execute queued jobs inline using srun/bash instead of sbatch."""
-        pending = deque()
-        for spec in specs:
-            done, status = self._status(spec)
-            if done:
-                logger.debug(
-                    f"[SLURM-batch] {spec.workdir.name}: already {status}; skipping."
-                )
-                continue
-            pending.append(spec)
-
-        if not pending:
-            logger.debug("[SLURM-batch] nothing to run inline.")
-            return
-
-        slots = self._batch_slots()
-        if slots < 1:
-            slots = 1
-        logger.info(
-            f"[SLURM-batch] running {len(pending)} job(s) inline with up to "
-            f"{slots} concurrent task(s) (gpus_per_task={self.gpus_per_task}, "
-            f"available_gpus={self.batch_gpus or self._detected_gpus()})."
-        )
-
-        running: dict[subprocess.Popen, SlurmJobSpec] = {}
-        failures = 0
-        sleep_time = max(0.1, min(self.poll_s, 30.0))
-
-        while pending or running:
-            # launch until we fill the slots
-            while pending and len(running) < slots:
-                spec = pending.popleft()
-                script = self._batch_script(spec)
-                if not script.exists():
-                    logger.error(f"[SLURM-batch] missing script for {spec.workdir}")
-                    try:
-                        spec.failed_path().touch()
-                    except Exception:
-                        pass
-                    failures += 1
-                    continue
-                try:
-                    proc = self._launch_batch(spec, script)
-                    running[proc] = spec
-                except Exception as exc:
-                    logger.error(f"[SLURM-batch] failed to launch {spec.workdir}: {exc}")
-                    try:
-                        spec.failed_path().touch()
-                    except Exception:
-                        pass
-                    failures += 1
-
-            if not running:
-                break
-
-            time.sleep(sleep_time)
-
-            for proc, spec in list(running.items()):
-                ret = proc.poll()
-                if ret is None:
-                    continue
-                running.pop(proc, None)
-                finished = spec.finished_path().exists()
-                failed = spec.failed_path().exists()
-                if ret != 0 or failed or not finished:
-                    failures += 1
-                    if not failed:
-                        try:
-                            spec.failed_path().touch()
-                        except Exception:
-                            pass
-                    logger.warning(
-                        f"[SLURM-batch] {spec.workdir.name} exited with "
-                        f"code {ret}; finished={finished}, failed={failed}"
-                    )
-                else:
-                    logger.debug(f"[SLURM-batch] {spec.workdir.name} completed.")
-
-        if failures:
-            logger.warning(f"[SLURM-batch] {failures} job(s) failed during inline execution.")
-        else:
-            logger.info("[SLURM-batch] All jobs completed inline.")
 
     # ---------- Shared wait logic ----------
     def _wait_loop(self, specs: List[SlurmJobSpec]) -> None:

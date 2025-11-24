@@ -53,16 +53,19 @@ def _spec_from_dir(
     script_rel: str = "SLURMM-run",
     extra_env: Optional[Dict[str, str]] = None,
     batch_script: Path | None = None,
+    submit_dir: Path | None = None,
 ) -> SlurmJobSpec:
     """Build a :class:`SlurmJobSpec` for ``workdir``."""
+    script_name = batch_script.name if batch_script else script_rel
     return SlurmJobSpec(
         workdir=workdir,
-        script_rel=script_rel,
+        script_rel=script_name,
         finished_name=finished_name,
         failed_name=failed_name,
         name=job_name,
         extra_env=extra_env or {},
         batch_script=batch_script,
+        submit_dir=submit_dir,
     )
 
 
@@ -153,6 +156,7 @@ def fe_equil_handler(
             job_name=job_name,
             extra_env=env,
             batch_script=batch_script,
+            submit_dir=batch_script.parent if batch_script else None,
         )
         job_mgr.add(spec)
         count += 1
@@ -246,11 +250,12 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 )
             spec = SlurmJobSpec(
                 workdir=comp_dir,
-                script_rel="SLURMM-BATCH-remd",
+                script_rel=batch_script.name if batch_script else "SLURMM-BATCH-remd",
                 finished_name="FINISHED",
                 failed_name="FAILED",
                 name=job_name,
                 batch_script=batch_script,
+                submit_dir=batch_script.parent if batch_script else None,
             )
             job_mgr.add(spec)
             count += 1
@@ -285,6 +290,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 job_name=job_name,
                 extra_env=env,
                 batch_script=batch_script,
+                submit_dir=batch_script.parent if batch_script else None,
             )
             job_mgr.add(spec)
             count += 1
