@@ -145,6 +145,21 @@ resources per run via the ``run.slurm`` block (partition, time, nodes, ntasks_pe
 Those values are substituted into SLURM scripts when rendered. Combine the two mechanisms by
 setting cluster defaults in the headers and per-run overrides in the YAML when needed.
 
+Batch mode (single allocation)
+------------------------------
+
+If you prefer to request a multi-GPU allocation once and launch windows inside it, set
+``run.batch_mode: true``. In this mode the manager uses ``srun`` to run the per-window
+``run-local.bash`` scripts directly instead of submitting each one with ``sbatch``.
+Additional knobs:
+
+* ``run.batch_gpus`` – GPUs available to the manager job (auto-detected from SLURM env when omitted).
+* ``run.batch_gpus_per_task`` – GPUs to hand to each ``srun`` (defaults to 1).
+* ``run.batch_srun_extra`` – extra flags appended to ``srun`` (e.g., ``["--exclusive"]``).
+
+Remember to request GPUs in your job manager header (``job_manager.header``) so the manager
+allocation has the resources it needs.
+
 Executable resolution
 ---------------------
 

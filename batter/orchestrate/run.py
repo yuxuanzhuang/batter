@@ -232,13 +232,19 @@ def run_from_yaml(
 
     # SLURM manager (registry per execution)
     slurm_flags = rc.run.slurm.to_sbatch_flags() if rc.run.slurm else None
+    batch_mode = bool(getattr(rc.run, "batch_mode", False))
+    batch_poll = 10.0 if batch_mode else 60 * 15
     job_mgr = SlurmJobManager(
-        poll_s=60 * 15,
+        poll_s=batch_poll,
         max_retries=3,
         resubmit_backoff_s=30,
         registry_file=(run_dir / ".slurm" / "queue.jsonl"),
         dry_run=dry_run,
         sbatch_flags=slurm_flags,
+        batch_mode=batch_mode,
+        batch_gpus=getattr(rc.run, "batch_gpus", None),
+        gpus_per_task=getattr(rc.run, "batch_gpus_per_task", 1),
+        srun_extra=getattr(rc.run, "batch_srun_extra", None),
     )
 
     # Build pipeline with explicit sys_params

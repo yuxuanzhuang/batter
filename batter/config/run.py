@@ -668,6 +668,24 @@ class RunSection(BaseModel):
         ge=0,
         description="Max concurrent SLURM jobs for FE submissions (0 disables throttling).",
     )
+    batch_mode: bool = Field(
+        False,
+        description="When true, run SLURM jobs inline via srun inside the manager allocation instead of submitting with sbatch.",
+    )
+    batch_gpus: int | None = Field(
+        None,
+        ge=0,
+        description="GPUs available to the manager process for batch_mode; auto-detected from SLURM env when omitted.",
+    )
+    batch_gpus_per_task: int = Field(
+        1,
+        ge=1,
+        description="GPUs to assign per task when batch_mode is enabled.",
+    )
+    batch_srun_extra: List[str] = Field(
+        default_factory=list,
+        description="Extra srun flags appended when launching tasks in batch_mode.",
+    )
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
     )

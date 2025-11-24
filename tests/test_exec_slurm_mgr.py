@@ -6,6 +6,7 @@ from batter.exec.slurm_mgr import (
     SlurmJobManager,
     SlurmJobSpec,
     _atomic_append_jsonl_unique,
+    _parse_gpu_env,
 )
 
 
@@ -163,3 +164,48 @@ def test_completed_resubmit_does_not_count_retry(monkeypatch, tmp_path):
     assert submissions["count"] == 2  # initial + resubmission
     assert manager._retries.get(spec.workdir, 0) == 0
     assert spec.failed_path().exists() is False
+
+
+def test_parse_gpu_env_variants():
+    assert _parse_gpu_env("4") == 4
+    assert _parse_gpu_env("gpu:4") == 4
+    assert _parse_gpu_env("0,1,2") == 3
+    assert _parse_gpu_env("") is None
+
+
+def test_batch_mode_runs_inline(tmp_path):
+    w1 = tmp_path / "w1"
+    w2 = tmp_path / "w2"
+    for w in (w1, w2):
+        w.mkdir()
+        script = w / "run-local.bash"
+        script.write_text("#!/bin/bash\ntouch FINISHED\n")
+        script.chmod(0o755)
+
+    specs = [SlurmJobSpec(workdir=w1), SlurmJobSpec(workdir=w2)]
+    manager = SlurmJobManager(
+        batch_mode=True, batch_gpus=2, gpus_per_task=1, poll_s=0.0
+    )
+
+    manager._run_batch(specs)
+
+    for w in (w1, w2):
+        assert (w / "FINISHED").exists()
+        assert not (w / "FAILED").exists()
+
+
+def test_batch_mode_marks_failure(tmp_path):
+    workdir = tmp_path / "fail"
+    workdir.mkdir()
+    script = workdir / "run-local.bash"
+    script.write_text("#!/bin/bash\nexit 1\n")
+    script.chmod(0o755)
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        batch_mode=True, batch_gpus=1, gpus_per_task=1, poll_s=0.0
+    )
+
+    manager._run_batch([spec])
+
+    assert spec.failed_path().exists()
