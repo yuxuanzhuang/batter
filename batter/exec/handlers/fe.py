@@ -229,8 +229,8 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         if batch_gpus:
             extra_sbatch += ["--gres", f"gpu:{batch_gpus}"]
         batch_script = render_batch_slurm_script(
-            batch_root=batch_root,
-            target_dir=batch_root,
+            batch_root=lig_batch_dir,
+            target_dir=lig_batch_dir,
             run_script=helper.name,
             env=None,
             system_name=getattr(payload.get("sim"), "system_name", system.name),
