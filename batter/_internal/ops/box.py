@@ -1178,6 +1178,9 @@ def create_box_m(ctx: BuildContext) -> None:
         f"{tleap} -s -f tleap_ligands.in > tleap_ligands.log", working_dir=window_dir
     )
 
+    # copy ligand_p to vac.prmtop
+    ligand_p_file = window_dir / f"{mol}.prmtop"
+    _cp(ligand_p_file, window_dir / "vac.prmtop")
 
     # copy vac to full
     _cp(window_dir / "vac.pdb", window_dir / "full.pdb")
