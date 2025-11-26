@@ -238,7 +238,7 @@ def cmd_run(
             tpl_header,
             tpl_body,
             {},
-            header_root=rc.run.slurm_header_dir,
+            header_root=cfg_for_validation.run.slurm_header_dir,
         )
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)

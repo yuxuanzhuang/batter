@@ -141,7 +141,12 @@ def test_cli_seed_headers_skips_existing(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
     hdr_root = tmp_path / "home" / ".batter"
     hdr_root.mkdir(parents=True, exist_ok=True)
-    names = ["SLURMM-Am.header", "SLURMM-BATCH-remd.header", "job_manager.header"]
+    names = [
+        "SLURMM-Am.header",
+        "SLURMM-BATCH-remd.header",
+        "SLURMM-BATCH.header",
+        "job_manager.header",
+    ]
     for name in names:
         (hdr_root / name).write_text(f"# existing {name}\n")
 
