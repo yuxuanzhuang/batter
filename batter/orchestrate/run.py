@@ -234,11 +234,12 @@ def run_from_yaml(
     slurm_flags = rc.run.slurm.to_sbatch_flags() if rc.run.slurm else None
     batch_mode = bool(getattr(rc.run, "batch_mode", False))
     batch_poll = 10.0 if batch_mode else 60 * 15
+    registry_file = None if batch_mode else (run_dir / ".slurm" / "queue.jsonl")
     job_mgr = SlurmJobManager(
         poll_s=batch_poll,
         max_retries=3,
         resubmit_backoff_s=30,
-        registry_file=(run_dir / ".slurm" / "queue.jsonl"),
+        registry_file=registry_file,
         dry_run=dry_run,
         sbatch_flags=slurm_flags,
         batch_mode=batch_mode,
