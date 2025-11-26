@@ -154,6 +154,9 @@ scripts into ``executions/<run_id>/batch_run`` and submit them with ``sbatch``; 
 ``cd``s into the component/window folder and runs ``run-local.bash`` (or ``run-local-remd.bash``).
 Equilibration and FE-equil run as normal per-ligand submits; FE production is bundled into a
 single batch submission per ligand when REMD is disabled.
+Set ``run.batch_gpus`` to request GPUs on the sbatch line (via ``--gres gpu:<batch_gpus>``)
+for the per-ligand FE batch submission; ``run.batch_gpus_per_task`` controls the per-task
+allocation used inside the batch helper.
 
 The batch wrapper header is seeded to ``~/.batter/SLURMM-BATCH.header`` (similar to other
 headers); edit it to match your cluster defaults (GPUs, partition, modules).
