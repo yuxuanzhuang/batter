@@ -69,6 +69,29 @@ def seed_headers(dest: Path | None, force: bool) -> None:
             click.echo("Use --force to overwrite existing header files.")
 
 
+@cli.command("diff-headers")
+@click.option(
+    "--dest",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    default=None,
+    help="Location of Slurm headers (defaults to ~/.batter).",
+)
+def diff_headers_cmd(dest: Path | None) -> None:
+    """Show differences between user headers and packaged defaults."""
+    from batter.utils.slurm_templates import diff_headers as _diff_headers
+
+    diffs = _diff_headers(dest)
+    if not diffs:
+        click.echo("No headers found.")
+        return
+    for name, diff in diffs.items():
+        click.echo(f"=== {name} ===")
+        if not diff:
+            click.echo("No differences.")
+            continue
+        click.echo(diff)
+
+
 # -------------------------------- run ----------------------------------
 
 

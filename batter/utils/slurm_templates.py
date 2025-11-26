@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib import resources
 from pathlib import Path
+import difflib
 from typing import Dict, Mapping, Optional
 
 from loguru import logger
@@ -117,3 +118,76 @@ def seed_default_headers(
         except Exception as e:
             logger.warning(f"[slurm] Failed to seed header {dst}: {e}")
     return copied
+
+
+def diff_headers(
+    header_root: Optional[Path] = None,
+    resource_map: Optional[Mapping[str, str]] = None,
+) -> dict[str, str]:
+    """
+    Return unified diffs between user headers and packaged defaults.
+
+    Parameters
+    ----------
+    header_root : Path, optional
+        Directory containing user headers (default: ~/.batter).
+    resource_map : Mapping[str, str], optional
+        Map of header name → resource ref or absolute path. When omitted the
+        standard BATTER headers are used.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of header name to unified diff text. Empty string indicates no
+        differences. When a header is missing, the value begins with ``MISSING``.
+    """
+    root = header_root or (Path.home() / ".batter")
+    targets = resource_map or {
+        "SLURMM-Am.header": "batter._internal.templates.run_files_orig/SLURMM-Am.header",
+        "SLURMM-BATCH-remd.header": "batter._internal.templates.remd_run_files/SLURMM-BATCH-remd.header",
+        "SLURMM-BATCH.header": "batter._internal.templates.batch_run/SLURMM-BATCH.header",
+        "job_manager.header": "batter.data/job_manager.header",
+    }
+
+    def _read_default(ref: str) -> str:
+        ref_path = Path(ref)
+        if ref_path.exists():
+            return ref_path.read_text()
+        pkg_name, rel = ref.split("/", 1)
+        with resources.as_file(resources.files(pkg_name) / rel) as src_path:
+            return src_path.read_text()
+
+    diffs: dict[str, str] = {}
+    for name, ref in targets.items():
+        default_txt = _read_default(ref)
+        user_path = root / name
+        if not user_path.exists():
+            diffs[name] = f"MISSING {user_path}\n" + "".join(
+                difflib.unified_diff(
+                    default_txt.splitlines(True),
+                    [],
+                    fromfile=f"default/{name}",
+                    tofile=str(user_path),
+                )
+            )
+            continue
+        try:
+            user_txt = user_path.read_text()
+        except Exception as exc:
+            diffs[name] = f"ERROR reading {user_path}: {exc}"
+            continue
+
+        if user_txt == default_txt:
+            diffs[name] = ""
+            continue
+
+        diff = "".join(
+            difflib.unified_diff(
+                default_txt.splitlines(True),
+                user_txt.splitlines(True),
+                fromfile=f"default/{name}",
+                tofile=str(user_path),
+            )
+        )
+        diffs[name] = diff
+    return diffs

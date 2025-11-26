@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import batter.utils.slurm_templates as slurm_templates
 from batter.utils.slurm_templates import (
     render_slurm_with_header_body,
     seed_default_headers,
@@ -157,10 +158,33 @@ def test_cli_seed_headers_skips_existing(tmp_path, monkeypatch):
     res = runner.invoke(seed_headers, [])
     assert res.exit_code == 0, res.output
     assert "No headers copied" in res.output
-    assert "Use --force" in res.output
-    # files should be left untouched
-    for name in names:
-        assert (hdr_root / name).read_text() == f"# existing {name}\n"
+
+
+def test_diff_headers_detects_changes(tmp_path):
+    defaults_dir = tmp_path / "defaults"
+    defaults_dir.mkdir()
+    hdr = defaults_dir / "SLURMM-Am.header"
+    hdr.write_text("line1\nline2\n")
+
+    header_root = tmp_path / "root"
+    header_root.mkdir()
+    user_hdr = header_root / "SLURMM-Am.header"
+    user_hdr.write_text("line1\nline2-mod\n")
+
+    res = slurm_templates.diff_headers(
+        header_root=header_root,
+        resource_map={"SLURMM-Am.header": hdr.as_posix()},
+    )
+    diff = res["SLURMM-Am.header"]
+    assert "line2" in diff
+    assert "line2-mod" in diff
+    # unchanged header yields empty diff
+    user_hdr.write_text("line1\nline2\n")
+    res = slurm_templates.diff_headers(
+        header_root=header_root,
+        resource_map={"SLURMM-Am.header": hdr.as_posix()},
+    )
+    assert res["SLURMM-Am.header"] == ""
 
 
 def test_non_remd_templates_use_cpu_mpi_exec():

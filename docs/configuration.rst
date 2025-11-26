@@ -127,6 +127,13 @@ You can also seed them explicitly:
    batter seed-headers --dest /path/to/dir
    batter seed-headers --force   # overwrite existing headers
 
+To check how your headers differ from the packaged defaults:
+
+.. code-block:: bash
+
+   batter diff-headers           # compares ~/.batter headers to defaults
+   batter diff-headers --dest /path/to/dir
+
 Edit the headers to match your cluster defaults (queue/partition, env exports,
 executable paths). Bodies remain managed by the package. Header files:
 
