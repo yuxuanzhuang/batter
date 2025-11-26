@@ -175,6 +175,31 @@ def _slurm_state(jobid: Optional[str]) -> Optional[str]:
     return _state_from_squeue(jobid) or _state_from_sacct(jobid)
 
 
+def _parse_gpu_env(value: str) -> Optional[int]:
+    """Parse a GPU count from common SLURM/CUDA environment variables."""
+    if not value:
+        return None
+    txt = value.strip()
+    if not txt:
+        return None
+    if txt.isdigit():
+        count = int(txt)
+        return count if count > 0 else None
+    tokens = [t for t in re.split(r"[,:]", txt) if t]
+    digits = [t for t in tokens if t.isdigit()]
+    if len(digits) > 1:
+        return len(digits)
+    if digits:
+        try:
+            count = int(digits[-1])
+            return count if count > 0 else None
+        except Exception:
+            pass
+    if tokens:
+        return len(tokens)
+    return None
+
+
 # ---- Spec ----
 @dataclass
 class SlurmJobSpec:
@@ -196,6 +221,10 @@ class SlurmJobSpec:
         Additional ``sbatch`` flags appended during submission.
     extra_env : dict, optional
         Additional environment variables exported before submission.
+    batch_script : pathlib.Path, optional
+        Optional wrapper script used when batch_mode is enabled.
+    submit_dir : pathlib.Path, optional
+        Working directory used when submitting (defaults to ``workdir``).
     """
 
     workdir: Path
@@ -205,6 +234,8 @@ class SlurmJobSpec:
     name: Optional[str] = None
     extra_sbatch: Sequence[str] = field(default_factory=list)
     extra_env: Dict[str, str] = field(default_factory=dict)
+    batch_script: Path | None = None
+    submit_dir: Path | None = None
 
     # allow a few common variants (case, alt names)
     alt_script_names: Sequence[str] = (
@@ -240,9 +271,11 @@ class SlurmJobSpec:
 
     def script_arg(self) -> str:
         """Return the workdir-relative script argument for ``sbatch``."""
-        abs_script = self.resolve_script_abs()
+        base = self.submit_dir or self.workdir
+        candidate = base / self.script_rel
+        abs_script = candidate if candidate.exists() else self.resolve_script_abs()
         try:
-            return str(abs_script.relative_to(self.workdir))
+            return str(abs_script.relative_to(base))
         except ValueError:
             return abs_script.name
 
@@ -262,6 +295,10 @@ class SlurmJobManager:
         submit_retry_limit: int = 3,
         submit_retry_delay_s: float = 60.0,
         max_active_jobs: Optional[int] = None,
+        batch_mode: bool = False,
+        batch_gpus: Optional[int] = None,
+        gpus_per_task: int = 1,
+        srun_extra: Optional[Sequence[str]] = None,
     ):
         """Initialise the manager.
 
@@ -288,6 +325,15 @@ class SlurmJobManager:
         max_active_jobs : int, optional
             Maximum number of active jobs allowed for the user. When ``None``,
             no limit is enforced.
+        batch_mode : bool, optional
+            When ``True``, batch scripts (e.g., SLURMM-BATCH) may be supplied via
+            ``batch_script``/``submit_dir`` on the job specs.
+        batch_gpus : int, optional
+            Reserved for future inline execution modes.
+        gpus_per_task : int, optional
+            Reserved for future inline execution modes.
+        srun_extra : Sequence[str], optional
+            Reserved for future inline execution modes.
         """
         self.poll_s = float(poll_s)
         self.max_retries = int(max_retries)
@@ -312,6 +358,12 @@ class SlurmJobManager:
         self._retries: Dict[Path, int] = {}
         self._submitted_job_ids: set[str] = set()
         self.n_active: int = 0
+        self.batch_mode = bool(batch_mode)
+        self.batch_gpus = (
+            None if batch_gpus is None or int(batch_gpus) <= 0 else int(batch_gpus)
+        )
+        self.gpus_per_task = max(1, int(gpus_per_task))
+        self.srun_extra: List[str] = list(srun_extra or [])
 
     # ---------- Registry API ----------
     def add(self, spec: SlurmJobSpec) -> None:
@@ -338,6 +390,8 @@ class SlurmJobManager:
                 "name": spec.name,
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
+                "batch_script": str(spec.batch_script) if spec.batch_script else None,
+                "submit_dir": str(spec.submit_dir) if spec.submit_dir else None,
             }
             _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
 
@@ -396,6 +450,8 @@ class SlurmJobManager:
                     name=rec.get("name"),
                     extra_sbatch=rec.get("extra_sbatch") or [],
                     extra_env=rec.get("extra_env") or {},
+                    batch_script=Path(rec["batch_script"]) if rec.get("batch_script") else None,
+                    submit_dir=Path(rec["submit_dir"]) if rec.get("submit_dir") else None,
                 )
         return out
 
@@ -438,7 +494,12 @@ class SlurmJobManager:
 
     def _submit_once(self, spec: SlurmJobSpec) -> str:
         """Submit ``spec`` via ``sbatch`` and persist the resulting job id (single attempt)."""
-        script_abs = spec.resolve_script_abs()
+        # resolve script path (allow separate submission directory)
+        if spec.submit_dir:
+            candidate = Path(spec.submit_dir) / spec.script_rel
+            script_abs = candidate if candidate.exists() else spec.resolve_script_abs()
+        else:
+            script_abs = spec.resolve_script_abs()
         if not script_abs.exists():
             listing = (
                 ", ".join(sorted(p.name for p in spec.workdir.iterdir()))
@@ -471,16 +532,18 @@ class SlurmJobManager:
 
         cmd.append(spec.script_arg())
 
+        submit_cwd = spec.submit_dir or spec.workdir
+
         if self.dry_run:
-            logger.info(f"[DRY-RUN] sbatch (cwd={spec.workdir}): {' '.join(cmd)}")
+            logger.info(f"[DRY-RUN] sbatch (cwd={submit_cwd}): {' '.join(cmd)}")
             # fabricate a dummy JOBID to keep downstream logic harmless
             _write_text(spec.jobid_path(), "0\n")
             return "0"
 
-        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
+        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={submit_cwd})")
         proc = subprocess.run(
             cmd,
-            cwd=spec.workdir,
+            cwd=submit_cwd,
             text=True,
             capture_output=True,
         )
@@ -548,7 +611,8 @@ class SlurmJobManager:
         elif self.dry_run:
             self.triggered = True
             return
-        self._wait_loop(list(specs_map.values()))
+        specs = list(specs_map.values())
+        self._wait_loop(specs)
         # clear registry for next phase
         self.clear()
 
@@ -638,7 +702,7 @@ class SlurmJobManager:
                             f"state={state}; attempting resubmit"
                         )
                 elif completed_state:
-                    logger.info(
+                    logger.debug(
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} completed without FINISHED; "
                         "resubmitting without counting against retries"
                     )

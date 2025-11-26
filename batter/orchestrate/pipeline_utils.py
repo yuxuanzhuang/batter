@@ -16,6 +16,7 @@ def select_pipeline(
     only_fe_prep: bool,
     *,
     sys_params: Optional[SystemParams | dict] = None,
+    partition: str | None = None,
 ) -> Pipeline:
     """Return the protocol-specific pipeline for a run.
 
@@ -48,24 +49,28 @@ def select_pipeline(
         if isinstance(sys_params, SystemParams)
         else SystemParams.model_validate(sys_params or {})
     )
+    extra = {"partition": partition} if partition else {}
 
     if name == "abfe":
         return make_abfe_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,
+            extra=extra,
         )
     if name == "asfe":
         return make_asfe_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,
+            extra=extra,
         )
     if name == "md":
         return make_md_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,
+            extra=extra,
         )
     if name == "rbfe":
         raise NotImplementedError("RBFE protocol is not yet implemented.")

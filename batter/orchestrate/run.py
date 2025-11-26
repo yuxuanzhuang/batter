@@ -101,7 +101,6 @@ def run_from_yaml(
             "max_workers": rc.run.max_workers,
             "max_active_jobs": rc.run.max_active_jobs,
             "slurm_partition": rc.run.slurm.partition if rc.run.slurm else None,
-            "amber_setup_sh": rc.run.amber_setup_sh,
         },
     )
     if run_overrides:
@@ -233,18 +232,29 @@ def run_from_yaml(
 
     # SLURM manager (registry per execution)
     slurm_flags = rc.run.slurm.to_sbatch_flags() if rc.run.slurm else None
+    batch_mode = bool(getattr(rc.run, "batch_mode", False))
+    batch_poll = 10.0 if batch_mode else 60 * 15
+    registry_file = None if batch_mode else (run_dir / ".slurm" / "queue.jsonl")
     job_mgr = SlurmJobManager(
-        poll_s=60 * 15,
+        poll_s=batch_poll,
         max_retries=3,
         resubmit_backoff_s=30,
-        registry_file=(run_dir / ".slurm" / "queue.jsonl"),
+        registry_file=registry_file,
         dry_run=dry_run,
         sbatch_flags=slurm_flags,
+        batch_mode=batch_mode,
+        batch_gpus=getattr(rc.run, "batch_gpus", None),
+        gpus_per_task=getattr(rc.run, "batch_gpus_per_task", 1),
+        srun_extra=getattr(rc.run, "batch_srun_extra", None),
     )
 
     # Build pipeline with explicit sys_params
     tpl = select_pipeline(
-        rc.protocol, sim_cfg, rc.run.only_fe_preparation, sys_params=sys_params
+        rc.protocol,
+        sim_cfg,
+        rc.run.only_fe_preparation,
+        sys_params=sys_params,
+        partition=rc.run.slurm.partition if rc.run.slurm else None,
     )
 
     # Run parent-only steps at run_dir by using a run-scoped SimSystem
@@ -431,6 +441,10 @@ def run_from_yaml(
             updates = {"job_mgr": job_mgr}
             if rc.run.max_active_jobs is not None:
                 updates["max_active_jobs"] = rc.run.max_active_jobs
+            updates["batch_mode"] = batch_mode
+            updates["batch_run_root"] = run_dir / "batch_run"
+            updates["batch_gpus"] = getattr(rc.run, "batch_gpus", None)
+            updates["batch_gpus_per_task"] = getattr(rc.run, "batch_gpus_per_task", 1)
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)

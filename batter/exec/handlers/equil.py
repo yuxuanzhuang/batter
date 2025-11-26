@@ -14,6 +14,7 @@ from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 
+
 def _phase_paths(root: Path) -> dict[str, Path]:
     """Return resolved paths for equilibration artifacts under ``root``."""
     phase_dir = root / "equil"
@@ -27,26 +28,6 @@ def _phase_paths(root: Path) -> dict[str, Path]:
         "stderr": phase_dir / "slurm.err",
         "rst7": root / "artifacts" / "equil" / "equil.rst7",
     }
-
-
-def _read_partition(payload: StepPayload) -> str:
-    """Resolve the desired Slurm partition from ``payload``."""
-    if payload.sim is not None:
-        sim_cfg = payload.sim
-        part = getattr(sim_cfg, "partition", None) or getattr(sim_cfg, "queue", None)
-        if part:
-            return str(part)
-        sim_dict = sim_cfg.model_dump()
-        part = sim_dict.get("partition") or sim_dict.get("queue")
-        if part:
-            return str(part)
-    sim_extra = payload.get("sim", {})
-    if isinstance(sim_extra, dict):
-        part = sim_extra.get("partition") or sim_extra.get("queue")
-        if part:
-            return str(part)
-    part = payload.get("partition") or payload.get("queue")
-    return str(part) if part else "normal"
 
 
 def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
@@ -77,7 +58,6 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     payload = StepPayload.model_validate(params)
     paths = _phase_paths(system.root)
     lig = system.meta.get("ligand", system.name)
-    part = _read_partition(payload)
 
     finished_rel = paths["finished"].relative_to(system.root).as_posix()
     failed_rel = paths["failed"].relative_to(system.root).as_posix()
@@ -115,19 +95,21 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     if not script.exists():
         raise FileNotFoundError(f"[equil:{lig}] SLURM submit script missing: {script}")
 
-    # Build job spec (submit from equil/ directory; pass partition)
+    # Build job spec (submit from equil/ directory; pass partition via sbatch flags)
     job_name = f"fep_{os.path.abspath(system.root)}_eq"
+    mgr = payload.get("job_mgr")
+    if not isinstance(mgr, SlurmJobManager):
+        raise RuntimeError(
+            "Equilibration handler requires payload['job_mgr'] to be a SlurmJobManager instance"
+        )
+
     spec = SlurmJobSpec(
         workdir=paths["phase_dir"],
-        script_rel=script.name,                   # relative (submitted with cwd=workdir)
+        script_rel=script.name,
         finished_name=paths["finished"].name,
         failed_name=paths["failed"].name,
         name=job_name,
-        extra_sbatch=["-p", part],
     )
 
-    mgr = payload.get("job_mgr")
-    if not isinstance(mgr, SlurmJobManager):
-        raise RuntimeError("Equilibration handler requires payload['job_mgr'] to be a SlurmJobManager instance")
     mgr.add(spec)
     return ExecResult(job_ids=[], artifacts={"workdir": paths["phase_dir"]})

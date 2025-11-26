@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -6,6 +7,7 @@ from batter.exec.slurm_mgr import (
     SlurmJobManager,
     SlurmJobSpec,
     _atomic_append_jsonl_unique,
+    _parse_gpu_env,
 )
 
 
@@ -163,3 +165,46 @@ def test_completed_resubmit_does_not_count_retry(monkeypatch, tmp_path):
     assert submissions["count"] == 2  # initial + resubmission
     assert manager._retries.get(spec.workdir, 0) == 0
     assert spec.failed_path().exists() is False
+
+
+def test_parse_gpu_env_variants():
+    assert _parse_gpu_env("4") == 4
+    assert _parse_gpu_env("gpu:4") == 4
+    assert _parse_gpu_env("0,1,2") == 3
+    assert _parse_gpu_env("") is None
+
+
+def test_submit_uses_submit_dir(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    submit_dir = tmp_path / "batch"
+    submit_dir.mkdir()
+    script = submit_dir / "batch.sh"
+    script.write_text("#!/bin/bash\necho hi\n")
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel=script.name,
+        batch_script=script,
+        submit_dir=submit_dir,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0)
+
+    calls = {}
+
+    class Dummy:
+        returncode = 0
+        stdout = "Submitted batch job 42"
+        stderr = ""
+
+    def fake_run(cmd, cwd=None, text=None, capture_output=None):
+        calls["cmd"] = cmd
+        calls["cwd"] = cwd
+        return Dummy()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    jobid = manager._submit_once(spec)
+    assert jobid == "42"
+    assert calls["cwd"] == submit_dir
+    assert script.name in calls["cmd"]

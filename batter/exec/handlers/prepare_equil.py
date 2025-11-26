@@ -39,6 +39,7 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     if payload.sim is None:
         raise ValueError("[prepare_equil] Missing simulation configuration in payload.")
     sim = payload.sim
+    partition = payload.get("partition") or payload.get("queue") or "normal"
 
     # 2) Resolve ligand name (e.g., folder name under ligands/)
     ligand = system.meta["ligand"]
@@ -76,6 +77,7 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
             "extra_restraints": extra_restraints,
             "extra_restraints_fc": extra_restraints_fc,
             "extra_conformation_restraints": extra_conformation_restraints,
+            "partition": partition,
         }
     )
     ok = builder.build()
