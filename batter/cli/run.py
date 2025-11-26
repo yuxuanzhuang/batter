@@ -168,27 +168,6 @@ def cmd_run(
 ) -> None:
     """
     Execute a BATTER workflow defined in ``YAML_PATH``.
-
-    Parameters
-    ----------
-    yaml_path : Path
-        Path to the run configuration YAML.
-    on_failure : {"prune", "raise"}
-        Failure policy for ligand pipelines.
-    output_folder : Path, optional
-        Override for the run output folder.
-    run_id : str, optional
-        Requested execution identifier (``auto`` reuses the latest).
-    allow_run_id_mismatch : bool, optional
-        When ``True``, allow reusing a provided run-id even if the stored configuration hash differs.
-    dry_run : bool, optional
-        Override the ``run.dry_run`` flag from the YAML.
-    only_equil : bool, optional
-        When ``True`` run only equilibration preparation steps.
-    slurm_submit : bool
-        If ``True``, generate an ``sbatch`` script and submit the job.
-    slurm_manager_path : Path, optional
-        Optional path to a SLURM header/template file.
     """
     run_over = {}
     if output_folder:

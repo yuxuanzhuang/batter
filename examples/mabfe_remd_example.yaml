@@ -25,7 +25,7 @@ create:
 
 run:
   output_folder: ABFE_simulations
-  only_fe_preparation: true
+  only_fe_preparation: false
   dry_run: false
   run_id: rep4
   max_workers: 8
