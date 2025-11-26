@@ -37,7 +37,7 @@ def test_write_fe_batch_runner(tmp_path):
 
     helper = _write_ligand_fe_batch_runner(
         system_root=system_root,
-        batch_root=batch_root,
+        helper_root=batch_root / "lig1",
         ligand="lig1",
         batch_gpus=2,
         gpus_per_task=1,
