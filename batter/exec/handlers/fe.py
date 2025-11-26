@@ -215,14 +215,18 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         run_root = system.root.parent.parent if system.root.name else system.root
         batch_root = payload.get("batch_run_root") or (run_root / "batch_run")
         lig = system.meta.get("ligand", system.name)
+        batch_gpus = payload.get("batch_gpus")
         helper = _write_ligand_fe_batch_runner(
             system_root=system.root,
             batch_root=batch_root,
             ligand=lig,
-            batch_gpus=payload.get("batch_gpus"),
+            batch_gpus=batch_gpus,
             gpus_per_task=payload.get("batch_gpus_per_task") or 1,
         )
         safe_lig = lig.replace("/", "_")
+        extra_sbatch: list[str] = []
+        if batch_gpus:
+            extra_sbatch += ["--gres", f"gpu:{batch_gpus}"]
         batch_script = render_batch_slurm_script(
             batch_root=batch_root,
             target_dir=batch_root,
@@ -241,6 +245,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             name=f"fe_{safe_lig}",
             batch_script=batch_script,
             submit_dir=batch_root,
+            extra_sbatch=extra_sbatch,
         )
         job_mgr.add(spec)
         return ExecResult(job_ids=[], artifacts={"batch_run": batch_root})
@@ -335,7 +340,6 @@ def _write_ligand_fe_batch_runner(
         #!/usr/bin/env bash
         set -euo pipefail
         {gpu_line}
-        MPI_EXEC=${{MPI_EXEC:-"mpirun"}}
         GPUS_PER_TASK={gpus_per_task}
         if [[ -z "$TOTAL_GPUS" ]]; then
             if [[ -n "${{SLURM_GPUS:-}}" ]]; then TOTAL_GPUS="${{SLURM_GPUS}}"; else TOTAL_GPUS="1"; fi
@@ -357,7 +361,7 @@ def _write_ligand_fe_batch_runner(
                 echo "[batter-batch] fe running $w"
                 (
                     cd "$w"
-                    $MPI_EXEC -N 1 -n 1 /bin/bash run-local.bash
+                    srun -N 1 -n 1 --gpus-per-task $GPUS_PER_TASK /bin/bash run-local.bash
                 ) &
                 pids+=($!)
                 running=$((running + 1))
