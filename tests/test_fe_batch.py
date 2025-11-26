@@ -50,3 +50,4 @@ def test_fe_batch_adds_gres_flag(tmp_path):
     assert len(mgr.add_calls) == 1
     spec = mgr.add_calls[0]
     assert spec.extra_sbatch == ["--gres", "gpu:2"]
+    assert spec.workdir == params["batch_run_root"] / "lig"

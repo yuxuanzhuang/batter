@@ -215,15 +215,16 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         run_root = system.root.parent.parent if system.root.name else system.root
         batch_root = payload.get("batch_run_root") or (run_root / "batch_run")
         lig = system.meta.get("ligand", system.name)
+        safe_lig = lig.replace("/", "_")
+        lig_batch_dir = batch_root / safe_lig
         batch_gpus = payload.get("batch_gpus")
         helper = _write_ligand_fe_batch_runner(
             system_root=system.root,
-            batch_root=batch_root,
+            helper_root=lig_batch_dir,
             ligand=lig,
             batch_gpus=batch_gpus,
             gpus_per_task=payload.get("batch_gpus_per_task") or 1,
         )
-        safe_lig = lig.replace("/", "_")
         extra_sbatch: list[str] = []
         if batch_gpus:
             extra_sbatch += ["--gres", f"gpu:{batch_gpus}"]
@@ -238,13 +239,13 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             header_root=getattr(payload.get("sim"), "slurm_header_dir", None),
         )
         spec = SlurmJobSpec(
-            workdir=batch_root,
+            workdir=lig_batch_dir,
             script_rel=batch_script.name,
             finished_name=f"fe_{safe_lig}.FINISHED",
             failed_name=f"fe_{safe_lig}.FAILED",
             name=f"fe_{safe_lig}",
             batch_script=batch_script,
-            submit_dir=batch_root,
+            submit_dir=lig_batch_dir,
             extra_sbatch=extra_sbatch,
         )
         job_mgr.add(spec)
@@ -319,15 +320,15 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
 def _write_ligand_fe_batch_runner(
     *,
     system_root: Path,
-    batch_root: Path,
+    helper_root: Path,
     ligand: str,
     batch_gpus: int | None = None,
     gpus_per_task: int = 1,
 ) -> Path:
     """Render a helper that launches all production windows for a single ligand in parallel."""
-    batch_root.mkdir(parents=True, exist_ok=True)
+    helper_root.mkdir(parents=True, exist_ok=True)
     safe_lig = ligand.replace("/", "_")
-    helper = batch_root / f"run_fe_{safe_lig}.sh"
+    helper = helper_root / f"run_fe_{safe_lig}.sh"
     gpus_per_task = max(1, int(gpus_per_task))
     gpu_line = (
         f'TOTAL_GPUS="{batch_gpus}"'
@@ -377,9 +378,9 @@ def _write_ligand_fe_batch_runner(
         done
 
         if [[ $status -eq 0 ]]; then
-            touch "{(batch_root / f'fe_{safe_lig}.FINISHED').as_posix()}"
+            touch "{(helper_root / f'fe_{safe_lig}.FINISHED').as_posix()}"
         else
-            touch "{(batch_root / f'fe_{safe_lig}.FAILED').as_posix()}"
+            touch "{(helper_root / f'fe_{safe_lig}.FAILED').as_posix()}"
         fi
         exit $status
         """
