@@ -26,16 +26,8 @@ fi
 source check_run.bash
 
 if [[ $only_eq -eq 1 ]]; then
-    # Minimization
-    # if mini_eq is found use mini_eq.in
-    if [[ -f mini_eq.in ]]; then
-        echo "Using mini_eq.in for minimization."
-    else
-        echo "mini_eq.in not found, using mini.in instead."
-        cp mini.in mini_eq.in
-    fi
-    # not use pmemd as sometimes it fails.
-    $SANDER_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
+    # no eq needed, just copy the INPCRD to mini.in.rst7
+    cp $INPCRD mini.rst7
     check_sim_failure "Minimization" "$log_file"
 
     # run minimization for each windows at this stage

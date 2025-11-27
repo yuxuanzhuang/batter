@@ -1,6 +1,8 @@
 scontrol show job ${SLURM_JOB_ID}
 echo "Job started at $(date)"
 
+PFOLDER="."
+
 ATTEMPT_FILE="${PFOLDER}/job_attempt.txt"
 if [ ! -f "$ATTEMPT_FILE" ]; then
     echo "1" > "$ATTEMPT_FILE"
