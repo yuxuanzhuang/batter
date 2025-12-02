@@ -549,14 +549,15 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                              % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
                     continue
             # ligand dihedrals
-            if n == 4:
-                try:
-                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
-                    df.write(f"&rst iat={iat:<23s} ")
-                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                            % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
-                except:
-                    logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
+            if False:
+                if n == 4:
+                    try:
+                        iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                        df.write(f"&rst iat={iat:<23s} ")
+                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                                % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                    except:
+                        logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
     # analysis driver
     rest_in = windows_dir / "restraints.in"
