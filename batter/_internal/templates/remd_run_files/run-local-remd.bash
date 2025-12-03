@@ -16,6 +16,7 @@ REMD=1
 overwrite=${OVERWRITE:-0}
 COMP=${COMP:-$(basename "$PWD")}
 log_file="${PFOLDER}/run.log"
+retry=${RETRY_COUNT:-0}
 
 if [[ -f ${PFOLDER}/FINISHED ]]; then
     echo "REMD is complete."
@@ -31,7 +32,6 @@ if [[ -s ${PFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
 else
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_0.log"
     $MPI_EXEC -np ${N_WINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.remd.groupfile >> "$log_file" 2>&1
-    if [[ -f check_run.bash ]]; then source check_run.bash; check_sim_failure "md00" "$log_file"; fi
 fi
 
 i=1
@@ -43,7 +43,6 @@ while [ $i -le ${FE_RANGE} ]; do
     else
         REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${x}.log"
         $MPI_EXEC -np ${N_WINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.stage${x}.remd.groupfile >> "$log_file" 2>&1
-        if [[ -f check_run.bash ]]; then source check_run.bash; check_sim_failure "md${x}" "$log_file"; fi
     fi
     i=$((i + 1))
 done

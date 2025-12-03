@@ -2,17 +2,28 @@ check_sim_failure() {
     local stage=$1
     local log_file=$2
     local rst_file=$3
+    local rst_file_prev=${4:-}
+    local retry_count=${5:-0}
 
     if grep -Eqi "Terminated Abnormally|command not found|illegal memory|Error|failed|segmentation fault" "$log_file"; then
         echo "[ERROR] $stage simulation failed. Detected error in $log_file:"
         cat "$log_file"
         rm -f "$log_file"
+        # if not the first retry attempt, remove the previous restart file to avoid repeated failure
+        if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
+            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
+            rm -f "$rst_file_prev"
+        fi
         exit 1
     fi
 
     if [[ -n "$rst_file" && (! -f "$rst_file" || ! -s "$rst_file") ]]; then
         echo "[ERROR] $stage simulation failed. Restart file missing or empty: $rst_file"
         rm -f "$log_file"
+        if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
+            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
+            rm -f "$rst_file_prev"
+        fi
         exit 1
     fi
 

@@ -14,6 +14,7 @@ log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
+retry=${RETRY_COUNT:-0}
 
 if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
@@ -77,7 +78,7 @@ if [[ $only_eq -eq 1 ]]; then
             prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
             curr=$(printf "eqnpt%02d" $step)
             $PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> "$log_file" 2>&1
-            check_sim_failure "Equilibration stage $step" "$log_file" ${curr}.rst7
+            check_sim_failure "Equilibration stage $step" "$log_file" ${curr}.rst7 $prev $retry
         done
     fi
 
@@ -141,7 +142,8 @@ while [ $i -le FERANGE ]; do
         echo "Skipping md$x steps."
     else
         $PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 >> $log_file 2>&1
-        check_sim_failure "MD stage $i" "$log_file" mdin-$x.rst7
+        # if retry is greater than 0, also remove previous restart file on failure
+        check_sim_failure "MD stage $i" "$log_file" mdin-$x.rst7 mdin-$y.rst7 $retry
     fi
     i=$((i + 1))
 done

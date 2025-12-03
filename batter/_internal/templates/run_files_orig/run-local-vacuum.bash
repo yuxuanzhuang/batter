@@ -13,6 +13,7 @@ log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
+retry=${RETRY_COUNT:-0}
 
 if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
@@ -28,7 +29,7 @@ source check_run.bash
 if [[ $only_eq -eq 1 ]]; then
     # no eq needed, just copy the INPCRD to mini.in.rst7
     cp $INPCRD mini.rst7
-    check_sim_failure "Minimization" "$log_file"
+    check_sim_failure "Minimization" "$log_file" mini.rst7
 
     # run minimization for each windows at this stage
     for i in $(seq 0 $((NWINDOWS - 1))); do
@@ -58,7 +59,7 @@ if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
 else
     # Initial MD production run
     $PMEMD_EXEC -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 -AllowSmallBox >> "$log_file" 2>&1
-    check_sim_failure "MD stage 0" "$log_file"
+    check_sim_failure "MD stage 0" "$log_file" mdin-00.rst7
 fi
 
 i=1
@@ -73,7 +74,7 @@ while [ $i -le FERANGE ]; do
         echo "Skipping md$x steps."
     else
         $PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 -AllowSmallBox >> $log_file 2>&1
-        check_sim_failure "MD stage $i" "$log_file"
+        check_sim_failure "MD stage $i" "$log_file" mdin-$x.rst7 mdin-$y.rst7 $retry
     fi
     i=$((i + 1))
 done

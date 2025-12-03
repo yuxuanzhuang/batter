@@ -25,7 +25,7 @@ MAX_ATTEMPTS=5
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."
-OVERWRITE=$OVERWRITE ONLY_EQ=$ONLY_EQ source run-local.bash 2>&1 | tee run.log
+OVERWRITE=$OVERWRITE ONLY_EQ=$ONLY_EQ RETRY_COUNT=$RETRY_COUNT source run-local.bash 2>&1 | tee run.log
 error_code=${PIPESTATUS[0]}  # Capture the exit status of 'source run-local.bash'
 
 if [ $error_code -eq 0 ]; then

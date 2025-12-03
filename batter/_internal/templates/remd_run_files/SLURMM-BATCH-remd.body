@@ -12,7 +12,7 @@ echo "Current attempt: $RETRY_COUNT"
 MAX_ATTEMPTS=5
 
 echo "Attempt $RETRY_COUNT to run simulations..."
-./run-local-remd.bash
+RETRY=$RETRY_COUNT ./run-local-remd.bash
 error_code=$?
 
 if [ $error_code -eq 0 ]; then
