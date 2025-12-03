@@ -21,7 +21,7 @@ def test_render_batch_slurm_script(tmp_path):
 
     text = script.read_text()
     assert script.exists()
-    assert "#SBATCH" in text
+    assert "#SBATCH" not in text  # header added later at submission
     assert "cd" in text
     assert "FOO=bar" in text
     assert "run-local.bash" in text
