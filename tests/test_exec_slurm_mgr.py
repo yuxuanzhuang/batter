@@ -49,6 +49,26 @@ def test_slurm_job_manager_status(tmp_path):
     assert len(lines) == 1
 
 
+def test_registry_filters_by_stage(tmp_path):
+    wd_eq = tmp_path / "eq_job"
+    wd_fe = tmp_path / "fe_job"
+    wd_eq.mkdir()
+    wd_fe.mkdir()
+
+    manager = SlurmJobManager(registry_file=tmp_path / "queue.jsonl")
+    manager.set_stage("equil")
+
+    manager.add(SlurmJobSpec(workdir=wd_eq, stage="equil"))
+    manager.add(SlurmJobSpec(workdir=wd_fe, stage="fe"))
+
+    jobs_equil = manager.jobs()
+    assert {j.workdir for j in jobs_equil} == {wd_eq}
+
+    manager.set_stage("fe")
+    jobs_fe = manager.jobs()
+    assert {j.workdir for j in jobs_fe} == {wd_fe}
+
+
 def test_timeout_resubmits_without_failure(monkeypatch, tmp_path):
     workdir = tmp_path / "timeout"
     workdir.mkdir()

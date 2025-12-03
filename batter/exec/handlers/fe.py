@@ -50,6 +50,7 @@ def _spec_from_dir(
     *,
     finished_name: str,
     job_name: str,
+    stage: str | None,
     failed_name: str = "FAILED",
     script_rel: str = "SLURMM-run",
     extra_env: Optional[Dict[str, str]] = None,
@@ -64,6 +65,7 @@ def _spec_from_dir(
         finished_name=finished_name,
         failed_name=failed_name,
         name=job_name,
+        stage=stage,
         extra_env=extra_env or {},
         batch_script=batch_script,
         submit_dir=submit_dir,
@@ -93,6 +95,7 @@ def fe_equil_handler(
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
     max_jobs = int(payload.get("max_active_jobs", 500))
+    stage = payload.get("job_stage") or "fe_equil"
 
     job_mgr = payload.get("job_mgr")
     if not isinstance(job_mgr, SlurmJobManager):
@@ -142,6 +145,7 @@ def fe_equil_handler(
             wd,
             finished_name="EQ_FINISHED",
             job_name=job_name,
+            stage=stage,
             extra_env=env,
         )
         job_mgr.add(spec)
@@ -173,6 +177,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     payload = StepPayload.model_validate(params)
     lig = system.meta.get("ligand", system.name)
     max_jobs = int(payload.get("max_active_jobs", 500))
+    stage = payload.get("job_stage") or "fe"
     remd_enabled = False
     if payload.sim is not None:
         remd_enabled = str(getattr(payload.sim, "remd", "no")).lower() == "yes"
@@ -244,6 +249,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             finished_name=f"fe_{safe_lig}.FINISHED",
             failed_name=f"fe_{safe_lig}.FAILED",
             name=f"fe_{safe_lig}",
+            stage=stage,
             batch_script=batch_script,
             submit_dir=lig_batch_dir,
             extra_sbatch=extra_sbatch,
@@ -268,6 +274,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 finished_name="FINISHED",
                 failed_name="FAILED",
                 name=job_name,
+                stage=stage,
             )
             job_mgr.add(spec)
             count += 1
@@ -302,6 +309,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 wd,
                 finished_name="FINISHED",
                 job_name=job_name,
+                stage=stage,
                 extra_env=env,
                 batch_script=batch_script,
                 submit_dir=batch_script.parent if batch_script else None,

@@ -200,6 +200,21 @@ def _parse_gpu_env(value: str) -> Optional[int]:
     return None
 
 
+def _infer_stage_from_workdir(path: Path | None) -> Optional[str]:
+    """Heuristically infer a stage name from ``path`` for legacy queue entries."""
+    if not path:
+        return None
+    parts = [p.lower() for p in path.parts]
+    if "equil" in parts:
+        return "equil"
+    if "fe" in parts:
+        # component equil windows are named <comp>-1; production windows differ
+        if path.name.endswith("-1"):
+            return "fe_equil"
+        return "fe"
+    return None
+
+
 # ---- Spec ----
 @dataclass
 class SlurmJobSpec:
@@ -232,6 +247,7 @@ class SlurmJobSpec:
     finished_name: str = "FINISHED"
     failed_name: str = "FAILED"
     name: Optional[str] = None
+    stage: Optional[str] = None
     extra_sbatch: Sequence[str] = field(default_factory=list)
     extra_env: Dict[str, str] = field(default_factory=dict)
     batch_script: Path | None = None
@@ -299,6 +315,7 @@ class SlurmJobManager:
         batch_gpus: Optional[int] = None,
         gpus_per_task: int = 1,
         srun_extra: Optional[Sequence[str]] = None,
+        stage: Optional[str] = None,
     ):
         """Initialise the manager.
 
@@ -358,12 +375,35 @@ class SlurmJobManager:
         self._retries: Dict[Path, int] = {}
         self._submitted_job_ids: set[str] = set()
         self.n_active: int = 0
+        self._stage: Optional[str] = stage
         self.batch_mode = bool(batch_mode)
         self.batch_gpus = (
             None if batch_gpus is None or int(batch_gpus) <= 0 else int(batch_gpus)
         )
         self.gpus_per_task = max(1, int(gpus_per_task))
         self.srun_extra: List[str] = list(srun_extra or [])
+
+    def set_stage(self, stage: Optional[str]) -> None:
+        """Limit registry loading to ``stage`` and default new specs to this stage."""
+        self._stage = stage
+
+    def _stage_matches(self, stage: Optional[str], workdir: Path | None = None) -> bool:
+        """Return ``True`` if ``stage`` is compatible with the manager's active stage."""
+        if not self._stage:
+            return True
+        if stage:
+            return stage == self._stage
+        # Best-effort inference for legacy entries without stage metadata
+        inferred = _infer_stage_from_workdir(workdir) if workdir else None
+        return inferred == self._stage
+
+    def _filter_stage(self, specs: Dict[Path, SlurmJobSpec]) -> Dict[Path, SlurmJobSpec]:
+        """Filter ``specs`` to the active stage (if set)."""
+        if not self._stage:
+            return specs
+        return {
+            wd: spec for wd, spec in specs.items() if self._stage_matches(spec.stage, wd)
+        }
 
     # ---------- Registry API ----------
     def add(self, spec: SlurmJobSpec) -> None:
@@ -379,6 +419,9 @@ class SlurmJobManager:
             self.triggered = True
             return
 
+        if spec.stage is None and self._stage is not None:
+            spec.stage = self._stage
+
         self._inmem_specs[spec.workdir] = spec
 
         if self._registry_file is not None:
@@ -388,6 +431,7 @@ class SlurmJobManager:
                 "finished_name": spec.finished_name,
                 "failed_name": spec.failed_name,
                 "name": spec.name,
+                "stage": spec.stage,
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
                 "batch_script": str(spec.batch_script) if spec.batch_script else None,
@@ -442,12 +486,16 @@ class SlurmJobManager:
                 except Exception:
                     continue
                 wd = Path(rec["workdir"])
+                stage = rec.get("stage")
+                if not self._stage_matches(stage, wd):
+                    continue
                 out[wd] = SlurmJobSpec(
                     workdir=wd,
                     script_rel=rec.get("script_rel", "SLURMM-run"),
                     finished_name=rec.get("finished_name", "FINISHED"),
                     failed_name=rec.get("failed_name", "FAILED"),
                     name=rec.get("name"),
+                    stage=stage,
                     extra_sbatch=rec.get("extra_sbatch") or [],
                     extra_env=rec.get("extra_env") or {},
                     batch_script=Path(rec["batch_script"]) if rec.get("batch_script") else None,
@@ -459,7 +507,7 @@ class SlurmJobManager:
         """Return the union of in-memory and on-disk queued specs (dedup by workdir)."""
         merged: Dict[Path, SlurmJobSpec] = self._load_registry_specs()
         merged.update(self._inmem_specs)
-        return list(merged.values())
+        return list(self._filter_stage(merged).values())
 
     def clear(self) -> None:
         """Clear in-memory specs, retry bookkeeping, and remove the on-disk queue if present."""
@@ -605,6 +653,7 @@ class SlurmJobManager:
         """Submit/monitor all registered jobs together and block until completion."""
         specs_map = self._load_registry_specs()
         specs_map.update(self._inmem_specs)
+        specs_map = self._filter_stage(specs_map)
         if not specs_map and not self.dry_run:
             logger.debug("[SLURM] wait_all: nothing to monitor.")
             return

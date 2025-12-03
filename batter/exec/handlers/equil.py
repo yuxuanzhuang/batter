@@ -58,6 +58,7 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     payload = StepPayload.model_validate(params)
     paths = _phase_paths(system.root)
     lig = system.meta.get("ligand", system.name)
+    stage = payload.get("job_stage") or "equil"
 
     finished_rel = paths["finished"].relative_to(system.root).as_posix()
     failed_rel = paths["failed"].relative_to(system.root).as_posix()
@@ -109,6 +110,7 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         finished_name=paths["finished"].name,
         failed_name=paths["failed"].name,
         name=job_name,
+        stage=stage,
     )
 
     mgr.add(spec)

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import json
 import os
 import smtplib
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 from smtplib import SMTPException
@@ -65,6 +66,19 @@ from batter.orchestrate.run_support import (
     stored_signature as _stored_signature,
     store_ligand_names as _store_ligand_names,
 )
+
+
+def _slurm_registry_path(run_dir: Path) -> Path:
+    """Return the registry path under artifacts/slurm, migrating legacy .slurm if present."""
+    new_path = run_dir / "artifacts" / "slurm" / "queue.jsonl"
+    old_path = run_dir / ".slurm" / "queue.jsonl"
+    if old_path.exists() and not new_path.exists():
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            old_path.replace(new_path)
+        except Exception:
+            shutil.copy2(old_path, new_path)
+    return new_path
 
 
 def run_from_yaml(
@@ -234,7 +248,7 @@ def run_from_yaml(
     slurm_flags = rc.run.slurm.to_sbatch_flags() if rc.run.slurm else None
     batch_mode = bool(getattr(rc.run, "batch_mode", False))
     batch_poll = 10.0 if batch_mode else 60 * 15
-    registry_file = None if batch_mode else (run_dir / ".slurm" / "queue.jsonl")
+    registry_file = None if batch_mode else _slurm_registry_path(run_dir)
     job_mgr = SlurmJobManager(
         poll_s=batch_poll,
         max_retries=3,
@@ -434,11 +448,12 @@ def run_from_yaml(
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    def _inject_mgr(p: Pipeline) -> Pipeline:
+    def _inject_mgr(p: Pipeline, stage_name: str) -> Pipeline:
+        job_mgr.set_stage(stage_name)
         patched = []
         for s in p.ordered_steps():
             base_payload = s.payload or StepPayload()
-            updates = {"job_mgr": job_mgr}
+            updates = {"job_mgr": job_mgr, "job_stage": stage_name}
             if rc.run.max_active_jobs is not None:
                 updates["max_active_jobs"] = rc.run.max_active_jobs
             updates["batch_mode"] = batch_mode
@@ -449,7 +464,7 @@ def run_from_yaml(
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
 
-    phase_equil = _inject_mgr(phase_equil)
+    phase_equil = _inject_mgr(phase_equil, "equil")
     if phase_equil.ordered_steps():
         finished = run_phase_skipping_done(
             phase_equil, children, "equil", backend, max_workers=1
@@ -513,7 +528,7 @@ def run_from_yaml(
     # --------------------
     # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------
-    phase_fe_equil = _inject_mgr(phase_fe_equil)
+    phase_fe_equil = _inject_mgr(phase_fe_equil, "fe_equil")
     if phase_fe_equil.ordered_steps():
         finished = run_phase_skipping_done(
             phase_fe_equil,
@@ -536,7 +551,7 @@ def run_from_yaml(
     # --------------------
     # PHASE 5: fe → must COMPLETE for all ligands
     # --------------------
-    phase_fe = _inject_mgr(phase_fe)
+    phase_fe = _inject_mgr(phase_fe, "fe")
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
         finished = run_phase_skipping_done(
