@@ -248,6 +248,10 @@ class SlurmJobSpec:
     failed_name: str = "FAILED"
     name: Optional[str] = None
     stage: Optional[str] = None
+    body_rel: Optional[str] = None
+    header_name: Optional[str] = None
+    header_template: Optional[Path] = None
+    header_root: Optional[Path] = None
     extra_sbatch: Sequence[str] = field(default_factory=list)
     extra_env: Dict[str, str] = field(default_factory=dict)
     batch_script: Path | None = None
@@ -316,6 +320,7 @@ class SlurmJobManager:
         gpus_per_task: int = 1,
         srun_extra: Optional[Sequence[str]] = None,
         stage: Optional[str] = None,
+        header_root: Optional[Path] = None,
     ):
         """Initialise the manager.
 
@@ -376,6 +381,7 @@ class SlurmJobManager:
         self._submitted_job_ids: set[str] = set()
         self.n_active: int = 0
         self._stage: Optional[str] = stage
+        self._header_root = header_root
         self.batch_mode = bool(batch_mode)
         self.batch_gpus = (
             None if batch_gpus is None or int(batch_gpus) <= 0 else int(batch_gpus)
@@ -405,6 +411,58 @@ class SlurmJobManager:
             wd: spec for wd, spec in specs.items() if self._stage_matches(spec.stage, wd)
         }
 
+    def _resolve_header_root(self, spec: SlurmJobSpec) -> Path:
+        root = spec.header_root or self._header_root
+        if not root:
+            env_root = os.environ.get("BATTER_SLURM_HEADER_DIR")
+            if env_root:
+                return Path(env_root)
+        return Path(root) if root else Path.home() / ".batter"
+
+    def _rebuild_script_with_header(self, spec: SlurmJobSpec, script_abs: Path) -> None:
+        """Rebuild the submission script by prepending a header to the stored body, if present."""
+        body_path = None
+        if spec.body_rel:
+            body_path = spec.workdir / spec.body_rel
+        else:
+            candidate = script_abs.with_suffix(script_abs.suffix + ".body")
+            if candidate.exists():
+                body_path = candidate
+
+        if not body_path or not body_path.exists():
+            return
+
+        try:
+            body_text = body_path.read_text()
+        except Exception as exc:
+            logger.warning(f"[SLURM] Failed to read body {body_path}: {exc}")
+            return
+
+        header_root = self._resolve_header_root(spec)
+        header_text = ""
+        if spec.header_name:
+            user_header = header_root / spec.header_name
+            if user_header.exists():
+                try:
+                    header_text = user_header.read_text()
+                except Exception as exc:
+                    logger.warning(f"[SLURM] Failed to read header {user_header}: {exc}")
+            elif spec.header_template and spec.header_template.exists():
+                try:
+                    header_text = spec.header_template.read_text()
+                except Exception:
+                    header_text = ""
+
+        combined = header_text
+        if combined and not combined.endswith("\n"):
+            combined += "\n"
+        combined += body_text
+
+        try:
+            script_abs.write_text(combined)
+        except Exception as exc:
+            logger.warning(f"[SLURM] Could not write rebuilt script {script_abs}: {exc}")
+
     # ---------- Registry API ----------
     def add(self, spec: SlurmJobSpec) -> None:
         """Queue ``spec`` for later submission.
@@ -432,6 +490,10 @@ class SlurmJobManager:
                 "failed_name": spec.failed_name,
                 "name": spec.name,
                 "stage": spec.stage,
+                "body_rel": spec.body_rel,
+                "header_name": spec.header_name,
+                "header_template": str(spec.header_template) if spec.header_template else None,
+                "header_root": str(spec.header_root) if spec.header_root else None,
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
                 "batch_script": str(spec.batch_script) if spec.batch_script else None,
@@ -496,6 +558,10 @@ class SlurmJobManager:
                     failed_name=rec.get("failed_name", "FAILED"),
                     name=rec.get("name"),
                     stage=stage,
+                    body_rel=rec.get("body_rel"),
+                    header_name=rec.get("header_name"),
+                    header_template=Path(rec["header_template"]) if rec.get("header_template") else None,
+                    header_root=Path(rec["header_root"]) if rec.get("header_root") else None,
                     extra_sbatch=rec.get("extra_sbatch") or [],
                     extra_env=rec.get("extra_env") or {},
                     batch_script=Path(rec["batch_script"]) if rec.get("batch_script") else None,
@@ -548,6 +614,10 @@ class SlurmJobManager:
             script_abs = candidate if candidate.exists() else spec.resolve_script_abs()
         else:
             script_abs = spec.resolve_script_abs()
+
+        # If a body is present, rebuild the script with the current header
+        self._rebuild_script_with_header(spec, script_abs)
+
         if not script_abs.exists():
             listing = (
                 ", ".join(sorted(p.name for p in spec.workdir.iterdir()))

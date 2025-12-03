@@ -16,8 +16,9 @@ from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils import components_under
-from batter.exec.handlers.batch import render_batch_slurm_script
+from batter.exec.handlers.batch import render_batch_slurm_script, _tpl_path
 from textwrap import dedent
+from batter._internal.templates import RUN_FILES_DIR as RUN_FILES_ORIG
 
 # ---------------- discovery helpers ----------------
 
@@ -53,6 +54,10 @@ def _spec_from_dir(
     stage: str | None,
     failed_name: str = "FAILED",
     script_rel: str = "SLURMM-run",
+    body_rel: str | None = None,
+    header_name: str | None = None,
+    header_template: Path | None = None,
+    header_root: Path | None = None,
     extra_env: Optional[Dict[str, str]] = None,
     batch_script: Path | None = None,
     submit_dir: Path | None = None,
@@ -65,6 +70,10 @@ def _spec_from_dir(
         finished_name=finished_name,
         failed_name=failed_name,
         name=job_name,
+        body_rel=body_rel,
+        header_name=header_name,
+        header_template=header_template,
+        header_root=header_root,
         stage=stage,
         extra_env=extra_env or {},
         batch_script=batch_script,
@@ -138,6 +147,12 @@ def fe_equil_handler(
             finished_name="EQ_FINISHED",
             job_name=job_name,
             stage=stage,
+            body_rel="SLURMM-run.body",
+            header_name="SLURMM-Am.header",
+            header_template=RUN_FILES_ORIG / "SLURMM-Am.header",
+            header_root=Path(getattr(payload.get("sim"), "slurm_header_dir", Path.home() / ".batter"))
+            if payload.get("sim")
+            else None,
             extra_env=env,
         )
         job_mgr.add(spec)
@@ -238,12 +253,18 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         spec = SlurmJobSpec(
             workdir=lig_batch_dir,
             script_rel=batch_script.name,
+            body_rel=f"{batch_script.name}.body",
             finished_name=f"fe_{safe_lig}.FINISHED",
             failed_name=f"fe_{safe_lig}.FAILED",
             name=f"fe_{safe_lig}",
             stage=stage,
             batch_script=batch_script,
             submit_dir=lig_batch_dir,
+            header_name="SLURMM-BATCH.header",
+            header_template=_tpl_path("SLURMM-BATCH.header"),
+            header_root=Path(getattr(payload.get("sim"), "slurm_header_dir", Path.home() / ".batter"))
+            if payload.get("sim")
+            else None,
             extra_sbatch=extra_sbatch,
         )
         job_mgr.add(spec)
@@ -256,10 +277,20 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             spec = SlurmJobSpec(
                 workdir=comp_dir,
                 script_rel="SLURMM-BATCH-remd",
+                body_rel="SLURMM-BATCH-remd.body",
                 finished_name="FINISHED",
                 failed_name="FAILED",
                 name=job_name,
                 stage=stage,
+                header_name="SLURMM-BATCH-remd.header",
+                header_template=Path(__file__).resolve().parent.parent
+                / "_internal"
+                / "templates"
+                / "remd_run_files"
+                / "SLURMM-BATCH-remd.header",
+                header_root=Path(getattr(payload.get("sim"), "slurm_header_dir", Path.home() / ".batter"))
+                if payload.get("sim")
+                else None,
             )
             job_mgr.add(spec)
             count += 1
@@ -288,6 +319,12 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 finished_name="FINISHED",
                 job_name=job_name,
                 stage=stage,
+                body_rel="SLURMM-run.body",
+                header_name="SLURMM-Am.header",
+                header_template=RUN_FILES_ORIG / "SLURMM-Am.header",
+                header_root=Path(getattr(payload.get("sim"), "slurm_header_dir", Path.home() / ".batter"))
+                if payload.get("sim")
+                else None,
                 extra_env=env,
                 batch_script=batch_script,
                 submit_dir=batch_script.parent if batch_script else None,

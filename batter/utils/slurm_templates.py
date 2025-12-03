@@ -68,6 +68,28 @@ def render_slurm_with_header_body(
     return text
 
 
+def render_slurm_body(body_path: Path, replacements: Dict[str, str]) -> str:
+    """
+    Render only the body portion of a Slurm script (no header prepended).
+
+    Parameters
+    ----------
+    body_path : Path
+        Template body path.
+    replacements : dict
+        Token substitutions applied to the body text.
+
+    Returns
+    -------
+    str
+        Rendered body text.
+    """
+    text = body_path.read_text()
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text
+
+
 def seed_default_headers(
     header_root: Optional[Path] = None,
     resource_map: Optional[Mapping[str, str]] = None,

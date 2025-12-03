@@ -9,7 +9,7 @@ from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
-from batter.utils.slurm_templates import render_slurm_with_header_body
+from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
 def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     """
@@ -57,24 +57,21 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         except Exception as e:
             logger.debug(f"chmod +x failed for {dst}: {e}")
 
-    # SLURM submit script assembled from header/body
-    out_slurm = work / "SLURMM-run"
-    stxt = render_slurm_with_header_body(
-        "SLURMM-Am.header",
-        run_files_orig / "SLURMM-Am.header",
+    # SLURM submit script body (header will be prepended at submission time)
+    body_txt = render_slurm_body(
         run_files_orig / "SLURMM-Am.body",
         {
             "STAGE": stage,
             "POSE": ligand_name,
             "SYSTEMNAME": sim.system_name,
         },
-        header_root=Path(getattr(sim, "slurm_header_dir", Path.home() / ".batter")),
     )
-    out_slurm.write_text(stxt)
+    out_slurm_body = work / "SLURMM-run.body"
+    out_slurm_body.write_text(body_txt)
     try:
-        out_slurm.chmod(0o755)
+        out_slurm_body.chmod(0o644)
     except Exception as e:
-        logger.debug(f"chmod +x failed for {out_slurm}: {e}")
+        logger.debug(f"chmod failed for {out_slurm_body}: {e}")
 
     logger.debug(f"[Equil] Run scripts ready at {work}")
 
@@ -131,11 +128,8 @@ def write_fe_run_file(
     out_local.write_text(txt)
     os.chmod(out_local, 0o755)
 
-    # -------- SLURMM-run (from SLURMM-Am template, with optional user override)
-    out_slurm = dst_dir / "SLURMM-run"
-    stxt = render_slurm_with_header_body(
-        "SLURMM-Am.header",
-        run_files_orig / "SLURMM-Am.header",
+    # -------- SLURMM-run body (header added at submission)
+    body_txt = render_slurm_body(
         run_files_orig / "SLURMM-Am.body",
         {
             "STAGE": pose,
@@ -143,8 +137,9 @@ def write_fe_run_file(
             "SYSTEMNAME": system_name,
         },
     )
-    out_slurm.write_text(stxt)
-    os.chmod(out_slurm, 0o755)
+    out_slurm_body = dst_dir / "SLURMM-run.body"
+    out_slurm_body.write_text(body_txt)
+    os.chmod(out_slurm_body, 0o644)
 
     logger.debug(
         f"[runfiles] wrote run scripts → {dst_dir} "

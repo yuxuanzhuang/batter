@@ -315,21 +315,18 @@ def write_remd_run_scripts(
     run_local.chmod(0o755)
     out.append(run_local)
 
-    slurm = comp_dir / "SLURMM-BATCH-remd"
-    slurm_text = render_slurm_with_header_body(
-        "SLURMM-BATCH-remd.header",
-        TEMPLATE_DIR / "SLURMM-BATCH-remd.header",
+    slurm_body = comp_dir / "SLURMM-BATCH-remd.body"
+    body_text = render_slurm_body(
         TEMPLATE_DIR / "SLURMM-BATCH-remd.body",
         {
             "COMPONENT": comp,
             "NWINDOWS": str(gpus),
             "FERANGE": str(num_extends),
         },
-        header_root=Path(getattr(sim, "slurm_header_dir", Path.home() / ".batter")),
     )
-    slurm.write_text(slurm_text)
-    slurm.chmod(0o755)
-    out.append(slurm)
+    slurm_body.write_text(body_text)
+    slurm_body.chmod(0o644)
+    out.append(slurm_body)
 
     # copy check_run.bash alongside for failure checks
     check_src = Path(__file__).resolve().parent.parent / "templates" / "run_files_orig" / "check_run.bash"

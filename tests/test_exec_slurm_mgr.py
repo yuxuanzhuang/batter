@@ -194,6 +194,40 @@ def test_parse_gpu_env_variants():
     assert _parse_gpu_env("") is None
 
 
+def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "SLURMM-run.body").write_text("BODY\n")
+    header_root = tmp_path / "headers"
+    header_root.mkdir()
+    (header_root / "SLURMM-Am.header").write_text("#HEADER\n")
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel="SLURMM-run",
+        body_rel="SLURMM-run.body",
+        header_name="SLURMM-Am.header",
+        header_root=header_root,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0, header_root=header_root)
+
+    def fake_run(cmd, cwd=None, text=None, capture_output=None):
+        class Dummy:
+            returncode = 0
+            stdout = "Submitted batch job 99"
+            stderr = ""
+
+        return Dummy()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    jobid = manager._submit_once(spec)
+    assert jobid == "99"
+    script_txt = (workdir / "SLURMM-run").read_text()
+    assert script_txt.startswith("#HEADER")
+    assert "BODY" in script_txt
+
+
 def test_submit_uses_submit_dir(monkeypatch, tmp_path):
     workdir = tmp_path / "wd"
     workdir.mkdir()

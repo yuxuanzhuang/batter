@@ -13,6 +13,7 @@ from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
+from batter._internal.templates import RUN_FILES_DIR as RUN_FILES_ORIG
 
 
 def _phase_paths(root: Path) -> dict[str, Path]:
@@ -100,10 +101,16 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     spec = SlurmJobSpec(
         workdir=paths["phase_dir"],
         script_rel=script.name,
+        body_rel=f"{script.name}.body",
         finished_name=paths["finished"].name,
         failed_name=paths["failed"].name,
         name=job_name,
         stage=stage,
+        header_name="SLURMM-Am.header",
+        header_template=RUN_FILES_ORIG / "SLURMM-Am.header",
+        header_root=Path(getattr(payload.get("sim"), "slurm_header_dir", Path.home() / ".batter"))
+        if payload.get("sim")
+        else None,
     )
 
     mgr.add(spec)

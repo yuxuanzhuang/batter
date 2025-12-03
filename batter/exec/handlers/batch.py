@@ -4,7 +4,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Dict, Optional
 
-from batter.utils.slurm_templates import render_slurm_with_header_body
+from batter.utils.slurm_templates import render_slurm_body
 
 
 def _tpl_path(filename: str) -> Path:
@@ -34,9 +34,8 @@ def render_batch_slurm_script(
         env_lines.append(f"export {k}={v}")
     env_block = "\n".join(env_lines) if env_lines else ":"
 
-    script_text = render_slurm_with_header_body(
-        "SLURMM-BATCH.header",
-        _tpl_path("SLURMM-BATCH.header"),
+    out_body = out.with_suffix(out.suffix + ".body")
+    body_text = render_slurm_body(
         _tpl_path("SLURMM-BATCH.body"),
         {
             "SYSTEMNAME": system_name,
@@ -46,11 +45,10 @@ def render_batch_slurm_script(
             "ENV_EXPORT": env_block,
             "RUN_SCRIPT": run_script,
         },
-        header_root=header_root,
     )
-    out.write_text(script_text)
+    out_body.write_text(body_text)
     try:
-        out.chmod(0o755)
+        out_body.chmod(0o644)
     except Exception:
         pass
     return out
