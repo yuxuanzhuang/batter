@@ -37,13 +37,33 @@ check_min_energy() {
     # Prefer EAMBER from the FINAL RESULTS block; fall back to ENERGY from the NSTEP table
     local energy_value source_label
     energy_value=$(awk '/FINAL RESULTS/,/EAMBER/ { if ($1 == "EAMBER") { print $3; exit } }' "$energy_file")
-    source_label="EAMBER"
+    source_label="EAMBER energy"
 
     if [[ -z $energy_value ]]; then
+        # First, try to grab ENERGY from the NSTEP table that appears after the FINAL RESULTS section
         energy_value=$(awk '
-            /^NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ { in_block=1; next }
-            in_block && NF >= 2 { val=$2; found=val }
+            /FINAL RESULTS/ { in_final=1; next }
+            in_final && /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {
+                if (getline line) {
+                    split(line, fields)
+                    if (length(fields) >= 2) found=fields[2]
+                }
+            }
             END { if (found) print found }
+        ' "$energy_file")
+        source_label="ENERGY (NSTEP table)"
+    fi
+
+    if [[ -z $energy_value ]]; then
+        # Fallback: any NSTEP ENERGY table in the file
+        energy_value=$(awk '
+            /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {
+                if (getline line) {
+                    split(line, fields)
+                    if (length(fields) >= 2) last=fields[2]
+                }
+            }
+            END { if (last) print last }
         ' "$energy_file")
         source_label="ENERGY (NSTEP table)"
     fi
