@@ -131,14 +131,6 @@ def fe_equil_handler(
             )
             continue
 
-        # clear FAILED if present
-        failed = wd / "FAILED"
-        if failed.exists():
-            try:
-                failed.unlink()
-            except Exception:
-                pass
-
         env = {"ONLY_EQ": "1", "INPCRD": "full.inpcrd"}
         job_name = f"fep_{os.path.abspath(system.root)}_{comp}_fe_equil"
         spec = _spec_from_dir(
@@ -260,13 +252,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     for comp in comps:
         if remd_enabled:
             comp_dir = system.root / "fe" / comp
-            failed = comp_dir / "FAILED"
-            if failed.exists():
-                try:
-                    failed.unlink()
-                except Exception:
-                    pass
-
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_remd"
             spec = SlurmJobSpec(
                 workdir=comp_dir,
@@ -281,13 +266,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             continue
 
         for wd in _production_window_dirs(system.root, comp):
-            failed = wd / "FAILED"
-            if failed.exists():
-                try:
-                    failed.unlink()
-                except Exception:
-                    pass
-
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_{wd.name}_fe"
             batch_script = None

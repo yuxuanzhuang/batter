@@ -84,13 +84,6 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
             pass
         return ExecResult(job_ids=[], artifacts=arts)
 
-    # If previously FAILED, clear the sentinel so the manager can retry cleanly
-    if paths["failed"].exists():
-        try:
-            paths["failed"].unlink(missing_ok=True)
-        except Exception:
-            pass
-
     # Require the submit script to exist
     script = paths["script"]
     if not script.exists():

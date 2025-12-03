@@ -443,7 +443,7 @@ def run_from_yaml(
         )
         children = handle_phase_failures(children, "prepare_equil", rc.run.on_failure)
     else:
-        logger.info(f"[skip] prepare_equil: no steps in this protocol.")
+        logger.info("[skip] prepare_equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
@@ -478,7 +478,7 @@ def run_from_yaml(
                 return
         children = handle_phase_failures(children, "equil", rc.run.on_failure)
     else:
-        logger.info(f"[skip] equil: no steps in this protocol.")
+        logger.info("[skip] equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
