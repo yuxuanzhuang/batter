@@ -101,7 +101,6 @@ def equil_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     spec = SlurmJobSpec(
         workdir=paths["phase_dir"],
         script_rel=script.name,
-        body_rel=f"{script.name}.body",
         finished_name=paths["finished"].name,
         failed_name=paths["failed"].name,
         name=job_name,

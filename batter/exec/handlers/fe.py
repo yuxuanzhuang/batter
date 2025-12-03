@@ -54,7 +54,6 @@ def _spec_from_dir(
     stage: str | None,
     failed_name: str = "FAILED",
     script_rel: str = "SLURMM-run",
-    body_rel: str | None = None,
     header_name: str | None = None,
     header_template: Path | None = None,
     header_root: Path | None = None,
@@ -70,7 +69,6 @@ def _spec_from_dir(
         finished_name=finished_name,
         failed_name=failed_name,
         name=job_name,
-        body_rel=body_rel,
         header_name=header_name,
         header_template=header_template,
         header_root=header_root,
@@ -147,7 +145,6 @@ def fe_equil_handler(
             finished_name="EQ_FINISHED",
             job_name=job_name,
             stage=stage,
-            body_rel="SLURMM-run.body",
             header_name="SLURMM-Am.header",
             header_template=RUN_FILES_ORIG / "SLURMM-Am.header",
             header_root=Path(getattr(payload.get("sim"), "slurm_header_dir", Path.home() / ".batter"))
@@ -253,7 +250,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
         spec = SlurmJobSpec(
             workdir=lig_batch_dir,
             script_rel=batch_script.name,
-            body_rel=f"{batch_script.name}.body",
             finished_name=f"fe_{safe_lig}.FINISHED",
             failed_name=f"fe_{safe_lig}.FAILED",
             name=f"fe_{safe_lig}",
@@ -277,7 +273,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             spec = SlurmJobSpec(
                 workdir=comp_dir,
                 script_rel="SLURMM-BATCH-remd",
-                body_rel="SLURMM-BATCH-remd.body",
                 finished_name="FINISHED",
                 failed_name="FAILED",
                 name=job_name,
@@ -319,7 +314,6 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
                 finished_name="FINISHED",
                 job_name=job_name,
                 stage=stage,
-                body_rel="SLURMM-run.body",
                 header_name="SLURMM-Am.header",
                 header_template=RUN_FILES_ORIG / "SLURMM-Am.header",
                 header_root=Path(getattr(payload.get("sim"), "slurm_header_dir", Path.home() / ".batter"))

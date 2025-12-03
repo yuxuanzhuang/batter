@@ -57,7 +57,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         except Exception as e:
             logger.debug(f"chmod +x failed for {dst}: {e}")
 
-    # SLURM submit script body (header will be prepended at submission time)
+    # SLURM submit script (body only; header added at submission time)
     body_txt = render_slurm_body(
         run_files_orig / "SLURMM-Am.body",
         {
@@ -66,10 +66,10 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
             "SYSTEMNAME": sim.system_name,
         },
     )
-    out_slurm_body = work / "SLURMM-run.body"
+    out_slurm_body = work / "SLURMM-run"
     out_slurm_body.write_text(body_txt)
     try:
-        out_slurm_body.chmod(0o644)
+        out_slurm_body.chmod(0o755)
     except Exception as e:
         logger.debug(f"chmod failed for {out_slurm_body}: {e}")
 
@@ -137,9 +137,9 @@ def write_fe_run_file(
             "SYSTEMNAME": system_name,
         },
     )
-    out_slurm_body = dst_dir / "SLURMM-run.body"
+    out_slurm_body = dst_dir / "SLURMM-run"
     out_slurm_body.write_text(body_txt)
-    os.chmod(out_slurm_body, 0o644)
+    os.chmod(out_slurm_body, 0o755)
 
     logger.debug(
         f"[runfiles] wrote run scripts → {dst_dir} "

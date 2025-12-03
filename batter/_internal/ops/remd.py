@@ -315,7 +315,7 @@ def write_remd_run_scripts(
     run_local.chmod(0o755)
     out.append(run_local)
 
-    slurm_body = comp_dir / "SLURMM-BATCH-remd.body"
+    slurm_body = comp_dir / "SLURMM-BATCH-remd"
     body_text = render_slurm_body(
         TEMPLATE_DIR / "SLURMM-BATCH-remd.body",
         {
@@ -325,7 +325,7 @@ def write_remd_run_scripts(
         },
     )
     slurm_body.write_text(body_text)
-    slurm_body.chmod(0o644)
+    slurm_body.chmod(0o755)
     out.append(slurm_body)
 
     # copy check_run.bash alongside for failure checks

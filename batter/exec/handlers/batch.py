@@ -34,7 +34,7 @@ def render_batch_slurm_script(
         env_lines.append(f"export {k}={v}")
     env_block = "\n".join(env_lines) if env_lines else ":"
 
-    out_body = out.with_suffix(out.suffix + ".body")
+    out_body = out  # body-only; header will be added at submission
     body_text = render_slurm_body(
         _tpl_path("SLURMM-BATCH.body"),
         {
@@ -48,7 +48,7 @@ def render_batch_slurm_script(
     )
     out_body.write_text(body_text)
     try:
-        out_body.chmod(0o644)
+        out_body.chmod(0o755)
     except Exception:
         pass
     return out

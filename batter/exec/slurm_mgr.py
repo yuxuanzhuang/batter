@@ -421,19 +421,21 @@ class SlurmJobManager:
 
     def _rebuild_script_with_header(self, spec: SlurmJobSpec, script_abs: Path) -> None:
         """Rebuild the submission script by prepending a header to the stored body, if present."""
-        body_path = None
-        if spec.body_rel:
-            body_path = spec.workdir / spec.body_rel
-        else:
+        body_path = spec.workdir / spec.body_rel if spec.body_rel else script_abs
+        if not body_path.exists():
             candidate = script_abs.with_suffix(script_abs.suffix + ".body")
             if candidate.exists():
                 body_path = candidate
-
-        if not body_path or not body_path.exists():
-            return
+            else:
+                return
 
         try:
             body_text = body_path.read_text()
+            # drop any baked-in SBATCH lines from the body
+            body_lines = [
+                ln for ln in body_text.splitlines() if not ln.lstrip().startswith("#SBATCH")
+            ]
+            body_text = "\n".join(body_lines)
         except Exception as exc:
             logger.warning(f"[SLURM] Failed to read body {body_path}: {exc}")
             return

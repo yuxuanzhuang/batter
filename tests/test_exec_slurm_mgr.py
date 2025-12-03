@@ -197,7 +197,7 @@ def test_parse_gpu_env_variants():
 def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
     workdir = tmp_path / "wd"
     workdir.mkdir()
-    (workdir / "SLURMM-run.body").write_text("BODY\n")
+    (workdir / "SLURMM-run").write_text("#SBATCH -J old\nBODY\n")
     header_root = tmp_path / "headers"
     header_root.mkdir()
     (header_root / "SLURMM-Am.header").write_text("#HEADER\n")
@@ -205,7 +205,6 @@ def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
     spec = SlurmJobSpec(
         workdir=workdir,
         script_rel="SLURMM-run",
-        body_rel="SLURMM-run.body",
         header_name="SLURMM-Am.header",
         header_root=header_root,
     )
@@ -226,6 +225,7 @@ def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
     script_txt = (workdir / "SLURMM-run").read_text()
     assert script_txt.startswith("#HEADER")
     assert "BODY" in script_txt
+    assert "SBATCH -J old" not in script_txt
 
 
 def test_submit_uses_submit_dir(monkeypatch, tmp_path):
