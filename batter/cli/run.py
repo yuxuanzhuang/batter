@@ -290,6 +290,43 @@ def cmd_run(
     )
 
 
+@cli.command("run-exec")
+@click.argument(
+    "execution_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--on-failure",
+    type=click.Choice(["prune", "raise", "retry"], case_sensitive=False),
+    default="raise",
+    show_default=True,
+)
+def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
+    """
+    Resume/extend a run using only an existing execution directory.
+    """
+    exec_dir = execution_dir.resolve()
+    yaml_copy = exec_dir / "artifacts" / "config" / "run_config.yaml"
+    if not yaml_copy.exists():
+        raise click.ClickException(
+            f"Could not find stored run_config.yaml under {yaml_copy}. "
+            "Run once with `batter run` to seed artifacts/config."
+        )
+
+    run_overrides = {
+        "output_folder": exec_dir.parent.parent,
+        "run_id": exec_dir.name,
+        "allow_run_id_mismatch": True,
+    }
+    try:
+        run_from_yaml(
+            yaml_copy,
+            on_failure=on_failure.lower(),
+            run_overrides=run_overrides,
+        )
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+
 # ---------------------------- free energy results check ------------------------------
 
 
