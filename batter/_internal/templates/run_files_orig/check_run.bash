@@ -34,27 +34,37 @@ check_min_energy() {
     local energy_file=$1
     local threshold=$2
 
-    # Find EAMBER value from FINAL RESULTS block
-    local eam_line
-    eam_line=$(awk '/FINAL RESULTS/,/EAMBER/ { if ($1 == "EAMBER") print $3 }' "$energy_file")
+    # Prefer EAMBER from the FINAL RESULTS block; fall back to ENERGY from the NSTEP table
+    local energy_value source_label
+    energy_value=$(awk '/FINAL RESULTS/,/EAMBER/ { if ($1 == "EAMBER") { print $3; exit } }' "$energy_file")
+    source_label="EAMBER"
 
-    if [[ -z $eam_line ]]; then
-        echo "Error: Could not find EAMBER energy in $energy_file"
+    if [[ -z $energy_value ]]; then
+        energy_value=$(awk '
+            /^NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ { in_block=1; next }
+            in_block && NF >= 2 { val=$2; found=val }
+            END { if (found) print found }
+        ' "$energy_file")
+        source_label="ENERGY (NSTEP table)"
+    fi
+
+    if [[ -z $energy_value ]]; then
+        echo "Error: Could not find EAMBER or ENERGY in $energy_file"
         return 2
     fi
 
-    # Check if eam_line is a valid number
-    if ! [[ $eam_line =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
-        echo "Error: EAMBER value '$eam_line' is not a valid number"
+    # Validate numeric (support scientific notation)
+    if ! [[ $energy_value =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
+        echo "Error: Energy value '$energy_value' is not a valid number"
         return 1
     fi
 
-    local eam_value
-    eam_value=$(printf "%.4f" "$eam_line")
+    local formatted_value
+    formatted_value=$(printf "%.4f" "$energy_value")
 
-    echo "EAMBER energy: $eam_value kcal/mol (threshold: $threshold)"
+    echo "$source_label: $formatted_value kcal/mol (threshold: $threshold)"
 
-    if (( $(echo "$eam_value < $threshold" | bc -l) )); then
+    if awk -v val="$energy_value" -v thr="$threshold" 'BEGIN { exit (val < thr ? 0 : 1) }'; then
         echo "Energy is below threshold."
         return 0
     else
