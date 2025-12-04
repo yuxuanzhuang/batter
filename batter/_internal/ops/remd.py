@@ -7,7 +7,7 @@ from loguru import logger
 
 from batter.config.simulation import SimulationConfig
 from batter.utils.components import COMPONENTS_DICT
-from batter.utils.slurm_templates import render_slurm_with_header_body
+from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
 # Default REMD exchange settings to mirror legacy batching behaviour (overridden by config).
 NUMEXCHG_DEFAULT = 3000
