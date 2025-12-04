@@ -131,14 +131,26 @@ def test_run_phase_skipping_done_behavior(tmp_path):
 
 
 def test_spec_satisfied_writes_progress(tmp_path):
-    phase = "fe"
     target = tmp_path / "foo" / "FINISHED"
     target.parent.mkdir(parents=True)
     target.write_text("")
     spec = [["foo/FINISHED"]]
 
-    assert _spec_satisfied(tmp_path, spec, phase) is True
+    assert _spec_satisfied(tmp_path, spec, "fe") is True
 
-    progress = tmp_path / "artifacts" / "progress" / f"{phase}.csv"
+    progress = tmp_path / "fe" / "artifacts" / "progress" / "fe.csv"
+    assert progress.exists()
+    assert "foo/FINISHED" in progress.read_text()
+
+
+def test_prepare_fe_progress_path(tmp_path):
+    target = tmp_path / "foo" / "FINISHED"
+    target.parent.mkdir(parents=True)
+    target.write_text("")
+    spec = [["foo/FINISHED"]]
+
+    assert _spec_satisfied(tmp_path, spec, "prepare_fe") is True
+
+    progress = tmp_path / "fe" / "artifacts" / "progress" / "prepare_fe.csv"
     assert progress.exists()
     assert "foo/FINISHED" in progress.read_text()
