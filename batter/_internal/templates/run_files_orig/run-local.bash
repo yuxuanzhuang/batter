@@ -7,6 +7,7 @@ PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
 PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
 SANDER_EXEC=${SANDER_EXEC:-sander}
 MPI_EXEC=${MPI_EXEC:-mpirun}
+MPI_FLAGS=${MPI_FLAGS:-}
 
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
@@ -21,6 +22,18 @@ print_and_run() {
     echo "$@"
     eval "$@"
 }
+
+# Build an MPI launch prefix that works for mpirun or srun.
+if [[ -z "${MPI_FLAGS}" ]]; then
+    mpi_base=$(echo "${MPI_EXEC}" | awk '{print $1}')
+    mpi_base=${mpi_base##*/}
+    if [[ "${mpi_base}" == srun* ]]; then
+        MPI_FLAGS="-n ${SLURM_JOB_CPUS_PER_NODE:-1}"
+    else
+        MPI_FLAGS="--oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1}"
+    fi
+fi
+MPI_LAUNCH="${MPI_EXEC} ${MPI_FLAGS}"
 
 if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
@@ -50,7 +63,7 @@ if [[ $only_eq -eq 1 ]]; then
         rm -f "$log_file"
         rm -f mini.rst7 mini.nc mini.out
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            print_and_run "$MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         else
             print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         fi
@@ -71,7 +84,7 @@ if [[ $only_eq -eq 1 ]]; then
         # Note we are not using the GPU version here
         # because for large box size change, an error will be raised.
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            print_and_run "$MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 >> \"$log_file\" 2>&1"
+            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 >> \"$log_file\" 2>&1"
         else
             print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini.rst7 >> \"$log_file\" 2>&1"
         fi
@@ -103,7 +116,7 @@ if [[ $only_eq -eq 1 ]]; then
                 rm -f "$log_file"
                 rm -f mini.in.rst7 mini.in.nc mini.in.out
                 if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-                    print_and_run "$MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
+                    print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
                 else
                     print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
                 fi

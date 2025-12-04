@@ -7,6 +7,7 @@ PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
 PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
 SANDER_EXEC=${SANDER_EXEC:-sander}
 MPI_EXEC=${MPI_EXEC:-mpirun}
+MPI_FLAGS=${MPI_FLAGS:-}
 
 PRMTOP="full.hmr.prmtop"
 N_WINDOWS=NWINDOWS
@@ -24,6 +25,18 @@ print_and_run() {
     eval "$@"
 }
 
+# Build an MPI launch prefix that works for mpirun or srun.
+if [[ -z "${MPI_FLAGS}" ]]; then
+    mpi_base=$(echo "${MPI_EXEC}" | awk '{print $1}')
+    mpi_base=${mpi_base##*/}
+    if [[ "${mpi_base}" == srun* ]]; then
+        MPI_FLAGS="-n ${N_WINDOWS}"
+    else
+        MPI_FLAGS="-np ${N_WINDOWS} --oversubscribe"
+    fi
+fi
+MPI_LAUNCH="${MPI_EXEC} ${MPI_FLAGS}"
+
 if [[ -f ${PFOLDER}/FINISHED ]]; then
     echo "REMD is complete."
     exit 0
@@ -37,7 +50,7 @@ if [[ -s ${PFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_0.log"
-    print_and_run "$MPI_EXEC -np ${N_WINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.remd.groupfile >> \"$log_file\" 2>&1"
+    print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.remd.groupfile >> \"$log_file\" 2>&1"
 fi
 
 i=1
@@ -48,7 +61,7 @@ while [ $i -le ${FE_RANGE} ]; do
         echo "Skipping md${x} steps."
     else
         REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${x}.log"
-        print_and_run "$MPI_EXEC -np ${N_WINDOWS} --oversubscribe ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.stage${x}.remd.groupfile >> \"$log_file\" 2>&1"
+        print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.stage${x}.remd.groupfile >> \"$log_file\" 2>&1"
     fi
     i=$((i + 1))
 done
