@@ -1,7 +1,9 @@
 REMD submission flow
 ====================
 
-When ``sim.remd`` is enabled, production jobs are submitted per-component rather than per-window.
+When ``run.remd`` is enabled, production jobs are submitted per-component rather than
+per-window. REMD input files are always prepared; the toggle only controls whether they
+are submitted.
 Key behaviours:
 
 * Under ``fe/<comp>/``, REMD groupfiles live in ``remd/`` with component-agnostic names

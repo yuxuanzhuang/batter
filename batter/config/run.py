@@ -383,9 +383,12 @@ class FESimArgs(BaseModel):
         "mbar",
         description="Free-energy integration scheme (``mbar`` or ``ti``).",
     )
+    remd_enable: Literal["yes", "no"] = Field(
+        "no", description="Toggle REMD execution (yes/no)."
+    )
     remd: RemdArgs = Field(
         default_factory=RemdArgs,
-        description="Replica-exchange MD controls (enable/nstlim/numexchg).",
+        description="Replica-exchange MD controls (nstlim/numexchg).",
     )
     rocklin_correction: Literal["yes", "no"] = Field(
         "no",
@@ -486,6 +489,16 @@ class FESimArgs(BaseModel):
         description="Optional (start, end) simulation index range to analyze per FE window.",
     )
 
+    @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
+    @classmethod
+    def _coerce_fe_yes_no(cls, v):
+        return coerce_yes_no(v)
+
+    @field_validator("remd_enable", mode="before")
+    @classmethod
+    def _coerce_remd_enable(cls, v):
+        return coerce_yes_no(v)
+
     @field_validator("remd", mode="before")
     @classmethod
     def _coerce_remd(cls, v):
@@ -493,12 +506,21 @@ class FESimArgs(BaseModel):
             return v
         if isinstance(v, dict):
             return RemdArgs(**v)
-        return RemdArgs(enable=coerce_yes_no(v))
+        return RemdArgs()
 
-    @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _coerce_fe_yes_no(cls, v):
-        return coerce_yes_no(v)
+    def _ingest_remd_enable(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+        payload = dict(data)
+        remd_val = payload.get("remd")
+        if "remd_enable" not in payload:
+            if isinstance(remd_val, (str, bool)):
+                payload["remd_enable"] = coerce_yes_no(remd_val)
+            elif isinstance(remd_val, Mapping) and "enable" in remd_val:
+                payload["remd_enable"] = coerce_yes_no(remd_val.get("enable"))
+        return payload
 
     @field_validator("lambdas")
     @classmethod
@@ -689,6 +711,10 @@ class RunSection(BaseModel):
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
     )
+    remd: Literal["yes", "no"] = Field(
+        "no",
+        description="Enable REMD execution (templates are always prepared).",
+    )
     run_id: str = Field(
         "auto", description="Run identifier to use (``auto`` picks latest)."
     )
@@ -727,7 +753,13 @@ class RunSection(BaseModel):
         hdr = self.slurm_header_dir
         if hdr is not None and not hdr.is_absolute():
             hdr = (base / hdr).resolve()
-        return self.model_copy(update={"output_folder": folder, "slurm_header_dir": hdr})
+        return self.model_copy(
+            update={
+                "output_folder": folder,
+                "slurm_header_dir": hdr,
+                "remd": coerce_yes_no(self.remd),
+            }
+        )
 
     @field_validator("output_folder", mode="before")
     @classmethod
@@ -735,6 +767,11 @@ class RunSection(BaseModel):
         if v is None or (isinstance(v, str) and not v.strip()):
             raise ValueError("`run.output_folder` is required.")
         return Path(v)
+
+    @field_validator("remd", mode="before")
+    @classmethod
+    def _coerce_remd(cls, v):
+        return coerce_yes_no(v)
 
     @field_validator("system_type", mode="before")
     @classmethod
@@ -846,6 +883,13 @@ class RunConfig(BaseModel):
             Simulation parameters derived from ``create`` and ``fe_sim`` sections.
         """
         fe_args = self.fe_sim
+        if isinstance(fe_args, dict):
+            fe_args = FESimArgs(**fe_args)
+        elif isinstance(fe_args, FESimArgs):
+            pass
+        else:
+            fe_args = FESimArgs.model_validate(fe_args)
+        fe_args = fe_args.model_copy(update={"remd_enable": self.run.remd})
         desired_fe_type = PROTOCOL_TO_FE_TYPE.get(self.protocol)
         return SimulationConfig.from_sections(
             self.create,

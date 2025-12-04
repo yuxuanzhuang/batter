@@ -107,12 +107,13 @@ bulk solvent above the membrane even if the YAML specifies a smaller buffer.
 REMD runs
 ---------
 
-Set ``fe_sim.remd: yes`` to enable per-component replica-exchange submissions. Use
-``fe_sim.remd_nstlim`` for segment length and ``fe_sim.remd_numexchg`` for exchange
-intervals; both values are copied into the REMD ``mdin`` inputs and groupfiles generated
-under ``fe/<comp>/remd/``. REMD jobs submit one Slurm job per component via
-``SLURMM-BATCH-remd`` and monitor ``FINISHED``/``FAILED`` sentinels in the component
-folder. See :doc:`remd_submission` for operational details.
+REMD inputs (mdins/groupfiles) are always written during preparation so you can decide at
+submit time whether to run them. Use ``fe_sim.remd`` to tune segment length and exchange
+frequency (``nstlim`` / ``numexchg``). Control execution with ``run.remd`` (``yes`` or
+``no``); when ``run.remd: no`` the files are still generated but no REMD jobs are
+scheduled. REMD jobs submit one Slurm job per component via ``SLURMM-BATCH-remd`` and
+monitor ``FINISHED``/``FAILED`` sentinels in the component folder. See
+:doc:`remd_submission` for operational details.
 
 SLURM header templates
 ----------------------

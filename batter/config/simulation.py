@@ -195,16 +195,20 @@ class SimulationConfig(BaseModel):
             analysis_fe_range_value = _analysis_range_default()
 
         remd_settings = _fe_attr("remd", lambda: RemdArgs())
-        if isinstance(remd_settings, dict):
-            remd_settings = RemdArgs(**remd_settings)
         if isinstance(remd_settings, RemdArgs):
-            remd_enable = remd_settings.enable
             remd_nstlim = int(remd_settings.nstlim)
             remd_numexchg = int(remd_settings.numexchg)
         else:
-            remd_enable = coerce_yes_no(remd_settings)
-            remd_nstlim = int(_fe_attr("remd_nstlim", lambda: 100))
-            remd_numexchg = int(_fe_attr("remd_numexchg", lambda: 3000))
+            # legacy dict/yes-no forms
+            if isinstance(remd_settings, dict):
+                remd_settings = RemdArgs(**remd_settings)
+                remd_nstlim = int(remd_settings.nstlim)
+                remd_numexchg = int(remd_settings.numexchg)
+            else:
+                remd_nstlim = int(_fe_attr("remd_nstlim", lambda: 100))
+                remd_numexchg = int(_fe_attr("remd_numexchg", lambda: 3000))
+
+        remd_enable = coerce_yes_no(_fe_attr("remd_enable", lambda: "no"))
 
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,

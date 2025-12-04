@@ -349,9 +349,6 @@ def prepare_remd_component(
     """
     Patch mdin files and emit groupfiles so REMD can run from ``comp_dir``.
     """
-    if str(sim.remd).lower() != "yes":
-        return []
-
     add_numexchg = comp in COMPONENTS_DICT["dd"]
     patch_component_inputs(comp_dir, comp, sim, add_numexchg=add_numexchg)
 

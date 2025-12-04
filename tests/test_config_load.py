@@ -197,6 +197,14 @@ def test_fesim_remd_block():
     assert args.remd.numexchg == 1500
 
 
+def test_fesim_remd_yes_sets_enable_flag() -> None:
+    args = FESimArgs.model_validate({"remd": "yes"})
+    assert args.remd_enable == "yes"
+    # Defaults preserved for timing/exchange settings
+    assert args.remd.nstlim == 100
+    assert args.remd.numexchg == 3000
+
+
 def _minimal_create(tmp_path: Path, **updates) -> CreateArgs:
     lig = tmp_path / "lig.sdf"
     lig.write_text("dummy")
@@ -336,6 +344,26 @@ def test_resolved_sim_config_sets_fe_type(
     cfg = _minimal_run_config(tmp_path, protocol)
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.fe_type == expected
+
+
+def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:
+    cfg = _minimal_run_config(tmp_path, "abfe")
+    fe_overrides = cfg.fe_sim.model_dump()
+    fe_overrides["remd"] = "yes"
+    cfg = cfg.model_copy(
+        update={
+            "fe_sim": fe_overrides,
+            "run": cfg.run.model_copy(update={"remd": "no"}),
+        }
+    )
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.remd == "no"
+
+    cfg_yes = cfg.model_copy(
+        update={"run": cfg.run.model_copy(update={"remd": "yes"})}
+    )
+    sim_cfg_yes = cfg_yes.resolved_sim_config()
+    assert sim_cfg_yes.remd == "yes"
 
 
 def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) -> None:
