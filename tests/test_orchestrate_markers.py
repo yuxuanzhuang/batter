@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 
 from batter.orchestrate import markers
+from batter.orchestrate.markers import _spec_satisfied
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.pipeline import Pipeline
 from batter.systems.core import SimSystem
@@ -127,3 +128,17 @@ def test_run_phase_skipping_done_behavior(tmp_path):
     skipped_done = markers.run_phase_skipping_done(pipeline, [done_system], phase, backend2)
     assert skipped_done is True
     assert backend2.calls == []
+
+
+def test_spec_satisfied_writes_progress(tmp_path):
+    phase = "fe"
+    target = tmp_path / "foo" / "FINISHED"
+    target.parent.mkdir(parents=True)
+    target.write_text("")
+    spec = [["foo/FINISHED"]]
+
+    assert _spec_satisfied(tmp_path, spec, phase) is True
+
+    progress = tmp_path / "artifacts" / "progress" / f"{phase}.csv"
+    assert progress.exists()
+    assert "foo/FINISHED" in progress.read_text()

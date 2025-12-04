@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 from loguru import logger
 
@@ -34,11 +34,11 @@ def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple
     for child in children:
         spec = _phase_spec(child.root, phase)
         success_spec = spec.success or spec.required
-        is_success = _spec_satisfied(child.root, success_spec)
+        is_success = _spec_satisfied(child.root, success_spec, phase)
         if is_success:
             ok.append(child)
             continue
-        is_failure = _spec_satisfied(child.root, spec.failure)
+        is_failure = _spec_satisfied(child.root, spec.failure, phase)
         if is_failure or not is_success:
             bad.append(child)
     return ok, bad
@@ -205,7 +205,7 @@ def is_done(system: SimSystem, phase_name: str) -> bool:
     """
     spec = _phase_spec(system.root, phase_name)
     required_spec = spec.required or spec.success
-    return _spec_satisfied(system.root, required_spec)
+    return _spec_satisfied(system.root, required_spec, phase_name)
 
 
 def _phase_spec(root: Path, phase: str) -> PhaseState:
@@ -214,38 +214,53 @@ def _phase_spec(root: Path, phase: str) -> PhaseState:
     return get_phase_state(root, phase)
 
 
-def _spec_satisfied(root: Path, spec: List[List[str]]) -> bool:
+def _spec_satisfied(root: Path, spec: List[List[str]], phase: str) -> bool:
     """Evaluate whether any clause in the DNF spec is satisfied on disk."""
 
     if not spec:
         return False
+    progress = _load_progress(root, phase)
+    updates: Dict[str, str] = {}
+    comp_cache = components_under(root)
+    win_cache: dict[str, List[int]] = {}
     for group in spec:
         paths: List[Path] = []
         for pattern in group:
-            expanded = _expand_pattern(root, pattern)
+            expanded = _expand_pattern(root, pattern, comp_cache, win_cache)
             if not expanded:
                 paths = []
                 break
             paths.extend(expanded)
-        if paths and all(p.exists() for p in paths):
+        if paths and _all_exist_with_progress(root, paths, progress, updates):
+            _write_progress(root, progress, updates, phase)
             return True
+    if updates:
+        _write_progress(root, progress, updates, phase)
     return False
 
 
-def _expand_pattern(root: Path, pattern: str) -> List[Path]:
+def _expand_pattern(
+    root: Path,
+    pattern: str,
+    comp_cache: List[str] | None = None,
+    win_cache: dict[str, List[int]] | None = None,
+) -> List[Path]:
     """Expand a single sentinel pattern, interpolating components and windows."""
 
     if "{comp" not in pattern and "{win" not in pattern:
         return [root / pattern]
 
-    comps = components_under(root)
+    comps = comp_cache if comp_cache is not None else components_under(root)
     if not comps:
         return []
 
     expanded: List[Path] = []
     if "{win" in pattern:
         for comp in comps:
-            wins = _production_windows_under(root, comp)
+            cache = win_cache if win_cache is not None else {}
+            if comp not in cache:
+                cache[comp] = _production_windows_under(root, comp)
+            wins = cache.get(comp, [])
             if not wins:
                 return []
             for win in wins:
@@ -280,3 +295,62 @@ def _production_windows_under(root: Path, comp: str) -> List[int]:
         if idx >= 0:
             out.append(idx)
     return sorted(out)
+
+
+def _progress_path(root: Path, phase: str) -> Path:
+    return root / "artifacts" / "progress" / f"{phase}.csv"
+
+
+def _load_progress(root: Path, phase: str) -> Dict[str, str]:
+    path = _progress_path(root, phase)
+    out: Dict[str, str] = {}
+    if not path.exists():
+        return out
+    try:
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            rel, state = line.split(",", 1)
+            out[rel] = state
+    except Exception:
+        return {}
+    return out
+
+
+def _write_progress(
+    root: Path, existing: Dict[str, str], updates: Dict[str, str], phase: str
+) -> None:
+    if not updates:
+        return
+    merged = dict(existing)
+    merged.update(updates)
+    path = _progress_path(root, phase)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{k},{v}\n" for k, v in sorted(merged.items())]
+    tmp = path.with_suffix(".tmp")
+    try:
+        tmp.write_text("".join(lines))
+        tmp.replace(path)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _all_exist_with_progress(
+    root: Path, paths: List[Path], progress: Dict[str, str], updates: Dict[str, str]
+) -> bool:
+    for p in paths:
+        try:
+            rel = p.relative_to(root).as_posix()
+        except ValueError:
+            rel = p.as_posix()
+        state = progress.get(rel)
+        if state:
+            continue
+        if p.exists():
+            updates[rel] = "1"
+            continue
+        return False
+    return True
