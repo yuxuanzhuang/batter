@@ -235,14 +235,14 @@ def prepare_fe_windows_handler(
 
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}
 
-        if sim.remd == "yes":
-            remd_ops.prepare_remd_component(
-                workdir,
-                comp=comp,
-                sim=sim,
-                n_windows=len(lambdas),
-                partition=partition,
-            )
+        # Always write REMD inputs; run.remd controls whether they are submitted.
+        remd_ops.prepare_remd_component(
+            workdir,
+            comp=comp,
+            sim=sim,
+            n_windows=len(lambdas),
+            partition=partition,
+        )
 
     # write a canonical windows.json under artifacts/fe/
     windows_json = child_root / "fe" / "artifacts" / "windows.json"
