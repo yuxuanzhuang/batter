@@ -681,7 +681,7 @@ class SlurmJobManager:
         _write_text(spec.jobid_path(), f"{jobid}\n")
         self._submitted_job_ids.add(jobid)
         self.n_active += 1
-        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
+        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid} #{self.n_active} active")
         return jobid
 
     def _status(self, spec: SlurmJobSpec) -> Tuple[bool, Optional[str]]:

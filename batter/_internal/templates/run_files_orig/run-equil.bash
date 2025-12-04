@@ -107,7 +107,7 @@ if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
 # Initial MD run
-print_and_run "$PMEMD_DPFP_EXEC -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md-00.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+print_and_run "$PMEMD_EXEC -O -i mdin-00 -p $PRMTOP -c eqnpt04.rst7 -o md-00.out -r md00.rst7 -x md-00.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
 check_sim_failure "MD stage 0" "$log_file" md00.rst7
 fi
 
@@ -122,7 +122,7 @@ while [ $i -le RANGE ]; do
     if [[ $overwrite -eq 0 && -s md$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
-        print_and_run "$PMEMD_DPFP_EXEC -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "MD stage $i" "$log_file" md$x.rst7
     fi
     i=$((i + 1))
