@@ -443,3 +443,38 @@ def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:
     )
     assert isinstance(run.fe_sim, MDSimArgs)
     assert run.fe_sim.dt == pytest.approx(0.004)
+
+
+def test_resolved_sim_config_handles_md(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    payload = {
+        "protocol": "md",
+        "backend": "local",
+        "run": {"output_folder": str(tmp_path / "out")},
+        "create": create.model_dump(),
+        "fe_sim": {
+            "eq_steps": 1000,
+            "num_equil_extends": 1,
+            "dt": 0.002,
+            "temperature": 300.0,
+        },
+    }
+    cfg = RunConfig.model_validate(payload)
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.fe_type == "md"
+    assert sim_cfg.eq_steps == 1000
+    assert sim_cfg.num_equil_extends == 1
+    assert sim_cfg.temperature == 300.0
+
+
+def test_md_rejects_fe_only_fields(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    payload = {
+        "protocol": "md",
+        "backend": "local",
+        "run": {"output_folder": str(tmp_path / "out")},
+        "create": create.model_dump(),
+        "fe_sim": {"num_fe_extends": 5, "eq_steps": 1000, "num_equil_extends": 1},
+    }
+    with pytest.raises(ValidationError):
+        RunConfig.model_validate(payload)

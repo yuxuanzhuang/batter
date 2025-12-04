@@ -883,13 +883,22 @@ class RunConfig(BaseModel):
             Simulation parameters derived from ``create`` and ``fe_sim`` sections.
         """
         fe_args = self.fe_sim
-        if isinstance(fe_args, dict):
-            fe_args = FESimArgs(**fe_args)
-        elif isinstance(fe_args, FESimArgs):
-            pass
+        if self.protocol == "md":
+            if isinstance(fe_args, dict):
+                fe_args = MDSimArgs(**fe_args)
+            elif isinstance(fe_args, MDSimArgs):
+                pass
+            else:
+                fe_args = MDSimArgs.model_validate(fe_args)
         else:
-            fe_args = FESimArgs.model_validate(fe_args)
-        fe_args = fe_args.model_copy(update={"remd_enable": self.run.remd})
+            if isinstance(fe_args, dict):
+                fe_args = FESimArgs(**fe_args)
+            elif isinstance(fe_args, FESimArgs):
+                pass
+            else:
+                fe_args = FESimArgs.model_validate(fe_args)
+            fe_args = fe_args.model_copy(update={"remd_enable": self.run.remd})
+
         desired_fe_type = PROTOCOL_TO_FE_TYPE.get(self.protocol)
         return SimulationConfig.from_sections(
             self.create,
