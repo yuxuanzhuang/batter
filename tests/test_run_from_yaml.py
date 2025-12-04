@@ -13,6 +13,7 @@ import pytest
 from batter.config.run import RunConfig
 from batter.config import load_run_config  # if you expose it here
 from batter.config.simulation import SimulationConfig  # where your class lives
+from batter.orchestrate import run as run_mod
 from batter.orchestrate.run import run_from_yaml
 from batter.pipeline.step import ExecResult
 
@@ -202,3 +203,80 @@ def test_runs_prepare_fe(tmp_path: Path) -> None:
         )
         assert (lig_dir / "prepare_fe.ok").exists()
         assert (lig_dir / "prepare_fe_windows.ok").exists()
+
+
+def test_run_from_yaml_passes_max_active_jobs(monkeypatch, tmp_path: Path) -> None:
+    """Ensure run.max_active_jobs is handed to the SlurmJobManager constructor."""
+
+    run_dir = tmp_path / "out" / "executions" / "rep1"
+    run_dir.mkdir(parents=True)
+    lig_path = tmp_path / "lig.sdf"
+    lig_path.write_text("dummy")
+
+    run_yaml = tmp_path / "run.yaml"
+    run_yaml.write_text(
+        f"""
+protocol: abfe
+backend: slurm
+run:
+  output_folder: "{tmp_path / 'out'}"
+  run_id: auto
+  max_active_jobs: 7
+create:
+  system_name: example
+  ligand_paths:
+    LIG: "{lig_path}"
+fe_sim:
+  lambdas: [0.0, 1.0]
+  num_equil_extends: 1
+  eq_steps: 1000
+  steps1: {{z: 50000}}
+  steps2: {{z: 50000}}
+"""
+    )
+
+    # Stub out components that would otherwise perform heavy work
+    class DummyBuilder:
+        def build(self, sys_exec, create_args):
+            sys_exec.root.mkdir(parents=True, exist_ok=True)
+            return sys_exec
+
+    class Sentinel(Exception):
+        pass
+
+    seen: dict[str, int | None] = {}
+
+    def fake_mgr(*args, **kwargs):
+        seen["max_active_jobs"] = kwargs.get("max_active_jobs")
+        raise Sentinel
+
+    monkeypatch.setattr(run_mod, "SlurmJobManager", fake_mgr)
+    monkeypatch.setattr(run_mod, "_select_system_builder", lambda *a, **k: DummyBuilder())
+    monkeypatch.setattr(
+        run_mod,
+        "select_run_id",
+        lambda *a, **k: ("rep1", run_dir),
+    )
+    monkeypatch.setattr(
+        run_mod,
+        "_compute_run_signature",
+        lambda *a, **k: ("sig", {"payload": True}),
+    )
+    monkeypatch.setattr(run_mod, "_stored_signature", lambda rd: (None, rd / "sig"))
+    monkeypatch.setattr(run_mod, "_stored_payload", lambda rd: None)
+    monkeypatch.setattr(run_mod, "_resolve_signature_conflict", lambda *a, **k: True)
+    monkeypatch.setattr(run_mod, "discover_staged_ligands", lambda run_dir: {})
+    monkeypatch.setattr(
+        run_mod,
+        "resolve_ligand_map",
+        lambda rc, yaml_dir: ({"LIG": lig_path}, {"LIG": "LIG"}),
+    )
+    monkeypatch.setattr(run_mod, "_store_ligand_names", lambda *a, **k: None)
+    monkeypatch.setattr(
+        run_mod, "_materialize_extra_conf_restraints", lambda *a, **k: None
+    )
+
+    with pytest.raises(Sentinel):
+        run_from_yaml(run_yaml)
+
+    assert seen["max_active_jobs"] == 7
