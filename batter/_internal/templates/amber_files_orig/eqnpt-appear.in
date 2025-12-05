@@ -1,7 +1,7 @@
 *******************************************************
 *****************************       mdin
 *******************************************************
-Runs equilibrium stage
+Equil re-appear ligand
  &cntrl
   imin = 0,
   ntx = 5,
@@ -15,14 +15,12 @@ Runs equilibrium stage
   iwrap = 1,
   ntf = 1,
   ntc = 2,
-  cut = 10,
+  cut = _cutoff_,
   ntt = 3,
   temp0 = _temperature_,
   gamma_ln = _gamma_ln_,
   ig = -1,
-  ntp = _p_coupling_,
-  csurften = _c_surften_,
-  barostat = _barostat_,
+  ntp = 0,
   nstlim = 50000,
   dt = _step_,
   nmropt = 1,

@@ -15,7 +15,7 @@ Runs equilibrium stage
   iwrap = 1,
   ntf = 2,
   ntc = 2,
-  cut = 10,
+  cut = _cutoff_,
   ntt = 3,
   temp0 = _temperature_,
   gamma_ln = _gamma_ln_,
