@@ -43,7 +43,7 @@ Runs equilibrium stage
  output_freq = _ntwx_
  cv_file = 'cv.in'
  /
- &wt type = 'END', /
 DISANG=disang_file.rest
 LISTOUT=POUT
+ &wt type = 'END', /
 

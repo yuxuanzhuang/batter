@@ -36,7 +36,7 @@ Equilibrate, NPT.
  output_freq = 1000
  cv_file = 'cv.in'
  /
- &wt type = 'END', /
 DISANG=disang.rest
 LISTOUT=POUT
+ &wt type = 'END', /
 
