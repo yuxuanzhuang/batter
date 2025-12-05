@@ -124,6 +124,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
     temperature = sim.temperature
     mol = ctx.residue_name
+    infe_flag = "1" if infe else "0"
 
     # disang anchor triplet (L1/L2/L3)
     with open(work / "disang.rest", "r") as f:
@@ -155,10 +156,31 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     _sub_write(eqnpt_src, work / "eqnpt.in",
                {"_temperature_": f"{temperature}", "_lig_name_": mol})
 
+    # Additional equilibration inputs for disappear/appear stages
+    _sub_write(
+        amber_dir / "eqnpt-disappear.in",
+        work / "eqnpt_disappear.in",
+        {
+            "_temperature_": f"{temperature}",
+            "_lig_name_": mol,
+            "_enable_infe_": infe_flag,
+            "disang_file": "disang",
+        },
+    )
+    _sub_write(
+        amber_dir / "eqnpt-appear.in",
+        work / "eqnpt_appear.in",
+        {
+            "_temperature_": f"{temperature}",
+            "_lig_name_": mol,
+            "_enable_infe_": infe_flag,
+            "disang_file": "disang",
+        },
+    )
+
     # mdin-XX for gradual release
     steps1 = sim.eq_steps1
     steps2 = sim.eq_steps2
-    infe_flag = "1" if infe else "0"
 
     mdin_src = amber_dir / "mdin-equil"
     base_text = mdin_src.read_text()
