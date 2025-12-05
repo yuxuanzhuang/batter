@@ -47,7 +47,9 @@ Common tasks are centralised under ``batter/_internal/ops``:
 
 * ``box.py`` – ``create_box`` helpers (AMBER tleap scripts, solvation, ion placement).
 * ``restraints.py`` – Writers for disang/cv inputs.
-* ``sim_files.py`` – Template renderers for MD input decks.
+* ``sim_files.py`` – Template renderers for MD input decks (equilibration emits the
+  standard ``eqnpt.in``/``eqnpt0.in`` plus the appear/disappear variants used by the
+  run scripts).
 * ``simprep.py`` – Build directory initialisation and window copying.
 
 Prefer importing and extending these modules instead of duplicating tleap/parmed code.

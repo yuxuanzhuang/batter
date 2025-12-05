@@ -27,7 +27,7 @@ Common environment overrides
 Headers include commented examples for overriding executables:
 
 * ``PMEMD_EXEC`` (default: pmemd.cuda)
-* ``PMEMD_MPI_EXEC`` (default: pmemd.cuda.MPI)
+* ``PMEMD_MPI_EXEC`` (default: pmemd.cuda.MPI; used by REMD templates)
 * ``PMEMD_DPFP_EXEC`` (default: pmemd.cuda_DPFP)
 * ``PMEMD_CPU_EXEC`` (default: pmemd)
 * ``PMEMD_CPU_MPI_EXEC`` (default: pmemd.MPI)

@@ -31,8 +31,9 @@ The run YAML file is divided into three sections grouped inside
     coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
     ``lambdas`` or SDR restraints are no longer required. Equilibration controls
     are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
-    (how many additional segments to run). The total number of equilibration MD
-    steps therefore scales as ``num_equil_extends * eq_steps``. For FE production
+    (how many additional segments to run). A base segment always runs, so the
+    total equilibration work scales as ``(num_equil_extends + 1) * eq_steps``.
+    For FE production
     the ``num_fe_extends`` field multiplies the stage-2 component steps defined in
     ``steps2`` so each window ultimately samples
     ``num_fe_extends * steps2[component]`` steps before moving on.
@@ -103,6 +104,19 @@ shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
 clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems
 the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
 bulk solvent above the membrane even if the YAML specifies a smaller buffer.
+
+Equilibration options
+---------------------
+
+Two frequently toggled equilibration knobs live under ``fe_sim`` and flow into the
+resolved :class:`~batter.config.simulation.SimulationConfig`:
+
+* ``hmr`` – ``"yes"`` enables hydrogen mass repartitioning. The builder swaps in HMR
+  parameter files and switches equilibration/production mdins to the HMR topology
+  (``full.hmr.prmtop``).
+* ``enable_mcwat`` – ``"yes"`` (default) enables Monte Carlo water moves during
+  equilibration. The flag populates the ``mcwat`` setting in AMBER input decks via
+  :func:`batter._internal.ops.amber.write_amber_templates`.
 
 REMD runs
 ---------
