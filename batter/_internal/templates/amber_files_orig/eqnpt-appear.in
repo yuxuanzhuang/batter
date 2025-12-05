@@ -1,0 +1,66 @@
+*******************************************************
+*****************************       mdin
+*******************************************************
+Runs equilibrium stage
+ &cntrl
+  imin = 0,
+  ntx = 5,
+  irest = 1,
+  ntpr = _ntpr_,
+  ntwr = _ntwr_,
+  ntwe = _ntwe_,
+  ntxo = 2,
+  ntwx = _ntwx_,
+  ioutfm = 1,
+  iwrap = 1,
+  ntf = 1,
+  ntc = 2,
+  cut = 10,
+  ntt = 3,
+  temp0 = _temperature_,
+  gamma_ln = _gamma_ln_,
+  ig = -1,
+  ntp = _p_coupling_,
+  csurften = _c_surften_,
+  barostat = _barostat_,
+  nstlim = 50000,
+  dt = _step_,
+  nmropt = 1,
+  pencut = -1,
+  ntr = 1,
+  restraint_wt = 50.0,
+  restraintmask = '(@CA | :_lig_name_) & !@H=',
+  mcwat = _enable_mcwat_,
+  nmd = 1000,
+  nmc = 1000,
+  mcwatmask = ":_lig_name_",
+  mcligshift = 20,
+  mcresstr = "WAT",
+  infe = _enable_infe_,
+  clambda  = 0,
+  icfe     = 1,
+  timask1 = '',
+  timask2 = ':_lig_name_',
+  scmask1 = '',
+  scmask2 = ':_lig_name_',
+  ifsc    = 1,
+  gti_cut         = 1,
+  gti_output      = 1,
+  gti_add_sc      = 5,
+  gti_scale_beta  = 1,
+  gti_cut_sc_on   = 7,
+  gti_cut_sc_off  = 9,
+  gti_ele_exp     = 2,
+  gti_vdw_exp     = 2,
+  dynlmb          = 0.05,
+  ntave           = 1000,
+ /
+ &pmd
+ output_file = 'cmass.txt'
+ output_freq = _ntwx_
+ cv_file = 'cv.in'
+ /
+ &wt type = 'END', /
+DISANG=disang_file.rest
+LISTOUT=POUT
+
