@@ -71,6 +71,8 @@ working on internal builders or pipelines:
    developer_guide/execution_model
    developer_guide/analysis
    developer_guide/parameterisation
+   slurm_headers
+   remd_submission
 
 High-Level Execution Flow
 =========================

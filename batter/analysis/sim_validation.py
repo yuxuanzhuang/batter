@@ -170,12 +170,16 @@ class SimValidator:
 
         ag_lists = []
         for line in dihed_lines:
-            atoms_str = line.split()[2:6]
-            atoms_str = [selection_string(a) for a in atoms_str]
-            ag_group = AtomGroup([
-                self.universe.select_atoms(a).atoms[0] for a in atoms_str
-            ])
-            ag_lists.append(ag_group)
+            try:
+                atoms_str = line.split()[2:6]
+                atoms_str = [selection_string(a) for a in atoms_str]
+                ag_group = AtomGroup([
+                    self.universe.select_atoms(a).atoms[0] for a in atoms_str
+                ])
+                ag_lists.append(ag_group)
+            except Exception as e:
+                # an issue with Cl and CL naming
+                pass
         
         diheds = []
         for ts in self.universe.trajectory:

@@ -156,7 +156,6 @@ def test_args_negative_force():
     "overrides, message",
     [
         ({"p1": "bad-anchor"}, "Anchor must look"),
-        ({"remd": "yes"}, "REMD not implemented"),
         ({"dec_int": "ti"}, "TI integration not implemented"),
         ({"fe_type": "custom", "lambdas": [0.0], "num_equil_extends": 1}, "dec_method"),
         (
@@ -180,6 +179,30 @@ def test_simulation_config_errors(overrides, message):
     with pytest.raises(Exception) as excinfo:
         SimulationConfig(**kwargs)
     assert message in str(excinfo.value)
+
+
+def test_simulation_config_remd_enabled():
+    cfg = SimulationConfig(**base_sim_kwargs(remd="yes"))
+    assert cfg.remd == "yes"
+    assert cfg.remd_nstlim == 100
+    assert cfg.remd_numexchg == 3000
+
+
+def test_fesim_remd_block():
+    args = FESimArgs.model_validate(
+        {"remd": {"enable": "yes", "nstlim": 200, "numexchg": 1500}}
+    )
+    assert args.remd.enable == "yes"
+    assert args.remd.nstlim == 200
+    assert args.remd.numexchg == 1500
+
+
+def test_fesim_remd_yes_sets_enable_flag() -> None:
+    args = FESimArgs.model_validate({"remd": "yes"})
+    assert args.remd_enable == "yes"
+    # Defaults preserved for timing/exchange settings
+    assert args.remd.nstlim == 100
+    assert args.remd.numexchg == 3000
 
 
 def _minimal_create(tmp_path: Path, **updates) -> CreateArgs:
@@ -323,6 +346,26 @@ def test_resolved_sim_config_sets_fe_type(
     assert sim_cfg.fe_type == expected
 
 
+def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:
+    cfg = _minimal_run_config(tmp_path, "abfe")
+    fe_overrides = cfg.fe_sim.model_dump()
+    fe_overrides["remd"] = "yes"
+    cfg = cfg.model_copy(
+        update={
+            "fe_sim": fe_overrides,
+            "run": cfg.run.model_copy(update={"remd": "no"}),
+        }
+    )
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.remd == "no"
+
+    cfg_yes = cfg.model_copy(
+        update={"run": cfg.run.model_copy(update={"remd": "yes"})}
+    )
+    sim_cfg_yes = cfg_yes.resolved_sim_config()
+    assert sim_cfg_yes.remd == "yes"
+
+
 def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
@@ -387,50 +430,6 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     assert cfg.enable_mcwat == "no"
 
 
-def test_amber_setup_sh_defaults_and_override(tmp_path: Path) -> None:
-    create = _minimal_create(tmp_path)
-    fe_args = FESimArgs(
-        lambdas=[0, 1],
-        num_equil_extends=0,
-        eq_steps=10,
-        steps1={"z": 10},
-        steps2={"z": 20},
-    )
-
-    setup_sh = tmp_path / "amber.sh"
-    setup_sh.write_text("#!/bin/bash\necho amber\n")
-
-    run = RunConfig(
-        version=1,
-        protocol="abfe",
-        backend="local",
-        run=RunSection(
-            output_folder=tmp_path / "out",
-            amber_setup_sh=str(setup_sh),
-        ),
-        create=create,
-        fe_sim=fe_args,
-    )
-    sim_cfg = run.resolved_sim_config()
-    assert sim_cfg.amber_setup_sh == str(setup_sh)
-
-
-def test_amber_setup_sh_accepts_missing_path(tmp_path: Path) -> None:
-    create = _minimal_create(tmp_path)
-    fe_args = FESimArgs(
-        lambdas=[0, 1],
-        num_equil_extends=0,
-        eq_steps=10,
-        steps1={"z": 10},
-        steps2={"z": 20},
-    )
-    missing = tmp_path / "missing.sh"
-    cfg = SimulationConfig.from_sections(
-        create, fe_args, protocol="abfe", amber_setup_sh=str(missing)
-    )
-    assert cfg.amber_setup_sh == str(missing)
-
-
 def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:
     lig = tmp_path / "lig.sdf"
     lig.write_text("dummy")
@@ -444,3 +443,38 @@ def test_run_config_uses_md_sim_args(tmp_path: Path) -> None:
     )
     assert isinstance(run.fe_sim, MDSimArgs)
     assert run.fe_sim.dt == pytest.approx(0.004)
+
+
+def test_resolved_sim_config_handles_md(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    payload = {
+        "protocol": "md",
+        "backend": "local",
+        "run": {"output_folder": str(tmp_path / "out")},
+        "create": create.model_dump(),
+        "fe_sim": {
+            "eq_steps": 1000,
+            "num_equil_extends": 1,
+            "dt": 0.002,
+            "temperature": 300.0,
+        },
+    }
+    cfg = RunConfig.model_validate(payload)
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.fe_type == "md"
+    assert sim_cfg.eq_steps == 1000
+    assert sim_cfg.num_equil_extends == 1
+    assert sim_cfg.temperature == 300.0
+
+
+def test_md_rejects_fe_only_fields(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    payload = {
+        "protocol": "md",
+        "backend": "local",
+        "run": {"output_folder": str(tmp_path / "out")},
+        "create": create.model_dump(),
+        "fe_sim": {"num_fe_extends": 5, "eq_steps": 1000, "num_equil_extends": 1},
+    }
+    with pytest.raises(ValidationError):
+        RunConfig.model_validate(payload)

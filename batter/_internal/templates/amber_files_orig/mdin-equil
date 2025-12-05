@@ -15,7 +15,7 @@ Runs equilibrium stage
   iwrap = 1,
   ntf = 2,
   ntc = 2,
-  cut = 10,
+  cut = _cutoff_,
   ntt = 3,
   temp0 = _temperature_,
   gamma_ln = _gamma_ln_,
@@ -43,7 +43,7 @@ Runs equilibrium stage
  output_freq = _ntwx_
  cv_file = 'cv.in'
  /
- &wt type = 'END', /
 DISANG=disang_file.rest
 LISTOUT=POUT
+ &wt type = 'END', /
 

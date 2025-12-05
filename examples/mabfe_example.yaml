@@ -32,7 +32,6 @@ run:
   on_failure: prune
 
   email_on_completion: yuzhuang@stanford.edu
-  amber_setup_sh: $GROUP_HOME/software/amber24/setup_amber.sh
   slurm:
     partition: owners
     time: "12:00:00"

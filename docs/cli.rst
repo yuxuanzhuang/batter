@@ -29,6 +29,15 @@ Options:
 ``--slurm-submit``
    Emit an ``sbatch`` script and submit the job instead of running locally.
 
+Resume an existing execution (no YAML needed once seeded)::
+
+   batter run-exec work/adrb2/executions/rep1
+
+Notes:
+
+* The first ``batter run`` stores a copy of the YAML plus any external restraint files (e.g.,
+  ``extra_conformation_restraints``) under ``artifacts/config/``. ``run-exec`` reuses that copy.
+
 Inspect Free-Energy Results
 ===========================
 

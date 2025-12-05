@@ -11,6 +11,7 @@ from loguru import logger
 from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
+from batter._internal.ops import remd as remd_ops
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
@@ -71,6 +72,7 @@ def prepare_fe_handler(
     if payload.sim is None:
         raise ValueError("[prepare_fe] Missing simulation configuration in payload.")
     sim = payload.sim
+    partition = payload.get("partition") or payload.get("queue") or "normal"
     components = list(getattr(sim, "components", []) or [])
     if not components:
         raise ValueError("No components specified in sim config.")
@@ -120,6 +122,7 @@ def prepare_fe_handler(
                 "extra_restraints": extra_restraints,
                 "extra_restraints_fc": extra_restraints_fc,
                 "extra_conformation_restraints": extra_conformation_restraints,
+                "partition": partition,
             },
         )
         builder.build()  # will create <comp>-1, amber templates, run files, etc.
@@ -163,6 +166,7 @@ def prepare_fe_windows_handler(
             "[prepare_fe_windows] Missing simulation configuration in payload."
         )
     sim = payload.sim
+    partition = payload.get("partition") or payload.get("queue") or "normal"
     components = list(getattr(sim, "components", []) or [])
     if not components:
         raise RuntimeError(
@@ -224,11 +228,21 @@ def prepare_fe_windows_handler(
                     "extra_restraints": extra_restraints,
                     "extra_restraints_fc": extra_restraints_fc,
                     "extra_conformation_restraints": extra_conformation_restraints,
+                    "partition": partition,
                 },
             )
             builder.build()
 
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}
+
+        # Always write REMD inputs; run.remd controls whether they are submitted.
+        remd_ops.prepare_remd_component(
+            workdir,
+            comp=comp,
+            sim=sim,
+            n_windows=len(lambdas),
+            partition=partition,
+        )
 
     # write a canonical windows.json under artifacts/fe/
     windows_json = child_root / "fe" / "artifacts" / "windows.json"

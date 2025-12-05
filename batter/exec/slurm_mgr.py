@@ -175,6 +175,46 @@ def _slurm_state(jobid: Optional[str]) -> Optional[str]:
     return _state_from_squeue(jobid) or _state_from_sacct(jobid)
 
 
+def _parse_gpu_env(value: str) -> Optional[int]:
+    """Parse a GPU count from common SLURM/CUDA environment variables."""
+    if not value:
+        return None
+    txt = value.strip()
+    if not txt:
+        return None
+    if txt.isdigit():
+        count = int(txt)
+        return count if count > 0 else None
+    tokens = [t for t in re.split(r"[,:]", txt) if t]
+    digits = [t for t in tokens if t.isdigit()]
+    if len(digits) > 1:
+        return len(digits)
+    if digits:
+        try:
+            count = int(digits[-1])
+            return count if count > 0 else None
+        except Exception:
+            pass
+    if tokens:
+        return len(tokens)
+    return None
+
+
+def _infer_stage_from_workdir(path: Path | None) -> Optional[str]:
+    """Heuristically infer a stage name from ``path`` for legacy queue entries."""
+    if not path:
+        return None
+    parts = [p.lower() for p in path.parts]
+    if "equil" in parts:
+        return "equil"
+    if "fe" in parts:
+        # component equil windows are named <comp>-1; production windows differ
+        if path.name.endswith("-1"):
+            return "fe_equil"
+        return "fe"
+    return None
+
+
 # ---- Spec ----
 @dataclass
 class SlurmJobSpec:
@@ -196,6 +236,10 @@ class SlurmJobSpec:
         Additional ``sbatch`` flags appended during submission.
     extra_env : dict, optional
         Additional environment variables exported before submission.
+    batch_script : pathlib.Path, optional
+        Optional wrapper script used when batch_mode is enabled.
+    submit_dir : pathlib.Path, optional
+        Working directory used when submitting (defaults to ``workdir``).
     """
 
     workdir: Path
@@ -203,8 +247,15 @@ class SlurmJobSpec:
     finished_name: str = "FINISHED"
     failed_name: str = "FAILED"
     name: Optional[str] = None
+    stage: Optional[str] = None
+    body_rel: Optional[str] = None
+    header_name: Optional[str] = None
+    header_template: Optional[Path] = None
+    header_root: Optional[Path] = None
     extra_sbatch: Sequence[str] = field(default_factory=list)
     extra_env: Dict[str, str] = field(default_factory=dict)
+    batch_script: Path | None = None
+    submit_dir: Path | None = None
 
     # allow a few common variants (case, alt names)
     alt_script_names: Sequence[str] = (
@@ -240,9 +291,11 @@ class SlurmJobSpec:
 
     def script_arg(self) -> str:
         """Return the workdir-relative script argument for ``sbatch``."""
-        abs_script = self.resolve_script_abs()
+        base = self.submit_dir or self.workdir
+        candidate = base / self.script_rel
+        abs_script = candidate if candidate.exists() else self.resolve_script_abs()
         try:
-            return str(abs_script.relative_to(self.workdir))
+            return str(abs_script.relative_to(base))
         except ValueError:
             return abs_script.name
 
@@ -262,6 +315,12 @@ class SlurmJobManager:
         submit_retry_limit: int = 3,
         submit_retry_delay_s: float = 60.0,
         max_active_jobs: Optional[int] = None,
+        batch_mode: bool = False,
+        batch_gpus: Optional[int] = None,
+        gpus_per_task: int = 1,
+        srun_extra: Optional[Sequence[str]] = None,
+        stage: Optional[str] = None,
+        header_root: Optional[Path] = None,
     ):
         """Initialise the manager.
 
@@ -288,6 +347,15 @@ class SlurmJobManager:
         max_active_jobs : int, optional
             Maximum number of active jobs allowed for the user. When ``None``,
             no limit is enforced.
+        batch_mode : bool, optional
+            When ``True``, batch scripts (e.g., SLURMM-BATCH) may be supplied via
+            ``batch_script``/``submit_dir`` on the job specs.
+        batch_gpus : int, optional
+            Reserved for future inline execution modes.
+        gpus_per_task : int, optional
+            Reserved for future inline execution modes.
+        srun_extra : Sequence[str], optional
+            Reserved for future inline execution modes.
         """
         self.poll_s = float(poll_s)
         self.max_retries = int(max_retries)
@@ -312,6 +380,90 @@ class SlurmJobManager:
         self._retries: Dict[Path, int] = {}
         self._submitted_job_ids: set[str] = set()
         self.n_active: int = 0
+        self._stage: Optional[str] = stage
+        self._header_root = header_root
+        self.batch_mode = bool(batch_mode)
+        self.batch_gpus = (
+            None if batch_gpus is None or int(batch_gpus) <= 0 else int(batch_gpus)
+        )
+        self.gpus_per_task = max(1, int(gpus_per_task))
+        self.srun_extra: List[str] = list(srun_extra or [])
+
+    def set_stage(self, stage: Optional[str]) -> None:
+        """Limit registry loading to ``stage`` and default new specs to this stage."""
+        self._stage = stage
+
+    def _stage_matches(self, stage: Optional[str], workdir: Path | None = None) -> bool:
+        """Return ``True`` if ``stage`` is compatible with the manager's active stage."""
+        if not self._stage:
+            return True
+        if stage:
+            return stage == self._stage
+        # Best-effort inference for legacy entries without stage metadata
+        inferred = _infer_stage_from_workdir(workdir) if workdir else None
+        return inferred == self._stage
+
+    def _filter_stage(self, specs: Dict[Path, SlurmJobSpec]) -> Dict[Path, SlurmJobSpec]:
+        """Filter ``specs`` to the active stage (if set)."""
+        if not self._stage:
+            return specs
+        return {
+            wd: spec for wd, spec in specs.items() if self._stage_matches(spec.stage, wd)
+        }
+
+    def _resolve_header_root(self, spec: SlurmJobSpec) -> Path:
+        root = spec.header_root or self._header_root
+        if not root:
+            env_root = os.environ.get("BATTER_SLURM_HEADER_DIR")
+            if env_root:
+                return Path(env_root)
+        return Path(root) if root else Path.home() / ".batter"
+
+    def _rebuild_script_with_header(self, spec: SlurmJobSpec, script_abs: Path) -> None:
+        """Rebuild the submission script by prepending a header to the stored body, if present."""
+        body_path = spec.workdir / spec.body_rel if spec.body_rel else script_abs
+        if not body_path.exists():
+            candidate = script_abs.with_suffix(script_abs.suffix + ".body")
+            if candidate.exists():
+                body_path = candidate
+            else:
+                return
+
+        try:
+            body_text = body_path.read_text()
+            # drop any baked-in SBATCH lines from the body
+            body_lines = [
+                ln for ln in body_text.splitlines() if not ln.lstrip().startswith("#SBATCH")
+            ]
+            body_text = "\n".join(body_lines)
+        except Exception as exc:
+            logger.warning(f"[SLURM] Failed to read body {body_path}: {exc}")
+            return
+
+        header_root = self._resolve_header_root(spec)
+        header_text = ""
+        if spec.header_name:
+            user_header = header_root / spec.header_name
+            if user_header.exists():
+                try:
+                    header_text = user_header.read_text()
+                except Exception as exc:
+                    logger.warning(f"[SLURM] Failed to read header {user_header}: {exc}")
+            elif spec.header_template and spec.header_template.exists():
+                try:
+                    header_text = spec.header_template.read_text()
+                except Exception:
+                    header_text = ""
+
+        combined = header_text
+        if combined and not combined.endswith("\n"):
+            combined += "\n"
+        combined += body_text
+
+        try:
+            script_abs.write_text(combined)
+        except Exception as exc:
+            logger.warning(f"[SLURM] Could not write rebuilt script {script_abs}: {exc}")
 
     # ---------- Registry API ----------
     def add(self, spec: SlurmJobSpec) -> None:
@@ -327,6 +479,9 @@ class SlurmJobManager:
             self.triggered = True
             return
 
+        if spec.stage is None and self._stage is not None:
+            spec.stage = self._stage
+
         self._inmem_specs[spec.workdir] = spec
 
         if self._registry_file is not None:
@@ -336,8 +491,15 @@ class SlurmJobManager:
                 "finished_name": spec.finished_name,
                 "failed_name": spec.failed_name,
                 "name": spec.name,
+                "stage": spec.stage,
+                "body_rel": spec.body_rel,
+                "header_name": spec.header_name,
+                "header_template": str(spec.header_template) if spec.header_template else None,
+                "header_root": str(spec.header_root) if spec.header_root else None,
                 "extra_sbatch": list(spec.extra_sbatch or []),
                 "extra_env": dict(getattr(spec, "extra_env", {}) or {}),
+                "batch_script": str(spec.batch_script) if spec.batch_script else None,
+                "submit_dir": str(spec.submit_dir) if spec.submit_dir else None,
             }
             _atomic_append_jsonl_unique(self._registry_file, rec, unique_key="workdir")
 
@@ -388,14 +550,24 @@ class SlurmJobManager:
                 except Exception:
                     continue
                 wd = Path(rec["workdir"])
+                stage = rec.get("stage")
+                if not self._stage_matches(stage, wd):
+                    continue
                 out[wd] = SlurmJobSpec(
                     workdir=wd,
                     script_rel=rec.get("script_rel", "SLURMM-run"),
                     finished_name=rec.get("finished_name", "FINISHED"),
                     failed_name=rec.get("failed_name", "FAILED"),
                     name=rec.get("name"),
+                    stage=stage,
+                    body_rel=rec.get("body_rel"),
+                    header_name=rec.get("header_name"),
+                    header_template=Path(rec["header_template"]) if rec.get("header_template") else None,
+                    header_root=Path(rec["header_root"]) if rec.get("header_root") else None,
                     extra_sbatch=rec.get("extra_sbatch") or [],
                     extra_env=rec.get("extra_env") or {},
+                    batch_script=Path(rec["batch_script"]) if rec.get("batch_script") else None,
+                    submit_dir=Path(rec["submit_dir"]) if rec.get("submit_dir") else None,
                 )
         return out
 
@@ -403,7 +575,7 @@ class SlurmJobManager:
         """Return the union of in-memory and on-disk queued specs (dedup by workdir)."""
         merged: Dict[Path, SlurmJobSpec] = self._load_registry_specs()
         merged.update(self._inmem_specs)
-        return list(merged.values())
+        return list(self._filter_stage(merged).values())
 
     def clear(self) -> None:
         """Clear in-memory specs, retry bookkeeping, and remove the on-disk queue if present."""
@@ -438,7 +610,16 @@ class SlurmJobManager:
 
     def _submit_once(self, spec: SlurmJobSpec) -> str:
         """Submit ``spec`` via ``sbatch`` and persist the resulting job id (single attempt)."""
-        script_abs = spec.resolve_script_abs()
+        # resolve script path (allow separate submission directory)
+        if spec.submit_dir:
+            candidate = Path(spec.submit_dir) / spec.script_rel
+            script_abs = candidate if candidate.exists() else spec.resolve_script_abs()
+        else:
+            script_abs = spec.resolve_script_abs()
+
+        # If a body is present, rebuild the script with the current header
+        self._rebuild_script_with_header(spec, script_abs)
+
         if not script_abs.exists():
             listing = (
                 ", ".join(sorted(p.name for p in spec.workdir.iterdir()))
@@ -471,16 +652,18 @@ class SlurmJobManager:
 
         cmd.append(spec.script_arg())
 
+        submit_cwd = spec.submit_dir or spec.workdir
+
         if self.dry_run:
-            logger.info(f"[DRY-RUN] sbatch (cwd={spec.workdir}): {' '.join(cmd)}")
+            logger.info(f"[DRY-RUN] sbatch (cwd={submit_cwd}): {' '.join(cmd)}")
             # fabricate a dummy JOBID to keep downstream logic harmless
             _write_text(spec.jobid_path(), "0\n")
             return "0"
 
-        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={spec.workdir})")
+        logger.debug(f"[SLURM] sbatch: {' '.join(cmd)} (cwd={submit_cwd})")
         proc = subprocess.run(
             cmd,
-            cwd=spec.workdir,
+            cwd=submit_cwd,
             text=True,
             capture_output=True,
         )
@@ -498,7 +681,7 @@ class SlurmJobManager:
         _write_text(spec.jobid_path(), f"{jobid}\n")
         self._submitted_job_ids.add(jobid)
         self.n_active += 1
-        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid}")
+        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid} #{self.n_active} active")
         return jobid
 
     def _status(self, spec: SlurmJobSpec) -> Tuple[bool, Optional[str]]:
@@ -542,13 +725,15 @@ class SlurmJobManager:
         """Submit/monitor all registered jobs together and block until completion."""
         specs_map = self._load_registry_specs()
         specs_map.update(self._inmem_specs)
+        specs_map = self._filter_stage(specs_map)
         if not specs_map and not self.dry_run:
             logger.debug("[SLURM] wait_all: nothing to monitor.")
             return
         elif self.dry_run:
             self.triggered = True
             return
-        self._wait_loop(list(specs_map.values()))
+        specs = list(specs_map.values())
+        self._wait_loop(specs)
         # clear registry for next phase
         self.clear()
 
@@ -638,7 +823,7 @@ class SlurmJobManager:
                             f"state={state}; attempting resubmit"
                         )
                 elif completed_state:
-                    logger.info(
+                    logger.debug(
                         f"[SLURM] {wd.name}: job{(' ' + jobid) if jobid else ''} completed without FINISHED; "
                         "resubmitting without counting against retries"
                     )

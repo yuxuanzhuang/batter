@@ -150,6 +150,7 @@ def equil_analysis_handler(step: Step, system: SimSystem, params: Dict[str, Any]
     # use the last frame as representative
     except Exception as e:
         logger.warning(f"[equil_check:{lig}] error during simulation validation: {e}")
+        raise e
         # copy last frame as representative
         shutil.copyfile(p["equil_dir"] / f"md{n_eq-1:02d}.rst7", p["rep_rst"])
         # convert to pdb

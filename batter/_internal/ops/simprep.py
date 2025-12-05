@@ -13,7 +13,12 @@ import MDAnalysis as mda
 
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
-from batter._internal.ops.helpers import load_anchors, save_anchors, Anchors, get_sdr_dist
+from batter._internal.ops.helpers import (
+    load_anchors,
+    save_anchors,
+    Anchors,
+    get_sdr_dist,
+)
 
 from batter.utils import run_with_log
 from batter.config.simulation import SimulationConfig
@@ -30,6 +35,7 @@ def _rel_symlink(target: Path, link_path: Path) -> None:
     rel = os.path.relpath(target, start=link_path.parent)
     link_path.symlink_to(rel)
 
+
 def _copy_if_exists(src: Path, dst: Path) -> None:
     if src.exists():
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -37,21 +43,26 @@ def _copy_if_exists(src: Path, dst: Path) -> None:
     else:
         logger.warning(f"[simprep] expected file not found: {src} (continuing)")
 
+
 def _read_nonblank_lines(p: Path) -> List[str]:
     return [ln.rstrip("\n") for ln in p.read_text().splitlines() if ln.strip()]
+
 
 def _is_atom_line(line: str) -> bool:
     tag = line[0:6].strip()
     return tag == "ATOM" or tag == "HETATM"
 
+
 def _field(line: str, start: int, end: int) -> str:
     # 0-based, end exclusive
     return line[start:end].strip()
+
 
 def _safe_resid(resid: int) -> int:
     """Clamp resid into PDB 1..9999 domain."""
     r = resid % 10000
     return r if r != 0 else 1
+
 
 def _fmt_atom_line(
     serial: int,
@@ -64,7 +75,7 @@ def _fmt_atom_line(
     z: float,
 ) -> str:
     name4 = f"{name:>4s}"[:4]
-    res3  = f"{resname:>3s}"[:3]
+    res3 = f"{resname:>3s}"[:3]
     chain1 = (chain or " ")[:1]
     resid4 = _safe_resid(resid)
     return (
@@ -75,6 +86,7 @@ def _fmt_atom_line(
 
 
 # ---------------------- unified writer ----------------------
+
 
 def write_build_from_aligned(
     *,
@@ -112,10 +124,10 @@ def write_build_from_aligned(
             x = float(_field(dlines[1], 30, 38) or 0.0)
             y = float(_field(dlines[1], 38, 46) or 0.0)
             z = float(_field(dlines[1], 46, 54) or 0.0)
-            name    = _field(dlines[1], 12, 16) or "DU"
+            name = _field(dlines[1], 12, 16) or "DU"
             resname = _field(dlines[1], 17, 20) or "DUM"
-            resid   = int(float(_field(dlines[1], 22, 26) or 1))
-            chain   = _field(dlines[1], 21, 22) or "A"
+            resid = int(float(_field(dlines[1], 22, 26) or 1))
+            chain = _field(dlines[1], 21, 22) or "A"
             coords_dum.append((x, y, z))
             atom_dum.append((name, resname, resid, chain))
     if not coords_dum:
@@ -125,26 +137,33 @@ def write_build_from_aligned(
     dum_count = len(coords_dum)
 
     # ---- categorize atoms
-    om = set(other_mol or []); lm = set(lipid_mol or []); im = set(ion_mol or [])
+    om = set(other_mol or [])
+    lm = set(lipid_mol or [])
+    im = set(ion_mol or [])
     recep_block: List[Tuple[str, str, int, str, float, float, float]] = []
-    lig_block:   List[Tuple[str, str, int, str, float, float, float]] = []
-    oth_block:   List[Tuple[str, str, int, str, float, float, float]] = []
+    lig_block: List[Tuple[str, str, int, str, float, float, float]] = []
+    oth_block: List[Tuple[str, str, int, str, float, float, float]] = []
     recep_last_resid = 0
 
     for ln in lines:
         if not _is_atom_line(ln):
             continue
         resname = _field(ln, 17, 21)
-        chain   = _field(ln, 21, 22)
-        resid   = int(_field(ln, 22, 26) or 0)
-        name    = _field(ln, 12, 16)
+        chain = _field(ln, 21, 22)
+        resid = int(_field(ln, 22, 26) or 0)
+        name = _field(ln, 12, 16)
         x = float(_field(ln, 30, 38) or 0.0)
         y = float(_field(ln, 38, 46) or 0.0)
         z = float(_field(ln, 46, 54) or 0.0)
 
-        if resname not in {lig, "DUM", "WAT"} and resname not in om and resname not in lm and resname not in im:
+        if (
+            resname not in {lig, "DUM", "WAT"}
+            and resname not in om
+            and resname not in lm
+            and resname not in im
+        ):
             recep_block.append((name, resname, resid - start_off_set, chain, x, y, z))
-            recep_last_resid = max(recep_last_resid, resid-start_off_set)
+            recep_last_resid = max(recep_last_resid, resid - start_off_set)
         elif resname == lig:
             lig_block.append((name, resname, resid - start_off_set, chain, x, y, z))
         else:
@@ -158,7 +177,9 @@ def write_build_from_aligned(
 
         # Dummy blocks (all)
         for (name, resname, resid, chain), (x, y, z) in zip(atom_dum, coords_dum):
-            fout.write(_fmt_atom_line(serial, name, resname, chain, resid, x, y, z) + "\n")
+            fout.write(
+                _fmt_atom_line(serial, name, resname, chain, resid, x, y, z) + "\n"
+            )
             fout.write("TER\n")
             serial += 1
             recep_last_resid += 1
@@ -167,20 +188,31 @@ def write_build_from_aligned(
         # Receptor (+dum_count)
         prev_chain = None
         for name, resname, resid, chain, x, y, z in recep_block:
-            if prev_chain is not None and chain != prev_chain and resname not in om and resname != "WAT":
+            if (
+                prev_chain is not None
+                and chain != prev_chain
+                and resname not in om
+                and resname != "WAT"
+            ):
                 fout.write("TER\n")
             prev_chain = chain
-            fout.write(_fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z) + "\n")
+            fout.write(
+                _fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z)
+                + "\n"
+            )
             serial += 1
             if use_ter_markers:
-                leg_idx = (resid + 2 - dum_count)
+                leg_idx = resid + 2 - dum_count
                 if leg_idx in (ter_atoms or set()):
                     fout.write("TER\n")
         fout.write("TER\n")
 
         # Ligand at lig_resid
         for name, resname, resid, chain, x, y, z in lig_block:
-            fout.write(_fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z) + "\n")
+            fout.write(
+                _fmt_atom_line(serial, name, resname, chain, resid + dum_count, x, y, z)
+                + "\n"
+            )
             serial += 1
         fout.write("TER\n")
 
@@ -189,7 +221,19 @@ def write_build_from_aligned(
         for i, shift in enumerate(extra_ligand_shift, start=1):
             shift_sdr_dist = sdr_dist if shift else 0.0
             for name, _, __, chain, x, y, z in lig_block:
-                fout.write(_fmt_atom_line(serial, name, lig, chain, resid + i, x, y, z + float(shift_sdr_dist)) + "\n")
+                fout.write(
+                    _fmt_atom_line(
+                        serial,
+                        name,
+                        lig,
+                        chain,
+                        resid + i,
+                        x,
+                        y,
+                        z + float(shift_sdr_dist),
+                    )
+                    + "\n"
+                )
                 serial += 1
             fout.write("TER\n")
 
@@ -200,7 +244,9 @@ def write_build_from_aligned(
             if last_resid is not None and out_resid != last_resid:
                 fout.write("TER\n")
             last_resid = out_resid
-            fout.write(_fmt_atom_line(serial, name, resname, chain, out_resid, x, y, z) + "\n")
+            fout.write(
+                _fmt_atom_line(serial, name, resname, chain, out_resid, x, y, z) + "\n"
+            )
             serial += 1
 
         fout.write("TER\nEND\n")
@@ -217,6 +263,7 @@ def write_build_from_aligned(
 
 # ---------------------- create_simulation_dir: EQUIL ----------------------
 
+
 def _read_protein_anchors(txt: Path) -> Tuple[str, str, str]:
     """protein_anchors.txt is expected to have 3 lines: P1, P2, P3."""
     if not txt.exists():
@@ -226,7 +273,10 @@ def _read_protein_anchors(txt: Path) -> Tuple[str, str, str]:
         raise ValueError(f"[simprep] protein_anchors.txt malformed: {txt}")
     return lines[0], lines[1], lines[2]
 
-def _read_ligand_anchor_names(txt: Path) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+
+def _read_ligand_anchor_names(
+    txt: Path,
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     if not txt.exists():
         logger.warning(f"[simprep] anchors file not found: {txt}")
         return None, None, None
@@ -236,6 +286,7 @@ def _read_ligand_anchor_names(txt: Path) -> Tuple[Optional[str], Optional[str], 
         logger.warning(f"[simprep] anchors file malformed: '{line}'")
         return None, None, None
     return parts[0], parts[1], parts[2]
+
 
 def _mask(resid: int, atom: Optional[str]) -> Optional[str]:
     return f":{resid}@{atom}" if atom else None
@@ -266,17 +317,17 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
     src_dum_prmtop = build_dir / "dum.prmtop"
     src_dum_inpcrd = build_dir / "dum.inpcrd"
     src_dum_frcmod = build_dir / "dum.frcmod"
-    src_dum_mol2   = build_dir / "dum.mol2"
+    src_dum_mol2 = build_dir / "dum.mol2"
 
     # destinations
     dst_equil = window_dir / f"equil-{mol}.pdb"
-    dst_ref   = window_dir / "equil-reference.pdb"
-    dst_lig   = window_dir / f"{mol}.pdb"
+    dst_ref = window_dir / "equil-reference.pdb"
+    dst_lig = window_dir / f"{mol}.pdb"
     dst_anchors = window_dir / "anchors.txt"
     dst_dum_prmtop = window_dir / "dum.prmtop"
     dst_dum_inpcrd = window_dir / "dum.inpcrd"
     dst_dum_frcmod = window_dir / "dum.frcmod"
-    dst_dum_mol2   = window_dir / "dum.mol2"
+    dst_dum_mol2 = window_dir / "dum.mol2"
 
     # copy inputs
     for s, d in [
@@ -287,7 +338,7 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
         (src_dum_prmtop, dst_dum_prmtop),
         (src_dum_inpcrd, dst_dum_inpcrd),
         (src_dum_frcmod, dst_dum_frcmod),
-        (src_dum_mol2,   dst_dum_mol2),
+        (src_dum_mol2, dst_dum_mol2),
     ]:
         _copy_if_exists(s, d)
 
@@ -314,7 +365,7 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
     )
 
     # compute residue numbers for REMARK and anchors.json
-    lig_resid  = recep_last + 1
+    lig_resid = recep_last + 1
     L1 = _mask(lig_resid, l1_name)
     L2 = _mask(lig_resid, l2_name)
     L3 = _mask(lig_resid, l3_name)
@@ -333,7 +384,7 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
 
 
 # ---------------------- create_simulation_dir: Z ----------------------
-@register_create_simulation('z')
+@register_create_simulation("z")
 def create_simulation_dir_z(ctx: BuildContext) -> None:
     """
     Create the initial simulation directory for component 'z' at window `-1`
@@ -342,14 +393,14 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     comp = ctx.comp.lower()
     ligand = ctx.ligand
     mol = ctx.residue_name
-    buffer_z    = ctx.sim.buffer_z
+    buffer_z = ctx.sim.buffer_z
 
     # paths
     sys_root = ctx.system_root
     build_dir = ctx.build_dir
     amber_dir = ctx.amber_dir
-    dest_dir  = ctx.equil_dir
-    ff_dir    = sys_root / "simulations" / ligand / "params"
+    dest_dir = ctx.equil_dir
+    ff_dir = sys_root / "simulations" / ligand / "params"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -361,14 +412,14 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         _copy_if_exists(p, dest_dir / p.name)
 
     for s, d in [
-        (build_dir / f"{mol}.pdb",                 dest_dir / f"{mol}.pdb"),
-        (build_dir / f"fe-{mol}.pdb",              dest_dir / "build-ini.pdb"),
-        (build_dir / f"fe-{mol}.pdb",              dest_dir / f"fe-{mol}.pdb"),
-        (build_dir / f"anchors-{ligand}.txt",      dest_dir / f"anchors-{ligand}.txt"),
-        (build_dir / "equil-reference.pdb",        dest_dir / "equil-reference.pdb"),
-        (build_dir / "dum.inpcrd",                 dest_dir / "dum.inpcrd"),
-        (build_dir / "dum.prmtop",                 dest_dir / "dum.prmtop"),
-        (build_dir / "rec_file.pdb",               dest_dir / "rec_file.pdb"),
+        (build_dir / f"{mol}.pdb", dest_dir / f"{mol}.pdb"),
+        (build_dir / f"fe-{mol}.pdb", dest_dir / "build-ini.pdb"),
+        (build_dir / f"fe-{mol}.pdb", dest_dir / f"fe-{mol}.pdb"),
+        (build_dir / f"anchors-{ligand}.txt", dest_dir / f"anchors-{ligand}.txt"),
+        (build_dir / "equil-reference.pdb", dest_dir / "equil-reference.pdb"),
+        (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
+        (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
+        (build_dir / "rec_file.pdb", dest_dir / "rec_file.pdb"),
     ]:
         _copy_if_exists(s, d)
 
@@ -395,11 +446,12 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
                     ter_atoms.append(int(ln[6:11].strip()))
                 except Exception:
                     pass
-    
-    if not buffer_z: buffer_z = 25
-    sdr_dist = get_sdr_dist(build_dir / "complex.pdb",
-        lig_resname=mol, buffer_z=buffer_z, extra_buffer=5)
 
+    if not buffer_z:
+        buffer_z = 25
+    sdr_dist = get_sdr_dist(
+        build_dir / "complex.pdb", lig_resname=mol, buffer_z=buffer_z, extra_buffer=5
+    )
 
     # write build files for z
     write_build_from_aligned(
@@ -412,15 +464,16 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         ion_mol=ION_NAMES,
         extra_ligand_shift=[True],  # SDR copy
         sdr_dist=sdr_dist,
-        start_off_set=1, # equil offset
+        start_off_set=1,  # equil offset
         use_ter_markers=True,
         ter_atoms=set(ter_atoms),
     )
 
     logger.debug(f"[simprep:z] simulation directory created → {dest_dir}")
 
-@register_create_simulation('y')
-@register_create_simulation('m')
+
+@register_create_simulation("y")
+@register_create_simulation("m")
 def create_simulation_dir_lig(ctx: BuildContext) -> None:
     mol = ctx.residue_name
     ligand = ctx.ligand
@@ -429,8 +482,8 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
     sys_root = ctx.system_root
     build_dir = ctx.build_dir
     amber_dir = ctx.amber_dir
-    dest_dir  = ctx.equil_dir
-    ff_dir    = sys_root / "simulations" / ligand / "params"
+    dest_dir = ctx.equil_dir
+    ff_dir = sys_root / "simulations" / ligand / "params"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -442,9 +495,9 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
         _copy_if_exists(p, dest_dir / p.name)
 
     for s, d in [
-        (build_dir / f"{mol}.pdb",                 dest_dir / f"{mol}.pdb"),
-        (build_dir / "dum.inpcrd",                 dest_dir / "dum.inpcrd"),
-        (build_dir / "dum.prmtop",                 dest_dir / "dum.prmtop"),
+        (build_dir / f"{mol}.pdb", dest_dir / f"{mol}.pdb"),
+        (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
+        (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
     ]:
         _copy_if_exists(s, d)
 
@@ -456,29 +509,34 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
 
     # write build.pdb with dum atom + ligand
     # the position of the DUM atom is the center of mass of the ligand
-    u_lig = mda.Universe(dest_dir / f'{mol}.pdb')
+    u_lig = mda.Universe(dest_dir / f"{mol}.pdb")
     com = u_lig.atoms.center_of_mass()
-    u_dum = mda.Universe.empty(1,
-                        n_residues=1,
-                        atom_resindex=[0],
-                        residue_segindex=[0],
-                        trajectory=True)
-    u_dum.add_TopologyAttr('name', ['Pb'])
-    u_dum.add_TopologyAttr('resname', ['DUM'])
+    u_dum = mda.Universe.empty(
+        1, n_residues=1, atom_resindex=[0], residue_segindex=[0], trajectory=True
+    )
+    u_dum.add_TopologyAttr("name", ["Pb"])
+    u_dum.add_TopologyAttr("resname", ["DUM"])
     u_dum.atoms.positions = np.array([com])
-    with mda.Writer(dest_dir / 'build.pdb', n_atoms=u_lig.atoms.n_atoms + 1) as W:
+    with mda.Writer(dest_dir / "build.pdb", n_atoms=u_lig.atoms.n_atoms + 1) as W:
         W.write(u_dum)
         W.write(u_lig)
+
 
 # ---------------------- window copier ----------------------
 def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None:
     """Symlink (using relative links) or copy only the needed files from the source simulation dir."""
     needed = [
-        "full.prmtop", "full.inpcrd", "full.pdb",
-        "vac.pdb", "vac_ligand.pdb",
-        "vac.prmtop", "vac_ligand.prmtop",
-        "fe-lig.pdb", "lig.mol2",
-        "disang.rest", "cv.in",
+        "full.prmtop",
+        "full.inpcrd",
+        "full.pdb",
+        "vac.pdb",
+        "vac_ligand.pdb",
+        "vac.prmtop",
+        "vac_ligand.prmtop",
+        "fe-lig.pdb",
+        "lig.mol2",
+        "disang.rest",
+        "cv.in",
     ]
     if not hasattr(sim, "hmr"):
         raise AttributeError("SimulationConfig missing 'hmr'.")
@@ -496,10 +554,5 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
         if dst.exists() or dst.is_symlink():
             dst.unlink()
 
-        try:
-            # Compute relative path from destination directory to source file
-            rel_src = os.path.relpath(src, start=dest)
-            dst.symlink_to(rel_src)
-        except Exception as e:
-            # Fall back to copying if symlink fails (e.g., on Windows or cross-device)
-            shutil.copy2(src, dst)
+        # Always copy files to avoid issues with transferring between computers
+        shutil.copy2(src, dst)

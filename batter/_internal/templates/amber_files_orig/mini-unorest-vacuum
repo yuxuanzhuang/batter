@@ -17,7 +17,7 @@ Minimizing.
   nmropt = 0,
   pencut = -1,
  /
- &wt type = 'END', /
 DISANG=disang.rest
 LISTOUT=POUT
+ &wt type = 'END', /
 
