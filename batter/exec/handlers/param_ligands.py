@@ -11,7 +11,13 @@ from typing import Any, Dict, List, Tuple
 from loguru import logger
 
 from batter.orchestrate.state_registry import register_phase_state
-from batter.param.ligand import _convert_mol_name_to_unique, batch_ligand_process
+from batter.param.ligand import (
+    _convert_mol_name_to_unique,
+    _hash_id,
+    _rdkit_load,
+    _canonical_payload,
+    batch_ligand_process,
+)
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
@@ -109,7 +115,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         if not hashes:
             raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
     except Exception as exc:
-        # allow reuse of an existing index when on_failure=prune/retry
+        # allow reuse of an existing index when present
         if index_path.exists():
             logger.error(
                 "[param_ligands] encountered error but index exists; reusing cached ligands. Error: %s",
@@ -140,35 +146,79 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
                     "hashes": [e.get("hash") for e in index_entries],
                 },
             )
-        raise
 
-    # generate unique list of resnames
-    unique_resnames = []
+        # Attempt to salvage cached ligands: use existing param store entries only
+        salvaged_hashes: List[str] = []
+        unique = {}
+        for name, path in lig_map.items():
+            try:
+                mol = _rdkit_load(path, retain_h=retain)
+                smi = _canonical_payload(mol)
+                hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
+                cache_dir = outdir / hid
+                if (cache_dir / "lig.prmtop").exists():
+                    unique[path] = (hid, smi)
+                    salvaged_hashes.append(hid)
+            except Exception:
+                continue
+
+        if salvaged_hashes:
+            logger.error(
+                "[param_ligands] encountered error; salvaged %d cached ligands and will skip failures.",
+                len(salvaged_hashes),
+            )
+            hashes = salvaged_hashes
+        else:
+            logger.error(
+                "[param_ligands] encountered error and no cached ligands could be salvaged: %s",
+                exc,
+            )
+            raise
+
+    # generate unique list of resnames only for ligands we have data for
+    unique_resnames: Dict[str, str] = {}
+    seen_resnames: set[str] = set()
     for i, (name, p) in enumerate(lig_map.items()):
+        smiles_val = unique.get(p, (None, None))[1]
+        if smiles_val is None:
+            continue
         init_mol_name = name.lower()
         unique_resname = _convert_mol_name_to_unique(
             mol_name=init_mol_name,
             ind=i,
-            smiles=unique[p][1],
-            exist_mol_names=set(unique_resnames),
+            smiles=smiles_val,
+            exist_mol_names=seen_resnames,
         )
-        unique_resnames.append(unique_resname)
+        seen_resnames.add(unique_resname)
+        unique_resnames[name] = unique_resname
 
     # Link artifacts per staged ligand and collect index rows
     index_entries: List[Dict[str, Any]] = []
     linked: List[Tuple[str, str]] = []  # (name, hash)
 
-    for i, (name, d) in enumerate(lig_map.items()):
-        hid = hashes[i]
+    for name, d in lig_map.items():
+        if name not in unique_resnames:
+            logger.warning("[param_ligands] Skipping ligand %s due to parametrization failure.", name)
+            continue
+        hid = unique.get(d, (None, None))[0]
+        if hid is None:
+            logger.warning("[param_ligands] Missing hash for ligand %s; skipping.", name)
+            continue
         src_dir = outdir / hid
         meta_path = src_dir / "metadata.json"
         if not src_dir.exists() or not meta_path.exists():
-            raise FileNotFoundError(
-                f"[param_ligands] Missing params for staged ligand {name}: expected {src_dir}"
+            logger.warning(
+                "[param_ligands] Missing params for staged ligand %s at %s; skipping.",
+                name,
+                src_dir,
             )
+            continue
 
         meta = json.loads(meta_path.read_text())
-        residue_name = unique_resnames[i]
+        residue_name = unique_resnames.get(name)
+        if residue_name is None:
+            logger.warning("[param_ligands] Missing residue name for %s; skipping.", name)
+            continue
         title = meta.get("title", name)
 
         copy_ligand_params(src_dir, lig_root / Path(name), residue_name)
@@ -195,6 +245,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
             "retain_lig_prot": retain,
         },
     }
+    index_path = artifacts_index_dir / "index.json"
     index_path.write_text(json.dumps(index_payload, indent=2))
     marker_rel = index_path.relative_to(system.root).as_posix()
     register_phase_state(
