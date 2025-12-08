@@ -90,35 +90,71 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         f"(charge={charge}, ff={ligand_ff}, retain H={retain})"
     )
 
-    # Run batch parametrization into content-addressed subfolders
-    # Returns (hash_ids_in_order, residue_names_in_order)
-    hashes, unique = batch_ligand_process(
-        ligand_paths=lig_map,
-        output_path=outdir,
-        retain_lig_prot=retain,
-        ligand_ff=ligand_ff,
-        charge_method=charge,
-        overwrite=False,
-        run_with_slurm=False,
-    )
-    if not hashes:
-        raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
-    
+    artifacts_index_dir = system.root / "artifacts" / "ligand_params"
+    artifacts_index_dir.mkdir(parents=True, exist_ok=True)
+    index_path = artifacts_index_dir / "index.json"
+
+    try:
+        # Run batch parametrization into content-addressed subfolders
+        # Returns (hash_ids_in_order, residue_names_in_order)
+        hashes, unique = batch_ligand_process(
+            ligand_paths=lig_map,
+            output_path=outdir,
+            retain_lig_prot=retain,
+            ligand_ff=ligand_ff,
+            charge_method=charge,
+            overwrite=False,
+            run_with_slurm=False,
+        )
+        if not hashes:
+            raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
+    except Exception as exc:
+        # allow reuse of an existing index when on_failure=prune/retry
+        if index_path.exists():
+            logger.error(
+                "[param_ligands] encountered error but index exists; reusing cached ligands. Error: %s",
+                exc,
+            )
+            existing_index = json.loads(index_path.read_text())
+            index_entries = existing_index.get("ligands", [])
+            # write a manifest to keep downstream in sync
+            manifest = artifacts_index_dir / "ligand_manifest.tsv"
+            with manifest.open("w") as mf:
+                for entry in index_entries:
+                    mf.write(
+                        f"{entry.get('ligand')}\t{entry.get('hash')}\t{entry.get('residue_name')}\n"
+                    )
+            marker_rel = index_path.relative_to(system.root).as_posix()
+            register_phase_state(
+                system.root,
+                "param_ligands",
+                required=[[marker_rel]],
+                success=[[marker_rel]],
+            )
+            return ExecResult(
+                [],
+                {
+                    "param_store": existing_index.get("store", str(outdir)),
+                    "index_json": str(index_path),
+                    "manifest_tsv": str(manifest),
+                    "hashes": [e.get("hash") for e in index_entries],
+                },
+            )
+        raise
+
     # generate unique list of resnames
     unique_resnames = []
     for i, (name, p) in enumerate(lig_map.items()):
         init_mol_name = name.lower()
         unique_resname = _convert_mol_name_to_unique(
-                mol_name=init_mol_name,
-                ind=i,
-                smiles=unique[p][1],
-                exist_mol_names=set(unique_resnames))
+            mol_name=init_mol_name,
+            ind=i,
+            smiles=unique[p][1],
+            exist_mol_names=set(unique_resnames),
+        )
         unique_resnames.append(unique_resname)
 
     # Link artifacts per staged ligand and collect index rows
-    artifacts_index_dir = system.root / "artifacts" / "ligand_params"
-    artifacts_index_dir.mkdir(parents=True, exist_ok=True)
-
     index_entries: List[Dict[str, Any]] = []
     linked: List[Tuple[str, str]] = []  # (name, hash)
 
@@ -159,7 +195,6 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
             "retain_lig_prot": retain,
         },
     }
-    index_path = artifacts_index_dir / "index.json"
     index_path.write_text(json.dumps(index_payload, indent=2))
     marker_rel = index_path.relative_to(system.root).as_posix()
     register_phase_state(
