@@ -342,41 +342,55 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     # ---- integrate extra conformation restraints (equil) ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=work, cv_file=cv_in)
 
-    # staged disangXX.rest
-    for idx, weight in enumerate(release_eq):
-        rdsf = rest[1]
-        ldf  = weight * rest[2] / 100.0
-        laf  = weight * rest[3] / 100.0
-        ldhf = weight * rest[4] / 100.0
+    # single restraint file (no staged ramping)
+    rdsf = rest[1]
+    ldf = rest[2]
+    laf = rest[3]
+    ldhf = rest[4]
 
-        outp = work / f"disang{idx:02d}.rest"
-        with outp.open("w") as df:
-            df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}  stage=equil  weight={weight}\n")
-            for i, expr in enumerate(full_rst):
-                fields = expr.split()
-                n = len(fields)
+    outp = work / "disang.rest"
+    with outp.open("w") as df:
+        df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}  stage=equil  weight=100\n")
+        for i, expr in enumerate(full_rst):
+            fields = expr.split()
+            n = len(fields)
 
-                # first 3 are protein distances
-                if i < 3 and n == 2:
+            # first 3 are protein distances
+            if i < 3 and n == 2:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Rec_C\n"
+                         % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf))
+                continue
+
+            # TR block
+            if 3 <= i < 9:
+                if n == 2:
                     iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
                     df.write(f"&rst iat={iat:<23s} ")
-                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Rec_C\n"
-                             % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf))
-                    continue
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                             % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf))
+                elif n == 3:
+                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                             % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf))
+                elif n == 4:
+                    iat = (
+                        f"{atm_num.index(fields[0])},"
+                        f"{atm_num.index(fields[1])},"
+                        f"{atm_num.index(fields[2])},"
+                        f"{atm_num.index(fields[3])},"
+                    )
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                             % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
+                continue
 
-                # TR block
-                if 3 <= i < 9:
-                    if n == 2:
-                        iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
-                        df.write(f"&rst iat={iat:<23s} ")
-                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
-                                 % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf))
-                    elif n == 3:
-                        iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
-                        df.write(f"&rst iat={iat:<23s} ")
-                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
-                                 % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf))
-                    elif n == 4:
+            # disable ligand dihedrals
+            if False:
+                if n == 4:
+                    try:
                         iat = (
                             f"{atm_num.index(fields[0])},"
                             f"{atm_num.index(fields[1])},"
@@ -384,29 +398,11 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                             f"{atm_num.index(fields[3])},"
                         )
                         df.write(f"&rst iat={iat:<23s} ")
-                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
-                                 % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
-                    continue
+                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                                % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                    except:
+                        logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
 
-                # disable ligand dihedrals
-                if False:
-                    if n == 4:
-                        try:
-                            iat = (
-                                f"{atm_num.index(fields[0])},"
-                                f"{atm_num.index(fields[1])},"
-                                f"{atm_num.index(fields[2])},"
-                                f"{atm_num.index(fields[3])},"
-                            )
-                            df.write(f"&rst iat={iat:<23s} ")
-                            df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
-                                    % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
-                        except:
-                            logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
-
-
-    # copy last stage as disang.rest
-    (work / "disang.rest").write_text((work / f"disang{len(release_eq)-1:02d}.rest").read_text())
     logger.debug(f"[equil] restraints written in {work}")
 
 
