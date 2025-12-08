@@ -383,9 +383,6 @@ class FESimArgs(BaseModel):
         "mbar",
         description="Free-energy integration scheme (``mbar`` or ``ti``).",
     )
-    remd_enable: Literal["yes", "no"] = Field(
-        "no", description="Toggle REMD execution (yes/no)."
-    )
     remd: RemdArgs = Field(
         default_factory=RemdArgs,
         description="Replica-exchange MD controls (nstlim/numexchg).",
@@ -494,11 +491,6 @@ class FESimArgs(BaseModel):
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
 
-    @field_validator("remd_enable", mode="before")
-    @classmethod
-    def _coerce_remd_enable(cls, v):
-        return coerce_yes_no(v)
-
     @field_validator("remd", mode="before")
     @classmethod
     def _coerce_remd(cls, v):
@@ -507,20 +499,6 @@ class FESimArgs(BaseModel):
         if isinstance(v, dict):
             return RemdArgs(**v)
         return RemdArgs()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _ingest_remd_enable(cls, data: Any) -> Any:
-        if not isinstance(data, Mapping):
-            return data
-        payload = dict(data)
-        remd_val = payload.get("remd")
-        if "remd_enable" not in payload:
-            if isinstance(remd_val, (str, bool)):
-                payload["remd_enable"] = coerce_yes_no(remd_val)
-            elif isinstance(remd_val, Mapping) and "enable" in remd_val:
-                payload["remd_enable"] = coerce_yes_no(remd_val.get("enable"))
-        return payload
 
     @field_validator("lambdas")
     @classmethod
@@ -713,7 +691,7 @@ class RunSection(BaseModel):
     )
     remd: Literal["yes", "no"] = Field(
         "no",
-        description="Enable REMD execution (templates are always prepared).",
+        description="Enable REMD execution.",
     )
     run_id: str = Field(
         "auto", description="Run identifier to use (``auto`` picks latest)."
@@ -897,7 +875,6 @@ class RunConfig(BaseModel):
                 pass
             else:
                 fe_args = FESimArgs.model_validate(fe_args)
-            fe_args = fe_args.model_copy(update={"remd_enable": self.run.remd})
 
         desired_fe_type = PROTOCOL_TO_FE_TYPE.get(self.protocol)
         return SimulationConfig.from_sections(
