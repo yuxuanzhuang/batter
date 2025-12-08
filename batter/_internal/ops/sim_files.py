@@ -214,39 +214,33 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         },
     )
 
-    # mdin-XX for gradual release
-    steps1 = sim.eq_steps1
-    steps2 = sim.eq_steps2
-
+    # mdin-template for runtime chunking (eq_steps now represents the total target)
     mdin_src = amber_dir / "mdin-equil"
     base_text = mdin_src.read_text()
+    total_steps = int(getattr(sim, "eq_steps", 0) or 0)
+    if total_steps <= 0:
+        total_steps = int(sim.eq_steps1) * max(1, int(getattr(sim, "num_equil_extends", 0)) + 1)
 
-    # compute extra mask once for equil (applied to mdin-XX only)
+    # compute extra mask once for equil (applied to template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, work)
 
-    for i, weight in enumerate(sim.release_eq):
-        text = base_text
-        if i == 0:
-            text = re.sub(r"^\s*irest\s*=.*$", "  irest = 0,", text, flags=re.MULTILINE)
-            text = re.sub(r"^\s*ntx\s*=.*$", "  ntx = 1,", text, flags=re.MULTILINE)
+    text = (
+        base_text.replace("_temperature_", f"{temperature}")
+        .replace("_enable_infe_", infe_flag)
+        .replace("_lig_name_", mol)
+        .replace("_num-steps_", f"{sim.eq_steps1}")
+        .replace("disang_file", "disang00")
+    )
 
-        num_steps = steps2 if weight == 0 else steps1
-        text = (
-            text.replace("_temperature_", f"{temperature}")
-            .replace("_enable_infe_", infe_flag)
-            .replace("_lig_name_", mol)
-            .replace("_num-steps_", f"{num_steps}")
-            .replace("disang_file", f"disang{i:02d}")
-        )
+    if extra_mask:
+        try:
+            text = _patch_restraint_block(text, extra_mask, extra_fc)
+        except Exception as e:
+            logger.warning(f"[extra_restraints] Could not patch mdin-template: {e}")
 
-        # Inject extra restraints ONLY for mdin-XX files
-        if extra_mask:
-            try:
-                text = _patch_restraint_block(text, extra_mask, extra_fc)
-            except Exception as e:
-                logger.warning(f"[extra_restraints] Could not patch mdin-{i:02d}: {e}")
-
-        (work / f"mdin-{i:02d}").write_text(text)
+    # Prepend total eq steps marker for runtime scripts
+    text = f"# eq_steps={total_steps}\n{text}"
+    (work / "mdin-template").write_text(text)
 
     logger.debug(f"[Equil] Simulation input files written under {work}")
 

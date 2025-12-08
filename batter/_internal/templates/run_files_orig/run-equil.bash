@@ -33,6 +33,83 @@ fi
 
 source check_run.bash
 
+tmpl="mdin-template"
+mdin_current="mdin-current"
+
+parse_total_steps() {
+    if [[ ! -f $tmpl ]]; then
+        echo "[ERROR] Missing template $tmpl"
+        exit 1
+    fi
+    local total
+    total=$(grep -E "^#\\s*eq_steps\\s*=\\s*[0-9]+" "$tmpl" | tail -1 | sed -E 's/.*eq_steps\\s*=\\s*([0-9]+).*/\\1/')
+    if [[ -z $total ]]; then
+        echo "[ERROR] eq_steps comment not found in $tmpl (expected '# eq_steps=<total_steps>')"
+        exit 1
+    fi
+    echo "$total"
+}
+
+parse_nstlim() {
+    local nst
+    nst=$(grep -E "^[[:space:]]*nstlim" "$tmpl" | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\\1/')
+    if [[ -z $nst ]]; then
+        echo "[ERROR] Could not parse nstlim from $tmpl"
+        exit 1
+    fi
+    echo "$nst"
+}
+
+latest_md_index() {
+    local idx
+    idx=$(highest_index_for_pattern "md*.out")
+    echo "$idx"
+}
+
+completed_steps() {
+    local idx
+    idx=$(latest_md_index)
+    if [[ $idx -lt 0 ]]; then
+        echo 0
+        return
+    fi
+    local mdout
+    mdout=$(printf "md-%02d.out" "$idx")
+    if [[ ! -f $mdout ]]; then
+        # legacy name
+        mdout=$(printf "md%02d.out" "$idx")
+    fi
+    if [[ ! -f $mdout ]]; then
+        echo $(( (idx + 1) * $(parse_nstlim) ))
+        return
+    fi
+    local nstep
+    nstep=$(grep "NSTEP" "$mdout" | tail -1 | awk '{for(i=1;i<=NF;i++){if($i=="NSTEP"){print $(i+2); exit}}}')
+    if [[ -z $nstep ]]; then
+        echo $(( (idx + 1) * $(parse_nstlim) ))
+    else
+        echo "$nstep"
+    fi
+}
+
+write_mdin_current() {
+    local nstlim_value=$1
+    local first_run=$2
+    local text
+    text=$(<"$tmpl")
+    if [[ $first_run -eq 1 ]]; then
+        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
+    else
+        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
+    fi
+    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
+    echo "$text" > "$mdin_current"
+}
+
+# prepare template-driven MD input on the fly
+total_steps=$(parse_total_steps)
+chunk_steps=$(parse_nstlim)
+
 if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping EM steps." 
 else
@@ -118,32 +195,44 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-if [[ $overwrite -eq 0 && -s md01.rst7 ]]; then
-    echo "Skipping md00 steps."
-else
-# Initial MD run
-print_and_run "$PMEMD_EXEC -O -i mdin-00 -p $PRMTOP -c eqnpt_appear.rst7 -o md-00.out -r md00.rst7 -x md-00.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
-check_sim_failure "MD stage 0" "$log_file" md00.rst7
-fi
+current_steps=$(completed_steps)
 
-i=1
-while [ $i -le RANGE ]; do
-    j=$((i - 1))
-    k=$((i + 1))
-    x=$(printf "%02d" $i)
-    y=$(printf "%02d" $j)
-    z=$(printf "%02d" $k)
-    # x is the current step, y is the previous step, z is the next step
-    if [[ $overwrite -eq 0 && -s md$z.rst7 ]]; then
-        echo "Skipping md$x steps."
-    else
-        print_and_run "$PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c md$y.rst7 -o md-$x.out -r md$x.rst7 -x md-$x.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
-        check_sim_failure "MD stage $i" "$log_file" md$x.rst7
+last_rst="eqnpt_appear.rst7"
+
+while [[ $current_steps -lt $total_steps ]]; do
+    remaining=$((total_steps - current_steps))
+    run_steps=$chunk_steps
+    if [[ $remaining -lt $chunk_steps ]]; then
+        run_steps=$remaining
     fi
-    i=$((i + 1))
+
+    seg_idx=$(( (current_steps + chunk_steps - 1) / chunk_steps ))
+    rst_prev="eqnpt_appear.rst7"
+    if [[ $seg_idx -gt 0 ]]; then
+        rst_prev=$(printf "md%02d.rst7" "$seg_idx")
+        if [[ ! -f $rst_prev ]]; then
+            rst_prev=$(printf "md-%02d.rst7" "$seg_idx")
+        fi
+    fi
+
+    if [[ ! -f $rst_prev ]]; then
+        echo "[ERROR] Missing restart file $rst_prev; cannot continue."
+        exit 1
+    fi
+
+    write_mdin_current "$run_steps" $((current_steps == 0 ? 1 : 0))
+
+    out_tag=$(printf "md-%02d" "$((seg_idx + 1))")
+    rst_out=$(printf "md%02d.rst7" "$((seg_idx + 1))")
+
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_prev -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out"
+
+    current_steps=$((current_steps + run_steps))
+    last_rst="$rst_out"
 done
 
-print_and_run "cpptraj -p $PRMTOP -y md$x.rst7 -x output.pdb >> \"$log_file\" 2>&1"
+print_and_run "cpptraj -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion
