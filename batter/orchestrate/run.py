@@ -459,12 +459,14 @@ def run_from_yaml(
     if not param_idx_path.exists():
         if parent_failure and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
             logger.warning(
-                "Parametrization failed and no ligand param index was written; exiting early due to on_failure=%s.",
+                "Parametrization failed and no ligand param index was written; continuing with 0 ligands due to on_failure=%s.",
                 rc.run.on_failure,
             )
-            return
-        raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
-    param_index = json.loads(param_idx_path.read_text())
+            param_index = {"ligands": []}
+        else:
+            raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
+    else:
+        param_index = json.loads(param_idx_path.read_text())
     param_dir_dict = {e["residue_name"]: e["store_dir"] for e in param_index["ligands"]}
 
     lig_resname_map = {}
