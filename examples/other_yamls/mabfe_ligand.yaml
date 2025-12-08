@@ -48,4 +48,4 @@ fe_sim:
   barostat: 2
   hmr: yes
   dt: 0.004
-  temperature: 310.0
+  temperature: 298.15

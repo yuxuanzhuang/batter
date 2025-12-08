@@ -232,7 +232,7 @@ class SimulationConfig(BaseModel):
             "buffer_x": float(_fe_attr("buffer_x", lambda: 15.0)),
             "buffer_y": float(_fe_attr("buffer_y", lambda: 15.0)),
             "buffer_z": float(_fe_attr("buffer_z", lambda: 15.0)),
-            "temperature": float(_fe_attr("temperature", lambda: 310.0)),
+            "temperature": float(_fe_attr("temperature", lambda: 298.15)),
             "dt": float(_fe_attr("dt", lambda: 0.004)),
             "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "yes")),
             "release_eq": fe_release_eq,
@@ -388,7 +388,7 @@ class SimulationConfig(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration templates.",
     )
-    temperature: float = Field(310.0, description="Temperature (K)")
+    temperature: float = Field(298.15, description="Temperature (K)")
     eq_steps: int = Field(
         1_000_000, description="Steps per equilibration segment (derived)"
     )

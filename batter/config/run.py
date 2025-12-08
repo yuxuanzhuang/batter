@@ -472,7 +472,7 @@ class FESimArgs(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration (1 = on).",
     )
-    temperature: float = Field(310.0, description="Simulation temperature (K).")
+    temperature: float = Field(298.15, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
     num_fe_extends: int = Field(
         10,
@@ -626,7 +626,7 @@ class MDSimArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     dt: float = Field(0.004, description="MD timestep (ps).")
-    temperature: float = Field(310.0, description="Simulation temperature (K).")
+    temperature: float = Field(298.15, description="Simulation temperature (K).")
     num_equil_extends: int = Field(
         2,
         ge=0,

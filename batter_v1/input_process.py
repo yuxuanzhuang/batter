@@ -99,7 +99,7 @@ class SimulationConfig(BaseModel):
 
     # --- Simulation params ---
     hmr: str = Field("no", description="Hydrogen mass repartitioning (yes/no)")
-    temperature: float = Field(310.0, description="Temperature (K)")
+    temperature: float = Field(298.15, description="Temperature (K)")
     eq_steps1: int = Field(500_000, description="Equilibration stage 1 steps")
     eq_steps2: int = Field(1_000_000, description="Equilibration stage 2 steps")
     n_steps_dict: Dict[str, int] = Field(

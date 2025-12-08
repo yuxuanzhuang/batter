@@ -106,7 +106,7 @@ def apply_minimization(mdin: AmberMdin, *, steps: int = 5000) -> None:
     )
 
 
-def apply_npt(mdin: AmberMdin, *, temp: float = 310.0, steps: int = 50000, barostat: int = 2, dt: float = 0.004) -> None:
+def apply_npt(mdin: AmberMdin, *, temp: float = 298.15, steps: int = 50000, barostat: int = 2, dt: float = 0.004) -> None:
     """Configure standard NPT dynamics."""
     mdin.override_block(
         "cntrl",
@@ -125,7 +125,7 @@ def apply_npt(mdin: AmberMdin, *, temp: float = 310.0, steps: int = 50000, baros
 def apply_membrane_npt(
     mdin: AmberMdin,
     *,
-    temp: float = 310.0,
+    temp: float = 298.15,
     steps: int = 50000,
     barostat: int = 2,
     dt: float = 0.004,

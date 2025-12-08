@@ -55,4 +55,4 @@ fe_sim:
   hmr: yes
   dt: 0.004
   buffer_z: 25.0
-  temperature: 310.0
+  temperature: 298.15

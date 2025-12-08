@@ -21,7 +21,7 @@ class MBARValidator:
     """
     def __init__(self,
                 df_list: list,
-                temperature: float = 310.0,
+                temperature: float = 298.15,
                 energy_unit: str = 'kcal/mol',
                 log_level: str = 'WARNING'
                 ):
@@ -140,7 +140,7 @@ class ConvergenceValidator(MBARValidator):
     def __init__(self,
                 Upot: np.ndarray,
                 lambdas: list,
-                temperature: float = 310.0,
+                temperature: float = 298.15,
                 energy_unit: str = 'kcal/mol',
                 log_level: str = 'WARNING'
                 ):
