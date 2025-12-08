@@ -21,7 +21,10 @@ from batter._internal.ops.helpers import format_ranges
 
 # ----------------------------- helpers ----------------------------- #
 
-def _patch_restraint_block(text: str, new_mask_component: str, force_const: float) -> str:
+
+def _patch_restraint_block(
+    text: str, new_mask_component: str, force_const: float
+) -> str:
     """
     Idempotently enable ntr=1, merge/append restraintmask with new_mask_component,
     and set restraint_wt. If mask already present, replace the appended part.
@@ -34,21 +37,29 @@ def _patch_restraint_block(text: str, new_mask_component: str, force_const: floa
             line = re.sub(r"\bntr\s*=\s*\d+", "  ntr = 1", line)
         elif re.search(r"\brestraintmask\s*=", line):
             m = re.search(r'restraintmask\s*=\s*["\']([^"\']*)["\']', line)
-            base_mask = (m.group(1).strip() if m else "")
+            base_mask = m.group(1).strip() if m else ""
             # drop any previously appended “| ((:... ) & @CA)” chunk to stay idempotent
-            base_mask = re.sub(r'\|\s*\(\s*\(:[^)]*\)\s*&\s*@CA\s*\)\s*', '', base_mask).strip()
-            mask = f'({base_mask}) | ({new_mask_component})' if base_mask else new_mask_component
+            base_mask = re.sub(
+                r"\|\s*\(\s*\(:[^)]*\)\s*&\s*@CA\s*\)\s*", "", base_mask
+            ).strip()
+            mask = (
+                f"({base_mask}) | ({new_mask_component})"
+                if base_mask
+                else new_mask_component
+            )
             if len(mask) > 256:
                 raise ValueError(f"Restraint mask too long (>256 chars): {mask}")
             line = f'  restraintmask = "{mask}",\n'
             seen_mask = True
         elif re.search(r"\brestraint_wt\s*=", line):
-            line = re.sub(r"\brestraint_wt\s*=\s*[\d.]+", f" restraint_wt = {force_const}", line)
+            line = re.sub(
+                r"\brestraint_wt\s*=\s*[\d.]+", f" restraint_wt = {force_const}", line
+            )
         out.append(line)
 
     if not seen_mask:
         out.append(f'\n  restraintmask = "{new_mask_component}",\n')
-        out.append(f'  restraint_wt   = {force_const},\n')
+        out.append(f"  restraint_wt   = {force_const},\n")
 
     return "".join(out)
 
@@ -67,7 +78,9 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
         # load from window -1 dir
         res_json = ctx.equil_dir / "extra_restraints.json"
         if not os.path.exists(res_json):
-            raise FileNotFoundError(f"Missing extra_restraints.json in equil dir: {res_json}")
+            raise FileNotFoundError(
+                f"Missing extra_restraints.json in equil dir: {res_json}"
+            )
         with open(res_json, "rt") as f:
             data = json.load(f)
         return data.get("mask"), data.get("force_const", 10.0)
@@ -83,18 +96,24 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
         logger.warning(f"[extra_restraints] Missing reference PDB: {ref_pdb}; skip.")
         return None, force_const
     if not renum_txt.exists():
-        logger.warning(f"[extra_restraints] Missing renumber map: {renum_txt1} / {renum_txt2}; skip.")
+        logger.warning(
+            f"[extra_restraints] Missing renumber map: {renum_txt1} / {renum_txt2}; skip."
+        )
         return None, force_const
 
     u = mda.Universe(str(ref_pdb))
     sel = u.select_atoms(f"({extra_sel}) and name CA")
     if len(sel) == 0:
-        logger.warning(f"[extra_restraints] 0 atoms selected for '({extra_sel}) and name CA'; skip.")
+        logger.warning(
+            f"[extra_restraints] 0 atoms selected for '({extra_sel}) and name CA'; skip."
+        )
         return None, force_const
 
     ren = pd.read_csv(
-        renum_txt, sep=r"\s+", header=None,
-        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"]
+        renum_txt,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
     amber_resids = ren.loc[ren["old_resid"].isin(sel.residues.resids), "new_resid"]
     mask_ranges = format_ranges(amber_resids)
@@ -104,12 +123,16 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
 
     mask = f"(:{mask_ranges}) & @CA"
     # save as json
-    json.dump({"mask": mask, "force_const": force_const}, (work / "extra_restraints.json").open("wt"))
+    json.dump(
+        {"mask": mask, "force_const": force_const},
+        (work / "extra_restraints.json").open("wt"),
+    )
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
 
 # ------------------------- generic equil files ------------------------- #
+
 
 def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     """
@@ -143,18 +166,31 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     _sub_write(amber_dir / "mini.in", work / "mini.in", {"_lig_name_": mol})
 
     # eqnvt.in
-    _sub_write(amber_dir / "eqnvt.in", work / "eqnvt.in",
-               {"_temperature_": f"{temperature}", "_lig_name_": mol})
+    _sub_write(
+        amber_dir / "eqnvt.in",
+        work / "eqnvt.in",
+        {"_temperature_": f"{temperature}", "_lig_name_": mol},
+    )
 
     # eqnpt0.in (membrane vs water variant)
-    eqnpt0_src = amber_dir / ("eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in")
-    _sub_write(eqnpt0_src, work / "eqnpt0.in",
-               {"_temperature_": f"{temperature}", "_lig_name_": mol})
+    eqnpt0_src = amber_dir / (
+        "eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in"
+    )
+    _sub_write(
+        eqnpt0_src,
+        work / "eqnpt0.in",
+        {"_temperature_": f"{temperature}", "_lig_name_": mol},
+    )
 
     # eqnpt.in  (no extra restraints here)
-    eqnpt_src = amber_dir / ("eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in")
-    _sub_write(eqnpt_src, work / "eqnpt.in",
-               {"_temperature_": f"{temperature}", "_lig_name_": mol})
+    eqnpt_src = amber_dir / (
+        "eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in"
+    )
+    _sub_write(
+        eqnpt_src,
+        work / "eqnpt.in",
+        {"_temperature_": f"{temperature}", "_lig_name_": mol},
+    )
 
     # Additional equilibration inputs for disappear/appear stages
     _sub_write(
@@ -195,13 +231,13 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
             text = re.sub(r"^\s*ntx\s*=.*$", "  ntx = 1,", text, flags=re.MULTILINE)
 
         num_steps = steps2 if weight == 0 else steps1
-        text = (text
-                .replace("_temperature_", f"{temperature}")
-                .replace("_enable_infe_", infe_flag)
-                .replace("_lig_name_", mol)
-                .replace("_num-steps_", f"{num_steps}")
-                .replace("disang_file", f"disang{i:02d}")
-               )
+        text = (
+            text.replace("_temperature_", f"{temperature}")
+            .replace("_enable_infe_", infe_flag)
+            .replace("_lig_name_", mol)
+            .replace("_num-steps_", f"{num_steps}")
+            .replace("disang_file", f"disang{i:02d}")
+        )
 
         # Inject extra restraints ONLY for mdin-XX files
         if extra_mask:
@@ -216,6 +252,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
 
 # ------------------------- FE component: z ------------------------- #
+
 
 @register_sim_files("z")
 def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
@@ -298,19 +335,26 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         elif "dt = " in line:
                             line = "dt = 0.001,\n"
                         elif "restraintmask" in line:
-                            rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                            rm = (
+                                line.split("=", 1)[1]
+                                .strip()
+                                .rstrip(",")
+                                .replace("'", "")
+                            )
                             if rm == "":
                                 line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
                             else:
-                                line = f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                                line = (
+                                    f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                                )
 
                     line = (
                         line.replace("_temperature_", str(temperature))
-                            .replace("_num-atoms_", str(vac_atoms))
-                            .replace("_num-steps_", n_steps_run)
-                            .replace("lbd_val", f"{float(weight):6.5f}")
-                            .replace("mk1", str(mk1))
-                            .replace("mk2", str(mk2))
+                        .replace("_num-atoms_", str(vac_atoms))
+                        .replace("_num-steps_", n_steps_run)
+                        .replace("lbd_val", f"{float(weight):6.5f}")
+                        .replace("mk1", str(mk1))
+                        .replace("mk2", str(mk2))
                     )
                     fout.write(line)
 
@@ -338,16 +382,21 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     content = _patch_restraint_block(content, extra_mask, extra_fc)
                     out_path.write_text(content)
                 except Exception as e:
-                    logger.warning(f"[extra_restraints] Could not patch {out_path.name}: {e}")
+                    logger.warning(
+                        f"[extra_restraints] Could not patch {out_path.name}: {e}"
+                    )
 
-        with template_mini.open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
+        with (
+            template_mini.open("rt") as fin,
+            (windows_dir / "mini.in").open("wt") as fout,
+        ):
             for line in fin:
                 line = (
                     line.replace("_temperature_", str(temperature))
-                        .replace("lbd_val", f"{float(weight):6.5f}")
-                        .replace("mk1", str(mk1))
-                        .replace("mk2", str(mk2))
-                        .replace("_lig_name_", mol)
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                    .replace("mk2", str(mk2))
+                    .replace("_lig_name_", mol)
                 )
                 fout.write(line)
 
@@ -375,18 +424,25 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         elif "dt = " in line:
                             line = "dt = 0.001,\n"
                         elif "restraintmask" in line:
-                            rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                            rm = (
+                                line.split("=", 1)[1]
+                                .strip()
+                                .rstrip(",")
+                                .replace("'", "")
+                            )
                             if rm == "":
                                 line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
                             else:
-                                line = f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                                line = (
+                                    f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                                )
 
                     line = (
                         line.replace("_temperature_", str(temperature))
-                            .replace("_num-atoms_", str(vac_atoms))
-                            .replace("_num-steps_", n_steps_run)
-                            .replace("lbd_val", f"{float(weight):6.5f}")
-                            .replace("mk1", str(mk1))
+                        .replace("_num-atoms_", str(vac_atoms))
+                        .replace("_num-steps_", n_steps_run)
+                        .replace("lbd_val", f"{float(weight):6.5f}")
+                        .replace("mk1", str(mk1))
                     )
                     fout.write(line)
 
@@ -414,43 +470,70 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     content = _patch_restraint_block(content, extra_mask, extra_fc)
                     out_path.write_text(content)
                 except Exception as e:
-                    logger.warning(f"[extra_restraints] Could not patch {out_path.name}: {e}")
+                    logger.warning(
+                        f"[extra_restraints] Could not patch {out_path.name}: {e}"
+                    )
 
-        with template_mini.open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
+        with (
+            template_mini.open("rt") as fin,
+            (windows_dir / "mini.in").open("wt") as fout,
+        ):
             for line in fin:
                 line = (
                     line.replace("_temperature_", str(temperature))
-                        .replace("lbd_val", f"{float(weight):6.5f}")
-                        .replace("mk1", str(mk1))
-                        .replace("_lig_name_", mol)
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                    .replace("_lig_name_", mol)
                 )
                 fout.write(line)
 
     # Always emit mini_eq.in, eqnpt0.in, eqnpt.in from UNO templates (no extra restraints here)
-    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open("wt") as fout:
+    with (
+        (amber_dir / "mini.in").open("rt") as fin,
+        (windows_dir / "mini_eq.in").open("wt") as fout,
+    ):
         for line in fin:
             fout.write(line.replace("_lig_name_", mol))
 
-    with (amber_dir / "eqnpt0-uno.in").open("rt") as fin, (windows_dir / "eqnpt0.in").open("wt") as fout:
+    with (
+        (amber_dir / "eqnpt0-uno.in").open("rt") as fin,
+        (windows_dir / "eqnpt0.in").open("wt") as fout,
+    ):
         for line in fin:
             if "mcwat" in line:
                 fout.write("  mcwat = 0,\n")
             else:
-                fout.write(line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol))
+                fout.write(
+                    line.replace("_temperature_", str(temperature)).replace(
+                        "_lig_name_", mol
+                    )
+                )
 
-    with (amber_dir / "eqnpt-uno.in").open("rt") as fin, (windows_dir / "eqnpt.in").open("wt") as fout:
+    with (
+        (amber_dir / "eqnpt-uno.in").open("rt") as fin,
+        (windows_dir / "eqnpt.in").open("wt") as fout,
+    ):
         for line in fin:
             if "mcwat" in line:
                 fout.write("  mcwat = 0,\n")
             else:
-                fout.write(line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol))
+                fout.write(
+                    line.replace("_temperature_", str(temperature)).replace(
+                        "_lig_name_", mol
+                    )
+                )
 
-    (windows_dir / "lambda.sch").write_text("TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n")
+    (windows_dir / "lambda.sch").write_text(
+        "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"
+    )
 
-    logger.debug(f"[sim_files_z] wrote mdin/mini/eq inputs in {windows_dir} for comp='z', win={win}, weight={weight:0.5f}")
+    logger.debug(
+        f"[sim_files_z] wrote mdin/mini/eq inputs in {windows_dir} for comp='z', win={win}, weight={weight:0.5f}"
+    )
 
 
 # ------------------------- FE component: y ------------------------- #
+
 
 @register_sim_files("y")
 def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
@@ -474,31 +557,47 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     amber_dir = ctx.amber_dir
 
     # mini.in from ligand template
-    with (amber_dir / "mini-unorest-lig").open("rt") as fin, (windows_dir / "mini.in").open("wt") as fout:
+    with (
+        (amber_dir / "mini-unorest-lig").open("rt") as fin,
+        (windows_dir / "mini.in").open("wt") as fout,
+    ):
         for line in fin:
             line = (
                 line.replace("_temperature_", str(temperature))
-                    .replace("lbd_val", f"{float(weight):6.5f}")
-                    .replace("mk1", str(mk1))
-                    .replace("_lig_name_", mol)
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("_lig_name_", mol)
             )
             fout.write(line)
 
     # mini_eq.in from generic mini template
-    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open("wt") as fout:
+    with (
+        (amber_dir / "mini.in").open("rt") as fin,
+        (windows_dir / "mini_eq.in").open("wt") as fout,
+    ):
         for line in fin:
             fout.write(line.replace("_lig_name_", mol))
 
     # eqnpt.in / eqnpt0.in from ligand templates
-    with (amber_dir / "eqnpt-lig.in").open("rt") as fin, (windows_dir / "eqnpt.in").open("wt") as fout:
+    with (
+        (amber_dir / "eqnpt-lig.in").open("rt") as fin,
+        (windows_dir / "eqnpt.in").open("wt") as fout,
+    ):
         for line in fin:
             fout.write(
-                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
+                line.replace("_temperature_", str(temperature)).replace(
+                    "_lig_name_", mol
+                )
             )
-    with (amber_dir / "eqnpt0-lig.in").open("rt") as fin, (windows_dir / "eqnpt0.in").open("wt") as fout:
+    with (
+        (amber_dir / "eqnpt0-lig.in").open("rt") as fin,
+        (windows_dir / "eqnpt0.in").open("wt") as fout,
+    ):
         for line in fin:
             fout.write(
-                line.replace("_temperature_", str(temperature)).replace("_lig_name_", mol)
+                line.replace("_temperature_", str(temperature)).replace(
+                    "_lig_name_", mol
+                )
             )
 
     # per-window production inputs
@@ -518,11 +617,11 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         line = "dt = 0.001,\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
-                        .replace("_num-steps_", n_steps_run)
-                        .replace("lbd_val", f"{float(weight):6.5f}")
-                        .replace("mk1", str(mk1))
-                        .replace("disang_file", "disang")
-                        .replace("_lig_name_", mol)
+                    .replace("_num-steps_", n_steps_run)
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                    .replace("disang_file", "disang")
+                    .replace("_lig_name_", mol)
                 )
                 fout.write(line)
 
@@ -543,7 +642,10 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("DISANG=disang.rest\n")
             mdin.write("LISTOUT=POUT\n")
 
-    logger.debug(f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}")
+    logger.debug(
+        f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
+    )
+
 
 @register_sim_files("m")
 def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
@@ -566,13 +668,16 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     amber_dir = ctx.amber_dir
 
     # mini.in from ligand template
-    with (amber_dir / "mini-unorest-vacuum").open("rt") as fin, (windows_dir / "mini_eq.in").open("wt") as fout:
+    with (
+        (amber_dir / "mini-unorest-vacuum").open("rt") as fin,
+        (windows_dir / "mini_eq.in").open("wt") as fout,
+    ):
         for line in fin:
             line = (
                 line.replace("_temperature_", str(temperature))
-                    .replace("lbd_val", f"{float(weight):6.5f}")
-                    .replace("mk1", str(mk1))
-                    .replace("_lig_name_", mol)
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("_lig_name_", mol)
             )
             fout.write(line)
 
@@ -593,11 +698,11 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         line = "dt = 0.001,\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
-                        .replace("_num-steps_", n_steps_run)
-                        .replace("lbd_val", f"{float(weight):6.5f}")
-                        .replace("mk1", str(mk1))
-                        .replace("disang_file", "disang")
-                        .replace("_lig_name_", mol)
+                    .replace("_num-steps_", n_steps_run)
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                    .replace("disang_file", "disang")
+                    .replace("_lig_name_", mol)
                 )
                 fout.write(line)
 
@@ -618,4 +723,6 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("DISANG=disang.rest\n")
             mdin.write("LISTOUT=POUT\n")
 
-    logger.debug(f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}")
+    logger.debug(
+        f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"
+    )

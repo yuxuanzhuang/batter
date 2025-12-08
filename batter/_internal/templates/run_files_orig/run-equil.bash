@@ -38,19 +38,27 @@ if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
 else
     print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
     check_sim_failure "Minimization" "$log_file" mini.rst7
-    if ! check_min_energy "mini.out" -1000; then
+    print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    check_sim_failure "Minimization 2" "$log_file" mini2.rst7
+
+    if ! check_min_energy "mini2.out" -1000; then
         echo "Minimization not passed with cuda; trying CPU"
         rm -f "$log_file"
         rm -f mini.rst7 mini.nc mini.out
+        rm -f mini2.rst7 mini2.nc mini2.out
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
             print_and_run "$MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+            print_and_run "$MPI_EXEC --oversubscribe -np $SLURM_JOB_CPUS_PER_NODE $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         else
             print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+            print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         fi
         check_sim_failure "Minimization" "$log_file" mini.rst7
-        if ! check_min_energy "mini.out" -1000; then
+        check_sim_failure "Minimization 2" "$log_file" mini2.rst7
+        if ! check_min_energy "mini2.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
             rm -f mini.rst7 mini.nc mini.out
+            rm -f mini2.rst7 mini2.nc mini2.out
             exit 1
         fi
     fi
@@ -59,7 +67,7 @@ fi
 if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping equilibration steps."
 else
-    python check_penetration.py mini.rst7
+    python check_penetration.py mini2.rst7
 
     # if RING_PENETRATION file is found
     if [[ -f RING_PENETRATION ]]; then
@@ -67,7 +75,7 @@ else
 
         # Equilbration with gradually-incrase lambda of the ligand
         # this can fix issues e.g. ligand entaglement https://pubs.acs.org/doi/10.1021/ct501111d
-        print_and_run "$PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP -c mini.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP -c mini2.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         check_sim_failure "NVT" "$log_file" eqnvt.rst7
         python check_penetration.py eqnvt.rst7
         if [[ -f RING_PENETRATION ]]; then
@@ -76,7 +84,7 @@ else
         fi
     else
         # no NVT needed
-        cp mini.rst7 eqnvt.rst7
+        cp mini2.rst7 eqnvt.rst7
     fi
 
     # Equilibration with protein and ligand restrained
