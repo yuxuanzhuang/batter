@@ -145,9 +145,9 @@ parse_total_steps() {
         return 1
     fi
     local total
-    total=$(grep -E "^#\\s*eq_steps\\s*=\\s*[0-9]+" "$tmpl" | tail -1 | sed -E 's/.*eq_steps\\s*=\\s*([0-9]+).*/\1/')
+    total=$(grep -E "^[!#]\\s*eq_steps\\s*=\\s*[0-9]+" "$tmpl" | tail -1 | sed -E 's/.*eq_steps\\s*=\\s*([0-9]+).*/\1/')
     if [[ -z $total ]]; then
-        echo "[ERROR] eq_steps comment not found in $tmpl (expected '# eq_steps=<total_steps>')" >&2
+        echo "[ERROR] eq_steps comment not found in $tmpl (expected '! eq_steps=<total_steps>')" >&2
         return 1
     fi
     echo "$total"

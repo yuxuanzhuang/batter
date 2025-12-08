@@ -238,8 +238,8 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         except Exception as e:
             logger.warning(f"[extra_restraints] Could not patch mdin-template: {e}")
 
-    # Prepend total eq steps marker for runtime scripts
-    text = f"# eq_steps={total_steps}\n{text}"
+    # Prepend total eq steps marker for runtime scripts (comment starts with '!')
+    text = f"! eq_steps={total_steps}\n{text}"
     (work / "mdin-template").write_text(text)
 
     logger.debug(f"[Equil] Simulation input files written under {work}")
