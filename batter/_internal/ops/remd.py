@@ -188,7 +188,7 @@ def patch_component_inputs(
                 dst00,
                 prefix,
                 add_numexchg=add_numexchg,
-                remd_nstlim=nstlim_val,
+                remd_nstlim=100, # always set nstlim=100 for first stage
                 remd_numexchg=numexchg_val,
             ):
                 patched.append(dst00)
