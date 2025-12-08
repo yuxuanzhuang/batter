@@ -36,79 +36,9 @@ source check_run.bash
 tmpl="mdin-template"
 mdin_current="mdin-current"
 
-parse_total_steps() {
-    if [[ ! -f $tmpl ]]; then
-        echo "[ERROR] Missing template $tmpl"
-        exit 1
-    fi
-    local total
-    total=$(grep -E "^#\\s*eq_steps\\s*=\\s*[0-9]+" "$tmpl" | tail -1 | sed -E 's/.*eq_steps\\s*=\\s*([0-9]+).*/\\1/')
-    if [[ -z $total ]]; then
-        echo "[ERROR] eq_steps comment not found in $tmpl (expected '# eq_steps=<total_steps>')"
-        exit 1
-    fi
-    echo "$total"
-}
-
-parse_nstlim() {
-    local nst
-    nst=$(grep -E "^[[:space:]]*nstlim" "$tmpl" | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\\1/')
-    if [[ -z $nst ]]; then
-        echo "[ERROR] Could not parse nstlim from $tmpl"
-        exit 1
-    fi
-    echo "$nst"
-}
-
-latest_md_index() {
-    local idx
-    idx=$(highest_index_for_pattern "md*.out")
-    echo "$idx"
-}
-
-completed_steps() {
-    local idx
-    idx=$(latest_md_index)
-    if [[ $idx -lt 0 ]]; then
-        echo 0
-        return
-    fi
-    local mdout
-    mdout=$(printf "md-%02d.out" "$idx")
-    if [[ ! -f $mdout ]]; then
-        # legacy name
-        mdout=$(printf "md%02d.out" "$idx")
-    fi
-    if [[ ! -f $mdout ]]; then
-        echo $(( (idx + 1) * $(parse_nstlim) ))
-        return
-    fi
-    local nstep
-    nstep=$(grep "NSTEP" "$mdout" | tail -1 | awk '{for(i=1;i<=NF;i++){if($i=="NSTEP"){print $(i+2); exit}}}')
-    if [[ -z $nstep ]]; then
-        echo $(( (idx + 1) * $(parse_nstlim) ))
-    else
-        echo "$nstep"
-    fi
-}
-
-write_mdin_current() {
-    local nstlim_value=$1
-    local first_run=$2
-    local text
-    text=$(<"$tmpl")
-    if [[ $first_run -eq 1 ]]; then
-        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
-    else
-        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
-    fi
-    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
-    echo "$text" > "$mdin_current"
-}
-
 # prepare template-driven MD input on the fly
-total_steps=$(parse_total_steps)
-chunk_steps=$(parse_nstlim)
+total_steps=$(parse_total_steps "$tmpl")
+chunk_steps=$(parse_nstlim "$tmpl")
 
 if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
     echo "Skipping EM steps." 
@@ -195,7 +125,7 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-current_steps=$(completed_steps)
+current_steps=$(completed_steps "$tmpl")
 
 last_rst="eqnpt_appear.rst7"
 
@@ -220,7 +150,7 @@ while [[ $current_steps -lt $total_steps ]]; do
         exit 1
     fi
 
-    write_mdin_current "$run_steps" $((current_steps == 0 ? 1 : 0))
+    write_mdin_current "$tmpl" "$run_steps" $((current_steps == 0 ? 1 : 0)) > "$mdin_current"
 
     out_tag=$(printf "md-%02d" "$((seg_idx + 1))")
     rst_out=$(printf "md%02d.rst7" "$((seg_idx + 1))")

@@ -136,3 +136,82 @@ report_progress() {
 
     echo "[progress] stage=${stage} steps_completed=${steps}"
 }
+
+# --------- Equil/production helper parsers ---------
+parse_total_steps() {
+    local tmpl=${1:-mdin-template}
+    if [[ ! -f $tmpl ]]; then
+        echo "[ERROR] Missing template $tmpl" >&2
+        return 1
+    fi
+    local total
+    total=$(grep -E "^#\\s*eq_steps\\s*=\\s*[0-9]+" "$tmpl" | tail -1 | sed -E 's/.*eq_steps\\s*=\\s*([0-9]+).*/\1/')
+    if [[ -z $total ]]; then
+        echo "[ERROR] eq_steps comment not found in $tmpl (expected '# eq_steps=<total_steps>')" >&2
+        return 1
+    fi
+    echo "$total"
+}
+
+parse_nstlim() {
+    local tmpl=${1:-mdin-template}
+    local nst
+    nst=$(grep -E "^[[:space:]]*nstlim" "$tmpl" | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+    if [[ -z $nst ]]; then
+        echo "[ERROR] Could not parse nstlim from $tmpl" >&2
+        return 1
+    fi
+    echo "$nst"
+}
+
+latest_md_index() {
+    local pattern=${1:-"md*.out"}
+    local idx
+    idx=$(highest_index_for_pattern "$pattern")
+    echo "$idx"
+}
+
+completed_steps() {
+    local tmpl=${1:-mdin-template}
+    local idx
+    idx=$(latest_md_index "md*.out")
+    if [[ $idx -lt 0 ]]; then
+        echo 0
+        return
+    fi
+    local mdout
+    mdout=$(printf "md-%02d.out" "$idx")
+    if [[ ! -f $mdout ]]; then
+        mdout=$(printf "md%02d.out" "$idx")
+    fi
+    if [[ ! -f $mdout ]]; then
+        echo $(( (idx + 1) * $(parse_nstlim "$tmpl") ))
+        return
+    fi
+    local nstep
+    nstep=$(grep "NSTEP" "$mdout" | tail -1 | awk '{for(i=1;i<=NF;i++){if($i=="NSTEP"){print $(i+2); exit}}}')
+    if [[ -z $nstep ]]; then
+        echo $(( (idx + 1) * $(parse_nstlim "$tmpl") ))
+    else
+        echo "$nstep"
+    fi
+}
+
+write_mdin_current() {
+    local tmpl=${1:-mdin-template}
+    local nstlim_value=$2
+    local first_run=$3
+    if [[ ! -f $tmpl ]]; then
+        echo "[ERROR] Missing template $tmpl" >&2
+        return 1
+    fi
+    local text
+    text=$(<"$tmpl")
+    if [[ $first_run -eq 1 ]]; then
+        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
+    else
+        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
+    fi
+    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
+    echo "$text"
+}
