@@ -94,3 +94,45 @@ check_min_energy() {
         return 1
     fi
 }
+
+# Lightweight progress reporting helpers (stage + completed steps)
+highest_index_for_pattern() {
+    local pattern=$1
+    local max=-1
+    for f in $pattern; do
+        [[ -e "$f" ]] || continue
+        # extract the first integer chunk from the filename
+        local n
+        n=$(echo "$f" | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+        [[ $n =~ ^[0-9]+$ ]] || continue
+        if [[ $n -gt $max ]]; then
+            max=$n
+        fi
+    done
+    echo "$max"
+}
+
+report_progress() {
+    local stage="not_started"
+    local steps=0
+
+    if [[ -f FINISHED ]]; then
+        stage="production"
+        steps=$(highest_index_for_pattern "mdin-*.rst7")
+        [[ $steps -lt 0 ]] && steps="completed"
+    elif ls mdin-*.rst7 >/dev/null 2>&1; then
+        stage="production"
+        steps=$(highest_index_for_pattern "mdin-*.rst7")
+        [[ $steps -lt 0 ]] && steps=0
+    elif ls eqnpt*.rst7 >/dev/null 2>&1; then
+        stage="equilibration"
+        steps=$(highest_index_for_pattern "eqnpt*.rst7")
+        [[ $steps -lt 0 ]] && steps=0
+    elif ls mini*.rst7 >/dev/null 2>&1; then
+        stage="minimization"
+        steps=$(highest_index_for_pattern "mini*.rst7")
+        [[ $steps -lt 0 ]] && steps=0
+    fi
+
+    echo "[progress] stage=${stage} steps_completed=${steps}"
+}

@@ -37,6 +37,7 @@ MPI_LAUNCH="${MPI_EXEC} ${MPI_FLAGS}"
 
 if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
+    report_progress
     exit 0
 fi
 
@@ -45,6 +46,7 @@ if [[ -f FAILED ]]; then
 fi
 
 source check_run.bash
+report_progress
 
 if [[ $only_eq -eq 1 ]]; then
     # Minimization
