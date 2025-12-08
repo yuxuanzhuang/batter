@@ -496,9 +496,14 @@ class FESimArgs(BaseModel):
     def _coerce_remd(cls, v):
         if isinstance(v, RemdArgs):
             return v
-        if isinstance(v, dict):
+        if isinstance(v, Mapping):
             return RemdArgs(**v)
-        return RemdArgs()
+        if v is None:
+            return RemdArgs()
+        raise ValueError(
+            "fe_sim.remd only accepts REMD timing settings (nstlim/numexchg); "
+            "use run.remd to enable or disable REMD submissions."
+        )
 
     @field_validator("lambdas")
     @classmethod
@@ -883,6 +888,7 @@ class RunConfig(BaseModel):
             protocol=self.protocol,
             fe_type=desired_fe_type,
             slurm_header_dir=self.run.slurm_header_dir,
+            run_remd=self.run.remd,
         )
 
     def with_base_dir(self, base_dir: Path) -> "RunConfig":

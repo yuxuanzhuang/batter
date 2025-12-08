@@ -47,6 +47,7 @@ class SimulationConfig(BaseModel):
         protocol: str | None = None,
         fe_type: str | None = None,
         slurm_header_dir: Path | None = None,
+        run_remd: str | bool | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -56,6 +57,9 @@ class SimulationConfig(BaseModel):
             System creation inputs taken from the ``create`` YAML section.
         fe : FESimArgs
             Free-energy simulation overrides from the ``fe_sim`` section.
+        run_remd : {"yes","no"}, optional
+            Whether REMD execution is enabled (controls submission only; REMD inputs are
+            always written during preparation).
 
         Returns
         -------
@@ -198,20 +202,22 @@ class SimulationConfig(BaseModel):
         if isinstance(remd_settings, RemdArgs):
             remd_nstlim = int(remd_settings.nstlim)
             remd_numexchg = int(remd_settings.numexchg)
+        elif isinstance(remd_settings, Mapping):
+            remd_settings = RemdArgs(**remd_settings)
+            remd_nstlim = int(remd_settings.nstlim)
+            remd_numexchg = int(remd_settings.numexchg)
         else:
-            # legacy dict/yes-no forms
-            if isinstance(remd_settings, dict):
-                remd_settings = RemdArgs(**remd_settings)
-                remd_nstlim = int(remd_settings.nstlim)
-                remd_numexchg = int(remd_settings.numexchg)
-            else:
-                remd_nstlim = int(_fe_attr("remd_nstlim", lambda: 100))
-                remd_numexchg = int(_fe_attr("remd_numexchg", lambda: 3000))
+            raise ValueError(
+                "fe_sim.remd must be a mapping of REMD settings (nstlim/numexchg); "
+                "toggle execution with run.remd."
+            )
 
+        remd_flag = coerce_yes_no(run_remd or "no") or "no"
 
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
+            "remd": remd_flag,
             "remd_nstlim": remd_nstlim,
             "remd_numexchg": remd_numexchg,
             "rocklin_correction": coerce_yes_no(
@@ -296,6 +302,10 @@ class SimulationConfig(BaseModel):
     # --- Global switches ---
     dec_int: Literal["mbar", "ti"] = Field(
         "mbar", description="Integration method (mbar/ti)"
+    )
+    remd: Literal["yes", "no"] = Field(
+        "no",
+        description="Enable REMD execution (submission only; inputs are always prepared).",
     )
     remd_nstlim: int = Field(
         100, description="Steps per REMD segment (applied to mdin-*-remd copies)."
@@ -474,6 +484,7 @@ class SimulationConfig(BaseModel):
         "hmr",
         "rocklin_correction",
         "enable_mcwat",
+        "remd",
         mode="before",
     )
     @classmethod

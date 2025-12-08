@@ -118,8 +118,8 @@ def test_create_args_requires_ligand_spec():
         CreateArgs()
 
 
-def test_fesim_args_invalid_yes_no():
-    with pytest.raises(ValidationError):
+def test_fesim_args_invalid_remd_type():
+    with pytest.raises(ValidationError, match="fe_sim\\.remd"):
         FESimArgs(remd="maybe")
 
 
@@ -181,28 +181,32 @@ def test_simulation_config_errors(overrides, message):
     assert message in str(excinfo.value)
 
 
-def test_simulation_config_remd_enabled():
-    cfg = SimulationConfig(**base_sim_kwargs(remd="yes"))
+def test_simulation_config_remd_enabled(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        num_equil_extends=1,
+        eq_steps=1000,
+        steps1={"z": 50_000},
+        steps2={"z": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(
+        create, fe_args, protocol="abfe", run_remd="yes"
+    )
     assert cfg.remd == "yes"
     assert cfg.remd_nstlim == 100
     assert cfg.remd_numexchg == 3000
 
 
 def test_fesim_remd_block():
-    args = FESimArgs.model_validate(
-        {"remd": {"enable": "yes", "nstlim": 200, "numexchg": 1500}}
-    )
-    assert args.remd.enable == "yes"
+    args = FESimArgs.model_validate({"remd": {"nstlim": 200, "numexchg": 1500}})
     assert args.remd.nstlim == 200
     assert args.remd.numexchg == 1500
 
 
-def test_fesim_remd_yes_sets_enable_flag() -> None:
-    args = FESimArgs.model_validate({"remd": "yes"})
-    assert args.remd_enable == "yes"
-    # Defaults preserved for timing/exchange settings
-    assert args.remd.nstlim == 100
-    assert args.remd.numexchg == 3000
+def test_fesim_remd_yes_rejected() -> None:
+    with pytest.raises(ValidationError, match="run\\.remd"):
+        FESimArgs.model_validate({"remd": "yes"})
 
 
 def _minimal_create(tmp_path: Path, **updates) -> CreateArgs:
@@ -348,14 +352,6 @@ def test_resolved_sim_config_sets_fe_type(
 
 def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:
     cfg = _minimal_run_config(tmp_path, "abfe")
-    fe_overrides = cfg.fe_sim.model_dump()
-    fe_overrides["remd"] = "yes"
-    cfg = cfg.model_copy(
-        update={
-            "fe_sim": fe_overrides,
-            "run": cfg.run.model_copy(update={"remd": "no"}),
-        }
-    )
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.remd == "no"
 
