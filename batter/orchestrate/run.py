@@ -309,6 +309,7 @@ def run_from_yaml(
         gpus_per_task=getattr(rc.run, "batch_gpus_per_task", 1),
         srun_extra=getattr(rc.run, "batch_srun_extra", None),
         max_active_jobs=rc.run.max_active_jobs,
+        partition=rc.run.slurm.partition if rc.run.slurm else None,
     )
 
     # Build pipeline with explicit sys_params

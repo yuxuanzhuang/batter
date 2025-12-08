@@ -12,7 +12,7 @@ def test_wait_for_slot_no_wait(monkeypatch):
     sleep_called = []
 
     monkeypatch.setattr(
-        "batter.exec.slurm_mgr._num_active_job", lambda user=None: 2
+        "batter.exec.slurm_mgr._num_active_job", lambda user=None, partition=None: 2
     )
     mgr.jobs = lambda: ["a"]
     monkeypatch.setattr("time.sleep", lambda s: sleep_called.append(s))
@@ -27,7 +27,7 @@ def test_wait_for_slot_enforces_cap(monkeypatch):
     sleep_called: List[float] = []
 
     call_count = {"n": 0}
-    def fake_active(user=None):
+    def fake_active(user=None, partition=None):
         call_count["n"] += 1
         return 3 if call_count["n"] == 1 else 0
 
