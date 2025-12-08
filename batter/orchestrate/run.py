@@ -343,6 +343,7 @@ def run_from_yaml(
             builder.make_child_for_ligand(sys_exec, lig_name, lig_path)
     logger.debug(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
 
+    parent_failure = False
     parent_only = Pipeline(
         [
             s
@@ -357,7 +358,18 @@ def run_from_yaml(
             if is_done(run_sys, step.name):
                 logger.info(f"[skip] {step.name}: finished.")
                 continue
-            backend.run(step, run_sys, step.params)
+            try:
+                backend.run(step, run_sys, step.params)
+            except Exception as exc:
+                if step.name == "param_ligands" and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+                    parent_failure = True
+                    logger.error(
+                        "[param_ligands] encountered error with on_failure=%s: %s — continuing with successful ligands only.",
+                        rc.run.on_failure,
+                        exc,
+                    )
+                    break
+                raise
 
     # Locate sim_overrides from system_prep (under run_dir)
     config_dir = run_dir / "artifacts" / "config"
@@ -445,6 +457,12 @@ def run_from_yaml(
     # --- build SimSystem children ---
     param_idx_path = run_dir / "artifacts" / "ligand_params" / "index.json"
     if not param_idx_path.exists():
+        if parent_failure and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+            logger.warning(
+                "Parametrization failed and no ligand param index was written; exiting early due to on_failure=%s.",
+                rc.run.on_failure,
+            )
+            return
         raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
     param_index = json.loads(param_idx_path.read_text())
     param_dir_dict = {e["residue_name"]: e["store_dir"] for e in param_index["ligands"]}
