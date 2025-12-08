@@ -100,6 +100,12 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     artifacts_index_dir.mkdir(parents=True, exist_ok=True)
     index_path = artifacts_index_dir / "index.json"
 
+    mode_lower = ""
+    if isinstance(params, dict):
+        mode_lower = str(params.get("on_failure") or "").lower()
+    elif hasattr(payload, "model_extra") and payload.model_extra:
+        mode_lower = str(payload.model_extra.get("on_failure") or "").lower()
+
     try:
         # Run batch parametrization into content-addressed subfolders
         # Returns (hash_ids_in_order, residue_names_in_order)
@@ -111,6 +117,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
             charge_method=charge,
             overwrite=False,
             run_with_slurm=False,
+            on_failure=mode_lower,
         )
         if not hashes:
             raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")

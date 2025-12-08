@@ -359,7 +359,13 @@ def run_from_yaml(
                 logger.info(f"[skip] {step.name}: finished.")
                 continue
             try:
-                backend.run(step, run_sys, step.params)
+                step_params = step.params
+                if isinstance(step_params, dict):
+                    step_params = dict(step_params)
+                    step_params["on_failure"] = rc.run.on_failure
+                elif hasattr(step_params, "copy_with"):
+                    step_params = step_params.copy_with(on_failure=rc.run.on_failure)
+                backend.run(step, run_sys, step_params)
             except Exception as exc:
                 if step.name == "param_ligands" and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
                     parent_failure = True
