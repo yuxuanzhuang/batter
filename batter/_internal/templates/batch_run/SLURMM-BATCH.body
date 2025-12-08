@@ -1,0 +1,7 @@
+scontrol show job $SLURM_JOB_ID
+echo "Job started at $(date)"
+
+cd TARGET_DIR
+ENV_EXPORT
+echo "[batter-batch] running RUN_SCRIPT in TARGET_DIR"
+exec /bin/bash RUN_SCRIPT

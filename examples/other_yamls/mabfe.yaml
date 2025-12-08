@@ -1,5 +1,5 @@
 version: 1
-protocol: md
+protocol: abfe
 backend: local
 
 create:
@@ -12,7 +12,7 @@ create:
   ligand_ff: openff-2.2.1
   retain_lig_prot: true
   param_charge: am1bcc
-
+  param_outdir: ligand_params
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
@@ -25,24 +25,28 @@ create:
   water_model: TIP3P
 
 run:
-  output_folder: adrb2_A_md
+  output_folder: adrb2_A_mabfe
   only_fe_preparation: false
   dry_run: false
   run_id: auto
   max_workers: 8
   on_failure: prune
   slurm:
-    partition: owners
-    time: "12:00:00"
+    partition: rondror
+    time: "4:00:00"
 
 fe_sim:
   num_fe_extends: 10
-  eq_steps: 1000000
-  num_equil_extends: 50
-  # 200 ns
+  lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
+  blocks: 5
+  eq_steps: 10000
+  num_equil_extends: 6
+  z_steps1: 5000
+  z_steps2: 30000
   cut: 9.0
-  barostat: 1
-  enable_mcwat: no
+  barostat: 2
   hmr: yes
   dt: 0.004
-  temperature: 310.0
+  temperature: 298.15
+  unbound_threshold: 8.0
+  buffer_z: 25.0

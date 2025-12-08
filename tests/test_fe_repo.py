@@ -49,3 +49,48 @@ def test_record_failure_creates_row_and_artifact(
     data = json.loads(failure_file.read_text())
     assert data["status"] == status
     assert data["reason"] == reason
+
+
+def test_save_clears_stale_failure_artifact(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+
+    # write a failure first
+    repo.record_failure(
+        run_id="run1",
+        ligand="lig1",
+        system_name="sys",
+        temperature=300.0,
+        status="failed",  # type: ignore[arg-type]
+        reason="old failure",
+    )
+    failure_file = tmp_path / "results" / "run1" / "lig1" / "failure.json"
+    assert failure_file.exists()
+
+    # now save a success and ensure the failure marker is removed
+    from batter.runtime.fe_repo import FERecord
+
+    rec = FERecord(
+        run_id="run1",
+        ligand="lig1",
+        mol_name="lig1",
+        system_name="sys",
+        fe_type="rest",
+        temperature=300.0,
+        method="mbar",
+        total_dG=-1.0,
+        total_se=0.1,
+        components=["z"],
+    )
+    repo.save(rec)
+
+    assert not failure_file.exists()
+    df = pd.read_csv(tmp_path / "results" / "index.csv")
+    row = df[(df["run_id"] == "run1") & (df["ligand"] == "lig1")].iloc[0]
+    assert row["status"] == "success"
+    assert pd.isna(row["failure_reason"]) or row["failure_reason"] == ""
+
+    # repository view should also present a cleared reason
+    idx = repo.index()
+    row2 = idx[(idx["run_id"] == "run1") & (idx["ligand"] == "lig1")].iloc[0]
+    assert row2["failure_reason"] == ""

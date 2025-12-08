@@ -1,11 +1,25 @@
 #!/bin/bash
 
+# AMBER Constants
+PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
+PMEMD_CPU_MPI_EXEC=${PMEMD_CPU_MPI_EXEC:-pmemd.MPI}
+PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
+PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
+SANDER_EXEC=${SANDER_EXEC:-sander}
+
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
 log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
+retry=${RETRY_COUNT:-0}
+
+# Echo commands before executing them so the full invocation is visible
+print_and_run() {
+    echo "$@"
+    eval "$@"
+}
 
 if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
@@ -19,17 +33,9 @@ fi
 source check_run.bash
 
 if [[ $only_eq -eq 1 ]]; then
-    # Minimization
-    # if mini_eq is found use mini_eq.in
-    if [[ -f mini_eq.in ]]; then
-        echo "Using mini_eq.in for minimization."
-    else
-        echo "mini_eq.in not found, using mini.in instead."
-        cp mini.in mini_eq.in
-    fi
-    # not use pmemd as sometimes it fails.
-    sander -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> "$log_file" 2>&1
-    check_sim_failure "Minimization" "$log_file"
+    # no eq needed, just copy the INPCRD to mini.in.rst7
+    cp $INPCRD mini.rst7
+    check_sim_failure "Minimization" "$log_file" mini.rst7
 
     # run minimization for each windows at this stage
     for i in $(seq 0 $((NWINDOWS - 1))); do
@@ -44,7 +50,7 @@ if [[ $only_eq -eq 1 ]]; then
         fi
     done
 
-    cpptraj -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> "$log_file" 2>&1
+    print_and_run "cpptraj -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
@@ -58,8 +64,8 @@ if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     # Initial MD production run
-    pmemd.cuda -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 -AllowSmallBox >> "$log_file" 2>&1
-    check_sim_failure "MD stage 0" "$log_file"
+    print_and_run "$PMEMD_EXEC -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
+    check_sim_failure "MD stage 0" "$log_file" mdin-00.rst7
 fi
 
 i=1
@@ -73,13 +79,13 @@ while [ $i -le FERANGE ]; do
     if [[ $overwrite -eq 0 && -s mdin-$z.rst7 ]]; then
         echo "Skipping md$x steps."
     else
-        pmemd.cuda -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 -AllowSmallBox >> $log_file 2>&1
-        check_sim_failure "MD stage $i" "$log_file"
+        print_and_run "$PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
+        check_sim_failure "MD stage $i" "$log_file" mdin-$x.rst7 mdin-$y.rst7 $retry
     fi
     i=$((i + 1))
 done
 
-cpptraj -p $PRMTOP -y mdin-$x.rst7 -x output.pdb >> "$log_file" 2>&1
+print_and_run "cpptraj -p $PRMTOP -y mdin-$x.rst7 -x output.pdb >> \"$log_file\" 2>&1"
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion

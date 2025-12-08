@@ -56,7 +56,7 @@ def write_amber_templates(
     Supported placeholder tokens include ``_step_``, ``_ntpr_``, ``_ntwr_``,
     ``_ntwe_``, ``_ntwx_``, ``_cutoff_``, ``_gamma_ln_``, ``_barostat_``,
     ``_receptor_ff_``, ``_ligand_ff_``, ``_lipid_ff_``, ``_p_coupling_``,
-    and ``_c_surften_``.
+    ``_c_surften_``, and ``_enable_mcwat_``.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

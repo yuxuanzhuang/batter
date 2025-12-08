@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest
 
 from batter.orchestrate import markers
+from batter.orchestrate.markers import _spec_satisfied
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.pipeline import Pipeline
 from batter.systems.core import SimSystem
@@ -127,3 +128,68 @@ def test_run_phase_skipping_done_behavior(tmp_path):
     skipped_done = markers.run_phase_skipping_done(pipeline, [done_system], phase, backend2)
     assert skipped_done is True
     assert backend2.calls == []
+
+
+def test_run_phase_skipping_done_allows_prune_on_backend_error(tmp_path):
+    phase = "example_phase"
+    todo_root = tmp_path / "todo"
+    todo_root.mkdir()
+    _register_example(todo_root, phase)
+    todo_system = _make_system(todo_root)
+    pipeline = Pipeline([])
+
+    class FailingBackend:
+        def __init__(self):
+            self.calls = 0
+
+        def run_parallel(self, pipeline, systems, description="", max_workers=None):
+            self.calls += 1
+            raise RuntimeError("boom")
+
+    backend = FailingBackend()
+    skipped = markers.run_phase_skipping_done(
+        pipeline,
+        [todo_system],
+        phase,
+        backend,
+        on_failure="prune",
+    )
+    assert skipped is False
+    assert backend.calls == 1
+
+    backend2 = FailingBackend()
+    with pytest.raises(RuntimeError):
+        markers.run_phase_skipping_done(
+            pipeline,
+            [todo_system],
+            phase,
+            backend2,
+            on_failure="raise",
+        )
+    assert backend2.calls == 1
+
+
+def test_spec_satisfied_writes_progress(tmp_path):
+    target = tmp_path / "foo" / "FINISHED"
+    target.parent.mkdir(parents=True)
+    target.write_text("")
+    spec = [["foo/FINISHED"]]
+
+    assert _spec_satisfied(tmp_path, spec, "fe") is True
+
+    progress = tmp_path / "fe" / "artifacts" / "progress" / "fe.csv"
+    assert progress.exists()
+    assert "foo/FINISHED" in progress.read_text()
+
+
+def test_prepare_fe_progress_path(tmp_path):
+    target = tmp_path / "foo" / "FINISHED"
+    target.parent.mkdir(parents=True)
+    target.write_text("")
+    spec = [["foo/FINISHED"]]
+
+    assert _spec_satisfied(tmp_path, spec, "prepare_fe") is True
+
+    progress = tmp_path / "fe" / "artifacts" / "progress" / "prepare_fe.csv"
+    assert progress.exists()
+    assert "foo/FINISHED" in progress.read_text()

@@ -64,6 +64,7 @@ Primary Guides
 
    getting_started
    tutorial
+   slurm_headers
    configuration
    cli
    api

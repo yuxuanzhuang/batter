@@ -20,8 +20,6 @@ Equilibrate, NPT.
   gamma_ln = _gamma_ln_,
   ig = -1,
   ntp = 0,
-  mcbarint = 10,
-  barostat = 1,
   nstlim = 10000,
   dt = 0.001,
   nmropt = 1,

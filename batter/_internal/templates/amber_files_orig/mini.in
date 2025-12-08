@@ -14,12 +14,12 @@ Minimizing.
   ntc = 1,
   ntb = 1,
   cut = _cutoff_,
-  nmropt = 1,
+  nmropt = 0,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
   restraintmask = '(@CA,C,N,P31 | :_lig_name_ | :1) & !@H=',
-  infe = 1,
+  infe = 0,
  /
  &pmd
  output_file = 'cmass.txt'

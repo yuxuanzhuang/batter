@@ -31,8 +31,9 @@ The run YAML file is divided into three sections grouped inside
     coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
     ``lambdas`` or SDR restraints are no longer required. Equilibration controls
     are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
-    (how many additional segments to run). The total number of equilibration MD
-    steps therefore scales as ``num_equil_extends * eq_steps``. For FE production
+    (how many additional segments to run). A base segment always runs, so the
+    total equilibration work scales as ``(num_equil_extends + 1) * eq_steps``.
+    For FE production
     the ``num_fe_extends`` field multiplies the stage-2 component steps defined in
     ``steps2`` so each window ultimately samples
     ``num_fe_extends * steps2[component]`` steps before moving on.
@@ -98,6 +99,113 @@ Linking configuration fields to their downstream consumers makes it easier to re
 about which parts of the file structure (build directories, solvation scripts,
 restraint writers) are affected when you toggle individual knobs.
 
+The ``buffer_z`` value also determines the SDR translation distance: ligands are
+shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
+clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems
+the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
+bulk solvent above the membrane even if the YAML specifies a smaller buffer.
+
+Equilibration options
+---------------------
+
+Two frequently toggled equilibration knobs live under ``fe_sim`` and flow into the
+resolved :class:`~batter.config.simulation.SimulationConfig`:
+
+* ``hmr`` – ``"yes"`` enables hydrogen mass repartitioning. The builder swaps in HMR
+  parameter files and switches equilibration/production mdins to the HMR topology
+  (``full.hmr.prmtop``).
+* ``enable_mcwat`` – ``"yes"`` (default) enables Monte Carlo water moves during
+  equilibration. The flag populates the ``mcwat`` setting in AMBER input decks via
+  :func:`batter._internal.ops.amber.write_amber_templates`.
+
+REMD runs
+---------
+
+REMD inputs (mdins/groupfiles) are always written during preparation so you can decide at
+submit time whether to run them. Use ``fe_sim.remd`` to tune segment length and exchange
+frequency (``nstlim`` / ``numexchg``). Control execution with ``run.remd`` (``yes`` or
+``no``); when ``run.remd: no`` the files are still generated but no REMD jobs are
+scheduled. REMD jobs submit one Slurm job per component via ``SLURMM-BATCH-remd`` and
+monitor ``FINISHED``/``FAILED`` sentinels in the component folder. See
+:doc:`remd_submission` for operational details.
+
+SLURM header templates
+----------------------
+
+BATTER renders SLURM scripts by combining a user-editable header with a packaged body.
+Headers are copied into ``~/.batter`` on first use.
+You can also seed them explicitly:
+
+.. code-block:: bash
+
+   batter seed-headers           # seeds into ~/.batter
+   batter seed-headers --dest /path/to/dir
+   batter seed-headers --force   # overwrite existing headers
+
+To check how your headers differ from the packaged defaults:
+
+.. code-block:: bash
+
+   batter diff-headers           # compares ~/.batter headers to defaults
+   batter diff-headers --dest /path/to/dir
+
+Edit the headers to match your cluster defaults (queue/partition, env exports,
+executable paths). Bodies remain managed by the package. Header files:
+
+* ``SLURMM-Am.header`` (equil/FE runs)
+* ``SLURMM-BATCH-remd.header`` (REMD runs)
+* ``job_manager.header`` (manager script for ``batter --slurm-submit``)
+
+The header lookup/seed location is controlled by ``run.slurm_header_dir``; when omitted it
+defaults to ``~/.batter``.
+
+Per-run SLURM overrides
+-----------------------
+
+Simulation submit scripts inherit the header settings above, but you can also control SLURM
+resources per run via the ``run.slurm`` block (partition, time, nodes, ntasks_per_node, mem, etc.).
+Those values are substituted into SLURM scripts when rendered. Combine the two mechanisms by
+setting cluster defaults in the headers and per-run overrides in the YAML when needed.
+
+Batch mode (single allocation)
+------------------------------
+
+If you prefer to request a multi-GPU allocation once and submit per-window jobs from a
+manager process, set ``run.batch_mode: true``. The manager will render ``SLURMM-BATCH``
+scripts into ``executions/<run_id>/batch_run`` and submit them with ``sbatch``; each script
+``cd``s into the component/window folder and runs ``run-local.bash`` (or ``run-local-remd.bash``).
+Equilibration and FE-equil run as normal per-ligand submits; FE production is bundled into a
+single batch submission per ligand when REMD is disabled.
+Set ``run.batch_gpus`` to request GPUs on the sbatch line (via ``--gres gpu:<batch_gpus>``)
+for the per-ligand FE batch submission; ``run.batch_gpus_per_task`` controls the per-task
+allocation used inside the batch helper.
+
+The batch wrapper header is seeded to ``~/.batter/SLURMM-BATCH.header`` (similar to other
+headers); edit it to match your cluster defaults (GPUs, partition, modules).
+
+Remember to request GPUs in your job manager header (``job_manager.header``) so the manager
+allocation has the resources it needs.
+
+Executable resolution
+---------------------
+
+BATTER launches external tools by name (e.g., ``pmemd.cuda``, ``pmemd.cuda.MPI``,
+``pmemd``, ``sander``, ``tleap``, ``antechamber``, ``cpptraj``, ``parmchk2``,
+``obabel``, ``vmd``). Ensure they are on ``PATH`` or exported in your SLURM headers
+if cluster modules are required. The package ships ``USalign`` internally and calls
+it via the baked-in path. For the Python-side tooling you can override executables
+via environment variables so overrides propagate into subprocesses:
+
+* ``BATTER_ANTECHAMBER`` (default: ``antechamber``)
+* ``BATTER_TLEAP`` (default: ``tleap``)
+* ``BATTER_CPPTRAJ`` (default: ``cpptraj``)
+* ``BATTER_PARMCHK2`` (default: ``parmchk2``)
+* ``BATTER_CHARMM_LIPID2AMBER`` (default: ``charmmlipid2amber.py``)
+* ``BATTER_USALIGN`` (default: packaged ``USalign``)
+* ``BATTER_OBABEL`` (default: ``obabel``)
+* ``BATTER_VMD`` (default: ``vmd``)
+
+
 Quick Reference
 ---------------
 
@@ -112,8 +220,3 @@ Quick Reference
    batter.config.run.RunSection
    batter.config.load_run_config
    batter.config.dump_run_config
-  The ``buffer_z`` value also determines the SDR translation distance: ligands are
-  shifted so they sit near the midpoint of the solvent slab, with an extra 5 Å of
-  clearance (see :func:`batter.systemprep.helpers.get_sdr_dist`).  For membrane systems
-  the builder enforces a minimum effective ``buffer_z`` of ~25 Å to keep the ligand in
-  bulk solvent above the membrane even if the YAML specifies a smaller buffer.

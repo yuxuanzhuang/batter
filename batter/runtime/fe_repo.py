@@ -191,6 +191,8 @@ class FEResultsRepository:
     def save(self, rec: FERecord, copy_from: Path | None = None) -> None:
         lig_dir = self._lig_dir(rec.run_id, rec.ligand)
         lig_dir.mkdir(parents=True, exist_ok=True)
+        # clear any stale failure marker when writing a success record
+        (lig_dir / "failure.json").unlink(missing_ok=True)
         # write JSON record
         (lig_dir / "record.json").write_text(json.dumps(rec.__dict__, indent=2))
         # optional: copy raw Results/ in
@@ -249,6 +251,7 @@ class FEResultsRepository:
         for col in cols:
             if col not in df.columns:
                 df[col] = pd.NA
+        df["failure_reason"] = df["failure_reason"].fillna("")
         return df[cols + ["status", "failure_reason"]]
 
     def record_failure(

@@ -152,6 +152,84 @@ def test_cli_fe_show(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
     assert "total_dG   : -5.000" in result.output
 
 
+def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
+    yaml_path = tmp_path / "run.yaml"
+    yaml_path.write_text("dummy: true\n")
+    header_root = tmp_path / "headers"
+
+    class DummySection:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+        def model_copy(self, update: dict | None = None):
+            data = dict(self.__dict__)
+            if update:
+                data.update(update)
+            return DummySection(**data)
+
+    class DummyRunConfig:
+        def __init__(self, run=None):
+            default_run = {
+                "output_folder": str(tmp_path / "out"),
+                "run_id": "auto",
+                "dry_run": False,
+                "slurm_header_dir": header_root,
+            }
+            run_data = dict(default_run)
+            if run:
+                run_data.update(run)
+            self.run = DummySection(**run_data)
+
+        def model_copy(self, update: dict | None = None):
+            data = {"run": self.run}
+            if update:
+                data.update(update)
+            run_payload = data["run"]
+            run_values = dict(run_payload.__dict__)
+            return DummyRunConfig(run=run_values)
+
+        def resolved_sim_config(self):
+            return object()
+
+    monkeypatch.setattr(
+        "batter.cli.run.RunConfig.load",
+        staticmethod(lambda path: DummyRunConfig()),
+    )
+
+    rendered = {}
+
+    def fake_render(name, header_path, body_path, replacements, header_root=None):
+        rendered["header_root"] = header_root
+        return "#SBATCH --dummy\n"
+
+    monkeypatch.setattr("batter.cli.run.render_slurm_with_header_body", fake_render)
+
+    class DummyProc:
+        returncode = 0
+        stdout = "Submitted batch job 123"
+        stderr = ""
+
+    calls = {}
+
+    def fake_run(cmd, stdout=None, stderr=None, text=None):
+        calls["cmd"] = cmd
+        return DummyProc()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(cli, ["run", str(yaml_path), "--slurm-submit"])
+    assert result.exit_code == 0
+    # ensure header_root threaded through to renderer
+    assert rendered["header_root"] == header_root
+    # job script should be written under temp path
+    scripts = list(tmp_path.glob("*_job_manager.sbatch"))
+    assert len(scripts) == 1
+    assert scripts[0].exists()
+    # sbatch invoked on the generated script
+    assert scripts[0].name in calls["cmd"]
+
+
 def test_cli_fe_analyze_invokes_api(
     monkeypatch, tmp_path: Path, runner: CliRunner
 ) -> None:

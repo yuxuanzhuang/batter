@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import json
 import os
 import smtplib
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 from smtplib import SMTPException
@@ -67,6 +68,62 @@ from batter.orchestrate.run_support import (
 )
 
 
+def _slurm_registry_path(run_dir: Path) -> Path:
+    """Return the registry path under artifacts/slurm, migrating legacy .slurm if present."""
+    new_path = run_dir / "artifacts" / "slurm" / "queue.jsonl"
+    old_path = run_dir / ".slurm" / "queue.jsonl"
+    if old_path.exists() and not new_path.exists():
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            old_path.replace(new_path)
+        except Exception:
+            shutil.copy2(old_path, new_path)
+    return new_path
+
+
+def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
+    """Persist a copy of the user YAML under artifacts/config for future reuse."""
+    cfg_dir = run_dir / "artifacts" / "config"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    dst = cfg_dir / "run_config.yaml"
+    if dst.exists():
+        return
+    try:
+        shutil.copy2(yaml_path, dst)
+    except Exception as exc:
+        logger.warning("Could not store run YAML copy at %s: %s", dst, exc)
+
+
+def _materialize_extra_conf_restraints(
+    source: Path | str | None, run_dir: Path, yaml_dir: Path
+) -> Path | None:
+    """Copy extra_conformation_restraints into artifacts/config for reuse and return the stored path."""
+    if not source:
+        return None
+    src = Path(source)
+    if not src.is_absolute():
+        src = (yaml_dir / src).resolve()
+
+    dest_dir = run_dir / "artifacts" / "config"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+
+    if dest.exists():
+        return dest
+    if src.exists():
+        try:
+            shutil.copy2(src, dest)
+            return dest
+        except Exception as exc:
+            logger.warning("Could not copy extra_conformation_restraints from %s: %s", src, exc)
+            return None
+
+    logger.warning(
+        f"extra_conformation_restraints missing at {src} and no stored copy under {dest}"
+    )
+    return None
+
+
 def run_from_yaml(
     path: Path | str,
     on_failure: Literal["prune", "raise", "retry"] = None,
@@ -101,7 +158,6 @@ def run_from_yaml(
             "max_workers": rc.run.max_workers,
             "max_active_jobs": rc.run.max_active_jobs,
             "slurm_partition": rc.run.slurm.partition if rc.run.slurm else None,
-            "amber_setup_sh": rc.run.amber_setup_sh,
         },
     )
     if run_overrides:
@@ -120,29 +176,6 @@ def run_from_yaml(
         logger.info(
             f"Using user-specified ligand param_outdir: {rc.create.param_outdir}"
         )
-
-    # Build system-prep params exactly once
-    sys_params = {
-        "param_outdir": str(rc.create.param_outdir),
-        "system_name": rc.create.system_name,
-        "protein_input": str(rc.create.protein_input),
-        "system_input": str(rc.create.system_input) if rc.create.system_input else None,
-        "system_coordinate": (
-            str(rc.create.system_coordinate) if rc.create.system_coordinate else None
-        ),
-        "ligand_paths": rc.create.ligand_paths,
-        "anchor_atoms": list(rc.create.anchor_atoms or []),
-        "protein_align": str(rc.create.protein_align),
-        "lipid_mol": list(rc.create.lipid_mol or []),
-        "other_mol": list(rc.create.other_mol or []),
-        "ligand_ff": rc.create.ligand_ff,
-        "retain_lig_prot": bool(rc.create.retain_lig_prot),
-        "charge": rc.create.param_charge,
-        "yaml_dir": str(yaml_dir),
-        "extra_restraints": rc.create.extra_restraints,
-        "extra_restraint_fc": rc.create.extra_restraint_fc,
-        "extra_conformation_restraints": rc.create.extra_conformation_restraints,
-    }
 
     sim_cfg = rc.resolved_sim_config()
     logger.info(f"Loaded simulation config for system: {sim_cfg.system_name}")
@@ -192,6 +225,8 @@ def run_from_yaml(
     logger.info(f"Using run_id='{run_id}' under {run_dir}")
     _, sig_path = _stored_signature(run_dir)
 
+    _store_run_yaml_copy(run_dir, path)
+
     # Ligands
     lig_original_names: Dict[str, str] = {}
     staged_lig_map = discover_staged_ligands(run_dir)
@@ -214,7 +249,33 @@ def run_from_yaml(
         if lig_original_names:
             _store_ligand_names(run_dir, lig_original_names)
     rc.create.ligand_paths = {k: str(v) for k, v in lig_map.items()}
-    sys_params.update({"ligand_paths": rc.create.ligand_paths})
+
+    # Build system-prep params exactly once (after run_dir is known)
+    extra_conf_path = _materialize_extra_conf_restraints(
+        rc.create.extra_conformation_restraints, run_dir, yaml_dir
+    )
+    sys_params = {
+        "param_outdir": str(rc.create.param_outdir),
+        "system_name": rc.create.system_name,
+        "protein_input": str(rc.create.protein_input),
+        "system_input": str(rc.create.system_input) if rc.create.system_input else None,
+        "system_coordinate": (
+            str(rc.create.system_coordinate) if rc.create.system_coordinate else None
+        ),
+        "ligand_paths": rc.create.ligand_paths,
+        "anchor_atoms": list(rc.create.anchor_atoms or []),
+        "protein_align": str(rc.create.protein_align),
+        "lipid_mol": list(rc.create.lipid_mol or []),
+        "other_mol": list(rc.create.other_mol or []),
+        "ligand_ff": rc.create.ligand_ff,
+        "retain_lig_prot": bool(rc.create.retain_lig_prot),
+        "charge": rc.create.param_charge,
+        "yaml_dir": str(yaml_dir),
+        "extra_restraints": rc.create.extra_restraints,
+        "extra_restraint_fc": rc.create.extra_restraint_fc,
+        "extra_conformation_restraints": extra_conf_path
+        or rc.create.extra_conformation_restraints,
+    }
 
     sys_exec = SimSystem(name=rc.create.system_name, root=run_dir)
     sys_exec = builder.build(sys_exec, rc.create)
@@ -233,18 +294,30 @@ def run_from_yaml(
 
     # SLURM manager (registry per execution)
     slurm_flags = rc.run.slurm.to_sbatch_flags() if rc.run.slurm else None
+    batch_mode = bool(getattr(rc.run, "batch_mode", False))
+    batch_poll = 10.0 if batch_mode else 60 * 15
+    registry_file = None if batch_mode else _slurm_registry_path(run_dir)
     job_mgr = SlurmJobManager(
-        poll_s=60 * 15,
+        poll_s=batch_poll,
         max_retries=3,
         resubmit_backoff_s=30,
-        registry_file=(run_dir / ".slurm" / "queue.jsonl"),
+        registry_file=registry_file,
         dry_run=dry_run,
         sbatch_flags=slurm_flags,
+        batch_mode=batch_mode,
+        batch_gpus=getattr(rc.run, "batch_gpus", None),
+        gpus_per_task=getattr(rc.run, "batch_gpus_per_task", 1),
+        srun_extra=getattr(rc.run, "batch_srun_extra", None),
+        max_active_jobs=rc.run.max_active_jobs,
     )
 
     # Build pipeline with explicit sys_params
     tpl = select_pipeline(
-        rc.protocol, sim_cfg, rc.run.only_fe_preparation, sys_params=sys_params
+        rc.protocol,
+        sim_cfg,
+        rc.run.only_fe_preparation,
+        sys_params=sys_params,
+        partition=rc.run.slurm.partition if rc.run.slurm else None,
     )
 
     # Run parent-only steps at run_dir by using a run-scoped SimSystem
@@ -416,29 +489,40 @@ def run_from_yaml(
             "prepare_equil",
             backend,
             max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "prepare_equil", rc.run.on_failure)
     else:
-        logger.info(f"[skip] prepare_equil: no steps in this protocol.")
+        logger.info("[skip] prepare_equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    def _inject_mgr(p: Pipeline) -> Pipeline:
+    def _inject_mgr(p: Pipeline, stage_name: str) -> Pipeline:
+        job_mgr.set_stage(stage_name)
         patched = []
         for s in p.ordered_steps():
             base_payload = s.payload or StepPayload()
-            updates = {"job_mgr": job_mgr}
+            updates = {"job_mgr": job_mgr, "job_stage": stage_name}
             if rc.run.max_active_jobs is not None:
                 updates["max_active_jobs"] = rc.run.max_active_jobs
+            updates["batch_mode"] = batch_mode
+            updates["batch_run_root"] = run_dir / "batch_run"
+            updates["batch_gpus"] = getattr(rc.run, "batch_gpus", None)
+            updates["batch_gpus_per_task"] = getattr(rc.run, "batch_gpus_per_task", 1)
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
 
-    phase_equil = _inject_mgr(phase_equil)
+    phase_equil = _inject_mgr(phase_equil, "equil")
     if phase_equil.ordered_steps():
         finished = run_phase_skipping_done(
-            phase_equil, children, "equil", backend, max_workers=1
+            phase_equil,
+            children,
+            "equil",
+            backend,
+            max_workers=1,
+            on_failure=rc.run.on_failure,
         )
         if not finished:
             job_mgr.wait_all()
@@ -449,7 +533,7 @@ def run_from_yaml(
                 return
         children = handle_phase_failures(children, "equil", rc.run.on_failure)
     else:
-        logger.info(f"[skip] equil: no steps in this protocol.")
+        logger.info("[skip] equil: no steps in this protocol.")
 
     # --------------------
     # PHASE 2.5: equil_analysis (parallel) → prune UNBOUND if requested
@@ -475,6 +559,7 @@ def run_from_yaml(
             "equil_analysis",
             backend,
             max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "equil_analysis", rc.run.on_failure)
         children = _filter_bound(children)
@@ -491,6 +576,7 @@ def run_from_yaml(
             "prepare_fe",
             backend,
             max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "prepare_fe", rc.run.on_failure)
     else:
@@ -499,7 +585,7 @@ def run_from_yaml(
     # --------------------
     # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------
-    phase_fe_equil = _inject_mgr(phase_fe_equil)
+    phase_fe_equil = _inject_mgr(phase_fe_equil, "fe_equil")
     if phase_fe_equil.ordered_steps():
         finished = run_phase_skipping_done(
             phase_fe_equil,
@@ -507,6 +593,7 @@ def run_from_yaml(
             "fe_equil",
             backend,
             max_workers=1,
+            on_failure=rc.run.on_failure,
         )
         if not finished:
             job_mgr.wait_all()
@@ -522,11 +609,16 @@ def run_from_yaml(
     # --------------------
     # PHASE 5: fe → must COMPLETE for all ligands
     # --------------------
-    phase_fe = _inject_mgr(phase_fe)
+    phase_fe = _inject_mgr(phase_fe, "fe")
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
         finished = run_phase_skipping_done(
-            phase_fe, children, "fe", backend, max_workers=1
+            phase_fe,
+            children,
+            "fe",
+            backend,
+            max_workers=1,
+            on_failure=rc.run.on_failure,
         )
         if not finished:
             job_mgr.wait_all()
@@ -554,7 +646,12 @@ def run_from_yaml(
     phase_analyze = _inject_analysis_workers(phase_analyze)
     if phase_analyze.ordered_steps():
         run_phase_skipping_done(
-            phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers
+            phase_analyze,
+            children,
+            "analyze",
+            backend,
+            max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "analyze", rc.run.on_failure)
     else:

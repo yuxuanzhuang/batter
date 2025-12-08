@@ -84,7 +84,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
 
     default_components = components_under(fe_root)
     components: List[str] = list(default_components)
-    temperature: float = 310.0
+    temperature: float = 298.15
     water_model: str = "tip3p"
     rocklin_correction: bool = False
     n_workers_override = payload.get("analysis_n_workers", None)

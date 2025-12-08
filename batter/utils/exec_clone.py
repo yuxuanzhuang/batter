@@ -58,9 +58,11 @@ def _copy_if_exists(src: Path, dst: Path, mode: CopyMode) -> None:
 
 
 def _strip_run_state(dst_run_dir: Path, reset_states: bool) -> None:
-    slurm_q = dst_run_dir / ".slurm"
-    if slurm_q.exists():
-        shutil.rmtree(slurm_q, ignore_errors=True)
+    legacy_slurm_q = dst_run_dir / ".slurm"
+    new_slurm_q = dst_run_dir / "artifacts" / "slurm"
+    for slurm_q in (legacy_slurm_q, new_slurm_q):
+        if slurm_q.exists():
+            shutil.rmtree(slurm_q, ignore_errors=True)
     if not reset_states:
         return
     markers = {"FINISHED", "FAILED", "EQ_FINISHED", "UNBOUND"}

@@ -32,7 +32,6 @@ run:
   on_failure: prune
 
   email_on_completion: yuzhuang@stanford.edu
-  amber_setup_sh: $GROUP_HOME/software/amber24/setup_amber.sh
   slurm:
     partition: owners
     time: "12:00:00"
@@ -63,7 +62,7 @@ fe_sim:
   dt: 0.004
   # buffer_z for solvation layer above and below membrane
   buffer_z: 25.0
-  temperature: 310.0 
+  temperature: 298.15 
   # analysis only start from 4th extension (exclude the first three FE extensions)
   analysis_fe_range: [3, -1]
   # MBAR analysis blocks

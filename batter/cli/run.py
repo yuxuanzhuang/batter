@@ -28,6 +28,10 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
+from batter.utils.slurm_templates import (
+    render_slurm_with_header_body,
+    seed_default_headers,
+)
 from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
 
@@ -36,6 +40,56 @@ from batter.cli.fek import fek_schedule
 @click.version_option(version=__version__, prog_name="batter")
 def cli() -> None:
     """Root command group for BATTER."""
+    seed_default_headers()
+
+
+@cli.command("seed-headers")
+@click.option(
+    "--dest",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    default=None,
+    help="Destination directory for Slurm headers (defaults to ~/.batter).",
+)
+@click.option(
+    "--force/--no-force",
+    default=False,
+    help="Overwrite existing headers if present.",
+)
+def seed_headers(dest: Path | None, force: bool) -> None:
+    """Copy packaged Slurm headers into dest (default: ~/.batter)."""
+    copied = seed_default_headers(dest, overwrite=force)
+    dest_dir = dest or Path.home() / ".batter"
+    if copied:
+        click.echo(f"Seeded headers into {dest_dir}:")
+        for path in copied:
+            click.echo(f"  - {path}")
+    else:
+        click.echo(f"No headers copied; existing headers already present under {dest_dir}.")
+        if not force:
+            click.echo("Use --force to overwrite existing header files.")
+
+
+@cli.command("diff-headers")
+@click.option(
+    "--dest",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    default=None,
+    help="Location of Slurm headers (defaults to ~/.batter).",
+)
+def diff_headers_cmd(dest: Path | None) -> None:
+    """Show differences between user headers and packaged defaults."""
+    from batter.utils.slurm_templates import diff_headers as _diff_headers
+
+    diffs = _diff_headers(dest)
+    if not diffs:
+        click.echo("No headers found.")
+        return
+    for name, diff in diffs.items():
+        click.echo(f"=== {name} ===")
+        if not diff:
+            click.echo("No differences.")
+            continue
+        click.echo(diff)
 
 
 # -------------------------------- run ----------------------------------
@@ -137,27 +191,6 @@ def cmd_run(
 ) -> None:
     """
     Execute a BATTER workflow defined in ``YAML_PATH``.
-
-    Parameters
-    ----------
-    yaml_path : Path
-        Path to the run configuration YAML.
-    on_failure : {"prune", "raise"}
-        Failure policy for ligand pipelines.
-    output_folder : Path, optional
-        Override for the run output folder.
-    run_id : str, optional
-        Requested execution identifier (``auto`` reuses the latest).
-    allow_run_id_mismatch : bool, optional
-        When ``True``, allow reusing a provided run-id even if the stored configuration hash differs.
-    dry_run : bool, optional
-        Override the ``run.dry_run`` flag from the YAML.
-    only_equil : bool, optional
-        When ``True`` run only equilibration preparation steps.
-    slurm_submit : bool
-        If ``True``, generate an ``sbatch`` script and submit the job.
-    slurm_manager_path : Path, optional
-        Optional path to a SLURM header/template file.
     """
     run_over = {}
     if output_folder:
@@ -220,8 +253,16 @@ def cmd_run(
             dry_run=("1" if dry_run else "0") if dry_run is not None else "",
             only_equil=("1" if only_equil else "0") if only_equil is not None else "",
         )
-        with open(slurm_manager_path or job_manager, "r") as f:
-            manager_code = f.read()
+        base_path = Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
+        tpl_header = base_path.with_suffix(".header")
+        tpl_body = base_path.with_suffix(".body")
+        manager_code = render_slurm_with_header_body(
+            "job_manager.header",
+            tpl_header,
+            tpl_body,
+            {},
+            header_root=cfg_for_validation.run.slurm_header_dir,
+        )
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")
@@ -247,6 +288,43 @@ def cmd_run(
         on_failure=on_failure.lower(),
         run_overrides=(run_over or None),
     )
+
+
+@cli.command("run-exec")
+@click.argument(
+    "execution_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--on-failure",
+    type=click.Choice(["prune", "raise", "retry"], case_sensitive=False),
+    default="raise",
+    show_default=True,
+)
+def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
+    """
+    Resume/extend a run using only an existing execution directory.
+    """
+    exec_dir = execution_dir.resolve()
+    yaml_copy = exec_dir / "artifacts" / "config" / "run_config.yaml"
+    if not yaml_copy.exists():
+        raise click.ClickException(
+            f"Could not find stored run_config.yaml under {yaml_copy}. "
+            "Run once with `batter run` to seed artifacts/config."
+        )
+
+    run_overrides = {
+        "output_folder": exec_dir.parent.parent,
+        "run_id": exec_dir.name,
+        "allow_run_id_mismatch": True,
+    }
+    try:
+        run_from_yaml(
+            yaml_copy,
+            on_failure=on_failure.lower(),
+            run_overrides=run_overrides,
+        )
+    except Exception as e:
+        raise click.ClickException(str(e))
 
 
 # ---------------------------- free energy results check ------------------------------
@@ -620,6 +698,13 @@ def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
                 except ValueError:
                     win = None
         stage = "fe"
+    elif tail.endswith("_remd"):
+        core = tail[: -len("_remd")]
+        m = re.match(r"(?P<lig>.+)_(?P<comp>[A-Za-z]+)$", core)
+        if m:
+            ligand = m.group("lig")
+            comp = m.group("comp")
+        stage = "remd"
 
     run_id = None
     mrun = re.search(r"/executions/([^/]+)$", system_root)

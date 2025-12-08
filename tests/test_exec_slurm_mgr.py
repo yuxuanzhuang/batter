@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -6,6 +7,7 @@ from batter.exec.slurm_mgr import (
     SlurmJobManager,
     SlurmJobSpec,
     _atomic_append_jsonl_unique,
+    _parse_gpu_env,
 )
 
 
@@ -45,6 +47,26 @@ def test_slurm_job_manager_status(tmp_path):
     manager.add(spec)
     lines = (tmp_path / "queue.jsonl").read_text().strip().splitlines()
     assert len(lines) == 1
+
+
+def test_registry_filters_by_stage(tmp_path):
+    wd_eq = tmp_path / "eq_job"
+    wd_fe = tmp_path / "fe_job"
+    wd_eq.mkdir()
+    wd_fe.mkdir()
+
+    manager = SlurmJobManager(registry_file=tmp_path / "queue.jsonl")
+    manager.set_stage("equil")
+
+    manager.add(SlurmJobSpec(workdir=wd_eq, stage="equil"))
+    manager.add(SlurmJobSpec(workdir=wd_fe, stage="fe"))
+
+    jobs_equil = manager.jobs()
+    assert {j.workdir for j in jobs_equil} == {wd_eq}
+
+    manager.set_stage("fe")
+    jobs_fe = manager.jobs()
+    assert {j.workdir for j in jobs_fe} == {wd_fe}
 
 
 def test_timeout_resubmits_without_failure(monkeypatch, tmp_path):
@@ -163,3 +185,80 @@ def test_completed_resubmit_does_not_count_retry(monkeypatch, tmp_path):
     assert submissions["count"] == 2  # initial + resubmission
     assert manager._retries.get(spec.workdir, 0) == 0
     assert spec.failed_path().exists() is False
+
+
+def test_parse_gpu_env_variants():
+    assert _parse_gpu_env("4") == 4
+    assert _parse_gpu_env("gpu:4") == 4
+    assert _parse_gpu_env("0,1,2") == 3
+    assert _parse_gpu_env("") is None
+
+
+def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "SLURMM-run").write_text("#SBATCH -J old\nBODY\n")
+    header_root = tmp_path / "headers"
+    header_root.mkdir()
+    (header_root / "SLURMM-Am.header").write_text("#HEADER\n")
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel="SLURMM-run",
+        header_name="SLURMM-Am.header",
+        header_root=header_root,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0, header_root=header_root)
+
+    def fake_run(cmd, cwd=None, text=None, capture_output=None):
+        class Dummy:
+            returncode = 0
+            stdout = "Submitted batch job 99"
+            stderr = ""
+
+        return Dummy()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    jobid = manager._submit_once(spec)
+    assert jobid == "99"
+    script_txt = (workdir / "SLURMM-run").read_text()
+    assert script_txt.startswith("#HEADER")
+    assert "BODY" in script_txt
+    assert "SBATCH -J old" not in script_txt
+
+
+def test_submit_uses_submit_dir(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    submit_dir = tmp_path / "batch"
+    submit_dir.mkdir()
+    script = submit_dir / "batch.sh"
+    script.write_text("#!/bin/bash\necho hi\n")
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel=script.name,
+        batch_script=script,
+        submit_dir=submit_dir,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0)
+
+    calls = {}
+
+    class Dummy:
+        returncode = 0
+        stdout = "Submitted batch job 42"
+        stderr = ""
+
+    def fake_run(cmd, cwd=None, text=None, capture_output=None):
+        calls["cmd"] = cmd
+        calls["cwd"] = cwd
+        return Dummy()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    jobid = manager._submit_once(spec)
+    assert jobid == "42"
+    assert calls["cwd"] == submit_dir
+    assert script.name in calls["cmd"]

@@ -175,6 +175,6 @@ rocklin_correction: 'no'
 sdr_dist: 0.0
 solv_shell: 15.0
 system_name: adrb2_A
-temperature: 310.0
+temperature: 298.15
 ti_points: 0
 water_model: TIP3P

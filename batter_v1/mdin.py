@@ -90,7 +90,7 @@ def apply_minimization(mdin: AmberMdin, steps=5000):
     })
 
 
-def apply_npt(mdin: AmberMdin, temp=310, steps=50000, barostat=2, dt=0.004):
+def apply_npt(mdin: AmberMdin, temp=298.15, steps=50000, barostat=2, dt=0.004):
     mdin.override_block("cntrl", {
         "ntp": 1,
         "barostat": barostat,
@@ -102,7 +102,7 @@ def apply_npt(mdin: AmberMdin, temp=310, steps=50000, barostat=2, dt=0.004):
         "dt": dt,
     })
 
-def apply_membrane_npt(mdin: AmberMdin, temp=310, steps=50000, barostat=2, dt=0.004):
+def apply_membrane_npt(mdin: AmberMdin, temp=298.15, steps=50000, barostat=2, dt=0.004):
     mdin.override_block("cntrl", {
         "ntp": 3,
         "barostat": barostat,

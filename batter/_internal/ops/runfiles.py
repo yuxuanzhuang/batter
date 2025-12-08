@@ -7,16 +7,16 @@ from typing import Sequence, Optional
 from pathlib import Path
 from loguru import logger
 
-from batter.config.simulation import SimulationConfig
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
+from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
 def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     """
     Port of `_run_files` for equilibration.
 
     Copies run scripts and substitutes variables
-    like RANGE, STAGE, POSE, SYSTEMNAME, PARTITIONNAME, etc.
+    like RANGE, STAGE, POSE, SYSTEMNAME, etc.
     """
     sim = ctx.sim
     ligand_name = ctx.ligand
@@ -26,11 +26,10 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     logger.debug(f"[Equil] Creating run scripts in {work}")
 
     # Copy templates from internal RUN_FILES_DIR
-    for template_name in ["check_run.bash", "check_penetration.py", "run-equil.bash", "SLURMM-Am"]:
+    for template_name in ["check_run.bash", "check_penetration.py", "run-equil.bash"]:
         src = run_files_orig / template_name
         dst = work / (
             "run-local.bash" if template_name == "run-equil.bash" else
-            "SLURMM-run" if template_name == "SLURMM-Am" else
             template_name
         )
         if not src.exists():
@@ -45,8 +44,6 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("STAGE", stage)
                 .replace("POSE", ligand_name)
                 .replace("SYSTEMNAME", sim.system_name)
-                .replace("PARTITIONNAME", sim.partition)
-                .replace("AMBER_SETUP_SH", sim.amber_setup_sh)
         )
 
         if hmr:
@@ -60,29 +57,29 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         except Exception as e:
             logger.debug(f"chmod +x failed for {dst}: {e}")
 
+    # SLURM submit script (body only; header added at submission time)
+    body_txt = render_slurm_body(
+        run_files_orig / "SLURMM-Am.body",
+        {
+            "STAGE": stage,
+            "POSE": ligand_name,
+            "SYSTEMNAME": sim.system_name,
+        },
+    )
+    out_slurm_body = work / "SLURMM-run"
+    out_slurm_body.write_text(body_txt)
+    try:
+        out_slurm_body.chmod(0o755)
+    except Exception as e:
+        logger.debug(f"chmod failed for {out_slurm_body}: {e}")
+
     logger.debug(f"[Equil] Run scripts ready at {work}")
 
 def write_fe_run_file(
     ctx: BuildContext,
     lambdas: Sequence[float],
-    *,
-    partition_override: Optional[str] = None,
 ) -> None:
-    """
-    Materialize run scripts for a given component/window:
-
-    Reads templates from:   <working_dir>/<comp>_run_files/
-      - check_run.bash
-      - run-local.bash
-      - SLURMM-Am
-
-    Writes to the window dir: <working_dir>/<comp>-<win or 1>/
-      - check_run.bash
-      - run-local.bash     (FERANGE/NWINDOWS/COMPONENT replaced)
-      - SLURMM-run         (STAGE/POSE/SYSTEMNAME/PARTITIONNAME replaced)
-
-    Makes outputs executable.
-    """
+    """Materialize run scripts for a given component/window."""
     # --- source/dest paths
     src_dir = run_files_orig
     dst_dir = ctx.window_dir
@@ -112,18 +109,6 @@ def write_fe_run_file(
         )
     system_name = ctx.sim.system_name
 
-    if partition_override is not None:
-        partition = partition_override
-    elif hasattr(ctx.sim, "partition"):
-        partition = ctx.sim.partition
-    elif hasattr(ctx.sim, "queue"):
-        partition = ctx.sim.queue
-    else:
-        raise AttributeError(
-            "SimulationConfig is missing 'partition' (or legacy 'queue'). "
-            "Specify a partition in the simulation configuration or pass partition_override."
-        )
-
     # -------- check_run.bash (verbatim copy)
     out_check = dst_dir / "check_run.bash"
     out_check.write_text(tpl_check.read_text())
@@ -143,20 +128,20 @@ def write_fe_run_file(
     out_local.write_text(txt)
     os.chmod(out_local, 0o755)
 
-    # -------- SLURMM-run (from SLURMM-Am template)
-    out_slurm = dst_dir / "SLURMM-run"
-    stxt = tpl_slurm.read_text()
-    stxt = (
-        stxt.replace("STAGE", pose)
-            .replace("POSE", f"{comp}{int(win_idx):02d}")
-            .replace("SYSTEMNAME", system_name)
-            .replace("PARTITIONNAME", partition)
-            .replace("AMBER_SETUP_SH", ctx.sim.amber_setup_sh)
+    # -------- SLURMM-run body (header added at submission)
+    body_txt = render_slurm_body(
+        run_files_orig / "SLURMM-Am.body",
+        {
+            "STAGE": pose,
+            "POSE": f"{comp}{int(win_idx):02d}",
+            "SYSTEMNAME": system_name,
+        },
     )
-    out_slurm.write_text(stxt)
-    os.chmod(out_slurm, 0o755)
+    out_slurm_body = dst_dir / "SLURMM-run"
+    out_slurm_body.write_text(body_txt)
+    os.chmod(out_slurm_body, 0o755)
 
     logger.debug(
         f"[runfiles] wrote run scripts → {dst_dir} "
-        f"(FERANGE={num_sim}, NWINDOWS={n_windows}, COMPONENT={comp}, PARTITION={partition})"
+        f"(FERANGE={num_sim}, NWINDOWS={n_windows}, COMPONENT={comp})"
     )

@@ -15,6 +15,7 @@ import os
 from loguru import logger
 from batter.utils import COMPONENTS_LAMBDA_DICT
 from batter.config.utils import coerce_yes_no
+from batter.config.remd import RemdArgs
 
 if TYPE_CHECKING:
     from batter.config.run import CreateArgs, FESimArgs
@@ -43,10 +44,9 @@ class SimulationConfig(BaseModel):
         create: "CreateArgs",
         fe: "FESimArgs",
         *,
-        partition: str | None = None,
         protocol: str | None = None,
         fe_type: str | None = None,
-        amber_setup_sh: str = "",
+        slurm_header_dir: Path | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -56,8 +56,6 @@ class SimulationConfig(BaseModel):
             System creation inputs taken from the ``create`` YAML section.
         fe : FESimArgs
             Free-energy simulation overrides from the ``fe_sim`` section.
-        partition : str, optional
-            Cluster partition specified in the run section.
 
         Returns
         -------
@@ -196,20 +194,28 @@ class SimulationConfig(BaseModel):
         if analysis_fe_range_value is None:
             analysis_fe_range_value = _analysis_range_default()
 
-        if not os.path.exists(amber_setup_sh):
-            # try to expand vars
-            amber_setup_sh = os.path.expandvars(amber_setup_sh)
-            if not os.path.exists(amber_setup_sh):
-                logger.warning(
-                    f"run.amber_setup_sh points to {amber_setup_sh}, but the file was not found. "
-                    "Please ensure the path points to a valid AMBER setup script "
-                    "where you run the simulations.",
-                )
+        remd_settings = _fe_attr("remd", lambda: RemdArgs())
+        if isinstance(remd_settings, RemdArgs):
+            remd_nstlim = int(remd_settings.nstlim)
+            remd_numexchg = int(remd_settings.numexchg)
+        else:
+            # legacy dict/yes-no forms
+            if isinstance(remd_settings, dict):
+                remd_settings = RemdArgs(**remd_settings)
+                remd_nstlim = int(remd_settings.nstlim)
+                remd_numexchg = int(remd_settings.numexchg)
+            else:
+                remd_nstlim = int(_fe_attr("remd_nstlim", lambda: 100))
+                remd_numexchg = int(_fe_attr("remd_numexchg", lambda: 3000))
+
+        remd_enable = coerce_yes_no(_fe_attr("remd_enable", lambda: "no"))
 
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
-            "remd": coerce_yes_no(_fe_attr("remd", lambda: "no")),
+            "remd": remd_enable,
+            "remd_nstlim": remd_nstlim,
+            "remd_numexchg": remd_numexchg,
             "rocklin_correction": coerce_yes_no(
                 _fe_attr("rocklin_correction", lambda: "no")
             ),
@@ -226,7 +232,7 @@ class SimulationConfig(BaseModel):
             "buffer_x": float(_fe_attr("buffer_x", lambda: 15.0)),
             "buffer_y": float(_fe_attr("buffer_y", lambda: 15.0)),
             "buffer_z": float(_fe_attr("buffer_z", lambda: 15.0)),
-            "temperature": float(_fe_attr("temperature", lambda: 310.0)),
+            "temperature": float(_fe_attr("temperature", lambda: 298.15)),
             "dt": float(_fe_attr("dt", lambda: 0.004)),
             "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "yes")),
             "release_eq": fe_release_eq,
@@ -244,7 +250,7 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_fe_range": analysis_fe_range_value,
             "num_fe_extends": num_fe_extends_value,
-            "amber_setup_sh": amber_setup_sh,
+            "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -264,8 +270,6 @@ class SimulationConfig(BaseModel):
             "n_steps_dict": n_steps_dict,
             "infe": infe_flag,
         }
-        if partition:
-            merged["partition"] = partition
 
         return cls(**merged)
 
@@ -296,7 +300,12 @@ class SimulationConfig(BaseModel):
         "mbar", description="Integration method (mbar/ti)"
     )
     remd: Literal["yes", "no"] = Field("no", description="H-REMD toggle")
-    partition: str = Field("owners", description="Cluster partition/queue")
+    remd_nstlim: int = Field(
+        100, description="Steps per REMD segment (applied to mdin-*-remd copies)."
+    )
+    remd_numexchg: int = Field(
+        3000, description="Exchange attempt interval for REMD (numexchg)."
+    )
     infe: bool = Field(
         False, description="Enable NFE (infinite) equilibration when true."
     )
@@ -379,7 +388,7 @@ class SimulationConfig(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration templates.",
     )
-    temperature: float = Field(310.0, description="Temperature (K)")
+    temperature: float = Field(298.15, description="Temperature (K)")
     eq_steps: int = Field(
         1_000_000, description="Steps per equilibration segment (derived)"
     )
@@ -422,10 +431,6 @@ class SimulationConfig(BaseModel):
     receptor_ff: str = Field("protein.ff14SB", description="Receptor FF")
     ligand_ff: str = Field("gaff2", description="Ligand FF")
     lipid_ff: str = Field("lipid21", description="Lipid FF")
-    amber_setup_sh: str = Field(
-        "$GROUP_HOME/software/amber24/setup_amber.sh",
-        description="Path to a shell script that loads AMBER; sourced in SLURM run scripts.",
-    )
 
     # --- Derived/public state (not user-set) ---
     ligand_dict: Dict[str, Any] = Field(
@@ -533,9 +538,6 @@ class SimulationConfig(BaseModel):
 
     @model_validator(mode="after")
     def _finalize(self) -> "SimulationConfig":
-        # REMD not implemented
-        if self.remd == "yes":
-            raise NotImplementedError("REMD not implemented; set remd to 'no'.")
         # TI not implemented
         if self.dec_int == "ti":
             raise NotImplementedError("TI integration not implemented; use 'mbar'.")
