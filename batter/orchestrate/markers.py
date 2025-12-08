@@ -154,6 +154,7 @@ def run_phase_skipping_done(
     backend,
     *,
     max_workers: int | None = None,
+    on_failure: str | None = None,
 ) -> bool:
     """Execute a phase for systems that still need it, skipping completed ones.
 
@@ -169,6 +170,10 @@ def run_phase_skipping_done(
         Execution backend implementing ``run_parallel``.
     max_workers
         Optional parallelism limit passed through to the backend.
+    on_failure
+        Failure-handling policy from the run config. When set to ``"prune"``
+        or ``"retry"``, backend exceptions are logged and execution proceeds
+        to sentinel-based pruning instead of raising immediately.
 
     Returns
     -------
@@ -184,7 +189,19 @@ def run_phase_skipping_done(
         f"{phase_name}: {len(todo)} ligand(s) not finished → running phase..."
         f"(of {len(children)} total)."
     )
-    backend.run_parallel(phase, todo, description=phase_name, max_workers=max_workers)
+    try:
+        backend.run_parallel(phase, todo, description=phase_name, max_workers=max_workers)
+    except Exception as exc:
+        mode = (on_failure or "").lower()
+        if mode in {"prune", "retry"}:
+            logger.error(
+                "[{}] backend reported failures (on_failure={}): {} — proceeding to sentinel-based pruning.",
+                phase_name,
+                mode,
+                exc,
+            )
+            return False
+        raise
     return False
 
 

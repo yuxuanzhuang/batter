@@ -489,6 +489,7 @@ def run_from_yaml(
             "prepare_equil",
             backend,
             max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "prepare_equil", rc.run.on_failure)
     else:
@@ -516,7 +517,12 @@ def run_from_yaml(
     phase_equil = _inject_mgr(phase_equil, "equil")
     if phase_equil.ordered_steps():
         finished = run_phase_skipping_done(
-            phase_equil, children, "equil", backend, max_workers=1
+            phase_equil,
+            children,
+            "equil",
+            backend,
+            max_workers=1,
+            on_failure=rc.run.on_failure,
         )
         if not finished:
             job_mgr.wait_all()
@@ -553,6 +559,7 @@ def run_from_yaml(
             "equil_analysis",
             backend,
             max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "equil_analysis", rc.run.on_failure)
         children = _filter_bound(children)
@@ -569,6 +576,7 @@ def run_from_yaml(
             "prepare_fe",
             backend,
             max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "prepare_fe", rc.run.on_failure)
     else:
@@ -585,6 +593,7 @@ def run_from_yaml(
             "fe_equil",
             backend,
             max_workers=1,
+            on_failure=rc.run.on_failure,
         )
         if not finished:
             job_mgr.wait_all()
@@ -604,7 +613,12 @@ def run_from_yaml(
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
         finished = run_phase_skipping_done(
-            phase_fe, children, "fe", backend, max_workers=1
+            phase_fe,
+            children,
+            "fe",
+            backend,
+            max_workers=1,
+            on_failure=rc.run.on_failure,
         )
         if not finished:
             job_mgr.wait_all()
@@ -632,7 +646,12 @@ def run_from_yaml(
     phase_analyze = _inject_analysis_workers(phase_analyze)
     if phase_analyze.ordered_steps():
         run_phase_skipping_done(
-            phase_analyze, children, "analyze", backend, max_workers=rc.run.max_workers
+            phase_analyze,
+            children,
+            "analyze",
+            backend,
+            max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
         )
         children = handle_phase_failures(children, "analyze", rc.run.on_failure)
     else:
