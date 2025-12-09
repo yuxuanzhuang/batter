@@ -229,7 +229,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         .replace("_enable_infe_", infe_flag)
         .replace("_lig_name_", mol)
         .replace("_num-steps_", f"{sim.eq_steps1}")
-        .replace("disang_file", "disang00")
+        .replace("disang_file", "disang")
     )
 
     if extra_mask:

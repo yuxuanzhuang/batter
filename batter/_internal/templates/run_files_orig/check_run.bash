@@ -140,17 +140,26 @@ report_progress() {
 # --------- Equil/production helper parsers ---------
 parse_total_steps() {
     local tmpl=${1:-mdin-template}
-    if [[ ! -f $tmpl ]]; then
+
+    [[ -f $tmpl ]] || {
         echo "[ERROR] Missing template $tmpl" >&2
         return 1
-    fi
+    }
+
+    # Extract the last eq_steps=<num> appearing in comment lines starting with ! or #
     local total
-    total=$(grep -E "^[!#]\\s*eq_steps\\s*=\\s*[0-9]+" "$tmpl" | tail -1 | sed -E 's/.*eq_steps\\s*=\\s*([0-9]+).*/\1/')
-    if [[ -z $total ]]; then
-        echo "[ERROR] eq_steps comment not found in $tmpl (expected '! eq_steps=<total_steps>')" >&2
+    total=$(
+        grep -E '^[!#][[:space:]]*eq_steps[[:space:]]*=[[:space:]]*[0-9]+' "$tmpl" \
+        | tail -1 \
+        | sed -E 's/.*eq_steps[[:space:]]*=[[:space:]]*([0-9]+).*/\1/'
+    )
+
+    [[ -n $total ]] || {
+        echo "[ERROR] eq_steps comment not found in $tmpl" >&2
         return 1
-    fi
-    echo "$total"
+    }
+
+    printf "%s\n" "$total"
 }
 
 parse_nstlim() {
