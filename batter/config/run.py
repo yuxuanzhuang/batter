@@ -438,14 +438,14 @@ class FESimArgs(BaseModel):
 
     # Equilibration schedule
     num_equil_extends: int = Field(
-        6,
+        0,
         ge=0,
-        description="Number of additional equilibration segments (all run fully released).",
+        description="Deprecated: equilibration extensions are ignored; keep 0.",
     )
     eq_steps: int = Field(
         1_000_000,
         gt=0,
-        description="Steps per equilibration segment (applied to the initial run and each extend).",
+        description="Total equilibration steps (entire equilibration run).",
     )
     steps1: Dict[str, int] = Field(
         default_factory=dict,
@@ -611,14 +611,14 @@ class MDSimArgs(BaseModel):
     dt: float = Field(0.004, description="MD timestep (ps).")
     temperature: float = Field(298.15, description="Simulation temperature (K).")
     num_equil_extends: int = Field(
-        2,
+        0,
         ge=0,
-        description="Number of additional equilibration segments (all run fully released).",
+        description="Deprecated: equilibration extensions are ignored; keep 0.",
     )
     eq_steps: int = Field(
         100_000,
         gt=0,
-        description="Steps per equilibration segment.",
+        description="Total equilibration steps (entire equilibration run).",
     )
     ntpr: int = Field(1000, description="Energy print frequency.")
     ntwr: int = Field(10_000, description="Restart write frequency.")

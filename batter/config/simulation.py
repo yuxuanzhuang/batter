@@ -172,9 +172,13 @@ class SimulationConfig(BaseModel):
                 )
 
         num_equil_extends = max(0, int(_fe_attr("num_equil_extends", lambda: 0)))
+        if num_equil_extends:
+            logger.warning(
+                "fe_sim.num_equil_extends is deprecated and ignored; "
+                "set fe_sim.eq_steps to the total equilibration steps instead."
+            )
         eq_steps_value = int(_fe_attr("eq_steps", lambda: 1_000_000))
-        release_count = max(1, num_equil_extends + 1)
-        fe_release_eq = [0.0] * release_count
+        fe_release_eq = [0.0]
 
         extra_conf_rest = create.extra_conformation_restraints
         extra_restraints = create.extra_restraints
@@ -334,10 +338,11 @@ class SimulationConfig(BaseModel):
 
     # --- FE controls / analysis ---
     release_eq: List[float] = Field(
-        default_factory=list, description="Equilibration release weights (derived)"
+        default_factory=lambda: [0.0],
+        description="Equilibration release weights (derived; fixed to [0.0]).",
     )
     num_equil_extends: int = Field(
-        0, description="Number of equilibration extends (derived)"
+        0, description="Deprecated equilibration extends (retained for compatibility)."
     )
     ti_points: Optional[int] = Field(0, description="(#) TI points (not implemented)")
     lambdas: List[float] = Field(
@@ -397,13 +402,13 @@ class SimulationConfig(BaseModel):
     )
     temperature: float = Field(298.15, description="Temperature (K)")
     eq_steps: int = Field(
-        1_000_000, description="Steps per equilibration segment (derived)"
+        1_000_000, description="Total equilibration steps (entire run)."
     )
     eq_steps1: int = Field(
-        500_000, description="Equilibration stage 1 steps (legacy mirror of eq_steps)"
+        0, description="Legacy alias of eq_steps (auto-filled)."
     )
     eq_steps2: int = Field(
-        1_000_000, description="Equilibration stage 2 steps (legacy mirror of eq_steps)"
+        0, description="Legacy alias of eq_steps (auto-filled)."
     )
     n_steps_dict: Dict[str, int] = Field(
         default_factory=lambda: {
@@ -548,6 +553,12 @@ class SimulationConfig(BaseModel):
         # TI not implemented
         if self.dec_int == "ti":
             raise NotImplementedError("TI integration not implemented; use 'mbar'.")
+
+        # align legacy aliases
+        if not self.eq_steps1 or self.eq_steps1 <= 0:
+            self.eq_steps1 = self.eq_steps
+        if not self.eq_steps2 or self.eq_steps2 <= 0:
+            self.eq_steps2 = self.eq_steps
 
         # derived fields
         self.rng = len(self.release_eq) - 1

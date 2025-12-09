@@ -214,12 +214,12 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         },
     )
 
-    # mdin-template for runtime chunking (eq_steps now represents the total target)
+    # mdin-template for runtime chunking (eq_steps is the total target)
     mdin_src = amber_dir / "mdin-equil"
     base_text = mdin_src.read_text()
     total_steps = int(getattr(sim, "eq_steps", 0) or 0)
     if total_steps <= 0:
-        total_steps = int(sim.eq_steps1) * max(1, int(getattr(sim, "num_equil_extends", 0)) + 1)
+        total_steps = int(getattr(sim, "eq_steps1", 0) or 0)
 
     # compute extra mask once for equil (applied to template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, work)
@@ -228,7 +228,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         base_text.replace("_temperature_", f"{temperature}")
         .replace("_enable_infe_", infe_flag)
         .replace("_lig_name_", mol)
-        .replace("_num-steps_", f"{sim.eq_steps1}")
+        .replace("_num-steps_", f"{total_steps}")
         .replace("disang_file", "disang")
     )
 

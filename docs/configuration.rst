@@ -30,10 +30,9 @@ The run YAML file is divided into three sections grouped inside
     these map to :class:`batter.config.run.FESimArgs`. MD-only runs automatically
     coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
     ``lambdas`` or SDR restraints are no longer required. Equilibration controls
-    are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
-    (how many additional segments to run). A base segment always runs, so the
-    total equilibration work scales as ``(num_equil_extends + 1) * eq_steps``.
-    For FE production
+    are expressed via ``eq_steps`` which now represents the **total** equilibration
+    steps. The legacy ``num_equil_extends`` knob is ignored (retained only for
+    backward compatibility). For FE production
     the ``num_fe_extends`` field multiplies the stage-2 component steps defined in
     ``steps2`` so each window ultimately samples
     ``num_fe_extends * steps2[component]`` steps before moving on.

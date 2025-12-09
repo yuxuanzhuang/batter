@@ -234,7 +234,7 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.infe is True
     assert cfg.barostat == 2
-    assert cfg.release_eq == [0.0, 0.0]
+    assert cfg.release_eq == [0.0]
     assert cfg.eq_steps1 == cfg.eq_steps2 == cfg.eq_steps == 100
 
     create2 = create.model_copy(
