@@ -40,7 +40,7 @@ mdin_current="mdin-current"
 total_steps=$(parse_total_steps "$tmpl")
 chunk_steps=$(parse_nstlim "$tmpl")
 
-if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s eqnpt_appear.rst7 ]]; then
     echo "Skipping EM steps." 
 else
     print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
@@ -71,7 +71,7 @@ else
     fi
 
 fi
-if [[ $overwrite -eq 0 && -s md00.rst7 ]]; then
+if [[ $overwrite -eq 0 && -s eqnpt_appear.rst7 ]]; then
     echo "Skipping equilibration steps."
 else
     python check_penetration.py mini2.rst7
