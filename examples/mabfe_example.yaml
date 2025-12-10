@@ -33,7 +33,7 @@ run:
 
   email_on_completion: yuzhuang@stanford.edu
   slurm:
-    partition: owners
+    partition: rondror
     time: "12:00:00"
 
 fe_sim:
@@ -45,9 +45,7 @@ fe_sim:
     0.59453, 0.60923, 0.62468, 0.63991, 0.65631, 0.67222, 0.68487, 0.69656, 0.70897, 0.72458,
     0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
   ]
-  eq_steps: 100000
-  # total 10 * 100000 = 1000000 steps -> 4 ns
-  num_equil_extends: 10
+  eq_steps: 1000000
   z_steps1: 5000
   z_steps2: 100000
   # total 10 * 100000 = 1000000 steps -> 4 ns per window
