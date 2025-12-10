@@ -36,6 +36,12 @@ source check_run.bash
 tmpl="mdin-template"
 mdin_current="mdin-current"
 
+# sanity check template exists
+if [[ ! -f $tmpl ]]; then
+    echo "[ERROR] Missing mdin template: $tmpl"
+    exit 1
+fi
+
 # prepare template-driven MD input on the fly
 total_steps=$(parse_total_steps "$tmpl")
 chunk_steps=$(parse_nstlim "$tmpl")
@@ -126,6 +132,7 @@ if [[ $only_eq -eq 1 ]]; then
 fi
 
 current_steps=$(completed_steps "$tmpl")
+echo "Current completed steps: $current_steps / $total_steps"
 
 last_rst="eqnpt_appear.rst7"
 
@@ -137,12 +144,11 @@ while [[ $current_steps -lt $total_steps ]]; do
     fi
 
     seg_idx=$(( (current_steps + chunk_steps - 1) / chunk_steps ))
+
+    # pick previous restart: prefer current md if present, else fall back to eqnpt_appear
     rst_prev="eqnpt_appear.rst7"
-    if [[ $seg_idx -gt 0 ]]; then
-        rst_prev=$(printf "md%02d.rst7" "$seg_idx")
-        if [[ ! -f $rst_prev ]]; then
-            rst_prev=$(printf "md-%02d.rst7" "$seg_idx")
-        fi
+    if [[ -s md-current.rst7 ]]; then
+        rst_prev="md-current.rst7"
     fi
 
     if [[ ! -f $rst_prev ]]; then
@@ -150,10 +156,22 @@ while [[ $current_steps -lt $total_steps ]]; do
         exit 1
     fi
 
+    # archive prior restart if present
+    if [[ -f md-current.rst7 ]]; then
+        if [[ ! -s md-current.rst7 ]]; then
+            echo "[ERROR] Found md-current.rst7 but file is empty; aborting to avoid corrupt restart."
+            exit 1
+        fi
+        mv -f md-current.rst7 md-previous.rst7
+        rst_prev="md-previous.rst7"
+    fi
+
+    echo "[INFO] Using restart $rst_prev -> md-current.rst7 for segment $((seg_idx + 1))"
+
     write_mdin_current "$tmpl" "$run_steps" $((current_steps == 0 ? 1 : 0)) > "$mdin_current"
 
     out_tag=$(printf "md-%02d" "$((seg_idx + 1))")
-    rst_out=$(printf "md%02d.rst7" "$((seg_idx + 1))")
+    rst_out="md-current.rst7"
 
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_prev -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out"
