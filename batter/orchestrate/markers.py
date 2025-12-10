@@ -61,7 +61,7 @@ def _remove_patterns(root: Path, spec: List[List[str]]) -> bool:
                         p.unlink()
                     removed = True
                 except Exception:
-                    logger.warning("Could not remove sentinel %s", p)
+                    logger.warning(f"Could not remove sentinel {p}")
     return removed
 
 

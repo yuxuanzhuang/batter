@@ -904,7 +904,7 @@ def batch_ligand_process(
     # filter outputs to successful ligands only
     if not success_paths:
         if mode_lower in {"prune", "retry"}:
-            logger.warning("[param_ligands] No ligands prepared successfully (on_failure=%s).", mode_lower)
+            logger.warning(f"[param_ligands] No ligands prepared successfully (on_failure={mode_lower}).")
             return [], {}
         logger.warning("[param_ligands] No ligands prepared successfully.")
         return [], {}

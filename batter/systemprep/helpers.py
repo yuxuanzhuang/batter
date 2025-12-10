@@ -12,7 +12,7 @@ try:
     from rdkit import Chem
 except Exception as e:  # pragma: no cover - RDKit optional at runtime
     Chem = None  # type: ignore
-    logger.warning("RDKit not available; ligand helpers will fail if invoked. (%s)", e)
+    logger.warning(f"RDKit not available; ligand helpers will fail if invoked. ({e})")
 
 __all__ = [
     "find_anchor_atoms",

@@ -205,11 +205,11 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
     for name, d in lig_map.items():
         if name not in unique_resnames:
-            logger.warning("[param_ligands] Skipping ligand %s due to parametrization failure.", name)
+            logger.warning(f"[param_ligands] Skipping ligand {name} due to parametrization failure.")
             continue
         hid = unique.get(d, (None, None))[0]
         if hid is None:
-            logger.warning("[param_ligands] Missing hash for ligand %s; skipping.", name)
+            logger.warning(f"[param_ligands] Missing hash for ligand {name}; skipping.")
             continue
         src_dir = outdir / hid
         meta_path = src_dir / "metadata.json"
@@ -224,7 +224,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         meta = json.loads(meta_path.read_text())
         residue_name = unique_resnames.get(name)
         if residue_name is None:
-            logger.warning("[param_ligands] Missing residue name for %s; skipping.", name)
+            logger.warning(f"[param_ligands] Missing residue name for {name}; skipping.")
             continue
         title = meta.get("title", name)
 

@@ -754,9 +754,13 @@ def check_universe_ring_penetration(universe, verbose=0):
         if pairs:
             logger.warning(f'In frame {frame} found a ring penetration:')
             for i, cycle in enumerate(rings):
-                logger.warning('- %s %s %s %s | %s %s %s %s' % (top.nodes[pairs[i][0]]['segid'], top.nodes[pairs[i][0]]['resid'], top.nodes[pairs[i][0]]['resname'], ' '.join([top.nodes[num]['name'] for num in pairs[i]]), top.nodes[cycle[0]]['segid'], top.nodes[cycle[0]]['resid'], top.nodes[cycle[0]]['resname'], ' '.join([top.nodes[num]['name'] for num in cycle])))
+                logger.warning(
+                    f"- {top.nodes[pairs[i][0]]['segid']} {top.nodes[pairs[i][0]]['resid']} "
+                    f"{top.nodes[pairs[i][0]]['resname']} {' '.join([top.nodes[num]['name'] for num in pairs[i]])} | "
+                    f"{top.nodes[cycle[0]]['segid']} {top.nodes[cycle[0]]['resid']} "
+                    f"{top.nodes[cycle[0]]['resname']} {' '.join([top.nodes[num]['name'] for num in cycle])}"
+                )
             faulty = True
         else:
             logger.debug(f'In frame {frame} no ring penetration found')
     return faulty
-

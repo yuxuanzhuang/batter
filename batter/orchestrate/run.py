@@ -91,7 +91,7 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
     try:
         shutil.copy2(yaml_path, dst)
     except Exception as exc:
-        logger.warning("Could not store run YAML copy at %s: %s", dst, exc)
+        logger.warning(f"Could not store run YAML copy at {dst}: {exc}")
 
 
 def _materialize_extra_conf_restraints(
@@ -115,7 +115,7 @@ def _materialize_extra_conf_restraints(
             shutil.copy2(src, dest)
             return dest
         except Exception as exc:
-            logger.warning("Could not copy extra_conformation_restraints from %s: %s", src, exc)
+            logger.warning(f"Could not copy extra_conformation_restraints from {src}: {exc}")
             return None
 
     logger.warning(

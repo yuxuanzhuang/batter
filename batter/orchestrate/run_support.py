@@ -77,7 +77,7 @@ def stored_payload(run_dir: Path) -> Dict[str, Any] | None:
     try:
         return json.loads(path.read_text())
     except Exception as exc:
-        logger.warning("Failed to load stored run payload from %s: %s", path, exc)
+        logger.warning(f"Failed to load stored run payload from {path}: {exc}")
         return None
 
 
@@ -92,7 +92,7 @@ def load_stored_ligand_names(run_dir: Path) -> Dict[str, str]:
         try:
             return json.loads(path.read_text())
         except Exception as exc:
-            logger.warning("Failed to load ligand names from %s: %s", path, exc)
+            logger.warning(f"Failed to load ligand names from {path}: {exc}")
     return {}
 
 
