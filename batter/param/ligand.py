@@ -11,7 +11,19 @@ import tempfile
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    Literal,
+)
 
 import numpy as np
 from gufe import SmallMoleculeComponent
@@ -29,6 +41,12 @@ from batter.utils import (
     run_with_log,
     tleap,
 )
+
+# type helpers
+LigandPath = Union[str, Path]
+LigandPathMap = Mapping[str, LigandPath]
+LigandPathSeq = Sequence[LigandPath]
+OnFailureMode = Optional[Literal["prune", "retry", "raise"]]
 
 __all__ = [
     "LigandProcessing",
@@ -738,7 +756,7 @@ class LigandFactory:
 
 
 def batch_ligand_process(
-    ligand_paths: Union[List[str], Dict[str, str]],
+    ligand_paths: Union[LigandPathSeq, LigandPathMap],
     output_path: Union[str, Path],
     retain_lig_prot: bool = True,
     ligand_ph: float = 7.0,
@@ -749,7 +767,7 @@ def batch_ligand_process(
     max_slurm_jobs: int = 50,
     run_with_slurm_kwargs: Optional[Dict[str, Any]] = None,
     job_extra_directives: Optional[List[str]] = None,
-    on_failure: Optional[str] = None,
+    on_failure: OnFailureMode = None,
 ) -> Tuple[List[str], Dict[str, Tuple[str, str]]]:
     """Parameterise ligands into a content-addressed store.
 
@@ -788,10 +806,13 @@ def batch_ligand_process(
         Mapping from the provided input path to ``(hash_id, canonical_smiles)``.
     """
     # --- normalize inputs ---
-    if isinstance(ligand_paths, list):
-        lig_map: Dict[str, str] = {f"lig{i}": p for i, p in enumerate(ligand_paths)}
+    def _norm(p: LigandPath) -> str:
+        return str(Path(p))
+
+    if isinstance(ligand_paths, (list, tuple)):
+        lig_map: Dict[str, str] = {f"lig{i}": _norm(p) for i, p in enumerate(ligand_paths)}
     else:
-        lig_map = dict(ligand_paths)
+        lig_map = {k: _norm(v) for k, v in ligand_paths.items()}
 
     for lp in lig_map.values():
         if not Path(lp).exists():
@@ -918,9 +939,7 @@ def batch_ligand_process(
             hash_order_filtered.append(unique_filtered[p][0])
     skipped = len(lig_map) - len(success_paths)
     logger.success(
-        "Prepared %d ligands into %s%s",
-        len(success_paths),
-        out_root,
-        f" (skipped {skipped})" if skipped else "",
+        f"Prepared {len(success_paths)} ligands into {out_root}"
+        f"{f' (skipped {skipped})' if skipped else ''}"
     )
     return hash_order_filtered, unique_filtered
