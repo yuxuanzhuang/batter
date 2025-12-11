@@ -11,7 +11,6 @@ MPI_FLAGS=${MPI_FLAGS:-}
 
 PRMTOP="full.hmr.prmtop"
 N_WINDOWS=NWINDOWS
-FE_RANGE=FERANGE
 PFOLDER="."
 REMD=1
 overwrite=${OVERWRITE:-0}
@@ -46,28 +45,14 @@ if [[ -f ${PFOLDER}/FAILED ]]; then
     rm -f ${PFOLDER}/FAILED
 fi
 
-if [[ -s ${PFOLDER}/${COMP}00/mdin-01.rst7 ]]; then
+if [[ -s ${PFOLDER}/${COMP}00/mdin-00.rst7 ]]; then
     echo "Skipping md00 steps."
 else
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_0.log"
     print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.remd.groupfile >> \"$log_file\" 2>&1"
 fi
 
-i=1
-while [ $i -le ${FE_RANGE} ]; do
-    x=$(printf "%02d" $i)
-    z=$(printf "%02d" $((i + 1)))
-    if [[ $overwrite -eq 0 && -s ${PFOLDER}/${COMP}00/mdin-${z}.rst7 ]]; then
-        echo "Skipping md${x} steps."
-    else
-        REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${x}.log"
-        print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${PFOLDER}/remd/mdin.in.stage${x}.remd.groupfile >> \"$log_file\" 2>&1"
-    fi
-    i=$((i + 1))
-done
-
-final_stage=$(printf "%02d" $FE_RANGE)
-if [[ -s ${PFOLDER}/${COMP}00/mdin-${final_stage}.rst7 ]]; then
+if [[ -s ${PFOLDER}/${COMP}00/mdin-00.rst7 ]]; then
     echo "FINISHED" > ${PFOLDER}/FINISHED
     exit 0
 fi

@@ -303,7 +303,7 @@ def write_remd_run_scripts(
     _copy_template(
         run_local_tpl,
         run_local,
-        {"COMPONENT": comp, "NWINDOWS": str(n_windows), "FERANGE": "0"},
+        {"COMPONENT": comp, "NWINDOWS": str(n_windows)},
     )
     run_local.chmod(0o755)
     out.append(run_local)
@@ -314,7 +314,6 @@ def write_remd_run_scripts(
         {
             "COMPONENT": comp,
             "NWINDOWS": str(gpus),
-            "FERANGE": "0",
         },
     )
     slurm_body.write_text(body_text)

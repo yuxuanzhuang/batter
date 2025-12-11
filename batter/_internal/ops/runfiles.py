@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 import os
-from typing import Sequence, Optional
+from typing import Sequence
 
 from pathlib import Path
 from loguru import logger
@@ -89,7 +89,6 @@ def write_fe_run_file(
     # replacements
     pose = ctx.ligand
     comp = ctx.comp
-    num_sim = 0  # FE extensions deprecated; single production segment per window
     win_idx = ctx.win if ctx.win != -1 else 0
     hmr = ctx.sim.hmr
     n_windows = len(lambdas)
@@ -114,12 +113,11 @@ def write_fe_run_file(
     out_check.write_text(tpl_check.read_text())
     os.chmod(out_check, 0o755)
 
-    # -------- run-local.bash (replace FERANGE/NWINDOWS/COMPONENT)
+    # -------- run-local.bash (replace NWINDOWS/COMPONENT)
     out_local = dst_dir / "run-local.bash"
     txt = tpl_local.read_text()
     txt = (
-        txt.replace("FERANGE", str(num_sim))
-           .replace("NWINDOWS", str(n_windows))
+        txt.replace("NWINDOWS", str(n_windows))
            .replace("COMPONENT", comp)
     )
     if hmr:
@@ -143,5 +141,5 @@ def write_fe_run_file(
 
     logger.debug(
         f"[runfiles] wrote run scripts → {dst_dir} "
-        f"(FERANGE={num_sim}, NWINDOWS={n_windows}, COMPONENT={comp})"
+        f"(NWINDOWS={n_windows}, COMPONENT={comp})"
     )

@@ -60,32 +60,64 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-if [[ $overwrite -eq 0 && -s mdin-01.rst7 ]]; then
-    echo "Skipping md00 steps."
-else
-    # Initial MD production run
-    print_and_run "$PMEMD_EXEC -O -i mdin-00 -p $PRMTOP -c mini.in.rst7 -o mdin-00.out -r mdin-00.rst7 -x mdin-00.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
-    check_sim_failure "MD stage 0" "$log_file" mdin-00.rst7
+tmpl="mdin-template"
+mdin_current="mdin-current"
+
+if [[ ! -f $tmpl ]]; then
+    echo "[ERROR] Missing mdin template: $tmpl"
+    exit 1
 fi
 
-i=1
-while [ $i -le FERANGE ]; do
-    j=$((i - 1))
-    k=$((i + 1))
-    x=$(printf "%02d" $i)
-    y=$(printf "%02d" $j)
-    z=$(printf "%02d" $k)
-    # x is the current step, y is the previous step, z is the next step
-    if [[ $overwrite -eq 0 && -s mdin-$z.rst7 ]]; then
-        echo "Skipping md$x steps."
-    else
-        print_and_run "$PMEMD_EXEC -O -i mdin-$x -p $PRMTOP -c mdin-$y.rst7 -o mdin-$x.out -r mdin-$x.rst7 -x mdin-$x.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
-        check_sim_failure "MD stage $i" "$log_file" mdin-$x.rst7 mdin-$y.rst7 $retry
+total_steps=$(parse_total_steps "$tmpl")
+chunk_steps=$(parse_nstlim "$tmpl")
+current_steps=$(completed_steps "$tmpl")
+echo "Current completed steps: $current_steps / $total_steps"
+
+last_rst="mini.in.rst7"
+
+while [[ $current_steps -lt $total_steps ]]; do
+    remaining=$((total_steps - current_steps))
+    run_steps=$chunk_steps
+    if [[ $remaining -lt $chunk_steps ]]; then
+        run_steps=$remaining
     fi
-    i=$((i + 1))
+
+    seg_idx=$(( (current_steps + chunk_steps - 1) / chunk_steps ))
+
+    rst_prev="mini.in.rst7"
+    if [[ -s md-current.rst7 ]]; then
+        rst_prev="md-current.rst7"
+    fi
+
+    if [[ ! -f $rst_prev ]]; then
+        echo "[ERROR] Missing restart file $rst_prev; cannot continue."
+        exit 1
+    fi
+
+    if [[ -f md-current.rst7 ]]; then
+        if [[ ! -s md-current.rst7 ]]; then
+            echo "[ERROR] Found md-current.rst7 but file is empty; aborting to avoid corrupt restart."
+            exit 1
+        fi
+        mv -f md-current.rst7 md-previous.rst7
+        rst_prev="md-previous.rst7"
+    fi
+
+    echo "[INFO] Using restart $rst_prev -> md-current.rst7 for segment $((seg_idx + 1))"
+
+    write_mdin_current "$tmpl" "$run_steps" $((current_steps == 0 ? 1 : 0)) > "$mdin_current"
+
+    out_tag=$(printf "md-%02d" "$((seg_idx + 1))")
+    rst_out="md-current.rst7"
+
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_prev -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out"
+
+    current_steps=$((current_steps + run_steps))
+    last_rst="$rst_out"
 done
 
-print_and_run "cpptraj -p $PRMTOP -y mdin-$x.rst7 -x output.pdb >> \"$log_file\" 2>&1"
+print_and_run "cpptraj -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion
