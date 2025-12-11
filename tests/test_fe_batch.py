@@ -27,7 +27,6 @@ def test_fe_batch_adds_gres_flag(tmp_path):
         system_name="sys",
         fe_type="uno_rest",
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=1000,
         buffer_x=15.0,
         buffer_y=15.0,

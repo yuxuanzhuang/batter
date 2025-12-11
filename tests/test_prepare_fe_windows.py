@@ -51,7 +51,6 @@ def test_prepare_fe_windows_always_writes_remd(monkeypatch, tmp_path: Path) -> N
     create = CreateArgs(system_name="sys", ligand_paths={"LIG": lig_file})
     fe_args = FESimArgs(
         lambdas=[0.0],
-        num_equil_extends=0,
         eq_steps=100,
         steps1={"z": 1000},
         steps2={"z": 1000},
@@ -70,4 +69,3 @@ def test_prepare_fe_windows_always_writes_remd(monkeypatch, tmp_path: Path) -> N
     assert n_windows == 1
     # ensure dummy builder created window dirs
     assert (lig_root / "fe" / "z" / "z00").exists()
-

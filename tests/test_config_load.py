@@ -47,7 +47,6 @@ def test_load_simulation_config(tmp_path: Path) -> None:
 system_name: sim-example
 fe_type: uno_rest
 lambdas: [0.0, 1.0]
-num_equil_extends: 2
 eq_steps: 1000
 neutralize_only: "YES"
 buffer_x: 20.0
@@ -93,7 +92,6 @@ def base_sim_kwargs(**overrides):
         "system_name": "sys",
         "fe_type": "rest",
         "lambdas": [0.0, 1.0],
-        "num_equil_extends": 2,
         "eq_steps": 1000,
         "buffer_x": 15.0,
         "buffer_y": 15.0,
@@ -157,7 +155,7 @@ def test_args_negative_force():
     [
         ({"p1": "bad-anchor"}, "Anchor must look"),
         ({"dec_int": "ti"}, "TI integration not implemented"),
-        ({"fe_type": "custom", "lambdas": [0.0], "num_equil_extends": 1}, "dec_method"),
+        ({"fe_type": "custom", "lambdas": [0.0]}, "dec_method"),
         (
             {
                 "fe_type": "uno_rest",
@@ -185,7 +183,6 @@ def test_simulation_config_remd_enabled(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=1000,
         steps1={"z": 50_000},
         steps2={"z": 300_000},
@@ -226,7 +223,6 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path, extra_conformation_restraints=conf_json)
     fe_args = FESimArgs(
         lambdas=[0, 1],
-        num_equil_extends=1,
         eq_steps=100,
         steps1={"z": 50_000},
         steps2={"z": 300_000},
@@ -244,7 +240,6 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
         create2,
         FESimArgs(
             lambdas=[0, 1],
-            num_equil_extends=1,
             eq_steps=100,
             steps1={"z": 50_000},
             steps2={"z": 300_000},
@@ -275,7 +270,6 @@ def test_sim_config_abfe_requires_z_steps(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=100,
         steps1={"z": 0},
         steps2={"z": 50},
@@ -288,7 +282,6 @@ def test_sim_config_asfe_requires_y_steps(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=100,
         steps1={"y": 0, "m": 10},
         steps2={"y": 0, "m": 20},
@@ -301,7 +294,6 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=100,
         component_lambdas={"z": [0.0, 0.2, 0.4, 1.0]},
         steps1={"z": 50_000},
@@ -326,7 +318,6 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
         "create": create.model_dump(),
         "fe_sim": {
             "lambdas": [0.0, 1.0],
-            "num_equil_extends": 1,
             "eq_steps": 1000,
             "steps1": steps1,
             "steps2": steps2,
@@ -366,7 +357,6 @@ def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) 
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=1000,
         num_fe_extends=2,
         steps1={"z": 50_000},
@@ -383,7 +373,6 @@ def test_analysis_fe_range_default_for_large_num_fe_extends(
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=1000,
         num_fe_extends=6,
         steps1={"z": 50_000},
@@ -399,7 +388,6 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
-        num_equil_extends=1,
         eq_steps=1000,
         num_fe_extends=2,
         analysis_fe_range=(5, 7),
@@ -416,7 +404,6 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0, 1],
-        num_equil_extends=0,
         eq_steps=100,
         enable_mcwat="no",
         steps1={"z": 50_000},
@@ -450,7 +437,6 @@ def test_resolved_sim_config_handles_md(tmp_path: Path) -> None:
         "create": create.model_dump(),
         "fe_sim": {
             "eq_steps": 1000,
-            "num_equil_extends": 1,
             "dt": 0.002,
             "temperature": 300.0,
         },
@@ -459,7 +445,6 @@ def test_resolved_sim_config_handles_md(tmp_path: Path) -> None:
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.fe_type == "md"
     assert sim_cfg.eq_steps == 1000
-    assert sim_cfg.num_equil_extends == 1
     assert sim_cfg.temperature == 300.0
 
 
@@ -470,7 +455,7 @@ def test_md_rejects_fe_only_fields(tmp_path: Path) -> None:
         "backend": "local",
         "run": {"output_folder": str(tmp_path / "out")},
         "create": create.model_dump(),
-        "fe_sim": {"num_fe_extends": 5, "eq_steps": 1000, "num_equil_extends": 1},
+        "fe_sim": {"num_fe_extends": 5, "eq_steps": 1000},
     }
     with pytest.raises(ValidationError):
         RunConfig.model_validate(payload)
