@@ -125,8 +125,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         # allow reuse of an existing index when present
         if index_path.exists():
             logger.error(
-                "[param_ligands] encountered error but index exists; reusing cached ligands. Error: %s",
-                exc,
+                f"[param_ligands] encountered error but index exists; reusing cached ligands. Error: {exc}",
             )
             existing_index = json.loads(index_path.read_text())
             index_entries = existing_index.get("ligands", [])
@@ -171,14 +170,12 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
         if salvaged_hashes:
             logger.error(
-                "[param_ligands] encountered error; salvaged %d cached ligands and will skip failures.",
-                len(salvaged_hashes),
+                f"[param_ligands] encountered error; salvaged {len(salvaged_hashes)} cached ligands and will skip failures.",
             )
             hashes = salvaged_hashes
         else:
             logger.error(
-                "[param_ligands] encountered error and no cached ligands could be salvaged: %s",
-                exc,
+                f"[param_ligands] encountered error and no cached ligands could be salvaged: {exc}",
             )
             raise
 
@@ -215,9 +212,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         meta_path = src_dir / "metadata.json"
         if not src_dir.exists() or not meta_path.exists():
             logger.warning(
-                "[param_ligands] Missing params for staged ligand %s at %s; skipping.",
-                name,
-                src_dir,
+                f"[param_ligands] Missing params for staged ligand {name} at {src_dir}; skipping.",
             )
             continue
 
