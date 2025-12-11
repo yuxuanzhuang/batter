@@ -32,10 +32,9 @@ The run YAML file is divided into three sections grouped inside
     ``lambdas`` or SDR restraints are no longer required. Equilibration controls
     are expressed via ``eq_steps`` which now represents the **total** equilibration
     steps. The legacy ``num_equil_extends`` knob is ignored (retained only for
-    backward compatibility). For FE production
-    the ``num_fe_extends`` field multiplies the stage-2 component steps defined in
-    ``steps2`` so each window ultimately samples
-    ``num_fe_extends * steps2[component]`` steps before moving on.
+    backward compatibility). FE production no longer chunks into extends; set
+    ``steps2`` to the total per-window production steps. The legacy
+    ``num_fe_extends`` knob is ignored.
 
 See Quick Reference below for links to individual config classes.
 

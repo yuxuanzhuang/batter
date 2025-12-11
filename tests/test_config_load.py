@@ -358,7 +358,6 @@ def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) 
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=1000,
-        num_fe_extends=2,
         steps1={"z": 50_000},
         steps2={"z": 300_000},
     )
@@ -374,13 +373,12 @@ def test_analysis_fe_range_default_for_large_num_fe_extends(
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=1000,
-        num_fe_extends=6,
         steps1={"z": 50_000},
         steps2={"z": 300_000},
     )
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.analysis_fe_range == (2, -1)
+    assert cfg.analysis_fe_range == (0, -1)
     assert all("num_fe_extends" not in rec.message for rec in caplog.records)
 
 
@@ -389,7 +387,6 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=1000,
-        num_fe_extends=2,
         analysis_fe_range=(5, 7),
         steps1={"z": 50_000},
         steps2={"z": 300_000},

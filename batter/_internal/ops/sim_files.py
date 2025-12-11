@@ -275,7 +275,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         )
 
     temperature = sim.temperature
-    num_sim = int(sim.num_fe_extends)
+    num_sim = 0  # extensions deprecated; single production segment
     steps1 = sim.dic_steps1[comp]
     steps2 = sim.dic_steps2[comp]
     ntwx = sim.ntwx
@@ -316,8 +316,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mdin = amber_dir / "mdin-unorest"
         template_mini = amber_dir / "mini-unorest"
 
-        for i in range(0, num_sim + 1):
-            n_steps_run = str(steps1) if i == 0 else str(steps2)
+        for i in range(0, 1):
+            n_steps_run = str(steps2)
             out_path = windows_dir / f"mdin-{i:02d}"
             with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
                 for line in fin:
@@ -405,8 +405,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
-        for i in range(0, num_sim + 1):
-            n_steps_run = str(steps1) if i == 0 else str(steps2)
+        for i in range(0, 1):
+            n_steps_run = str(steps2)
             out_path = windows_dir / f"mdin-{i:02d}"
             with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
                 for line in fin:
@@ -521,6 +521,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"
     )
 
+    mdin00 = windows_dir / "mdin-00"
+    if mdin00.exists():
+        (windows_dir / "mdin-template").write_text(
+            f"! eq_steps={steps2}\n{mdin00.read_text()}"
+        )
+
     logger.debug(
         f"[sim_files_z] wrote mdin/mini/eq inputs in {windows_dir} for comp='z', win={win}, weight={weight:0.5f}"
     )
@@ -540,7 +546,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
 
     temperature = sim.temperature
-    num_sim = int(sim.num_fe_extends)
+    num_sim = 0
     steps1 = sim.dic_steps1["y"]
     steps2 = sim.dic_steps2["y"]
     ntwx = sim.ntwx
@@ -596,9 +602,9 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     # per-window production inputs
     template = amber_dir / "mdin-unorest-lig"
-    for i in range(0, num_sim + 1):
+    for i in range(0, 1):
         out_path = windows_dir / f"mdin-{i:02d}"
-        n_steps_run = str(steps1) if i == 0 else str(steps2)
+        n_steps_run = str(steps2)
 
         with template.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
@@ -639,6 +645,11 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     logger.debug(
         f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
     )
+    mdin00 = windows_dir / "mdin-00"
+    if mdin00.exists():
+        (windows_dir / "mdin-template").write_text(
+            f"! eq_steps={steps2}\n{mdin00.read_text()}"
+        )
 
 
 @register_sim_files("m")
@@ -651,7 +662,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
 
     temperature = sim.temperature
-    num_sim = int(sim.num_fe_extends)
+    num_sim = 0
     steps1 = sim.dic_steps1["m"]
     steps2 = sim.dic_steps2["m"]
     ntwx = sim.ntwx
@@ -677,9 +688,9 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     # per-window production inputs
     template = amber_dir / "mdin-unorest-vacuum"
-    for i in range(0, num_sim + 1):
+    for i in range(0, 1):
         out_path = windows_dir / f"mdin-{i:02d}"
-        n_steps_run = str(steps1) if i == 0 else str(steps2)
+        n_steps_run = str(steps2)
 
         with template.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
@@ -720,3 +731,8 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     logger.debug(
         f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"
     )
+    mdin00 = windows_dir / "mdin-00"
+    if mdin00.exists():
+        (windows_dir / "mdin-template").write_text(
+            f"! eq_steps={steps2}\n{mdin00.read_text()}"
+        )
