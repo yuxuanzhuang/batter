@@ -188,15 +188,12 @@ def equil_analysis_handler(
     except Exception as e:
         logger.warning(f"[equil_check:{lig}] error during simulation validation: {e}")
         # copy last frame as representative
-        last_rst = _sort_md_paths(
-            list(p["equil_dir"].glob("md-*.rst7"))
-            + list(p["equil_dir"].glob("md*.rst7"))
-        )
-        if last_rst:
-            shutil.copyfile(last_rst[-1], p["rep_rst"])
+        last_rst = p["equil_dir"] / "md-current.rst7"
+        if os.path.exists(last_rst):
+            shutil.copyfile(last_rst, p["rep_rst"])
         else:
             raise FileNotFoundError(
-                f"[equil_check:{lig}] no md*.rst7 restart found for fallback representative"
+                f"[equil_check:{lig}] no md-current.rst7 found for fallback representative"
             )
         # convert to pdb
         run_with_log(

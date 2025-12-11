@@ -278,7 +278,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
 
     vac_pdb         = work / "vac.pdb"
     vac_lig_pdb     = work / f"{lig}.pdb"
-    vac_lig_prmtop  = work / "vac_ligand.prmtop"
+    vac_lig_prmtop  = work / "{lig}.prmtop"
     full_hmr_prmtop = work / "full.hmr.prmtop"
     full_inpcrd     = work / "full.inpcrd"
     lig_mol2        = work / f"{mol}.mol2"
@@ -343,10 +343,16 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     _maybe_append_extra_conf_blocks(ctx, work_dir=work, cv_file=cv_in)
 
     # single restraint file (no staged ramping)
-    rdsf = rest[1]
-    ldf = rest[2]
-    laf = rest[3]
-    ldhf = rest[4]
+    #rdsf = rest[1]
+    #ldf = rest[2]
+    #laf = rest[3]
+    #ldhf = rest[4]
+
+    # set all to 0 for equil
+    rdsf = 0
+    ldf  = 0
+    laf  = 0
+    ldhf = 0
 
     outp = work / "disang.rest"
     with outp.open("w") as df:
