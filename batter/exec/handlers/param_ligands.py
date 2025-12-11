@@ -163,7 +163,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
                 hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
                 cache_dir = outdir / hid
                 if (cache_dir / "lig.prmtop").exists():
-                    unique[path] = (hid, smi)
+                    unique[str(path)] = (hid, smi)
                     salvaged_hashes.append(hid)
             except Exception:
                 continue
@@ -183,7 +183,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     unique_resnames: Dict[str, str] = {}
     seen_resnames: set[str] = set()
     for i, (name, p) in enumerate(lig_map.items()):
-        smiles_val = unique.get(p, (None, None))[1]
+        smiles_val = unique.get(str(p), (None, None))[1]
         if smiles_val is None:
             continue
         init_mol_name = name.lower()
@@ -204,7 +204,7 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         if name not in unique_resnames:
             logger.warning(f"[param_ligands] Skipping ligand {name} due to parametrization failure.")
             continue
-        hid = unique.get(d, (None, None))[0]
+        hid = unique.get(str(d), (None, None))[0]
         if hid is None:
             logger.warning(f"[param_ligands] Missing hash for ligand {name}; skipping.")
             continue
