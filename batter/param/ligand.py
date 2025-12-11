@@ -856,6 +856,7 @@ def batch_ligand_process(
 
     # --- build LigandProcessing objects for each unique hash ---
     to_prepare: List[Tuple[str, str, "LigandProcessing", str]] = []
+    success_paths: set[str] = set()
 
     factory = LigandFactory()
 
@@ -895,12 +896,13 @@ def batch_ligand_process(
         )
         if not overwrite and marker_any:
             logger.info("Reusing cached ligand @ {} ({})", hid, meta["prepared_base"])
+            # treat cached ligands as successful so they propagate downstream
+            success_paths.add(p)
         else:
             to_prepare.append((lig_name, hid, lig, p))
 
     # --- perform parametrization (local or SLURM) ---
     mode_lower = (on_failure or "").lower()
-    success_paths: set[str] = set()
     if to_prepare:
         if run_with_slurm:
             raise NotImplementedError("Not implemented yet.")

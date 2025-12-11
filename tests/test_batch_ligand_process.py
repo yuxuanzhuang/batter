@@ -90,3 +90,24 @@ def test_batch_ligand_process_raises_without_prune(monkeypatch, tmp_path: Path) 
             output_path=tmp_path / "out",
             on_failure="raise",
         )
+
+
+def test_batch_ligand_process_reuses_cache(monkeypatch, tmp_path: Path) -> None:
+    lig = tmp_path / "a.sdf"
+    lig.write_text("fake")
+    _patch_hashing(monkeypatch, fail_paths=set())
+
+    out = tmp_path / "out"
+    cache_dir = out / "HASH-SMI-a.sdf"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    # create marker files so the ligand is considered cached
+    (cache_dir / "lig.prmtop").write_text("ok")
+
+    hashes, unique = ligand_mod.batch_ligand_process(
+        {"L1": str(lig)},
+        output_path=out,
+        on_failure="raise",
+    )
+
+    assert hashes == ["HASH-SMI-a.sdf"]
+    assert set(unique.keys()) == {str(lig)}
