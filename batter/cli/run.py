@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 import click
 import pandas as pd
@@ -34,6 +34,14 @@ from batter.utils.slurm_templates import (
 )
 from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
+from batter.orchestrate.run_support import (
+    compute_run_signature,
+    generate_run_id,
+    resolve_signature_conflict,
+    select_run_id,
+    stored_payload,
+    stored_signature,
+)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
@@ -140,6 +148,62 @@ def _which_batter() -> str:
     return shlex.quote(sys.executable) + " -m batter.cli"
 
 
+def _resolve_run_dir_for_submission(
+    cfg: RunConfig, yaml_path: Path, run_overrides: Dict[str, Any]
+) -> Tuple[str, Path]:
+    """
+    Mirror the run_id resolution used by ``run_from_yaml`` to keep SLURM job names stable.
+    """
+    config_signature, config_payload = compute_run_signature(
+        yaml_path, run_overrides or None
+    )
+    requested_run_id = getattr(cfg.run, "run_id", "auto")
+
+    while True:
+        run_id, run_dir = select_run_id(
+            cfg.run.output_folder,
+            cfg.protocol,
+            cfg.create.system_name,
+            requested_run_id,
+        )
+        stored_sig, _ = stored_signature(run_dir)
+        prev_payload = stored_payload(run_dir)
+        if resolve_signature_conflict(
+            stored_sig,
+            config_signature,
+            requested_run_id,
+            cfg.run.allow_run_id_mismatch,
+            stored_payload=prev_payload,
+            current_payload=config_payload,
+            run_id=run_id,
+            run_dir=run_dir,
+        ):
+            return run_id, run_dir
+
+        # mismatch with auto run_id → generate a fresh execution directory
+        requested_run_id = "auto"
+        run_id = generate_run_id(cfg.protocol, cfg.create.system_name)
+        run_dir = Path(cfg.run.output_folder) / "executions" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _upsert_sbatch_option(text: str, flag: str, value: str) -> str:
+    """
+    Replace or insert a ``#SBATCH --<flag>=...`` line with ``value``.
+    """
+    pattern = re.compile(rf"^#SBATCH\s+--{re.escape(flag)}=.*$", re.MULTILINE)
+    repl = f"#SBATCH --{flag}={value}"
+    if pattern.search(text):
+        return pattern.sub(repl, text, count=1)
+
+    lines = text.splitlines()
+    insert_idx = 0
+    if lines and lines[0].startswith("#!"):
+        insert_idx = 1
+    lines.insert(insert_idx, repl)
+    return "\n".join(lines)
+
+
 @cli.command("run")
 @click.argument(
     "yaml_path", type=click.Path(exists=True, dir_okay=False, path_type=Path)
@@ -218,6 +282,15 @@ def cmd_run(
         raise click.ClickException(f"Invalid SimulationConfig YAML: {e}")
 
     if slurm_submit:
+        _, run_dir = _resolve_run_dir_for_submission(
+            cfg_for_validation, yaml_path, run_over
+        )
+        run_dir_abs = run_dir.resolve()
+        manager_job_name = "fep_" + (
+            PurePosixPath(run_dir_abs) / "simulations" / "manager"
+        ).as_posix()
+        log_base = f"manager-{run_dir_abs.name or 'run'}"
+
         batter_cmd = _which_batter()
         parts = [batter_cmd, "run", shlex.quote(str(Path(yaml_path).resolve()))]
         parts += ["--on-failure", shlex.quote(on_failure)]
@@ -260,8 +333,14 @@ def cmd_run(
             "job_manager.header",
             tpl_header,
             tpl_body,
-            {},
+            {
+                "__JOB_NAME__": manager_job_name,
+                "__JOB_LOG_BASE__": log_base,
+            },
             header_root=cfg_for_validation.run.slurm_header_dir,
+        )
+        manager_code = _upsert_sbatch_option(
+            manager_code, "job-name", manager_job_name
         )
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
