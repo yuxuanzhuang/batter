@@ -44,7 +44,6 @@ protein binding site. The main steps are:
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
    to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
 #. **Analysis** – Once all windows complete, MBAR analysis is performed and
-   results are summarised in CSV/JSON formats with convergence plots. The worker pool for this stage follows ``run.max_workers``; optionally limit the trajectory range per window via ``fe_sim.analysis_fe_range`` (``[start, end]`` defaults to ``[2, -1]`` or ``[0, -1]`` when ``num_fe_extends < 4``).
 
 Installation
 ------------

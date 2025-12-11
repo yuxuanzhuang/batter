@@ -353,7 +353,7 @@ def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:
     assert sim_cfg_yes.remd == "yes"
 
 
-def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) -> None:
+def test_analysis_fe_range_default(tmp_path: Path, caplog) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
@@ -364,22 +364,6 @@ def test_analysis_fe_range_default_small_num_fe_extends(tmp_path: Path, caplog) 
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.analysis_fe_range == (0, -1)
-
-
-def test_analysis_fe_range_default_for_large_num_fe_extends(
-    tmp_path: Path, caplog
-) -> None:
-    create = _minimal_create(tmp_path)
-    fe_args = FESimArgs(
-        lambdas=[0.0, 1.0],
-        eq_steps=1000,
-        steps1={"z": 50_000},
-        steps2={"z": 300_000},
-    )
-    with caplog.at_level("WARNING"):
-        cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.analysis_fe_range == (0, -1)
-    assert all("num_fe_extends" not in rec.message for rec in caplog.records)
 
 
 def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> None:
@@ -394,7 +378,23 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.analysis_fe_range == (5, 7)
-    assert all("num_fe_extends" not in rec.message for rec in caplog.records)
+
+
+    create = _minimal_create(tmp_path)
+    payload = {
+        "protocol": "abfe",
+        "backend": "local",
+        "run": {"output_folder": str(tmp_path / "out")},
+        "create": create.model_dump(),
+        "fe_sim": {
+            "lambdas": [0.0, 1.0],
+            "eq_steps": 1000,
+            "steps1": {"z": 50_000},
+            "steps2": {"z": 300_000},
+        },
+    }
+    cfg = RunConfig.model_validate(payload)
+    sim_cfg = cfg.resolved_sim_config()
 
 
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
@@ -452,7 +452,7 @@ def test_md_rejects_fe_only_fields(tmp_path: Path) -> None:
         "backend": "local",
         "run": {"output_folder": str(tmp_path / "out")},
         "create": create.model_dump(),
-        "fe_sim": {"num_fe_extends": 5, "eq_steps": 1000},
+        "fe_sim": {"lambdas": [0.0, 1.0]},  # FE-only field should be rejected for MD
     }
     with pytest.raises(ValidationError):
         RunConfig.model_validate(payload)

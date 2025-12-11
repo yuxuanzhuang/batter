@@ -471,11 +471,6 @@ class FESimArgs(BaseModel):
     )
     temperature: float = Field(298.15, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
-    num_fe_extends: int = Field(
-        0,
-        ge=0,
-        description="Deprecated: FE extensions ignored; steps2 is total production steps.",
-    )
     unbound_threshold: float = Field(
         8.0,
         ge=0.0,

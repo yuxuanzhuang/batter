@@ -34,7 +34,10 @@ The run YAML file is divided into three sections grouped inside
     steps. The legacy ``num_equil_extends`` knob is ignored (retained only for
     backward compatibility). FE production no longer chunks into extends; set
     ``steps2`` to the total per-window production steps. The legacy
-    ``num_fe_extends`` knob is ignored.
+    template-based continuation scheme mirroring equilibration: it reads a
+    ``mdin-template`` with ``! eq_steps=<total>`` and rolls restart files
+    between ``md-current.rst7``/``md-previous.rst7`` so interrupted runs can
+    resume without regenerating mdin decks.
 
 See Quick Reference below for links to individual config classes.
 

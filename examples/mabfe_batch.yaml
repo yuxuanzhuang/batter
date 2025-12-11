@@ -54,7 +54,6 @@ fe_sim:
   z_steps1: 5000
   z_steps2: 10000
   # total 10 * 100000 = 1000000 steps -> 4 ns per window
-  num_fe_extends: 10
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat

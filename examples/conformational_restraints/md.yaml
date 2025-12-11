@@ -37,7 +37,6 @@ run:
     time: "4:00:00"
 
 fe_sim:
-  num_fe_extends: 10
   eq_steps: 10000
   num_equil_extends: 6
   cut: 9.0

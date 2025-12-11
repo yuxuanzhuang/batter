@@ -146,7 +146,6 @@ ntwe: 0
 ntwr: 2500
 ntwx: 25000
 num_equil_extends: 6
-num_fe_extends: 10
 other_mol: []
 p1: :113@CA
 p2: :82@CA

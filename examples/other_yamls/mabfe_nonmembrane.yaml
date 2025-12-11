@@ -47,7 +47,6 @@ fe_sim:
   num_equil_extends: 6
   z_steps1: 5000
   z_steps2: 100000
-  num_fe_extends: 10
   cut: 9.0
   barostat: 1
   hmr: yes
