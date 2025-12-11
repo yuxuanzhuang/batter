@@ -19,8 +19,10 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 from smtplib import SMTPException
+import yaml
 
 from loguru import logger
+from pprint import pprint
 
 from batter.config.run import RunConfig
 from batter.systems.core import SimSystem
@@ -145,28 +147,17 @@ def run_from_yaml(
 
     # Configs
     rc = RunConfig.load(path)
-    logger.info(
-        "Run configuration: {}",
-        {
-            "protocol": rc.protocol,
-            "backend": rc.backend,
-            "system": rc.create.system_name,
-            "output": str(rc.run.output_folder),
-            "run_id": getattr(rc.run, "run_id", "auto"),
-            "only_fe_preparation": rc.run.only_fe_preparation,
-            "on_failure": rc.run.on_failure,
-            "max_workers": rc.run.max_workers,
-            "max_active_jobs": rc.run.max_active_jobs,
-            "slurm_partition": rc.run.slurm.partition if rc.run.slurm else None,
-        },
-    )
+
     if run_overrides:
         logger.info(f"Applying run overrides: {run_overrides}")
         rc = rc.model_copy(update={"run": rc.run.model_copy(update=run_overrides)})
     if on_failure:
-        logger.info(f"on_failure behavior: {on_failure}")
         rc.run.on_failure = on_failure
 
+    logger.info(
+    "Run configuration:\n{}",
+    yaml.safe_dump(rc.model_dump(mode="json"), sort_keys=False)
+    )
     yaml_dir = path.parent
 
     # ligand params output directory

@@ -278,7 +278,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
 
     vac_pdb         = work / "vac.pdb"
     vac_lig_pdb     = work / f"{lig}.pdb"
-    vac_lig_prmtop  = work / "{lig}.prmtop"
+    vac_lig_prmtop  = work / f"{mol}.prmtop"
     full_hmr_prmtop = work / "full.hmr.prmtop"
     full_inpcrd     = work / "full.inpcrd"
     lig_mol2        = work / f"{mol}.mol2"

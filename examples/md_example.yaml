@@ -32,12 +32,11 @@ run:
   max_workers: 8
   on_failure: prune
   slurm:
-    partition: owners
-    time: "12:00:00"
+    partition: rondror
+    time: "2:00:00"
 
 fe_sim:
-  eq_steps: 1000000
-  num_equil_extends: 50
+  eq_steps: 50000000
   # 200 ns
   cut: 9.0
   barostat: 1
