@@ -913,9 +913,9 @@ def analyze_lig_task(
         other_ag = universe.atoms - lig_ag
         other_netq = int(round(other_ag.total_charge()))
         if lig_netq == 0:
-            logger.info(f"Rocklin correction skipped: ligand netq={lig_netq}, other netq={other_netq}")
+            logger.debug(f"Rocklin correction skipped: ligand netq={lig_netq}, other netq={other_netq}")
         if lig_netq != 0:
-            logger.info(f"Rocklin correction with ligand netq={lig_netq}, other netq={other_netq}")
+            logger.debug(f"Rocklin correction with ligand netq={lig_netq}, other netq={other_netq}")
             corr = run_rocklin_correction(
                 universe=universe,
                 mol_name=mol,
