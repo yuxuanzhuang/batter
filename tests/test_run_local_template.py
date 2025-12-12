@@ -25,7 +25,7 @@ def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> Non
     (work / "mini.in.rst7").write_text("rst")
     # total_steps=20, nstlim=10 → two segments
     (work / "mdin-template").write_text(
-        "! eq_steps=20\n"
+        "! total_steps=20\n"
         "irest = 1,\n"
         "ntx   = 5,\n"
         "nstlim = 10,\n"

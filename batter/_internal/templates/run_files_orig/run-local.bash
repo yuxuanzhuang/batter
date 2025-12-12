@@ -135,9 +135,9 @@ if [[ $only_eq -eq 1 ]]; then
                     rm -f mini.in.rst7 mini.in.nc mini.in.out
                     exit 1
                 fi
+            fi
             print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
             check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
-            fi
             cd ../COMPONENT-1
         fi
     done
