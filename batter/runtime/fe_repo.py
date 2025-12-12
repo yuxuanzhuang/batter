@@ -175,6 +175,24 @@ class FEResultsRepository:
             if col not in df.columns:
                 df[col] = pd.NA
 
+        string_cols = {
+            "run_id",
+            "ligand",
+            "mol_name",
+            "system_name",
+            "canonical_smiles",
+            "original_name",
+            "original_path",
+            "protocol",
+            "sim_range",
+            "status",
+            "failure_reason",
+            "created_at",
+        }
+        for col in string_cols:
+            if col in df.columns:
+                df[col] = df[col].astype("string")
+
         # Append the new row without using concat
         # Make sure we only write known columns; fill missing with NA
         new_row = {col: row.get(col, pd.NA) for col in cols}
@@ -213,10 +231,10 @@ class FEResultsRepository:
             "original_name": rec.original_name or "",
             "original_path": rec.original_path or "",
             "protocol": rec.protocol,
-            "sim_range": rec.sim_range if rec.sim_range is not None else "",
+            "sim_range": rec.sim_range if rec.sim_range is not None else pd.NA,
             "created_at": rec.created_at,
             "status": rec.status,
-            "failure_reason": "",
+            "failure_reason": pd.NA,
         }
         self._append_index_row(row)
 
