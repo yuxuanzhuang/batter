@@ -178,7 +178,7 @@ To submit the same run through SLURM::
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.). Copy and modify the default template from
-``batter/data/job_manager.sbatch``.
+``batter/data/job_manager.header`` + ``job_manager.body``.
 
 The job manager stages the system locally,
 writes an ``sbatch`` script based on the YAML hash, and streams updates as windows
