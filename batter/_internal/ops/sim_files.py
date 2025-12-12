@@ -433,68 +433,96 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
-        for i in range(0, 1):
-            n_steps_run = str(steps2)
-            out_path = windows_dir / f"mdin-{i:02d}"
-            with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
-                for line in fin:
-                    if i == 0:
-                        if "ntx = 5" in line:
-                            line = "ntx = 1,\n"
-                        elif "irest" in line:
-                            line = "irest = 0,\n"
-                        elif "dt = " in line:
-                            line = "dt = 0.001,\n"
-                        elif "restraintmask" in line:
-                            rm = (
-                                line.split("=", 1)[1]
-                                .strip()
-                                .rstrip(",")
-                                .replace("'", "")
-                            )
-                            if rm == "":
-                                line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
-                            else:
-                                line = (
-                                    f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
-                                )
-
-                    line = (
-                        line.replace("_temperature_", str(temperature))
-                        .replace("_num-atoms_", str(vac_atoms))
-                        .replace("_num-steps_", n_steps_run)
-                        .replace("lbd_val", f"{float(weight):6.5f}")
-                        .replace("mk1", str(mk1))
+        # optional short equilibration input
+        eq_path = windows_dir / "eq.in"
+        with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
+            for line in fin:
+                if "ntx = 5" in line:
+                    line = "ntx = 1,\n"
+                elif "irest" in line:
+                    line = "irest = 0,\n"
+                elif "dt = " in line:
+                    line = "dt = 0.001,\n"
+                elif "restraintmask" in line:
+                    rm = (
+                        line.split("=", 1)[1]
+                        .strip()
+                        .rstrip(",")
+                        .replace("'", "")
                     )
-                    fout.write(line)
+                    if rm == "":
+                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                    else:
+                        line = (
+                            f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                        )
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-steps_", "5000")
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                )
+                fout.write(line)
+        with eq_path.open("a") as mdin:
+            mdin.write(f"  mbar_states = {len(lambdas)}\n")
+            mdin.write("  mbar_lambda =")
+            for lbd in lambdas:
+                mdin.write(f" {lbd:6.5f},")
+            mdin.write("\n")
+            mdin.write(f"  infe = {infe_flag},\n")
+            mdin.write(" /\n")
+            mdin.write(" &pmd \n")
+            mdin.write("  output_file = 'cmass.txt'\n")
+            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+            mdin.write("  cv_file = 'cv.in'\n")
+            mdin.write(" /\n")
+            mdin.write(" &wt type = 'END' , /\n")
+            mdin.write("DISANG=disang.rest\n")
+            mdin.write("LISTOUT=POUT\n")
 
-            with out_path.open("a") as mdin:
-                mdin.write(f"  mbar_states = {len(lambdas)}\n")
-                mdin.write("  mbar_lambda =")
-                for lbd in lambdas:
-                    mdin.write(f" {lbd:6.5f},")
-                mdin.write("\n")
-                mdin.write(f"  infe = {infe_flag},\n")
-                mdin.write(" /\n")
-                mdin.write(" &pmd \n")
-                mdin.write("  output_file = 'cmass.txt'\n")
-                mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-                mdin.write("  cv_file = 'cv.in'\n")
-                mdin.write(" /\n")
-                mdin.write(" &wt type = 'END' , /\n")
-                mdin.write("DISANG=disang.rest\n")
-                mdin.write("LISTOUT=POUT\n")
+        # production template
+        n_steps_run = str(steps2)
+        out_path = windows_dir / "mdin-template"
+        with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
+            fout.write(f"! total_steps={steps2}\n")
+            for line in fin:
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                    .replace("_num-atoms_", str(vac_atoms))
+                    .replace("_num-steps_", n_steps_run)
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("mk1", str(mk1))
+                )
+                fout.write(line)
 
-            # Patch mdin with extra restraints (only mdin-XX)
-            if extra_mask:
-                try:
-                    content = out_path.read_text()
-                    content = _patch_restraint_block(content, extra_mask, extra_fc)
-                    out_path.write_text(content)
-                except Exception as e:
-                    logger.warning(
-                        f"[extra_restraints] Could not patch {out_path.name}: {e}"
-                    )
+        with out_path.open("a") as mdin:
+            mdin.write(f"  mbar_states = {len(lambdas)}\n")
+            mdin.write("  mbar_lambda =")
+            for lbd in lambdas:
+                mdin.write(f" {lbd:6.5f},")
+            mdin.write("\n")
+            mdin.write(f"  infe = {infe_flag},\n")
+            mdin.write(" /\n")
+            mdin.write(" &pmd \n")
+            mdin.write("  output_file = 'cmass.txt'\n")
+            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+            mdin.write("  cv_file = 'cv.in'\n")
+            mdin.write(" /\n")
+            mdin.write(" &wt type = 'END' , /\n")
+            mdin.write("DISANG=disang.rest\n")
+            mdin.write("LISTOUT=POUT\n")
+
+        # Patch mdin with extra restraints (only mdin-template)
+        if extra_mask:
+            try:
+                content = out_path.read_text()
+                content = _patch_restraint_block(content, extra_mask, extra_fc)
+                out_path.write_text(content)
+            except Exception as e:
+                logger.warning(
+                    f"[extra_restraints] Could not patch {out_path.name}: {e}"
+                )
 
         with (
             template_mini.open("rt") as fin,
@@ -568,7 +596,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
 
     temperature = sim.temperature
-    steps2 = sim.dic_n_steps["y"]
+    n_steps = sim.dic_n_steps["y"]
     ntwx = sim.ntwx
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
@@ -620,56 +648,91 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 )
             )
 
-    # per-window production inputs
     template = amber_dir / "mdin-unorest-lig"
-    for i in range(0, 1):
-        out_path = windows_dir / f"mdin-{i:02d}"
-        n_steps_run = str(steps2)
 
-        with template.open("rt") as fin, out_path.open("wt") as fout:
-            for line in fin:
-                if i == 0:
-                    if "ntx = 5" in line:
-                        line = "ntx = 1,\n"
-                    elif "irest" in line:
-                        line = "irest = 0,\n"
-                    elif "dt = " in line:
-                        line = "dt = 0.001,\n"
-                line = (
-                    line.replace("_temperature_", str(temperature))
-                    .replace("_num-steps_", n_steps_run)
-                    .replace("lbd_val", f"{float(weight):6.5f}")
-                    .replace("mk1", str(mk1))
-                    .replace("disang_file", "disang")
-                    .replace("_lig_name_", mol)
+    # short equilibration input
+    eq_path = windows_dir / "eq.in"
+    with template.open("rt") as fin, eq_path.open("wt") as fout:
+        for line in fin:
+            if "ntx = 5" in line:
+                line = "  ntx = 1,\n"
+            elif "irest" in line:
+                line = "  irest = 0,\n"
+            elif "dt = " in line:
+                line = "  dt = 0.001,\n"
+            elif "restraintmask" in line:
+                rm = (
+                    line.split("=", 1)[1]
+                    .strip()
+                    .rstrip(",")
+                    .replace("'", "")
                 )
-                fout.write(line)
+                if rm == "":
+                    line = f"  restraintmask = '(@CA | :{mol}) & !@H='\n"
+                else:
+                    line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-steps_", "5000")
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("disang_file", "disang")
+                .replace("_lig_name_", mol)
+            )
+            fout.write(line)
 
-        with out_path.open("a") as mdin:
-            mdin.write(f"  mbar_states = {len(lambdas)}\n")
-            mdin.write("  mbar_lambda =")
-            for lbd in lambdas:
-                mdin.write(f" {lbd:6.5f},")
-            mdin.write("\n")
-            mdin.write("  infe = 1,\n")
-            mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+    with eq_path.open("a") as mdin:
+        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write("  mbar_lambda =")
+        for lbd in lambdas:
+            mdin.write(f" {lbd:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 1,\n")
+        mdin.write(" /\n")
+        mdin.write(" &pmd \n")
+        mdin.write("  output_file = 'cmass.txt'\n")
+        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+        mdin.write("  cv_file = 'cv.in'\n")
+        mdin.write(" /\n")
+        mdin.write(" &wt type = 'END' , /\n")
+        mdin.write("DISANG=disang.rest\n")
+        mdin.write("LISTOUT=POUT\n")
+
+    # production template (single long segment)
+    out_path = windows_dir / "mdin-template"
+    with template.open("rt") as fin, out_path.open("wt") as fout:
+        fout.write(f"! total_steps={n_steps}\n")
+        for line in fin:
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-steps_", str(n_steps))
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("disang_file", "disang")
+                .replace("_lig_name_", mol)
+            )
+            fout.write(line)
+
+    with out_path.open("a") as mdin:
+        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write("  mbar_lambda =")
+        for lbd in lambdas:
+            mdin.write(f" {lbd:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 1,\n")
+        mdin.write(" /\n")
+        mdin.write(" &pmd \n")
+        mdin.write("  output_file = 'cmass.txt'\n")
+        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+        mdin.write("  cv_file = 'cv.in'\n")
+        mdin.write(" /\n")
+        mdin.write(" &wt type = 'END' , /\n")
+        mdin.write("DISANG=disang.rest\n")
+        mdin.write("LISTOUT=POUT\n")
 
     logger.debug(
         f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
     )
-    mdin00 = windows_dir / "mdin-00"
-    if mdin00.exists():
-        (windows_dir / "mdin-template").write_text(
-            f"! total_steps={steps2}\n{mdin00.read_text()}"
-        )
 
 
 @register_sim_files("m")
@@ -682,7 +745,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
 
     temperature = sim.temperature
-    steps2 = sim.dic_n_steps["m"]
+    n_steps = sim.dic_n_steps["m"]
     ntwx = sim.ntwx
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
@@ -704,53 +767,88 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
             fout.write(line)
 
-    # per-window production inputs
     template = amber_dir / "mdin-unorest-vacuum"
-    for i in range(0, 1):
-        out_path = windows_dir / f"mdin-{i:02d}"
-        n_steps_run = str(steps2)
 
-        with template.open("rt") as fin, out_path.open("wt") as fout:
-            for line in fin:
-                if i == 0:
-                    if "ntx = 5" in line:
-                        line = "ntx = 1,\n"
-                    elif "irest" in line:
-                        line = "irest = 0,\n"
-                    elif "dt = " in line:
-                        line = "dt = 0.001,\n"
-                line = (
-                    line.replace("_temperature_", str(temperature))
-                    .replace("_num-steps_", n_steps_run)
-                    .replace("lbd_val", f"{float(weight):6.5f}")
-                    .replace("mk1", str(mk1))
-                    .replace("disang_file", "disang")
-                    .replace("_lig_name_", mol)
+    # short equilibration input
+    eq_path = windows_dir / "eq.in"
+    with template.open("rt") as fin, eq_path.open("wt") as fout:
+        for line in fin:
+            if "ntx = 5" in line:
+                line = "  ntx = 1,\n"
+            elif "irest" in line:
+                line = "  irest = 0,\n"
+            elif "dt = " in line:
+                line = "  dt = 0.001,\n"
+            elif "restraintmask" in line:
+                rm = (
+                    line.split("=", 1)[1]
+                    .strip()
+                    .rstrip(",")
+                    .replace("'", "")
                 )
-                fout.write(line)
+                if rm == "":
+                    line = f"  restraintmask = '(@CA | :{mol}) & !@H='\n"
+                else:
+                    line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-steps_", "5000")
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("disang_file", "disang")
+                .replace("_lig_name_", mol)
+            )
+            fout.write(line)
 
-        with out_path.open("a") as mdin:
-            mdin.write(f"  mbar_states = {len(lambdas)}\n")
-            mdin.write("  mbar_lambda =")
-            for lbd in lambdas:
-                mdin.write(f" {lbd:6.5f},")
-            mdin.write("\n")
-            mdin.write("  infe = 0,\n")
-            mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+    with eq_path.open("a") as mdin:
+        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write("  mbar_lambda =")
+        for lbd in lambdas:
+            mdin.write(f" {lbd:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 0,\n")
+        mdin.write(" /\n")
+        mdin.write(" &pmd \n")
+        mdin.write("  output_file = 'cmass.txt'\n")
+        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+        mdin.write("  cv_file = 'cv.in'\n")
+        mdin.write(" /\n")
+        mdin.write(" &wt type = 'END' , /\n")
+        mdin.write("DISANG=disang.rest\n")
+        mdin.write("LISTOUT=POUT\n")
+
+    # production template (single long segment)
+    out_path = windows_dir / "mdin-template"
+    with template.open("rt") as fin, out_path.open("wt") as fout:
+        fout.write(f"! total_steps={n_steps}\n")
+        for line in fin:
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-steps_", str(n_steps))
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("disang_file", "disang")
+                .replace("_lig_name_", mol)
+            )
+            fout.write(line)
+
+    with out_path.open("a") as mdin:
+        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write("  mbar_lambda =")
+        for lbd in lambdas:
+            mdin.write(f" {lbd:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 0,\n")
+        mdin.write(" /\n")
+        mdin.write(" &pmd \n")
+        mdin.write("  output_file = 'cmass.txt'\n")
+        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+        mdin.write("  cv_file = 'cv.in'\n")
+        mdin.write(" /\n")
+        mdin.write(" &wt type = 'END' , /\n")
+        mdin.write("DISANG=disang.rest\n")
+        mdin.write("LISTOUT=POUT\n")
 
     logger.debug(
         f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"
     )
-    mdin00 = windows_dir / "mdin-00"
-    if mdin00.exists():
-        (windows_dir / "mdin-template").write_text(
-            f"! total_steps={steps2}\n{mdin00.read_text()}"
-        )
