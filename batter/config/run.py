@@ -472,9 +472,10 @@ class FESimArgs(BaseModel):
         ge=0.0,
         description="Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
     )
-    analysis_fe_range: Optional[Tuple[int, int]] = Field(
-        None,
-        description="Optional (start, end) simulation index range to analyze per FE window.",
+    analysis_start_step: int = Field(
+        0,
+        ge=0,
+        description="Only analyze FE production steps after this step (per window).",
     )
 
     @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
@@ -504,19 +505,6 @@ class FESimArgs(BaseModel):
         if any(left > right for left, right in zip(v, v[1:])):
             raise ValueError("Lambda values must be in ascending order.")
         return v
-
-    @field_validator("analysis_fe_range")
-    @classmethod
-    def _validate_analysis_range(
-        cls, value: Optional[Tuple[int, int]]
-    ) -> Optional[Tuple[int, int]]:
-        if value is None:
-            return None
-        if len(value) != 2:
-            raise ValueError(
-                "analysis_fe_range must contain exactly two integers (start, end)."
-            )
-        return value
 
     @field_validator(
         "lig_distance_force",

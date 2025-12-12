@@ -125,8 +125,8 @@ def save_fe_records(
     """
     failures: list[tuple[str, str, str]] = []
     analysis_range = (
-        tuple(sim_cfg_updated.analysis_fe_range)
-        if sim_cfg_updated.analysis_fe_range
+        sim_cfg_updated.analysis_start_step
+        if sim_cfg_updated.analysis_start_step is not None
         else None
     )
     for child in children_all:

@@ -687,8 +687,8 @@ def run_from_yaml(
     store = ArtifactStore(rc.run.output_folder)
     repo = FEResultsRepository(store)
     analysis_range = (
-        tuple(sim_cfg_updated.analysis_fe_range)
-        if sim_cfg_updated.analysis_fe_range
+        sim_cfg_updated.analysis_start_step
+        if sim_cfg_updated.analysis_start_step is not None
         else None
     )
     failures: list[tuple[str, str, str]] = []

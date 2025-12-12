@@ -182,16 +182,11 @@ class SimulationConfig(BaseModel):
         extra_conf_rest = create.extra_conformation_restraints
         extra_restraints = create.extra_restraints
 
-        def _analysis_range_default():
-            return (0, -1)
-
-        analysis_fe_range_value = (
-            getattr(fe, "analysis_fe_range", None)
-            if hasattr(fe, "analysis_fe_range")
-            else None
-        )
-        if analysis_fe_range_value is None:
-            analysis_fe_range_value = _analysis_range_default()
+        analysis_start_step_val = 0
+        if hasattr(fe, "analysis_start_step"):
+            analysis_start_step_val = int(getattr(fe, "analysis_start_step") or 0)
+        elif isinstance(fe, Mapping) and "analysis_start_step" in fe:
+            analysis_start_step_val = int(fe.get("analysis_start_step") or 0)
 
         remd_settings = _fe_attr("remd", lambda: RemdArgs())
         if isinstance(remd_settings, RemdArgs):
@@ -245,7 +240,7 @@ class SimulationConfig(BaseModel):
             "gamma_ln": float(_fe_attr("gamma_ln", lambda: 1.0)),
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
-            "analysis_fe_range": analysis_fe_range_value,
+            "analysis_start_step": analysis_start_step_val,
             "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
         }
 
@@ -348,9 +343,10 @@ class SimulationConfig(BaseModel):
         ge=0.0,
         description="Distance (Å) between ligand COMs that classifies equilibration as unbound.",
     )
-    analysis_fe_range: Optional[Tuple[int, int]] = Field(
-        (2, -1),
-        description="Optional tuple (start, end) limiting FE simulations analyzed per window.",
+    analysis_start_step: int = Field(
+        0,
+        ge=0,
+        description="Analyze only steps after this (per FE window).",
     )
 
     # --- Force constants ---
@@ -616,6 +612,10 @@ class SimulationConfig(BaseModel):
             if s2 <= 0:
                 raise ValueError(
                     f"{comp}: steps must be > 0 (key '{comp}_n_steps')."
+                )
+            if self.analysis_start_step >= s2:
+                raise ValueError(
+                    f"analysis_start_step ({self.analysis_start_step}) must be < {comp}_n_steps ({s2})."
                 )
 
         # update per-component lambdas
