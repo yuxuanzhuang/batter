@@ -113,10 +113,10 @@ if [[ $only_eq -eq 1 ]]; then
     # run minimization for each windows at this stage
     for i in $(seq 0 $((NWINDOWS - 1))); do
         win_folder=$(printf "../COMPONENT%02d" $i)
-        if [[ -s $win_folder/mini.rst7 ]]; then
-            echo "Skipping minimization for window $i, already exists."
+        if [[ -s $win_folder/eq.rst7 ]]; then
+            echo "Skipping equilibration for window $i, already exists."
         else
-            echo "Running minimization for window $i"
+            echo "Running equilibration for window $i"
             cd $win_folder
             print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
             check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
@@ -165,7 +165,7 @@ chunk_steps=$(parse_nstlim "$tmpl")
 current_steps=$(completed_steps "$tmpl")
 echo "Current completed steps: $current_steps / $total_steps"
 
-last_rst="mini.in.rst7"
+last_rst="eq.rst7"
 
 while [[ $current_steps -lt $total_steps ]]; do
     remaining=$((total_steps - current_steps))
@@ -176,7 +176,7 @@ while [[ $current_steps -lt $total_steps ]]; do
 
     seg_idx=$(( (current_steps + chunk_steps - 1) / chunk_steps ))
 
-    rst_prev="mini.in.rst7"
+    rst_prev="eq.rst7"
     if [[ -s md-current.rst7 ]]; then
         rst_prev="md-current.rst7"
     fi
@@ -202,7 +202,7 @@ while [[ $current_steps -lt $total_steps ]]; do
     out_tag=$(printf "md-%02d" "$((seg_idx + 1))")
     rst_out="md-current.rst7"
 
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_prev -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_prev -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out"
 
     current_steps=$((current_steps + run_steps))
