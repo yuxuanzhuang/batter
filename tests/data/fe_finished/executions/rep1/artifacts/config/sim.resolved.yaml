@@ -41,7 +41,6 @@ components:
 cut: 9.0
 dec_int: mbar
 dec_method: sdr
-dic_steps1:
   a: 0
   c: 0
   e: 0
@@ -78,7 +77,6 @@ dic_steps2:
 dt: 0.004
 enable_mcwat: 'yes'
 eq_steps: 10000
-eq_steps1: 10000
 eq_steps2: 10000
 fe_type: uno_rest
 gamma_ln: 1.0
@@ -135,9 +133,7 @@ max_adis: 7.0
 membrane_simulation: true
 min_adis: 3.0
 n_steps_dict:
-  y_steps1: 50000
   y_steps2: 300000
-  z_steps1: 5000
   z_steps2: 30000
 neut: 'no'
 neutralize_only: 'no'

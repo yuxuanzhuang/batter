@@ -139,7 +139,6 @@ class SimulationConfig(BaseModel):
                 raise ValueError(f"{name} values must be in ascending order.")
             return out
 
-        steps1 = _coerce_step_dict("steps1", dict(_fe_attr("steps1", dict) or {}))
         steps2 = _coerce_step_dict(
             "steps2",
             dict(_fe_attr("steps2", lambda: {"x": 300_000, "y": 300_000}) or {}),
@@ -162,11 +161,11 @@ class SimulationConfig(BaseModel):
             "asfe": ["y", "m"],
         }.get(proto_key, [])
         for comp in required_components:
-            if comp not in steps1 or comp not in steps2:
+            if comp not in steps2:
                 raise ValueError(
-                    f"{proto_key.upper()} protocol requires steps for component '{comp}'. Add {comp}_steps1 and {comp}_steps2."
+                    f"{proto_key.upper()} protocol requires steps for component '{comp}'. Add {comp}_steps2."
                 )
-            if steps1[comp] <= 0 or steps2[comp] <= 0:
+            if steps2[comp] <= 0:
                 raise ValueError(
                     f"{proto_key.upper()} protocol requires positive steps for component '{comp}'."
                 )
@@ -238,8 +237,6 @@ class SimulationConfig(BaseModel):
             "release_eq": fe_release_eq,
             "num_equil_extends": num_equil_extends,
             "eq_steps": eq_steps_value,
-            "eq_steps1": eq_steps_value,
-            "eq_steps2": eq_steps_value,
             "ntpr": int(_fe_attr("ntpr", lambda: 1000)),
             "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
             "ntwe": int(_fe_attr("ntwe", lambda: 0)),
@@ -259,8 +256,7 @@ class SimulationConfig(BaseModel):
             fe_data["barostat"] = 1
 
         n_steps_dict: dict[str, int] = {}
-        for comp in sorted(set(steps1) | set(steps2)):
-            n_steps_dict[f"{comp}_steps1"] = int(steps1.get(comp, 0))
+        for comp in sorted(steps2):
             n_steps_dict[f"{comp}_steps2"] = int(steps2.get(comp, 0))
 
         merged: dict[str, Any] = {
@@ -395,19 +391,11 @@ class SimulationConfig(BaseModel):
     eq_steps: int = Field(
         1_000_000, description="Total equilibration steps (entire run)."
     )
-    eq_steps1: int = Field(
-        0, description="Legacy alias of eq_steps (auto-filled)."
-    )
-    eq_steps2: int = Field(
-        0, description="Legacy alias of eq_steps (auto-filled)."
-    )
     n_steps_dict: Dict[str, int] = Field(
         default_factory=lambda: {
-            f"{comp}_steps{ind}": 50_000 if ind == "1" else 1_000_000
-            for comp in FEP_COMPONENTS
-            for ind in ("1", "2")
+            f"{comp}_steps2": 1_000_000 for comp in FEP_COMPONENTS
         },
-        description="Per-component steps (keys: '{comp}_steps1|2')",
+        description="Per-component steps (keys: '{comp}_steps2')",
     )
 
     # --- L1 search (optional) ---
@@ -442,11 +430,8 @@ class SimulationConfig(BaseModel):
     ion_def: List[Any] = Field(
         default_factory=list, description="Ion tuple [cation, anion, conc]"
     )
-    dic_steps1: Dict[str, int] = Field(
-        default_factory=dict, description="Stage1 steps per component"
-    )
     dic_steps2: Dict[str, int] = Field(
-        default_factory=dict, description="Stage2 steps per component"
+        default_factory=dict, description="Steps per component"
     )
     rest: List[float] = Field(
         default_factory=list, description="Packed restraint constants"
@@ -544,23 +529,15 @@ class SimulationConfig(BaseModel):
         if self.dec_int == "ti":
             raise NotImplementedError("TI integration not implemented; use 'mbar'.")
 
-        # align legacy aliases
-        if not self.eq_steps1 or self.eq_steps1 <= 0:
-            self.eq_steps1 = self.eq_steps
-        if not self.eq_steps2 or self.eq_steps2 <= 0:
-            self.eq_steps2 = self.eq_steps
-
         # derived fields
         self.rng = len(self.release_eq) - 1
         self.ion_def = [self.cation, self.anion, self.ion_conc]
         self.neut = self.neutralize_only
 
         # stage dicts (copy from n_steps_dict only for ACTIVE components)
-        self.dic_steps1.clear()
         self.dic_steps2.clear()
         for comp in FEP_COMPONENTS:
-            k1, k2 = f"{comp}_steps1", f"{comp}_steps2"
-            self.dic_steps1[comp] = int(self.n_steps_dict.get(k1, 0))
+            k2 = f"{comp}_steps2"
             self.dic_steps2[comp] = int(self.n_steps_dict.get(k2, 0))
 
         # pack restraints (order-sensitive, matches legacy)
@@ -637,14 +614,10 @@ class SimulationConfig(BaseModel):
 
         # sanity checks for active components only
         for comp in self.components:
-            s1, s2 = self.dic_steps1.get(comp, 0), self.dic_steps2.get(comp, 0)
-            if s1 <= 0:
-                raise ValueError(
-                    f"{comp}: stage 1 steps must be > 0 (key '{comp}_steps1')."
-                )
+            s2 = self.dic_steps2.get(comp, 0)
             if s2 <= 0:
                 raise ValueError(
-                    f"{comp}: stage 2 steps must be > 0 (key '{comp}_steps2')."
+                    f"{comp}: steps must be > 0 (key '{comp}_steps2')."
                 )
 
         # update per-component lambdas

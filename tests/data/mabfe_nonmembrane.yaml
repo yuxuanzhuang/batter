@@ -45,7 +45,6 @@ fe_sim:
   buffer_y: 15.0
   buffer_z: 15.0
   eq_steps: 10000
-  steps1:
     z: 5000
   steps2:
     z: 30000

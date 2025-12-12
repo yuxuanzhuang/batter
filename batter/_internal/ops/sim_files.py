@@ -219,7 +219,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     base_text = mdin_src.read_text()
     total_steps = int(getattr(sim, "eq_steps", 0) or 0)
     if total_steps <= 0:
-        total_steps = int(getattr(sim, "eq_steps1", 0) or 0)
+        raise ValueError("eq_steps must be > 0 to write equilibration templates.")
 
     # compute extra mask once for equil (applied to template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, work)
@@ -276,7 +276,6 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     temperature = sim.temperature
     num_sim = 0  # extensions deprecated; single production segment
-    steps1 = sim.dic_steps1[comp]
     steps2 = sim.dic_steps2[comp]
     ntwx = sim.ntwx
 
@@ -547,7 +546,6 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     temperature = sim.temperature
     num_sim = 0
-    steps1 = sim.dic_steps1["y"]
     steps2 = sim.dic_steps2["y"]
     ntwx = sim.ntwx
 
@@ -663,7 +661,6 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     temperature = sim.temperature
     num_sim = 0
-    steps1 = sim.dic_steps1["m"]
     steps2 = sim.dic_steps2["m"]
     ntwx = sim.ntwx
 

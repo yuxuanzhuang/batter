@@ -44,11 +44,11 @@ See Quick Reference below for links to individual config classes.
 Per-component steps and lambdas
 -------------------------------
 
-Stage-1/Stage-2 component steps are supplied via ``fe_sim.steps1`` and
-``fe_sim.steps2`` as dicts keyed by the single-letter component (e.g. ``z: 50000``).
-Keys like ``z_steps1``/``y_steps2`` are also accepted and folded into these
-maps automatically. Each protocol enforces the required components: ABFE fills
-``z`` defaults if omitted, and ASFE fills ``y``/``m`` defaults.
+Component steps are supplied via ``fe_sim.steps2`` as dicts keyed by the
+single-letter component (e.g. ``z: 100000``). Keys like ``y_steps2`` are also
+accepted and folded into this map automatically. Each protocol enforces the
+required components: ABFE fills ``z`` defaults if omitted, and ASFE fills
+``y``/``m`` defaults.
 
 Lambda schedules can be customized per component using ``fe_sim.component_lambdas``
 (or ``<comp>_lambdas`` keys). When a component is missing from that map, it

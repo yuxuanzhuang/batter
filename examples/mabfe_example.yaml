@@ -46,7 +46,6 @@ fe_sim:
     0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
   ]
   eq_steps: 1000000
-  z_steps1: 5000
   z_steps2: 100000
   # total 10 * 100000 = 1000000 steps -> 4 ns per window
   # non-bonded cutoff in Angstrom

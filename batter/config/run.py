@@ -447,13 +447,9 @@ class FESimArgs(BaseModel):
         gt=0,
         description="Total equilibration steps (entire equilibration run).",
     )
-    steps1: Dict[str, int] = Field(
-        default_factory=dict,
-        description="Stage 1 steps per component (key = letter).",
-    )
     steps2: Dict[str, int] = Field(
         default_factory=lambda: {"x": 300_000, "y": 300_000},
-        description="Stage 2 steps per component (key = letter).",
+        description="Total production steps per component (key = letter).",
     )
     ntpr: int = Field(1_000, description="Energy print frequency.")
     ntwr: int = Field(2_500, description="Restart write frequency.")
@@ -572,7 +568,6 @@ class FESimArgs(BaseModel):
             return data
 
         payload = dict(data)
-        steps1 = dict(payload.get("steps1") or {})
         steps2 = dict(payload.get("steps2") or {})
 
         for key in list(payload.keys()):
@@ -585,10 +580,12 @@ class FESimArgs(BaseModel):
                 val = int(val)
             except Exception:
                 pass
-            target = steps1 if stage == "1" else steps2
-            target.setdefault(comp, val)
+            if stage == "1":
+                raise ValueError(
+                    f"{comp}_steps1 is no longer supported; set {comp}_steps2 to the total production steps."
+                )
+            steps2.setdefault(comp, val)
 
-        payload["steps1"] = steps1
         payload["steps2"] = steps2
         return payload
 
