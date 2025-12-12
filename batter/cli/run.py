@@ -72,7 +72,9 @@ def seed_headers(dest: Path | None, force: bool) -> None:
         for path in copied:
             click.echo(f"  - {path}")
     else:
-        click.echo(f"No headers copied; existing headers already present under {dest_dir}.")
+        click.echo(
+            f"No headers copied; existing headers already present under {dest_dir}."
+        )
         if not force:
             click.echo("Use --force to overwrite existing header files.")
 
@@ -286,9 +288,9 @@ def cmd_run(
             cfg_for_validation, yaml_path, run_over
         )
         run_dir_abs = run_dir.resolve()
-        manager_job_name = "fep_" + (
-            PurePosixPath(run_dir_abs) / "simulations" / "manager"
-        ).as_posix()
+        manager_job_name = (
+            "fep_" + (PurePosixPath(run_dir_abs) / "simulations" / "manager").as_posix()
+        )
         log_base = f"manager-{run_dir_abs.name or 'run'}"
 
         batter_cmd = _which_batter()
@@ -326,7 +328,9 @@ def cmd_run(
             dry_run=("1" if dry_run else "0") if dry_run is not None else "",
             only_equil=("1" if only_equil else "0") if only_equil is not None else "",
         )
-        base_path = Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
+        base_path = (
+            Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
+        )
         tpl_header = base_path.with_suffix(".header")
         tpl_body = base_path.with_suffix(".body")
         manager_code = render_slurm_with_header_body(
@@ -339,9 +343,7 @@ def cmd_run(
             },
             header_root=cfg_for_validation.run.slurm_header_dir,
         )
-        manager_code = _upsert_sbatch_option(
-            manager_code, "job-name", manager_job_name
-        )
+        manager_code = _upsert_sbatch_option(manager_code, "job-name", manager_job_name)
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")
@@ -756,7 +758,7 @@ def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
 
     ligand = tail
     if tail == "manager":
-        ligand = None
+        ligand = "MANAGER_JOB"
         stage = "manager"
     elif tail.endswith("_eq"):
         ligand = tail[: -len("_eq")]
