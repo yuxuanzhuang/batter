@@ -755,7 +755,10 @@ def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
     win: int | None = None
 
     ligand = tail
-    if tail.endswith("_eq"):
+    if tail == "manager":
+        ligand = None
+        stage = "manager"
+    elif tail.endswith("_eq"):
         ligand = tail[: -len("_eq")]
         stage = "eq"
     elif tail.endswith("_fe_equil"):
