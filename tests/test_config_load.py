@@ -343,29 +343,27 @@ def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:
     assert sim_cfg_yes.remd == "yes"
 
 
-def test_analysis_fe_range_default(tmp_path: Path, caplog) -> None:
+def test_analysis_start_step_default(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=1000,
         n_steps={"z": 300_000},
     )
-    with caplog.at_level("WARNING"):
-        cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.analysis_fe_range == (0, -1)
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.analysis_start_step == 0
 
 
-def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> None:
+def test_analysis_start_step_respects_user_override(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=1000,
-        analysis_fe_range=(5, 7),
+        analysis_start_step=5000,
         n_steps={"z": 300_000},
     )
-    with caplog.at_level("WARNING"):
-        cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
-    assert cfg.analysis_fe_range == (5, 7)
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.analysis_start_step == 5000
 
 
     create = _minimal_create(tmp_path)

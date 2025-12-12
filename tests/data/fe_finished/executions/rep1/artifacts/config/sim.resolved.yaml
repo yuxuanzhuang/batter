@@ -1,7 +1,5 @@
 all_atoms: 'no'
-analysis_fe_range:
-- 2
-- -1
+analysis_start_step: 0
 anion: Cl-
 barostat: 2
 blocks: 5

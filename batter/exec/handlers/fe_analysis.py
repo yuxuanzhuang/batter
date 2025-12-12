@@ -90,7 +90,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     n_workers_override = payload.get("analysis_n_workers", None)
     n_workers: int = int(n_workers_override) if n_workers_override is not None else 4
     rest: Tuple[str, ...] = tuple()
-    sim_range_default: Optional[Tuple[int, int]] = None
+    sim_start_step: Optional[int] = None
 
     if sim_cfg is not None:
         if sim_cfg.components:
@@ -99,7 +99,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         water_model = str(sim_cfg.water_model).lower()
         rocklin_correction = bool(sim_cfg.rocklin_correction)
         rest = tuple(sim_cfg.rest)
-        sim_range_default = getattr(sim_cfg, "analysis_fe_range", None)
+        sim_start_step = int(getattr(sim_cfg, "analysis_start_step", 0))
 
     components = list(payload.get("components", components))
     temperature = float(payload.get("temperature", temperature))
@@ -107,14 +107,8 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     rocklin_correction = bool(payload.get("rocklin_correction", rocklin_correction))
     n_workers = int(payload.get("n_workers", n_workers))
 
-    # Optional: (start_idx, end_idx) subset of windows to analyze; else analyze all available
-    sim_range = payload.get("sim_range", sim_range_default)
-    if sim_range is not None:
-        try:
-            sim_range = (int(sim_range[0]), int(sim_range[1]))
-        except Exception:
-            logger.warning(f"[analyze:{lig}] Ignoring invalid sim_range={sim_range!r}")
-            sim_range = None
+    # Optional: analysis start step override; else use config default
+    sim_start_step = int(payload.get("analysis_start_step", sim_start_step or 0))
 
     # Try to reconstruct windows per component if the pipeline didn’t inject it
     component_windows_dict = payload.get("component_windows_dict")
@@ -136,7 +130,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
             water_model=water_model,
             component_windows_dict=component_windows_dict,
             rocklin_correction=rocklin_correction,
-            sim_range=sim_range,
+            analysis_start_step=sim_start_step,
             raise_on_error=True,
             mol=mol,
             n_workers=n_workers,

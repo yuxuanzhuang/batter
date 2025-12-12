@@ -27,7 +27,7 @@ def _make_sim_cfg() -> SimulationConfig:
             "component_lambdas": {"z": [0.0, 1.0]},
             "lambdas": [0.0, 1.0],
             "temperature": 300.0,
-            "analysis_fe_range": (0, -1),
+            "analysis_start_step": 0,
             "buffer_x": 15.0,
             "buffer_y": 15.0,
             "buffer_z": 15.0,

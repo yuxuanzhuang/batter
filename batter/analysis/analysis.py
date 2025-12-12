@@ -127,8 +127,8 @@ class MBARAnalysis(FEAnalysisBase):
     energy_unit : {"kcal/mol", "kJ/mol", "kT"}, optional
         Output energy unit. Internally every value is accumulated in units of
         ``kT`` and converted before publishing the results.
-    sim_range : tuple[int, int], optional
-        Optional slice of individual Amber simulations to include.
+    analysis_start_step : int, optional
+        Discard frames with step <= this value before analysis.
     detect_equil : bool, optional
         When ``True`` the equilibration time of each window is detected and
         the pre-equilibrated portion is discarded.
@@ -146,7 +146,7 @@ class MBARAnalysis(FEAnalysisBase):
         windows: List[int],
         temperature: float,
         energy_unit: str = "kcal/mol",
-        sim_range: Optional[Tuple[int, int]] = None,
+        analysis_start_step: int = 0,
         detect_equil: bool = True,
         n_bootstraps: int = 0,
         n_jobs: int = 6,
@@ -170,10 +170,7 @@ class MBARAnalysis(FEAnalysisBase):
         self.energy_unit = energy_unit
         self.kT = 0.0019872041 * self.temperature
 
-        if sim_range is not None:
-            if not (isinstance(sim_range, (list, tuple)) and len(sim_range) == 2):
-                raise ValueError("sim_range must be a 2-tuple (start, end)")
-        self.sim_range = sim_range
+        self.analysis_start_step = max(0, int(analysis_start_step))
 
         self.detect_equil = bool(detect_equil)
         self.n_bootstraps = int(n_bootstraps)
@@ -271,7 +268,7 @@ class MBARAnalysis(FEAnalysisBase):
         comp_folder: str,
         component: str,
         temperature: float,
-        sim_range: Optional[Tuple[int, int]],
+        analysis_start_step: int,
         truncate: bool,
     ) -> pd.DataFrame:
         """
@@ -287,8 +284,8 @@ class MBARAnalysis(FEAnalysisBase):
             Component identifier.
         temperature : float
             Simulation temperature in Kelvin.
-        sim_range : tuple[int, int] or None
-            Optional slice of Amber simulations to include.
+        analysis_start_step : int
+            Discard frames with step <= this value.
         truncate : bool
             If ``True``, detect equilibration and discard early frames.
 
@@ -304,14 +301,7 @@ class MBARAnalysis(FEAnalysisBase):
 
         # Collect mdin-XX.out
         mdouts: List[str] = []
-        s0 = sim_range[0] if sim_range is not None else 0
-        e0 = sim_range[1] if sim_range is not None else n_sims
-        if s0 > n_sims:
-            raise ValueError(f"sim_range start {s0} > available sims {n_sims}")
-        if e0 > n_sims:
-            logger.warning(f"sim_range end {e0} > available sims {n_sims}")
-
-        for i in all_range[s0:e0]:
+        for i in all_range:
             path = f"{win_dir}/mdin-{i:02d}.out"
             if os.path.exists(path):
                 mdouts.append(path)
@@ -326,6 +316,10 @@ class MBARAnalysis(FEAnalysisBase):
                 dfs.append(df_part)
 
         df = pd.concat(dfs)
+
+        # Drop early frames if requested
+        if analysis_start_step > 0:
+            df = df[df.index.get_level_values(0) > analysis_start_step]
 
         # detect_equilibration on the reference column of this window
         if truncate and df.shape[1] > win_i:
@@ -349,7 +343,7 @@ class MBARAnalysis(FEAnalysisBase):
                 comp_folder=self.comp_folder,
                 component=self.component,
                 temperature=self.temperature,
-                sim_range=self.sim_range,
+                analysis_start_step=self.analysis_start_step,
                 truncate=self.detect_equil,
             )
             for win_i in range(len(self.windows))
@@ -492,7 +486,7 @@ class RESTMBARAnalysis(MBARAnalysis):
                 comp_folder=self.comp_folder,
                 component=self.component,
                 temperature=self.temperature,
-                sim_range=self.sim_range,
+                analysis_start_step=self.analysis_start_step,
                 truncate=self.detect_equil,
                 rfc=rfc,
                 req=req,
@@ -517,7 +511,7 @@ class RESTMBARAnalysis(MBARAnalysis):
         comp_folder: str,
         component: str,
         temperature: float,
-        sim_range: Optional[Tuple[int, int]],
+        analysis_start_step: int,
         rfc: np.ndarray,
         req: np.ndarray,
         rty: List[str],
@@ -536,14 +530,7 @@ class RESTMBARAnalysis(MBARAnalysis):
             # enumerate mdin-XX.nc (or fallback md01.nc..)
             nc_list: List[str] = []
             nsims = len(glob.glob("mdin-*.nc"))
-            s0 = sim_range[0] if sim_range is not None else 0
-            e0 = sim_range[1] if sim_range is not None else nsims
-            if s0 > nsims:
-                raise ValueError(f"sim_range start {s0} > n_sims {nsims}")
-            if e0 > nsims:
-                logger.warning(f"sim_range end {e0} > n_sims {nsims}")
-
-            for i in range(s0, e0):
+            for i in range(nsims):
                 fn = f"mdin-{i:02d}.nc"
                 if os.path.exists(fn):
                     nc_list.append(fn)
@@ -586,6 +573,12 @@ class RESTMBARAnalysis(MBARAnalysis):
                     u = np.sum(rfc[win_i] * (val - req[win_i]) ** 2 / kT, axis=1)
             else:
                 u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
+
+            # Drop early frames if requested (interpret steps as frame index here)
+            start_idx = max(0, int(analysis_start_step))
+            if start_idx > 0:
+                u = u[start_idx:]
+                val = val[start_idx:]
 
             t0 = 0
             if truncate:
@@ -785,7 +778,7 @@ def analyze_lig_task(
     water_model: str,
     component_windows_dict: Dict[str, List[int]],
     rocklin_correction: bool = False,
-    sim_range: Optional[Tuple[int, int]] = None,
+    analysis_start_step: int = 0,
     raise_on_error: bool = True,
     mol: str = "LIG",
     n_workers: int = 4,
@@ -838,7 +831,7 @@ def analyze_lig_task(
                     component=comp,
                     windows=windows,
                     temperature=temperature,
-                    sim_range=sim_range,
+                    analysis_start_step=analysis_start_step,
                     load=False,
                     n_jobs=n_workers,
                 )
@@ -858,7 +851,7 @@ def analyze_lig_task(
                     component=comp,
                     windows=windows,
                     temperature=temperature,
-                    sim_range=sim_range,
+                    analysis_start_step=analysis_start_step,
                     load=False,
                     n_jobs=n_workers,
                 )
