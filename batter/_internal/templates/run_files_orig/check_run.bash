@@ -146,16 +146,16 @@ parse_total_steps() {
         return 1
     }
 
-    # Extract the last eq_steps=<num> appearing in comment lines starting with ! or #
+    # Extract the last total_steps=<num> appearing in comment lines starting with ! or #
     local total
     total=$(
-        grep -E '^[!#][[:space:]]*eq_steps[[:space:]]*=[[:space:]]*[0-9]+' "$tmpl" \
+        grep -E '^[!#][[:space:]]*total_steps[[:space:]]*=[[:space:]]*[0-9]+' "$tmpl" \
         | tail -1 \
-        | sed -E 's/.*eq_steps[[:space:]]*=[[:space:]]*([0-9]+).*/\1/'
+        | sed -E 's/.*total_steps[[:space:]]*=[[:space:]]*([0-9]+).*/\1/'
     )
 
     [[ -n $total ]] || {
-        echo "[ERROR] eq_steps comment not found in $tmpl" >&2
+        echo "[ERROR] total_steps comment not found in $tmpl" >&2
         return 1
     }
 
