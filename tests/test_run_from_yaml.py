@@ -229,8 +229,7 @@ create:
 fe_sim:
   lambdas: [0.0, 1.0]
   eq_steps: 1000
-  steps1: {{z: 50000}}
-  steps2: {{z: 50000}}
+  n_steps: {{z: 50000}}
 """
     )
 

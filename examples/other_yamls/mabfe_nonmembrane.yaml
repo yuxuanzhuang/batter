@@ -45,7 +45,7 @@ fe_sim:
   buffer_z: 15.0
   eq_steps: 10000
   num_equil_extends: 6
-  z_steps2: 100000
+  z_n_steps: 100000
   cut: 9.0
   barostat: 1
   hmr: yes

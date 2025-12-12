@@ -52,8 +52,7 @@ def test_prepare_fe_windows_always_writes_remd(monkeypatch, tmp_path: Path) -> N
     fe_args = FESimArgs(
         lambdas=[0.0],
         eq_steps=100,
-        steps1={"z": 1000},
-        steps2={"z": 1000},
+        n_steps={"z": 1000},
     )
     sim_cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
 

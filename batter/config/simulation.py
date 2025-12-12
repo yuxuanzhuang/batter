@@ -139,9 +139,9 @@ class SimulationConfig(BaseModel):
                 raise ValueError(f"{name} values must be in ascending order.")
             return out
 
-        steps2 = _coerce_step_dict(
-            "steps2",
-            dict(_fe_attr("steps2", lambda: {"x": 300_000, "y": 300_000}) or {}),
+        n_steps = _coerce_step_dict(
+            "n_steps",
+            dict(_fe_attr("n_steps", lambda: {"x": 300_000, "y": 300_000}) or {}),
         )
         base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
         component_lambda_map: dict[str, List[float]] = {}
@@ -161,11 +161,11 @@ class SimulationConfig(BaseModel):
             "asfe": ["y", "m"],
         }.get(proto_key, [])
         for comp in required_components:
-            if comp not in steps2:
+            if comp not in n_steps:
                 raise ValueError(
-                    f"{proto_key.upper()} protocol requires steps for component '{comp}'. Add {comp}_steps2."
+                    f"{proto_key.upper()} protocol requires steps for component '{comp}'. Add {comp}_n_steps."
                 )
-            if steps2[comp] <= 0:
+            if n_steps[comp] <= 0:
                 raise ValueError(
                     f"{proto_key.upper()} protocol requires positive steps for component '{comp}'."
                 )
@@ -256,8 +256,8 @@ class SimulationConfig(BaseModel):
             fe_data["barostat"] = 1
 
         n_steps_dict: dict[str, int] = {}
-        for comp in sorted(steps2):
-            n_steps_dict[f"{comp}_steps2"] = int(steps2.get(comp, 0))
+        for comp in sorted(n_steps):
+            n_steps_dict[f"{comp}_n_steps"] = int(n_steps.get(comp, 0))
 
         merged: dict[str, Any] = {
             **create_data,
@@ -392,10 +392,8 @@ class SimulationConfig(BaseModel):
         1_000_000, description="Total equilibration steps (entire run)."
     )
     n_steps_dict: Dict[str, int] = Field(
-        default_factory=lambda: {
-            f"{comp}_steps2": 1_000_000 for comp in FEP_COMPONENTS
-        },
-        description="Per-component steps (keys: '{comp}_steps2')",
+        default_factory=lambda: {f"{comp}_n_steps": 1_000_000 for comp in FEP_COMPONENTS},
+        description="Per-component steps (keys: '{comp}_n_steps')",
     )
 
     # --- L1 search (optional) ---
@@ -430,7 +428,7 @@ class SimulationConfig(BaseModel):
     ion_def: List[Any] = Field(
         default_factory=list, description="Ion tuple [cation, anion, conc]"
     )
-    dic_steps2: Dict[str, int] = Field(
+    dic_n_steps: Dict[str, int] = Field(
         default_factory=dict, description="Steps per component"
     )
     rest: List[float] = Field(
@@ -535,10 +533,10 @@ class SimulationConfig(BaseModel):
         self.neut = self.neutralize_only
 
         # stage dicts (copy from n_steps_dict only for ACTIVE components)
-        self.dic_steps2.clear()
+        self.dic_n_steps.clear()
         for comp in FEP_COMPONENTS:
-            k2 = f"{comp}_steps2"
-            self.dic_steps2[comp] = int(self.n_steps_dict.get(k2, 0))
+            k2 = f"{comp}_n_steps"
+            self.dic_n_steps[comp] = int(self.n_steps_dict.get(k2, 0))
 
         # pack restraints (order-sensitive, matches legacy)
         self.rest = [
@@ -614,10 +612,10 @@ class SimulationConfig(BaseModel):
 
         # sanity checks for active components only
         for comp in self.components:
-            s2 = self.dic_steps2.get(comp, 0)
+            s2 = self.dic_n_steps.get(comp, 0)
             if s2 <= 0:
                 raise ValueError(
-                    f"{comp}: steps must be > 0 (key '{comp}_steps2')."
+                    f"{comp}: steps must be > 0 (key '{comp}_n_steps')."
                 )
 
         # update per-component lambdas

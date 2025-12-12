@@ -33,7 +33,7 @@ The run YAML file is divided into three sections grouped inside
     are expressed via ``eq_steps`` which now represents the **total** equilibration
     steps. The legacy ``num_equil_extends`` knob is ignored (retained only for
     backward compatibility). FE production no longer chunks into extends; set
-    ``steps2`` to the total per-window production steps. The legacy
+    ``n_steps`` to the total per-window production steps. The legacy
     template-based continuation scheme mirroring equilibration: it reads a
     ``mdin-template`` with ``! eq_steps=<total>`` and rolls restart files
     between ``md-current.rst7``/``md-previous.rst7`` so interrupted runs can
@@ -44,8 +44,8 @@ See Quick Reference below for links to individual config classes.
 Per-component steps and lambdas
 -------------------------------
 
-Component steps are supplied via ``fe_sim.steps2`` as dicts keyed by the
-single-letter component (e.g. ``z: 100000``). Keys like ``y_steps2`` are also
+Component steps are supplied via ``fe_sim.n_steps`` as dicts keyed by the
+single-letter component (e.g. ``z: 100000``). Keys like ``y_n_steps`` are also
 accepted and folded into this map automatically. Each protocol enforces the
 required components: ABFE fills ``z`` defaults if omitted, and ASFE fills
 ``y``/``m`` defaults.

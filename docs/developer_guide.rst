@@ -134,7 +134,7 @@ Binding (ABFE) components
 
 ABFE simulations decouple the ligand from the bound complex using the ``z`` component
 (restraints + decoupling in complex). Provide total production steps via
-``fe_sim.steps2`` (or ``z_steps2``). Ensure the restraints and lambdas in the run YAML
+``fe_sim.n_steps`` (or ``z_n_steps``). Ensure the restraints and lambdas in the run YAML
 align with your chosen decoupling scheme.
 
 Solvation (ASFE) components
@@ -145,7 +145,7 @@ ASFE simulations run two FE components:
 - ``y`` – ligand-in-solvent decoupling.
 - ``m`` – ligand-in-vacuum decoupling.
 
-Both components require step counts in ``fe_sim.steps2`` (``y_steps2``/``m_steps2``).
+Both components require step counts in ``fe_sim.n_steps`` (``y_n_steps``/``m_n_steps``).
 The orchestrator enforces that both are positive before pipeline execution.
 
 Practical constraints

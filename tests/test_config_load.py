@@ -129,7 +129,7 @@ def test_fesim_args_unsorted_lambdas():
 def test_fesim_args_rejects_stage1_steps():
     with pytest.raises(ValidationError):
         FESimArgs.model_validate(
-            {"lambdas": [0, 1], "z_steps1": 60_000, "z_steps2": 70_000}
+            {"lambdas": [0, 1], "z_steps1": 60_000, "z_n_steps": 70_000}
         )
 
 
@@ -159,7 +159,7 @@ def test_args_negative_force():
             {
                 "fe_type": "uno_rest",
                 "lambdas": [0.0, 1.0],
-                "n_steps_dict": {"z_steps2": 0},
+                "n_steps_dict": {"z_n_steps": 0},
             },
             "steps must be > 0",
         ),
@@ -183,7 +183,7 @@ def test_simulation_config_remd_enabled(tmp_path: Path) -> None:
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=1000,
-        steps2={"z": 300_000},
+        n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(
         create, fe_args, protocol="abfe", run_remd="yes"
@@ -222,7 +222,7 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     fe_args = FESimArgs(
         lambdas=[0, 1],
         eq_steps=100,
-        steps2={"z": 300_000},
+        n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.infe is True
@@ -238,7 +238,7 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
         FESimArgs(
             lambdas=[0, 1],
             eq_steps=100,
-            steps2={"z": 300_000},
+            n_steps={"z": 300_000},
         ),
         protocol="abfe",
     )
@@ -267,7 +267,7 @@ def test_sim_config_abfe_requires_z_steps(tmp_path: Path) -> None:
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=100,
-        steps2={"z": 50},
+        n_steps={"z": 0},
     )
     with pytest.raises(ValueError, match="requires positive steps for component 'z'"):
         SimulationConfig.from_sections(create, fe_args, protocol="abfe")
@@ -278,7 +278,7 @@ def test_sim_config_asfe_requires_y_steps(tmp_path: Path) -> None:
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=100,
-        steps2={"y": 0, "m": 20},
+        n_steps={"y": 0, "m": 20},
     )
     with pytest.raises(ValueError, match="requires positive steps for component 'y'"):
         SimulationConfig.from_sections(create, fe_args, protocol="asfe")
@@ -290,7 +290,7 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
         lambdas=[0.0, 1.0],
         eq_steps=100,
         component_lambdas={"z": [0.0, 0.2, 0.4, 1.0]},
-        steps2={"z": 300_000},
+        n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.component_lambdas["z"] == [0.0, 0.2, 0.4, 1.0]
@@ -299,9 +299,9 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
     if protocol == "abfe":
-        steps2 = {"z": 300_000}
+        n_steps = {"z": 300_000}
     else:
-        steps2 = {"y": 300_000, "m": 300_000}
+        n_steps = {"y": 300_000, "m": 300_000}
     payload = {
         "protocol": protocol,
         "backend": "local",
@@ -310,7 +310,7 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
         "fe_sim": {
             "lambdas": [0.0, 1.0],
             "eq_steps": 1000,
-            "steps2": steps2,
+            "n_steps": n_steps,
         },
     }
     return RunConfig.model_validate(payload)
@@ -348,7 +348,7 @@ def test_analysis_fe_range_default(tmp_path: Path, caplog) -> None:
     fe_args = FESimArgs(
         lambdas=[0.0, 1.0],
         eq_steps=1000,
-        steps2={"z": 300_000},
+        n_steps={"z": 300_000},
     )
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
@@ -361,7 +361,7 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
         lambdas=[0.0, 1.0],
         eq_steps=1000,
         analysis_fe_range=(5, 7),
-        steps2={"z": 300_000},
+        n_steps={"z": 300_000},
     )
     with caplog.at_level("WARNING"):
         cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
@@ -377,7 +377,7 @@ def test_analysis_fe_range_respects_user_override(tmp_path: Path, caplog) -> Non
         "fe_sim": {
             "lambdas": [0.0, 1.0],
             "eq_steps": 1000,
-            "steps2": {"z": 300_000},
+            "n_steps": {"z": 300_000},
         },
     }
     cfg = RunConfig.model_validate(payload)
@@ -390,7 +390,7 @@ def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
         lambdas=[0, 1],
         eq_steps=100,
         enable_mcwat="no",
-        steps2={"z": 300_000},
+        n_steps={"z": 300_000},
     )
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
     assert cfg.enable_mcwat == "no"

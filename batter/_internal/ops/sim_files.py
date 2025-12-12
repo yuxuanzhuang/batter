@@ -276,7 +276,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     temperature = sim.temperature
     num_sim = 0  # extensions deprecated; single production segment
-    steps2 = sim.dic_steps2[comp]
+    steps2 = sim.dic_n_steps[comp]
     ntwx = sim.ntwx
 
     weight = lambdas[win if win != -1 else 0]
@@ -546,7 +546,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     temperature = sim.temperature
     num_sim = 0
-    steps2 = sim.dic_steps2["y"]
+    steps2 = sim.dic_n_steps["y"]
     ntwx = sim.ntwx
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
@@ -661,7 +661,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     temperature = sim.temperature
     num_sim = 0
-    steps2 = sim.dic_steps2["m"]
+    steps2 = sim.dic_n_steps["m"]
     ntwx = sim.ntwx
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]

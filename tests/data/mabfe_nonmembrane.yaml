@@ -45,8 +45,7 @@ fe_sim:
   buffer_y: 15.0
   buffer_z: 15.0
   eq_steps: 10000
-    z: 5000
-  steps2:
+  n_steps:
     z: 30000
   cut: 9.0
   barostat: 1

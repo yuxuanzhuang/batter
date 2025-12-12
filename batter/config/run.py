@@ -447,7 +447,7 @@ class FESimArgs(BaseModel):
         gt=0,
         description="Total equilibration steps (entire equilibration run).",
     )
-    steps2: Dict[str, int] = Field(
+    n_steps: Dict[str, int] = Field(
         default_factory=lambda: {"x": 300_000, "y": 300_000},
         description="Total production steps per component (key = letter).",
     )
@@ -568,9 +568,23 @@ class FESimArgs(BaseModel):
             return data
 
         payload = dict(data)
-        steps2 = dict(payload.get("steps2") or {})
+        n_steps = dict(payload.get("n_steps") or {})
+        # Allow legacy 'steps2' while migrating; raise on steps1
+        legacy_steps2 = dict(payload.pop("steps2", {}) or {})
+        for k, v in legacy_steps2.items():
+            n_steps.setdefault(k, v)
 
         for key in list(payload.keys()):
+            m_n = re.match(r"^([a-z])_n_steps$", key)
+            if m_n:
+                comp = m_n.group(1)
+                val = payload.pop(key)
+                try:
+                    val = int(val)
+                except Exception:
+                    pass
+                n_steps.setdefault(comp, val)
+                continue
             m = re.match(r"^([a-z])_steps([12])$", key)
             if not m:
                 continue
@@ -582,11 +596,11 @@ class FESimArgs(BaseModel):
                 pass
             if stage == "1":
                 raise ValueError(
-                    f"{comp}_steps1 is no longer supported; set {comp}_steps2 to the total production steps."
+                    f"{comp}_steps1 is no longer supported; set {comp}_n_steps to the total production steps."
                 )
-            steps2.setdefault(comp, val)
+            n_steps.setdefault(comp, val)
 
-        payload["steps2"] = steps2
+        payload["n_steps"] = n_steps
         return payload
 
 
