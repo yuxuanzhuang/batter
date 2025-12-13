@@ -217,7 +217,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     # mdin-template for runtime chunking (total_steps is the total target)
     mdin_src = amber_dir / "mdin-equil"
     base_text = mdin_src.read_text()
-    total_steps = int(getattr(sim, "total_steps", 0) or 0)
+    total_steps = int(getattr(sim, "eq_steps", 0) or 0)
     if total_steps <= 0:
         raise ValueError("total_steps must be > 0 to write equilibration templates.")
 

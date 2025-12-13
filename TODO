@@ -7,4 +7,4 @@
 - error reporting based on blocks
 
 BUG
-- some ligands get wrong charge somewhere in the process
+- during analysis if one component fails, the results is reported without it instead marking failure.
