@@ -23,6 +23,7 @@ def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> Non
     # minimal required inputs
     (work / "full.hmr.prmtop").write_text("prmtop")
     (work / "mini.in.rst7").write_text("rst")
+    (work / "eq.rst7").write_text("eqrst")
     # total_steps=20, nstlim=10 → two segments
     (work / "mdin-template").write_text(
         "! total_steps=20\n"

@@ -296,15 +296,17 @@ class MBARAnalysis(FEAnalysisBase):
         """
         logger.remove()
         win_dir = f"{comp_folder}/{component}{win_i:02d}"
-        n_sims = len(glob.glob(f"{win_dir}/mdin-*.out"))
-        all_range = range(n_sims)
-
-        # Collect mdin-XX.out
+        patterns = [f"{win_dir}/mdin-*.out", f"{win_dir}/md-*.out"]
         mdouts: List[str] = []
-        for i in all_range:
-            path = f"{win_dir}/mdin-{i:02d}.out"
-            if os.path.exists(path):
-                mdouts.append(path)
+        for pat in patterns:
+            mdouts.extend(glob.glob(pat))
+
+        if mdouts:
+            def _idx(path: str) -> int:
+                base = os.path.basename(path)
+                m = re.search(r"(?:mdin-|md-)(\d+)\.out$", base)
+                return int(m.group(1)) if m else 0
+            mdouts = sorted(set(mdouts), key=_idx)
 
         if not mdouts:
             raise FileNotFoundError(f"No Amber out files in {win_dir}")
