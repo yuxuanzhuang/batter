@@ -774,6 +774,10 @@ def remd_batch(
         script_text = _upsert_sbatch_option(script_text, "gpus-per-task", "1")
         script_text = _upsert_sbatch_option(script_text, "ntasks", str(gpu_request))
 
+    # Align log filenames with job name for clarity
+    script_text = _upsert_sbatch_option(script_text, "output", f"{job_name}-%j.out")
+    script_text = _upsert_sbatch_option(script_text, "error", f"{job_name}-%j.err")
+
     output_path = output or Path.cwd() / f"run_remd_batch_{job_hash}.sbatch"
     output_path.write_text(script_text)
     try:
