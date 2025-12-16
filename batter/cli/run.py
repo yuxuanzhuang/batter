@@ -9,6 +9,7 @@ import re
 import shlex
 import subprocess
 import sys
+import math
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
@@ -599,6 +600,12 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
     default=None,
     help="Optional node count override for the sbatch header.",
 )
+@click.option(
+    "--gpus-per-node",
+    type=int,
+    default=None,
+    help="GPUs available per node (used to infer nodes from total GPUs).",
+)
 def remd_batch(
     execution: tuple[Path, ...],
     output: Path | None,
@@ -607,6 +614,7 @@ def remd_batch(
     time_limit: str | None,
     gpus: int | None,
     nodes: int | None,
+    gpus_per_node: int | None,
 ) -> None:
     """
     Generate an sbatch script that runs ``run-local-remd.bash`` for provided executions.
@@ -635,6 +643,9 @@ def remd_batch(
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
     max_windows = max((t.n_windows or 0) for t in tasks)
     gpu_request = gpus or (max_windows if max_windows > 0 else None)
+    node_request = nodes
+    if node_request is None and gpu_request and gpus_per_node:
+        node_request = int(math.ceil(gpu_request / float(gpus_per_node)))
 
     job_hash = _hash_path_list(exec_paths)
     job_name = f"fep_remd_batch_{job_hash}"
@@ -675,8 +686,8 @@ def remd_batch(
         script_text = _upsert_sbatch_option(script_text, "partition", partition)
     if time_limit:
         script_text = _upsert_sbatch_option(script_text, "time", time_limit)
-    if nodes:
-        script_text = _upsert_sbatch_option(script_text, "nodes", str(nodes))
+    if node_request:
+        script_text = _upsert_sbatch_option(script_text, "nodes", str(node_request))
     if gpu_request:
         script_text = _upsert_sbatch_option(script_text, "gres", f"gpu:{gpu_request}")
 
@@ -689,7 +700,8 @@ def remd_batch(
 
     click.echo(f"Wrote sbatch script to {output_path}")
     click.echo(
-        f"Components queued: {len(tasks)} | max windows: {max_windows or 'unknown'} | job-name: {job_name}"
+        f"Components queued: {len(tasks)} | max windows: {max_windows or 'unknown'} | "
+        f"GPUs: {gpu_request or 'unset'} | nodes: {node_request or 'unset'} | job-name: {job_name}"
     )
 
 
