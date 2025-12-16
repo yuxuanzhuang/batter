@@ -451,7 +451,7 @@ class FESimArgs(BaseModel):
         default_factory=lambda: {"x": 300_000, "y": 300_000},
         description="Total production steps per component (key = letter).",
     )
-    ntpr: int = Field(1_000, description="Energy print frequency.")
+    ntpr: int = Field(100, description="Energy print frequency.")
     ntwr: int = Field(2_500, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")
@@ -614,7 +614,7 @@ class MDSimArgs(BaseModel):
         gt=0,
         description="Total equilibration steps (entire equilibration run).",
     )
-    ntpr: int = Field(1000, description="Energy print frequency.")
+    ntpr: int = Field(100, description="Energy print frequency.")
     ntwr: int = Field(10_000, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")

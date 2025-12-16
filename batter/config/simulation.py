@@ -239,7 +239,7 @@ class SimulationConfig(BaseModel):
             "release_eq": fe_release_eq,
             "num_equil_extends": num_equil_extends,
             "eq_steps": eq_steps_value,
-            "ntpr": int(_fe_attr("ntpr", lambda: 1000)),
+            "ntpr": int(_fe_attr("ntpr", lambda: 100)),
             "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
             "ntwe": int(_fe_attr("ntwe", lambda: 0)),
             "ntwx": int(_fe_attr("ntwx", lambda: 50_000)),
@@ -408,7 +408,7 @@ class SimulationConfig(BaseModel):
     max_adis: Optional[float] = Field(None, description="Max anchor distance (Å)")
 
     # --- Amber i/o ---
-    ntpr: int = Field(1000, description="Print energy every ntpr steps")
+    ntpr: int = Field(100, description="Print energy every ntpr steps")
     ntwr: int = Field(10_000, description="Write restart every ntwr steps")
     ntwe: int = Field(0, description="Write energy every ntwe steps")
     ntwx: int = Field(2500, description="Write trajectory every ntwx steps")

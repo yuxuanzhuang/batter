@@ -7,6 +7,7 @@ Production runs LJ decoupling
   ntx = 5,
   irest = 1,
   ntpr = _ntpr_,
+  bar_intervall = _ntpr_,
   ntwr = _ntwr_,
   ntwe = _ntwe_,
   ntxo = 2,

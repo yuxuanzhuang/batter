@@ -281,7 +281,7 @@ class MBARAnalysis(FEAnalysisBase):
         temperature: float,
         analysis_start_step: int,
         truncate: bool,
-        dt: float,
+        dt: float = 0.004,
     ) -> pd.DataFrame:
         """
         Extract reduced potentials for a single window.
@@ -335,12 +335,11 @@ class MBARAnalysis(FEAnalysisBase):
 
         df = pd.concat(dfs)
 
-        # Drop early frames if requested (convert steps -> ps if dt > 0)
+        # Drop early frames if requested (convert steps -> ps)
         if analysis_start_step > 0:
-            threshold = analysis_start_step * dt if dt and dt > 0 else analysis_start_step
+            threshold = analysis_start_step * dt / 1000
             logger.debug(
-                f"[MBARAnalysis] {component}{win_i:02d} dropping frames <= {threshold} "
-                f"({'ps' if dt and dt>0 else 'steps'})"
+                f"[MBARAnalysis] {component}{win_i:02d} dropping frames <= {threshold} ps "
             )
             df = df[df.index.get_level_values(0) > threshold]
 
