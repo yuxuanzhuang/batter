@@ -178,6 +178,10 @@ class MBARAnalysis(FEAnalysisBase):
         self.analysis_start_step = max(0, int(analysis_start_step))
         self.dt = float(dt) if dt is not None else 0.0
         self.ntwx = ntwx if ntwx is not None else 0
+        logger.debug(
+            f"[MBARAnalysis:init] comp={component}, windows={windows}, "
+            f"analysis_start_step={self.analysis_start_step}, dt={self.dt}, ntwx={self.ntwx}"
+        )
 
         self.detect_equil = bool(detect_equil)
         self.n_bootstraps = int(n_bootstraps)
@@ -321,6 +325,8 @@ class MBARAnalysis(FEAnalysisBase):
         if not mdouts:
             raise FileNotFoundError(f"No Amber out files in {win_dir}")
 
+        logger.debug(f"[MBARAnalysis] {component}{win_i:02d} using {len(mdouts)} mdout files")
+
         dfs = []
         with SilenceAlchemlybOnly():
             for fn in mdouts:
@@ -332,6 +338,10 @@ class MBARAnalysis(FEAnalysisBase):
         # Drop early frames if requested (convert steps -> ps if dt > 0)
         if analysis_start_step > 0:
             threshold = analysis_start_step * dt if dt and dt > 0 else analysis_start_step
+            logger.debug(
+                f"[MBARAnalysis] {component}{win_i:02d} dropping frames <= {threshold} "
+                f"({'ps' if dt and dt>0 else 'steps'})"
+            )
             df = df[df.index.get_level_values(0) > threshold]
 
         # detect_equilibration on the reference column of this window
@@ -556,8 +566,10 @@ class RESTMBARAnalysis(MBARAnalysis):
             if not nc_list:
                 fallback = ["md01.nc", "md02.nc", "md03.nc", "md04.nc"]
                 nc_list = [f for f in fallback if os.path.exists(f)]
-                if not nc_list:
-                    raise FileNotFoundError("No NetCDF trajs for REST window")
+            if not nc_list:
+                raise FileNotFoundError("No NetCDF trajs for REST window")
+
+            logger.debug(f"[RESTMBAR] {component}{win_i:02d} using {len(nc_list)} nc files")
 
             # generate restraint traces via cpptraj using current topology choice
             def _gen(top_choice: str):
@@ -597,6 +609,11 @@ class RESTMBARAnalysis(MBARAnalysis):
             if analysis_start_step > 0 and ntwx > 0:
                 # frames recorded every ntwx steps; dt cancels but kept for clarity
                 start_idx = max(0, int(math.ceil(analysis_start_step / float(ntwx))))
+            if start_idx > 0:
+                logger.debug(
+                    f"[RESTMBAR] {component}{win_i:02d} dropping first {start_idx} frames "
+                    f"(analysis_start_step={analysis_start_step}, ntwx={ntwx})"
+                )
             if start_idx > 0:
                 u = u[start_idx:]
                 val = val[start_idx:]
@@ -847,6 +864,11 @@ def analyze_lig_task(
             if comp == "n" and rest[1] == 0 and rest[4] == 0:
                 logger.debug("Skipping 'n' (no conformational restraints).")
                 continue
+
+            logger.debug(
+                f"[analyze_lig] {lig} comp={comp} windows={windows} "
+                f"analysis_start_step={analysis_start_step}, dt={dt}, ntwx={ntwx}"
+            )
 
             if comp in COMPONENTS_DICT["dd"]:
                 ana = MBARAnalysis(
