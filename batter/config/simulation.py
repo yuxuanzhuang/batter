@@ -187,6 +187,13 @@ class SimulationConfig(BaseModel):
             analysis_start_step_val = int(getattr(fe, "analysis_start_step") or 0)
         elif isinstance(fe, Mapping) and "analysis_start_step" in fe:
             analysis_start_step_val = int(fe.get("analysis_start_step") or 0)
+        if analysis_start_step_val < 0:
+            raise ValueError("analysis_start_step must be >= 0.")
+        max_fe_steps = max((int(v) for v in n_steps.values() if v is not None), default=0)
+        if max_fe_steps and analysis_start_step_val >= max_fe_steps:
+            raise ValueError(
+                f"analysis_start_step ({analysis_start_step_val}) must be smaller than fe_total_step ({max_fe_steps})."
+            )
 
         remd_settings = _fe_attr("remd", lambda: RemdArgs())
         if isinstance(remd_settings, RemdArgs):

@@ -317,6 +317,9 @@ class FEResultsRepository:
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         (lig_dir / "failure.json").write_text(json.dumps(failure_detail, indent=2))
+        sim_range_str = ""
+        if isinstance(sim_range, (list, tuple)) and len(sim_range) == 2:
+            sim_range_str = f"{sim_range[0]}-{sim_range[1]}"
         row = {
             "run_id": run_id,
             "ligand": ligand,
@@ -329,7 +332,7 @@ class FEResultsRepository:
             "original_name": original_name or "",
             "original_path": original_path or "",
             "protocol": protocol,
-            "sim_range": "" if sim_range is None else f"{sim_range[0]}-{sim_range[1]}",
+            "sim_range": sim_range_str,
             "status": status,
             "failure_reason": reason or "",
             "created_at": failure_detail["timestamp"],

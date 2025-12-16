@@ -124,11 +124,7 @@ def save_fe_records(
     ``(ligand, status, reason)`` tuples.
     """
     failures: list[tuple[str, str, str]] = []
-    analysis_range = (
-        sim_cfg_updated.analysis_start_step
-        if sim_cfg_updated.analysis_start_step is not None
-        else None
-    )
+    analysis_range = None
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
