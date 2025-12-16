@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import click
 import pandas as pd
@@ -28,6 +28,7 @@ from batter.api import (
 )
 from batter.config.run import RunConfig
 from batter.data import job_manager
+from batter.utils.components import components_under
 from batter.utils.slurm_templates import (
     render_slurm_with_header_body,
     seed_default_headers,
@@ -204,6 +205,150 @@ def _upsert_sbatch_option(text: str, flag: str, value: str) -> str:
         insert_idx = 1
     lines.insert(insert_idx, repl)
     return "\n".join(lines)
+
+
+REMD_HEADER_TEMPLATE = (
+    Path(__file__).resolve().parent.parent
+    / "_internal"
+    / "templates"
+    / "remd_run_files"
+    / "SLURMM-BATCH-remd.header"
+)
+
+
+class RemdTask(NamedTuple):
+    execution: Path
+    ligand: str
+    component: str
+    comp_dir: Path
+    n_windows: int
+
+
+def _hash_path_list(paths: Sequence[Path]) -> str:
+    joined = "\n".join(sorted(str(p.resolve()) for p in paths))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
+
+
+def _resolve_ligand_dirs(exec_path: Path) -> List[Path]:
+    """
+    Return ligand directories under an execution path or the path itself if it is already a ligand root.
+    """
+    if (exec_path / "simulations").is_dir():
+        lig_base = exec_path / "simulations"
+    elif exec_path.name == "simulations" and exec_path.is_dir():
+        lig_base = exec_path
+    elif (exec_path / "fe").is_dir():
+        return [exec_path]
+    else:
+        raise ValueError(
+            f"{exec_path} is not an execution folder (missing simulations/ or fe/)."
+        )
+
+    return [p for p in lig_base.iterdir() if p.is_dir()]
+
+
+def _load_windows_counts(fe_root: Path) -> dict[str, int]:
+    meta_path = fe_root / "artifacts" / "windows.json"
+    if not meta_path.is_file():
+        return {}
+
+    try:
+        data = json.loads(meta_path.read_text())
+    except Exception as exc:
+        logger.warning(f"[remd-batch] Failed to read {meta_path}: {exc}")
+        return {}
+
+    counts: dict[str, int] = {}
+    for comp, meta in data.items():
+        if not isinstance(meta, dict):
+            continue
+        try:
+            if meta.get("n_windows") is not None:
+                counts[comp] = int(meta["n_windows"])
+                continue
+            if "lambdas" in meta:
+                counts[comp] = len(meta["lambdas"])
+        except Exception:
+            continue
+    return counts
+
+
+def _count_component_windows(comp_dir: Path, comp: str) -> int:
+    if not comp_dir.is_dir():
+        return 0
+
+    count = 0
+    for entry in comp_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        name = entry.name
+        if not name.startswith(comp):
+            continue
+        tail = name[len(comp) :]
+        if tail.startswith("-"):
+            continue
+        if tail.isdigit():
+            count += 1
+    return count
+
+
+def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
+    lig_dirs = _resolve_ligand_dirs(exec_path)
+    tasks: List[RemdTask] = []
+
+    for lig_dir in lig_dirs:
+        comps = components_under(lig_dir)
+        if not comps:
+            logger.warning(f"[remd-batch] No components found under {lig_dir / 'fe'}")
+            continue
+
+        windows_counts = _load_windows_counts(lig_dir / "fe")
+        for comp in comps:
+            comp_dir = (lig_dir / "fe" / comp).resolve()
+            run_script = comp_dir / "run-local-remd.bash"
+            if not run_script.is_file():
+                logger.warning(
+                    f"[remd-batch] Missing run-local-remd.bash under {comp_dir}; skipping."
+                )
+                continue
+
+            n_windows = windows_counts.get(comp)
+            if n_windows is None:
+                n_windows = _count_component_windows(comp_dir, comp)
+
+            tasks.append(
+                RemdTask(
+                    execution=exec_path.resolve(),
+                    ligand=lig_dir.name,
+                    component=comp,
+                    comp_dir=comp_dir,
+                    n_windows=n_windows,
+                )
+            )
+
+    return tasks
+
+
+def _render_remd_batch_script(
+    body_text: str, replacements: dict[str, str], header_root: Path | None
+) -> str:
+    with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
+        tmp.write(body_text)
+        tmp_path = Path(tmp.name)
+
+    try:
+        return render_slurm_with_header_body(
+            "SLURMM-BATCH-remd.header",
+            REMD_HEADER_TEMPLATE,
+            tmp_path,
+            replacements,
+            header_root=header_root,
+        )
+    finally:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 @cli.command("run")
@@ -406,6 +551,146 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
         )
     except Exception as e:
         raise click.ClickException(str(e))
+
+
+@cli.command("remd-batch")
+@click.option(
+    "--execution",
+    "-e",
+    multiple=True,
+    required=True,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Execution directories to include (run root or a ligand folder under simulations/).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Destination for the rendered sbatch script (defaults to CWD).",
+)
+@click.option(
+    "--header-root",
+    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
+    default=None,
+    help="Directory containing SLURM headers (default: ~/.batter).",
+)
+@click.option(
+    "--partition",
+    type=str,
+    default=None,
+    help="Optional partition override for the sbatch header.",
+)
+@click.option(
+    "--time-limit",
+    type=str,
+    default=None,
+    help="Optional time limit override for the sbatch header (e.g., 08:00:00).",
+)
+@click.option(
+    "--gpus",
+    type=int,
+    default=None,
+    help="Total GPUs to request; defaults to the maximum REMD window count found.",
+)
+@click.option(
+    "--nodes",
+    type=int,
+    default=None,
+    help="Optional node count override for the sbatch header.",
+)
+def remd_batch(
+    execution: tuple[Path, ...],
+    output: Path | None,
+    header_root: Path | None,
+    partition: str | None,
+    time_limit: str | None,
+    gpus: int | None,
+    nodes: int | None,
+) -> None:
+    """
+    Generate an sbatch script that runs ``run-local-remd.bash`` for provided executions.
+    """
+    exec_paths = [p.resolve() for p in execution]
+    tasks: List[RemdTask] = []
+    seen: set[Path] = set()
+
+    for path in exec_paths:
+        try:
+            new_tasks = _collect_remd_tasks(path)
+        except ValueError as exc:
+            raise click.ClickException(str(exc))
+
+        for t in new_tasks:
+            if t.comp_dir in seen:
+                continue
+            seen.add(t.comp_dir)
+            tasks.append(t)
+
+    if not tasks:
+        raise click.ClickException(
+            "No REMD component folders with run-local-remd.bash found under the provided paths."
+        )
+
+    tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
+    max_windows = max((t.n_windows or 0) for t in tasks)
+    gpu_request = gpus or (max_windows if max_windows > 0 else None)
+
+    job_hash = _hash_path_list(exec_paths)
+    job_name = f"fep_remd_batch_{job_hash}"
+    body_lines = [
+        "scontrol show job ${SLURM_JOB_ID:-}",
+        'echo "Job started at $(date)"',
+    ]
+
+    for t in tasks:
+        label = f"{t.ligand}/{t.component}"
+        if t.execution.name:
+            label = f"{t.execution.name}/{label}"
+        win_note = f" (windows={t.n_windows})" if t.n_windows else ""
+        body_lines.append(f'echo "Running {label}{win_note}"')
+        body_lines.append(f'pushd "{t.comp_dir}" >/dev/null')
+        body_lines.append("if ! bash ./run-local-remd.bash; then")
+        body_lines.append(
+            f'  echo "run-local-remd.bash failed in {t.comp_dir}" >&2'
+        )
+        body_lines.append("fi")
+        body_lines.append("popd >/dev/null")
+        body_lines.append("")
+
+    body_lines.append('echo "Job completed at $(date)"')
+    body_text = "\n".join(body_lines) + "\n"
+
+    script_text = _render_remd_batch_script(
+        body_text,
+        {
+            "SYSTEMNAME": job_name,
+            "STAGE": "remd-batch",
+            "POSE": job_hash,
+        },
+        header_root=header_root,
+    )
+    script_text = _upsert_sbatch_option(script_text, "job-name", job_name)
+    if partition:
+        script_text = _upsert_sbatch_option(script_text, "partition", partition)
+    if time_limit:
+        script_text = _upsert_sbatch_option(script_text, "time", time_limit)
+    if nodes:
+        script_text = _upsert_sbatch_option(script_text, "nodes", str(nodes))
+    if gpu_request:
+        script_text = _upsert_sbatch_option(script_text, "gres", f"gpu:{gpu_request}")
+
+    output_path = output or Path.cwd() / f"run_remd_batch_{job_hash}.sbatch"
+    output_path.write_text(script_text)
+    try:
+        output_path.chmod(0o755)
+    except Exception:
+        pass
+
+    click.echo(f"Wrote sbatch script to {output_path}")
+    click.echo(
+        f"Components queued: {len(tasks)} | max windows: {max_windows or 'unknown'} | job-name: {job_name}"
+    )
 
 
 # ---------------------------- free energy results check ------------------------------
