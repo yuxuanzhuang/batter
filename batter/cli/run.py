@@ -611,6 +611,14 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     default=None,
     help="Subset of lambda windows to analyze, formatted as ``start,end``.",
 )
+@click.option(
+    "--log-level",
+    type=click.Choice(
+        ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False
+    ),
+    default="INFO",
+    help="Logging level for analysis stage.",
+)
 def fe_analyze(
     work_dir: Path,
     run_id: str,
@@ -618,10 +626,21 @@ def fe_analyze(
     workers: int | None,
     raise_on_error: bool,
     sim_range: str | None,
+    log_level: str = "INFO",
 ) -> None:
     """
     Re-run the FE analysis stage for a stored execution.
     """
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level=log_level.upper(),
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
+        "<level>{level: <8}</level> | "
+        "<cyan>{module}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>",
+    )
+    
     parsed_range: tuple[int, int] | None = None
     if sim_range:
         parts = sim_range.split(",")
