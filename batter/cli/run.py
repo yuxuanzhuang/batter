@@ -274,6 +274,22 @@ def _load_windows_counts(fe_root: Path) -> dict[str, int]:
     return counts
 
 
+def _extract_n_windows_from_run_script(run_script: Path) -> int | None:
+    """
+    Pull N_WINDOWS from run-local-remd.bash if present.
+    """
+    try:
+        for line in run_script.read_text().splitlines():
+            if line.strip().startswith("N_WINDOWS="):
+                _, _, val = line.partition("=")
+                val = val.strip()
+                if val.isdigit():
+                    return int(val)
+    except Exception:
+        return None
+    return None
+
+
 def _count_component_windows(comp_dir: Path, comp: str) -> int:
     if not comp_dir.is_dir():
         return 0
@@ -315,6 +331,8 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
 
             n_windows = windows_counts.get(comp)
             if n_windows is None:
+                n_windows = _extract_n_windows_from_run_script(run_script)
+            if n_windows is None:
                 n_windows = _count_component_windows(comp_dir, comp)
 
             tasks.append(
@@ -328,6 +346,30 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
             )
 
     return tasks
+
+
+def _infer_header_gpus_per_node(header_root: Path | None) -> int | None:
+    """
+    Attempt to read --gres gpu:<N> from the REMD header as a per-node GPU count.
+    """
+    root = header_root or (Path.home() / ".batter")
+    header_path = root / "SLURMM-BATCH-remd.header"
+    text = ""
+    try:
+        text = header_path.read_text()
+    except Exception:
+        try:
+            text = REMD_HEADER_TEMPLATE.read_text()
+        except Exception:
+            return None
+
+    m = re.search(r"--gres\s*=\s*gpu:(\d+)", text)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            return None
+    return None
 
 
 def _render_remd_batch_script(
@@ -644,8 +686,11 @@ def remd_batch(
     max_windows = max((t.n_windows or 0) for t in tasks)
     gpu_request = gpus or (max_windows if max_windows > 0 else None)
     node_request = nodes
-    if node_request is None and gpu_request and gpus_per_node:
-        node_request = int(math.ceil(gpu_request / float(gpus_per_node)))
+    gpus_per_node_resolved = gpus_per_node
+    if gpus_per_node_resolved is None:
+        gpus_per_node_resolved = _infer_header_gpus_per_node(header_root)
+    if node_request is None and gpu_request and gpus_per_node_resolved:
+        node_request = int(math.ceil(gpu_request / float(gpus_per_node_resolved)))
 
     job_hash = _hash_path_list(exec_paths)
     job_name = f"fep_remd_batch_{job_hash}"
