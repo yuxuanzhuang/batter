@@ -5,6 +5,7 @@ import re
 import sys
 import glob
 import json
+import math
 import pickle
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -151,8 +152,12 @@ class MBARAnalysis(FEAnalysisBase):
         n_bootstraps: int = 0,
         n_jobs: int = 6,
         load: bool = False,
+        dt: float = 0.0,
+        ntwx: Optional[int] = None,
     ):
         super().__init__()
+        if dt is None or dt <= 0:
+            raise ValueError("dt must be > 0 for analysis to convert steps to time.")
         self.lig_folder = lig_folder
         self.result_folder = f"{self.lig_folder}/Results"
         os.makedirs(self.result_folder, exist_ok=True)
@@ -171,6 +176,8 @@ class MBARAnalysis(FEAnalysisBase):
         self.kT = 0.0019872041 * self.temperature
 
         self.analysis_start_step = max(0, int(analysis_start_step))
+        self.dt = float(dt) if dt is not None else 0.0
+        self.ntwx = ntwx if ntwx is not None else 0
 
         self.detect_equil = bool(detect_equil)
         self.n_bootstraps = int(n_bootstraps)
@@ -270,6 +277,7 @@ class MBARAnalysis(FEAnalysisBase):
         temperature: float,
         analysis_start_step: int,
         truncate: bool,
+        dt: float,
     ) -> pd.DataFrame:
         """
         Extract reduced potentials for a single window.
@@ -288,6 +296,8 @@ class MBARAnalysis(FEAnalysisBase):
             Discard frames with step <= this value.
         truncate : bool
             If ``True``, detect equilibration and discard early frames.
+        dt : float
+            Time step (ps) used to convert analysis_start_step into ps.
 
         Returns
         -------
@@ -319,9 +329,10 @@ class MBARAnalysis(FEAnalysisBase):
 
         df = pd.concat(dfs)
 
-        # Drop early frames if requested
+        # Drop early frames if requested (convert steps -> ps if dt > 0)
         if analysis_start_step > 0:
-            df = df[df.index.get_level_values(0) > analysis_start_step]
+            threshold = analysis_start_step * dt if dt and dt > 0 else analysis_start_step
+            df = df[df.index.get_level_values(0) > threshold]
 
         # detect_equilibration on the reference column of this window
         if truncate and df.shape[1] > win_i:
@@ -347,6 +358,7 @@ class MBARAnalysis(FEAnalysisBase):
                 temperature=self.temperature,
                 analysis_start_step=self.analysis_start_step,
                 truncate=self.detect_equil,
+                dt=self.dt,
             )
             for win_i in range(len(self.windows))
         )
@@ -495,6 +507,8 @@ class RESTMBARAnalysis(MBARAnalysis):
                 rty=rty,
                 num_rest=num_rest,
                 num_win=len(self.windows),
+                dt=self.dt,
+                ntwx=self.ntwx,
             )
             for win_i in range(len(self.windows))
         )
@@ -520,6 +534,8 @@ class RESTMBARAnalysis(MBARAnalysis):
         num_rest: int,
         num_win: int,
         truncate: bool,
+        dt: float,
+        ntwx: int,
     ) -> pd.DataFrame:
         """Compute reduced potentials for REST components from restraint traces."""
         logger.remove()
@@ -576,8 +592,11 @@ class RESTMBARAnalysis(MBARAnalysis):
             else:
                 u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
 
-            # Drop early frames if requested (interpret steps as frame index here)
+            # Drop early frames if requested (convert steps -> frame index)
             start_idx = max(0, int(analysis_start_step))
+            if analysis_start_step > 0 and ntwx > 0:
+                # frames recorded every ntwx steps; dt cancels but kept for clarity
+                start_idx = max(0, int(math.ceil(analysis_start_step / float(ntwx))))
             if start_idx > 0:
                 u = u[start_idx:]
                 val = val[start_idx:]
@@ -784,6 +803,8 @@ def analyze_lig_task(
     raise_on_error: bool = True,
     mol: str = "LIG",
     n_workers: int = 4,
+    dt: float = 0.0,
+    ntwx: int = 0,
 ):
     """
     Analyze one lig under fe_folder/lig for the requested components.
@@ -836,6 +857,8 @@ def analyze_lig_task(
                     analysis_start_step=analysis_start_step,
                     load=False,
                     n_jobs=n_workers,
+                    dt=dt,
+                    ntwx=ntwx,
                 )
                 ana.run_analysis()
                 ana.plot_convergence(
@@ -856,6 +879,8 @@ def analyze_lig_task(
                     analysis_start_step=analysis_start_step,
                     load=False,
                     n_jobs=n_workers,
+                    dt=dt,
+                    ntwx=ntwx,
                 )
                 ana.run_analysis()
                 ana.plot_convergence(
