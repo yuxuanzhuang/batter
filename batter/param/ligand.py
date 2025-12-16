@@ -62,7 +62,7 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 
 # forbidden molecule names in MDA selection language and AMBER residue names
-FORBIDDEN_MOL_NAMES = {"add", "all", "and", "any", "not"}
+FORBIDDEN_MOL_NAMES = {"add", "all", "and", "any", "not", "set"}
 
 
 def _base26_triplet(n: int) -> str:
