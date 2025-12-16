@@ -684,7 +684,8 @@ def remd_batch(
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
     max_windows = max((t.n_windows or 0) for t in tasks)
-    gpu_request = gpus or (max_windows if max_windows > 0 else None)
+    total_windows = sum(t.n_windows or 0 for t in tasks)
+    gpu_request = gpus or (total_windows if total_windows > 0 else None)
     node_request = nodes
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
@@ -734,7 +735,17 @@ def remd_batch(
     if node_request:
         script_text = _upsert_sbatch_option(script_text, "nodes", str(node_request))
     if gpu_request:
-        script_text = _upsert_sbatch_option(script_text, "gres", f"gpu:{gpu_request}")
+        # Slurm gres is per-node; when nodes and per-node GPUs are known, use that value.
+        # Otherwise fall back to total GPUs requested.
+        gres_val = None
+        if node_request and gpus_per_node_resolved:
+            gres_val = gpus_per_node_resolved
+        elif not node_request:
+            gres_val = gpu_request
+        if gres_val:
+            script_text = _upsert_sbatch_option(script_text, "gres", f"gpu:{gres_val}")
+        script_text = _upsert_sbatch_option(script_text, "gpus-per-task", "1")
+        script_text = _upsert_sbatch_option(script_text, "ntasks", str(gpu_request))
 
     output_path = output or Path.cwd() / f"run_remd_batch_{job_hash}.sbatch"
     output_path.write_text(script_text)
@@ -746,7 +757,8 @@ def remd_batch(
     click.echo(f"Wrote sbatch script to {output_path}")
     click.echo(
         f"Components queued: {len(tasks)} | max windows: {max_windows or 'unknown'} | "
-        f"GPUs: {gpu_request or 'unset'} | nodes: {node_request or 'unset'} | job-name: {job_name}"
+        f"total windows: {total_windows or 'unknown'} | GPUs: {gpu_request or 'unset'} | "
+        f"nodes: {node_request or 'unset'} | job-name: {job_name}"
     )
 
 
