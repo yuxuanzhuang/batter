@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import json
 import shutil
 
@@ -110,6 +110,19 @@ class FERecord(BaseModel):
     protocol: str = "abfe"
     sim_range: tuple[int, int] | None = None
     status: Literal["success", "failed", "unbound"] = "success"
+
+    @field_validator("sim_range", mode="before")
+    @classmethod
+    def _coerce_sim_range(cls, v: Any) -> Any:
+        if v in (None, "", pd.NA):
+            return None
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            try:
+                return (int(v[0]), int(v[1]))
+            except Exception:
+                return None
+        # legacy ints/strings are ignored to avoid validation failures
+        return None
 
 
 class FEResultsRepository:
@@ -219,6 +232,12 @@ class FEResultsRepository:
             shutil.rmtree(lig_dir / "Results", ignore_errors=True)
             shutil.copytree(copy_from, lig_dir / "Results")
         # update index table (append-or-upsert by (run_id, ligand))
+        sim_range_val = rec.sim_range
+        sim_range_str = (
+            f"{sim_range_val[0]}-{sim_range_val[1]}"
+            if sim_range_val is not None
+            else ""
+        )
         row = {
             "run_id": rec.run_id,
             "ligand": rec.ligand,
@@ -231,7 +250,7 @@ class FEResultsRepository:
             "original_name": rec.original_name or "",
             "original_path": rec.original_path or "",
             "protocol": rec.protocol,
-            "sim_range": rec.sim_range if rec.sim_range is not None else pd.NA,
+            "sim_range": sim_range_str,
             "created_at": rec.created_at,
             "status": rec.status,
             "failure_reason": pd.NA,
@@ -310,7 +329,7 @@ class FEResultsRepository:
             "original_name": original_name or "",
             "original_path": original_path or "",
             "protocol": protocol,
-            "sim_range": sim_range or "",
+            "sim_range": "" if sim_range is None else f"{sim_range[0]}-{sim_range[1]}",
             "status": status,
             "failure_reason": reason or "",
             "created_at": failure_detail["timestamp"],
