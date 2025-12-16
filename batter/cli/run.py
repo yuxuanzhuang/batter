@@ -348,9 +348,27 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
     return tasks
 
 
+def _infer_gpus_per_node_from_text(text: str) -> int | None:
+    """
+    Attempt to extract per-node GPU count from SBATCH directives.
+    """
+    patterns = [
+        r"--gres\s*=?\s*gpu:(\d+)",
+        r"--gpus-per-node\s*=?\s*(\d+)",
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                continue
+    return None
+
+
 def _infer_header_gpus_per_node(header_root: Path | None) -> int | None:
     """
-    Attempt to read --gres gpu:<N> from the REMD header as a per-node GPU count.
+    Attempt to read per-node GPUs from the REMD header (gres or gpus-per-node).
     """
     root = header_root or (Path.home() / ".batter")
     header_path = root / "SLURMM-BATCH-remd.header"
@@ -363,13 +381,7 @@ def _infer_header_gpus_per_node(header_root: Path | None) -> int | None:
         except Exception:
             return None
 
-    m = re.search(r"--gres\s*=\s*gpu:(\d+)", text)
-    if m:
-        try:
-            return int(m.group(1))
-        except Exception:
-            return None
-    return None
+    return _infer_gpus_per_node_from_text(text)
 
 
 def _render_remd_batch_script(
@@ -690,8 +702,6 @@ def remd_batch(
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
         gpus_per_node_resolved = _infer_header_gpus_per_node(header_root)
-    if node_request is None and gpu_request and gpus_per_node_resolved:
-        node_request = int(math.ceil(gpu_request / float(gpus_per_node_resolved)))
 
     job_hash = _hash_path_list(exec_paths)
     job_name = f"fep_remd_batch_{job_hash}"
@@ -727,6 +737,10 @@ def remd_batch(
         },
         header_root=header_root,
     )
+    if gpus_per_node_resolved is None:
+        gpus_per_node_resolved = _infer_gpus_per_node_from_text(script_text)
+    if node_request is None and gpu_request and gpus_per_node_resolved:
+        node_request = int(math.ceil(gpu_request / float(gpus_per_node_resolved)))
     script_text = _upsert_sbatch_option(script_text, "job-name", job_name)
     if partition:
         script_text = _upsert_sbatch_option(script_text, "partition", partition)
@@ -736,7 +750,7 @@ def remd_batch(
         script_text = _upsert_sbatch_option(script_text, "nodes", str(node_request))
     if gpu_request:
         # Slurm gres is per-node; when nodes and per-node GPUs are known, use that value.
-        # Otherwise fall back to total GPUs requested.
+        # Otherwise fall back to total GPUs requested only for single-node allocations.
         gres_val = None
         if node_request and gpus_per_node_resolved:
             gres_val = gpus_per_node_resolved
@@ -744,6 +758,9 @@ def remd_batch(
             gres_val = gpu_request
         if gres_val:
             script_text = _upsert_sbatch_option(script_text, "gres", f"gpu:{gres_val}")
+        if node_request and not gpus_per_node_resolved:
+            # assume 1 GPU per node when nothing better is known
+            script_text = _upsert_sbatch_option(script_text, "gres", "gpu:1")
         script_text = _upsert_sbatch_option(script_text, "gpus-per-task", "1")
         script_text = _upsert_sbatch_option(script_text, "ntasks", str(gpu_request))
 
