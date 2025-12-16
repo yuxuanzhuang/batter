@@ -381,7 +381,14 @@ def _infer_header_gpus_per_node(header_root: Path | None) -> int | None:
         except Exception:
             return None
 
-    return _infer_gpus_per_node_from_text(text)
+    gpn = _infer_gpus_per_node_from_text(text)
+    if gpn is None:
+        try:
+            tmpl_text = REMD_HEADER_TEMPLATE.read_text()
+            gpn = _infer_gpus_per_node_from_text(tmpl_text)
+        except Exception:
+            pass
+    return gpn
 
 
 def _render_remd_batch_script(
@@ -739,8 +746,11 @@ def remd_batch(
     )
     if gpus_per_node_resolved is None:
         gpus_per_node_resolved = _infer_gpus_per_node_from_text(script_text)
-    if node_request is None and gpu_request and gpus_per_node_resolved:
-        node_request = int(math.ceil(gpu_request / float(gpus_per_node_resolved)))
+    if node_request is None and gpu_request:
+        if gpus_per_node_resolved:
+            node_request = int(math.ceil(gpu_request / float(gpus_per_node_resolved)))
+        else:
+            node_request = gpu_request  # assume 1 GPU per node if unknown
     script_text = _upsert_sbatch_option(script_text, "job-name", job_name)
     if partition:
         script_text = _upsert_sbatch_option(script_text, "partition", partition)
