@@ -379,6 +379,26 @@ class FESimArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_knobs(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        if "num_equil_extends" in data:
+            raise ValueError(
+                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
+            )
+        if "num_fe_extends" in data:
+            raise ValueError(
+                "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
+            )
+        if "analysis_range" in data:
+            raise ValueError(
+                "fe_sim.analysis_range is no longer supported; set fe_sim.analysis_start_step to the first step to include in analysis."
+            )
+        return data
+
     dec_int: str = Field(
         "mbar",
         description="Free-energy integration scheme (``mbar`` or ``ti``).",
@@ -601,6 +621,26 @@ class MDSimArgs(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_knobs(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        if "num_equil_extends" in data:
+            raise ValueError(
+                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
+            )
+        if "num_fe_extends" in data:
+            raise ValueError(
+                "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
+            )
+        if "analysis_range" in data:
+            raise ValueError(
+                "fe_sim.analysis_range is no longer supported; set fe_sim.analysis_start_step to the first step to include in analysis."
+            )
+        return data
 
     dt: float = Field(0.004, description="MD timestep (ps).")
     temperature: float = Field(298.15, description="Simulation temperature (K).")
