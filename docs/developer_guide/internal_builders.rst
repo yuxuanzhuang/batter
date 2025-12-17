@@ -69,6 +69,17 @@ roll ``md-current.rst7``/``md-previous.rst7`` between segments until
 ``total_steps`` is reached, so avoid deleting or renaming the comment when hand
 editing templates.
 
+Config field consumers
+----------------------
+
+Key :class:`~batter.config.simulation.SimulationConfig` fields and where they land:
+
+* ``eq_steps`` → ``write_sim_files`` (equil mdin-template ``total_steps`` marker).
+* ``<comp>_n_steps`` → component writers in ``sim_files.py`` (per-window mdin-template markers).
+* ``analysis_start_step`` → stored in FE records and passed to analysis writers to skip early frames.
+* ``ntpr``/``ntwr``/``ntwx`` → substituted into mdin templates in ``sim_files.py`` (restart/trajectory cadence).
+* ``hmr``/``enable_mcwat`` → toggles template selection and template flags in ``write_amber_templates``.
+
 Builder Lifecycle
 -----------------
 

@@ -47,3 +47,16 @@ disk. The helper methods introduced here simplify everyday tasks:
 When building or transforming systems, prefer :meth:`SimSystem.with_artifacts`
 for structural changes (new topology/coordinate paths) and
 :meth:`SimSystem.with_meta` for contextual tweaks (ligand IDs, run labels, etc.).
+
+Phase ordering and sentinels
+============================
+
+Orchestration follows a fixed phase order: system_prep → param_ligands →
+prepare_equil → equil → equil_analysis → prepare_fe → fe → analysis. MD-only runs
+stop after equilibration analysis. Handlers drop ``FINISHED``/``FAILED`` sentinels
+in window/component folders; the job manager (local or SLURM) checks these to decide
+whether to continue, retry, or mark ligands as failed. ``RunConfig.run.on_failure``
+controls behaviour: ``prune`` skips remaining phases for failed ligands, ``retry``
+clears ``FAILED`` once and reruns, and ``raise`` aborts the whole run. Interrupted
+runs can resume because submit helpers and ``run-local*.bash`` honor the sentinels
+and the ``total_steps`` markers in mdin templates when chunking production.

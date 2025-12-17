@@ -22,3 +22,35 @@ down to composing steps and teaching :mod:`batter.orchestrate` how to select the
 
 Once these pieces are in place, :func:`batter.orchestrate.run.run_from_yaml` will
 automatically schedule the new pipeline when the user selects your protocol.
+
+Minimal factory example
+=======================
+
+.. code-block:: python
+
+   # batter/pipeline/factory.py
+   from batter.pipeline.step import Step
+   from batter.pipeline.payloads import StepPayload
+   from batter.pipeline.factory import _step
+
+   def make_custom_pipeline(sim, sys_params):
+       payload = StepPayload(sim=sim, sys_params=sys_params)
+       steps: list[Step] = [
+           _step("prep_inputs", payload),
+           _step("run_custom_md", payload, requires=["prep_inputs"]),
+           _step("analyze_custom", payload, requires=["run_custom_md"]),
+       ]
+       return Pipeline(steps)
+
+   # batter/orchestrate/pipeline_utils.py
+   from batter.pipeline.factory import make_custom_pipeline
+
+   def select_pipeline(protocol, sim_cfg, only_fe_prep=False, sys_params=None):
+       ...
+       if protocol == "custom":
+           return make_custom_pipeline(sim_cfg, sys_params)
+       ...
+
+Keep step names terse and stable—tests typically assert the ordered names. When
+adding a branch, ensure ``RunConfig`` accepts the protocol string and that the
+factory handles ``only_fe_prep`` or other flags consistently with existing pipelines.
