@@ -65,9 +65,9 @@ Installation
 
 #. Create and activate a Conda environment (with ``environment.yml``)::
 
-       conda create -n batter_env python=3.12 -y
-       conda env update -n batter_env -f environment.yml
-       conda activate batter_env
+       conda create -n batter python=3.12 -y
+       conda env update -n batter -f environment.yml
+       conda activate batter
 
 #. Install editable copies of the bundled dependencies plus ``batter`` itself::
 
