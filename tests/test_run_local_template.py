@@ -68,6 +68,7 @@ done
 
     env = os.environ.copy()
     env["PMEMD_EXEC"] = str(stub)
+    env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
     env["PATH"] = f"{work}:{env.get('PATH','')}"
 
     cmd = ["bash", "-lc", "source run-local.bash"]

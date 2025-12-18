@@ -8,6 +8,7 @@ PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
 SANDER_EXEC=${SANDER_EXEC:-sander}
 MPI_EXEC=${MPI_EXEC:-mpirun}
 MPI_FLAGS=${MPI_FLAGS:-}
+CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
@@ -142,7 +143,7 @@ if [[ $only_eq -eq 1 ]]; then
         fi
     done
 
-    print_and_run "cpptraj -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
@@ -209,7 +210,7 @@ while [[ $current_steps -lt $total_steps ]]; do
     last_rst="$rst_out"
 done
 
-print_and_run "cpptraj -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
+print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
 
 # check output.pdb exists
 # to catch cases where the simulation did not run to completion
