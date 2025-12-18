@@ -105,7 +105,9 @@ Required Files
    ``system_input.pdb`` must encode the correct unit-cell vectors (box information).
    If ``system_input.inpcrd`` is provided its coordinates take precedence.
    
-   The protein **does not** need to be aligned to ``protein_input.pdb`` and the alignment
+   ``protein_input.pdb`` **does not** need to be aligned to ``system_input.pdb``; it can be helpful in cases e.g.,
+   the protein structure used for docking (so all the docked poses are superposed to this protein) is oriented differently
+   from the membrane system. During system staging, the protein will be aligned to the membrane system, and the alignment
    will be done automatically based on the ``create.protein_align`` config setting.
 
    Systems from other builders (CHARMM-GUI, Maestro, etc.) may work but are not extensively tested.
@@ -126,7 +128,7 @@ Generating Simulation Inputs
 
    - ``run.output_folder`` – dedicated directory for outputs/logs.
    - ``create.system_name`` – label used in reports.
-   - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/ligand_dict.json``).
+   - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
    - ``create.anchor_atoms`` – choose stable backbone atoms (CA/C/N) with the guidelines below.
 
@@ -219,7 +221,7 @@ Optional: Additional Conformational Restraints
 
 #. Use the restraint-generation notebook from
    `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
-   (or an equivalent script) to build a ``restraints.json`` describing the distance
+   or an equivalent script to build a ``restraints.json`` describing the distance
    constraints you need.
 
 #. Point ``create.extra_conformation_restraints`` at the resulting JSON file::

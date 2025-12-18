@@ -59,6 +59,17 @@ Clone the repository, initialize submodules, and create the environment:
    # Install batter (editable)
    pip install -e .
 
+Installation tips (clusters)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Building the environment can be storage hungry and slow.
+  try `micromamba <https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html>`_
+  and/or run the install on a compute node.
+- VMD often needs X11 forwarding and its own shared libraries on clusters. Set
+  ``LD_LIBRARY_PATH`` to include ``$CONDA_PREFIX/lib/vmd`` (or your env path) and load
+  any required ``x11``/``system`` modules before launching VMD. Override the executable
+  with ``BATTER_VMD`` if needed.
+
 This installs in editable mode so your code changes are immediately reflected.
 
 To use this package without the core components—useful for running CLI commands (e.g., ``batter report-jobs``),
