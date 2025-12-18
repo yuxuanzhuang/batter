@@ -337,7 +337,7 @@ class MBARAnalysis(FEAnalysisBase):
 
         # Drop early frames if requested (convert steps -> ps)
         if analysis_start_step > 0:
-            threshold = analysis_start_step * dt / 1000
+            threshold = analysis_start_step * dt
             logger.debug(
                 f"[MBARAnalysis] {component}{win_i:02d} dropping frames <= {threshold} ps "
             )
