@@ -715,24 +715,32 @@ def remd_batch(
     body_lines = [
         "scontrol show job ${SLURM_JOB_ID:-}",
         'echo "Job started at $(date)"',
+        "status=0",
+        "pids=()",
+        "run_remd_task() {",
+        '  local label="$1"',
+        '  local dir="$2"',
+        '  local win="$3"',
+        '  echo "Running ${label}${win:+ (windows=${win})}"',
+        '  ( cd "$dir" && bash ./run-local-remd.bash ) || status=1',
+        "}",
+        "",
     ]
 
     for t in tasks:
         label = f"{t.ligand}/{t.component}"
         if t.execution.name:
             label = f"{t.execution.name}/{label}"
-        win_note = f" (windows={t.n_windows})" if t.n_windows else ""
-        body_lines.append(f'echo "Running {label}{win_note}"')
-        body_lines.append(f'pushd "{t.comp_dir}" >/dev/null')
-        body_lines.append("if ! bash ./run-local-remd.bash; then")
-        body_lines.append(
-            f'  echo "run-local-remd.bash failed in {t.comp_dir}" >&2'
-        )
-        body_lines.append("fi")
-        body_lines.append("popd >/dev/null")
-        body_lines.append("")
+        win_arg = f"{t.n_windows}" if t.n_windows else ""
+        body_lines.append(f'run_remd_task "{label}" "{t.comp_dir}" "{win_arg}" &')
+        body_lines.append('pids+=($!)')
 
+    body_lines.append("")
+    body_lines.append('for pid in "${pids[@]}"; do')
+    body_lines.append('  wait "$pid" || status=1')
+    body_lines.append("done")
     body_lines.append('echo "Job completed at $(date)"')
+    body_lines.append("exit $status")
     body_text = "\n".join(body_lines) + "\n"
 
     script_text = _render_remd_batch_script(
