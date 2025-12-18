@@ -182,28 +182,39 @@ latest_md_index() {
 
 completed_steps() {
     local tmpl=${1:-mdin-template}
-    local idx
-    idx=$(latest_md_index "md*.out")
-    if [[ $idx -lt 0 ]]; then
+    local seg chunk mdout nstep
+
+    seg=$(latest_md_index "md*.out")   # segment number from filename (md-01.out => 1)
+    if [[ $seg -lt 0 ]]; then
         echo 0
         return
     fi
-    local mdout
-    mdout=$(printf "md-%02d.out" "$idx")
+
+    chunk=$(parse_nstlim "$tmpl") || { echo 0; return; }
+
+    mdout=$(printf "md-%02d.out" "$seg")
+    [[ -f $mdout ]] || mdout=$(printf "md%02d.out" "$seg")
+
+    # If mdout missing, count only completed prior segments (conservative)
     if [[ ! -f $mdout ]]; then
-        mdout=$(printf "md%02d.out" "$idx")
-    fi
-    if [[ ! -f $mdout ]]; then
-        echo $(( (idx + 1) * $(parse_nstlim "$tmpl") ))
+        echo $(( (seg - 1) * chunk ))
         return
     fi
-    local nstep
-    nstep=$(grep "NSTEP" "$mdout" | tail -1 | awk '{for(i=1;i<=NF;i++){if($i=="NSTEP"){print $(i+2); exit}}}')
+
+    # Robust NSTEP parse: matches "NSTEP = 123" and "NSTEP=123"
+    nstep=$(awk '
+      match($0, /NSTEP[[:space:]]*=[[:space:]]*([0-9]+)/, m) { last=m[1] }
+      END { if (last) print last }
+    ' "$mdout")
+
     if [[ -z $nstep ]]; then
-        echo $(( (idx + 1) * $(parse_nstlim "$tmpl") ))
-    else
-        echo "$nstep"
+        # IMPORTANT: mdout exists but no NSTEP yet => run not progressed (or just started)
+        echo $(( (seg - 1) * chunk ))
+        return
     fi
+
+    # Total completed = previous full segments + progress in current segment
+    echo $(( (seg - 1) * chunk + nstep ))
 }
 
 write_mdin_current() {
