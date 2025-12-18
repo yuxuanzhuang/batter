@@ -268,7 +268,7 @@ def run_analysis_from_execution(
         payload_data["sim_range"] = sim_range
         logger.info(f"Lambda window range set to: {sim_range}")
     else:
-        sim_range_cfg = getattr(sim_cfg, "analysis_fe_range", None)
+        sim_range_cfg = getattr(sim_cfg, "analysis_start_step", None)
         if sim_range_cfg is not None:
             payload_data["sim_range"] = sim_range_cfg
         sim_range = sim_range_cfg

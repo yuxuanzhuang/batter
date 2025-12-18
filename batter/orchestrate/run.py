@@ -19,8 +19,10 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Tuple
 from smtplib import SMTPException
+import yaml
 
 from loguru import logger
+from pprint import pprint
 
 from batter.config.run import RunConfig
 from batter.systems.core import SimSystem
@@ -91,7 +93,7 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
     try:
         shutil.copy2(yaml_path, dst)
     except Exception as exc:
-        logger.warning("Could not store run YAML copy at %s: %s", dst, exc)
+        logger.warning(f"Could not store run YAML copy at {dst}: {exc}")
 
 
 def _materialize_extra_conf_restraints(
@@ -115,7 +117,7 @@ def _materialize_extra_conf_restraints(
             shutil.copy2(src, dest)
             return dest
         except Exception as exc:
-            logger.warning("Could not copy extra_conformation_restraints from %s: %s", src, exc)
+            logger.warning(f"Could not copy extra_conformation_restraints from {src}: {exc}")
             return None
 
     logger.warning(
@@ -145,28 +147,17 @@ def run_from_yaml(
 
     # Configs
     rc = RunConfig.load(path)
-    logger.info(
-        "Run configuration: {}",
-        {
-            "protocol": rc.protocol,
-            "backend": rc.backend,
-            "system": rc.create.system_name,
-            "output": str(rc.run.output_folder),
-            "run_id": getattr(rc.run, "run_id", "auto"),
-            "only_fe_preparation": rc.run.only_fe_preparation,
-            "on_failure": rc.run.on_failure,
-            "max_workers": rc.run.max_workers,
-            "max_active_jobs": rc.run.max_active_jobs,
-            "slurm_partition": rc.run.slurm.partition if rc.run.slurm else None,
-        },
-    )
+
     if run_overrides:
         logger.info(f"Applying run overrides: {run_overrides}")
         rc = rc.model_copy(update={"run": rc.run.model_copy(update=run_overrides)})
     if on_failure:
-        logger.info(f"on_failure behavior: {on_failure}")
         rc.run.on_failure = on_failure
 
+    logger.info(
+    "Run configuration:\n{}",
+    yaml.safe_dump(rc.model_dump(mode="json"), sort_keys=False)
+    )
     yaml_dir = path.parent
 
     # ligand params output directory
@@ -309,6 +300,7 @@ def run_from_yaml(
         gpus_per_task=getattr(rc.run, "batch_gpus_per_task", 1),
         srun_extra=getattr(rc.run, "batch_srun_extra", None),
         max_active_jobs=rc.run.max_active_jobs,
+        partition=rc.run.slurm.partition if rc.run.slurm else None,
     )
 
     # Build pipeline with explicit sys_params
@@ -342,6 +334,7 @@ def run_from_yaml(
             builder.make_child_for_ligand(sys_exec, lig_name, lig_path)
     logger.debug(f"Staged {len(lig_map)} ligand subsystems under {lig_root}")
 
+    parent_failure = False
     parent_only = Pipeline(
         [
             s
@@ -356,7 +349,24 @@ def run_from_yaml(
             if is_done(run_sys, step.name):
                 logger.info(f"[skip] {step.name}: finished.")
                 continue
-            backend.run(step, run_sys, step.params)
+            try:
+                step_params = step.params
+                if isinstance(step_params, dict):
+                    step_params = dict(step_params)
+                    step_params["on_failure"] = rc.run.on_failure
+                elif hasattr(step_params, "copy_with"):
+                    step_params = step_params.copy_with(on_failure=rc.run.on_failure)
+                backend.run(step, run_sys, step_params)
+            except Exception as exc:
+                if step.name == "param_ligands" and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+                    parent_failure = True
+                    logger.error(
+                        "[param_ligands] encountered error with on_failure=%s: %s — continuing with successful ligands only.",
+                        rc.run.on_failure,
+                        exc,
+                    )
+                    break
+                raise
 
     # Locate sim_overrides from system_prep (under run_dir)
     config_dir = run_dir / "artifacts" / "config"
@@ -444,8 +454,16 @@ def run_from_yaml(
     # --- build SimSystem children ---
     param_idx_path = run_dir / "artifacts" / "ligand_params" / "index.json"
     if not param_idx_path.exists():
-        raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
-    param_index = json.loads(param_idx_path.read_text())
+        if parent_failure and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+            logger.warning(
+                "Parametrization failed and no ligand param index was written; continuing with 0 ligands due to on_failure=%s.",
+                rc.run.on_failure,
+            )
+            param_index = {"ligands": []}
+        else:
+            raise FileNotFoundError(f"Missing ligand param index: {param_idx_path}")
+    else:
+        param_index = json.loads(param_idx_path.read_text())
     param_dir_dict = {e["residue_name"]: e["store_dir"] for e in param_index["ligands"]}
 
     lig_resname_map = {}
@@ -669,8 +687,8 @@ def run_from_yaml(
     store = ArtifactStore(rc.run.output_folder)
     repo = FEResultsRepository(store)
     analysis_range = (
-        tuple(sim_cfg_updated.analysis_fe_range)
-        if sim_cfg_updated.analysis_fe_range
+        sim_cfg_updated.analysis_start_step
+        if sim_cfg_updated.analysis_start_step is not None
         else None
     )
     failures: list[tuple[str, str, str]] = []

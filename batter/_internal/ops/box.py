@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import shutil
 import re
 import tempfile
@@ -43,6 +44,21 @@ def _write_res_blocks(selection, out_pdb: Path) -> None:
                 lines += [ln for ln in f if ln.startswith("ATOM")]
             prev = res.resid
     out_pdb.write_text("".join(lines))
+
+
+def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
+    """Return the integer ligand charge recorded during parametrization."""
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text())
+        charge_val = data.get("ligand_charge")
+        if charge_val is None:
+            return None
+        return int(round(float(charge_val)))
+    except Exception as exc:
+        logger.debug(f"Failed to read ligand charge from {meta_path}: {exc}")
+        return None
 
 
 def create_box(ctx: BuildContext) -> None:
@@ -420,7 +436,12 @@ def create_box(ctx: BuildContext) -> None:
         nc2, na2 = _sum_unit_charge_from_log(window_dir / "tleap_others.log")
         neu_cat += nc2
         neu_ani += na2
-    lig_cat, lig_ani = _sum_unit_charge_from_log(window_dir / "tleap_ligands.log")
+    lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
+    if lig_charge is not None:
+        lig_cat = max(0, -lig_charge)
+        lig_ani = max(0, lig_charge)
+    else:
+        lig_cat, lig_ani = _sum_unit_charge_from_log(window_dir / "tleap_ligands.log")
 
     if comp in ["x", "z", "o", "s", "v"]:
         lig_cat //= 2
@@ -714,7 +735,10 @@ def create_box_y(ctx: BuildContext) -> None:
                     pass
         return int(round(q))
 
-    lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
+    # Prefer the charge computed during parametrization; fall back to tleap log for legacy runs
+    lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
+    if lig_charge is None:
+        lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
     # put a minimum of 5 ions
     box_volume_A3 = 2 * buffer_x * 2 * buffer_y * 2 * buffer_z
     num_ions = max(

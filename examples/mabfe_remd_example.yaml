@@ -30,6 +30,7 @@ run:
   run_id: rep4
   max_workers: 8
   on_failure: prune
+  remd: yes
 
   email_on_completion: yuzhuang@stanford.edu
   slurm:
@@ -37,7 +38,9 @@ run:
     time: "4:00:00"
 
 fe_sim:
-  remd: true
+  remd:
+    nstlim: 100
+    numexchg: 3000
   # 48 lambda windows
   lambdas: [
     0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,
@@ -49,10 +52,8 @@ fe_sim:
   eq_steps: 100000
   # total 10 * 100000 = 1000000 steps -> 4 ns
   num_equil_extends: 10
-  z_steps1: 5000
-  z_steps2: 100000
+  z_n_steps: 100000
   # total 10 * 100000 = 1000000 steps -> 4 ns per window
-  num_fe_extends: 10
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
@@ -65,6 +66,6 @@ fe_sim:
   buffer_z: 25.0
   temperature: 298.15 
   # analysis only start from 4th extension (exclude the first three FE extensions)
-  analysis_fe_range: [3, -1]
+  analysis_start_step: 0
   # MBAR analysis blocks
   blocks: 5

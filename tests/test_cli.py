@@ -170,15 +170,18 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     class DummyRunConfig:
         def __init__(self, run=None):
             default_run = {
-                "output_folder": str(tmp_path / "out"),
+                "output_folder": tmp_path / "out",
                 "run_id": "auto",
                 "dry_run": False,
                 "slurm_header_dir": header_root,
+                "allow_run_id_mismatch": False,
             }
             run_data = dict(default_run)
             if run:
                 run_data.update(run)
             self.run = DummySection(**run_data)
+            self.create = DummySection(system_name="sys")
+            self.protocol = "abfe"
 
         def model_copy(self, update: dict | None = None):
             data = {"run": self.run}
@@ -226,6 +229,10 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     scripts = list(tmp_path.glob("*_job_manager.sbatch"))
     assert len(scripts) == 1
     assert scripts[0].exists()
+    script_text = scripts[0].read_text()
+    assert "#SBATCH --job-name=fep_" in script_text
+    assert "/simulations/manager" in script_text
+    assert "__JOB_NAME__" not in script_text
     # sbatch invoked on the generated script
     assert scripts[0].name in calls["cmd"]
 

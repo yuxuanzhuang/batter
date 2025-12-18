@@ -47,6 +47,7 @@ class SimulationConfig(BaseModel):
         protocol: str | None = None,
         fe_type: str | None = None,
         slurm_header_dir: Path | None = None,
+        run_remd: str | bool | None = None,
     ) -> "SimulationConfig":
         """Construct a :class:`SimulationConfig` from run sections.
 
@@ -56,6 +57,9 @@ class SimulationConfig(BaseModel):
             System creation inputs taken from the ``create`` YAML section.
         fe : FESimArgs
             Free-energy simulation overrides from the ``fe_sim`` section.
+        run_remd : {"yes","no"}, optional
+            Whether REMD execution is enabled (controls submission only; REMD inputs are
+            always written during preparation).
 
         Returns
         -------
@@ -135,10 +139,9 @@ class SimulationConfig(BaseModel):
                 raise ValueError(f"{name} values must be in ascending order.")
             return out
 
-        steps1 = _coerce_step_dict("steps1", dict(_fe_attr("steps1", dict) or {}))
-        steps2 = _coerce_step_dict(
-            "steps2",
-            dict(_fe_attr("steps2", lambda: {"x": 300_000, "y": 300_000}) or {}),
+        n_steps = _coerce_step_dict(
+            "n_steps",
+            dict(_fe_attr("n_steps", lambda: {"x": 300_000, "y": 300_000}) or {}),
         )
         base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
         component_lambda_map: dict[str, List[float]] = {}
@@ -158,62 +161,60 @@ class SimulationConfig(BaseModel):
             "asfe": ["y", "m"],
         }.get(proto_key, [])
         for comp in required_components:
-            if comp not in steps1 or comp not in steps2:
+            if comp not in n_steps:
                 raise ValueError(
-                    f"{proto_key.upper()} protocol requires steps for component '{comp}'. Add {comp}_steps1 and {comp}_steps2."
+                    f"{proto_key.upper()} protocol requires steps for component '{comp}'. Add {comp}_n_steps."
                 )
-            if steps1[comp] <= 0 or steps2[comp] <= 0:
+            if n_steps[comp] <= 0:
                 raise ValueError(
                     f"{proto_key.upper()} protocol requires positive steps for component '{comp}'."
                 )
 
         num_equil_extends = max(0, int(_fe_attr("num_equil_extends", lambda: 0)))
+        if num_equil_extends:
+            logger.warning(
+                "fe_sim.num_equil_extends is deprecated and ignored; "
+                "set fe_sim.eq_steps to the total equilibration steps instead."
+            )
         eq_steps_value = int(_fe_attr("eq_steps", lambda: 1_000_000))
-        release_count = max(1, num_equil_extends + 1)
-        fe_release_eq = [0.0] * release_count
+        fe_release_eq = [0.0]
 
         extra_conf_rest = create.extra_conformation_restraints
         extra_restraints = create.extra_restraints
 
-        num_fe_extends_value = int(_fe_attr("num_fe_extends", lambda: 10))
-
-        def _analysis_range_default():
-            if num_fe_extends_value < 4:
-                logger.warning(
-                    "num_fe_extends={} is < 4; default analysis_fe_range will start at 0.",
-                    num_fe_extends_value,
-                )
-                return (0, -1)
-            return (2, -1)
-
-        analysis_fe_range_value = (
-            getattr(fe, "analysis_fe_range", None)
-            if hasattr(fe, "analysis_fe_range")
-            else None
-        )
-        if analysis_fe_range_value is None:
-            analysis_fe_range_value = _analysis_range_default()
+        analysis_start_step_val = 0
+        if hasattr(fe, "analysis_start_step"):
+            analysis_start_step_val = int(getattr(fe, "analysis_start_step") or 0)
+        elif isinstance(fe, Mapping) and "analysis_start_step" in fe:
+            analysis_start_step_val = int(fe.get("analysis_start_step") or 0)
+        if analysis_start_step_val < 0:
+            raise ValueError("analysis_start_step must be >= 0.")
+        max_fe_steps = max((int(v) for v in n_steps.values() if v is not None), default=0)
+        if max_fe_steps and analysis_start_step_val >= max_fe_steps:
+            raise ValueError(
+                f"analysis_start_step ({analysis_start_step_val}) must be smaller than fe_total_step ({max_fe_steps})."
+            )
 
         remd_settings = _fe_attr("remd", lambda: RemdArgs())
         if isinstance(remd_settings, RemdArgs):
             remd_nstlim = int(remd_settings.nstlim)
             remd_numexchg = int(remd_settings.numexchg)
+        elif isinstance(remd_settings, Mapping):
+            remd_settings = RemdArgs(**remd_settings)
+            remd_nstlim = int(remd_settings.nstlim)
+            remd_numexchg = int(remd_settings.numexchg)
         else:
-            # legacy dict/yes-no forms
-            if isinstance(remd_settings, dict):
-                remd_settings = RemdArgs(**remd_settings)
-                remd_nstlim = int(remd_settings.nstlim)
-                remd_numexchg = int(remd_settings.numexchg)
-            else:
-                remd_nstlim = int(_fe_attr("remd_nstlim", lambda: 100))
-                remd_numexchg = int(_fe_attr("remd_numexchg", lambda: 3000))
+            raise ValueError(
+                "fe_sim.remd must be a mapping of REMD settings (nstlim/numexchg); "
+                "toggle execution with run.remd."
+            )
 
-        remd_enable = coerce_yes_no(_fe_attr("remd_enable", lambda: "no"))
+        remd_flag = coerce_yes_no(run_remd or "no") or "no"
 
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
-            "remd": remd_enable,
+            "remd": remd_flag,
             "remd_nstlim": remd_nstlim,
             "remd_numexchg": remd_numexchg,
             "rocklin_correction": coerce_yes_no(
@@ -238,9 +239,7 @@ class SimulationConfig(BaseModel):
             "release_eq": fe_release_eq,
             "num_equil_extends": num_equil_extends,
             "eq_steps": eq_steps_value,
-            "eq_steps1": eq_steps_value,
-            "eq_steps2": eq_steps_value,
-            "ntpr": int(_fe_attr("ntpr", lambda: 1000)),
+            "ntpr": int(_fe_attr("ntpr", lambda: 100)),
             "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
             "ntwe": int(_fe_attr("ntwe", lambda: 0)),
             "ntwx": int(_fe_attr("ntwx", lambda: 50_000)),
@@ -248,8 +247,7 @@ class SimulationConfig(BaseModel):
             "gamma_ln": float(_fe_attr("gamma_ln", lambda: 1.0)),
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
-            "analysis_fe_range": analysis_fe_range_value,
-            "num_fe_extends": num_fe_extends_value,
+            "analysis_start_step": analysis_start_step_val,
             "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
         }
 
@@ -260,9 +258,8 @@ class SimulationConfig(BaseModel):
             fe_data["barostat"] = 1
 
         n_steps_dict: dict[str, int] = {}
-        for comp in sorted(set(steps1) | set(steps2)):
-            n_steps_dict[f"{comp}_steps1"] = int(steps1.get(comp, 0))
-            n_steps_dict[f"{comp}_steps2"] = int(steps2.get(comp, 0))
+        for comp in sorted(n_steps):
+            n_steps_dict[f"{comp}_n_steps"] = int(n_steps.get(comp, 0))
 
         merged: dict[str, Any] = {
             **create_data,
@@ -299,7 +296,10 @@ class SimulationConfig(BaseModel):
     dec_int: Literal["mbar", "ti"] = Field(
         "mbar", description="Integration method (mbar/ti)"
     )
-    remd: Literal["yes", "no"] = Field("no", description="H-REMD toggle")
+    remd: Literal["yes", "no"] = Field(
+        "no",
+        description="Enable REMD execution (submission only; inputs are always prepared).",
+    )
     remd_nstlim: int = Field(
         100, description="Steps per REMD segment (applied to mdin-*-remd copies)."
     )
@@ -327,10 +327,11 @@ class SimulationConfig(BaseModel):
 
     # --- FE controls / analysis ---
     release_eq: List[float] = Field(
-        default_factory=list, description="Equilibration release weights (derived)"
+        default_factory=lambda: [0.0],
+        description="Equilibration release weights (derived; fixed to [0.0]).",
     )
     num_equil_extends: int = Field(
-        0, description="Number of equilibration extends (derived)"
+        0, description="Deprecated equilibration extends (retained for compatibility)."
     )
     ti_points: Optional[int] = Field(0, description="(#) TI points (not implemented)")
     lambdas: List[float] = Field(
@@ -349,9 +350,10 @@ class SimulationConfig(BaseModel):
         ge=0.0,
         description="Distance (Å) between ligand COMs that classifies equilibration as unbound.",
     )
-    analysis_fe_range: Optional[Tuple[int, int]] = Field(
-        (2, -1),
-        description="Optional tuple (start, end) limiting FE simulations analyzed per window.",
+    analysis_start_step: int = Field(
+        0,
+        ge=0,
+        description="Analyze only steps after this (per FE window).",
     )
 
     # --- Force constants ---
@@ -390,21 +392,11 @@ class SimulationConfig(BaseModel):
     )
     temperature: float = Field(298.15, description="Temperature (K)")
     eq_steps: int = Field(
-        1_000_000, description="Steps per equilibration segment (derived)"
-    )
-    eq_steps1: int = Field(
-        500_000, description="Equilibration stage 1 steps (legacy mirror of eq_steps)"
-    )
-    eq_steps2: int = Field(
-        1_000_000, description="Equilibration stage 2 steps (legacy mirror of eq_steps)"
+        1_000_000, description="Total equilibration steps (entire run)."
     )
     n_steps_dict: Dict[str, int] = Field(
-        default_factory=lambda: {
-            f"{comp}_steps{ind}": 50_000 if ind == "1" else 1_000_000
-            for comp in FEP_COMPONENTS
-            for ind in ("1", "2")
-        },
-        description="Per-component steps (keys: '{comp}_steps1|2')",
+        default_factory=lambda: {f"{comp}_n_steps": 1_000_000 for comp in FEP_COMPONENTS},
+        description="Per-component steps (keys: '{comp}_n_steps')",
     )
 
     # --- L1 search (optional) ---
@@ -416,7 +408,7 @@ class SimulationConfig(BaseModel):
     max_adis: Optional[float] = Field(None, description="Max anchor distance (Å)")
 
     # --- Amber i/o ---
-    ntpr: int = Field(1000, description="Print energy every ntpr steps")
+    ntpr: int = Field(100, description="Print energy every ntpr steps")
     ntwr: int = Field(10_000, description="Write restart every ntwr steps")
     ntwe: int = Field(0, description="Write energy every ntwe steps")
     ntwx: int = Field(2500, description="Write trajectory every ntwx steps")
@@ -424,7 +416,6 @@ class SimulationConfig(BaseModel):
     gamma_ln: float = Field(1.0, description="Langevin γ (ps^-1)")
     barostat: Literal[1, 2] = Field(2, description="1=Berendsen, 2=MC barostat")
     dt: float = Field(0.004, description="Time step (ps)")
-    num_fe_extends: int = Field(10, description="# restarts per λ")
     all_atoms: Literal["yes", "no"] = Field("no", description="save all atoms for FE")
 
     # --- Force fields ---
@@ -440,11 +431,8 @@ class SimulationConfig(BaseModel):
     ion_def: List[Any] = Field(
         default_factory=list, description="Ion tuple [cation, anion, conc]"
     )
-    dic_steps1: Dict[str, int] = Field(
-        default_factory=dict, description="Stage1 steps per component"
-    )
-    dic_steps2: Dict[str, int] = Field(
-        default_factory=dict, description="Stage2 steps per component"
+    dic_n_steps: Dict[str, int] = Field(
+        default_factory=dict, description="Steps per component"
     )
     rest: List[float] = Field(
         default_factory=list, description="Packed restraint constants"
@@ -473,11 +461,11 @@ class SimulationConfig(BaseModel):
         return v if v is None else str(v).lower()
 
     @field_validator(
-        "remd",
         "neutralize_only",
         "hmr",
         "rocklin_correction",
         "enable_mcwat",
+        "remd",
         mode="before",
     )
     @classmethod
@@ -548,12 +536,10 @@ class SimulationConfig(BaseModel):
         self.neut = self.neutralize_only
 
         # stage dicts (copy from n_steps_dict only for ACTIVE components)
-        self.dic_steps1.clear()
-        self.dic_steps2.clear()
+        self.dic_n_steps.clear()
         for comp in FEP_COMPONENTS:
-            k1, k2 = f"{comp}_steps1", f"{comp}_steps2"
-            self.dic_steps1[comp] = int(self.n_steps_dict.get(k1, 0))
-            self.dic_steps2[comp] = int(self.n_steps_dict.get(k2, 0))
+            k2 = f"{comp}_n_steps"
+            self.dic_n_steps[comp] = int(self.n_steps_dict.get(k2, 0))
 
         # pack restraints (order-sensitive, matches legacy)
         self.rest = [
@@ -629,14 +615,14 @@ class SimulationConfig(BaseModel):
 
         # sanity checks for active components only
         for comp in self.components:
-            s1, s2 = self.dic_steps1.get(comp, 0), self.dic_steps2.get(comp, 0)
-            if s1 <= 0:
-                raise ValueError(
-                    f"{comp}: stage 1 steps must be > 0 (key '{comp}_steps1')."
-                )
+            s2 = self.dic_n_steps.get(comp, 0)
             if s2 <= 0:
                 raise ValueError(
-                    f"{comp}: stage 2 steps must be > 0 (key '{comp}_steps2')."
+                    f"{comp}: steps must be > 0 (key '{comp}_n_steps')."
+                )
+            if self.analysis_start_step >= s2:
+                raise ValueError(
+                    f"analysis_start_step ({self.analysis_start_step}) must be < {comp}_n_steps ({s2})."
                 )
 
         # update per-component lambdas

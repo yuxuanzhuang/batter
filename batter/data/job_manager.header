@@ -1,12 +1,13 @@
 #!/usr/bin/env bash 
-#SBATCH --job-name=abfe_manager
+#SBATCH --job-name=__JOB_NAME__
 #SBATCH --partition=rondror
 #SBATCH --time=72:00:00
-#SBATCH --output=abfe_manager-%j.out
-#SBATCH --error=abfe_manager-%j.err
+#SBATCH --output=__JOB_LOG_BASE__-%j.out
+#SBATCH --error=__JOB_LOG_BASE__-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=4 # use 4 CPUs
 #SBATCH --cpus-per-task=1
+#SBATCH --singleton
 
 #SBATCH --open-mode=append 
 

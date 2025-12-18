@@ -41,6 +41,19 @@ Minimal example::
     print(analysis.fe, "+/-", analysis.fe_error)
     analysis.plot_convergence(save_path="lig1_e_convergence.png")
 
+Config-driven trimming
+======================
+
+``analysis_start_step`` in ``SimulationConfig`` (set via ``fe_sim.analysis_start_step``)
+controls how much of each FE window is ignored before MBAR runs. The orchestrator
+passes that value into record writers so downstream consumers (CLI, notebooks) can
+respect the same cutoff. ``analysis_range`` is deprecated and rejected at load time;
+use ``analysis_start_step`` instead. To mirror the config in standalone scripts, set
+``start_step`` when instantiating ``MBARAnalysis``::
+
+    analysis = MBARAnalysis(..., start_step=sim_cfg.analysis_start_step)
+    analysis.run_analysis()
+
 Handling Restrained Components
 ==============================
 

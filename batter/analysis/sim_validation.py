@@ -214,7 +214,7 @@ class SimValidator:
 
     def plot_analysis(self, savefig=True):
         # plot ligand_bs, rmsd, dihedral in three rows
-        fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
+        fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
         # Plot ligand binding site distance
         axes[0].plot(self.results['ligand_bs'], label='Ligand to binding site distance')
         axes[0].set_ylabel('Distance (Å)')
@@ -224,17 +224,6 @@ class SimValidator:
         axes[1].plot(self.results['ligand_rmsd'], label='Ligand RMSD')
         axes[1].set_ylabel('RMSD (Å)')
         axes[1].legend()
-        # Plot dihedrals
-        self._ligand_dihedral()
-        dihed = self.results['ligand_dihedrals']
-        n_dihed = dihed.shape[1]
-        # split axes[2] into n_dihed subplots
-        for i in range(n_dihed):
-            axes[2].plot(dihed[:, i], label=f'Dihedral {i+1}')
-        
-        axes[2].set_ylabel('Dihedral (degrees)')
-        axes[2].set_xlabel('Frame')
-        axes[2].legend()
         plt.tight_layout()
         if savefig:
             plt.savefig(self.workdir / 'simulation_analysis.png')
@@ -754,9 +743,13 @@ def check_universe_ring_penetration(universe, verbose=0):
         if pairs:
             logger.warning(f'In frame {frame} found a ring penetration:')
             for i, cycle in enumerate(rings):
-                logger.warning('- %s %s %s %s | %s %s %s %s' % (top.nodes[pairs[i][0]]['segid'], top.nodes[pairs[i][0]]['resid'], top.nodes[pairs[i][0]]['resname'], ' '.join([top.nodes[num]['name'] for num in pairs[i]]), top.nodes[cycle[0]]['segid'], top.nodes[cycle[0]]['resid'], top.nodes[cycle[0]]['resname'], ' '.join([top.nodes[num]['name'] for num in cycle])))
+                logger.warning(
+                    f"- {top.nodes[pairs[i][0]]['segid']} {top.nodes[pairs[i][0]]['resid']} "
+                    f"{top.nodes[pairs[i][0]]['resname']} {' '.join([top.nodes[num]['name'] for num in pairs[i]])} | "
+                    f"{top.nodes[cycle[0]]['segid']} {top.nodes[cycle[0]]['resid']} "
+                    f"{top.nodes[cycle[0]]['resname']} {' '.join([top.nodes[num]['name'] for num in cycle])}"
+                )
             faulty = True
         else:
             logger.debug(f'In frame {frame} no ring penetration found')
     return faulty
-

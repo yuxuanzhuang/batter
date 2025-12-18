@@ -11,7 +11,13 @@ from typing import Any, Dict, List, Tuple
 from loguru import logger
 
 from batter.orchestrate.state_registry import register_phase_state
-from batter.param.ligand import _convert_mol_name_to_unique, batch_ligand_process
+from batter.param.ligand import (
+    _convert_mol_name_to_unique,
+    _hash_id,
+    _rdkit_load,
+    _canonical_payload,
+    batch_ligand_process,
+)
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
@@ -90,49 +96,131 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         f"(charge={charge}, ff={ligand_ff}, retain H={retain})"
     )
 
-    # Run batch parametrization into content-addressed subfolders
-    # Returns (hash_ids_in_order, residue_names_in_order)
-    hashes, unique = batch_ligand_process(
-        ligand_paths=lig_map,
-        output_path=outdir,
-        retain_lig_prot=retain,
-        ligand_ff=ligand_ff,
-        charge_method=charge,
-        overwrite=False,
-        run_with_slurm=False,
-    )
-    if not hashes:
-        raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
-    
-    # generate unique list of resnames
-    unique_resnames = []
-    for i, (name, p) in enumerate(lig_map.items()):
-        init_mol_name = name.lower()
-        unique_resname = _convert_mol_name_to_unique(
-                mol_name=init_mol_name,
-                ind=i,
-                smiles=unique[p][1],
-                exist_mol_names=set(unique_resnames))
-        unique_resnames.append(unique_resname)
-
-    # Link artifacts per staged ligand and collect index rows
     artifacts_index_dir = system.root / "artifacts" / "ligand_params"
     artifacts_index_dir.mkdir(parents=True, exist_ok=True)
+    index_path = artifacts_index_dir / "index.json"
 
+    mode_lower = ""
+    if isinstance(params, dict):
+        mode_lower = str(params.get("on_failure") or "").lower()
+    elif hasattr(payload, "model_extra") and payload.model_extra:
+        mode_lower = str(payload.model_extra.get("on_failure") or "").lower()
+
+    try:
+        # Run batch parametrization into content-addressed subfolders
+        # Returns (hash_ids_in_order, residue_names_in_order)
+        hashes, unique = batch_ligand_process(
+            ligand_paths=lig_map,
+            output_path=outdir,
+            retain_lig_prot=retain,
+            ligand_ff=ligand_ff,
+            charge_method=charge,
+            overwrite=False,
+            run_with_slurm=False,
+            on_failure=mode_lower,
+        )
+        if not hashes:
+            raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
+    except Exception as exc:
+        # allow reuse of an existing index when present
+        if index_path.exists():
+            logger.error(
+                f"[param_ligands] encountered error but index exists; reusing cached ligands. Error: {exc}",
+            )
+            existing_index = json.loads(index_path.read_text())
+            index_entries = existing_index.get("ligands", [])
+            # write a manifest to keep downstream in sync
+            manifest = artifacts_index_dir / "ligand_manifest.tsv"
+            with manifest.open("w") as mf:
+                for entry in index_entries:
+                    mf.write(
+                        f"{entry.get('ligand')}\t{entry.get('hash')}\t{entry.get('residue_name')}\n"
+                    )
+            marker_rel = index_path.relative_to(system.root).as_posix()
+            register_phase_state(
+                system.root,
+                "param_ligands",
+                required=[[marker_rel]],
+                success=[[marker_rel]],
+            )
+            return ExecResult(
+                [],
+                {
+                    "param_store": existing_index.get("store", str(outdir)),
+                    "index_json": str(index_path),
+                    "manifest_tsv": str(manifest),
+                    "hashes": [e.get("hash") for e in index_entries],
+                },
+            )
+
+        # Attempt to salvage cached ligands: use existing param store entries only
+        salvaged_hashes: List[str] = []
+        unique = {}
+        for name, path in lig_map.items():
+            try:
+                mol = _rdkit_load(path, retain_h=retain)
+                smi = _canonical_payload(mol)
+                hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
+                cache_dir = outdir / hid
+                if (cache_dir / "lig.prmtop").exists():
+                    unique[str(path)] = (hid, smi)
+                    salvaged_hashes.append(hid)
+            except Exception:
+                continue
+
+        if salvaged_hashes:
+            logger.error(
+                f"[param_ligands] encountered error; salvaged {len(salvaged_hashes)} cached ligands and will skip failures.",
+            )
+            hashes = salvaged_hashes
+        else:
+            logger.error(
+                f"[param_ligands] encountered error and no cached ligands could be salvaged: {exc}",
+            )
+            raise
+
+    # generate unique list of resnames only for ligands we have data for
+    unique_resnames: Dict[str, str] = {}
+    seen_resnames: set[str] = set()
+    for i, (name, p) in enumerate(lig_map.items()):
+        smiles_val = unique.get(str(p), (None, None))[1]
+        if smiles_val is None:
+            continue
+        init_mol_name = name.lower()
+        unique_resname = _convert_mol_name_to_unique(
+            mol_name=init_mol_name,
+            ind=i,
+            smiles=smiles_val,
+            exist_mol_names=seen_resnames,
+        )
+        seen_resnames.add(unique_resname)
+        unique_resnames[name] = unique_resname
+
+    # Link artifacts per staged ligand and collect index rows
     index_entries: List[Dict[str, Any]] = []
     linked: List[Tuple[str, str]] = []  # (name, hash)
 
-    for i, (name, d) in enumerate(lig_map.items()):
-        hid = hashes[i]
+    for name, d in lig_map.items():
+        if name not in unique_resnames:
+            logger.warning(f"[param_ligands] Skipping ligand {name} due to parametrization failure.")
+            continue
+        hid = unique.get(str(d), (None, None))[0]
+        if hid is None:
+            logger.warning(f"[param_ligands] Missing hash for ligand {name}; skipping.")
+            continue
         src_dir = outdir / hid
         meta_path = src_dir / "metadata.json"
         if not src_dir.exists() or not meta_path.exists():
-            raise FileNotFoundError(
-                f"[param_ligands] Missing params for staged ligand {name}: expected {src_dir}"
+            logger.warning(
+                f"[param_ligands] Missing params for staged ligand {name} at {src_dir}; skipping.",
             )
+            continue
 
         meta = json.loads(meta_path.read_text())
-        residue_name = unique_resnames[i]
+        residue_name = unique_resnames.get(name)
+        if residue_name is None:
+            logger.warning(f"[param_ligands] Missing residue name for {name}; skipping.")
+            continue
         title = meta.get("title", name)
 
         copy_ligand_params(src_dir, lig_root / Path(name), residue_name)

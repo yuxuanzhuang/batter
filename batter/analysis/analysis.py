@@ -5,6 +5,7 @@ import re
 import sys
 import glob
 import json
+import math
 import pickle
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -127,8 +128,8 @@ class MBARAnalysis(FEAnalysisBase):
     energy_unit : {"kcal/mol", "kJ/mol", "kT"}, optional
         Output energy unit. Internally every value is accumulated in units of
         ``kT`` and converted before publishing the results.
-    sim_range : tuple[int, int], optional
-        Optional slice of individual Amber simulations to include.
+    analysis_start_step : int, optional
+        Discard frames with step <= this value before analysis.
     detect_equil : bool, optional
         When ``True`` the equilibration time of each window is detected and
         the pre-equilibrated portion is discarded.
@@ -146,13 +147,17 @@ class MBARAnalysis(FEAnalysisBase):
         windows: List[int],
         temperature: float,
         energy_unit: str = "kcal/mol",
-        sim_range: Optional[Tuple[int, int]] = None,
+        analysis_start_step: int = 0,
         detect_equil: bool = True,
         n_bootstraps: int = 0,
         n_jobs: int = 6,
         load: bool = False,
+        dt: float = 0.0,
+        ntwx: Optional[int] = None,
     ):
         super().__init__()
+        if dt is None or dt <= 0:
+            raise ValueError("dt must be > 0 for analysis to convert steps to time.")
         self.lig_folder = lig_folder
         self.result_folder = f"{self.lig_folder}/Results"
         os.makedirs(self.result_folder, exist_ok=True)
@@ -170,10 +175,13 @@ class MBARAnalysis(FEAnalysisBase):
         self.energy_unit = energy_unit
         self.kT = 0.0019872041 * self.temperature
 
-        if sim_range is not None:
-            if not (isinstance(sim_range, (list, tuple)) and len(sim_range) == 2):
-                raise ValueError("sim_range must be a 2-tuple (start, end)")
-        self.sim_range = sim_range
+        self.analysis_start_step = max(0, int(analysis_start_step))
+        self.dt = float(dt) if dt is not None else 0.0
+        self.ntwx = ntwx if ntwx is not None else 0
+        logger.debug(
+            f"[MBARAnalysis:init] comp={component}, windows={windows}, "
+            f"analysis_start_step={self.analysis_start_step}, dt={self.dt}, ntwx={self.ntwx}"
+        )
 
         self.detect_equil = bool(detect_equil)
         self.n_bootstraps = int(n_bootstraps)
@@ -271,8 +279,9 @@ class MBARAnalysis(FEAnalysisBase):
         comp_folder: str,
         component: str,
         temperature: float,
-        sim_range: Optional[Tuple[int, int]],
+        analysis_start_step: int,
         truncate: bool,
+        dt: float = 0.004,
     ) -> pd.DataFrame:
         """
         Extract reduced potentials for a single window.
@@ -287,10 +296,12 @@ class MBARAnalysis(FEAnalysisBase):
             Component identifier.
         temperature : float
             Simulation temperature in Kelvin.
-        sim_range : tuple[int, int] or None
-            Optional slice of Amber simulations to include.
+        analysis_start_step : int
+            Discard frames with step <= this value.
         truncate : bool
             If ``True``, detect equilibration and discard early frames.
+        dt : float
+            Time step (ps) used to convert analysis_start_step into ps.
 
         Returns
         -------
@@ -299,25 +310,22 @@ class MBARAnalysis(FEAnalysisBase):
         """
         logger.remove()
         win_dir = f"{comp_folder}/{component}{win_i:02d}"
-        n_sims = len(glob.glob(f"{win_dir}/mdin-*.out"))
-        all_range = range(n_sims)
-
-        # Collect mdin-XX.out
+        patterns = [f"{win_dir}/mdin-*.out", f"{win_dir}/md-*.out"]
         mdouts: List[str] = []
-        s0 = sim_range[0] if sim_range is not None else 0
-        e0 = sim_range[1] if sim_range is not None else n_sims
-        if s0 > n_sims:
-            raise ValueError(f"sim_range start {s0} > available sims {n_sims}")
-        if e0 > n_sims:
-            logger.warning(f"sim_range end {e0} > available sims {n_sims}")
+        for pat in patterns:
+            mdouts.extend(glob.glob(pat))
 
-        for i in all_range[s0:e0]:
-            path = f"{win_dir}/mdin-{i:02d}.out"
-            if os.path.exists(path):
-                mdouts.append(path)
+        if mdouts:
+            def _idx(path: str) -> int:
+                base = os.path.basename(path)
+                m = re.search(r"(?:mdin-|md-)(\d+)\.out$", base)
+                return int(m.group(1)) if m else 0
+            mdouts = sorted(set(mdouts), key=_idx)
 
         if not mdouts:
             raise FileNotFoundError(f"No Amber out files in {win_dir}")
+
+        logger.debug(f"[MBARAnalysis] {component}{win_i:02d} using {len(mdouts)} mdout files")
 
         dfs = []
         with SilenceAlchemlybOnly():
@@ -326,6 +334,14 @@ class MBARAnalysis(FEAnalysisBase):
                 dfs.append(df_part)
 
         df = pd.concat(dfs)
+
+        # Drop early frames if requested (convert steps -> ps)
+        if analysis_start_step > 0:
+            threshold = analysis_start_step * dt / 1000
+            logger.debug(
+                f"[MBARAnalysis] {component}{win_i:02d} dropping frames <= {threshold} ps "
+            )
+            df = df[df.index.get_level_values(0) > threshold]
 
         # detect_equilibration on the reference column of this window
         if truncate and df.shape[1] > win_i:
@@ -349,8 +365,9 @@ class MBARAnalysis(FEAnalysisBase):
                 comp_folder=self.comp_folder,
                 component=self.component,
                 temperature=self.temperature,
-                sim_range=self.sim_range,
+                analysis_start_step=self.analysis_start_step,
                 truncate=self.detect_equil,
+                dt=self.dt,
             )
             for win_i in range(len(self.windows))
         )
@@ -492,13 +509,15 @@ class RESTMBARAnalysis(MBARAnalysis):
                 comp_folder=self.comp_folder,
                 component=self.component,
                 temperature=self.temperature,
-                sim_range=self.sim_range,
+                analysis_start_step=self.analysis_start_step,
                 truncate=self.detect_equil,
                 rfc=rfc,
                 req=req,
                 rty=rty,
                 num_rest=num_rest,
                 num_win=len(self.windows),
+                dt=self.dt,
+                ntwx=self.ntwx,
             )
             for win_i in range(len(self.windows))
         )
@@ -517,13 +536,15 @@ class RESTMBARAnalysis(MBARAnalysis):
         comp_folder: str,
         component: str,
         temperature: float,
-        sim_range: Optional[Tuple[int, int]],
+        analysis_start_step: int,
         rfc: np.ndarray,
         req: np.ndarray,
         rty: List[str],
         num_rest: int,
         num_win: int,
         truncate: bool,
+        dt: float,
+        ntwx: int,
     ) -> pd.DataFrame:
         """Compute reduced potentials for REST components from restraint traces."""
         logger.remove()
@@ -536,14 +557,7 @@ class RESTMBARAnalysis(MBARAnalysis):
             # enumerate mdin-XX.nc (or fallback md01.nc..)
             nc_list: List[str] = []
             nsims = len(glob.glob("mdin-*.nc"))
-            s0 = sim_range[0] if sim_range is not None else 0
-            e0 = sim_range[1] if sim_range is not None else nsims
-            if s0 > nsims:
-                raise ValueError(f"sim_range start {s0} > n_sims {nsims}")
-            if e0 > nsims:
-                logger.warning(f"sim_range end {e0} > n_sims {nsims}")
-
-            for i in range(s0, e0):
+            for i in range(nsims):
                 fn = f"mdin-{i:02d}.nc"
                 if os.path.exists(fn):
                     nc_list.append(fn)
@@ -551,8 +565,10 @@ class RESTMBARAnalysis(MBARAnalysis):
             if not nc_list:
                 fallback = ["md01.nc", "md02.nc", "md03.nc", "md04.nc"]
                 nc_list = [f for f in fallback if os.path.exists(f)]
-                if not nc_list:
-                    raise FileNotFoundError("No NetCDF trajs for REST window")
+            if not nc_list:
+                raise FileNotFoundError("No NetCDF trajs for REST window")
+
+            logger.debug(f"[RESTMBAR] {component}{win_i:02d} using {len(nc_list)} nc files")
 
             # generate restraint traces via cpptraj using current topology choice
             def _gen(top_choice: str):
@@ -586,6 +602,20 @@ class RESTMBARAnalysis(MBARAnalysis):
                     u = np.sum(rfc[win_i] * (val - req[win_i]) ** 2 / kT, axis=1)
             else:
                 u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
+
+            # Drop early frames if requested (convert steps -> frame index)
+            start_idx = max(0, int(analysis_start_step))
+            if analysis_start_step > 0 and ntwx > 0:
+                # frames recorded every ntwx steps; dt cancels but kept for clarity
+                start_idx = max(0, int(math.ceil(analysis_start_step / float(ntwx))))
+            if start_idx > 0:
+                logger.debug(
+                    f"[RESTMBAR] {component}{win_i:02d} dropping first {start_idx} frames "
+                    f"(analysis_start_step={analysis_start_step}, ntwx={ntwx})"
+                )
+            if start_idx > 0:
+                u = u[start_idx:]
+                val = val[start_idx:]
 
             t0 = 0
             if truncate:
@@ -785,10 +815,12 @@ def analyze_lig_task(
     water_model: str,
     component_windows_dict: Dict[str, List[int]],
     rocklin_correction: bool = False,
-    sim_range: Optional[Tuple[int, int]] = None,
+    analysis_start_step: int = 0,
     raise_on_error: bool = True,
     mol: str = "LIG",
     n_workers: int = 4,
+    dt: float = 0.0,
+    ntwx: int = 0,
 ):
     """
     Analyze one lig under fe_folder/lig for the requested components.
@@ -832,15 +864,22 @@ def analyze_lig_task(
                 logger.debug("Skipping 'n' (no conformational restraints).")
                 continue
 
+            logger.debug(
+                f"[analyze_lig] {lig} comp={comp} windows={windows} "
+                f"analysis_start_step={analysis_start_step}, dt={dt}, ntwx={ntwx}"
+            )
+
             if comp in COMPONENTS_DICT["dd"]:
                 ana = MBARAnalysis(
                     lig_folder=lig_path,
                     component=comp,
                     windows=windows,
                     temperature=temperature,
-                    sim_range=sim_range,
+                    analysis_start_step=analysis_start_step,
                     load=False,
                     n_jobs=n_workers,
+                    dt=dt,
+                    ntwx=ntwx,
                 )
                 ana.run_analysis()
                 ana.plot_convergence(
@@ -858,9 +897,11 @@ def analyze_lig_task(
                     component=comp,
                     windows=windows,
                     temperature=temperature,
-                    sim_range=sim_range,
+                    analysis_start_step=analysis_start_step,
                     load=False,
                     n_jobs=n_workers,
+                    dt=dt,
+                    ntwx=ntwx,
                 )
                 ana.run_analysis()
                 ana.plot_convergence(
@@ -913,9 +954,9 @@ def analyze_lig_task(
         other_ag = universe.atoms - lig_ag
         other_netq = int(round(other_ag.total_charge()))
         if lig_netq == 0:
-            logger.info(f"Rocklin correction skipped: ligand netq={lig_netq}, other netq={other_netq}")
+            logger.debug(f"Rocklin correction skipped: ligand netq={lig_netq}, other netq={other_netq}")
         if lig_netq != 0:
-            logger.info(f"Rocklin correction with ligand netq={lig_netq}, other netq={other_netq}")
+            logger.debug(f"Rocklin correction with ligand netq={lig_netq}, other netq={other_netq}")
             corr = run_rocklin_correction(
                 universe=universe,
                 mol_name=mol,

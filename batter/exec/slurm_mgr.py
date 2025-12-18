@@ -139,13 +139,15 @@ def _state_from_sacct(jobid: str) -> Optional[str]:
     return None
 
 
-def _num_active_job(user: Optional[str] = None) -> int:
-    """Return the number of active Slurm jobs for ``user``.
+def _num_active_job(user: Optional[str] = None, partition: Optional[str] = None) -> int:
+    """Return the number of active Slurm jobs for ``user`` (optionally within a partition).
 
     Parameters
     ----------
     user : str, optional
         Unix user name. If ``None``, defaults to ``$USER``.
+    partition : str, optional
+        Partition/queue name to filter with ``squeue -p``.
 
     Returns
     -------
@@ -155,16 +157,19 @@ def _num_active_job(user: Optional[str] = None) -> int:
     user = user or os.environ.get("USER")
     if not user:
         return 0
+    cmd = ["squeue", "-h", "-u", user]
+    if partition:
+        cmd += ["-p", partition]
+    cmd += ["-o", "%i"]
     try:
-        out = subprocess.check_output(
-            ["squeue", "-h", "-u", user, "-o", "%i"],
-            text=True,
-        )
+        out = subprocess.check_output(cmd, text=True)
     except Exception:
         return 0
 
     n_ids = [line.strip() for line in out.splitlines() if line.strip()]
-    logger.debug(f"[SQUEUE] active jobs for user '{user}': {n_ids}")
+    logger.debug(
+        f"[SQUEUE] active jobs for user '{user}'{f' partition={partition}' if partition else ''}: {n_ids}"
+    )
     return len(n_ids)
 
 
@@ -321,6 +326,7 @@ class SlurmJobManager:
         srun_extra: Optional[Sequence[str]] = None,
         stage: Optional[str] = None,
         header_root: Optional[Path] = None,
+        partition: Optional[str] = None,
     ):
         """Initialise the manager.
 
@@ -369,6 +375,7 @@ class SlurmJobManager:
         )
         if self.max_active_jobs is not None and self.max_active_jobs <= 0:
             raise ValueError("max_active_jobs must be positive or None")
+        self.partition = partition
 
         self.sbatch_flags: List[str] = list(sbatch_flags or [])
 
@@ -507,6 +514,7 @@ class SlurmJobManager:
         self,
         poll_s: float | None = None,
         user: Optional[str] = None,
+        partition: Optional[str] = None,
     ) -> None:
         """Block until the number of active jobs drops below ``max_active_jobs``.
 
@@ -521,8 +529,9 @@ class SlurmJobManager:
             return
         max_active = self.max_active_jobs
         interval = self.poll_s if poll_s is None else poll_s
+        target_partition = partition or self.partition
         while True:
-            n_active = _num_active_job(user=user)
+            n_active = _num_active_job(user=user, partition=target_partition)
             self.n_active = n_active
             if n_active < max_active:
                 if n_active > 0:

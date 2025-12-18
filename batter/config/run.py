@@ -379,12 +379,29 @@ class FESimArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_knobs(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        if "num_equil_extends" in data:
+            raise ValueError(
+                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
+            )
+        if "num_fe_extends" in data:
+            raise ValueError(
+                "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
+            )
+        if "analysis_range" in data:
+            raise ValueError(
+                "fe_sim.analysis_range is no longer supported; set fe_sim.analysis_start_step to the first step to include in analysis."
+            )
+        return data
+
     dec_int: str = Field(
         "mbar",
         description="Free-energy integration scheme (``mbar`` or ``ti``).",
-    )
-    remd_enable: Literal["yes", "no"] = Field(
-        "no", description="Toggle REMD execution (yes/no)."
     )
     remd: RemdArgs = Field(
         default_factory=RemdArgs,
@@ -441,24 +458,20 @@ class FESimArgs(BaseModel):
 
     # Equilibration schedule
     num_equil_extends: int = Field(
-        6,
+        0,
         ge=0,
-        description="Number of additional equilibration segments (all run fully released).",
+        description="Deprecated: equilibration extensions are ignored; keep 0.",
     )
     eq_steps: int = Field(
         1_000_000,
         gt=0,
-        description="Steps per equilibration segment (applied to the initial run and each extend).",
+        description="Total equilibration steps (entire equilibration run).",
     )
-    steps1: Dict[str, int] = Field(
-        default_factory=dict,
-        description="Stage 1 steps per component (key = letter).",
-    )
-    steps2: Dict[str, int] = Field(
+    n_steps: Dict[str, int] = Field(
         default_factory=lambda: {"x": 300_000, "y": 300_000},
-        description="Stage 2 steps per component (key = letter).",
+        description="Total production steps per component (key = letter).",
     )
-    ntpr: int = Field(1_000, description="Energy print frequency.")
+    ntpr: int = Field(100, description="Energy print frequency.")
     ntwr: int = Field(2_500, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")
@@ -474,19 +487,15 @@ class FESimArgs(BaseModel):
     )
     temperature: float = Field(298.15, description="Simulation temperature (K).")
     barostat: int = Field(2, description="Barostat selection (1=Berendsen, 2=MC).")
-    num_fe_extends: int = Field(
-        10,
-        ge=1,
-        description="# restarts per λ (controls how many FE simulations run per window).",
-    )
     unbound_threshold: float = Field(
         8.0,
         ge=0.0,
         description="Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
     )
-    analysis_fe_range: Optional[Tuple[int, int]] = Field(
-        None,
-        description="Optional (start, end) simulation index range to analyze per FE window.",
+    analysis_start_step: int = Field(
+        0,
+        ge=0,
+        description="Only analyze FE production steps after this step (per window).",
     )
 
     @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
@@ -494,33 +503,19 @@ class FESimArgs(BaseModel):
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
 
-    @field_validator("remd_enable", mode="before")
-    @classmethod
-    def _coerce_remd_enable(cls, v):
-        return coerce_yes_no(v)
-
     @field_validator("remd", mode="before")
     @classmethod
     def _coerce_remd(cls, v):
         if isinstance(v, RemdArgs):
             return v
-        if isinstance(v, dict):
+        if isinstance(v, Mapping):
             return RemdArgs(**v)
-        return RemdArgs()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _ingest_remd_enable(cls, data: Any) -> Any:
-        if not isinstance(data, Mapping):
-            return data
-        payload = dict(data)
-        remd_val = payload.get("remd")
-        if "remd_enable" not in payload:
-            if isinstance(remd_val, (str, bool)):
-                payload["remd_enable"] = coerce_yes_no(remd_val)
-            elif isinstance(remd_val, Mapping) and "enable" in remd_val:
-                payload["remd_enable"] = coerce_yes_no(remd_val.get("enable"))
-        return payload
+        if v is None:
+            return RemdArgs()
+        raise ValueError(
+            "fe_sim.remd only accepts REMD timing settings (nstlim/numexchg); "
+            "use run.remd to enable or disable REMD submissions."
+        )
 
     @field_validator("lambdas")
     @classmethod
@@ -530,19 +525,6 @@ class FESimArgs(BaseModel):
         if any(left > right for left, right in zip(v, v[1:])):
             raise ValueError("Lambda values must be in ascending order.")
         return v
-
-    @field_validator("analysis_fe_range")
-    @classmethod
-    def _validate_analysis_range(
-        cls, value: Optional[Tuple[int, int]]
-    ) -> Optional[Tuple[int, int]]:
-        if value is None:
-            return None
-        if len(value) != 2:
-            raise ValueError(
-                "analysis_fe_range must contain exactly two integers (start, end)."
-            )
-        return value
 
     @field_validator(
         "lig_distance_force",
@@ -594,10 +576,23 @@ class FESimArgs(BaseModel):
             return data
 
         payload = dict(data)
-        steps1 = dict(payload.get("steps1") or {})
-        steps2 = dict(payload.get("steps2") or {})
+        n_steps = dict(payload.get("n_steps") or {})
+        # Allow legacy 'steps2' while migrating; raise on steps1
+        legacy_steps2 = dict(payload.pop("steps2", {}) or {})
+        for k, v in legacy_steps2.items():
+            n_steps.setdefault(k, v)
 
         for key in list(payload.keys()):
+            m_n = re.match(r"^([a-z])_n_steps$", key)
+            if m_n:
+                comp = m_n.group(1)
+                val = payload.pop(key)
+                try:
+                    val = int(val)
+                except Exception:
+                    pass
+                n_steps.setdefault(comp, val)
+                continue
             m = re.match(r"^([a-z])_steps([12])$", key)
             if not m:
                 continue
@@ -607,11 +602,13 @@ class FESimArgs(BaseModel):
                 val = int(val)
             except Exception:
                 pass
-            target = steps1 if stage == "1" else steps2
-            target.setdefault(comp, val)
+            if stage == "1":
+                raise ValueError(
+                    f"{comp}_steps1 is no longer supported; set {comp}_n_steps to the total production steps."
+                )
+            n_steps.setdefault(comp, val)
 
-        payload["steps1"] = steps1
-        payload["steps2"] = steps2
+        payload["n_steps"] = n_steps
         return payload
 
 
@@ -625,19 +622,39 @@ class MDSimArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_knobs(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        if "num_equil_extends" in data:
+            raise ValueError(
+                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
+            )
+        if "num_fe_extends" in data:
+            raise ValueError(
+                "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
+            )
+        if "analysis_range" in data:
+            raise ValueError(
+                "fe_sim.analysis_range is no longer supported; set fe_sim.analysis_start_step to the first step to include in analysis."
+            )
+        return data
+
     dt: float = Field(0.004, description="MD timestep (ps).")
     temperature: float = Field(298.15, description="Simulation temperature (K).")
     num_equil_extends: int = Field(
-        2,
+        0,
         ge=0,
-        description="Number of additional equilibration segments (all run fully released).",
+        description="Deprecated: equilibration extensions are ignored; keep 0.",
     )
     eq_steps: int = Field(
         100_000,
         gt=0,
-        description="Steps per equilibration segment.",
+        description="Total equilibration steps (entire equilibration run).",
     )
-    ntpr: int = Field(1000, description="Energy print frequency.")
+    ntpr: int = Field(100, description="Energy print frequency.")
     ntwr: int = Field(10_000, description="Restart write frequency.")
     ntwe: int = Field(0, description="Energy write frequency (0 disables).")
     ntwx: int = Field(25_000, description="Trajectory write frequency.")
@@ -713,7 +730,7 @@ class RunSection(BaseModel):
     )
     remd: Literal["yes", "no"] = Field(
         "no",
-        description="Enable REMD execution (templates are always prepared).",
+        description="Enable REMD execution.",
     )
     run_id: str = Field(
         "auto", description="Run identifier to use (``auto`` picks latest)."
@@ -897,7 +914,6 @@ class RunConfig(BaseModel):
                 pass
             else:
                 fe_args = FESimArgs.model_validate(fe_args)
-            fe_args = fe_args.model_copy(update={"remd_enable": self.run.remd})
 
         desired_fe_type = PROTOCOL_TO_FE_TYPE.get(self.protocol)
         return SimulationConfig.from_sections(
@@ -906,6 +922,7 @@ class RunConfig(BaseModel):
             protocol=self.protocol,
             fe_type=desired_fe_type,
             slurm_header_dir=self.run.slurm_header_dir,
+            run_remd=self.run.remd,
         )
 
     def with_base_dir(self, base_dir: Path) -> "RunConfig":

@@ -12,7 +12,7 @@ try:
     from rdkit import Chem
 except Exception as e:  # pragma: no cover - RDKit optional at runtime
     Chem = None  # type: ignore
-    logger.warning("RDKit not available; ligand helpers will fail if invoked. (%s)", e)
+    logger.warning(f"RDKit not available; ligand helpers will fail if invoked. ({e})")
 
 __all__ = [
     "find_anchor_atoms",
@@ -57,7 +57,15 @@ def find_anchor_atoms(
             f"P3_atom.n_atoms={P3_atom.n_atoms}"
         )
     if P1_atom.n_atoms != 1 or P2_atom.n_atoms != 1 or P3_atom.n_atoms != 1:
-        raise ValueError("More than one atom selected in the anchor atoms.")
+        raise ValueError("More than one atom selected in the anchor atoms. with the provided selection strings."
+                            f"\np1: {anchor_atoms[0]}, p2: {anchor_atoms[1]}, p3: {anchor_atoms[2]}\n"
+                            f"Selected atoms:\n"
+                            f"P1_atom={P1_atom}, \n"
+                            f"P2_atom={P2_atom}, \n"
+                            f"P3_atom={P3_atom}\n"
+                            f"P1_atom.n_atoms={P1_atom.n_atoms}, "
+                            f"P2_atom.n_atoms={P2_atom.n_atoms}, "
+                            f"P3_atom.n_atoms={P3_atom.n_atoms}")
 
     if ligand_anchor_atom:
         lig_sel = u_merge.select_atoms(ligand_anchor_atom)

@@ -94,3 +94,133 @@ check_min_energy() {
         return 1
     fi
 }
+
+# Lightweight progress reporting helpers (stage + completed steps)
+highest_index_for_pattern() {
+    local pattern=$1
+    local max=-1
+    for f in $pattern; do
+        [[ -e "$f" ]] || continue
+        # extract the first integer chunk from the filename
+        local n
+        n=$(echo "$f" | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+        [[ $n =~ ^[0-9]+$ ]] || continue
+        if [[ $n -gt $max ]]; then
+            max=$n
+        fi
+    done
+    echo "$max"
+}
+
+report_progress() {
+    local stage="not_started"
+    local steps=0
+
+    if [[ -f FINISHED ]]; then
+        stage="production"
+        steps=$(highest_index_for_pattern "mdin-*.rst7")
+        [[ $steps -lt 0 ]] && steps="completed"
+    elif ls mdin-*.rst7 >/dev/null 2>&1; then
+        stage="production"
+        steps=$(highest_index_for_pattern "mdin-*.rst7")
+        [[ $steps -lt 0 ]] && steps=0
+    elif ls eqnpt*.rst7 >/dev/null 2>&1; then
+        stage="equilibration"
+        steps=$(highest_index_for_pattern "eqnpt*.rst7")
+        [[ $steps -lt 0 ]] && steps=0
+    elif ls mini*.rst7 >/dev/null 2>&1; then
+        stage="minimization"
+        steps=$(highest_index_for_pattern "mini*.rst7")
+        [[ $steps -lt 0 ]] && steps=0
+    fi
+
+    echo "[progress] stage=${stage} steps_completed=${steps}"
+}
+
+# --------- Equil/production helper parsers ---------
+parse_total_steps() {
+    local tmpl=${1:-mdin-template}
+
+    [[ -f $tmpl ]] || {
+        echo "[ERROR] Missing template $tmpl" >&2
+        return 1
+    }
+
+    # Extract the last total_steps=<num> appearing in comment lines starting with ! or #
+    local total
+    total=$(
+        grep -E '^[!#][[:space:]]*total_steps[[:space:]]*=[[:space:]]*[0-9]+' "$tmpl" \
+        | tail -1 \
+        | sed -E 's/.*total_steps[[:space:]]*=[[:space:]]*([0-9]+).*/\1/'
+    )
+
+    [[ -n $total ]] || {
+        echo "[ERROR] total_steps comment not found in $tmpl" >&2
+        return 1
+    }
+
+    printf "%s\n" "$total"
+}
+
+parse_nstlim() {
+    local tmpl=${1:-mdin-template}
+    local nst
+    nst=$(grep -E "^[[:space:]]*nstlim" "$tmpl" | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
+    if [[ -z $nst ]]; then
+        echo "[ERROR] Could not parse nstlim from $tmpl" >&2
+        return 1
+    fi
+    echo "$nst"
+}
+
+latest_md_index() {
+    local pattern=${1:-"md*.out"}
+    local idx
+    idx=$(highest_index_for_pattern "$pattern")
+    echo "$idx"
+}
+
+completed_steps() {
+    local tmpl=${1:-mdin-template}
+    local idx
+    idx=$(latest_md_index "md*.out")
+    if [[ $idx -lt 0 ]]; then
+        echo 0
+        return
+    fi
+    local mdout
+    mdout=$(printf "md-%02d.out" "$idx")
+    if [[ ! -f $mdout ]]; then
+        mdout=$(printf "md%02d.out" "$idx")
+    fi
+    if [[ ! -f $mdout ]]; then
+        echo $(( (idx + 1) * $(parse_nstlim "$tmpl") ))
+        return
+    fi
+    local nstep
+    nstep=$(grep "NSTEP" "$mdout" | tail -1 | awk '{for(i=1;i<=NF;i++){if($i=="NSTEP"){print $(i+2); exit}}}')
+    if [[ -z $nstep ]]; then
+        echo $(( (idx + 1) * $(parse_nstlim "$tmpl") ))
+    else
+        echo "$nstep"
+    fi
+}
+
+write_mdin_current() {
+    local tmpl=${1:-mdin-template}
+    local nstlim_value=$2
+    local first_run=$3
+    if [[ ! -f $tmpl ]]; then
+        echo "[ERROR] Missing template $tmpl" >&2
+        return 1
+    fi
+    local text
+    text=$(<"$tmpl")
+    if [[ $first_run -eq 1 ]]; then
+        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
+    else
+        text=$(echo "$text" | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
+    fi
+    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
+    echo "$text"
+}

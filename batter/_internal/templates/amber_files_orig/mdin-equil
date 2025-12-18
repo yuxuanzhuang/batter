@@ -35,6 +35,7 @@ Runs equilibrium stage
   nmc = 1000,
   mcwatmask = ":_lig_name_",
   mcligshift = 40,
+  mcwatretry = 3000,
   mcresstr = "WAT",
   infe = _enable_infe_,
  /

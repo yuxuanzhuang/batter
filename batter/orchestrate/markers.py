@@ -61,7 +61,7 @@ def _remove_patterns(root: Path, spec: List[List[str]]) -> bool:
                         p.unlink()
                     removed = True
                 except Exception:
-                    logger.warning("Could not remove sentinel %s", p)
+                    logger.warning(f"Could not remove sentinel {p}")
     return removed
 
 
@@ -89,10 +89,10 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
     RuntimeError
         If failures occur and ``mode`` is not ``"prune"``.
     """
+    mode_lower = (mode or "").lower()
     ok, bad = partition_children_by_status(children, phase_name)
     if bad:
         bad_names = ", ".join(c.meta.get("ligand", c.name) for c in bad)
-        mode_lower = (mode or "").lower()
         if mode_lower == "prune":
             logger.warning(f"[{phase_name}] Pruning {len(bad)} ligand(s) that FAILED: {bad_names}")
             return ok
@@ -116,6 +116,9 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
             return ok + retried
         raise RuntimeError(f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}")
     if not ok:
+        if mode_lower in {"prune", "retry"}:
+            logger.warning(f"[{phase_name}] No ligands completed successfully (mode={mode_lower}); continuing with empty set.")
+            return ok
         raise RuntimeError(f"[{phase_name}] No ligands completed successfully.")
     return children
 

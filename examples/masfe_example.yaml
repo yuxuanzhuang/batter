@@ -29,12 +29,9 @@ fe_sim:
   lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
   # use rocklin correction 
   rocklin_correction: yes
-  y_steps1: 5000
-  y_steps2: 30000
-  m_steps1: 5000
-  m_steps2: 30000
+  y_n_steps: 30000
+  m_n_steps: 30000
   # total 10 * 30000 = 300000 steps -> 1.2 ns per window
-  num_fe_extends: 10
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
@@ -45,6 +42,6 @@ fe_sim:
   dt: 0.004
   temperature: 298.15 
   # analysis only start from 4th extension (exclude the first three FE extensions)
-  analysis_fe_range: [3, -1]
+  analysis_start_step: 0
   # MBAR analysis blocks
   blocks: 5

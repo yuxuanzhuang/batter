@@ -232,7 +232,6 @@ def write_remd_groupfiles(
     prmtop = "full.hmr.prmtop" if str(sim.hmr).lower() == "yes" else "full.prmtop"
     prmtop_path = f"{comp}-1/{prmtop}"
     eq_restart = f"{comp}-1/eqnpt04.rst7"
-    num_extends = int(getattr(sim, "num_fe_extends", 0))
     allow_small_box = " -AllowSmallBox" if comp == "m" else ""
 
     def _window_name(idx: int) -> str:
@@ -273,11 +272,6 @@ def write_remd_groupfiles(
     _write_groupfile(prod0_path, n_windows, lambda idx: prod_line(idx, 0))
     out_files.append(prod0_path)
 
-    for stage in range(1, num_extends + 1):
-        path = group_dir / f"mdin.in.stage{stage:02d}.remd.groupfile"
-        _write_groupfile(path, n_windows, lambda idx, st=stage: prod_line(idx, st))
-        out_files.append(path)
-
     logger.debug(f"[remd] Wrote {len(out_files)} groupfiles under {group_dir}")
     return out_files
 
@@ -296,7 +290,6 @@ def write_remd_run_scripts(
     out: List[Path] = []
     comp_dir.mkdir(parents=True, exist_ok=True)
 
-    num_extends = int(getattr(sim, "num_fe_extends", 0))
     gpus = n_windows if n_windows > 0 else 1
 
     def _copy_template(src: Path, dst: Path, repl: dict[str, str], override_text: str | None = None) -> None:
@@ -310,7 +303,7 @@ def write_remd_run_scripts(
     _copy_template(
         run_local_tpl,
         run_local,
-        {"COMPONENT": comp, "NWINDOWS": str(n_windows), "FERANGE": str(num_extends)},
+        {"COMPONENT": comp, "NWINDOWS": str(n_windows)},
     )
     run_local.chmod(0o755)
     out.append(run_local)
@@ -321,7 +314,6 @@ def write_remd_run_scripts(
         {
             "COMPONENT": comp,
             "NWINDOWS": str(gpus),
-            "FERANGE": str(num_extends),
         },
     )
     slurm_body.write_text(body_text)

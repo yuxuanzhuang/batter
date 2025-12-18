@@ -56,6 +56,30 @@ Prefer importing and extending these modules instead of duplicating tleap/parmed
 Many helpers already expect ``BuildContext`` objects and honour the directory layout
 described above.
 
+Sim file templates and ``total_steps``
+--------------------------------------
+
+Equilibration and production templates written by ``sim_files.py`` begin with a
+``! total_steps=<int>`` comment (``#`` also works). ``write_sim_files`` uses
+``eq_steps`` for equilibration; per-component ``n_steps`` are used for production
+mdin templates. The runtime scripts (``run-local.bash``, ``run-local-vacuum.bash``,
+``run-equil.bash``) call ``parse_total_steps`` in ``check_run.bash`` to read that
+marker and ``parse_nstlim`` to pick the first ``nstlim`` as the chunk length. They
+roll ``md-current.rst7``/``md-previous.rst7`` between segments until
+``total_steps`` is reached, so avoid deleting or renaming the comment when hand
+editing templates.
+
+Config field consumers
+----------------------
+
+Key :class:`~batter.config.simulation.SimulationConfig` fields and where they land:
+
+* ``eq_steps`` → ``write_sim_files`` (equil mdin-template ``total_steps`` marker).
+* ``<comp>_n_steps`` → component writers in ``sim_files.py`` (per-window mdin-template markers).
+* ``analysis_start_step`` → stored in FE records and passed to analysis writers to skip early frames.
+* ``ntpr``/``ntwr``/``ntwx`` → substituted into mdin templates in ``sim_files.py`` (restart/trajectory cadence).
+* ``hmr``/``enable_mcwat`` → toggles template selection and template flags in ``write_amber_templates``.
+
 Builder Lifecycle
 -----------------
 

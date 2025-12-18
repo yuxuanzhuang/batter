@@ -11,7 +11,19 @@ import tempfile
 import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    Literal,
+)
 
 import numpy as np
 from gufe import SmallMoleculeComponent
@@ -30,6 +42,12 @@ from batter.utils import (
     tleap,
 )
 
+# type helpers
+LigandPath = Union[str, Path]
+LigandPathMap = Mapping[str, LigandPath]
+LigandPathSeq = Sequence[LigandPath]
+OnFailureMode = Optional[Literal["prune", "retry", "raise"]]
+
 __all__ = [
     "LigandProcessing",
     "PDB_LigandProcessing",
@@ -44,7 +62,7 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 
 # forbidden molecule names in MDA selection language and AMBER residue names
-FORBIDDEN_MOL_NAMES = {"add", "all", "and", "any", "not"}
+FORBIDDEN_MOL_NAMES = {"add", "all", "and", "any", "not", "set"}
 
 
 def _base26_triplet(n: int) -> str:
@@ -738,7 +756,7 @@ class LigandFactory:
 
 
 def batch_ligand_process(
-    ligand_paths: Union[List[str], Dict[str, str]],
+    ligand_paths: Union[LigandPathSeq, LigandPathMap],
     output_path: Union[str, Path],
     retain_lig_prot: bool = True,
     ligand_ph: float = 7.0,
@@ -749,6 +767,7 @@ def batch_ligand_process(
     max_slurm_jobs: int = 50,
     run_with_slurm_kwargs: Optional[Dict[str, Any]] = None,
     job_extra_directives: Optional[List[str]] = None,
+    on_failure: OnFailureMode = None,
 ) -> Tuple[List[str], Dict[str, Tuple[str, str]]]:
     """Parameterise ligands into a content-addressed store.
 
@@ -787,10 +806,13 @@ def batch_ligand_process(
         Mapping from the provided input path to ``(hash_id, canonical_smiles)``.
     """
     # --- normalize inputs ---
-    if isinstance(ligand_paths, list):
-        lig_map: Dict[str, str] = {f"lig{i}": p for i, p in enumerate(ligand_paths)}
+    def _norm(p: LigandPath) -> str:
+        return str(Path(p))
+
+    if isinstance(ligand_paths, (list, tuple)):
+        lig_map: Dict[str, str] = {f"lig{i}": _norm(p) for i, p in enumerate(ligand_paths)}
     else:
-        lig_map = dict(ligand_paths)
+        lig_map = {k: _norm(v) for k, v in ligand_paths.items()}
 
     for lp in lig_map.values():
         if not Path(lp).exists():
@@ -833,7 +855,8 @@ def batch_ligand_process(
         hash_order.append(unique[p][0])
 
     # --- build LigandProcessing objects for each unique hash ---
-    to_prepare: List[Tuple[str, "LigandProcessing"]] = []
+    to_prepare: List[Tuple[str, str, "LigandProcessing", str]] = []
+    success_paths: set[str] = set()
 
     factory = LigandFactory()
 
@@ -873,17 +896,52 @@ def batch_ligand_process(
         )
         if not overwrite and marker_any:
             logger.info("Reusing cached ligand @ {} ({})", hid, meta["prepared_base"])
+            # treat cached ligands as successful so they propagate downstream
+            success_paths.add(p)
         else:
-            to_prepare.append((lig_name, hid, lig))
+            to_prepare.append((lig_name, hid, lig, p))
 
     # --- perform parametrization (local or SLURM) ---
+    mode_lower = (on_failure or "").lower()
     if to_prepare:
         if run_with_slurm:
             raise NotImplementedError("Not implemented yet.")
         else:
-            for lig_name, hid, lig in to_prepare:
+            for lig_name, hid, lig, path in to_prepare:
                 logger.info(f"Preparing {lig_name} in {lig.output_dir}")
-                lig.prepare_ligand_parameters()
+                try:
+                    lig.prepare_ligand_parameters()
+                    success_paths.add(path)
+                except Exception as exc:
+                    if mode_lower in {"prune", "retry"}:
+                        logger.error(
+                            "[param_ligands] failed to prepare %s (hash=%s): %s — skipping due to on_failure=%s",
+                            lig_name,
+                            hid,
+                            exc,
+                            mode_lower,
+                        )
+                        continue
+                    raise
 
-    logger.success(f"Prepared all ligands into {out_root}")
-    return hash_order, unique
+    # filter outputs to successful ligands only
+    if not success_paths:
+        if mode_lower in {"prune", "retry"}:
+            logger.warning(f"[param_ligands] No ligands prepared successfully (on_failure={mode_lower}).")
+            return [], {}
+        logger.warning("[param_ligands] No ligands prepared successfully.")
+        return [], {}
+
+    unique_filtered: Dict[str, Tuple[str, str]] = {
+        p: unique[p] for p in success_paths if p in unique
+    }
+    hash_order_filtered: List[str] = []
+    for name, p in lig_map.items():
+        if p in success_paths and p in unique_filtered:
+            hash_order_filtered.append(unique_filtered[p][0])
+    skipped = len(lig_map) - len(success_paths)
+    logger.success(
+        f"Prepared {len(success_paths)} ligands into {out_root}"
+        f"{f' (skipped {skipped})' if skipped else ''}"
+    )
+    return hash_order_filtered, unique_filtered

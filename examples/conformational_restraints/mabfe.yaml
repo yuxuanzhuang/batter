@@ -40,8 +40,7 @@ fe_sim:
   blocks: 5
   eq_steps: 10000
   num_equil_extends: 6
-  z_steps1: 5000
-  z_steps2: 30000
+  z_n_steps: 30000
   cut: 9.0
   barostat: 1
   hmr: yes

@@ -44,7 +44,6 @@ protein binding site. The main steps are:
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
    to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
 #. **Analysis** – Once all windows complete, MBAR analysis is performed and
-   results are summarised in CSV/JSON formats with convergence plots. The worker pool for this stage follows ``run.max_workers``; optionally limit the trajectory range per window via ``fe_sim.analysis_fe_range`` (``[start, end]`` defaults to ``[2, -1]`` or ``[0, -1]`` when ``num_fe_extends < 4``).
 
 Installation
 ------------
@@ -66,9 +65,9 @@ Installation
 
 #. Create and activate a Conda environment (with ``environment.yml``)::
 
-       conda create -n batter_env python=3.12 -y
-       conda env update -n batter_env -f environment.yml
-       conda activate batter_env
+       conda create -n batter python=3.12 -y
+       conda env update -n batter -f environment.yml
+       conda activate batter
 
 #. Install editable copies of the bundled dependencies plus ``batter`` itself::
 
@@ -106,7 +105,9 @@ Required Files
    ``system_input.pdb`` must encode the correct unit-cell vectors (box information).
    If ``system_input.inpcrd`` is provided its coordinates take precedence.
    
-   The protein **does not** need to be aligned to ``protein_input.pdb`` and the alignment
+   ``protein_input.pdb`` **does not** need to be aligned to ``system_input.pdb``; it can be helpful in cases e.g.,
+   the protein structure used for docking (so all the docked poses are superposed to this protein) is oriented differently
+   from the membrane system. During system staging, the protein will be aligned to the membrane system, and the alignment
    will be done automatically based on the ``create.protein_align`` config setting.
 
    Systems from other builders (CHARMM-GUI, Maestro, etc.) may work but are not extensively tested.
@@ -127,7 +128,7 @@ Generating Simulation Inputs
 
    - ``run.output_folder`` – dedicated directory for outputs/logs.
    - ``create.system_name`` – label used in reports.
-   - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/ligand_dict.json``).
+   - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
    - ``create.anchor_atoms`` – choose stable backbone atoms (CA/C/N) with the guidelines below.
 
@@ -179,7 +180,7 @@ To submit the same run through SLURM::
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.). Copy and modify the default template from
-``batter/data/job_manager.sbatch``.
+``batter/data/job_manager.header`` + ``job_manager.body``.
 
 The job manager stages the system locally,
 writes an ``sbatch`` script based on the YAML hash, and streams updates as windows
@@ -220,7 +221,7 @@ Optional: Additional Conformational Restraints
 
 #. Use the restraint-generation notebook from
    `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
-   (or an equivalent script) to build a ``restraints.json`` describing the distance
+   or an equivalent script to build a ``restraints.json`` describing the distance
    constraints you need.
 
 #. Point ``create.extra_conformation_restraints`` at the resulting JSON file::

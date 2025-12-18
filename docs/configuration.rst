@@ -30,24 +30,28 @@ The run YAML file is divided into three sections grouped inside
     these map to :class:`batter.config.run.FESimArgs`. MD-only runs automatically
     coerce this section into :class:`batter.config.run.MDSimArgs`, so fields like
     ``lambdas`` or SDR restraints are no longer required. Equilibration controls
-    are expressed via ``eq_steps`` (steps per segment) and ``num_equil_extends``
-    (how many additional segments to run). A base segment always runs, so the
-    total equilibration work scales as ``(num_equil_extends + 1) * eq_steps``.
-    For FE production
-    the ``num_fe_extends`` field multiplies the stage-2 component steps defined in
-    ``steps2`` so each window ultimately samples
-    ``num_fe_extends * steps2[component]`` steps before moving on.
+    are expressed via ``eq_steps`` which now represents the **total** equilibration
+    steps. The value is written into ``mdin-template`` as ``! total_steps=<total>``,
+    letting runtime scripts determine the target length without regenerating inputs.
+    Legacy extend knobs (``num_equil_extends``, ``num_fe_extends``) are rejected; set
+    ``eq_steps``/``n_steps`` to total steps instead. ``analysis_range`` is likewise
+    disallowed—use ``analysis_start_step`` to skip early production frames. FE
+    production no longer chunks into extends; set ``n_steps`` to the total per-window
+    production steps. Those mdin templates also include ``! total_steps=<total>``;
+    ``run-local*.bash`` reads that marker plus the first ``nstlim`` it finds to choose
+    segment length and roll restart files between ``md-current.rst7``/``md-previous.rst7``
+    so interrupted runs resume cleanly.
 
 See Quick Reference below for links to individual config classes.
 
 Per-component steps and lambdas
 -------------------------------
 
-Stage-1/Stage-2 component steps are supplied via ``fe_sim.steps1`` and
-``fe_sim.steps2`` as dicts keyed by the single-letter component (e.g. ``z: 50000``).
-Keys like ``z_steps1``/``y_steps2`` are also accepted and folded into these
-maps automatically. Each protocol enforces the required components: ABFE fills
-``z`` defaults if omitted, and ASFE fills ``y``/``m`` defaults.
+Component steps are supplied via ``fe_sim.n_steps`` as dicts keyed by the
+single-letter component (e.g. ``z: 100000``). Keys like ``y_n_steps`` are also
+accepted and folded into this map automatically. Each protocol enforces the
+required components: ABFE fills ``z`` defaults if omitted, and ASFE fills
+``y``/``m`` defaults.
 
 Lambda schedules can be customized per component using ``fe_sim.component_lambdas``
 (or ``<comp>_lambdas`` keys). When a component is missing from that map, it
