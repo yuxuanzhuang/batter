@@ -29,6 +29,7 @@ Minimal factory example
 .. code-block:: python
 
    # batter/pipeline/factory.py
+   from batter.pipeline.pipeline import Pipeline
    from batter.pipeline.step import Step
    from batter.pipeline.payloads import StepPayload
    from batter.pipeline.factory import _step
