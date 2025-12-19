@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, List
+import re
 
 from loguru import logger
 
@@ -205,6 +206,17 @@ def patch_component_inputs(
                 remd_numexchg=numexchg_val,
             ):
                 patched.append(dst01)
+            # write a template with total_steps marker for runtime chunking
+            tmpl = window_dir / "mdin-remd-template"
+            if not tmpl.exists():
+                # prefer configured remd_nstlim; fall back to parsing the file
+                total_steps = nstlim_val
+                if total_steps is None:
+                    m = re.search(r"nstlim\s*=\s*([0-9]+)", dst01.read_text())
+                    if m:
+                        total_steps = int(m.group(1))
+                if total_steps:
+                    tmpl.write_text(f"! total_steps={total_steps}\n{dst01.read_text()}")
 
     if patched:
         logger.debug(f"[remd] Patched {len(patched)} mdin files under {comp_dir}")
