@@ -114,7 +114,7 @@ class LocalBackend(ExecBackend):
         max_workers: Optional[int] = None,
         description: str = "",
         batch_size: str | int = "auto",
-        verbose: int = 0,
+        verbose: int = 10,
         prefer: str = "processes",
         backend: Optional[str] = None,
     ) -> Dict[str, Mapping[str, ExecResult]]:
@@ -194,6 +194,7 @@ class LocalBackend(ExecBackend):
             prefer=prefer,
             batch_size=batch_size,
             verbose=verbose,
+            max_nbytes=None,
         )(
             delayed(_run_pipeline_task)(pipeline, self, sys)
             for sys in systems
