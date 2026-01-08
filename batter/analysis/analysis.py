@@ -208,7 +208,9 @@ class MBARAnalysis(FEAnalysisBase):
         if self.load and os.path.exists(pkl):
             with open(pkl, "rb") as f:
                 df_list = pickle.load(f)
+                logger.debug(f"[MBARAnalysis] Loaded cached data from {pkl}")
         else:
+            logger.debug(f"[MBARAnalysis] Parsing data for component {self.component}")
             df_list = self._get_data_list()
 
         self._data_list = df_list
@@ -282,6 +284,7 @@ class MBARAnalysis(FEAnalysisBase):
         analysis_start_step: int,
         truncate: bool,
         dt: float = 0.004,
+        log_level: int = logging.WARNING,
     ) -> pd.DataFrame:
         """
         Extract reduced potentials for a single window.
@@ -308,7 +311,8 @@ class MBARAnalysis(FEAnalysisBase):
         pandas.DataFrame
             Reduced potentials referenced to ``win_i`` in units of ``kT``.
         """
-        logger.remove()
+        logger.add(sys.stderr, level=log_level)
+        logger.debug(f"[MBARAnalysis] Extracting window {component}{win_i:02d}")
         win_dir = f"{comp_folder}/{component}{win_i:02d}"
         patterns = [f"{win_dir}/mdin-*.out", f"{win_dir}/md-*.out"]
         mdouts: List[str] = []
@@ -338,24 +342,42 @@ class MBARAnalysis(FEAnalysisBase):
         # Drop early frames if requested (convert steps -> ps)
         if analysis_start_step > 0:
             threshold = analysis_start_step * dt
-            logger.debug(
-                f"[MBARAnalysis] {component}{win_i:02d} dropping frames <= {threshold} ps "
-            )
-            df = df[df.index.get_level_values(0) > threshold]
-
+            if threshold > df.index.get_level_values(0).max():
+                logger.warning(
+                    f"[MBARAnalysis] {component}{win_i:02d} WARNING: "
+                    f"analysis_start_step={analysis_start_step} exceeds max time "
+                    f"in data ({df.index.get_level_values(0).max()/dt:.0f} steps)! "
+                    f"keeping all frames."
+                )
+            
+            else:
+                logger.debug(
+                    f"[MBARAnalysis] {component}{win_i:02d} dropping frames <= {threshold} ps "
+                )
+                df = df[df.index.get_level_values(0) > threshold]
+                # reduce index to start from zero time
+                df.index = df.index.set_levels(
+                    df.index.levels[0] - threshold,
+                    level=0
+                )
+        # Mixed precision spikes guard
+        df = exclude_outliers(df, iclam=win_i)
+        
         # detect_equilibration on the reference column of this window
-        if truncate and df.shape[1] > win_i:
+        if truncate:
             with SilenceAlchemlybOnly():
                 t0, _, _ = detect_equilibration(df.iloc[:, win_i], nskip=10)
-            # time is level 0 of the MultiIndex
-            df = df[df.index.get_level_values(0) > t0]
-
+            logger.debug(f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}")
+            df = df.iloc[t0:, :]
         # subtract reference (this window) to yield reduced potentials
         ref = df.iloc[:, win_i]
         df = df.subtract(ref, axis=0)
 
-        # Mixed precision spikes guard
-        df = exclude_outliers(df, iclam=win_i)
+        logger.debug(f"[MBARAnalysis] {component}{win_i:02d} final data shape: {df.shape}")
+        if df.empty:
+            # reuse the full df
+            df = pd.concat(dfs)
+            logger.warning(f"[MBARAnalysis] {component}{win_i:02d} WARNING: returning untruncated data!")
         return df
 
     def _get_data_list(self) -> List[pd.DataFrame]:
@@ -807,7 +829,7 @@ def generate_results_rest(md_sim_files: List[str], comp: str, blocks: int = 5, t
 # ---- lig wrapper ------------------------------------------------------------
 
 def analyze_lig_task(
-    fe_folder: str,
+    lig_path: str,
     lig: str,
     components: List[str],
     rest: Tuple[float, float, float, float, float],
@@ -823,9 +845,8 @@ def analyze_lig_task(
     ntwx: int = 0,
 ):
     """
-    Analyze one lig under fe_folder/lig for the requested components.
+    Analyze one lig under lig_path for the requested components.
     """
-    lig_path = f"{fe_folder}/{lig}"
     os.makedirs(f"{lig_path}/Results", exist_ok=True)
 
     results_entries: List[str] = []
@@ -913,6 +934,9 @@ def analyze_lig_task(
                 fe_timeseries[comp] = ana.results["fe_timeseries"]
                 results_entries.append(f"{comp}\t{COMPONENT_DIRECTION_DICT[comp]*ana.results['fe']:.2f}\t{ana.results['fe_error']:.2f}")
 
+        logger.debug(f"[analyze_lig] {lig} combining components for total FE")
+        logger.debug(f"  component FE values: {fe_values}")
+        logger.debug(f"  component FE stds:   {fe_stds}")
         # total FE and timeseries (sum in quadrature for std)
         fe_value = float(np.sum(fe_values)) if fe_values else float("nan")
         fe_std = float(np.sqrt(np.sum(np.array(fe_stds) ** 2))) if fe_stds else float("nan")

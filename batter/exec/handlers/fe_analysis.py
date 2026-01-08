@@ -125,11 +125,10 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     logger.debug(f"[analyze:{lig}] Starting FE analysis "
                 f"(components={components}, T={temperature}K, rocklin={rocklin_correction}, mol={mol})")
 
-    # We treat the ligand’s fe/ folder itself as “lig” root (lig = ".")
     try:
         analyze_lig_task(
-            fe_folder=str(fe_root),
-            lig='.',
+            lig_path=system.root / "fe",
+            lig=lig,
             components=components,
             rest=rest,
             temperature=temperature,

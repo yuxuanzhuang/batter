@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 # AMBER Constants
 PMEMD_EXEC=${PMEMD_EXEC:-pmemd.cuda}
@@ -27,32 +28,31 @@ if [[ -f FINISHED ]]; then
 fi
 
 if [[ -f FAILED ]]; then
-    rm FAILED
+    rm -f FAILED
 fi
 
 source check_run.bash
 
+# ------------------------- only_eq mode -------------------------
 if [[ $only_eq -eq 1 ]]; then
-    # no eq needed, just copy the INPCRD to mini.in.rst7
-    cp $INPCRD mini.rst7
-    check_sim_failure "Minimization" "$log_file" mini.rst7
+    # no equilibration needed here; just seed a restart
+    cp "$INPCRD" mini.rst7
+    check_sim_failure "Seed restart" "$log_file" mini.rst7
 
-    # run minimization for each windows at this stage
+    # propagate restart to each window folder
     for i in $(seq 0 $((NWINDOWS - 1))); do
-        win_folder=$(printf "../COMPONENT%02d" $i)
-        if [[ -s $win_folder/mini.rst7 ]]; then
-            echo "Skipping minimization for window $i, already exists."
+        win_folder=$(printf "../COMPONENT%02d" "$i")
+        if [[ -s "$win_folder/mini.rst7" ]]; then
+            echo "Skipping seed for window $i, already exists."
         else
-            echo "Running minimization for window $i"
-            cd $win_folder
-            cp ../COMPONENT-1/mini.rst7 mini.in.rst7
-            cd ../COMPONENT-1
+            echo "Seeding window $i"
+            cp "mini.rst7" "$win_folder/mini.rst7"
         fi
     done
 
     print_and_run "cpptraj -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
 
-    echo "Only equilibration requested and finished."
+    echo "Only seeding requested and finished."
     if [[ -s eq_output.pdb ]]; then
         echo "EQ_FINISHED" > EQ_FINISHED
         echo "Job completed at $(date)"
@@ -60,6 +60,7 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
+# ------------------------- production mode -------------------------
 tmpl="mdin-template"
 mdin_current="mdin-current"
 
@@ -68,60 +69,101 @@ if [[ ! -f $tmpl ]]; then
     exit 1
 fi
 
+dt_ps=$(parse_dt_ps "$tmpl")
 total_steps=$(parse_total_steps "$tmpl")
 chunk_steps=$(parse_nstlim "$tmpl")
-current_steps=$(completed_steps "$tmpl")
-echo "Current completed steps: $current_steps / $total_steps"
 
-last_rst="mini.in.rst7"
+# Convert steps -> ps for loop control
+total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
+chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-while [[ $current_steps -lt $total_steps ]]; do
-    remaining=$((total_steps - current_steps))
-    run_steps=$chunk_steps
-    if [[ $remaining -lt $chunk_steps ]]; then
-        run_steps=$remaining
+# Progress from OUT only (TIME(PS)); completed_steps() should also handle:
+# "if latest out is 0 ps -> use previous + delete bad latest out"
+current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+[[ -z $current_ps ]] && current_ps=0
+
+echo "Current completed time (from OUT): $current_ps ps / $total_ps ps (dt=$dt_ps ps)"
+
+# Determine current segment index from existing OUT files
+seg_idx=$(latest_md_index "md-*.out")
+if [[ $seg_idx -lt 0 ]]; then
+    seg_idx=0
+fi
+
+# Choose initial restart input (needed to run, not for progress)
+rst_in="mini.in.rst7"
+if [[ -s md-current.rst7 ]]; then
+    rst_in="md-current.rst7"
+elif [[ -s md-previous.rst7 ]]; then
+    rst_in="md-previous.rst7"
+fi
+
+if [[ ! -s $rst_in ]]; then
+    echo "[ERROR] Missing restart file $rst_in; cannot continue."
+    exit 1
+fi
+
+last_rst="md-current.rst7"
+
+while awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; do
+    remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
+
+    run_ps="$chunk_ps"
+    if awk -v rem="$remaining_ps" -v ch="$chunk_ps" 'BEGIN{exit !(rem < ch)}'; then
+        run_ps="$remaining_ps"
     fi
 
-    seg_idx=$(( (current_steps + chunk_steps - 1) / chunk_steps ))
+    # Convert back to steps ONLY for writing nstlim
+    run_steps=$(awk -v ps="$run_ps" -v dt="$dt_ps" 'BEGIN{printf "%d\n", ps/dt}')
+    (( run_steps > 0 )) || { echo "[ERROR] Computed run_steps=0 (dt=$dt_ps, run_ps=$run_ps)"; exit 1; }
 
-    rst_prev="mini.in.rst7"
-    if [[ -s md-current.rst7 ]]; then
-        rst_prev="md-current.rst7"
+    # first_run if no md-*.out exists yet
+    first_run=0
+    if [[ $(latest_md_index "md-*.out") -lt 0 ]]; then
+        first_run=1
     fi
 
-    if [[ ! -f $rst_prev ]]; then
-        echo "[ERROR] Missing restart file $rst_prev; cannot continue."
+    out_tag=$(printf "md-%02d" $((seg_idx + 1)))
+    echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
+
+    write_mdin_current "$tmpl" "$run_steps" "$first_run" > "$mdin_current"
+
+    # Preflight: ensure output directory writable (avoids Fortran OPEN errors)
+    : > .write_test.$$ 2>/dev/null || {
+        echo "[ERROR] Cannot write in $(pwd). Check permissions/quota."
+        df -h . || true
         exit 1
-    fi
+    }
+    rm -f .write_test.$$
 
+    # Rotate restart outputs
     if [[ -f md-current.rst7 ]]; then
-        if [[ ! -s md-current.rst7 ]]; then
-            echo "[ERROR] Found md-current.rst7 but file is empty; aborting to avoid corrupt restart."
-            exit 1
-        fi
+        [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
         mv -f md-current.rst7 md-previous.rst7
-        rst_prev="md-previous.rst7"
     fi
 
-    echo "[INFO] Using restart $rst_prev -> md-current.rst7 for segment $((seg_idx + 1))"
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7"
 
-    write_mdin_current "$tmpl" "$run_steps" $((current_steps == 0 ? 1 : 0)) > "$mdin_current"
+    # Update progress from OUT only
+    current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    [[ -z $current_ps ]] && current_ps=0
+    echo "[INFO] Updated completed time (from OUT): $current_ps ps / $total_ps ps"
 
-    out_tag=$(printf "md-%02d" "$((seg_idx + 1))")
-    rst_out="md-current.rst7"
-
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_prev -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out"
-
-    current_steps=$((current_steps + run_steps))
-    last_rst="$rst_out"
+    # advance
+    seg_idx=$((seg_idx + 1))
+    rst_in="md-current.rst7"
+    last_rst="md-current.rst7"
 done
 
 print_and_run "cpptraj -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
 
-# check output.pdb exists
-# to catch cases where the simulation did not run to completion
+# check output.pdb exists to catch cases where the simulation did not run to completion
 if [[ -s output.pdb ]]; then
     echo "FINISHED" > FINISHED
     exit 0
 fi
+
+echo "[ERROR] output.pdb not created or empty; marking FAILED."
+echo "FAILED" > FAILED
+exit 1

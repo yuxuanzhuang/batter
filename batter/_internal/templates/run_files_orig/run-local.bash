@@ -36,6 +36,8 @@ if [[ -z "${MPI_FLAGS}" ]]; then
 fi
 MPI_LAUNCH="${MPI_EXEC} ${MPI_FLAGS}"
 
+source check_run.bash
+
 if [[ -f FINISHED ]]; then
     echo "Simulation is complete."
     report_progress
@@ -43,10 +45,9 @@ if [[ -f FINISHED ]]; then
 fi
 
 if [[ -f FAILED ]]; then
-    rm FAILED
+    rm -f FAILED
 fi
 
-source check_run.bash
 report_progress
 
 if [[ $only_eq -eq 1 ]]; then
@@ -161,60 +162,101 @@ if [[ ! -f $tmpl ]]; then
     exit 1
 fi
 
+dt_ps=$(parse_dt_ps "$tmpl")
 total_steps=$(parse_total_steps "$tmpl")
 chunk_steps=$(parse_nstlim "$tmpl")
-current_steps=$(completed_steps "$tmpl")
-echo "Current completed steps: $current_steps / $total_steps"
 
-last_rst="eq.rst7"
+# Convert steps -> ps (loop is time-based)
+total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
+chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-while [[ $current_steps -lt $total_steps ]]; do
-    remaining=$((total_steps - current_steps))
-    run_steps=$chunk_steps
-    if [[ $remaining -lt $chunk_steps ]]; then
-        run_steps=$remaining
+# Progress from OUT only (completed_steps prints a single number to STDOUT)
+current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+[[ -z $current_ps ]] && current_ps=0
+
+echo "Current completed time (from OUT): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
+
+# Determine current segment index from existing OUT files
+seg_idx=$(latest_md_index "md-*.out")
+if [[ $seg_idx -lt 0 ]]; then
+    seg_idx=0
+fi
+
+# Choose restart input (needed to run; NOT used for progress)
+rst_in="eq.rst7"
+if [[ -s md-current.rst7 ]]; then
+    rst_in="md-current.rst7"
+elif [[ -s md-previous.rst7 ]]; then
+    rst_in="md-previous.rst7"
+fi
+
+[[ -s "$rst_in" ]] || {
+    echo "[ERROR] Missing restart file $rst_in; cannot continue."
+    exit 1
+}
+
+last_rst="md-current.rst7"
+
+while awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; do
+    remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
+
+    run_ps="$chunk_ps"
+    if awk -v rem="$remaining_ps" -v ch="$chunk_ps" 'BEGIN{exit !(rem < ch)}'; then
+        run_ps="$remaining_ps"
     fi
 
-    seg_idx=$(( (current_steps + chunk_steps - 1) / chunk_steps ))
+    # Convert to steps for nstlim
+    run_steps=$(awk -v ps="$run_ps" -v dt="$dt_ps" 'BEGIN{printf "%d\n", ps/dt}')
+    (( run_steps > 0 )) || { echo "[ERROR] Computed run_steps=0 (dt=$dt_ps, run_ps=$run_ps)"; exit 1; }
 
-    rst_prev="eq.rst7"
-    if [[ -s md-current.rst7 ]]; then
-        rst_prev="md-current.rst7"
+    # first_run if no md-*.out exists yet
+    first_run=0
+    if [[ $(latest_md_index "md-*.out") -lt 0 ]]; then
+        first_run=1
     fi
 
-    if [[ ! -f $rst_prev ]]; then
-        echo "[ERROR] Missing restart file $rst_prev; cannot continue."
+    out_tag=$(printf "md-%02d" $((seg_idx + 1)))
+    echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
+
+    write_mdin_current "$tmpl" "$run_steps" "$first_run" > "$mdin_current"
+
+    # Preflight: must be able to write restart output in this directory
+    : > .write_test.$$ 2>/dev/null || {
+        echo "[ERROR] Cannot write in $(pwd). Check permissions/quota."
+        df -h . || true
         exit 1
-    fi
+    }
+    rm -f .write_test.$$
 
+    # Rotate md-current restart (avoid Fortran OPEN issues / keep backup)
     if [[ -f md-current.rst7 ]]; then
-        if [[ ! -s md-current.rst7 ]]; then
-            echo "[ERROR] Found md-current.rst7 but file is empty; aborting to avoid corrupt restart."
-            exit 1
-        fi
+        [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
         mv -f md-current.rst7 md-previous.rst7
-        rst_prev="md-previous.rst7"
     fi
 
-    echo "[INFO] Using restart $rst_prev -> md-current.rst7 for segment $((seg_idx + 1))"
+    # Run MD: always write restart to md-current.rst7
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eq.rst7 >> \"$log_file\" 2>&1"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7"
 
-    write_mdin_current "$tmpl" "$run_steps" $((current_steps == 0 ? 1 : 0)) > "$mdin_current"
+    # Update progress (OUT only). completed_steps will:
+    # - if latest out has 0 ps, use previous and delete the bad latest.
+    current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    [[ -z $current_ps ]] && current_ps=0
+    echo "[INFO] Updated completed time (from OUT): ${current_ps} ps / ${total_ps} ps"
 
-    out_tag=$(printf "md-%02d" "$((seg_idx + 1))")
-    rst_out="md-current.rst7"
-
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_prev -o ${out_tag}.out -r $rst_out -x ${out_tag}.nc -ref eq.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "$rst_out"
-
-    current_steps=$((current_steps + run_steps))
-    last_rst="$rst_out"
+    # Advance for next loop
+    seg_idx=$((seg_idx + 1))
+    rst_in="md-current.rst7"
+    last_rst="md-current.rst7"
 done
 
 print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
 
-# check output.pdb exists
-# to catch cases where the simulation did not run to completion
 if [[ -s output.pdb ]]; then
     echo "FINISHED" > FINISHED
     exit 0
 fi
+
+echo "[ERROR] output.pdb not created or empty; marking FAILED."
+echo "FAILED" > FAILED
+exit 1
