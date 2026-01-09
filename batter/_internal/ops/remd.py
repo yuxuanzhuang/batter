@@ -10,8 +10,6 @@ from batter.config.simulation import SimulationConfig
 from batter.utils.components import COMPONENTS_DICT
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
-# Default REMD exchange settings to mirror legacy batching behaviour (overridden by config).
-NUMEXCHG_DEFAULT = 3000
 BAR_INTERVAL_DEFAULT = 100
 
 
@@ -59,10 +57,12 @@ def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str],
     """
     Insert numexchg/bar_intervall into the &cntrl block if missing.
     """
+    if numexchg is None:
+        return lines, False
     out: List[str] = []
     in_cntrl = False
     inserted = False
-    num_val = numexchg or NUMEXCHG_DEFAULT
+    num_val = numexchg
 
     for line in lines:
         lower = line.lower().strip()
@@ -206,15 +206,18 @@ def patch_component_inputs(
         tmpl = window_dir / "mdin-remd-template"
         if not tmpl.exists() and base_template.exists():
             tmpl.write_text(base_template.read_text())
+            total_steps = comp_total_steps or _extract_total_steps(
+                base_template.read_text()
+            )
+            remd_exchg = None
+            if total_steps and nstlim_val:
+                remd_exchg = (total_steps + nstlim_val - 1) // nstlim_val
             changed = patch_mdin_file(
                 tmpl,
                 prefix,
                 add_numexchg=add_numexchg,
                 remd_nstlim=nstlim_val,
-                remd_numexchg=numexchg_val,
-            )
-            total_steps = comp_total_steps or _extract_total_steps(
-                base_template.read_text()
+                remd_numexchg=remd_exchg,
             )
             if not total_steps:
                 total_steps = nstlim_val or 0
