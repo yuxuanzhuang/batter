@@ -169,7 +169,7 @@ if [[ $seg_idx -lt 0 ]]; then
     seg_idx=0
 fi
 
-while awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; do
+if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; then
     remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 
     run_ps="$chunk_ps"
@@ -213,19 +213,19 @@ while awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; do
     [[ -z $current_ps ]] && current_ps=0
     echo "[INFO] Updated completed time (from OUT): $current_ps ps / $total_ps ps"
 
-    # advance
-    seg_idx=$((seg_idx + 1))
     rst_in="md-current.rst7"
     last_rst="md-current.rst7"
-done
-
-print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
-
-if [[ -s output.pdb ]]; then
-    echo "FINISHED" > FINISHED
-    exit 0
 fi
 
-echo "[ERROR] output.pdb not created or empty; marking FAILED."
-echo "FAILED" > FAILED
-exit 1
+if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
+
+    if [[ -s output.pdb ]]; then
+        echo "FINISHED" > FINISHED
+        exit 0
+    fi
+
+    echo "[ERROR] output.pdb not created or empty; marking FAILED."
+    echo "FAILED" > FAILED
+    exit 1
+fi

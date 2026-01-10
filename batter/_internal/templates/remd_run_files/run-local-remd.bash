@@ -19,7 +19,11 @@ COMP=${COMP:-$(basename "$PWD")}
 log_file="${PFOLDER}/run.log"
 retry=${RETRY_COUNT:-0}
 
-source check_run.bash
+if [[ ! -f ./check_run.bash ]]; then
+    echo "[ERROR] Missing check_run.bash in ${PFOLDER}; cannot continue."
+    exit 1
+fi
+source ./check_run.bash
 
 # Write a REMD mdin current file:
 # - keep nstlim fixed to the REMD interval
@@ -60,6 +64,44 @@ write_mdin_remd_current() {
     echo "$text"
 }
 
+# Determine completed time (ps) and latest mdin-*.out index for window 0.
+remd_progress() {
+    local win0=$1
+    local pattern=$2
+    local idx tps prev_idx prev_out prev_tps mdout
+    idx=$(highest_out_index_for_pattern "$pattern")
+    if [[ $idx -lt 0 ]]; then
+        echo "0 -1"
+        return
+    fi
+    mdout=$(printf "%s/mdin-%02d.out" "$win0" "$idx")
+    [[ -f $mdout ]] || mdout=$(printf "%s/mdin-%d.out" "$win0" "$idx")
+    if [[ ! -f $mdout ]]; then
+        echo "0 -1"
+        return
+    fi
+    tps=$(completed_time_ps_from_out "$mdout")
+    if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
+        prev_idx=$((idx - 1))
+        if (( prev_idx >= 0 )); then
+            prev_out=$(printf "%s/mdin-%02d.out" "$win0" "$prev_idx")
+            [[ -f $prev_out ]] || prev_out=$(printf "%s/mdin-%d.out" "$win0" "$prev_idx")
+            if [[ -f $prev_out ]]; then
+                prev_tps=$(completed_time_ps_from_out "$prev_out")
+                if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
+                    echo "[WARN] Latest out $mdout has 0 ps; using $prev_out (TIME(PS)=$prev_tps) and removing $mdout" >&2
+                    rm -f "$mdout"
+                    echo "$prev_tps $prev_idx"
+                    return
+                fi
+            fi
+        fi
+        echo "0 -1"
+        return
+    fi
+    echo "$tps $idx"
+}
+
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"
@@ -97,32 +139,28 @@ fi
 
 total_steps=$(parse_total_steps "$tmpl0")
 chunk_steps=$(parse_nstlim "$tmpl0")
-last_idx=$(highest_index_for_pattern "${PFOLDER}/${WIN0}/mdin-*.out")
-if [[ $last_idx -lt 0 ]]; then
-    current_steps=0
-else
-    mdout=$(printf "%s/%s/mdin-%02d.out" "$PFOLDER" "$WIN0" "$last_idx")
-    if [[ ! -f $mdout ]]; then
-        mdout=$(printf "%s/%s/mdin-%d.out" "$PFOLDER" "$WIN0" "$last_idx")
-    fi
-    if [[ ! -f $mdout ]]; then
-        current_steps=$(( (last_idx + 1) * chunk_steps ))
-    else
-        nstep=$(grep "NSTEP" "$mdout" | tail -1 | awk '{for(i=1;i<=NF;i++){if($i=="NSTEP"){print $(i+2); exit}}}')
-        if [[ -z $nstep ]]; then
-            current_steps=$(( (last_idx + 1) * chunk_steps ))
-        else
-            current_steps=$nstep
-        fi
-    fi
-fi
+dt_ps=$(parse_dt_ps "$tmpl0")
+total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-while [[ $current_steps -lt $total_steps ]]; do
-    remaining=$((total_steps - current_steps))
+read current_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+[[ -z $current_ps ]] && current_ps=0
+
+echo "Current completed time (from OUT): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
+
+if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; then
+    remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
+
+    run_ps="$remaining_ps"
+
+    run_steps=$(awk -v ps="$run_ps" -v dt="$dt_ps" 'BEGIN{printf "%d\n", ps/dt}')
+    (( run_steps > 0 )) || { echo "[ERROR] Computed run_steps=0 (dt=$dt_ps, run_ps=$run_ps)"; exit 1; }
+
     # numexchg controls total steps for REMD (steps = nstlim * numexchg)
-    run_exchg=$(( (remaining + chunk_steps - 1) / chunk_steps ))
+    run_exchg=$(( (run_steps + chunk_steps - 1) / chunk_steps ))
+    (( run_exchg > 0 )) || { echo "[ERROR] Computed run_exchg=0"; exit 1; }
+
     seg_idx=$((last_idx + 1))
-    first_run=$([[ $current_steps -eq 0 ]] && echo 1 || echo 0)
+    first_run=$([[ $last_idx -lt 0 ]] && echo 1 || echo 0)
 
     # Build per-window mdin and groupfile for this segment
     groupfile="${PFOLDER}/remd/mdin.in.remd.groupfile"
@@ -137,12 +175,21 @@ while [[ $current_steps -lt $total_steps ]]; do
         current_mdin="${PFOLDER}/${win}/mdin-remd-current"
         write_mdin_remd_current "$tmpl" "$chunk_steps" "$run_exchg" "$first_run" > "$current_mdin"
 
-        prev_rst="mini.in.rst7"
-        if [[ $seg_idx -gt 0 ]]; then
-            prev_rst=$(printf "mdin-%02d.rst7" $((seg_idx - 1)))
+        # Determine restart input per window (prefer rolling restarts, else eq.rst7)
+        rst_in="eq.rst7"
+        if [[ -s "${win}/md-current.rst7" ]]; then
+            mv -f "${win}/md-current.rst7" "${win}/md-previous.rst7"
+            rst_in="md-previous.rst7"
+        elif [[ -s "${win}/md-previous.rst7" ]]; then
+            rst_in="md-previous.rst7"
         fi
-        out_tag=$(printf "mdin-%02d" "$seg_idx")
-        echo "-O -i ${win}/mdin-remd-current -p ${PRMTOP} -c ${win}/${prev_rst} -o ${win}/${out_tag}.out -r ${win}/${out_tag}.rst7 -x ${win}/${out_tag}.nc -ref ${win}/mini.in.rst7 -inf ${win}/mdinfo -l ${win}/${out_tag}.log -e ${win}/${out_tag}.mden" >> "$groupfile"
+        if [[ ! -s "${win}/${rst_in}" ]]; then
+            echo "[ERROR] Missing restart file ${win}/${rst_in}; cannot continue."
+            exit 1
+        fi
+
+        out_tag=$(printf "md-%02d" "$seg_idx")
+        echo "-O -i ${win}/mdin-remd-current -p ${win}/${PRMTOP} -c ${win}/${rst_in} -o ${win}/${out_tag}.out -r ${win}/md-current.rst7 -x ${win}/${out_tag}.nc -ref ${win}/eq.rst7 -inf ${win}/mdinfo -l ${win}/${out_tag}.log -e ${win}/${out_tag}.mden" >> "$groupfile"
     done
 
     # keep a compat copy for older tooling
@@ -151,8 +198,11 @@ while [[ $current_steps -lt $total_steps ]]; do
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${seg_idx}.log"
     print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${groupfile} >> \"$log_file\" 2>&1"
 
-    current_steps=$((current_steps + (run_exchg * chunk_steps)))
-    last_idx=$((last_idx + 1))
-done
+    read current_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+    [[ -z $current_ps ]] && current_ps=0
+fi
 
-echo "FINISHED" > ${PFOLDER}/FINISHED
+if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+    echo "FINISHED" > ${PFOLDER}/FINISHED
+    exit 0
+fi
