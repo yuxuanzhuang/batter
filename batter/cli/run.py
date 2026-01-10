@@ -322,6 +322,12 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
         windows_counts = _load_windows_counts(lig_dir / "fe")
         for comp in comps:
             comp_dir = (lig_dir / "fe" / comp).resolve()
+            finished_marker = comp_dir / "FINISHED"
+            if finished_marker.exists():
+                logger.info(
+                    f"[remd-batch] {comp_dir} already finished; skipping."
+                )
+                continue
             run_script = comp_dir / "run-local-remd.bash"
             if not run_script.is_file():
                 logger.warning(
@@ -653,7 +659,7 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
     "--gpus",
     type=int,
     default=None,
-    help="Total GPUs to request; defaults to the maximum REMD window count found.",
+    help="Total GPUs to request; defaults to the total REMD window count found.",
 )
 @click.option(
     "--nodes",
@@ -664,8 +670,9 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
 @click.option(
     "--gpus-per-node",
     type=int,
-    default=None,
-    help="GPUs available per node (used to infer nodes from total GPUs).",
+    default=8,
+    show_default=True,
+    help="GPUs available per node (used to size per-task node allocations).",
 )
 def remd_batch(
     execution: tuple[Path, ...],
@@ -695,20 +702,47 @@ def remd_batch(
                 continue
             seen.add(t.comp_dir)
             tasks.append(t)
+            win_note = t.n_windows if t.n_windows else "unknown"
+            logger.info(
+                f"[remd-batch] Queued {t.comp_dir} (windows={win_note})."
+            )
 
     if not tasks:
         raise click.ClickException(
-            "No REMD component folders with run-local-remd.bash found under the provided paths."
+            "No unfinished REMD component folders found under the provided paths."
         )
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
-    max_windows = max((t.n_windows or 0) for t in tasks)
-    total_windows = sum(t.n_windows or 0 for t in tasks)
-    gpu_request = gpus or (total_windows if total_windows > 0 else None)
-    node_request = nodes
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
         gpus_per_node_resolved = _infer_header_gpus_per_node(header_root)
+    if gpus_per_node_resolved is None:
+        gpus_per_node_resolved = 8
+    if gpus_per_node_resolved <= 0:
+        raise click.ClickException("--gpus-per-node must be >= 1.")
+
+    task_specs: list[tuple[RemdTask, int, int]] = []
+    total_windows = 0
+    max_windows = 0
+    total_nodes_needed = 0
+    for t in tasks:
+        n_windows = t.n_windows
+        if n_windows <= 0:
+            logger.warning(
+                f"[remd-batch] Could not determine windows for {t.comp_dir}; "
+                "assuming 1 for resource sizing."
+            )
+            n_windows = 1
+        nodes_needed = int(math.ceil(n_windows / float(gpus_per_node_resolved)))
+        task_specs.append((t, n_windows, nodes_needed))
+        total_windows += n_windows
+        max_windows = max(max_windows, n_windows)
+        total_nodes_needed += nodes_needed
+
+    gpu_request = gpus or (total_windows if total_windows > 0 else None)
+    node_request = nodes
+    if node_request is None and total_nodes_needed > 0:
+        node_request = total_nodes_needed
 
     job_hash = _hash_path_list(exec_paths)
     job_name = f"fep_remd_batch_{job_hash}"
@@ -717,22 +751,39 @@ def remd_batch(
         'echo "Job started at $(date)"',
         "status=0",
         "pids=()",
+        'mpi_base=$(echo "${MPI_EXEC:-mpirun}" | awk \'{print $1}\')',
+        'mpi_base=${mpi_base##*/}',
+        "use_srun=0",
+        'if [[ "${mpi_base}" == srun* ]]; then',
+        "  use_srun=1",
+        "fi",
         "run_remd_task() {",
         '  local label="$1"',
         '  local dir="$2"',
         '  local win="$3"',
+        '  local nodes="$4"',
         '  echo "Running ${label}${win:+ (windows=${win})}"',
-        '  ( cd "$dir" && bash ./run-local-remd.bash ) || status=1',
+        '  local mpi_flags="${MPI_FLAGS:-}"',
+        '  if [[ "$use_srun" -eq 1 && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
+        '    local extra_flags="--nodes=${nodes} --ntasks=${win} --exclusive --gpus-per-task=1"',
+        '    if [[ -n "$mpi_flags" ]]; then',
+        '      mpi_flags="${mpi_flags} ${extra_flags}"',
+        "    else",
+        '      mpi_flags="${extra_flags}"',
+        "    fi",
+        "  fi",
+        '  ( cd "$dir" && MPI_FLAGS="$mpi_flags" bash ./run-local-remd.bash ) || status=1',
         "}",
         "",
     ]
 
-    for t in tasks:
+    for t, n_windows, nodes_needed in task_specs:
         label = f"{t.ligand}/{t.component}"
         if t.execution.name:
             label = f"{t.execution.name}/{label}"
-        win_arg = f"{t.n_windows}" if t.n_windows else ""
-        body_lines.append(f'run_remd_task "{label}" "{t.comp_dir}" "{win_arg}" &')
+        body_lines.append(
+            f'run_remd_task "{label}" "{t.comp_dir}" "{n_windows}" "{nodes_needed}" &'
+        )
         body_lines.append('pids+=($!)')
 
     body_lines.append("")
@@ -797,7 +848,8 @@ def remd_batch(
     click.echo(
         f"Components queued: {len(tasks)} | max windows: {max_windows or 'unknown'} | "
         f"total windows: {total_windows or 'unknown'} | GPUs: {gpu_request or 'unset'} | "
-        f"nodes: {node_request or 'unset'} | job-name: {job_name}"
+        f"nodes: {node_request or 'unset'} | gpus-per-node: {gpus_per_node_resolved} | "
+        f"job-name: {job_name}"
     )
 
 

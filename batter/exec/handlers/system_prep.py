@@ -301,10 +301,8 @@ class _SystemPrepRunner:
             membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
             if len(membrane_ag) == 0:
                 logger.warning(
-                    "No membrane atoms found with resname {}. Available resnames are {}. "
+                    f"No membrane atoms found with resname {self.lipid_mol}. Available resnames are {list(np.unique(u_sys.atoms.resnames))}. "
                     "Please check the lipid_mol parameter.",
-                    self.lipid_mol,
-                    list(np.unique(u_sys.atoms.resnames)),
                 )
             else:
                 with open(f"{build_files_orig}/memb_opls2charmm.json", "r") as f:
@@ -354,9 +352,8 @@ class _SystemPrepRunner:
         water_ag.residues.segments = water_seg
         if len(water_ag) == 0:
             logger.warning(
-                "No water molecules found in the system. Available resnames are %s. "
+                f"No water molecules found in the system. Available resnames are {np.unique(u_sys.atoms.resnames)}. "
                 "Please check the system_topology and system_coordinate files.",
-                np.unique(u_sys.atoms.resnames),
             )
         else:
             comp_2_combined.append(water_ag)

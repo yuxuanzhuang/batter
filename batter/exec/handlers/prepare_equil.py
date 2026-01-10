@@ -80,8 +80,18 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
             "partition": partition,
         }
     )
-    ok = builder.build()
+    def _mark_prepare_equil_failed() -> None:
+        artifacts_dir = system_root / "equil" / "artifacts"
+        os.makedirs(artifacts_dir, exist_ok=True)
+        (artifacts_dir / "prepare_equil.failed").touch()
+
+    try:
+        ok = builder.build()
+    except Exception:
+        _mark_prepare_equil_failed()
+        raise
     if not ok:
+        _mark_prepare_equil_failed()
         raise RuntimeError(f"[prepare_equil] anchor detection failed for ligand={ligand}")
 
     os.makedirs(system_root / "equil" / "artifacts", exist_ok=True)
@@ -90,11 +100,15 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
 
     prepare_rel = prepare_finished.relative_to(system.root).as_posix()
     full_prmtop = (system_root / "equil" / "full.prmtop").relative_to(system.root).as_posix()
+    failed_rel = (system_root / "equil" / "artifacts" / "prepare_equil.failed").relative_to(
+        system.root
+    ).as_posix()
     register_phase_state(
         system.root,
         "prepare_equil",
-        required=[[full_prmtop, prepare_rel]],
+        required=[[full_prmtop, prepare_rel], [failed_rel]],
         success=[[full_prmtop, prepare_rel]],
+        failure=[[failed_rel]],
     )
 
     logger.debug(f"[prepare_equil] finished for ligand={ligand}")
