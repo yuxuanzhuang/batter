@@ -196,8 +196,10 @@ parse_dt_ps() {
         BEGIN{IGNORECASE=1}
         {
             # Match dt = 0.004 or dt=0.004 (allow spaces, commas)
-            if (match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)/, m)) {
-                print m[1]
+            if (match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/)) {
+                s = substr($0, RSTART, RLENGTH)
+                sub(/.*dt[[:space:]]*=[[:space:]]*/, "", s)
+                print s
                 exit
             }
         }
@@ -213,7 +215,12 @@ completed_time_ps_from_out() {
 
     awk '
       BEGIN{IGNORECASE=1}
-      match($0, /TIME\(PS\)[[:space:]]*=[[:space:]]*([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)/, m) { last=m[1] }
+      match($0, /TIME\(PS\)[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/) {
+        s = substr($0, RSTART, RLENGTH)
+        sub(/.*=/, "", s)
+        gsub(/[[:space:]]/, "", s)
+        last = s
+      }
       END { if (last != "") printf "%s\n", last; else print 0 }
     ' "$out_file"
 }
@@ -276,9 +283,9 @@ completed_steps() {
               {gsub(/!.*/, "", $0)}                           # strip comments
               {
                 # find ntwr=...
-                if (match($0, /(^|[^a-z0-9_])ntwr[[:space:]]*=[[:space:]]*[-+]?[0-9]+/, m)) {
+                if (match($0, /(^|[^a-z0-9_])ntwr[[:space:]]*=[[:space:]]*[-+]?[0-9]+/)) {
                   s=substr($0, RSTART, RLENGTH)
-                  gsub(/.*ntwr[[:space:]]*=[[:space:]]*/, "", s)
+                  sub(/.*ntwr[[:space:]]*=[[:space:]]*/, "", s)
                   print s
                   exit
                 }
@@ -290,9 +297,9 @@ completed_steps() {
               {gsub(/!.*/, "", $0)}
               {
                 # find dt=... (allow decimals and exponent)
-                if (match($0, /(^|[^a-z0-9_])dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?/, m)) {
+                if (match($0, /(^|[^a-z0-9_])dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?/)) {
                   s=substr($0, RSTART, RLENGTH)
-                  gsub(/.*dt[[:space:]]*=[[:space:]]*/, "", s)
+                  sub(/.*dt[[:space:]]*=[[:space:]]*/, "", s)
                   gsub(/[dD]/, "e", s)   # Fortran D exponent -> e
                   print s
                   exit

@@ -64,7 +64,7 @@ write_mdin_remd_current() {
     echo "$text"
 }
 
-# Determine completed time (ps) and latest mdin-*.out index for window 0.
+# Determine completed time (ps) and latest md-*.out index for window 0.
 remd_progress() {
     local win0=$1
     local pattern=$2
@@ -74,8 +74,8 @@ remd_progress() {
         echo "0 -1"
         return
     fi
-    mdout=$(printf "%s/mdin-%02d.out" "$win0" "$idx")
-    [[ -f $mdout ]] || mdout=$(printf "%s/mdin-%d.out" "$win0" "$idx")
+    mdout=$(printf "%s/md-%02d.out" "$win0" "$idx")
+    [[ -f $mdout ]] || mdout=$(printf "%s/md-%d.out" "$win0" "$idx")
     if [[ ! -f $mdout ]]; then
         echo "0 -1"
         return
@@ -84,8 +84,8 @@ remd_progress() {
     if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
         prev_idx=$((idx - 1))
         if (( prev_idx >= 0 )); then
-            prev_out=$(printf "%s/mdin-%02d.out" "$win0" "$prev_idx")
-            [[ -f $prev_out ]] || prev_out=$(printf "%s/mdin-%d.out" "$win0" "$prev_idx")
+            prev_out=$(printf "%s/md-%02d.out" "$win0" "$prev_idx")
+            [[ -f $prev_out ]] || prev_out=$(printf "%s/md-%d.out" "$win0" "$prev_idx")
             if [[ -f $prev_out ]]; then
                 prev_tps=$(completed_time_ps_from_out "$prev_out")
                 if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then

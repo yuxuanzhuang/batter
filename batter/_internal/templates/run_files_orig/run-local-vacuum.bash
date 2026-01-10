@@ -167,3 +167,5 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
     echo "FAILED" > FAILED
     exit 1
 fi
+echo "[INFO] Not finished yet; rerun to continue."
+exit 0

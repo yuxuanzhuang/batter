@@ -259,5 +259,5 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
     echo "[ERROR] output.pdb not created or empty; marking FAILED."
     exit 1
 fi
-echo "FAILED" > FAILED
-exit 1
+echo "[INFO] Not finished yet; rerun to continue."
+exit 0
