@@ -38,6 +38,25 @@ Notes:
 * The first ``batter run`` stores a copy of the YAML plus any external restraint files (e.g.,
   ``extra_conformation_restraints``) under ``artifacts/config/``. ``run-exec`` reuses that copy.
 
+Generate REMD Batch Scripts
+===========================
+
+Use ``batter remd-batch`` to emit an ``sbatch`` script that runs ``run-local-remd.bash``
+across one or more execution folders::
+
+   batter remd-batch -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
+
+The command skips component folders that already contain ``FINISHED`` and writes the
+script to the current directory. Key options:
+
+``--gpus``
+   Total GPUs to request (defaults to the total window count detected).
+``--gpus-per-node``
+   GPUs available per node (default: 8). Used to size per-task node allocations when
+   ``MPI_EXEC`` is ``srun``.
+``--nodes``
+   Override the total node count in the header.
+
 Inspect Free-Energy Results
 ===========================
 

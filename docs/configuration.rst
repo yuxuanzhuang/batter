@@ -39,8 +39,9 @@ The run YAML file is divided into three sections grouped inside
     production no longer chunks into extends; set ``n_steps`` to the total per-window
     production steps. Those mdin templates also include ``! total_steps=<total>``;
     ``run-local*.bash`` reads that marker plus the first ``nstlim`` it finds to choose
-    segment length and roll restart files between ``md-current.rst7``/``md-previous.rst7``
-    so interrupted runs resume cleanly.
+    the segment length. Each invocation runs one segment, updates
+    ``md-current.rst7``/``md-previous.rst7`` plus ``md-*.out``, and returns; rerun the
+    script to continue until ``total_steps`` is reached.
 
 See Quick Reference below for links to individual config classes.
 
@@ -126,12 +127,13 @@ REMD runs
 ---------
 
 REMD inputs (mdins/groupfiles) are always written during preparation so you can decide at
-submit time whether to run them. Use ``fe_sim.remd`` to tune segment length and exchange
-frequency (``nstlim`` / ``numexchg``). Control execution with ``run.remd`` (``yes`` or
-``no``); when ``run.remd: no`` the files are still generated but no REMD jobs are
-scheduled. REMD jobs submit one Slurm job per component via ``SLURMM-BATCH-remd`` and
-monitor ``FINISHED``/``FAILED`` sentinels in the component folder. See
-:doc:`remd_submission` for operational details.
+submit time whether to run them. Use ``fe_sim.remd.nstlim`` to set the exchange interval
+and segment length; ``numexchg`` is derived from the remaining steps so total runtime is
+controlled by ``n_steps``. Control execution with ``run.remd`` (``yes`` or ``no``); when
+``run.remd: no`` the files are still generated but no REMD jobs are scheduled. REMD jobs
+submit one Slurm job per component via ``SLURMM-BATCH-remd`` and monitor
+``FINISHED``/``FAILED`` sentinels in the component folder. See :doc:`remd_submission`
+for operational details.
 
 SLURM header templates
 ----------------------
