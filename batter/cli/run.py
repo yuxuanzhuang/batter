@@ -322,6 +322,12 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
         windows_counts = _load_windows_counts(lig_dir / "fe")
         for comp in comps:
             comp_dir = (lig_dir / "fe" / comp).resolve()
+            finished_marker = comp_dir / "FINISHED"
+            if finished_marker.exists():
+                logger.info(
+                    f"[remd-batch] {comp_dir} already finished; skipping."
+                )
+                continue
             run_script = comp_dir / "run-local-remd.bash"
             if not run_script.is_file():
                 logger.warning(
@@ -696,10 +702,14 @@ def remd_batch(
                 continue
             seen.add(t.comp_dir)
             tasks.append(t)
+            win_note = t.n_windows if t.n_windows else "unknown"
+            logger.info(
+                f"[remd-batch] Queued {t.comp_dir} (windows={win_note})."
+            )
 
     if not tasks:
         raise click.ClickException(
-            "No REMD component folders with run-local-remd.bash found under the provided paths."
+            "No unfinished REMD component folders found under the provided paths."
         )
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
