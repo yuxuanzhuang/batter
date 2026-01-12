@@ -64,39 +64,23 @@ write_mdin_remd_current() {
     echo "$text"
 }
 
-# Determine completed time (ps) and latest md-*.out index for window 0.
+# Determine completed time (ps) from restart and latest md-*.out index for window 0.
 remd_progress() {
     local win0=$1
     local pattern=$2
-    local idx tps prev_idx prev_out prev_tps mdout
+    local idx tps prev_tps
     idx=$(highest_out_index_for_pattern "$pattern")
-    if [[ $idx -lt 0 ]]; then
-        echo "0 -1"
-        return
-    fi
-    mdout=$(printf "%s/md-%02d.out" "$win0" "$idx")
-    [[ -f $mdout ]] || mdout=$(printf "%s/md-%d.out" "$win0" "$idx")
-    if [[ ! -f $mdout ]]; then
-        echo "0 -1"
-        return
-    fi
-    tps=$(completed_time_ps_from_out "$mdout")
+    tps=$(completed_time_ps_from_rst "${win0}/md-current.rst7")
     if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
-        prev_idx=$((idx - 1))
-        if (( prev_idx >= 0 )); then
-            prev_out=$(printf "%s/md-%02d.out" "$win0" "$prev_idx")
-            [[ -f $prev_out ]] || prev_out=$(printf "%s/md-%d.out" "$win0" "$prev_idx")
-            if [[ -f $prev_out ]]; then
-                prev_tps=$(completed_time_ps_from_out "$prev_out")
-                if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
-                    echo "[WARN] Latest out $mdout has 0 ps; using $prev_out (TIME(PS)=$prev_tps) and removing $mdout" >&2
-                    rm -f "$mdout"
-                    echo "$prev_tps $prev_idx"
-                    return
-                fi
-            fi
+        prev_tps=$(completed_time_ps_from_rst "${win0}/md-previous.rst7")
+        if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
+            tps="$prev_tps"
+        else
+            tps=0
         fi
-        echo "0 -1"
+    fi
+    if [[ $idx -lt 0 ]]; then
+        echo "$tps -1"
         return
     fi
     echo "$tps $idx"
@@ -145,7 +129,7 @@ total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}'
 read current_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
 [[ -z $current_ps ]] && current_ps=0
 
-echo "Current completed time (from OUT): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
+echo "Current completed time (from restart): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
 
 if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; then
     remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')

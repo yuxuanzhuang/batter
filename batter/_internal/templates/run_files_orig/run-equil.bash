@@ -138,15 +138,13 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-# ---------------- Production MD (progress = OUT only) ----------------
+# ---------------- Production MD (progress = restart) ----------------
 
-# current progress (ps) from OUT; your completed_steps() should implement:
-# - read TIME(PS) from latest md-*.out
-# - if latest is 0 ps: use previous and delete bad latest out
+# current progress (ps) from restart
 current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
 [[ -z $current_ps ]] && current_ps=0
 
-echo "Current completed time (from OUT): $current_ps ps / $total_ps ps (dt=$dt_ps ps)"
+echo "Current completed time (from restart): $current_ps ps / $total_ps ps (dt=$dt_ps ps)"
 
 # pick previous restart: prefer current md if present, else fall back to eqnpt_appear
 rst_in="eqnpt_appear.rst7"
@@ -208,10 +206,10 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; then
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7"
 
-    # Update progress from OUT only
+    # Update progress from restart
     current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
     [[ -z $current_ps ]] && current_ps=0
-    echo "[INFO] Updated completed time (from OUT): $current_ps ps / $total_ps ps"
+    echo "[INFO] Updated completed time (from restart): $current_ps ps / $total_ps ps"
 
     rst_in="md-current.rst7"
     last_rst="md-current.rst7"

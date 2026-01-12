@@ -72,7 +72,14 @@ if [[ -n "$out" ]]; then
     echo "ok" > "$out"
   fi
 fi
-[[ -n "$rst" ]] && echo "ok" > "$rst"
+if [[ -n "$rst" ]]; then
+  if [[ "$seg" -gt 0 && -n "$chunk_ps" ]]; then
+    time=$(awk -v s="$seg" -v c="$chunk_ps" 'BEGIN{printf "%.10f", s*c}')
+    echo "time=$time" > "$rst"
+  else
+    echo "time=0.0" > "$rst"
+  fi
+fi
 [[ -n "$nc" ]] && echo "ok" > "$nc"
 exit 0
 """,
@@ -88,13 +95,33 @@ while [[ $# -gt 0 ]]; do
 done
 """,
     )
+    ncdump_stub = work / "ncdump"
+    _write_stub_exe(
+        ncdump_stub,
+        """#!/usr/bin/env bash
+file=""
+for arg in "$@"; do
+  if [[ "$arg" != -* ]]; then
+    file="$arg"
+  fi
+done
+time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
+if [[ -z "$time" ]]; then time=0; fi
+cat <<EOF
+        double time ;
+                time:units = "picosecond" ;
+ time = $time ;
+EOF
+exit 0
+""",
+    )
 
     env = os.environ.copy()
     env["PMEMD_EXEC"] = str(stub)
     env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
     env["PATH"] = f"{work}:{env.get('PATH','')}"
 
-    cmd = ["bash", "-lc", "source run-local.bash"]
+    cmd = ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"]
     subprocess.run(cmd, cwd=work, check=True, env=env)
     assert (work / "md-current.rst7").exists()
     assert not (work / "output.pdb").exists()

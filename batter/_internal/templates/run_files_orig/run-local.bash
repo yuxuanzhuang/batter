@@ -170,11 +170,11 @@ chunk_steps=$(parse_nstlim "$tmpl")
 total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-# Progress from OUT only (completed_steps prints a single number to STDOUT)
+# Progress from restart (completed_steps prints a single number to STDOUT)
 current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
 [[ -z $current_ps ]] && current_ps=0
 
-echo "Current completed time (from OUT): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
+echo "Current completed time (from restart): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
 
 # Determine current segment index from existing OUT files
 seg_idx=$(latest_md_index "md-*.out")
@@ -238,11 +238,11 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; then
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7"
 
-    # Update progress (OUT only). completed_steps will:
+    # Update progress from restart. completed_steps will:
     # - if latest out has 0 ps, use previous and delete the bad latest.
     current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
     [[ -z $current_ps ]] && current_ps=0
-    echo "[INFO] Updated completed time (from OUT): ${current_ps} ps / ${total_ps} ps"
+    echo "[INFO] Updated completed time (from restart): ${current_ps} ps / ${total_ps} ps"
 
     rst_in="md-current.rst7"
     last_rst="md-current.rst7"

@@ -225,45 +225,32 @@ completed_time_ps_from_out() {
     ' "$out_file"
 }
 
+completed_time_ps_from_rst() {
+    local rst_file=$1
+    [[ -f $rst_file ]] || { echo 0; return; }
+    command -v ncdump >/dev/null 2>&1 || { echo 0; return; }
+
+    ncdump -v time "$rst_file" 2>/dev/null | awk '
+      BEGIN{IGNORECASE=1}
+      tolower($1) == "time" && $2 == "=" {
+        gsub(/;/, "", $3)
+        print $3
+        exit
+      }
+    '
+}
+
 completed_steps() {
     local tmpl=${1:-mdin-template}
-    local seg mdout tps prev_seg prev_out prev_tps
+    local tps prev_tps
 
-    # ---- find latest md output ----
-    seg=$(latest_md_index "md-*.out")
-    echo "[DEBUG] Latest md segment index: $seg" >&2
-    if [[ $seg -lt 0 ]]; then
-        echo 0
-        return
-    fi
+    tps=$(completed_time_ps_from_rst "md-current.rst7")
 
-    mdout=$(printf "md-%02d.out" "$seg")
-    [[ -f $mdout ]] || mdout=$(printf "md%02d.out" "$seg")
-    [[ -f $mdout ]] || { echo 0; return; }
-
-    tps=$(completed_time_ps_from_out "$mdout")
-
-    # ---- fallback if latest is bad/truncated ----
+    # ---- fallback if latest restart is missing/bad ----
     if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
-        prev_seg=$((seg - 1))
-        if (( prev_seg >= 0 )); then
-            prev_out=$(printf "md-%02d.out" "$prev_seg")
-            [[ -f $prev_out ]] || prev_out=$(printf "md%02d.out" "$prev_seg")
-
-            if [[ -f $prev_out ]]; then
-                prev_tps=$(completed_time_ps_from_out "$prev_out")
-                if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
-                    echo "[WARN] Latest out $mdout has 0 ps; using $prev_out (TIME(PS)=$prev_tps) and removing $mdout" >&2
-                    rm -f "$mdout"
-                    tps="$prev_tps"
-                else
-                    echo 0
-                    return
-                fi
-            else
-                echo 0
-                return
-            fi
+        prev_tps=$(completed_time_ps_from_rst "md-previous.rst7")
+        if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
+            tps="$prev_tps"
         else
             echo 0
             return
