@@ -62,8 +62,8 @@ script to the current directory. Key options:
    or the max resubmission window is reached.
 ``--signal-mins``
    Minutes before the time limit to trigger auto-resubmit (default: 90).
-``--max-resubmit-hours``
-   Maximum wall time in hours to keep auto-resubmitting (default: 4).
+``--max-resubmit-count``
+   Maximum number of times to resubmit the script (default: 4).
 
 Inspect Free-Energy Results
 ===========================
