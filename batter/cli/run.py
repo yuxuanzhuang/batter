@@ -775,6 +775,13 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
     show_default=True,
     help="Minutes before time limit to trigger auto-resubmit (requires --auto-resubmit).",
 )
+@click.option(
+    "--max-resubmit-hours",
+    type=float,
+    default=4.0,
+    show_default=True,
+    help="Maximum wall time in hours to keep auto-resubmitting (requires --auto-resubmit).",
+)
 def remd_batch(
     execution: tuple[Path, ...],
     output: Path | None,
@@ -786,6 +793,7 @@ def remd_batch(
     gpus_per_node: int | None,
     auto_resubmit: bool,
     signal_mins: float,
+    max_resubmit_hours: float,
 ) -> None:
     """
     Generate an sbatch script that runs ``run-local-remd.bash`` for provided executions.
@@ -818,6 +826,10 @@ def remd_batch(
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
     if auto_resubmit and signal_mins <= 0:
         raise click.ClickException("--signal-mins must be > 0 when auto-resubmit is enabled.")
+    if auto_resubmit and max_resubmit_hours <= 0:
+        raise click.ClickException(
+            "--max-resubmit-hours must be > 0 when auto-resubmit is enabled."
+        )
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
         gpus_per_node_resolved = _infer_header_gpus_per_node(header_root)
@@ -872,7 +884,15 @@ def remd_batch(
             resubmit_args.extend(["--nodes", str(nodes)])
         if gpus_per_node is not None:
             resubmit_args.extend(["--gpus-per-node", str(gpus_per_node)])
-        resubmit_args.extend(["--auto-resubmit", "--signal-mins", str(signal_mins)])
+        resubmit_args.extend(
+            [
+                "--auto-resubmit",
+                "--signal-mins",
+                str(signal_mins),
+                "--max-resubmit-hours",
+                str(max_resubmit_hours),
+            ]
+        )
         resubmit_cmd = f"{batter_cmd} " + " ".join(
             shlex.quote(arg) for arg in resubmit_args
         )
@@ -889,14 +909,36 @@ def remd_batch(
         "fi",
     ]
     if auto_resubmit:
+        max_resubmit_seconds = int(math.ceil(max_resubmit_hours * 3600.0))
+        resubmit_state = f"{output_path_abs}.resubmit_start"
         body_lines += [
             "resubmit_done=0",
             f'RESUBMIT_CMD="{resubmit_cmd}"',
             f'RESUBMIT_OUTPUT="{output_path_abs}"',
+            f'RESUBMIT_STATE="{resubmit_state}"',
+            f"MAX_RESUBMIT_SECONDS={max_resubmit_seconds}",
+            "resubmit_allowed() {",
+            '  local now start elapsed',
+            '  now=$(date +%s)',
+            '  if [[ -f "$RESUBMIT_STATE" ]]; then',
+            '    start=$(head -n 1 "$RESUBMIT_STATE" 2>/dev/null || true)',
+            "  fi",
+            '  if [[ -z "$start" ]]; then',
+            '    start="$now"',
+            '    echo "$start" > "$RESUBMIT_STATE"',
+            "  fi",
+            '  elapsed=$((now - start))',
+            '  if (( elapsed >= MAX_RESUBMIT_SECONDS )); then',
+            '    echo "[INFO] Auto-resubmit: max time reached (${elapsed}s >= ${MAX_RESUBMIT_SECONDS}s)."',
+            "    return 1",
+            "  fi",
+            "  return 0",
+            "}",
             "regen_and_submit() {",
             '  if [[ "$resubmit_done" -eq 1 ]]; then return; fi',
             "  resubmit_done=1",
             '  echo "[INFO] Auto-resubmit triggered at $(date)"',
+            '  resubmit_allowed || return',
             '  eval "$RESUBMIT_CMD" || { echo "[ERROR] Auto-resubmit command failed."; return; }',
             '  if [[ -n "${SLURM_JOB_ID:-}" ]]; then',
             '    sbatch --dependency=afterany:${SLURM_JOB_ID} "$RESUBMIT_OUTPUT"',
@@ -1021,7 +1063,9 @@ def remd_batch(
         f"total windows: {total_windows or 'unknown'} | GPUs: {gpu_request or 'unset'} | "
         f"nodes: {node_request or 'unset'} | gpus-per-node: {gpus_per_node_resolved} | "
         f"auto-resubmit: {'yes' if auto_resubmit else 'no'} | "
-        f"signal-mins: {signal_mins if auto_resubmit else 'n/a'} | job-name: {job_name}"
+        f"signal-mins: {signal_mins if auto_resubmit else 'n/a'} | "
+        f"max-resubmit-hours: {max_resubmit_hours if auto_resubmit else 'n/a'} | "
+        f"job-name: {job_name}"
     )
 
 

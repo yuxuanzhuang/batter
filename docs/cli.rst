@@ -57,10 +57,13 @@ script to the current directory. Key options:
 ``--nodes``
    Override the total node count in the header.
 ``--auto-resubmit`` / ``--no-auto-resubmit``
-   When enabled, the generated sbatch traps a pre-timeout signal, regenerates the
-   remd-batch script, and resubmits it until all components finish.
+   When enabled (default), the generated sbatch traps a pre-timeout signal,
+   regenerates the remd-batch script, and resubmits it until all components finish
+   or the max resubmission window is reached.
 ``--signal-mins``
    Minutes before the time limit to trigger auto-resubmit (default: 90).
+``--max-resubmit-hours``
+   Maximum wall time in hours to keep auto-resubmitting (default: 4).
 
 Inspect Free-Energy Results
 ===========================
