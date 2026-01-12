@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import math
@@ -324,9 +325,16 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
             comp_dir = (lig_dir / "fe" / comp).resolve()
             finished_marker = comp_dir / "FINISHED"
             if finished_marker.exists():
-                logger.info(
-                    f"[remd-batch] {comp_dir} already finished; skipping."
-                )
+                finish_time = _remd_finished_time(comp_dir, comp)
+                if finish_time:
+                    logger.info(
+                        f"[remd-batch] {comp_dir} already finished; "
+                        f"time(ps)={finish_time} (window 0); skipping."
+                    )
+                else:
+                    logger.info(
+                        f"[remd-batch] {comp_dir} already finished; skipping."
+                    )
                 continue
             run_script = comp_dir / "run-local-remd.bash"
             if not run_script.is_file():
@@ -395,6 +403,40 @@ def _infer_header_gpus_per_node(header_root: Path | None) -> int | None:
         except Exception:
             pass
     return gpn
+
+
+def _remd_time_from_rst(rst_path: Path) -> str | None:
+    if not rst_path.is_file():
+        return None
+    ncdump = shutil.which("ncdump")
+    if not ncdump:
+        return None
+    try:
+        result = subprocess.run(
+            [ncdump, "-v", "time", str(rst_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(
+        r"^\s*time\s*=\s*([-+0-9.eE]+)\s*;",
+        result.stdout,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if match:
+        return match.group(1)
+    return None
+
+
+def _remd_finished_time(comp_dir: Path, comp: str) -> str | None:
+    win0 = comp_dir / f"{comp}00"
+    return _remd_time_from_rst(win0 / "md-current.rst7") or _remd_time_from_rst(
+        win0 / "md-previous.rst7"
+    )
 
 
 def _render_remd_batch_script(
@@ -757,11 +799,40 @@ def remd_batch(
         'if [[ "${mpi_base}" == srun* ]]; then',
         "  use_srun=1",
         "fi",
+        "remd_time_from_rst() {",
+        '  local rst="$1"',
+        '  [[ -f "$rst" ]] || return 1',
+        '  command -v ncdump >/dev/null 2>&1 || return 1',
+        '  local t',
+        '  t=$(ncdump -v time "$rst" 2>/dev/null | awk \'tolower($1) == "time" && $2 == "=" { gsub(/;/, "", $3); print $3; exit }\')',
+        '  [[ -n "$t" ]] || return 1',
+        '  echo "$t"',
+        "}",
+        "report_finish_time() {",
+        '  local label="$1"',
+        '  local dir="$2"',
+        '  local comp="$3"',
+        '  [[ -z "$comp" ]] && comp=$(basename "$dir")',
+        '  local win0="${dir}/${comp}00"',
+        '  local rst="${win0}/md-current.rst7"',
+        '  local t=""',
+        '  t=$(remd_time_from_rst "$rst" 2>/dev/null || true)',
+        '  if [[ -z "$t" ]]; then',
+        '    rst="${win0}/md-previous.rst7"',
+        '    t=$(remd_time_from_rst "$rst" 2>/dev/null || true)',
+        "  fi",
+        '  if [[ -n "$t" ]]; then',
+        '    echo "[INFO] ${label}: FINISHED time(ps)=${t} (${rst})"',
+        "  else",
+        '    echo "[INFO] ${label}: FINISHED (time unavailable)"',
+        "  fi",
+        "}",
         "run_remd_task() {",
         '  local label="$1"',
         '  local dir="$2"',
         '  local win="$3"',
         '  local nodes="$4"',
+        '  local comp="$5"',
         '  echo "Running ${label}${win:+ (windows=${win})}"',
         '  local mpi_flags="${MPI_FLAGS:-}"',
         '  if [[ "$use_srun" -eq 1 && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
@@ -773,6 +844,9 @@ def remd_batch(
         "    fi",
         "  fi",
         '  ( cd "$dir" && MPI_FLAGS="$mpi_flags" bash ./run-local-remd.bash ) || status=1',
+        '  if [[ -f "${dir}/FINISHED" ]]; then',
+        '    report_finish_time "$label" "$dir" "$comp"',
+        "  fi",
         "}",
         "",
     ]
@@ -782,7 +856,7 @@ def remd_batch(
         if t.execution.name:
             label = f"{t.execution.name}/{label}"
         body_lines.append(
-            f'run_remd_task "{label}" "{t.comp_dir}" "{n_windows}" "{nodes_needed}" &'
+            f'run_remd_task "{label}" "{t.comp_dir}" "{n_windows}" "{nodes_needed}" "{t.component}" &'
         )
         body_lines.append('pids+=($!)')
 
