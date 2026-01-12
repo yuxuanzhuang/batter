@@ -324,23 +324,26 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
         for comp in comps:
             comp_dir = (lig_dir / "fe" / comp).resolve()
             finished_marker = comp_dir / "FINISHED"
-            if finished_marker.exists():
-                finish_time = _remd_finished_time(comp_dir, comp)
-                if finish_time:
-                    logger.info(
-                        f"[remd-batch] {comp_dir} already finished; "
-                        f"time(ps)={finish_time} (window 0); skipping."
-                    )
-                else:
-                    logger.info(
-                        f"[remd-batch] {comp_dir} already finished; skipping."
-                    )
-                continue
             run_script = comp_dir / "run-local-remd.bash"
             if not run_script.is_file():
                 logger.warning(
                     f"[remd-batch] Missing run-local-remd.bash under {comp_dir}; skipping."
                 )
+                continue
+
+            finish_time = _remd_finished_time(comp_dir, comp)
+            status_note = "finished" if finished_marker.exists() else "pending"
+            if finish_time:
+                logger.info(
+                    f"[remd-batch] {comp_dir} window0 time(ps)={finish_time} ({status_note})."
+                )
+            else:
+                logger.info(
+                    f"[remd-batch] {comp_dir} window0 time unavailable ({status_note})."
+                )
+
+            if finished_marker.exists():
+                logger.info(f"[remd-batch] {comp_dir} already finished; skipping.")
                 continue
 
             n_windows = windows_counts.get(comp)
