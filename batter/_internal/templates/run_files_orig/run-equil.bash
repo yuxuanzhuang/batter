@@ -222,6 +222,7 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
 
     if [[ -s output.pdb ]]; then
         echo "FINISHED" > FINISHED
+        echo "[INFO] FINISHED marker written."
         exit 0
     fi
 

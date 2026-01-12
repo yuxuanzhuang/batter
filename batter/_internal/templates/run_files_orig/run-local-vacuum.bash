@@ -55,6 +55,7 @@ if [[ $only_eq -eq 1 ]]; then
     echo "Only seeding requested and finished."
     if [[ -s eq_output.pdb ]]; then
         echo "EQ_FINISHED" > EQ_FINISHED
+        echo "[INFO] EQ_FINISHED marker written."
         echo "Job completed at $(date)"
     fi
     exit 0
@@ -160,6 +161,7 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
     # check output.pdb exists to catch cases where the simulation did not run to completion
     if [[ -s output.pdb ]]; then
         echo "FINISHED" > FINISHED
+        echo "[INFO] FINISHED marker written."
         exit 0
     fi
 

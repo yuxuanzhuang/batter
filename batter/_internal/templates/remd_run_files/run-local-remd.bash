@@ -192,5 +192,11 @@ fi
 
 if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
     echo "FINISHED" > ${PFOLDER}/FINISHED
+    echo "[INFO] REMD complete; writing per-window FINISHED markers."
+    for ((i = 0; i < N_WINDOWS; i++)); do
+        win=$(printf "%s%02d" "${COMP}" "$i")
+        echo "FINISHED" > "${PFOLDER}/${win}/FINISHED"
+        echo "[INFO] ${win}: FINISHED"
+    done
     exit 0
 fi
