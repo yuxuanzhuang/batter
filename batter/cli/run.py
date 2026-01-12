@@ -762,6 +762,19 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
     show_default=True,
     help="GPUs available per node (used to size per-task node allocations).",
 )
+@click.option(
+    "--auto-resubmit/--no-auto-resubmit",
+    default=True,
+    show_default=True,
+    help="Regenerate and resubmit the remd-batch script until all components finish.",
+)
+@click.option(
+    "--signal-mins",
+    type=float,
+    default=90.0,
+    show_default=True,
+    help="Minutes before time limit to trigger auto-resubmit (requires --auto-resubmit).",
+)
 def remd_batch(
     execution: tuple[Path, ...],
     output: Path | None,
@@ -771,6 +784,8 @@ def remd_batch(
     gpus: int | None,
     nodes: int | None,
     gpus_per_node: int | None,
+    auto_resubmit: bool,
+    signal_mins: float,
 ) -> None:
     """
     Generate an sbatch script that runs ``run-local-remd.bash`` for provided executions.
@@ -801,6 +816,8 @@ def remd_batch(
         )
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
+    if auto_resubmit and signal_mins <= 0:
+        raise click.ClickException("--signal-mins must be > 0 when auto-resubmit is enabled.")
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
         gpus_per_node_resolved = _infer_header_gpus_per_node(header_root)
@@ -834,6 +851,31 @@ def remd_batch(
 
     job_hash = _hash_path_list(exec_paths)
     job_name = f"fep_remd_batch_{job_hash}"
+    output_path = output or Path.cwd() / f"run_remd_batch_{job_hash}.sbatch"
+    output_path_abs = output_path.resolve()
+    resubmit_cmd = None
+    if auto_resubmit:
+        batter_cmd = _which_batter()
+        resubmit_args = ["remd-batch"]
+        for p in exec_paths:
+            resubmit_args.extend(["-e", str(p)])
+        resubmit_args.extend(["--output", str(output_path_abs)])
+        if header_root:
+            resubmit_args.extend(["--header-root", str(header_root.resolve())])
+        if partition:
+            resubmit_args.extend(["--partition", partition])
+        if time_limit:
+            resubmit_args.extend(["--time-limit", time_limit])
+        if gpus is not None:
+            resubmit_args.extend(["--gpus", str(gpus)])
+        if nodes is not None:
+            resubmit_args.extend(["--nodes", str(nodes)])
+        if gpus_per_node is not None:
+            resubmit_args.extend(["--gpus-per-node", str(gpus_per_node)])
+        resubmit_args.extend(["--auto-resubmit", "--signal-mins", str(signal_mins)])
+        resubmit_cmd = f"{batter_cmd} " + " ".join(
+            shlex.quote(arg) for arg in resubmit_args
+        )
     body_lines = [
         "scontrol show job ${SLURM_JOB_ID:-}",
         'echo "Job started at $(date)"',
@@ -845,6 +887,26 @@ def remd_batch(
         'if [[ "${mpi_base}" == srun* ]]; then',
         "  use_srun=1",
         "fi",
+    ]
+    if auto_resubmit:
+        body_lines += [
+            "resubmit_done=0",
+            f'RESUBMIT_CMD="{resubmit_cmd}"',
+            f'RESUBMIT_OUTPUT="{output_path_abs}"',
+            "regen_and_submit() {",
+            '  if [[ "$resubmit_done" -eq 1 ]]; then return; fi',
+            "  resubmit_done=1",
+            '  echo "[INFO] Auto-resubmit triggered at $(date)"',
+            '  eval "$RESUBMIT_CMD" || { echo "[ERROR] Auto-resubmit command failed."; return; }',
+            '  if [[ -n "${SLURM_JOB_ID:-}" ]]; then',
+            '    sbatch --dependency=afterany:${SLURM_JOB_ID} "$RESUBMIT_OUTPUT"',
+            "  else",
+            '    sbatch "$RESUBMIT_OUTPUT"',
+            "  fi",
+            "}",
+            'trap "regen_and_submit" USR1',
+        ]
+    body_lines += [
         "run_remd_task() {",
         '  local label="$1"',
         '  local dir="$2"',
@@ -878,6 +940,23 @@ def remd_batch(
     body_lines.append('for pid in "${pids[@]}"; do')
     body_lines.append('  wait "$pid" || status=1')
     body_lines.append("done")
+    if auto_resubmit:
+        body_lines.append("pending=0")
+        body_lines.append("for d in \\")
+        for t, _, _ in task_specs:
+            body_lines.append(f'  "{t.comp_dir}" \\')
+        body_lines.append("  ; do")
+        body_lines.append('  if [[ ! -f "$d/FINISHED" ]]; then')
+        body_lines.append("    pending=1")
+        body_lines.append("    break")
+        body_lines.append("  fi")
+        body_lines.append("done")
+        body_lines.append('if [[ "$pending" -eq 1 ]]; then')
+        body_lines.append('  echo "[INFO] Auto-resubmit: pending components remain."')
+        body_lines.append("  regen_and_submit")
+        body_lines.append("else")
+        body_lines.append('  echo "[INFO] Auto-resubmit: all components finished."')
+        body_lines.append("fi")
     body_lines.append('echo "Job completed at $(date)"')
     body_lines.append("exit $status")
     body_text = "\n".join(body_lines) + "\n"
@@ -905,6 +984,11 @@ def remd_batch(
         script_text = _upsert_sbatch_option(script_text, "time", time_limit)
     if node_request:
         script_text = _upsert_sbatch_option(script_text, "nodes", str(node_request))
+    if auto_resubmit:
+        signal_seconds = int(math.ceil(signal_mins * 60.0))
+        script_text = _upsert_sbatch_option(
+            script_text, "signal", f"B:USR1@{signal_seconds}"
+        )
     if gpu_request:
         # Slurm gres is per-node; when nodes and per-node GPUs are known, use that value.
         # Otherwise fall back to total GPUs requested only for single-node allocations.
@@ -925,7 +1009,6 @@ def remd_batch(
     script_text = _upsert_sbatch_option(script_text, "output", f"{job_name}-%j.out")
     script_text = _upsert_sbatch_option(script_text, "error", f"{job_name}-%j.err")
 
-    output_path = output or Path.cwd() / f"run_remd_batch_{job_hash}.sbatch"
     output_path.write_text(script_text)
     try:
         output_path.chmod(0o755)
@@ -937,7 +1020,8 @@ def remd_batch(
         f"Components queued: {len(tasks)} | max windows: {max_windows or 'unknown'} | "
         f"total windows: {total_windows or 'unknown'} | GPUs: {gpu_request or 'unset'} | "
         f"nodes: {node_request or 'unset'} | gpus-per-node: {gpus_per_node_resolved} | "
-        f"job-name: {job_name}"
+        f"auto-resubmit: {'yes' if auto_resubmit else 'no'} | "
+        f"signal-mins: {signal_mins if auto_resubmit else 'n/a'} | job-name: {job_name}"
     )
 
 

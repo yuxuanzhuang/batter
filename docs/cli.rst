@@ -56,6 +56,11 @@ script to the current directory. Key options:
    ``MPI_EXEC`` is ``srun``.
 ``--nodes``
    Override the total node count in the header.
+``--auto-resubmit`` / ``--no-auto-resubmit``
+   When enabled, the generated sbatch traps a pre-timeout signal, regenerates the
+   remd-batch script, and resubmits it until all components finish.
+``--signal-mins``
+   Minutes before the time limit to trigger auto-resubmit (default: 90).
 
 Inspect Free-Energy Results
 ===========================
