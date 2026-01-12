@@ -167,16 +167,18 @@ if [[ $seg_idx -lt 0 ]]; then
     seg_idx=0
 fi
 
-if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur < tot)}'; then
-    remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
+current_steps=$(awk -v t="$current_ps" -v dt="$dt_ps" 'BEGIN{if (dt<=0) {print 0; exit} printf "%d\n", (t/dt)+0.5}')
+remaining_steps=$(( total_steps - current_steps ))
+if (( remaining_steps < 0 )); then
+    remaining_steps=0
+fi
 
-    run_ps="$chunk_ps"
-    if awk -v rem="$remaining_ps" -v ch="$chunk_ps" 'BEGIN{exit !(rem < ch)}'; then
-        run_ps="$remaining_ps"
+if (( remaining_steps > 0 )); then
+    run_steps=$remaining_steps
+    if (( run_steps > chunk_steps )); then
+        run_steps=$chunk_steps
     fi
-
-    run_steps=$(awk -v ps="$run_ps" -v dt="$dt_ps" 'BEGIN{printf "%d\n", ps/dt}')
-    (( run_steps > 0 )) || { echo "[ERROR] Computed run_steps=0 (dt=$dt_ps, run_ps=$run_ps)"; exit 1; }
+    run_ps=$(awk -v s="$run_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
     # first run if no md-*.out exists
     first_run=0
