@@ -333,6 +333,19 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
 
             finish_time = _remd_finished_time(comp_dir, comp)
             status_note = "finished" if finished_marker.exists() else "pending"
+            if finish_time and not finished_marker.exists():
+                total_ps = _remd_total_ps(comp_dir, comp)
+                if total_ps is not None:
+                    try:
+                        remaining_ps = total_ps - float(finish_time)
+                    except Exception:
+                        remaining_ps = None
+                    if (
+                        remaining_ps is not None
+                        and total_ps >= 100.0
+                        and remaining_ps <= 100.0
+                    ):
+                        status_note = "finished"
             if finish_time:
                 logger.info(
                     f"[remd-batch] {comp_dir} window0 time(ps)={finish_time} ({status_note})."
@@ -440,6 +453,36 @@ def _remd_finished_time(comp_dir: Path, comp: str) -> str | None:
     return _remd_time_from_rst(win0 / "md-current.rst7") or _remd_time_from_rst(
         win0 / "md-previous.rst7"
     )
+
+
+def _remd_total_ps(comp_dir: Path, comp: str) -> float | None:
+    tmpl = comp_dir / f"{comp}00" / "mdin-remd-template"
+    if not tmpl.is_file():
+        return None
+    try:
+        text = tmpl.read_text()
+    except Exception:
+        return None
+    match = re.search(
+        r"^[!#]\s*total_steps\s*=\s*([0-9]+)",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if not match:
+        return None
+    total_steps = int(match.group(1))
+    dt_match = re.search(
+        r"^\s*dt\s*=\s*([-+0-9.eEdD]+)",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    dt = 0.001
+    if dt_match:
+        try:
+            dt = float(dt_match.group(1).replace("d", "e").replace("D", "e"))
+        except Exception:
+            dt = 0.001
+    return total_steps * dt
 
 
 def _render_remd_batch_script(

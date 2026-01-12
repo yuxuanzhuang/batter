@@ -172,6 +172,11 @@ remaining_steps=$(( total_steps - current_steps ))
 if (( remaining_steps < 0 )); then
     remaining_steps=0
 fi
+remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
+if awk -v tot="$total_ps" -v rem="$remaining_ps" 'BEGIN{exit !(tot>=100 && rem<=100)}'; then
+    remaining_steps=0
+    current_ps="$total_ps"
+fi
 
 if (( remaining_steps > 0 )); then
     run_steps=$remaining_steps
