@@ -845,40 +845,11 @@ def remd_batch(
         'if [[ "${mpi_base}" == srun* ]]; then',
         "  use_srun=1",
         "fi",
-        "remd_time_from_rst() {",
-        '  local rst="$1"',
-        '  [[ -f "$rst" ]] || return 1',
-        '  command -v ncdump >/dev/null 2>&1 || return 1',
-        '  local t',
-        '  t=$(ncdump -v time "$rst" 2>/dev/null | awk \'tolower($1) == "time" && $2 == "=" { gsub(/;/, "", $3); print $3; exit }\')',
-        '  [[ -n "$t" ]] || return 1',
-        '  echo "$t"',
-        "}",
-        "report_finish_time() {",
-        '  local label="$1"',
-        '  local dir="$2"',
-        '  local comp="$3"',
-        '  [[ -z "$comp" ]] && comp=$(basename "$dir")',
-        '  local win0="${dir}/${comp}00"',
-        '  local rst="${win0}/md-current.rst7"',
-        '  local t=""',
-        '  t=$(remd_time_from_rst "$rst" 2>/dev/null || true)',
-        '  if [[ -z "$t" ]]; then',
-        '    rst="${win0}/md-previous.rst7"',
-        '    t=$(remd_time_from_rst "$rst" 2>/dev/null || true)',
-        "  fi",
-        '  if [[ -n "$t" ]]; then',
-        '    echo "[INFO] ${label}: FINISHED time(ps)=${t} (${rst})"',
-        "  else",
-        '    echo "[INFO] ${label}: FINISHED (time unavailable)"',
-        "  fi",
-        "}",
         "run_remd_task() {",
         '  local label="$1"',
         '  local dir="$2"',
         '  local win="$3"',
         '  local nodes="$4"',
-        '  local comp="$5"',
         '  echo "Running ${label}${win:+ (windows=${win})}"',
         '  local mpi_flags="${MPI_FLAGS:-}"',
         '  if [[ "$use_srun" -eq 1 && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
@@ -890,9 +861,6 @@ def remd_batch(
         "    fi",
         "  fi",
         '  ( cd "$dir" && MPI_FLAGS="$mpi_flags" bash ./run-local-remd.bash ) || status=1',
-        '  if [[ -f "${dir}/FINISHED" ]]; then',
-        '    report_finish_time "$label" "$dir" "$comp"',
-        "  fi",
         "}",
         "",
     ]
@@ -902,7 +870,7 @@ def remd_batch(
         if t.execution.name:
             label = f"{t.execution.name}/{label}"
         body_lines.append(
-            f'run_remd_task "{label}" "{t.comp_dir}" "{n_windows}" "{nodes_needed}" "{t.component}" &'
+            f'run_remd_task "{label}" "{t.comp_dir}" "{n_windows}" "{nodes_needed}" &'
         )
         body_lines.append('pids+=($!)')
 
