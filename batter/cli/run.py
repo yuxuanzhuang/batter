@@ -332,20 +332,20 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                 continue
 
             finish_time = _remd_finished_time(comp_dir, comp)
-            status_note = "finished" if finished_marker.exists() else "pending"
-            if finish_time and not finished_marker.exists():
-                total_ps = _remd_total_ps(comp_dir, comp)
-                if total_ps is not None:
-                    try:
-                        remaining_ps = total_ps - float(finish_time)
-                    except Exception:
-                        remaining_ps = None
-                    if (
-                        remaining_ps is not None
-                        and total_ps >= 100.0
-                        and remaining_ps <= 100.0
-                    ):
-                        status_note = "finished"
+            total_ps = _remd_total_ps(comp_dir, comp) if finish_time else None
+            is_finished = finished_marker.exists()
+            if not is_finished and finish_time and total_ps is not None:
+                try:
+                    remaining_ps = total_ps - float(finish_time)
+                except Exception:
+                    remaining_ps = None
+                if (
+                    remaining_ps is not None
+                    and total_ps >= 100.0
+                    and remaining_ps <= 100.0
+                ):
+                    is_finished = True
+            status_note = "finished" if is_finished else "pending"
             if finish_time:
                 logger.info(
                     f"[remd-batch] {comp_dir} window0 time(ps)={finish_time} ({status_note})."
@@ -355,7 +355,7 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                     f"[remd-batch] {comp_dir} window0 time unavailable ({status_note})."
                 )
 
-            if finished_marker.exists():
+            if is_finished:
                 logger.info(f"[remd-batch] {comp_dir} already finished; skipping.")
                 continue
 
