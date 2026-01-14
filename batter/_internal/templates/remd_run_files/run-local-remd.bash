@@ -156,6 +156,7 @@ if (( remaining_steps > 0 )); then
     # Build per-window mdin and groupfile for this segment
     groupfile="${PFOLDER}/remd/mdin.in.remd.groupfile"
     : > "$groupfile"
+    win_00=$(printf "%s%02d" "${COMP}" 0)
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
         tmpl="${PFOLDER}/${win}/mdin-remd-template"
@@ -180,7 +181,7 @@ if (( remaining_steps > 0 )); then
         fi
 
         out_tag=$(printf "md-%02d" "$seg_idx")
-        echo "-O -i ${win}/mdin-remd-current -p ${win}/${PRMTOP} -c ${win}/${rst_in} -o ${win}/${out_tag}.out -r ${win}/md-current.rst7 -x ${win}/${out_tag}.nc -ref ${win}/eq.rst7 -inf ${win}/mdinfo -l ${win}/${out_tag}.log -e ${win}/${out_tag}.mden" >> "$groupfile"
+        echo "-O -i ${win}/mdin-remd-current -p ${win_00}/${PRMTOP} -c ${win}/${rst_in} -o ${win}/${out_tag}.out -r ${win}/md-current.rst7 -x ${win}/${out_tag}.nc -ref ${win_00}/eq.rst7 -inf ${win}/mdinfo -l ${win}/${out_tag}.log -e ${win}/${out_tag}.mden" >> "$groupfile"
     done
 
     # keep a compat copy for older tooling
