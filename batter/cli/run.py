@@ -780,7 +780,14 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
     type=int,
     default=4,
     show_default=True,
-    help="Maximum number of times to resubmit the script (requires --auto-resubmit).",
+    help="Maximum total submissions (including the first run) when auto-resubmitting.",
+)
+@click.option(
+    "--current-submission-time",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Internal counter for auto-resubmit; increments on each resubmission.",
 )
 def remd_batch(
     execution: tuple[Path, ...],
@@ -794,6 +801,7 @@ def remd_batch(
     auto_resubmit: bool,
     signal_mins: float,
     max_resubmit_count: int,
+    current_submission_time: int,
 ) -> None:
     """
     Generate an sbatch script that runs ``run-local-remd.bash`` for provided executions.
@@ -829,6 +837,10 @@ def remd_batch(
     if auto_resubmit and max_resubmit_count <= 0:
         raise click.ClickException(
             "--max-resubmit-count must be > 0 when auto-resubmit is enabled."
+        )
+    if auto_resubmit and current_submission_time < 0:
+        raise click.ClickException(
+            "--current-submission-time must be >= 0 when auto-resubmit is enabled."
         )
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
@@ -891,6 +903,8 @@ def remd_batch(
                 str(signal_mins),
                 "--max-resubmit-count",
                 str(max_resubmit_count),
+                "--current-submission-time",
+                str(current_submission_time + 1),
             ]
         )
         resubmit_cmd = f"{batter_cmd} " + " ".join(
@@ -909,25 +923,17 @@ def remd_batch(
         "fi",
     ]
     if auto_resubmit:
-        resubmit_state = f"{output_path_abs}.resubmit_count"
         body_lines += [
             "resubmit_done=0",
             f'RESUBMIT_CMD="{resubmit_cmd}"',
             f'RESUBMIT_OUTPUT="{output_path_abs}"',
-            f'RESUBMIT_STATE="{resubmit_state}"',
             f"MAX_RESUBMIT_COUNT={max_resubmit_count}",
+            f"CURRENT_SUBMISSION_TIME={current_submission_time}",
             "resubmit_allowed() {",
-            "  local count",
-            '  if [[ -f "$RESUBMIT_STATE" ]]; then',
-            '    count=$(head -n 1 "$RESUBMIT_STATE" 2>/dev/null || true)',
-            "  fi",
-            '  if [[ -z "$count" ]]; then count=0; fi',
-            "  if (( count >= MAX_RESUBMIT_COUNT )); then",
-            '    echo "[INFO] Auto-resubmit: max resubmit count reached (${count} >= ${MAX_RESUBMIT_COUNT})."',
+            "  if (( CURRENT_SUBMISSION_TIME + 1 >= MAX_RESUBMIT_COUNT )); then",
+            '    echo "[INFO] Auto-resubmit: max submission count reached (next=${CURRENT_SUBMISSION_TIME}+1 >= ${MAX_RESUBMIT_COUNT})."',
             "    return 1",
             "  fi",
-            "  count=$((count + 1))",
-            '  echo "$count" > "$RESUBMIT_STATE"',
             "  return 0",
             "}",
             "regen_and_submit() {",
@@ -1061,6 +1067,7 @@ def remd_batch(
         f"auto-resubmit: {'yes' if auto_resubmit else 'no'} | "
         f"signal-mins: {signal_mins if auto_resubmit else 'n/a'} | "
         f"max-resubmit-count: {max_resubmit_count if auto_resubmit else 'n/a'} | "
+        f"current-submission-time: {current_submission_time if auto_resubmit else 'n/a'} | "
         f"job-name: {job_name}"
     )
 
