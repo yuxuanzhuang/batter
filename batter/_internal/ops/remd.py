@@ -200,8 +200,6 @@ def patch_component_inputs(
         prefix = window_dir.relative_to(comp_dir).as_posix()
         nstlim = getattr(sim, "remd_nstlim", None)
         nstlim_val = int(nstlim) if nstlim else None
-        numexchg_val = getattr(sim, "remd_numexchg", None)
-        numexchg_val = int(numexchg_val) if numexchg_val else None
         base_template = window_dir / "mdin-template"
         tmpl = window_dir / "mdin-remd-template"
         if not tmpl.exists() and base_template.exists():
