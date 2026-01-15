@@ -77,7 +77,7 @@ proc pick_aa1 {mat xd yd zd ang_tol} {
         set v1 [vecsub $d3 $dp]
         set v2 [vecsub $d1 $dp]
 
-        # guard against zero-length vectors (rare but safe)
+        # guard against zero-length vectors
         set l1 [veclength $v1]
         set l2 [veclength $v2]
         if {$l1 == 0.0 || $l2 == 0.0} {
@@ -96,7 +96,7 @@ proc pick_aa1 {mat xd yd zd ang_tol} {
             continue
         }
 
-        # distance to shifted p (your original metric)
+        # distance to shifted p
         foreach {x2 y2 z2} $dp {break}
         set xl [expr {$x2 + $xd}]
         set yl [expr {$y2 + $yd}]
