@@ -239,6 +239,9 @@ if (( remaining_steps > 0 )); then
     if [[ -f md-current.rst7 ]]; then
         [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
         mv -f md-current.rst7 md-previous.rst7
+        if [[ "$rst_in" == "md-current.rst7" ]]; then
+            rst_in="md-previous.rst7"
+        fi
     fi
 
     # Run MD: always write restart to md-current.rst7

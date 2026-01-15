@@ -146,6 +146,9 @@ if (( remaining_steps > 0 )); then
     if [[ -f md-current.rst7 ]]; then
         [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
         mv -f md-current.rst7 md-previous.rst7
+        if [[ "$rst_in" == "md-current.rst7" ]]; then
+            rst_in="md-previous.rst7"
+        fi
     fi
 
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
