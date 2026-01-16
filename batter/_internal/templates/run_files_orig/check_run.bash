@@ -4,6 +4,18 @@ check_sim_failure() {
     local rst_file=$3
     local rst_file_prev=${4:-}
     local retry_count=${5:-0}
+    local extra_files=()
+    if (( $# > 5 )); then
+        extra_files=("${@:6}")
+    fi
+
+    cleanup_outputs() {
+        local f
+        for f in "${extra_files[@]}"; do
+            [[ -n "$f" ]] || continue
+            rm -f "$f"
+        done
+    }
 
     # If log doesn't exist yet, don't treat as failure here
     [[ -f "$log_file" ]] || return 0
@@ -13,6 +25,7 @@ check_sim_failure() {
         tail -n 200 "$log_file" || true
         rm -f "$log_file"
         rm -f "$rst_file"
+        cleanup_outputs
 
         # if not the first retry attempt, remove the previous restart file to avoid repeated failure
         if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
@@ -26,6 +39,7 @@ check_sim_failure() {
         echo "[ERROR] $stage simulation failed. Restart file missing or empty: $rst_file"
         rm -f "$log_file"
         rm -f "$rst_file"
+        cleanup_outputs
         if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
             echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
             rm -f "$rst_file_prev"
