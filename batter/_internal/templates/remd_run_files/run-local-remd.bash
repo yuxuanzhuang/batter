@@ -189,20 +189,23 @@ if (( remaining_steps > 0 )); then
 
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${seg_idx}.log"
     print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${groupfile} >> \"$log_file\" 2>&1"
-
-    read current_ps last_idx < <(remd_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
-    [[ -z $current_ps ]] && current_ps=0
+    rc=$?
+    echo "[INFO] pmemd step rc=$rc at $(date)" | tee -a "$log_file"
+    if (( rc != 0 )); then
+        echo "[ERROR] pmemd failed; skipping post-step" | tee -a "$log_file"
+        exit $rc
+    fi
 else
     current_ps="$total_ps"
 fi
 
-if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
-    echo "FINISHED" > ${PFOLDER}/FINISHED
-    echo "[INFO] REMD complete; writing per-window FINISHED markers."
-    for ((i = 0; i < N_WINDOWS; i++)); do
-        win=$(printf "%s%02d" "${COMP}" "$i")
-        echo "FINISHED" > "${PFOLDER}/${win}/FINISHED"
-        echo "[INFO] ${win}: FINISHED"
-    done
-    exit 0
+# if we reach here, REMD step completed successfully
+echo "FINISHED" > ${PFOLDER}/FINISHED
+echo "[INFO] REMD complete; writing per-window FINISHED markers."
+for ((i = 0; i < N_WINDOWS; i++)); do
+    win=$(printf "%s%02d" "${COMP}" "$i")
+    echo "FINISHED" > "${PFOLDER}/${win}/FINISHED"
+    echo "[INFO] ${win}: FINISHED"
+done
+exit 0
 fi
