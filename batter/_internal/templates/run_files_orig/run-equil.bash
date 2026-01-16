@@ -59,7 +59,11 @@ else
     print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
     check_sim_failure "Minimization" "$log_file" mini.rst7
 
-    print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
+        print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    else
+        print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    fi
     check_sim_failure "Minimization 2" "$log_file" mini2.rst7
 
     if ! check_min_energy "mini2.out" -1000; then
