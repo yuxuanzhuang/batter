@@ -336,6 +336,7 @@ class SimValidator:
             plt.show()
         plt.close(fig)
 
+        self.results['representative_frame_index'] = representative_index
         return representative_index
 
     def dump_results(self, filename='equilibration_analysis_results.npz'):
