@@ -48,8 +48,38 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
-[[ -n "$out" ]] && echo "ok" > "$out"
-[[ -n "$rst" ]] && echo "ok" > "$rst"
+seg=0
+if [[ "$out" =~ md-([0-9]+)\\.out ]]; then
+  seg=$((10#${BASH_REMATCH[1]}))
+elif [[ "$out" =~ md([0-9]+)\\.out ]]; then
+  seg=$((10#${BASH_REMATCH[1]}))
+fi
+chunk_ps=""
+if [[ -f mdin-current ]]; then
+  nstlim=$(sed -nE 's/.*nstlim[[:space:]]*=[[:space:]]*([0-9]+).*/\\1/p' mdin-current | head -n 1)
+  dt=$(sed -nE 's/.*dt[[:space:]]*=[[:space:]]*([-+0-9.eEdD]+).*/\\1/p' mdin-current | head -n 1)
+  if [[ -n "$dt" ]]; then dt=${dt//d/e}; dt=${dt//D/e}; fi
+  if [[ -z "$dt" ]]; then dt=0.001; fi
+  if [[ -n "$nstlim" ]]; then
+    chunk_ps=$(awk -v n="$nstlim" -v dt="$dt" 'BEGIN{printf "%.6f", n*dt}')
+  fi
+fi
+if [[ -n "$out" ]]; then
+  if [[ "$seg" -gt 0 && -n "$chunk_ps" ]]; then
+    time=$(awk -v s="$seg" -v c="$chunk_ps" 'BEGIN{printf "%.6f", s*c}')
+    echo "TIME(PS) = $time" > "$out"
+  else
+    echo "ok" > "$out"
+  fi
+fi
+if [[ -n "$rst" ]]; then
+  if [[ "$seg" -gt 0 && -n "$chunk_ps" ]]; then
+    time=$(awk -v s="$seg" -v c="$chunk_ps" 'BEGIN{printf "%.10f", s*c}')
+    echo "time=$time" > "$rst"
+  else
+    echo "time=0.0" > "$rst"
+  fi
+fi
 [[ -n "$nc" ]] && echo "ok" > "$nc"
 exit 0
 """,
@@ -65,13 +95,37 @@ while [[ $# -gt 0 ]]; do
 done
 """,
     )
+    ncdump_stub = work / "ncdump"
+    _write_stub_exe(
+        ncdump_stub,
+        """#!/usr/bin/env bash
+file=""
+for arg in "$@"; do
+  if [[ "$arg" != -* ]]; then
+    file="$arg"
+  fi
+done
+time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
+if [[ -z "$time" ]]; then time=0; fi
+cat <<EOF
+        double time ;
+                time:units = "picosecond" ;
+ time = $time ;
+EOF
+exit 0
+""",
+    )
 
     env = os.environ.copy()
     env["PMEMD_EXEC"] = str(stub)
     env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
     env["PATH"] = f"{work}:{env.get('PATH','')}"
 
-    cmd = ["bash", "-lc", "source run-local.bash"]
+    cmd = ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"]
+    subprocess.run(cmd, cwd=work, check=True, env=env)
+    assert (work / "md-current.rst7").exists()
+    assert not (work / "output.pdb").exists()
+
     subprocess.run(cmd, cwd=work, check=True, env=env)
 
     # After two segments we should have rolling restarts and output

@@ -207,13 +207,16 @@ def test_simulation_config_remd_enabled(tmp_path: Path) -> None:
     )
     assert cfg.remd == "yes"
     assert cfg.remd_nstlim == 100
-    assert cfg.remd_numexchg == 3000
 
 
 def test_fesim_remd_block():
-    args = FESimArgs.model_validate({"remd": {"nstlim": 200, "numexchg": 1500}})
+    args = FESimArgs.model_validate({"remd": {"nstlim": 200}})
     assert args.remd.nstlim == 200
-    assert args.remd.numexchg == 1500
+
+
+def test_fesim_remd_numexchg_rejected():
+    with pytest.raises(ValidationError):
+        FESimArgs.model_validate({"remd": {"nstlim": 200, "numexchg": 1500}})
 
 
 def test_fesim_remd_yes_rejected() -> None:

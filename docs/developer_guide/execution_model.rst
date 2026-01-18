@@ -59,4 +59,5 @@ whether to continue, retry, or mark ligands as failed. ``RunConfig.run.on_failur
 controls behaviour: ``prune`` skips remaining phases for failed ligands, ``retry``
 clears ``FAILED`` once and reruns, and ``raise`` aborts the whole run. Interrupted
 runs can resume because submit helpers and ``run-local*.bash`` honor the sentinels
-and the ``total_steps`` markers in mdin templates when chunking production.
+and the ``total_steps`` markers in mdin templates; each invocation runs a single
+segment and updates rolling restarts.
