@@ -184,7 +184,7 @@ def equil_analysis_handler(
         rep_idx = int(sim_val.find_representative_snapshot())
         # pick representative frame and export using cpptraj
         _cpptraj_export_rep(rep_idx, prmtop, trajs, p["equil_dir"])
-        sim_vals.dump_results()
+        sim_val.dump_results()
 
     # if traj doesn't exist
     # use the last frame as representative
