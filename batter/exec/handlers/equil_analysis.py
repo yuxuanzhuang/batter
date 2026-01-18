@@ -172,6 +172,7 @@ def equil_analysis_handler(
         u = mda.Universe(str(p["full_pdb"]), [str(t) for t in trajs])
         sim_val = SimValidator(u, ligand=residue_name, directory=p["equil_dir"])
         sim_val.plot_analysis(savefig=True)
+        sim_vals.dump_results()
 
         # bound vs unbound
         ligand_bs_last = float(np.asarray(sim_val.results["ligand_bs"][-1]).item())
