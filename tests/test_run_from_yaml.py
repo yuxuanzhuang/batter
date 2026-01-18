@@ -9,10 +9,9 @@ from typing import Iterable, List, Tuple
 
 import pytest
 
-# --- Project imports (adjust if your import path differs) ---
 from batter.config.run import RunConfig
-from batter.config import load_run_config  # if you expose it here
-from batter.config.simulation import SimulationConfig  # where your class lives
+from batter.config import load_run_config
+from batter.config.simulation import SimulationConfig
 from batter.orchestrate import run as run_mod
 from batter.orchestrate.run import run_from_yaml
 from batter.pipeline.step import ExecResult
@@ -54,16 +53,12 @@ def test_yaml_parse_and_validate(yaml_path: Path) -> None:
     """
     assert yaml_path.exists(), f"Config file not found: {yaml_path}"
 
-    # Load the high-level run config (adjust API if needed in your project).
     cfg: RunConfig = load_run_config(str(yaml_path))
     assert hasattr(cfg, "create"), "RunConfig missing 'create' section"
     assert hasattr(cfg, "fe_sim") or hasattr(
         cfg, "fe"
     ), "RunConfig missing 'fe_sim'/'fe' section"
 
-    # Your code suggested using:
-    #   SimulationConfig.from_sections(create, fe, partition=...)
-    # Try both attribute names for compatibility.
     fe_section = getattr(cfg, "fe_sim", None) or getattr(cfg, "fe", None)
 
     # Build the merged model; this runs field + model validators (including _finalize).
@@ -77,8 +72,6 @@ def test_yaml_parse_and_validate(yaml_path: Path) -> None:
     assert isinstance(sim_cfg.component_lambdas, dict)
     assert isinstance(sim_cfg.components, list)
     assert sim_cfg.dec_int in {"mbar", "ti"}
-    # If TI is forbidden, your validator will raise before this point.
-
 
 @pytest.mark.parametrize("yaml_path", _iter_yaml_files(), ids=lambda p: p.name)
 def test_yaml_has_minimal_keys(yaml_path: Path) -> None:
@@ -95,7 +88,6 @@ def test_yaml_has_minimal_keys(yaml_path: Path) -> None:
 
     # Basic round-trip via loader
     cfg: RunConfig = load_run_config(str(yaml_path))
-    # Some minimal presence checks—tune to your schema.
     assert getattr(cfg, "create", None) is not None
     assert (
         getattr(cfg, "fe_sim", None) is not None or getattr(cfg, "fe", None) is not None

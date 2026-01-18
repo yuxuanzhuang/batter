@@ -211,7 +211,7 @@ class IBuilderFactory(Protocol):
 # A registry maps (stage, component) to a callable that produces a builder.
 BuilderCtor = Callable[
     [],
-    ISystemBuilder,  # You can curry arguments in closures when registering
+    ISystemBuilder,
 ]
 
 BuilderKey = Tuple[Stage, Component]

@@ -155,7 +155,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     # Adjust protein anchors to new numbering
     def _extract_resid(atom_spec: str) -> tuple[int, str]:
-        # e.g. ":113@CA" or "113@CA" formats used in your config
+        # e.g. ":113@CA" or "113@CA"
         if atom_spec.startswith(":"):
             atom_spec = atom_spec[1:]
         r_s, a = atom_spec.split("@")

@@ -178,7 +178,7 @@ def _gen_cv_blocks_from_distance_restraints(work_dir: Path,
         except Exception:
             raise ValueError(f"[extra_conf] Could not find CA for resid {res1} or {res2} in {pdb.name}")
 
-        # walls: add a small 0.3 Å buffer like your original code
+        # walls: add a small 0.3 Å buffer to avoid overlap
         if direction == ">=":
             lo = max(cutoff - 0.3, 0.0)
             hi = cutoff
