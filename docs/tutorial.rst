@@ -102,8 +102,8 @@ Required Files
    Needed for membrane protein system.
    
    The membrane-embedded system can be generated via `Dabble <https://github.com/Eigenstate/dabble>`_ (preferred with ``protein_input.pdb``).
-   ``system_input.pdb`` must encode the correct unit-cell vectors (box information).
-   If ``system_input.inpcrd`` is provided its coordinates take precedence.
+   ``system_input.pdb`` must encode the correct unit-cell vectors (box information) if `system_input.inpcrd`` is not provided (Dabble does this by default).
+   If ``system_input.inpcrd`` is provided its coordinates and box information take precedence.
    
    ``protein_input.pdb`` **does not** need to be aligned to ``system_input.pdb``; it can be helpful in cases e.g.,
    the protein structure used for docking (so all the docked poses are superposed to this protein) is oriented differently
