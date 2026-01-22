@@ -381,6 +381,25 @@ class _SystemPrepRunner:
             raise ValueError(f"Invalid system_dimensions: {self.system_dimensions}")
         u_merged.dimensions = box_dim
 
+        charmm_2_std_resname_map = {
+            "HIS": "HIE",   # generic HIS → HID (or change to HIE if that’s your default)
+            "HSD": "HID",   # δ-protonated
+            "HSE": "HIE",   # ε-protonated
+            "HIP": "HIP",   # doubly protonated
+        }
+        # replace CHARMM specific resname
+        for res in u_merged.residues:
+            new_name = charmm_2_std_resname_map.get(res.resname, res.resname)
+            res.resname = new_name
+
+        charmm_2_std_resname_map = {
+            ("ILE", "CD"): "CD1",
+        }
+        # replace CHARMM specific atom name
+        for atom in u_merged.atoms:
+            new_name = charmm_2_std_resname_map.get((atom.resname, atom.name), atom.name)
+            atom.name = new_name
+
         u_merged.atoms.write(f"{self.ligands_folder}/{self.system_name}.pdb")
         protein_ref = u_prot.select_atoms("protein")
         protein_ref.write(f"{self.ligands_folder}/reference.pdb")
