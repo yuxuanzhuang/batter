@@ -46,7 +46,7 @@ if [[ $only_eq -eq 1 ]]; then
             echo "Skipping seed for window $i, already exists."
         else
             echo "Seeding window $i"
-            cp "mini.rst7" "$win_folder/mini.rst7"
+            cp "mini.rst7" "$win_folder/eq.rst7"
         fi
     done
 
