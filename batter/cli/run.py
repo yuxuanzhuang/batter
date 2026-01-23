@@ -957,7 +957,7 @@ def remd_batch(
         '  local dir="$2"',
         '  local win="$3"',
         '  local nodes="$4"',
-        '  echo "Running ${label}${win:+ (windows=${win})}"',
+        '  echo "Running ${label}${win:+ (windows=${win})} dir=${dir}"',
         '  local mpi_flags="${MPI_FLAGS:-}"',
         '  if [[ "$use_srun" -eq 1 && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
         '    local extra_flags="--nodes=${nodes} --ntasks=${win} --exclusive --gpus-per-task=1"',

@@ -190,9 +190,9 @@ if (( remaining_steps > 0 )); then
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${seg_idx}.log"
     print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${groupfile} >> \"$log_file\" 2>&1"
     rc=$?
-    echo "[INFO] pmemd step rc=$rc at $(date)" | tee -a "$log_file"
+    echo "[INFO] pmemd step rc=$rc dir=${PFOLDER} at $(date)" | tee -a "$log_file"
     if (( rc != 0 )); then
-        echo "[ERROR] pmemd failed; skipping post-step" | tee -a "$log_file"
+        echo "[ERROR] pmemd failed in ${PFOLDER}; skipping post-step" | tee -a "$log_file"
         exit $rc
     fi
 else
