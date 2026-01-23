@@ -5,7 +5,6 @@
 - add supports and documentation to build membrane protein systems without dabble.
 - correction for symmetry.
 - error reporting based on blocks
-- REMD in batch submission
 
 BUG
 - during analysis if one component fails, the results is reported without it instead marking failure.
