@@ -347,11 +347,11 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                     is_finished = True
             status_note = "finished" if is_finished else "pending"
             if finish_time:
-                logger.info(
+                logger.debug(
                     f"[remd-batch] {comp_dir} window0 time(ps)={finish_time} ({status_note})."
                 )
             else:
-                logger.info(
+                logger.debug(
                     f"[remd-batch] {comp_dir} window0 time unavailable ({status_note})."
                 )
 
@@ -374,6 +374,7 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                     n_windows=n_windows,
                 )
             )
+            logger.info(f"[remd-batch] {comp_dir} Queued (windows={n_windows}).")
 
     return tasks
 
@@ -822,9 +823,7 @@ def remd_batch(
             seen.add(t.comp_dir)
             tasks.append(t)
             win_note = t.n_windows if t.n_windows else "unknown"
-            logger.info(
-                f"[remd-batch] Queued {t.comp_dir} (windows={win_note})."
-            )
+            logger.debug(f"[remd-batch] Queued {t.comp_dir} (windows={win_note}).")
 
     if not tasks:
         raise click.ClickException(
@@ -833,7 +832,9 @@ def remd_batch(
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
     if auto_resubmit and signal_mins <= 0:
-        raise click.ClickException("--signal-mins must be > 0 when auto-resubmit is enabled.")
+        raise click.ClickException(
+            "--signal-mins must be > 0 when auto-resubmit is enabled."
+        )
     if auto_resubmit and max_resubmit_count <= 0:
         raise click.ClickException(
             "--max-resubmit-count must be > 0 when auto-resubmit is enabled."
@@ -915,8 +916,8 @@ def remd_batch(
         'echo "Job started at $(date)"',
         "status=0",
         "pids=()",
-        'mpi_base=$(echo "${MPI_EXEC:-mpirun}" | awk \'{print $1}\')',
-        'mpi_base=${mpi_base##*/}',
+        "mpi_base=$(echo \"${MPI_EXEC:-mpirun}\" | awk '{print $1}')",
+        "mpi_base=${mpi_base##*/}",
         "use_srun=0",
         'if [[ "${mpi_base}" == srun* ]]; then',
         "  use_srun=1",
@@ -940,7 +941,7 @@ def remd_batch(
             '  if [[ "$resubmit_done" -eq 1 ]]; then return; fi',
             "  resubmit_done=1",
             '  echo "[INFO] Auto-resubmit triggered at $(date)"',
-            '  resubmit_allowed || return',
+            "  resubmit_allowed || return",
             '  eval "$RESUBMIT_CMD" || { echo "[ERROR] Auto-resubmit command failed."; return; }',
             '  if [[ -n "${SLURM_JOB_ID:-}" ]]; then',
             '    sbatch --dependency=afterany:${SLURM_JOB_ID} "$RESUBMIT_OUTPUT"',
@@ -978,7 +979,7 @@ def remd_batch(
         body_lines.append(
             f'run_remd_task "{label}" "{t.comp_dir}" "{n_windows}" "{nodes_needed}" &'
         )
-        body_lines.append('pids+=($!)')
+        body_lines.append("pids+=($!)")
 
     body_lines.append("")
     body_lines.append('for pid in "${pids[@]}"; do')
@@ -1304,7 +1305,7 @@ def fe_analyze(
         "<cyan>{module}</cyan>:<cyan>{line}</cyan> - "
         "<level>{message}</level>",
     )
-    
+
     parsed_range: tuple[int, int] | None = None
     if sim_range:
         parts = sim_range.split(",")
