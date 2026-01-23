@@ -134,7 +134,7 @@ class FEResultsRepository:
         self.store = store
         self._root = store.root / "results"
         self._idx = self._root / "index.csv"
-        self._idx_lock = self._root / "index.csv.lock"
+        self._idx_lock = self._root / ".index.csv.lock"
 
     def _lig_dir(self, run_id: str, ligand: str) -> Path:
         return self._root / run_id / ligand
@@ -185,12 +185,13 @@ class FEResultsRepository:
             if self._idx.exists():
                 df = pd.read_csv(self._idx)
                 if {"run_id", "ligand"}.issubset(df.columns):
+                    logger.info("Updating index for run_id={}, ligand={}", row["run_id"], row["ligand"])
                     df = df[
                         ~(
                             (df["run_id"] == row["run_id"])
                             & (df["ligand"] == row["ligand"])
                         )
-                    ].copy()
+                    ].copy().reset_index(drop=True)
             else:
                 df = pd.DataFrame(columns=cols)
 
