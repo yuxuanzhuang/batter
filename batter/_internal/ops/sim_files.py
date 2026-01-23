@@ -311,13 +311,14 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     if dec_method == "sdr":
         mk2 = int(last_lig)
         mk1 = mk2 - 1
+        template_eqin = amber_dir / "eqin-unorest"
         template_mdin = amber_dir / "mdin-unorest"
         template_mini = amber_dir / "mini-unorest"
 
         # first write eq.in
         n_steps_run = 5000
         out_path = windows_dir / "eq.in"
-        with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
+        with template_eqin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
                 if "ntx = 5" in line:
                     line = "ntx = 1,\n"
@@ -430,12 +431,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
         infe_flag = 1 if extra_ctx["infe"] else 0
         mk1 = int(last_lig)
+        template_eqin = amber_dir / "eqin-unorest-dd"
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
         # optional short equilibration input
         eq_path = windows_dir / "eq.in"
-        with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
+        with template_eqin.open("rt") as fin, eq_path.open("wt") as fout:
             for line in fin:
                 if "ntx = 5" in line:
                     line = "ntx = 1,\n"

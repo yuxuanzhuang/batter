@@ -155,7 +155,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     # Adjust protein anchors to new numbering
     def _extract_resid(atom_spec: str) -> tuple[int, str]:
-        # e.g. ":113@CA" or "113@CA" formats used in your config
+        # e.g. ":113@CA" or "113@CA"
         if atom_spec.startswith(":"):
             atom_spec = atom_spec[1:]
         r_s, a = atom_spec.split("@")
@@ -185,6 +185,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     p2_resid = int(h2_entry["new_resid"].values[0]) + 1
     p3_resid = int(h3_entry["new_resid"].values[0]) + 1
     p1_vmd = f"{p1_resid}"
+    p2_vmd = f"{p2_resid}"
 
     P1 = f":{p1_resid}@{h1_atom}"
     P2 = f":{p2_resid}@{h2_atom}"
@@ -308,7 +309,9 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
                     line.replace("MMM", mol)
                     .replace("mmm", mol)
                     .replace("NN", h1_atom)
+                    .replace("N2A", h2_atom)
                     .replace("P1A", f"{p1_vmd}")
+                    .replace("P2A", f"{p2_vmd}")
                     .replace("FIRST", "1")
                     .replace("LAST", f"{recep_resid_num}")
                     .replace("STAGE", "equil")
@@ -530,6 +533,10 @@ def build_complex_z(ctx) -> bool:
     rec_res = int(recep_last) + 1
     p1_vmd = p1_resid
 
+    p2_resid = P2.split("@")[0][1:]
+    p2_atom = P2.split("@")[1]
+    p2_vmd = p2_resid
+
     # 8) SDR distance
     if buffer_z <= 25:
         buffer_z = 25
@@ -576,7 +583,9 @@ def build_complex_z(ctx) -> bool:
                 line.replace("MMM", mol)
                 .replace("mmm", mol)
                 .replace("NN", p1_atom)
+                .replace("N2A", p2_atom)
                 .replace("P1A", p1_vmd)
+                .replace("P2A", p2_vmd)
                 .replace("FIRST", "2")
                 .replace("LAST", str(rec_res))
                 .replace("STAGE", "fe")
@@ -611,6 +620,8 @@ def build_complex_z(ctx) -> bool:
                     .replace("mmm", mol)
                     .replace("NN", p1_atom)
                     .replace("P1A", p1_vmd)
+                    .replace("N2A", p2_atom)
+                    .replace("P2A", p2_vmd)
                     .replace("FIRST", "2")
                     .replace("LAST", str(rec_res))
                     .replace("STAGE", "fe")

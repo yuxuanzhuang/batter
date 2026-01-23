@@ -1,6 +1,5 @@
 from pathlib import Path
 
-# Paths relative to package root (adjust to your layout)
 PKG_ROOT = Path(__file__).resolve().parents[2]
 
 # Example: batter/_internal/templates/build_files_orig/

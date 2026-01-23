@@ -64,10 +64,10 @@ Equilibration and production templates written by ``sim_files.py`` begin with a
 ``eq_steps`` for equilibration; per-component ``n_steps`` are used for production
 mdin templates. The runtime scripts (``run-local.bash``, ``run-local-vacuum.bash``,
 ``run-equil.bash``) call ``parse_total_steps`` in ``check_run.bash`` to read that
-marker and ``parse_nstlim`` to pick the first ``nstlim`` as the chunk length. They
-roll ``md-current.rst7``/``md-previous.rst7`` between segments until
-``total_steps`` is reached, so avoid deleting or renaming the comment when hand
-editing templates.
+marker and ``parse_nstlim`` to pick the first ``nstlim`` as the chunk length. Each
+invocation runs one segment, rolls ``md-current.rst7``/``md-previous.rst7``, and
+returns; rerun the script to continue until ``total_steps`` is reached. Avoid
+deleting or renaming the comment when hand editing templates.
 
 Config field consumers
 ----------------------

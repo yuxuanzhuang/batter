@@ -212,7 +212,7 @@ class SimValidator:
         areas.run()
         self.results['leaflet_areas'] = areas.areas
 
-    def plot_analysis(self, savefig=True):
+    def plot_analysis(self, savefig=True, output_filename='simulation_analysis.png'):
         # plot ligand_bs, rmsd, dihedral in three rows
         fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=True)
         # Plot ligand binding site distance
@@ -226,7 +226,7 @@ class SimValidator:
         axes[1].legend()
         plt.tight_layout()
         if savefig:
-            plt.savefig(self.workdir / 'simulation_analysis.png')
+            plt.savefig(self.workdir / output_filename)
         else:
             plt.show()
         plt.close(fig)
@@ -297,7 +297,7 @@ class SimValidator:
         plt.close(fig)
     
     # get the mode value of the dihedral
-    def find_representative_snapshot(self, savefig=True):
+    def find_representative_snapshot(self, savefig=True, output_filename='dihed_hist.png'):
         """
         Find the representative snapshot based on the mode dihedral values.
         """
@@ -331,12 +331,21 @@ class SimValidator:
                         color='r', linestyle='--', label='Representative')
         plt.tight_layout()
         if savefig:
-            plt.savefig(self.workdir / 'dihed_hist.png')
+            plt.savefig(self.workdir / output_filename)
         else:
             plt.show()
         plt.close(fig)
 
+        self.results['representative_frame_index'] = representative_index
         return representative_index
+
+    def dump_results(self, filename='equilibration_analysis_results.npz'):
+        """
+        Dump the results to a npz file
+        """
+        filepath = self.workdir / filename
+        np.savez_compressed(filepath, **self.results)
+        logger.debug(f'Simulation validation results saved to {filepath}')
 
 
 class MultiligandSimValidator:

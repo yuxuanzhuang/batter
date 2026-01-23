@@ -134,7 +134,6 @@ def system_prep_masfe(step: Step, system: SimSystem, params: Dict[str, Any]) -> 
     # Minimal overrides that tell downstream we are in MASFE/solvation mode.
     overrides = {
         "is_solvation": True,
-        # Surface common FE knobs if you want handlers to see them early:
         "water_model": sys_params.get("water_model", "TIP3P"),
         "ion_conc": sys_params.get("ion_conc", 0.0),
         "cation": sys_params.get("cation", "Na+"),

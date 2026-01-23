@@ -198,14 +198,12 @@ class SimulationConfig(BaseModel):
         remd_settings = _fe_attr("remd", lambda: RemdArgs())
         if isinstance(remd_settings, RemdArgs):
             remd_nstlim = int(remd_settings.nstlim)
-            remd_numexchg = int(remd_settings.numexchg)
         elif isinstance(remd_settings, Mapping):
             remd_settings = RemdArgs(**remd_settings)
             remd_nstlim = int(remd_settings.nstlim)
-            remd_numexchg = int(remd_settings.numexchg)
         else:
             raise ValueError(
-                "fe_sim.remd must be a mapping of REMD settings (nstlim/numexchg); "
+                "fe_sim.remd must be a mapping of REMD settings (nstlim); "
                 "toggle execution with run.remd."
             )
 
@@ -216,7 +214,6 @@ class SimulationConfig(BaseModel):
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
             "remd": remd_flag,
             "remd_nstlim": remd_nstlim,
-            "remd_numexchg": remd_numexchg,
             "rocklin_correction": coerce_yes_no(
                 _fe_attr("rocklin_correction", lambda: "no")
             ),
@@ -302,9 +299,6 @@ class SimulationConfig(BaseModel):
     )
     remd_nstlim: int = Field(
         100, description="Steps per REMD segment (applied to mdin-*-remd copies)."
-    )
-    remd_numexchg: int = Field(
-        3000, description="Exchange attempt interval for REMD (numexchg)."
     )
     infe: bool = Field(
         False, description="Enable NFE (infinite) equilibration when true."

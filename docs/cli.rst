@@ -38,6 +38,37 @@ Notes:
 * The first ``batter run`` stores a copy of the YAML plus any external restraint files (e.g.,
   ``extra_conformation_restraints``) under ``artifacts/config/``. ``run-exec`` reuses that copy.
 
+Generate REMD Batch Scripts
+===========================
+
+Use ``batter remd-batch`` to emit an ``sbatch`` script that runs ``run-local-remd.bash``
+across one or more execution folders::
+
+   batter remd-batch -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
+
+The command skips component folders that already contain ``FINISHED`` and, when
+``ncdump`` is available, also skips components whose window0 restart time is within
+100 ps of the requested total. The script is written to the current directory.
+Key options:
+
+``--gpus``
+   Total GPUs to request (defaults to the total window count detected).
+``--gpus-per-node``
+   GPUs available per node (default: 8). Used to size per-task node allocations when
+   ``MPI_EXEC`` is ``srun``.
+``--nodes``
+   Override the total node count in the header.
+``--auto-resubmit`` / ``--no-auto-resubmit``
+   When enabled (default), the generated sbatch traps a pre-timeout signal,
+   regenerates the remd-batch script, and resubmits it until all components finish
+   or the max resubmission count is reached.
+``--signal-mins``
+   Minutes before the time limit to trigger auto-resubmit (default: 90).
+``--max-resubmit-count``
+   Maximum total submissions for the script (including the first run; default: 4).
+``--current-submission-time``
+   Internal counter for auto-resubmit; increments on each resubmission (default: 0).
+
 Inspect Free-Energy Results
 ===========================
 

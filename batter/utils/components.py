@@ -53,13 +53,13 @@ COMPONENTS_FOLDER_DICT = {
     "t": "rest",
     "r": "rest",
     "c": "rest",
-    "m": "rest",
+    "m": "sdr",
     "n": "rest",
 }
 
 COMPONENTS_DICT = {
-    "rest": ["a", "l", "t", "c", "r", "m", "n"],
-    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "y"],
+    "rest": ["a", "l", "t", "c", "r", "n"],
+    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "y", "m"],
 }
 
 

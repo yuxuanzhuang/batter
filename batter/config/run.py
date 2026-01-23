@@ -405,7 +405,7 @@ class FESimArgs(BaseModel):
     )
     remd: RemdArgs = Field(
         default_factory=RemdArgs,
-        description="Replica-exchange MD controls (nstlim/numexchg).",
+        description="Replica-exchange MD controls (nstlim).",
     )
     rocklin_correction: Literal["yes", "no"] = Field(
         "no",
@@ -513,7 +513,7 @@ class FESimArgs(BaseModel):
         if v is None:
             return RemdArgs()
         raise ValueError(
-            "fe_sim.remd only accepts REMD timing settings (nstlim/numexchg); "
+            "fe_sim.remd only accepts REMD timing settings (nstlim); "
             "use run.remd to enable or disable REMD submissions."
         )
 

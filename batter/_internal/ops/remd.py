@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable, List
+import re
 
 from loguru import logger
 
@@ -9,8 +10,6 @@ from batter.config.simulation import SimulationConfig
 from batter.utils.components import COMPONENTS_DICT
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
-# Default REMD exchange settings to mirror legacy batching behaviour (overridden by config).
-NUMEXCHG_DEFAULT = 3000
 BAR_INTERVAL_DEFAULT = 100
 
 
@@ -58,10 +57,12 @@ def _inject_numexchg(lines: List[str], numexchg: int | None) -> tuple[List[str],
     """
     Insert numexchg/bar_intervall into the &cntrl block if missing.
     """
+    if numexchg is None:
+        return lines, False
     out: List[str] = []
     in_cntrl = False
     inserted = False
-    num_val = numexchg or NUMEXCHG_DEFAULT
+    num_val = numexchg
 
     for line in lines:
         lower = line.lower().strip()
@@ -165,46 +166,68 @@ def patch_component_inputs(
 ) -> List[Path]:
     """
     Prepare REMD-specific mdin copies:
-      - mdin-00      → mdin-00-remd  (first stage)
-      - mdin-01      → mdin-remd     (re-used for all subsequent stages)
+      - mdin-template → mdin-remd-template (runtime REMD template with total_steps)
 
     Only production windows (comp00, comp01, ...) are touched; the scaffold
     window (comp-1) is left intact.
     """
     patched: List[Path] = []
+    comp_total_steps = 0
+    try:
+        comp_total_steps = int(getattr(sim, "dic_n_steps", {}).get(comp, 0))
+    except Exception:
+        comp_total_steps = 0
+
+    def _extract_total_steps(text: str) -> int | None:
+        total = None
+        for line in text.splitlines():
+            m = re.match(r"^[!#]\s*total_steps\s*=\s*([0-9]+)", line)
+            if m:
+                total = int(m.group(1))
+        return total
+
+    def _with_total_steps_marker(text: str, total_steps: int) -> str:
+        lines = [
+            line
+            for line in text.splitlines()
+            if not re.match(r"^[!#]\s*total_steps\s*=", line)
+        ]
+        return f"! total_steps={total_steps}\n" + "\n".join(lines) + "\n"
+
     for window_dir in _component_window_dirs(comp_dir, comp):
         if window_dir.name == f"{comp}-1":
             continue
         prefix = window_dir.relative_to(comp_dir).as_posix()
         nstlim = getattr(sim, "remd_nstlim", None)
         nstlim_val = int(nstlim) if nstlim else None
-        numexchg_val = getattr(sim, "remd_numexchg", None)
-        numexchg_val = int(numexchg_val) if numexchg_val else None
-        src00 = window_dir / "mdin-00"
-        dst00 = window_dir / "mdin-00-remd"
-        if src00.exists():
-            dst00.write_text(src00.read_text())
-            if patch_mdin_file(
-                dst00,
-                prefix,
-                add_numexchg=add_numexchg,
-                remd_nstlim=100, # always set nstlim=100 for first stage
-                remd_numexchg=numexchg_val,
-            ):
-                patched.append(dst00)
-
-        src01 = window_dir / "mdin-01"
-        dst01 = window_dir / "mdin-remd"
-        if src01.exists():
-            dst01.write_text(src01.read_text())
-            if patch_mdin_file(
-                dst01,
+        base_template = window_dir / "mdin-template"
+        tmpl = window_dir / "mdin-remd-template"
+        if not tmpl.exists() and base_template.exists():
+            tmpl.write_text(base_template.read_text())
+            total_steps = comp_total_steps or _extract_total_steps(
+                base_template.read_text()
+            )
+            remd_exchg = None
+            if total_steps and nstlim_val:
+                remd_exchg = (total_steps + nstlim_val - 1) // nstlim_val
+            changed = patch_mdin_file(
+                tmpl,
                 prefix,
                 add_numexchg=add_numexchg,
                 remd_nstlim=nstlim_val,
-                remd_numexchg=numexchg_val,
-            ):
-                patched.append(dst01)
+                remd_numexchg=remd_exchg,
+            )
+            if not total_steps:
+                total_steps = nstlim_val or 0
+            if total_steps:
+                tmpl.write_text(_with_total_steps_marker(tmpl.read_text(), total_steps))
+                changed = True
+            if changed:
+                patched.append(tmpl)
+        elif not tmpl.exists():
+            logger.warning(
+                f"[remd] Missing mdin-template under {window_dir}; cannot write remd template."
+            )
 
     if patched:
         logger.debug(f"[remd] Patched {len(patched)} mdin files under {comp_dir}")
@@ -246,31 +269,10 @@ def write_remd_groupfiles(
             f"-e {win}/mini.in.mden{allow_small_box}\n"
         )
 
-    def prod_line(idx: int, stage: int) -> str:
-        win = _window_name(idx)
-        if stage == 0:
-            inp = "mdin-00-remd"
-            curr = "mdin-00"
-            prev = "mini.in"
-        else:
-            inp = "mdin-remd"
-            curr = f"mdin-{stage:02d}"
-            prev = f"mdin-{stage - 1:02d}"
-        return (
-            f"-O -i {win}/{inp} -p {prmtop_path} -c {win}/{prev}.rst7 "
-            f"-o {win}/{curr}.out -r {win}/{curr}.rst7 -x {win}/{curr}.nc "
-            f"-ref {win}/mini.in.rst7 -inf {win}/mdinfo -l {win}/{curr}.log "
-            f"-e {win}/{curr}.mden{allow_small_box}\n"
-        )
-
     out_files: List[Path] = []
     mini_path = group_dir / "mini.in.remd.groupfile"
     _write_groupfile(mini_path, n_windows, mini_line)
     out_files.append(mini_path)
-
-    prod0_path = group_dir / "mdin.in.remd.groupfile"
-    _write_groupfile(prod0_path, n_windows, lambda idx: prod_line(idx, 0))
-    out_files.append(prod0_path)
 
     logger.debug(f"[remd] Wrote {len(out_files)} groupfiles under {group_dir}")
     return out_files

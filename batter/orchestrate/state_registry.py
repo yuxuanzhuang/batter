@@ -28,9 +28,12 @@ LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
         "failure": [],
     },
     "prepare_equil": {
-        "required": [["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"]],
+        "required": [
+            ["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"],
+            ["equil/artifacts/prepare_equil.failed"],
+        ],
         "success": [["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"]],
-        "failure": [],
+        "failure": [["equil/artifacts/prepare_equil.failed"]],
     },
     "equil": {
         "required": [["equil/FINISHED"], ["equil/FAILED"]],

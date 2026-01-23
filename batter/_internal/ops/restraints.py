@@ -178,7 +178,7 @@ def _gen_cv_blocks_from_distance_restraints(work_dir: Path,
         except Exception:
             raise ValueError(f"[extra_conf] Could not find CA for resid {res1} or {res2} in {pdb.name}")
 
-        # walls: add a small 0.3 Å buffer like your original code
+        # walls: add a small 0.3 Å buffer to avoid overlap
         if direction == ">=":
             lo = max(cutoff - 0.3, 0.0)
             hi = cutoff
@@ -330,12 +330,17 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     cv_in = work / "cv.in"
     with cv_in.open("w") as cvf:
         cvf.write("cv_file\n&colvar\n")
-        cvf.write(" cv_type = 'COM_DISTANCE'\n")
-        cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-        for a in hvy_h:
-            cvf.write(a + ",")
+        if len(hvy_h) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
+            for a in hvy_h:
+                cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 0.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rest[5], rest[5]))
         cvf.write("/\n")
 
@@ -494,21 +499,33 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     with cv_in.open("w") as cvf:
         # protein COM restraint
         cvf.write("cv_file\n&colvar\n")
-        cvf.write(" cv_type = 'COM_DISTANCE'\n")
-        cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-        for a in hvy_h: cvf.write(a + ",")
+        if len(hvy_h) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
+            for a in hvy_h:
+                cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 0.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
         cvf.write("/\n")
 
         # ligand COM restraint
         cvf.write("&colvar\n")
-        cvf.write(" cv_type = 'COM_DISTANCE'\n")
-        cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
-        for a in hvy_lig: cvf.write(a + ",")
+        if len(hvy_lig) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
+            for a in hvy_lig:
+                cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 0.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 
@@ -626,12 +643,16 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
     with cv_in.open("w") as cvf:
         cvf.write("cv_file\n")
         cvf.write("&colvar\n")
-        cvf.write(" cv_type = 'COM_DISTANCE'\n")
-        # cv_ni = (#heavy + 2), cv_i starts with "1,0," then heavy serials
-        cvf.write(f" cv_ni = {len(hvy_serials) + 2}, cv_i = 1,0,")
-        cvf.write(",".join(hvy_serials))
+        if len(hvy_serials) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_serials[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_serials) + 2}, cv_i = 1,0,")
+            cvf.write(",".join(hvy_serials))
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 0.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 

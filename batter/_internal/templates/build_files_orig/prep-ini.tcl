@@ -56,25 +56,78 @@ lappend mat $i
 
 puts $mat
 
-foreach i $mat {
-set t [atomselect 1 "resname MMM and name $i"]
-set p [atomselect 1 "(not resname MMM) and (resid P1A and name NN)"]
-set d1 [measure center $t weight mass]
-set d2 [measure center $p weight mass]
-foreach {x2 y2 z2} $d2 {break}
-set xl [expr $x2+$xd]
-set yl [expr $y2+$yd]
-set zl [expr $z2+$zd]
-foreach {x1 y1 z1} $d1 {break}
-set xc [expr abs($x1-$xl)]
-set yc [expr abs($y1-$yl)]
-set zc [expr abs($z1-$zl)]
-set diff [expr sqrt([expr pow($xc,2) + pow($yc,2) + pow($zc,2)])]
-if [expr $diff < $rad] {
-set rad $diff
-set aa1 $i }
+proc pick_aa1 {mat xd yd zd ang_tol} {
+    upvar rad rad aa1 aa1 best_ang best_ang
+
+    # reset outputs
+    catch {unset aa1}
+    catch {unset best_ang}
+    set rad 100.0
+
+    foreach i $mat {
+        set t  [atomselect 1 "resname MMM and name $i"]
+        set p  [atomselect 1 "(not resname MMM) and (resid P1A and name NN)"]
+        set p2 [atomselect 1 "(not resname MMM) and (resid P2A and name N2A)"]
+
+        set d1 [measure center $t  weight mass]   ;# candidate
+        set dp [measure center $p  weight mass]   ;# vertex point (p)
+        set d3 [measure center $p2 weight mass]   ;# point (p2)
+
+        # angle p2 - p - candidate
+        set v1 [vecsub $d3 $dp]
+        set v2 [vecsub $d1 $dp]
+
+        # guard against zero-length vectors
+        set l1 [veclength $v1]
+        set l2 [veclength $v2]
+        if {$l1 == 0.0 || $l2 == 0.0} {
+            $t delete; $p delete; $p2 delete
+            continue
+        }
+
+        set cosang [expr {[vecdot $v1 $v2] / ($l1 * $l2)}]
+        if {$cosang >  1.0} { set cosang  1.0 }
+        if {$cosang < -1.0} { set cosang -1.0 }
+        set ang [expr {acos($cosang) * 180.0 / 3.141592653589793}]
+
+        if {[expr {abs($ang - 90.0)}] > $ang_tol} {
+            puts "Angle $ang out of tolerance ($ang_tol)"
+            $t delete; $p delete; $p2 delete
+            continue
+        }
+
+        # distance to shifted p
+        foreach {x2 y2 z2} $dp {break}
+        set xl [expr {$x2 + $xd}]
+        set yl [expr {$y2 + $yd}]
+        set zl [expr {$z2 + $zd}]
+
+        foreach {x1 y1 z1} $d1 {break}
+        set xc [expr {abs($x1 - $xl)}]
+        set yc [expr {abs($y1 - $yl)}]
+        set zc [expr {abs($z1 - $zl)}]
+        set diff [expr {sqrt($xc*$xc + $yc*$yc + $zc*$zc)}]
+
+        if {$diff < $rad} {
+            set rad $diff
+            set aa1 $i
+            set best_ang $ang
+        }
+
+        $t delete; $p delete; $p2 delete
+    }
 }
 
+# Pass 1: strict
+set ANG_TOL 15.0
+pick_aa1 $mat $xd $yd $zd $ANG_TOL
+
+# If not found, pass 2: relaxed
+if {![info exists aa1]} {
+    puts "No aa1 found with ANG_TOL=$ANG_TOL. Retrying with ANG_TOL=70..."
+    set ANG_TOL 70.0
+    pick_aa1 $mat $xd $yd $zd $ANG_TOL
+}
 
 set exist [info exists aa1]
 if {[expr $exist == 0]} {

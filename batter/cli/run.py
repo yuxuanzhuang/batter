@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import math
@@ -322,11 +323,40 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
         windows_counts = _load_windows_counts(lig_dir / "fe")
         for comp in comps:
             comp_dir = (lig_dir / "fe" / comp).resolve()
+            finished_marker = comp_dir / "FINISHED"
             run_script = comp_dir / "run-local-remd.bash"
             if not run_script.is_file():
                 logger.warning(
                     f"[remd-batch] Missing run-local-remd.bash under {comp_dir}; skipping."
                 )
+                continue
+
+            finish_time = _remd_finished_time(comp_dir, comp)
+            total_ps = _remd_total_ps(comp_dir, comp) if finish_time else None
+            is_finished = finished_marker.exists()
+            if not is_finished and finish_time and total_ps is not None:
+                try:
+                    remaining_ps = total_ps - float(finish_time)
+                except Exception:
+                    remaining_ps = None
+                if (
+                    remaining_ps is not None
+                    and total_ps >= 100.0
+                    and remaining_ps <= 100.0
+                ):
+                    is_finished = True
+            status_note = "finished" if is_finished else "pending"
+            if finish_time:
+                logger.debug(
+                    f"[remd-batch] {comp_dir} window0 time(ps)={finish_time} ({status_note})."
+                )
+            else:
+                logger.debug(
+                    f"[remd-batch] {comp_dir} window0 time unavailable ({status_note})."
+                )
+
+            if is_finished:
+                logger.info(f"[remd-batch] {comp_dir} already finished; skipping.")
                 continue
 
             n_windows = windows_counts.get(comp)
@@ -344,6 +374,7 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                     n_windows=n_windows,
                 )
             )
+            logger.info(f"[remd-batch] {comp_dir} Queued (windows={n_windows}).")
 
     return tasks
 
@@ -389,6 +420,70 @@ def _infer_header_gpus_per_node(header_root: Path | None) -> int | None:
         except Exception:
             pass
     return gpn
+
+
+def _remd_time_from_rst(rst_path: Path) -> str | None:
+    if not rst_path.is_file():
+        return None
+    ncdump = shutil.which("ncdump")
+    if not ncdump:
+        return None
+    try:
+        result = subprocess.run(
+            [ncdump, "-v", "time", str(rst_path)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    match = re.search(
+        r"^\s*time\s*=\s*([-+0-9.eE]+)\s*;",
+        result.stdout,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if match:
+        return match.group(1)
+    return None
+
+
+def _remd_finished_time(comp_dir: Path, comp: str) -> str | None:
+    win0 = comp_dir / f"{comp}00"
+    return _remd_time_from_rst(win0 / "md-current.rst7") or _remd_time_from_rst(
+        win0 / "md-previous.rst7"
+    )
+
+
+def _remd_total_ps(comp_dir: Path, comp: str) -> float | None:
+    tmpl = comp_dir / f"{comp}00" / "mdin-remd-template"
+    if not tmpl.is_file():
+        return None
+    try:
+        text = tmpl.read_text()
+    except Exception:
+        return None
+    match = re.search(
+        r"^[!#]\s*total_steps\s*=\s*([0-9]+)",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if not match:
+        return None
+    total_steps = int(match.group(1))
+    dt_match = re.search(
+        r"^\s*dt\s*=\s*([-+0-9.eEdD]+)",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    dt = 0.001
+    if dt_match:
+        try:
+            dt = float(dt_match.group(1).replace("d", "e").replace("D", "e"))
+        except Exception:
+            dt = 0.001
+    return total_steps * dt
 
 
 def _render_remd_batch_script(
@@ -653,7 +748,7 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
     "--gpus",
     type=int,
     default=None,
-    help="Total GPUs to request; defaults to the maximum REMD window count found.",
+    help="Total GPUs to request; defaults to the total REMD window count found.",
 )
 @click.option(
     "--nodes",
@@ -664,8 +759,36 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
 @click.option(
     "--gpus-per-node",
     type=int,
-    default=None,
-    help="GPUs available per node (used to infer nodes from total GPUs).",
+    default=8,
+    show_default=True,
+    help="GPUs available per node (used to size per-task node allocations).",
+)
+@click.option(
+    "--auto-resubmit/--no-auto-resubmit",
+    default=True,
+    show_default=True,
+    help="Regenerate and resubmit the remd-batch script until all components finish.",
+)
+@click.option(
+    "--signal-mins",
+    type=float,
+    default=90.0,
+    show_default=True,
+    help="Minutes before time limit to trigger auto-resubmit (requires --auto-resubmit).",
+)
+@click.option(
+    "--max-resubmit-count",
+    type=int,
+    default=4,
+    show_default=True,
+    help="Maximum total submissions (including the first run) when auto-resubmitting.",
+)
+@click.option(
+    "--current-submission-time",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Internal counter for auto-resubmit; increments on each resubmission.",
 )
 def remd_batch(
     execution: tuple[Path, ...],
@@ -676,6 +799,10 @@ def remd_batch(
     gpus: int | None,
     nodes: int | None,
     gpus_per_node: int | None,
+    auto_resubmit: bool,
+    signal_mins: float,
+    max_resubmit_count: int,
+    current_submission_time: int,
 ) -> None:
     """
     Generate an sbatch script that runs ``run-local-remd.bash`` for provided executions.
@@ -695,50 +822,186 @@ def remd_batch(
                 continue
             seen.add(t.comp_dir)
             tasks.append(t)
+            win_note = t.n_windows if t.n_windows else "unknown"
+            logger.debug(f"[remd-batch] Queued {t.comp_dir} (windows={win_note}).")
 
     if not tasks:
         raise click.ClickException(
-            "No REMD component folders with run-local-remd.bash found under the provided paths."
+            "No unfinished REMD component folders found under the provided paths."
         )
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
-    max_windows = max((t.n_windows or 0) for t in tasks)
-    total_windows = sum(t.n_windows or 0 for t in tasks)
-    gpu_request = gpus or (total_windows if total_windows > 0 else None)
-    node_request = nodes
+    if auto_resubmit and signal_mins <= 0:
+        raise click.ClickException(
+            "--signal-mins must be > 0 when auto-resubmit is enabled."
+        )
+    if auto_resubmit and max_resubmit_count <= 0:
+        raise click.ClickException(
+            "--max-resubmit-count must be > 0 when auto-resubmit is enabled."
+        )
+    if auto_resubmit and current_submission_time < 0:
+        raise click.ClickException(
+            "--current-submission-time must be >= 0 when auto-resubmit is enabled."
+        )
     gpus_per_node_resolved = gpus_per_node
     if gpus_per_node_resolved is None:
         gpus_per_node_resolved = _infer_header_gpus_per_node(header_root)
+    if gpus_per_node_resolved is None:
+        gpus_per_node_resolved = 8
+    if gpus_per_node_resolved <= 0:
+        raise click.ClickException("--gpus-per-node must be >= 1.")
+
+    task_specs: list[tuple[RemdTask, int, int]] = []
+    total_windows = 0
+    max_windows = 0
+    total_nodes_needed = 0
+    for t in tasks:
+        n_windows = t.n_windows
+        if n_windows <= 0:
+            logger.warning(
+                f"[remd-batch] Could not determine windows for {t.comp_dir}; "
+                "assuming 1 for resource sizing."
+            )
+            n_windows = 1
+        nodes_needed = int(math.ceil(n_windows / float(gpus_per_node_resolved)))
+        task_specs.append((t, n_windows, nodes_needed))
+        total_windows += n_windows
+        max_windows = max(max_windows, n_windows)
+        total_nodes_needed += nodes_needed
+
+    gpu_request = gpus or (total_windows if total_windows > 0 else None)
+    node_request = nodes
+    if node_request is None and total_nodes_needed > 0:
+        node_request = total_nodes_needed
 
     job_hash = _hash_path_list(exec_paths)
     job_name = f"fep_remd_batch_{job_hash}"
+    output_path = output or Path.cwd() / f"run_remd_batch_{job_hash}.sbatch"
+    output_path_abs = output_path.resolve()
+    resubmit_cmd = None
+    if auto_resubmit:
+        batter_cmd = _which_batter()
+        resubmit_args = ["remd-batch"]
+        for p in exec_paths:
+            resubmit_args.extend(["-e", str(p)])
+        resubmit_args.extend(["--output", str(output_path_abs)])
+        if header_root:
+            resubmit_args.extend(["--header-root", str(header_root.resolve())])
+        if partition:
+            resubmit_args.extend(["--partition", partition])
+        if time_limit:
+            resubmit_args.extend(["--time-limit", time_limit])
+        if gpus is not None:
+            resubmit_args.extend(["--gpus", str(gpus)])
+        if nodes is not None:
+            resubmit_args.extend(["--nodes", str(nodes)])
+        if gpus_per_node is not None:
+            resubmit_args.extend(["--gpus-per-node", str(gpus_per_node)])
+        resubmit_args.extend(
+            [
+                "--auto-resubmit",
+                "--signal-mins",
+                str(signal_mins),
+                "--max-resubmit-count",
+                str(max_resubmit_count),
+                "--current-submission-time",
+                str(current_submission_time + 1),
+            ]
+        )
+        resubmit_cmd = f"{batter_cmd} " + " ".join(
+            shlex.quote(arg) for arg in resubmit_args
+        )
     body_lines = [
         "scontrol show job ${SLURM_JOB_ID:-}",
         'echo "Job started at $(date)"',
         "status=0",
         "pids=()",
+        "mpi_base=$(echo \"${MPI_EXEC:-mpirun}\" | awk '{print $1}')",
+        "mpi_base=${mpi_base##*/}",
+        "use_srun=0",
+        'if [[ "${mpi_base}" == srun* ]]; then',
+        "  use_srun=1",
+        "fi",
+    ]
+    if auto_resubmit:
+        body_lines += [
+            "resubmit_done=0",
+            f'RESUBMIT_CMD="{resubmit_cmd}"',
+            f'RESUBMIT_OUTPUT="{output_path_abs}"',
+            f"MAX_RESUBMIT_COUNT={max_resubmit_count}",
+            f"CURRENT_SUBMISSION_TIME={current_submission_time}",
+            "resubmit_allowed() {",
+            "  if (( CURRENT_SUBMISSION_TIME + 1 >= MAX_RESUBMIT_COUNT )); then",
+            '    echo "[INFO] Auto-resubmit: max submission count reached (next=${CURRENT_SUBMISSION_TIME}+1 >= ${MAX_RESUBMIT_COUNT})."',
+            "    return 1",
+            "  fi",
+            "  return 0",
+            "}",
+            "regen_and_submit() {",
+            '  if [[ "$resubmit_done" -eq 1 ]]; then return; fi',
+            "  resubmit_done=1",
+            '  echo "[INFO] Auto-resubmit triggered at $(date)"',
+            "  resubmit_allowed || return",
+            '  eval "$RESUBMIT_CMD" || { echo "[ERROR] Auto-resubmit command failed."; return; }',
+            '  if [[ -n "${SLURM_JOB_ID:-}" ]]; then',
+            '    sbatch --dependency=afterany:${SLURM_JOB_ID} "$RESUBMIT_OUTPUT"',
+            "  else",
+            '    sbatch "$RESUBMIT_OUTPUT"',
+            "  fi",
+            "}",
+            'trap "regen_and_submit" USR1',
+        ]
+    body_lines += [
         "run_remd_task() {",
         '  local label="$1"',
         '  local dir="$2"',
         '  local win="$3"',
-        '  echo "Running ${label}${win:+ (windows=${win})}"',
-        '  ( cd "$dir" && bash ./run-local-remd.bash ) || status=1',
+        '  local nodes="$4"',
+        '  echo "Running ${label}${win:+ (windows=${win})} dir=${dir}"',
+        '  local mpi_flags="${MPI_FLAGS:-}"',
+        '  if [[ "$use_srun" -eq 1 && "$nodes" -gt 0 && "$win" -gt 0 ]]; then',
+        '    local extra_flags="--nodes=${nodes} --ntasks=${win} --exclusive --gpus-per-task=1"',
+        '    if [[ -n "$mpi_flags" ]]; then',
+        '      mpi_flags="${mpi_flags} ${extra_flags}"',
+        "    else",
+        '      mpi_flags="${extra_flags}"',
+        "    fi",
+        "  fi",
+        '  ( cd "$dir" && MPI_FLAGS="$mpi_flags" bash ./run-local-remd.bash ) || status=1',
         "}",
         "",
     ]
 
-    for t in tasks:
+    for t, n_windows, nodes_needed in task_specs:
         label = f"{t.ligand}/{t.component}"
         if t.execution.name:
             label = f"{t.execution.name}/{label}"
-        win_arg = f"{t.n_windows}" if t.n_windows else ""
-        body_lines.append(f'run_remd_task "{label}" "{t.comp_dir}" "{win_arg}" &')
-        body_lines.append('pids+=($!)')
+        body_lines.append(
+            f'run_remd_task "{label}" "{t.comp_dir}" "{n_windows}" "{nodes_needed}" &'
+        )
+        body_lines.append("pids+=($!)")
 
     body_lines.append("")
     body_lines.append('for pid in "${pids[@]}"; do')
     body_lines.append('  wait "$pid" || status=1')
     body_lines.append("done")
+    if auto_resubmit:
+        body_lines.append("pending=0")
+        body_lines.append("for d in \\")
+        for t, _, _ in task_specs:
+            body_lines.append(f'  "{t.comp_dir}" \\')
+        body_lines.append("  ; do")
+        body_lines.append('  if [[ ! -f "$d/FINISHED" ]]; then')
+        body_lines.append("    pending=1")
+        body_lines.append("    break")
+        body_lines.append("  fi")
+        body_lines.append("done")
+        body_lines.append('if [[ "$pending" -eq 1 ]]; then')
+        body_lines.append('  echo "[INFO] Auto-resubmit: pending components remain."')
+        body_lines.append("  regen_and_submit")
+        body_lines.append("else")
+        body_lines.append('  echo "[INFO] Auto-resubmit: all components finished."')
+        body_lines.append("fi")
     body_lines.append('echo "Job completed at $(date)"')
     body_lines.append("exit $status")
     body_text = "\n".join(body_lines) + "\n"
@@ -766,6 +1029,11 @@ def remd_batch(
         script_text = _upsert_sbatch_option(script_text, "time", time_limit)
     if node_request:
         script_text = _upsert_sbatch_option(script_text, "nodes", str(node_request))
+    if auto_resubmit:
+        signal_seconds = int(math.ceil(signal_mins * 60.0))
+        script_text = _upsert_sbatch_option(
+            script_text, "signal", f"B:USR1@{signal_seconds}"
+        )
     if gpu_request:
         # Slurm gres is per-node; when nodes and per-node GPUs are known, use that value.
         # Otherwise fall back to total GPUs requested only for single-node allocations.
@@ -786,7 +1054,6 @@ def remd_batch(
     script_text = _upsert_sbatch_option(script_text, "output", f"{job_name}-%j.out")
     script_text = _upsert_sbatch_option(script_text, "error", f"{job_name}-%j.err")
 
-    output_path = output or Path.cwd() / f"run_remd_batch_{job_hash}.sbatch"
     output_path.write_text(script_text)
     try:
         output_path.chmod(0o755)
@@ -797,7 +1064,12 @@ def remd_batch(
     click.echo(
         f"Components queued: {len(tasks)} | max windows: {max_windows or 'unknown'} | "
         f"total windows: {total_windows or 'unknown'} | GPUs: {gpu_request or 'unset'} | "
-        f"nodes: {node_request or 'unset'} | job-name: {job_name}"
+        f"nodes: {node_request or 'unset'} | gpus-per-node: {gpus_per_node_resolved} | "
+        f"auto-resubmit: {'yes' if auto_resubmit else 'no'} | "
+        f"signal-mins: {signal_mins if auto_resubmit else 'n/a'} | "
+        f"max-resubmit-count: {max_resubmit_count if auto_resubmit else 'n/a'} | "
+        f"current-submission-time: {current_submission_time if auto_resubmit else 'n/a'} | "
+        f"job-name: {job_name}"
     )
 
 
@@ -1033,7 +1305,7 @@ def fe_analyze(
         "<cyan>{module}</cyan>:<cyan>{line}</cyan> - "
         "<level>{message}</level>",
     )
-    
+
     parsed_range: tuple[int, int] | None = None
     if sim_range:
         parts = sim_range.split(",")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List
+import os
 
 import MDAnalysis as mda
 import numpy as np
@@ -155,18 +156,19 @@ def equil_analysis_handler(
     if not p["full_pdb"].exists():
         raise FileNotFoundError(f"[equil_check:{lig}] missing {p['full_pdb']}")
 
-    # Build trajectory list from completed equil segments
-    trajs = _sort_md_paths(list(p["equil_dir"].glob("md-*.nc")))
-    trajs = [t for t in trajs if t.exists()]
-    if not trajs:
-        raise FileNotFoundError(
-            f"[equil_check:{lig}] no md-*.nc trajectories found for analysis"
-        )
-
     # Run validation
     prmtop = "full.hmr.prmtop" if hmr == "yes" else "full.prmtop"
 
     try:
+        # Build trajectory list from completed equil segments
+        trajs = _sort_md_paths(list(p["equil_dir"].glob("md-*.nc")))
+        trajs = [t for t in trajs if t.exists()]
+        # make sure each t is larger than 1 KB
+        trajs = [t for t in trajs if t.stat().st_size > 1024]
+        if not trajs:
+            raise FileNotFoundError(
+                f"[equil_check:{lig}] no md-*.nc trajectories found for analysis"
+            )
         u = mda.Universe(str(p["full_pdb"]), [str(t) for t in trajs])
         sim_val = SimValidator(u, ligand=residue_name, directory=p["equil_dir"])
         sim_val.plot_analysis(savefig=True)
@@ -182,6 +184,7 @@ def equil_analysis_handler(
         rep_idx = int(sim_val.find_representative_snapshot())
         # pick representative frame and export using cpptraj
         _cpptraj_export_rep(rep_idx, prmtop, trajs, p["equil_dir"])
+        sim_val.dump_results()
 
     # if traj doesn't exist
     # use the last frame as representative
