@@ -1,4 +1,7 @@
 from __future__ import annotations
+import os
+import tempfile
+from filelock import FileLock
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,6 +12,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
+from loguru import logger
 import json
 import shutil
 
@@ -130,6 +134,7 @@ class FEResultsRepository:
         self.store = store
         self._root = store.root / "results"
         self._idx = self._root / "index.csv"
+        self._idx_lock = self._root / "index.csv.lock"
 
     def _lig_dir(self, run_id: str, ligand: str) -> Path:
         return self._root / run_id / ligand
@@ -172,52 +177,47 @@ class FEResultsRepository:
             "created_at",
         ]
 
-        if self._idx.exists():
-            df = pd.read_csv(self._idx)
-            # Remove existing entry with same (run_id, ligand)
-            if {"run_id", "ligand"}.issubset(df.columns):
-                df = df[
-                    ~((df["run_id"] == row["run_id"]) & (df["ligand"] == row["ligand"]))
-                ].copy()
-        else:
-            # Start from an empty DataFrame with the right columns
-            df = pd.DataFrame(columns=cols)
+        # serialize all index read/modify/write
+        self._idx.parent.mkdir(parents=True, exist_ok=True)
+        lock = FileLock(str(self._idx_lock))
 
-        # Ensure all expected columns exist
-        for col in cols:
-            if col not in df.columns:
-                df[col] = pd.NA
+        with lock:  # (optionally: lock.acquire(timeout=120) if you want a timeout)
+            if self._idx.exists():
+                df = pd.read_csv(self._idx)
+                if {"run_id", "ligand"}.issubset(df.columns):
+                    df = df[
+                        ~(
+                            (df["run_id"] == row["run_id"])
+                            & (df["ligand"] == row["ligand"])
+                        )
+                    ].copy()
+            else:
+                df = pd.DataFrame(columns=cols)
 
-        string_cols = {
-            "run_id",
-            "ligand",
-            "mol_name",
-            "system_name",
-            "canonical_smiles",
-            "original_name",
-            "original_path",
-            "protocol",
-            "sim_range",
-            "status",
-            "failure_reason",
-            "created_at",
-        }
-        for col in string_cols:
-            if col in df.columns:
-                df[col] = df[col].astype("string")
+            for col in cols:
+                if col not in df.columns:
+                    df[col] = pd.NA
 
-        # Append the new row without using concat
-        # Make sure we only write known columns; fill missing with NA
-        new_row = {col: row.get(col, pd.NA) for col in cols}
-        if df.empty:
-            df = pd.DataFrame([new_row], columns=cols)
-        else:
+            # append/upsert row
+            new_row = {col: row.get(col, pd.NA) for col in cols}
             df.loc[len(df)] = new_row
+            df = df[cols]
 
-        # Enforce column order
-        df = df[cols]
-
-        df.to_csv(self._idx, index=False)
+            # atomic write: write tmp then replace
+            fd, tmp = tempfile.mkstemp(
+                prefix=self._idx.name + ".", suffix=".tmp", dir=str(self._idx.parent)
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    df.to_csv(f, index=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, self._idx)  # atomic
+            finally:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
 
     def save(self, rec: FERecord, copy_from: Path | None = None) -> None:
         lig_dir = self._lig_dir(rec.run_id, rec.ligand)
