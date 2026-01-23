@@ -311,6 +311,7 @@ class MBARAnalysis(FEAnalysisBase):
         pandas.DataFrame
             Reduced potentials referenced to ``win_i`` in units of ``kT``.
         """
+        logger.remove()
         logger.add(sys.stderr, level=log_level)
         logger.debug(f"[MBARAnalysis] Extracting window {component}{win_i:02d}")
         win_dir = f"{comp_folder}/{component}{win_i:02d}"
@@ -396,6 +397,19 @@ class MBARAnalysis(FEAnalysisBase):
         for df in df_list:
             df.attrs["temperature"] = self.temperature
             df.attrs["energy_unit"] = "kT"
+
+        # save df_list info
+        df_list_attrs = {
+            "component": self.component,
+            "temperature": self.temperature,
+            "energy_unit": "kT",
+            "analysis_start_step": self.analysis_start_step,
+            "detect_equil": self.detect_equil,
+            "dt": self.dt,
+            "win_sizes": {i: len(df) for i, df in enumerate(df_list)},
+        }
+        with open(f"{self.result_folder}/{self.component}_df_list_attrs.json", "w") as f:
+            json.dump(df_list_attrs, f, indent=2)
 
         with open(f"{self.result_folder}/{self.component}_df_list.pickle", "wb") as f:
             pickle.dump(df_list, f)
