@@ -37,6 +37,7 @@ from batter.utils.slurm_templates import (
 )
 from batter.utils import natural_keys
 from batter.cli.fek import fek_schedule
+from batter._internal.ops.remd import patch_batch_component_inputs
 from batter.orchestrate.run_support import (
     compute_run_signature,
     generate_run_id,
@@ -376,6 +377,8 @@ def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
             check_dst.chmod(0o755)
         except Exception:
             pass
+
+    patch_batch_component_inputs(comp_dir, comp)
 
     return run_script
 

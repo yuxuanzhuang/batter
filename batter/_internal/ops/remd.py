@@ -234,6 +234,36 @@ def patch_component_inputs(
     return patched
 
 
+def patch_batch_component_inputs(comp_dir: Path, comp: str) -> List[Path]:
+    """
+    Prepare batch-specific mdin copies:
+      - mdin-template → mdin-batch-template (paths rewritten relative to comp_dir)
+
+    Only production windows (comp00, comp01, ...) are touched; the scaffold
+    window (comp-1) is left intact.
+    """
+    patched: List[Path] = []
+    for window_dir in _component_window_dirs(comp_dir, comp):
+        if window_dir.name == f"{comp}-1":
+            continue
+        prefix = window_dir.relative_to(comp_dir).as_posix()
+        base_template = window_dir / "mdin-template"
+        tmpl = window_dir / "mdin-batch-template"
+        if not tmpl.exists() and base_template.exists():
+            tmpl.write_text(base_template.read_text())
+            changed = patch_mdin_file(tmpl, prefix, add_numexchg=False)
+            if changed:
+                patched.append(tmpl)
+        elif not tmpl.exists():
+            logger.warning(
+                f"[batch] Missing mdin-template under {window_dir}; cannot write batch template."
+            )
+
+    if patched:
+        logger.debug(f"[batch] Patched {len(patched)} mdin files under {comp_dir}")
+    return patched
+
+
 def _write_groupfile(path: Path, n_windows: int, builder) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:

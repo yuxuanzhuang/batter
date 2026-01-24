@@ -63,9 +63,12 @@ fi
 
 # Determine progress from the first window
 WIN0=$(printf "%s%02d" "${COMP}" 0)
-tmpl0="${PFOLDER}/${WIN0}/mdin-template"
+tmpl0="${PFOLDER}/${WIN0}/mdin-batch-template"
 if [[ ! -f "$tmpl0" ]]; then
-    echo "[ERROR] Missing mdin-template in ${WIN0}; cannot continue."
+    tmpl0="${PFOLDER}/${WIN0}/mdin-template"
+fi
+if [[ ! -f "$tmpl0" ]]; then
+    echo "[ERROR] Missing mdin template in ${WIN0}; cannot continue."
     exit 1
 fi
 
@@ -105,7 +108,10 @@ if (( remaining_steps > 0 )); then
     : > "$groupfile"
     for ((i = 0; i < N_WINDOWS; i++)); do
         win=$(printf "%s%02d" "${COMP}" "$i")
-        tmpl="${PFOLDER}/${win}/mdin-template"
+        tmpl="${PFOLDER}/${win}/mdin-batch-template"
+        if [[ ! -f "$tmpl" ]]; then
+            tmpl="${PFOLDER}/${win}/mdin-template"
+        fi
         [[ -f "$tmpl" ]] || {
             echo "[ERROR] Missing template $tmpl" >&2
             exit 1
