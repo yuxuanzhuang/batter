@@ -249,7 +249,8 @@ def test_cli_fe_analyze_invokes_api(
         ligand,
         components=None,
         n_workers,
-        sim_range,
+        analysis_start_step,
+        overwrite=False,
         raise_on_error=True,
     ):
         called["work_dir"] = work_dir
@@ -257,7 +258,8 @@ def test_cli_fe_analyze_invokes_api(
         called["ligand"] = ligand
         called["components"] = components
         called["n_workers"] = n_workers
-        called["sim_range"] = sim_range
+        called["analysis_start_step"] = analysis_start_step
+        called["overwrite"] = overwrite
         called["raise_on_error"] = raise_on_error
 
     monkeypatch.setattr("batter.cli.run.run_analysis_from_execution", fake_run)
@@ -273,8 +275,8 @@ def test_cli_fe_analyze_invokes_api(
             "LIG1",
             "--workers",
             "3",
-            "--sim-range",
-            "0,5",
+            "--analysis-start-step",
+            "2500",
         ],
     )
     assert result.exit_code == 0
@@ -282,7 +284,8 @@ def test_cli_fe_analyze_invokes_api(
     assert called["run_id"] == "run1"
     assert called["ligand"] == "LIG1"
     assert called["n_workers"] == 3
-    assert called["sim_range"] == (0, 5)
+    assert called["analysis_start_step"] == 2500
+    assert called["overwrite"] is False
     assert called["raise_on_error"] is True
 
 
@@ -298,7 +301,8 @@ def test_cli_fe_analyze_can_disable_raise(
         ligand,
         components=None,
         n_workers,
-        sim_range,
+        analysis_start_step,
+        overwrite=False,
         raise_on_error=True,
     ):
         called["raise_on_error"] = raise_on_error

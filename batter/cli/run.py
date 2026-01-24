@@ -1271,15 +1271,15 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Whether analysis failures should raise (default) or be logged and skipped.",
 )
 @click.option(
-    "--sim-range",
-    type=str,
+    "--analysis-start-step",
+    type=int,
     default=None,
-    help="Subset of lambda windows to analyze, formatted as ``start,end``.",
+    help="First production step (per window) to include in analysis.",
 )
 @click.option(
     "--overwrite",
     is_flag=True,
-    help="Overwrite existing destination run_id if it exists.",
+    help="Overwrite existing analysis results when present.",
 )
 @click.option(
     "--log-level",
@@ -1295,7 +1295,7 @@ def fe_analyze(
     ligand: str | None,
     workers: int | None,
     raise_on_error: bool,
-    sim_range: str | None,
+    analysis_start_step: int | None,
     overwrite: bool,
     log_level: str = "INFO",
 ) -> None:
@@ -1312,25 +1312,14 @@ def fe_analyze(
         "<level>{message}</level>",
     )
 
-    parsed_range: tuple[int, int] | None = None
-    if sim_range:
-        parts = sim_range.split(",")
-        if len(parts) != 2:
-            raise click.ClickException(
-                "`--sim-range` expects two comma-separated integers."
-            )
-        try:
-            parsed_range = (int(parts[0]), int(parts[1]))
-        except ValueError as exc:
-            raise click.ClickException(f"Invalid `--sim-range`: {exc}")
-
     try:
         run_analysis_from_execution(
             work_dir,
             run_id,
             ligand=ligand,
             n_workers=workers,
-            sim_range=parsed_range,
+            analysis_start_step=analysis_start_step,
+            overwrite=overwrite,
             raise_on_error=raise_on_error,
         )
     except Exception as exc:

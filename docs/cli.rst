@@ -88,8 +88,8 @@ Re-run FE analysis for a saved execution::
 
    batter fe analyze work/adrb2 run-20240101 --ligand LIG1 --workers 4
 
-Use ``--workers`` to control parallelism and ``--sim-range`` (``start,end``) to restrict
-which windows are parsed.
+Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
+production steps in each window.
 Pass ``--no-raise-on-error`` to continue even if a ligand's analysis fails.
 
 Clone Executions
