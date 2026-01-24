@@ -12,6 +12,7 @@ from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
 from batter._internal.ops import remd as remd_ops
+from batter._internal.ops import batch as batch_ops
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
@@ -236,6 +237,11 @@ def prepare_fe_windows_handler(
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}
 
         # Always write REMD inputs; run.remd controls whether they are submitted.
+        batch_ops.prepare_batch_component(
+            workdir,
+            comp=comp,
+            n_windows=len(lambdas),
+        )
         remd_ops.prepare_remd_component(
             workdir,
             comp=comp,
