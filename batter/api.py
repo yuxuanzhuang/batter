@@ -170,6 +170,7 @@ def run_analysis_from_execution(
     components: Sequence[str] | None = None,
     n_workers: int | None = None,
     sim_range: tuple[int, int] | None = None,
+    overwrite: bool = False,
     raise_on_error: bool = True,
 ) -> None:
     """
@@ -189,6 +190,8 @@ def run_analysis_from_execution(
         Number of worker processes requested for the analysis handler.
     sim_range : (int, int), optional
         (start, end) range of lambda windows to analyze.
+    overwrite: bool, optional
+        When ``True``, overwrite any existing analysis results for the given run_id.
     raise_on_error : bool, optional
         When ``True`` (default) propagate errors raised by the analysis handler.
         Set to ``False`` to log the failure and continue with other ligands.

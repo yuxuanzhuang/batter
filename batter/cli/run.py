@@ -1277,6 +1277,11 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Subset of lambda windows to analyze, formatted as ``start,end``.",
 )
 @click.option(
+    "--overwrite",
+    is_flag=True,
+    help="Overwrite existing destination run_id if it exists.",
+)
+@click.option(
     "--log-level",
     type=click.Choice(
         ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False
@@ -1291,6 +1296,7 @@ def fe_analyze(
     workers: int | None,
     raise_on_error: bool,
     sim_range: str | None,
+    overwrite: bool,
     log_level: str = "INFO",
 ) -> None:
     """
