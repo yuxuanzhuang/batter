@@ -250,7 +250,7 @@ def test_cli_fe_analyze_invokes_api(
         components=None,
         n_workers,
         analysis_start_step,
-        overwrite=False,
+        overwrite=True,
         raise_on_error=True,
     ):
         called["work_dir"] = work_dir
@@ -285,7 +285,7 @@ def test_cli_fe_analyze_invokes_api(
     assert called["ligand"] == "LIG1"
     assert called["n_workers"] == 3
     assert called["analysis_start_step"] == 2500
-    assert called["overwrite"] is False
+    assert called["overwrite"] is True
     assert called["raise_on_error"] is True
 
 
@@ -302,7 +302,7 @@ def test_cli_fe_analyze_can_disable_raise(
         components=None,
         n_workers,
         analysis_start_step,
-        overwrite=False,
+        overwrite=True,
         raise_on_error=True,
     ):
         called["raise_on_error"] = raise_on_error

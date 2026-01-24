@@ -1277,8 +1277,8 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="First production step (per window) to include in analysis.",
 )
 @click.option(
-    "--overwrite",
-    is_flag=True,
+    "--overwrite/--no-overwrite",
+    default=True,
     help="Overwrite existing analysis results when present.",
 )
 @click.option(

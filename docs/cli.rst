@@ -90,6 +90,7 @@ Re-run FE analysis for a saved execution::
 
 Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
 production steps in each window.
+Pass ``--no-overwrite`` to skip ligands that already have analysis outputs.
 Pass ``--no-raise-on-error`` to continue even if a ligand's analysis fails.
 
 Clone Executions

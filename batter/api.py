@@ -171,7 +171,7 @@ def run_analysis_from_execution(
     components: Sequence[str] | None = None,
     n_workers: int | None = None,
     analysis_start_step: int | None = None,
-    overwrite: bool = False,
+    overwrite: bool = True,
     raise_on_error: bool = True,
 ) -> None:
     """
@@ -192,7 +192,8 @@ def run_analysis_from_execution(
     analysis_start_step : int, optional
         First production step to include in analysis (per window); overrides config.
     overwrite: bool, optional
-        When ``True``, overwrite any existing analysis results for the given run_id.
+        When ``True`` (default), overwrite any existing analysis results for the run_id.
+        When ``False``, skip ligands that already have analysis outputs.
     raise_on_error : bool, optional
         When ``True`` (default) propagate errors raised by the analysis handler.
         Set to ``False`` to log the failure and continue with other ligands.
