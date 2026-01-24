@@ -21,6 +21,8 @@ Options:
    Override the system output directory.
 ``--run-id TEXT``
    Override the execution run id (use ``auto`` to reuse the latest).
+``--allow-run-id-mismatch / --no-allow-run-id-mismatch``
+   Allow reuse of a run id even when the stored configuration hash differs.
 ``--dry-run / --no-dry-run``
    Toggle ``run.dry_run`` from the YAML.
 ``--only-equil / --full``
@@ -28,6 +30,8 @@ Options:
    ``prepare_fe_windows``), but the FE equilibration/production/analyse phases are skipped.
 ``--slurm-submit``
    Emit an ``sbatch`` script and submit the job instead of running locally.
+``--slurm-manager-path PATH``
+   Optional path to a custom SLURM header/body pair for the manager submission.
 
 Resume an existing execution (no YAML needed once seeded)::
 
@@ -80,6 +84,25 @@ across one or more execution folders::
 The command writes ``run-local-batch.bash`` into each component folder using the packaged
 template and skips components that already contain ``FINISHED`` (or where all windows
 are marked ``FINISHED``).
+Key options:
+
+``--gpus``
+   Total GPUs to request (defaults to the total window count detected).
+``--gpus-per-node``
+   GPUs available per node (default: 8). Used to size per-task node allocations when
+   ``MPI_EXEC`` is ``srun``.
+``--nodes``
+   Override the total node count in the header.
+``--auto-resubmit`` / ``--no-auto-resubmit``
+   When enabled (default), the generated sbatch traps a pre-timeout signal,
+   regenerates the batch script, and resubmits it until all components finish
+   or the max resubmission count is reached.
+``--signal-mins``
+   Minutes before the time limit to trigger auto-resubmit (default: 90).
+``--max-resubmit-count``
+   Maximum total submissions for the script (including the first run; default: 4).
+``--current-submission-time``
+   Internal counter for auto-resubmit; increments on each resubmission (default: 0).
 
 Inspect Free-Energy Results
 ===========================
@@ -118,6 +141,10 @@ so the clone can start new simulations without recreating large FE dumps.
 SLURM Utilities
 ===============
 
+* ``batter seed-headers`` – Seed packaged SLURM headers into ``~/.batter`` (or
+  a custom directory via ``--dest``). Use ``--force`` to overwrite existing headers.
+* ``batter diff-headers`` – Show a unified diff between your headers and the packaged
+  defaults (use ``--dest`` to point at a custom header directory).
 * ``batter report-jobs`` – Summarise SLURM jobs launched by BATTER. Use ``--detailed``
   to show per-job information and ``--partition`` to filter by queue.
 * ``batter cancel-jobs --contains TEXT`` – Cancel SLURM jobs whose name contains the
