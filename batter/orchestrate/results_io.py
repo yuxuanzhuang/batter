@@ -115,6 +115,7 @@ def save_fe_records(
     repo: FEResultsRepository,
     protocol: str,
     original_map: Dict[str, str] | None = None,
+    analysis_start_step: int | None = None,
 ) -> list[tuple[str, str, str]]:
     """Persist FE totals for all ligands to the FE repository, recording failures.
 
@@ -124,7 +125,11 @@ def save_fe_records(
     ``(ligand, status, reason)`` tuples.
     """
     failures: list[tuple[str, str, str]] = []
-    analysis_range = None
+    analysis_start_step_val = analysis_start_step
+    if analysis_start_step_val is None:
+        analysis_start_step_val = getattr(sim_cfg_updated, "analysis_start_step", None)
+    if analysis_start_step_val is not None:
+        analysis_start_step_val = int(analysis_start_step_val)
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
@@ -161,7 +166,7 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
-                sim_range=analysis_range,
+                analysis_start_step=analysis_start_step_val,
             )
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
@@ -187,7 +192,7 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
-                sim_range=analysis_range,
+                analysis_start_step=analysis_start_step_val,
             )
             repo.save(rec, copy_from=results_dir)
             logger.info(
@@ -209,7 +214,7 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
-                sim_range=analysis_range,
+                analysis_start_step=analysis_start_step_val,
             )
 
     return failures

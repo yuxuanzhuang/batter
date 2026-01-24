@@ -17,6 +17,7 @@ import shutil
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_sim_files
 from batter._internal.ops.helpers import format_ranges
+from batter._internal.ops.remd import patch_mdin_file
 
 
 # ----------------------------- helpers ----------------------------- #
@@ -62,6 +63,16 @@ def _patch_restraint_block(
         out.append(f"  restraint_wt   = {force_const},\n")
 
     return "".join(out)
+
+
+def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
+    base_template = window_dir / "mdin-template"
+    if not base_template.exists():
+        return
+    batch_template = window_dir / "mdin-batch-template"
+    batch_template.write_text(base_template.read_text())
+    prefix = window_dir.relative_to(comp_dir).as_posix()
+    patch_mdin_file(batch_template, prefix, add_numexchg=False)
 
 
 def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], float]:

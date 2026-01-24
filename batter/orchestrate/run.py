@@ -686,11 +686,9 @@ def run_from_yaml(
 
     store = ArtifactStore(rc.run.output_folder)
     repo = FEResultsRepository(store)
-    analysis_range = (
-        sim_cfg_updated.analysis_start_step
-        if sim_cfg_updated.analysis_start_step is not None
-        else None
-    )
+    analysis_start_step = sim_cfg_updated.analysis_start_step
+    if analysis_start_step is not None:
+        analysis_start_step = int(analysis_start_step)
     failures: list[tuple[str, str, str]] = []
     for child in unbound_children:
         ligand = child.meta["ligand"]
@@ -709,7 +707,7 @@ def run_from_yaml(
             original_name=original_name,
             original_path=original_path,
             protocol=rc.protocol,
-            sim_range=analysis_range,
+            analysis_start_step=analysis_start_step,
         )
         failures.append((ligand, "unbound", reason))
     failures.extend(
@@ -720,6 +718,7 @@ def run_from_yaml(
             sim_cfg_updated=sim_cfg_updated,
             repo=repo,
             protocol=rc.protocol,
+            analysis_start_step=analysis_start_step,
         )
     )
 

@@ -114,7 +114,7 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
         DataFrame with one row per stored FE run. Columns include ``run_id``,
         ``ligand``, ``mol_name``, ``system_name``, ``temperature``, ``total_dG``,
         ``total_se``, ``canonical_smiles``, ``original_name``, ``original_path``,
-        ``protocol``, ``sim_range``, ``status``, ``failure_reason``, and
+        ``protocol``, ``analysis_start_step``, ``status``, ``failure_reason``, and
         ``created_at``.
     """
     store = ArtifactStore(Path(work_dir))
@@ -327,6 +327,7 @@ def run_analysis_from_execution(
         sim_cfg_updated=sim_cfg,
         repo=repo,
         protocol=protocol,
+        analysis_start_step=analysis_start_step_val,
     )
     if failures:
         failed = ", ".join(
