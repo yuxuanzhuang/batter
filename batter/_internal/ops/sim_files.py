@@ -416,6 +416,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
 
+        if ctx.win >= 0:
+            _write_batch_mdin_template(windows_dir, work)
+
         # end mdin-template
 
         # mini.in
@@ -536,6 +539,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 logger.warning(
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
+
+        if ctx.win >= 0:
+            _write_batch_mdin_template(windows_dir, work)
 
         with (
             template_mini.open("rt") as fin,
@@ -743,6 +749,9 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("DISANG=disang.rest\n")
         mdin.write("LISTOUT=POUT\n")
 
+    if ctx.win >= 0:
+        _write_batch_mdin_template(windows_dir, ctx.working_dir)
+
     logger.debug(
         f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
     )
@@ -861,6 +870,9 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write(" &wt type = 'END' , /\n")
         mdin.write("DISANG=disang.rest\n")
         mdin.write("LISTOUT=POUT\n")
+
+    if ctx.win >= 0:
+        _write_batch_mdin_template(windows_dir, ctx.working_dir)
 
     logger.debug(
         f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"
