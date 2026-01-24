@@ -356,7 +356,7 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
                 )
 
             if is_finished:
-                logger.info(f"[remd-batch] {comp_dir} already finished; skipping.")
+                logger.debug(f"[remd-batch] {comp_dir} already finished; skipping.")
                 continue
 
             n_windows = windows_counts.get(comp)
