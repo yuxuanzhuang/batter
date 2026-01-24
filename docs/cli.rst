@@ -69,6 +69,18 @@ Key options:
 ``--current-submission-time``
    Internal counter for auto-resubmit; increments on each resubmission (default: 0).
 
+Generate Batch Scripts
+======================
+
+Use ``batter batch`` to emit an ``sbatch`` script that runs ``run-local-batch.bash`` (non-REMD)
+across one or more execution folders::
+
+   batter batch -e work/adrb2/executions/rep1 -e work/adrb2/executions/rep2
+
+The command writes ``run-local-batch.bash`` into each component folder using the packaged
+template and skips components that already contain ``FINISHED`` (or where all windows
+are marked ``FINISHED``).
+
 Inspect Free-Energy Results
 ===========================
 
