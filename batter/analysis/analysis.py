@@ -344,11 +344,10 @@ class MBARAnalysis(FEAnalysisBase):
         if analysis_start_step > 0:
             threshold = analysis_start_step * dt
             if threshold > df.index.get_level_values(0).max():
-                logger.warning(
+                raise ValueError(
                     f"[MBARAnalysis] {component}{win_i:02d} WARNING: "
                     f"analysis_start_step={analysis_start_step} exceeds max time "
                     f"in data ({df.index.get_level_values(0).max()/dt:.0f} steps)! "
-                    f"keeping all frames."
                 )
             
             else:
