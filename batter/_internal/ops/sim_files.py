@@ -96,7 +96,7 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
             data = json.load(f)
         return data.get("mask"), data.get("force_const", 10.0)
 
-    force_const = float(extra.get("extra_restraints_fc", 10.0))
+    force_const = float(extra.get("extra_restraint_fc", 10.0))
 
     ref_pdb = work / "full.pdb"
     renum_txt1 = work / "build_files" / "protein_renum.txt"
