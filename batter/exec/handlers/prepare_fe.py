@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Type, Optional
+from typing import Any, Dict, Optional
 
 from loguru import logger
 
@@ -89,7 +89,7 @@ def prepare_fe_handler(
 
     comp_windows: dict = sim.component_lambdas  # type: ignore[attr-defined]
     sys_params = payload.sys_params or SystemParams()
-    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
+    extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
     extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get(
         "extra_conformation_restraints", None
@@ -186,7 +186,7 @@ def prepare_fe_windows_handler(
 
     comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
     sys_params = payload.sys_params or SystemParams()
-    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
+    extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
     extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get(
         "extra_conformation_restraints", None

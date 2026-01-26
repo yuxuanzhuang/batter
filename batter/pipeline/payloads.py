@@ -30,6 +30,12 @@ class SystemParams(BaseModel):
         Directory containing the originating YAML (useful for resolving relatives).
     anchor_atoms : tuple[str, ...]
         Anchor atom labels used for restraint placement.
+    extra_restraints : str, optional
+        Optional positional restraint selection string.
+    extra_restraint_fc : float, optional
+        Force constant (kcal/mol/Å^2) applied to ``extra_restraints``.
+    extra_conformation_restraints : Path, optional
+        Path to a conformational restraint JSON file.
     """
 
     model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
@@ -42,6 +48,9 @@ class SystemParams(BaseModel):
     ligand_paths: Dict[str, Path] = Field(default_factory=dict)
     yaml_dir: Optional[Path] = None
     anchor_atoms: tuple[str, ...] = ()
+    extra_restraints: Optional[str] = None
+    extra_restraint_fc: Optional[float] = None
+    extra_conformation_restraints: Optional[Path] = None
 
     @model_validator(mode="before")
     @classmethod
