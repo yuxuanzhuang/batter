@@ -48,8 +48,10 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     comp_windows: dict = payload.get("component_windows", {})
     sys_params = payload.sys_params or SystemParams()
     extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
-    extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
-    extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
+    extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
+    extra_conformation_restraints: Optional[Path] = sys_params.get(
+        "extra_conformation_restraints", None
+    )
     
     infe = bool(sim.infe)
     
@@ -75,7 +77,7 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
         param_dir_dict=param_dir_dict,
         extra={
             "extra_restraints": extra_restraints,
-            "extra_restraints_fc": extra_restraints_fc,
+            "extra_restraint_fc": extra_restraint_fc,
             "extra_conformation_restraints": extra_conformation_restraints,
             "partition": partition,
         }
