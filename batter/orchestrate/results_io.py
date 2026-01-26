@@ -261,12 +261,12 @@ def _copy_equil_artifacts(
         f"{mol_name}.sdf": f"{mol_name}.sdf",
         f"{mol_name}.prmtop": f"{mol_name}.prmtop",
         f"{mol_name}.pdb": f"{mol_name}.pdb",
-        f"vac.pdb": f"initial_complex.pdb",
+        f"full.pdb": f"initial_complex.pdb",
     }
     # get aligned representative complex
     protein_align = (protein_align or "name CA").strip()
     if protein_align and os.path.exists(equil_dir / "representative.pdb"):
-        ref_pdb = equil_dir / "vac.pdb"
+        ref_pdb = equil_dir / "full.pdb"
         if not ref_pdb.exists():
             logger.warning(
                 f"Equilibration reference {ref_pdb} not found; skipping alignment."
@@ -277,19 +277,15 @@ def _copy_equil_artifacts(
                 u_rep = mda.Universe(equil_dir / "representative.pdb")
                 u_ref = mda.Universe(ref_pdb)
 
-                # get translation-rotation matrix
-                mobile = u_rep.select_atoms(protein_align).select_atoms(
-                    "name CA and not resname NMA ACE"
-                )
-                ref = u_ref.select_atoms(protein_align).select_atoms(
-                    "name CA and not resname NMA ACE"
-                )
-
-                _ = align.alignto(mobile=mobile, reference=ref)
-                mobile.atoms.write(aligned_rep_output)
+                _ = align.alignto(mobile=u_rep.atoms, reference=u_ref.atoms, select=f'({protein_align}) and name CA and not resname NMA ACE')
+                u_rep.atoms.write(aligned_rep_output)
                 candidates_map["representative_complex.pdb"] = (
                     "representative_complex.pdb"
                 )
+                u_ref.select_atoms(f'resname {mol_name}').write(equil_dir / "initial_pose.pdb")
+                u_rep.select_atoms(f'resname {mol_name}').write(equil_dir / "representative_pose.pdb")
+                candidates_map["initial_pose.pdb"] = "initial_pose.pdb"
+                candidates_map["representative_pose.pdb"] = "representative_pose.pdb"
             except Exception as exc:
                 logger.warning(
                     f"Failed to align representative complex for {ligand}: {exc}"
@@ -308,15 +304,17 @@ def _copy_equil_artifacts(
         f.write(
             "This directory contains equilibration artifacts for the ligand.\n"
             "Files may include analysis results, representative structures, and input files.\n"
-            "These were copied from the equilibration phase for reference.\n"
+            "These were copied from the equilibration phase for reference.\n\n\n"
             f"File list:\n"
-            f"equilibration_analysis_results.npz: NumPy archive with equilibration analysis data.\n"
-            f"simulation_analysis.png: Plot of equilibration simulation metrics over time.\n"
-            f"dihed_hist.png: Histogram of dihedral angle distributions during equilibration.\n"
-            f"representative.pdb: Representative snapshot from equilibration that is used for further FEP.\n\n"
-            f"{mol_name}.sdf: Ligand structure file in SDF format.\n"
-            f"{mol_name}.prmtop: AMBER parameter/topology file for the ligand.\n"
-            f"{mol_name}.pdb: PDB structure file for the ligand.\n\n"
-            f"initial_complex.pdb: Initial complex structure used for equilibration.\n"
-            f"representative_complex.pdb: Aligned representative structure to initial complex.\n"
+            f"- equilibration_analysis_results.npz: NumPy archive with equilibration analysis data.\n"
+            f"- simulation_analysis.png: Plot of equilibration simulation metrics over time.\n"
+            f"- dihed_hist.png: Histogram of dihedral angle distributions during equilibration.\n"
+            f"- representative.pdb: Representative snapshot from equilibration that is used for further FEP.\n\n"
+            f"- {mol_name}.sdf: Ligand structure file in SDF format.\n"
+            f"- {mol_name}.prmtop: AMBER parameter/topology file for the ligand.\n"
+            f"- {mol_name}.pdb: PDB structure file for the ligand.\n\n"
+            f"- initial_complex.pdb: Initial complex structure used for equilibration.\n"
+            f"- representative_complex.pdb: Aligned representative structure to initial complex.\n"
+            f"- initial_pose.pdb: Initial ligand pose extracted from the initial complex.\n"
+            f"- representative_pose.pdb: Representative ligand pose extracted from the representative complex.\n"
         )
