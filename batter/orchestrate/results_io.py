@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, Tuple, List
 
 from loguru import logger
 
+import MDAnalysis as mda
+from MDAnalysis.analysis import align
+
 from batter.config.simulation import SimulationConfig
 from batter.runtime.fe_repo import FEResultsRepository, FERecord
 from batter.systems.core import SimSystem
 
-def parse_results_dat(path: Path) -> Tuple[float | None, float | None, Dict[str, float]]:
+
+def parse_results_dat(
+    path: Path,
+) -> Tuple[float | None, float | None, Dict[str, float]]:
     """Parse ``fe/Results/Results.dat`` and return totals plus per-component values.
 
     The file is expected to contain rows with ``LABEL FE SE``. ``total`` rows set the
@@ -131,6 +138,7 @@ def save_fe_records(
         analysis_start_step_val = getattr(sim_cfg_updated, "analysis_start_step", None)
     if analysis_start_step_val is not None:
         analysis_start_step_val = int(analysis_start_step_val)
+    protein_align = getattr(sim_cfg_updated, "protein_align", None)
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
@@ -169,7 +177,9 @@ def save_fe_records(
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
             )
-            _copy_equil_artifacts(repo, run_id, lig_name, child.root / "equil")
+            _copy_equil_artifacts(
+                repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+            )
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
 
@@ -197,7 +207,9 @@ def save_fe_records(
                 analysis_start_step=analysis_start_step_val,
             )
             repo.save(rec, copy_from=results_dir)
-            _copy_equil_artifacts(repo, run_id, lig_name, child.root / "equil")
+            _copy_equil_artifacts(
+                repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+            )
             logger.info(
                 f"Saved FE record for ligand {lig_name}"
                 f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
@@ -219,24 +231,92 @@ def save_fe_records(
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
             )
-            _copy_equil_artifacts(repo, run_id, lig_name, child.root / "equil")
+            _copy_equil_artifacts(
+                repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+            )
 
     return failures
 
 
 def _copy_equil_artifacts(
-    repo: FEResultsRepository, run_id: str, ligand: str, equil_dir: Path
+    repo: FEResultsRepository,
+    run_id: str,
+    ligand: str,
+    mol_name: str,
+    equil_dir: Path,
+    protein_align: str | None,
 ) -> None:
     if not equil_dir.exists():
+        logger.warning(
+            f"Equilibration directory {equil_dir} does not exist; skipping copy."
+        )
         return
     dest_dir = repo.ligand_dir(run_id, ligand) / "Equil"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    candidates = [
-        "equilibration_analysis_results.npz",
-        "simulation_analysis.png",
-        "dihed_hist.png",
-    ]
-    for name in candidates:
+    candidates_map = {
+        "equilibration_analysis_results.npz": "equilibration_analysis_results.npz",
+        "simulation_analysis.png": "simulation_analysis.png",
+        "dihed_hist.png": "dihed_hist.png",
+        "representative.pdb": "representative.pdb",
+        f"{mol_name}.sdf": f"{mol_name}.sdf",
+        f"{mol_name}.prmtop": f"{mol_name}.prmtop",
+        f"{mol_name}.pdb": f"{mol_name}.pdb",
+        f"vac.pdb": f"initial_complex.pdb",
+    }
+    # get aligned representative complex
+    protein_align = (protein_align or "name CA").strip()
+    if protein_align and os.path.exists(equil_dir / "representative.pdb"):
+        ref_pdb = equil_dir / "vac.pdb"
+        if not ref_pdb.exists():
+            logger.warning(
+                f"Equilibration reference {ref_pdb} not found; skipping alignment."
+            )
+        else:
+            try:
+                aligned_rep_output = equil_dir / "representative_complex.pdb"
+                u_rep = mda.Universe(equil_dir / "representative.pdb")
+                u_ref = mda.Universe(ref_pdb)
+
+                # get translation-rotation matrix
+                mobile = u_rep.select_atoms(protein_align).select_atoms(
+                    "name CA and not resname NMA ACE"
+                )
+                ref = u_ref.select_atoms(protein_align).select_atoms(
+                    "name CA and not resname NMA ACE"
+                )
+
+                _ = align.alignto(mobile=mobile, reference=ref)
+                mobile.atoms.write(aligned_rep_output)
+                candidates_map["representative_complex.pdb"] = (
+                    "representative_complex.pdb"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to align representative complex for {ligand}: {exc}"
+                )
+
+    for name in candidates_map:
         src = equil_dir / name
         if src.exists():
-            shutil.copy2(src, dest_dir / name)
+            shutil.copy2(src, dest_dir / candidates_map[name])
+        else:
+            logger.warning(f"Equilibration artifact {src} not found; skipping copy.")
+
+    # add README file
+    readme_path = dest_dir / "README.txt"
+    with open(readme_path, "w") as f:
+        f.write(
+            "This directory contains equilibration artifacts for the ligand.\n"
+            "Files may include analysis results, representative structures, and input files.\n"
+            "These were copied from the equilibration phase for reference.\n"
+            f"File list:\n"
+            f"equilibration_analysis_results.npz: NumPy archive with equilibration analysis data.\n"
+            f"simulation_analysis.png: Plot of equilibration simulation metrics over time.\n"
+            f"dihed_hist.png: Histogram of dihedral angle distributions during equilibration.\n"
+            f"representative.pdb: Representative snapshot from equilibration that is used for further FEP.\n\n"
+            f"{mol_name}.sdf: Ligand structure file in SDF format.\n"
+            f"{mol_name}.prmtop: AMBER parameter/topology file for the ligand.\n"
+            f"{mol_name}.pdb: PDB structure file for the ligand.\n\n"
+            f"initial_complex.pdb: Initial complex structure used for equilibration.\n"
+            f"representative_complex.pdb: Aligned representative structure to initial complex.\n"
+        )
