@@ -17,7 +17,6 @@ from typing import List, NamedTuple, Sequence
 import click
 from loguru import logger
 
-from batter._internal.ops.remd import patch_batch_component_inputs
 from batter.cli.root import cli
 from batter.cli.shared import _upsert_sbatch_option, _which_batter
 from batter.utils.components import components_under
@@ -175,6 +174,7 @@ def _component_finished(comp_dir: Path, comp: str, windows: Sequence[Path]) -> b
 
 
 def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
+    from batter._internal.ops.remd import patch_batch_component_inputs
     text = BATCH_RUN_TEMPLATE.read_text()
     text = text.replace("COMPONENT", comp).replace("NWINDOWS", str(n_windows))
     run_script = comp_dir / "run-local-batch.bash"
