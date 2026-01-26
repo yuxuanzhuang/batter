@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 from typing import Any, Dict, List, Tuple, Optional
 
 from loguru import logger
@@ -160,27 +159,6 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         ts_png = results_dir / "fe_timeseries.png"
         if ts_png.exists():
             arts["fe_timeseries_png"] = ts_png
-
-    # copy equil analysis results to results_dir
-    equil_results_dir = system.root / "equil"
-    if not equil_results_dir.exists():
-        logger.warning(f"[analyze:{lig}] Missing equilibration folder: {equil_results_dir}")
-    else:
-        res_file = equil_results_dir / "equilibration_analysis_results.npz"
-        if res_file.exists():
-            dest_file = results_dir / "equilibration_analysis_results.npz"
-            shutil.copy(res_file, dest_file)
-            arts["equilibration_analysis_results_npz"] = dest_file
-        sim_res_png = equil_results_dir / "simulation_analysis.png"
-        if sim_res_png.exists():
-            dest_file = results_dir / "equilibration_simulation_analysis.png"
-            shutil.copy(sim_res_png, dest_file)
-            arts["equilibration_simulation_analysis_png"] = dest_file
-        dihed_res_png = equil_results_dir / "dihed_hist.png"
-        if dihed_res_png.exists():
-            dest_file = results_dir / "equilibration_dihed_hist.png"
-            shutil.copy(dihed_res_png, dest_file)
-            arts["equilibration_dihed_hist_png"] = dest_file
 
     analyzed_finished = fe_root / "artifacts" / "analyze.ok"
     open(analyzed_finished, "w").close()

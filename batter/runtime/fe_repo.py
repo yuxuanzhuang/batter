@@ -138,6 +138,9 @@ class FEResultsRepository:
     def _lig_dir(self, run_id: str, ligand: str) -> Path:
         return self._root / run_id / ligand
 
+    def ligand_dir(self, run_id: str, ligand: str) -> Path:
+        return self._lig_dir(run_id, ligand)
+
     def _normalize_row(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(row)
         normalized.setdefault("temperature", pd.NA)

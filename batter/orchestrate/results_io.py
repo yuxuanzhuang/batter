@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Dict, Tuple, List
 
@@ -168,6 +169,7 @@ def save_fe_records(
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
             )
+            _copy_equil_artifacts(repo, run_id, lig_name, child.root / "equil")
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
 
@@ -195,6 +197,7 @@ def save_fe_records(
                 analysis_start_step=analysis_start_step_val,
             )
             repo.save(rec, copy_from=results_dir)
+            _copy_equil_artifacts(repo, run_id, lig_name, child.root / "equil")
             logger.info(
                 f"Saved FE record for ligand {lig_name}"
                 f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
@@ -216,5 +219,24 @@ def save_fe_records(
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
             )
+            _copy_equil_artifacts(repo, run_id, lig_name, child.root / "equil")
 
     return failures
+
+
+def _copy_equil_artifacts(
+    repo: FEResultsRepository, run_id: str, ligand: str, equil_dir: Path
+) -> None:
+    if not equil_dir.exists():
+        return
+    dest_dir = repo.ligand_dir(run_id, ligand) / "Equil"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    candidates = [
+        "equilibration_analysis_results.npz",
+        "simulation_analysis.png",
+        "dihed_hist.png",
+    ]
+    for name in candidates:
+        src = equil_dir / name
+        if src.exists():
+            shutil.copy2(src, dest_dir / name)
