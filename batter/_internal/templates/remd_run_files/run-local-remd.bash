@@ -193,6 +193,7 @@ if (( remaining_steps > 0 )); then
     echo "[INFO] pmemd step rc=$rc dir=${PFOLDER} at $(date)" | tee -a "$log_file"
     if (( rc != 0 )); then
         echo "[ERROR] pmemd failed in ${PFOLDER}; skipping post-step" | tee -a "$log_file"
+        cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
         exit $rc
     fi
 else

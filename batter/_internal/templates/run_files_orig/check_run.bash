@@ -151,6 +151,29 @@ latest_md_index() {
     highest_out_index_for_pattern "$pattern"
 }
 
+cleanup_failed_md_segment() {
+    local comp=$1
+    local seg_idx=$2
+    local n_windows=$3
+    local pfolder=${4:-.}
+
+    if [[ -z $comp || -z $seg_idx || -z $n_windows ]]; then
+        echo "[WARN] cleanup_failed_md_segment missing args; skip."
+        return
+    fi
+
+    local out_tag win
+    out_tag=$(printf "md-%02d" "$seg_idx")
+    for ((i = 0; i < n_windows; i++)); do
+        win=$(printf "%s%02d" "$comp" "$i")
+        rm -f "${pfolder}/${win}/${out_tag}.out" \
+              "${pfolder}/${win}/${out_tag}.nc" \
+              "${pfolder}/${win}/${out_tag}.log" \
+              "${pfolder}/${win}/${out_tag}.mden" \
+              "${pfolder}/${win}/md-current.rst7"
+    done
+}
+
 # Report stage based ONLY on which OUT files exist.
 # - production: md-*.out present
 # - equilibration: eqnpt*.out present
