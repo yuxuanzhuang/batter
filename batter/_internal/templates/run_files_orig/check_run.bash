@@ -26,6 +26,9 @@ check_sim_failure() {
         rm -f "$log_file"
         rm -f "$rst_file"
         cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+        fi
 
         # if not the first retry attempt, remove the previous restart file to avoid repeated failure
         if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
@@ -40,6 +43,9 @@ check_sim_failure() {
         rm -f "$log_file"
         rm -f "$rst_file"
         cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+        fi
         if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
             echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
             rm -f "$rst_file_prev"
@@ -221,6 +227,40 @@ parse_dt_ps() {
     )
 
     [[ -n $dt ]] && echo "$dt" || echo 0.001
+}
+
+reduce_dt_on_failure() {
+    local tmpl=${1:-mdin-template}
+    local dec=${2:-0.001}
+    local stage=${3:-unknown}
+    local retry_count=${4:-0}
+
+    [[ -f "$tmpl" ]] || { echo "[WARN] $tmpl not found; skip dt reduction."; return; }
+    if ! awk 'BEGIN{IGNORECASE=1} /^[[:space:]]*dt[[:space:]]*=/ {found=1; exit} END{exit !found}' "$tmpl"; then
+        echo "[WARN] dt not found in $tmpl; skip dt reduction."
+        return
+    fi
+
+    local dt new_dt
+    dt=$(parse_dt_ps "$tmpl")
+    new_dt=$(awk -v dt="$dt" -v dec="$dec" 'BEGIN{printf "%.6f\n", dt-dec}')
+    if ! awk -v nd="$new_dt" 'BEGIN{exit !(nd>0)}'; then
+        echo "[WARN] dt reduction skipped (current dt=${dt}, dec=${dec})."
+        return
+    fi
+
+    awk -v newdt="$new_dt" '
+        BEGIN{IGNORECASE=1; done=0}
+        {
+            if (!done && match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/)) {
+                sub(/dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/, "dt=" newdt)
+                done=1
+            }
+            print
+        }
+    ' "$tmpl" > "${tmpl}.tmp" && mv "${tmpl}.tmp" "$tmpl"
+
+    echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 
 completed_time_ps_from_out() {
