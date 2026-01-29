@@ -667,8 +667,10 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     membrane_builder = sim.membrane_simulation
     mol = ctx.residue_name
     ligand = ctx.ligand
+    protein_align = sim.protein_align
     equil_dir = sys_root / "simulations" / ligand / "equil"
     ref_equil_dir = sys_root / "simulations" / str(lig_ref) / "equil"
+    alt_equil_dir = sys_root / "simulations" / str(lig_alt) / "equil"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -686,6 +688,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
         (build_dir / "dum.frcmod", dest_dir / "dum.frcmod"),
         (build_dir / "dum.mol2", dest_dir / "dum.mol2"),
+        (alt_equil_dir / "representative.pdb", dest_dir / "alter_representative.pdb"),
     ]:
         _copy_if_exists(s, d)
 
@@ -702,15 +705,12 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # Prefer pre_fe_equil eqnpt04 coordinates for the reference complex
     build_ini = dest_dir / "build-ini.pdb"
     ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "fe" / "z" / "z-1"
-    ref_prmtop = ref_pre_fe / (
-        "full.hmr.prmtop"
-        if str(getattr(ctx.sim, "hmr", "no")).lower() == "yes"
-        else "full.prmtop"
-    )
-    ref_rst7 = ref_pre_fe / "eqnpt04.rst7"
-    if ref_prmtop.exists() and ref_rst7.exists():
+    # only full.pdb have the correct resid information
+    ref_pdb = ref_pre_fe / "full.pdb"
+    ref_pdb_coord = ref_pre_fe / "eq_output.pdb"
+    if ref_pdb.exists() and ref_pdb_coord.exists():
         try:
-            u_ref = mda.Universe(ref_prmtop.as_posix(), ref_rst7.as_posix())
+            u_ref = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
             ion_names = " ".join(sorted(ION_NAMES))
             try:
                 sel = u_ref.select_atoms(f"not resname WAT {ion_names} DUM")
@@ -720,118 +720,19 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
                 sel = u_ref.atoms
             sel.write(build_ini.as_posix())
         except Exception as exc:
-            logger.warning(f"[simprep:x] Failed to build eqnpt04 reference PDB: {exc}")
-            _copy_if_exists(build_dir / f"fe-{res_ref}.pdb", build_ini)
+            raise RuntimeError(f"Failed to build eqnpt04 reference PDB: {exc}")
     else:
-        _copy_if_exists(build_dir / f"fe-{res_ref}.pdb", build_ini)
+        raise FileNotFoundError(f"[simprep:x] Missing reference pdb or coordinate: {ref_pdb}, {ref_pdb_coord}")
 
-    # Build base build.pdb from reference ligand
-    if build_ini.exists():
-        write_build_from_aligned(
-            lig=res_ref,
-            window_dir=dest_dir,
-            build_dir=build_dir,
-            aligned_pdb=build_ini,
-            other_mol=ctx.sim.other_mol,
-            lipid_mol=ctx.sim.lipid_mol,
-            ion_mol=ION_NAMES,
-            extra_ligand_shift=[],
-            sdr_dist=0.0,
-            start_off_set=1,
-            use_ter_markers=False,
-        )
-
-    # Align alternate ligand to reference complex and append to build files
-    ref_align_pdb = build_ini if build_ini.exists() else None
-    ref_equil = sys_root / "simulations" / str(lig_ref) / "equil"
-    alt_equil = sys_root / "simulations" / str(lig_alt) / "equil"
-    alt_pdb = alt_equil / "representative.pdb"
-    if ref_align_pdb is None or not ref_align_pdb.exists():
-        ref_align_pdb = ref_equil / "representative.pdb"
-        if not ref_align_pdb.exists():
-            ref_align_pdb = ref_equil / "full.pdb"
-    if not alt_pdb.exists():
-        alt_pdb = alt_equil / "full.pdb"
-
-    alt_appended = False
-    if ref_align_pdb and ref_align_pdb.exists() and alt_pdb.exists():
-        try:
-            u_ref = mda.Universe(ref_align_pdb.as_posix())
-            u_alt = mda.Universe(alt_pdb.as_posix())
-            sel = (ctx.sim.protein_align or "name CA").strip()
-            align.alignto(
-                mobile=u_alt.atoms,
-                reference=u_ref.atoms,
-                select=f"protein and ({sel})",
-            )
-            alt_lig = u_alt.select_atoms(f"resname {res_alt}")
-            if alt_lig.n_atoms == 0:
-                raise RuntimeError(f"No atoms for ligand {res_alt} in {alt_pdb}")
-            alt_aligned = dest_dir / f"{lig_alt}_aligned.pdb"
-            alt_lig.atoms.write(alt_aligned.as_posix())
-            for target in (dest_dir / "build.pdb", dest_dir / "build-dry.pdb"):
-                if target.exists():
-                    _append_ligand_to_build(target, alt_aligned, resname=str(res_alt))
-                    alt_appended = True
-        except Exception as exc:
-            logger.warning(f"[simprep:x] Failed to align/append alt ligand: {exc}")
-    else:
-        logger.warning(
-            "[simprep:x] Missing equil representative for ref/alt ligands; skipping alt append."
-        )
-
-    # --- add DUM2 + solvent-centered alt ligand copy for RBFE ---
-    build_pdb = dest_dir / "build.pdb"
-    if build_pdb.exists():
-        try:
-            if buffer_z < 25.0:
-                buffer_z = 25.0
-            if membrane_builder:
-                buf_source = ref_equil_dir / f"equil-{res_ref}.pdb"
-                if not buf_source.exists():
-                    raise FileNotFoundError(
-                        f"[simprep:x] Missing equil buffer source: {buf_source}"
-                    )
-                buffer_z = get_buffer_z(buf_source, targeted_buf=buffer_z)
-
-            sdr_dist = get_sdr_dist(
-                build_pdb, lig_resname=str(res_ref), buffer_z=buffer_z, extra_buffer=5
-            )
-            u_ref = mda.Universe(build_pdb.as_posix())
-            ref_sel = u_ref.select_atoms(f"resname {res_ref}")
-            if ref_sel.n_atoms == 0:
-                raise RuntimeError(
-                    f"No atoms for reference ligand {res_ref} in build.pdb"
-                )
-            ref_com = ref_sel.center_of_mass()
-            dum_pos = ref_com + np.array([0.0, 0.0, float(sdr_dist)])
-
-            if not _set_dummy_position(build_pdb, dum_pos, target_resid=2):
-                logger.warning(
-                    "[simprep:x] No DUM2 atom found in build.pdb; appending a new one."
-                )
-                _append_dummy_atom(build_pdb, dum_pos, target_resid=2)
-
-            if alt_appended:
-                u_tmp = mda.Universe(build_pdb.as_posix())
-                sel = u_tmp.select_atoms(f"resname {res_alt}")
-                if sel.n_atoms == 0:
-                    logger.warning(
-                        f"[simprep:x] No atoms found for ligand {res_alt}; skipping solvent copy."
-                    )
-                else:
-                    com = sel.center_of_mass()
-                    shift = dum_pos - com
-                    sel.positions += shift
-                    tmp_pdb = dest_dir / f"{res_alt}_dum_copy.pdb"
-                    sel.atoms.write(tmp_pdb.as_posix())
-                    _append_ligand_to_build(build_pdb, tmp_pdb, resname=str(res_alt))
-        except Exception as exc:
-            logger.warning(f"[simprep:x] Failed to add DUM/solvent copies: {exc}")
-
-        # rebuild build-dry.pdb to include non-water atoms even if appended after waters
-        _write_build_dry_no_water(build_pdb, dest_dir / "build-dry.pdb")
-
+    # align representative_complex.pdb to u_ref
+    u_alter = mda.Universe(dest_dir / "alter_representative.pdb")
+    align.alignto(mobile=u_alter.atoms, reference=u_ref.atoms, select=f'({protein_align}) and name CA and not resname NMA ACE')
+    u_alter_lig = u_alter.select_atoms(f'resname {lig_alt}')
+    u_alter_lig.write(dest_dir / f"alter_representative_ligand.pdb")
+    dum_2 = u_ref.select_atoms('resname DUM and index 1')
+    u_alter_lig.positions = u_alter_lig.positions - u_alter_lig.center_of_mass() + dum_2.center_of_mass()
+    u_alter_lig.write(dest_dir / f"alter_representative_ligand_solvent.pdb")
+    raise NotImplementedError('')
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 
