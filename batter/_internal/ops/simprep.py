@@ -6,6 +6,8 @@ from typing import Iterable, List, Tuple, Optional, Set
 import shutil
 import re
 
+from batter.param import ligand
+from batter_v1.utils.builder_utils import get_buffer_z
 from loguru import logger
 
 import numpy as np
@@ -86,9 +88,7 @@ def _fmt_atom_line(
     )
 
 
-def _append_ligand_to_build(
-    build_pdb: Path, lig_pdb: Path, *, resname: str
-) -> None:
+def _append_ligand_to_build(build_pdb: Path, lig_pdb: Path, *, resname: str) -> None:
     """Append ligand atoms from lig_pdb to build_pdb as a new residue."""
     if not build_pdb.exists():
         raise FileNotFoundError(f"Missing build file: {build_pdb}")
@@ -548,7 +548,9 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     comp = ctx.comp.lower()
     ligand = ctx.ligand
     mol = ctx.residue_name
-    buffer_z = ctx.sim.buffer_z
+    sim = ctx.sim
+    membrane_builder = sim.membrane_simulation
+    buffer_z = sim.buffer_z
 
     # paths
     sys_root = ctx.system_root
@@ -602,8 +604,14 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
                 except Exception:
                     pass
 
-    if not buffer_z:
+    if buffer_z <= 25:
         buffer_z = 25
+        logger.debug(
+            f"buffer_z too small ({sim.buffer_z}); setting to 25 Å for SDR calculation."
+        )
+    if membrane_builder:
+        buffer_z = get_buffer_z(dest_dir / f"equil-{mol}.pdb", targeted_buf=buffer_z)
+
     sdr_dist = get_sdr_dist(
         build_dir / "complex.pdb", lig_resname=mol, buffer_z=buffer_z, extra_buffer=5
     )
@@ -648,6 +656,12 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     build_dir = ctx.build_dir
     amber_dir = ctx.amber_dir
     dest_dir = ctx.equil_dir
+    sim = ctx.sim
+    buffer_z = sim.buffer_z
+    membrane_builder = sim.membrane_simulation
+    mol = ctx.residue_name
+    ligand = ctx.ligand
+    equil_dir = sys_root / "simulations" / ligand / "equil"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -763,16 +777,22 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     build_pdb = dest_dir / "build.pdb"
     if build_pdb.exists():
         try:
-            buffer_z = float(getattr(ctx.sim, "buffer_z", 25.0) or 25.0)
             if buffer_z < 25.0:
                 buffer_z = 25.0
+            if membrane_builder:
+                buffer_z = get_buffer_z(
+                    equil_dir / f"equil-{mol}.pdb", targeted_buf=buffer_z
+                )
+
             sdr_dist = get_sdr_dist(
                 build_pdb, lig_resname=str(res_ref), buffer_z=buffer_z, extra_buffer=5
             )
             u_ref = mda.Universe(build_pdb.as_posix())
             ref_sel = u_ref.select_atoms(f"resname {res_ref}")
             if ref_sel.n_atoms == 0:
-                raise RuntimeError(f"No atoms for reference ligand {res_ref} in build.pdb")
+                raise RuntimeError(
+                    f"No atoms for reference ligand {res_ref} in build.pdb"
+                )
             ref_com = ref_sel.center_of_mass()
             dum_pos = ref_com + np.array([0.0, 0.0, float(sdr_dist)])
 
