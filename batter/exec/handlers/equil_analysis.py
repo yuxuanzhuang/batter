@@ -11,6 +11,7 @@ import MDAnalysis as mda
 import numpy as np
 import pandas as pd
 from loguru import logger
+from MDAnalysis.analysis import align
 
 from batter.analysis.sim_validation import SimValidator
 from batter.orchestrate.state_registry import register_phase_state
@@ -220,6 +221,48 @@ def equil_analysis_handler(
         uu = mda.Universe(str(p["rep_pdb"]))
         uu.select_atoms("protein").residues.resids = renum["old_resid"].values
         uu.atoms.write(str(p["rep_pdb"]))
+
+    # align representative to initial complex and extract poses
+    protein_align = (getattr(sim, "protein_align", None) or "name CA").strip()
+    if protein_align and p["rep_pdb"].exists() and p["full_pdb"].exists():
+        try:
+            aligned_rep_output = p["equil_dir"] / "representative_complex.pdb"
+            u_rep = mda.Universe(str(p["rep_pdb"]))
+            u_ref = mda.Universe(str(p["full_pdb"]))
+            _ = align.alignto(
+                mobile=u_rep.atoms,
+                reference=u_ref.atoms,
+                select=f"({protein_align}) and name CA and not resname NMA ACE",
+            )
+            u_rep.atoms.write(aligned_rep_output)
+            if residue_name:
+                u_ref.select_atoms(f"resname {residue_name}").write(
+                    p["equil_dir"] / "initial_pose.pdb"
+                )
+                u_rep.select_atoms(f"resname {residue_name}").write(
+                    p["equil_dir"] / "representative_pose.pdb"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[equil_check:{lig}] Failed to align representative complex: {exc}"
+            )
+
+    # copy key outputs into equil/artifacts for downstream use
+    artifacts_dir = p["equil_dir"] / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "representative.pdb",
+        "representative.rst7",
+        "representative_complex.pdb",
+        "representative_pose.pdb",
+        "initial_pose.pdb",
+        "equilibration_analysis_results.npz",
+        "simulation_analysis.png",
+        "dihed_hist.png",
+    ):
+        src = p["equil_dir"] / name
+        if src.exists():
+            shutil.copy2(src, artifacts_dir / name)
 
     logger.debug(f"[equil_check:{lig}] representative frame written")
     assert p["rep_pdb"].exists() and p["rep_rst"].exists()

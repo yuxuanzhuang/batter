@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from pathlib import Path
 from typing import Dict, Tuple, List
 
 from loguru import logger
-
-import MDAnalysis as mda
-from MDAnalysis.analysis import align
 
 from batter.config.simulation import SimulationConfig
 from batter.runtime.fe_repo import FEResultsRepository, FERecord
@@ -258,38 +254,14 @@ def _copy_equil_artifacts(
         "simulation_analysis.png": "simulation_analysis.png",
         "dihed_hist.png": "dihed_hist.png",
         "representative.pdb": "representative.pdb",
+        "representative_complex.pdb": "representative_complex.pdb",
+        "representative_pose.pdb": "representative_pose.pdb",
+        "initial_pose.pdb": "initial_pose.pdb",
         f"{mol_name}.sdf": f"{mol_name}.sdf",
         f"{mol_name}.prmtop": f"{mol_name}.prmtop",
         f"{mol_name}.pdb": f"{mol_name}.pdb",
         f"full.pdb": f"initial_complex.pdb",
     }
-    # get aligned representative complex
-    protein_align = (protein_align or "name CA").strip()
-    if protein_align and os.path.exists(equil_dir / "representative.pdb"):
-        ref_pdb = equil_dir / "full.pdb"
-        if not ref_pdb.exists():
-            logger.warning(
-                f"Equilibration reference {ref_pdb} not found; skipping alignment."
-            )
-        else:
-            try:
-                aligned_rep_output = equil_dir / "representative_complex.pdb"
-                u_rep = mda.Universe(equil_dir / "representative.pdb")
-                u_ref = mda.Universe(ref_pdb)
-
-                _ = align.alignto(mobile=u_rep.atoms, reference=u_ref.atoms, select=f'({protein_align}) and name CA and not resname NMA ACE')
-                u_rep.atoms.write(aligned_rep_output)
-                candidates_map["representative_complex.pdb"] = (
-                    "representative_complex.pdb"
-                )
-                u_ref.select_atoms(f'resname {mol_name}').write(equil_dir / "initial_pose.pdb")
-                u_rep.select_atoms(f'resname {mol_name}').write(equil_dir / "representative_pose.pdb")
-                candidates_map["initial_pose.pdb"] = "initial_pose.pdb"
-                candidates_map["representative_pose.pdb"] = "representative_pose.pdb"
-            except Exception as exc:
-                logger.warning(
-                    f"Failed to align representative complex for {ligand}: {exc}"
-                )
 
     for name in candidates_map:
         src = equil_dir / name
