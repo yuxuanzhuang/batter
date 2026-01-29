@@ -61,7 +61,7 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         return None
 
 
-def create_box(ctx: BuildContext) -> None:
+def create_box_z(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
     """
@@ -81,12 +81,7 @@ def create_box(ctx: BuildContext) -> None:
     ligand = ctx.ligand
     mol = ctx.residue_name
 
-    if comp == "x":
-        raise NotImplementedError(
-            "Comp=x (rbfe) not supported in box.py; use box_dimer.py."
-        )
-    else:
-        molr = mol
+    molr = mol
 
     for attr in ("buffer_x", "buffer_y", "buffer_z"):
         if not hasattr(sim, attr):
@@ -141,21 +136,6 @@ def create_box(ctx: BuildContext) -> None:
         shutil.copy2(src, window_dir / f"vac_ligand.{ext}")
 
     shutil.copy2(build_dir / f"{ligand}.pdb", window_dir / f"{ligand}.pdb")
-
-    # molr
-    if comp == "x":
-        # need FIX
-        raise NotImplementedError(
-            "Comp=x (rbfe) not supported in box.py; use box_dimer.py."
-        )
-        param_dir = work.parent.parent / lig2 / "param"
-        if not param_dir:
-            raise FileNotFoundError(
-                f"Param dir not found for ligand {ctx.ligandr} in param_dir_dict"
-            )
-        for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
-            src = param_dir / f"{ctx.residuer}.{ext}"
-            shutil.copy2(src, window_dir / src.name)
 
     # other_mol
     if other_mol:
@@ -618,8 +598,8 @@ def create_box(ctx: BuildContext) -> None:
 
 
 @register_create_box("z")
-def create_box_default(ctx: BuildContext) -> None:
-    create_box(ctx)
+def create_box_z_default(ctx: BuildContext) -> None:
+    create_box_z(ctx)
 
 
 @register_create_box("x")
