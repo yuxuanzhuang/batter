@@ -568,6 +568,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         (build_dir / "rec_file.pdb", dest_dir / "rec_file.pdb"),
         (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
         (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
+        (build_dir / "dum.frcmod", dest_dir / "dum.frcmod"),
+        (build_dir / "dum.mol2", dest_dir / "dum.mol2"),
     ]:
         _copy_if_exists(s, d)
 
