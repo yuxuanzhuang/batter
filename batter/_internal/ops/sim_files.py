@@ -595,6 +595,22 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     )
 
 
+# ------------------------- FE component: x ------------------------- #
+
+
+@register_sim_files("x")
+def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
+    """
+    RBFE (x-component) sim_files placeholder.
+
+    TODO: implement MBAR/MDIN templates for relative transformations.
+    """
+    raise NotImplementedError(
+        "RBFE component 'x' sim_files is not implemented yet. "
+        "Add the MD input generation for x before running RBFE."
+    )
+
+
 # ------------------------- FE component: y ------------------------- #
 
 

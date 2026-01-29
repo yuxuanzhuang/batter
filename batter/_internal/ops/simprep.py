@@ -472,6 +472,19 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     logger.debug(f"[simprep:z] simulation directory created → {dest_dir}")
 
 
+@register_create_simulation("x")
+def create_simulation_dir_x(ctx: BuildContext) -> None:
+    """
+    RBFE (x-component) simulation-dir placeholder.
+
+    TODO: implement ligand-pair build.pdb assembly and anchor handling for RBFE.
+    """
+    raise NotImplementedError(
+        "RBFE component 'x' create_simulation_dir is not implemented yet. "
+        "Add the relative (ligand-pair) build logic before running RBFE."
+    )
+
+
 @register_create_simulation("y")
 @register_create_simulation("m")
 def create_simulation_dir_lig(ctx: BuildContext) -> None:

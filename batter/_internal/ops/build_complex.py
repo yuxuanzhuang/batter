@@ -685,6 +685,19 @@ def build_complex_z(ctx) -> bool:
     return True
 
 
+@register_build_complex("x")
+def build_complex_x(ctx) -> bool:
+    """
+    RBFE (x-component) build_complex placeholder.
+
+    TODO: implement ligand-pair complex assembly for relative transformations.
+    """
+    raise NotImplementedError(
+        "RBFE component 'x' build_complex is not implemented yet. "
+        "Define how to assemble the ligand-pair complex before enabling RBFE runs."
+    )
+
+
 @register_build_complex("y")
 @register_build_complex("m")
 def build_complex_lig(ctx) -> bool:

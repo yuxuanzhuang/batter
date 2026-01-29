@@ -622,6 +622,19 @@ def create_box_default(ctx: BuildContext) -> None:
     create_box(ctx)
 
 
+@register_create_box("x")
+def create_box_x(ctx: BuildContext) -> None:
+    """
+    RBFE (x-component) create_box placeholder.
+
+    TODO: implement ligand-pair box building (dimer) for relative transformations.
+    """
+    raise NotImplementedError(
+        "RBFE component 'x' create_box is not implemented yet. "
+        "Implement a ligand-pair box builder (e.g., box_dimer) before running RBFE."
+    )
+
+
 @register_create_box("y")
 def create_box_y(ctx: BuildContext) -> None:
     """

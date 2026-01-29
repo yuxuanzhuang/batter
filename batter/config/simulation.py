@@ -144,6 +144,9 @@ class SimulationConfig(BaseModel):
             "n_steps",
             dict(_fe_attr("n_steps", lambda: {"x": 300_000, "y": 300_000}) or {}),
         )
+        if proto_key == "rbfe" and "x" not in n_steps:
+            n_steps["x"] = 300_000
+
         base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
         component_lambda_map: dict[str, List[float]] = {}
         raw_component_lambdas = dict(_fe_attr("component_lambdas", dict) or {})
@@ -628,6 +631,11 @@ class SimulationConfig(BaseModel):
             if not lambdas:
                 lambdas = self.lambdas
                 if not lambdas:
+                    if self.fe_type == "relative" and comp == "x":
+                        raise ValueError(
+                            "RBFE requires a lambda schedule for component 'x'. "
+                            "Set fe_sim.lambdas (or fe_sim.component_lambdas.x / x_lambdas)."
+                        )
                     raise ValueError(f"No lambdas defined for component '{comp}'.")
                 logger.debug(
                     f"No per-component lambdas for '{comp}'; using default lambdas."
