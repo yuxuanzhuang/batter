@@ -675,6 +675,46 @@ class MDSimArgs(BaseModel):
         return coerce_yes_no(v) or "no"
 
 
+class RBFENetworkArgs(BaseModel):
+    """
+    RBFE network mapping controls.
+
+    Users can specify a mapping strategy by name (``mapping``) or provide
+    an explicit mapping file (``mapping_file``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mapping: Optional[str] = Field(
+        "default",
+        description="Mapping strategy name (e.g., 'default').",
+    )
+    mapping_file: Optional[Path] = Field(
+        None,
+        description="Optional path to a mapping file (JSON/YAML/text).",
+    )
+
+    def resolve_paths(self, base: Path) -> "RBFENetworkArgs":
+        mf = self.mapping_file
+        if mf is not None and not mf.is_absolute():
+            mf = (base / mf).resolve()
+        return self.model_copy(update={"mapping_file": mf})
+
+    @field_validator("mapping", mode="before")
+    @classmethod
+    def _lower_mapping(cls, v):
+        if v is None:
+            return None
+        text = str(v).strip()
+        return text.lower() if text else None
+
+    @model_validator(mode="after")
+    def _validate_mapping(self) -> "RBFENetworkArgs":
+        if self.mapping_file is None and not self.mapping:
+            raise ValueError("rbfe.mapping or rbfe.mapping_file must be provided.")
+        return self
+
+
 class RunSection(BaseModel):
     """Run-related settings, including where outputs land."""
 
@@ -821,6 +861,9 @@ class RunConfig(BaseModel):
     run: RunSection = Field(
         ..., description="Execution controls and artifact destination."
     )
+    rbfe: RBFENetworkArgs | None = Field(
+        default=None, description="RBFE network mapping configuration."
+    )
 
     @model_validator(mode="after")
     def _coerce_fe_sim_model(self) -> "RunConfig":
@@ -837,6 +880,12 @@ class RunConfig(BaseModel):
         else:
             payload = dict(current or {})
         self.fe_sim = target.model_validate(payload)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_rbfe_section(self) -> "RunConfig":
+        if self.rbfe is not None and self.protocol != "rbfe":
+            raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
         return self
 
     @field_validator("protocol", mode="before")
@@ -931,7 +980,14 @@ class RunConfig(BaseModel):
         """
         resolved_create = self.create.resolve_paths(base_dir)
         resolved_run = self.run.resolve_paths(base_dir)
-        return self.model_copy(update={"create": resolved_create, "run": resolved_run})
+        resolved_rbfe = self.rbfe.resolve_paths(base_dir) if self.rbfe else None
+        return self.model_copy(
+            update={
+                "create": resolved_create,
+                "run": resolved_run,
+                "rbfe": resolved_rbfe,
+            }
+        )
 
 
 RunConfig.model_rebuild()

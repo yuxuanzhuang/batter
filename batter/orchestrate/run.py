@@ -497,6 +497,7 @@ def run_from_yaml(
         )
     # start with all children
     children = children_all
+    fe_children_all: List[SimSystem] = children_all
     # --------------------
     # PHASE 1: prepare_equil (parallel)
     # --------------------
@@ -583,6 +584,107 @@ def run_from_yaml(
         children = _filter_bound(children)
     else:
         logger.info("[skip] equil_analysis: no steps in this protocol.")
+
+    # --------------------
+    # RBFE: build transformation systems (pairs) after equil analysis
+    # --------------------
+    if rc.protocol == "rbfe":
+        from batter.rbfe import RBFENetwork, resolve_mapping_fn, load_mapping_file
+        from batter.config.run import RBFENetworkArgs
+        from batter.config.utils import sanitize_ligand_name
+
+        available = [c.meta.get("ligand") for c in children if c.meta.get("ligand")]
+        if len(available) < 2:
+            raise RuntimeError(
+                "RBFE requires at least two ligands that completed equilibration."
+            )
+        available = [sanitize_ligand_name(x) for x in available]
+        available_set = set(available)
+
+        rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+        mapping_source: dict[str, Any] = {}
+
+        if rbfe_cfg.mapping_file:
+            pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
+            if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+                pairs = [p for p in pairs if p[0] in available_set and p[1] in available_set]
+                if not pairs:
+                    raise RuntimeError(
+                        "RBFE mapping does not include any available ligands after pruning."
+                    )
+            network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+            mapping_source["mapping_file"] = str(rbfe_cfg.mapping_file)
+        else:
+            mapping_name = rbfe_cfg.mapping or "default"
+            mapping_fn = resolve_mapping_fn(mapping_name)
+            network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+            mapping_source["mapping"] = mapping_name
+
+        # Persist the resolved mapping for reproducibility
+        rbfe_network_path = config_dir / "rbfe_network.json"
+        payload = network.to_mapping()
+        payload.update(mapping_source)
+        rbfe_network_path.write_text(json.dumps(payload, indent=2))
+
+        # Build transformation systems under simulations/transformations/
+        trans_root = run_dir / "simulations" / "transformations"
+        trans_root.mkdir(parents=True, exist_ok=True)
+        rbfe_children: List[SimSystem] = []
+
+        for ref, alt in network.pairs:
+            pair_id = f"{ref}~{alt}"
+            pair_dir = trans_root / pair_id
+            inputs_dir = pair_dir / "inputs"
+            inputs_dir.mkdir(parents=True, exist_ok=True)
+
+            ref_src = Path(lig_map[ref])
+            alt_src = Path(lig_map[alt])
+            ref_dst = inputs_dir / f"{ref}{ref_src.suffix}"
+            alt_dst = inputs_dir / f"{alt}{alt_src.suffix}"
+            if not ref_dst.exists():
+                shutil.copy2(ref_src, ref_dst)
+            if not alt_dst.exists():
+                shutil.copy2(alt_src, alt_dst)
+
+            resn_ref = lig_resname_map.get(ref)
+            resn_alt = lig_resname_map.get(alt)
+            if not resn_ref or not resn_alt:
+                raise RuntimeError(
+                    f"Missing residue names for RBFE pair {pair_id}: {ref}={resn_ref}, {alt}={resn_alt}."
+                )
+
+            pair_meta = sys_exec.meta.merge(
+                ligand=pair_id,
+                residue_name=resn_ref,
+                mode="RBFE",
+                param_dir_dict=param_dir_dict,
+                pair_id=pair_id,
+                ligand_ref=ref,
+                ligand_alt=alt,
+                residue_ref=resn_ref,
+                residue_alt=resn_alt,
+                input_ref=str(ref_dst),
+                input_alt=str(alt_dst),
+            )
+
+            rbfe_children.append(
+                SimSystem(
+                    name=f"{sys_exec.name}:{pair_id}:{run_id}",
+                    root=pair_dir,
+                    protein=sys_exec.protein,
+                    topology=sys_exec.topology,
+                    coordinates=sys_exec.coordinates,
+                    ligands=tuple([ref_dst, alt_dst]),
+                    lipid_mol=sys_exec.lipid_mol,
+                    other_mol=sys_exec.other_mol,
+                    anchors=sys_exec.anchors,
+                    meta=pair_meta,
+                )
+            )
+
+        # Switch to transformation systems for FE stages/results
+        children = rbfe_children
+        fe_children_all = rbfe_children
 
     # --------------------
     # PHASE 3: prepare_fe (parallel)
@@ -690,31 +792,32 @@ def run_from_yaml(
     if analysis_start_step is not None:
         analysis_start_step = int(analysis_start_step)
     failures: list[tuple[str, str, str]] = []
-    for child in unbound_children:
-        ligand = child.meta["ligand"]
-        reason = "UNBOUND detected during equilibration"
-        canonical_smiles, original_name, original_path = extract_ligand_metadata(
-            child, lig_original_names
-        )
-        repo.record_failure(
-            run_id=run_id,
-            ligand=ligand,
-            system_name=sim_cfg_updated.system_name,
-            temperature=sim_cfg_updated.temperature,
-            status="unbound",
-            reason=reason,
-            canonical_smiles=canonical_smiles,
-            original_name=original_name,
-            original_path=original_path,
-            protocol=rc.protocol,
-            analysis_start_step=analysis_start_step,
-        )
-        failures.append((ligand, "unbound", reason))
+    if rc.protocol != "rbfe":
+        for child in unbound_children:
+            ligand = child.meta["ligand"]
+            reason = "UNBOUND detected during equilibration"
+            canonical_smiles, original_name, original_path = extract_ligand_metadata(
+                child, lig_original_names
+            )
+            repo.record_failure(
+                run_id=run_id,
+                ligand=ligand,
+                system_name=sim_cfg_updated.system_name,
+                temperature=sim_cfg_updated.temperature,
+                status="unbound",
+                reason=reason,
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=rc.protocol,
+                analysis_start_step=analysis_start_step,
+            )
+            failures.append((ligand, "unbound", reason))
     failures.extend(
         save_fe_records(
             run_dir=run_dir,
             run_id=run_id,
-            children_all=children_all,
+            children_all=fe_children_all,
             sim_cfg_updated=sim_cfg_updated,
             repo=repo,
             protocol=rc.protocol,

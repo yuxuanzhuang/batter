@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import json
 from dataclasses import dataclass
-from typing import Callable, Iterable, Sequence, Tuple, List
+from typing import Callable, Iterable, Sequence, Tuple, List, Any
+
+from batter.config.utils import sanitize_ligand_name
 
 RBFEPair = Tuple[str, str]
 RBFEMapFn = Callable[[Sequence[str]], Iterable[RBFEPair]]
@@ -18,6 +22,94 @@ def _dedupe_pairs(pairs: Iterable[RBFEPair]) -> List[RBFEPair]:
         seen.add(pair)
         out.append(pair)
     return out
+
+
+def _normalize_pair(pair: Any) -> RBFEPair:
+    if isinstance(pair, str):
+        if "~" in pair:
+            left, right = (p.strip() for p in pair.split("~", 1))
+        elif "," in pair:
+            left, right = (p.strip() for p in pair.split(",", 1))
+        else:
+            parts = [p for p in pair.split() if p]
+            if len(parts) != 2:
+                raise ValueError(f"RBFE mapping line must contain 2 tokens: {pair!r}")
+            left, right = parts
+    elif isinstance(pair, (list, tuple)) and len(pair) == 2:
+        left, right = pair
+    else:
+        raise ValueError(f"RBFE mapping entries must be 2-tuples; got {pair!r}.")
+
+    return (sanitize_ligand_name(str(left)), sanitize_ligand_name(str(right)))
+
+
+def _pairs_from_data(data: Any) -> List[RBFEPair]:
+    if isinstance(data, dict):
+        if "pairs" in data:
+            raw = data["pairs"]
+        elif "edges" in data:
+            raw = data["edges"]
+        else:
+            # adjacency mapping: {LIG1: [LIG2, LIG3], ...}
+            raw = []
+            for src, targets in data.items():
+                if not isinstance(targets, (list, tuple)):
+                    raise ValueError(
+                        "RBFE mapping dict must map ligands to list of targets."
+                    )
+                for tgt in targets:
+                    raw.append([src, tgt])
+        return [_normalize_pair(p) for p in raw]
+
+    if isinstance(data, list):
+        return [_normalize_pair(p) for p in data]
+
+    raise ValueError(f"Unsupported RBFE mapping data type: {type(data).__name__}")
+
+
+def load_mapping_file(path: Path) -> List[RBFEPair]:
+    """
+    Load RBFE mapping pairs from a file.
+
+    Supported formats:
+      - JSON/YAML: list of pairs, or dict with 'pairs'/'edges', or adjacency mapping.
+      - Text: one pair per line, separated by '~', ',' or whitespace.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"RBFE mapping file not found: {path}")
+
+    suffix = path.suffix.lower()
+    if suffix in {".json", ".yaml", ".yml"}:
+        if suffix == ".json":
+            data = json.loads(path.read_text())
+        else:
+            import yaml
+
+            data = yaml.safe_load(path.read_text())
+        pairs = _pairs_from_data(data)
+    else:
+        pairs = []
+        for raw in path.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            pairs.append(_normalize_pair(line))
+
+    if not pairs:
+        raise ValueError(f"RBFE mapping file produced no pairs: {path}")
+    return pairs
+
+
+def resolve_mapping_fn(name: str | None) -> RBFEMapFn:
+    """
+    Resolve a mapping function by name.
+    """
+    if not name:
+        return RBFENetwork.default_mapping
+    key = str(name).strip().lower()
+    if key in {"default", "star", "first"}:
+        return RBFENetwork.default_mapping
+    raise ValueError(f"Unknown RBFE mapping '{name}'. Available: default")
 
 
 @dataclass(frozen=True)
@@ -66,7 +158,7 @@ class RBFENetwork:
         if not ligands:
             raise ValueError("RBFE network requires at least two ligands.")
 
-        lig_list = [str(lig) for lig in ligands]
+        lig_list = [sanitize_ligand_name(str(lig)) for lig in ligands]
         if len(lig_list) < 2:
             raise ValueError("RBFE network requires at least two ligands.")
 
