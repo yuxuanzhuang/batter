@@ -8,7 +8,12 @@ from .payloads import StepPayload, SystemParams
 from .pipeline import Pipeline
 from .step import Step
 
-__all__ = ["make_abfe_pipeline", "make_asfe_pipeline", "make_md_pipeline"]
+__all__ = [
+    "make_abfe_pipeline",
+    "make_asfe_pipeline",
+    "make_rbfe_pipeline",
+    "make_md_pipeline",
+]
 
 
 def _step(
@@ -152,6 +157,26 @@ def make_abfe_pipeline(
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
+
+
+def make_rbfe_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """
+    RBFE pipeline:
+
+    Reuses the ABFE staging/execution steps with ``fe_type='relative'``.
+    """
+    return make_abfe_pipeline(
+        sim,
+        sys_params=sys_params,
+        only_fe_preparation=only_fe_preparation,
+        extra=extra,
+    )
 
 
 def make_asfe_pipeline(

@@ -48,7 +48,28 @@ class ASFE(FEProtocol):
         return ["fe/index", "fe/<run_id>/record", "fe/<run_id>/windows"]
 
 
+class RBFE(FEProtocol):
+    name = "rbfe"
+
+    def validate(self, ctx: ProtocolContext) -> None:
+        if ctx.sim.fe_type != "relative":
+            raise ValueError("RBFE expects fe_type='relative'.")
+        if not ctx.sim.components:
+            raise ValueError("RBFE requires non-empty components (derived from fe_type).")
+
+    def plan(self, ctx: ProtocolContext) -> Pipeline:
+        sim = ctx.sim
+        steps = [step_prepare_fe(sim)]
+        if not ctx.only_fe_preparation:
+            steps += [step_equil(sim), step_windows(sim, list(sim.components)), step_analysis(sim, "rbfe")]
+        return Pipeline(steps=steps)
+
+    def outputs(self) -> List[str]:
+        return ["fe/index", "fe/<run_id>/record", "fe/<run_id>/windows"]
+
+
 # One-time registration
 from .protocols import register_protocol
 register_protocol(ABFE())
 register_protocol(ASFE())
+register_protocol(RBFE())

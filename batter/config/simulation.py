@@ -27,6 +27,7 @@ MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
 PROTOCOL_TO_FE_TYPE = {
     "abfe": "uno_rest",
+    "rbfe": "relative",
     "asfe": "asfe",
     "md": "md",
 }
@@ -34,7 +35,7 @@ PROTOCOL_TO_FE_TYPE = {
 
 class SimulationConfig(BaseModel):
     """
-    Simulation configuration for ABFE/ASFE workflows.
+    Simulation configuration for ABFE/ASFE/RBFE workflows.
     Values are fed by RunConfig.resolved_sim_config(), which merges `create:` and `fe_sim:`.
     """
 
@@ -159,6 +160,7 @@ class SimulationConfig(BaseModel):
         required_components = {
             "abfe": ["z"],
             "asfe": ["y", "m"],
+            "rbfe": ["x"],
         }.get(proto_key, [])
         for comp in required_components:
             if comp not in n_steps:
@@ -591,7 +593,7 @@ class SimulationConfig(BaseModel):
                     "w",
                 ], "dd"
             case "relative":
-                self.components, self.dec_method = ["x", "e", "n", "m"], "exchange"
+                self.components, self.dec_method = ["x"], "exchange"
             case "uno":
                 self.components, self.dec_method = ["m", "n", "o"], "sdr"
             case "uno_rest":
