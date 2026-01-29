@@ -1,0 +1,49 @@
+version: 1
+protocol: rbfe
+backend: local
+
+create:
+  system_name: adrb2_A
+  protein_input: reference/adrb2_A.pdb
+  system_input: reference/adrb2_A_membrane.pdb
+  system_coordinate: reference/adrb2_A_membrane.rst7
+  protein_align: name CA and resid 50 to 200
+  ligand_input: reference/ligands_dict.json
+  ligand_ff: openff-2.2.1
+  retain_lig_prot: true
+  param_charge: am1bcc
+  anchor_atoms:
+    - "name CA and resid 113"
+    - "name CA and resid 82"
+    - "name CA and resid 316"
+  lipid_mol: ["POPC"]
+  overwrite: false
+  receptor_ff: protein.ff14SB
+  lipid_ff: lipid21
+  solv_shell: 15.0
+  water_model: TIP3P
+
+run:
+  output_folder: RBFE_simulations
+  only_fe_preparation: false
+  dry_run: false
+  run_id: rep1
+  max_workers: 8
+  on_failure: prune
+
+rbfe:
+  # "default" maps the first ligand to every other ligand.
+  mapping: default
+
+fe_sim:
+  # Lambda schedule required for RBFE.
+  lambdas: [0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  # RBFE uses only the x component.
+  x_n_steps: 300000
+  eq_steps: 1000000
+  cut: 9.0
+  barostat: 2
+  hmr: yes
+  dt: 0.004
+  buffer_z: 25.0
+  temperature: 298.15

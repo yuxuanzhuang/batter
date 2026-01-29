@@ -10,6 +10,7 @@ from loguru import logger
 
 import numpy as np
 import MDAnalysis as mda
+from MDAnalysis.analysis import align
 
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
@@ -83,6 +84,62 @@ def _fmt_atom_line(
         f"{x:8.3f}{y:8.3f}{z:8.3f}"
         f"{0.00:6.2f}{0.00:6.2f}"
     )
+
+
+def _append_ligand_to_build(
+    build_pdb: Path, lig_pdb: Path, *, resname: str
+) -> None:
+    """Append ligand atoms from lig_pdb to build_pdb as a new residue."""
+    if not build_pdb.exists():
+        raise FileNotFoundError(f"Missing build file: {build_pdb}")
+    if not lig_pdb.exists():
+        raise FileNotFoundError(f"Missing ligand PDB: {lig_pdb}")
+
+    lines = build_pdb.read_text().splitlines()
+    # strip END lines
+    while lines and lines[-1].strip().startswith("END"):
+        lines.pop()
+
+    last_serial = 0
+    last_resid = 0
+    for ln in lines:
+        if _is_atom_line(ln):
+            try:
+                last_serial = max(last_serial, int(_field(ln, 6, 11) or 0))
+            except Exception:
+                pass
+            try:
+                last_resid = max(last_resid, int(_field(ln, 22, 26) or 0))
+            except Exception:
+                pass
+
+    new_resid = last_resid + 1 if last_resid else 1
+    serial = last_serial + 1
+    appended: List[str] = []
+    for ln in lig_pdb.read_text().splitlines():
+        if not _is_atom_line(ln):
+            continue
+        name = _field(ln, 12, 16) or "C"
+        chain = _field(ln, 21, 22) or "A"
+        try:
+            x = float(_field(ln, 30, 38) or 0.0)
+            y = float(_field(ln, 38, 46) or 0.0)
+            z = float(_field(ln, 46, 54) or 0.0)
+        except Exception:
+            x, y, z = 0.0, 0.0, 0.0
+        appended.append(
+            _fmt_atom_line(serial, name, resname, chain, new_resid, x, y, z)
+        )
+        serial += 1
+
+    if not appended:
+        raise RuntimeError(f"No atoms found in ligand PDB: {lig_pdb}")
+
+    lines.append("TER")
+    lines.extend(appended)
+    lines.append("TER")
+    lines.append("END")
+    build_pdb.write_text("\n".join(lines) + "\n")
 
 
 # ---------------------- unified writer ----------------------
@@ -479,10 +536,101 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     TODO: implement ligand-pair build.pdb assembly and anchor handling for RBFE.
     """
-    raise NotImplementedError(
-        "RBFE component 'x' create_simulation_dir is not implemented yet. "
-        "Add the relative (ligand-pair) build logic before running RBFE."
-    )
+    extra = ctx.extra or {}
+    lig_ref = extra.get("ligand_ref")
+    lig_alt = extra.get("ligand_alt")
+    res_ref = extra.get("residue_ref") or ctx.residue_name
+    res_alt = extra.get("residue_alt")
+
+    if not lig_ref or not lig_alt or not res_ref or not res_alt:
+        raise ValueError(
+            "RBFE component 'x' requires pair metadata "
+            "(ligand_ref/ligand_alt/residue_ref/residue_alt)."
+        )
+
+    sys_root = ctx.system_root
+    build_dir = ctx.build_dir
+    amber_dir = ctx.amber_dir
+    dest_dir = ctx.equil_dir
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # link amber files
+    _rel_symlink(amber_dir, dest_dir / "amber_files")
+
+    # bring build outputs from reference ligand build (fe-<ref>.pdb, anchors, etc.)
+    for s, d in [
+        (build_dir / f"{res_ref}.pdb", dest_dir / f"{res_ref}.pdb"),
+        (build_dir / f"fe-{res_ref}.pdb", dest_dir / "build-ini.pdb"),
+        (build_dir / f"fe-{res_ref}.pdb", dest_dir / f"fe-{res_ref}.pdb"),
+        (build_dir / f"anchors-{lig_ref}.txt", dest_dir / f"anchors-{lig_ref}.txt"),
+        (build_dir / "equil-reference.pdb", dest_dir / "equil-reference.pdb"),
+        (build_dir / "rec_file.pdb", dest_dir / "rec_file.pdb"),
+        (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
+        (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
+    ]:
+        _copy_if_exists(s, d)
+
+    # copy reference ligand FF files
+    ff_ref = sys_root / "simulations" / str(lig_ref) / "params"
+    for p in ff_ref.glob(f"{res_ref}.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    # copy alternate ligand FF files
+    ff_alt = sys_root / "simulations" / str(lig_alt) / "params"
+    for p in ff_alt.glob(f"{res_alt}.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    # Build base build.pdb from reference ligand
+    if (dest_dir / "build-ini.pdb").exists():
+        write_build_from_aligned(
+            lig=res_ref,
+            window_dir=dest_dir,
+            build_dir=build_dir,
+            aligned_pdb=dest_dir / "build-ini.pdb",
+            other_mol=ctx.sim.other_mol,
+            lipid_mol=ctx.sim.lipid_mol,
+            ion_mol=ION_NAMES,
+            extra_ligand_shift=[],
+            sdr_dist=0.0,
+            start_off_set=1,
+            use_ter_markers=False,
+        )
+
+    # Align alternate ligand to reference complex and append to build files
+    ref_equil = sys_root / "simulations" / str(lig_ref) / "equil"
+    alt_equil = sys_root / "simulations" / str(lig_alt) / "equil"
+    ref_pdb = ref_equil / "representative.pdb"
+    alt_pdb = alt_equil / "representative.pdb"
+    if not ref_pdb.exists():
+        ref_pdb = ref_equil / "full.pdb"
+    if not alt_pdb.exists():
+        alt_pdb = alt_equil / "full.pdb"
+
+    if ref_pdb.exists() and alt_pdb.exists():
+        try:
+            u_ref = mda.Universe(ref_pdb.as_posix())
+            u_alt = mda.Universe(alt_pdb.as_posix())
+            sel = (ctx.sim.protein_align or "name CA").strip()
+            align.alignto(
+                mobile=u_alt.atoms,
+                reference=u_ref.atoms,
+                select=f"({sel}) and name CA and not resname NMA ACE",
+            )
+            alt_lig = u_alt.select_atoms(f"resname {res_alt}")
+            alt_aligned = dest_dir / f"{lig_alt}_aligned.pdb"
+            alt_lig.atoms.write(alt_aligned.as_posix())
+            for target in (dest_dir / "build.pdb", dest_dir / "build-dry.pdb"):
+                if target.exists():
+                    _append_ligand_to_build(target, alt_aligned, resname=str(res_alt))
+        except Exception as exc:
+            logger.warning(f"[simprep:x] Failed to align/append alt ligand: {exc}")
+    else:
+        logger.warning(
+            "[simprep:x] Missing equil representative for ref/alt ligands; skipping alt append."
+        )
+
+    logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 
 @register_create_simulation("y")

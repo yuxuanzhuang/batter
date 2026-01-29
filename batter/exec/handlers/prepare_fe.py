@@ -94,6 +94,19 @@ def prepare_fe_handler(
     extra_conformation_restraints: Optional[Path] = sys_params.get(
         "extra_conformation_restraints", None
     )
+    pair_meta = {
+        key: system.meta.get(key)
+        for key in (
+            "pair_id",
+            "ligand_ref",
+            "ligand_alt",
+            "residue_ref",
+            "residue_alt",
+            "input_ref",
+            "input_alt",
+        )
+        if system.meta.get(key) is not None
+    }
 
     infe = bool(sim.infe)
 
@@ -124,6 +137,7 @@ def prepare_fe_handler(
                 "extra_restraint_fc": extra_restraint_fc,
                 "extra_conformation_restraints": extra_conformation_restraints,
                 "partition": partition,
+                **pair_meta,
             },
         )
         builder.build()  # will create <comp>-1, amber templates, run files, etc.
@@ -191,6 +205,19 @@ def prepare_fe_windows_handler(
     extra_conformation_restraints: Optional[Path] = sys_params.get(
         "extra_conformation_restraints", None
     )
+    pair_meta = {
+        key: system.meta.get(key)
+        for key in (
+            "pair_id",
+            "ligand_ref",
+            "ligand_alt",
+            "residue_ref",
+            "residue_alt",
+            "input_ref",
+            "input_alt",
+        )
+        if system.meta.get(key) is not None
+    }
 
     infe = False
     if extra_restraints is not None:
@@ -230,6 +257,7 @@ def prepare_fe_windows_handler(
                     "extra_restraint_fc": extra_restraint_fc,
                     "extra_conformation_restraints": extra_conformation_restraints,
                     "partition": partition,
+                    **pair_meta,
                 },
             )
             builder.build()

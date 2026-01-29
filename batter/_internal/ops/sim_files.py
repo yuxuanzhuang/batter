@@ -601,13 +601,198 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 @register_sim_files("x")
 def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
-    RBFE (x-component) sim_files placeholder.
+    RBFE (x-component) sim_files.
 
-    TODO: implement MBAR/MDIN templates for relative transformations.
+    Uses mdin-ex / eqnpt-ex.in templates to build per-window inputs for
+    relative transformations (ligand pair).
     """
-    raise NotImplementedError(
-        "RBFE component 'x' sim_files is not implemented yet. "
-        "Add the MD input generation for x before running RBFE."
+    sim = ctx.sim
+    comp = ctx.comp
+    mol_ref = ctx.residue_name
+    extra = ctx.extra or {}
+    mol_alt = extra.get("residue_alt")
+
+    if not mol_alt:
+        raise ValueError(
+            "RBFE component 'x' requires residue_alt in BuildContext.extra."
+        )
+
+    windows_dir = ctx.window_dir
+    temperature = sim.temperature
+    steps2 = sim.dic_n_steps[comp]
+    ntwx = sim.ntwx
+
+    weight = lambdas[ctx.win if ctx.win != -1 else 0]
+
+    # Count atoms (vac or full)
+    all_atoms = sim.all_atoms
+    if all_atoms.lower() == "no":
+        vac_pdb = windows_dir / "vac.pdb"
+        if not vac_pdb.exists():
+            raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+        vac_atoms = mda.Universe(vac_pdb.as_posix()).atoms.n_atoms
+    else:
+        full_pdb = windows_dir / "full.pdb"
+        if not full_pdb.exists():
+            raise FileNotFoundError(f"Missing required file: {full_pdb}")
+        vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
+        vac_pdb = windows_dir / "vac.pdb"  # still needed for residue ids
+
+    # Find residue indices for the reference and alternate ligands in vac.pdb
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ref_resid = None
+    alt_resid = None
+    with vac_pdb.open("rt") as f:
+        for line in f:
+            rec = line[:6].strip()
+            if rec not in ("ATOM", "HETATM"):
+                continue
+            resname = line[17:20].strip()
+            resid = line[22:26].strip()
+            if resname.lower() == mol_ref.lower():
+                ref_resid = resid
+            elif resname.lower() == mol_alt.lower():
+                alt_resid = resid
+    if ref_resid is None or alt_resid is None:
+        raise ValueError(
+            f"Could not resolve ligand residue ids in {vac_pdb.name} "
+            f"(ref={mol_ref} -> {ref_resid}, alt={mol_alt} -> {alt_resid})."
+        )
+
+    mk1 = int(ref_resid)
+    mk2 = int(alt_resid)
+
+    amber_dir = ctx.amber_dir
+
+    # optional extra restraints (only applied to mdin-template)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
+
+    # --- eq.in (short equilibration) ---
+    template_mdin = amber_dir / "mdin-ex"
+    if not template_mdin.exists():
+        raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")
+
+    eq_path = windows_dir / "eq.in"
+    n_steps_run = 5000
+    with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
+        for line in fin:
+            if "ntx = 5" in line:
+                line = "  ntx = 1,\n"
+            elif "irest" in line:
+                line = "  irest = 0,\n"
+            elif "dt = " in line:
+                line = "  dt = 0.001,\n"
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-atoms_", str(vac_atoms))
+                .replace("_num-steps_", str(n_steps_run))
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("mk2", str(mk2))
+            )
+            fout.write(line)
+    with eq_path.open("a") as mdin:
+        mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+        mdin.write("  mbar_lambda =")
+        for lam in lambdas:
+            mdin.write(f" {lam:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 1,\n")
+        mdin.write(" /\n")
+        mdin.write(" &pmd \n")
+        mdin.write("  output_file = 'cmass.txt'\n")
+        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+        mdin.write("  cv_file = 'cv.in'\n")
+        mdin.write(" /\n")
+        mdin.write(" &wt type = 'END' , /\n")
+        mdin.write("DISANG=disang.rest\n")
+        mdin.write("LISTOUT=POUT\n")
+
+    # --- mdin-template (production) ---
+    out_path = windows_dir / "mdin-template"
+    with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
+        fout.write(f"! total_steps={steps2}\n")
+        for line in fin:
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-atoms_", str(vac_atoms))
+                .replace("_num-steps_", str(steps2))
+                .replace("lbd_val", f"{float(weight):6.5f}")
+                .replace("mk1", str(mk1))
+                .replace("mk2", str(mk2))
+            )
+            fout.write(line)
+    with out_path.open("a") as mdin:
+        mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+        mdin.write("  mbar_lambda =")
+        for lam in lambdas:
+            mdin.write(f" {lam:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 1,\n")
+        mdin.write(" /\n")
+        mdin.write(" &pmd \n")
+        mdin.write("  output_file = 'cmass.txt'\n")
+        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
+        mdin.write("  cv_file = 'cv.in'\n")
+        mdin.write(" /\n")
+        mdin.write(" &wt type = 'END' , /\n")
+        mdin.write("DISANG=disang.rest\n")
+        mdin.write("LISTOUT=POUT\n")
+
+    # Patch mdin with extra restraints (only mdin-template)
+    if extra_mask:
+        try:
+            content = out_path.read_text()
+            content = _patch_restraint_block(content, extra_mask, extra_fc)
+            out_path.write_text(content)
+        except Exception as e:
+            logger.warning(
+                f"[extra_restraints] Could not patch {out_path.name}: {e}"
+            )
+
+    # --- mini.in / mini_eq.in ---
+    lig_mask = f"{mol_ref} | :{mol_alt}"
+    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini.in").open(
+        "wt"
+    ) as fout:
+        for line in fin:
+            fout.write(line.replace("_lig_name_", lig_mask))
+
+    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open(
+        "wt"
+    ) as fout:
+        for line in fin:
+            fout.write(line.replace("_lig_name_", lig_mask))
+
+    # --- eqnpt0.in / eqnpt.in from eqnpt-ex.in ---
+    template_eq = amber_dir / "eqnpt-ex.in"
+    if not template_eq.exists():
+        raise FileNotFoundError(f"Missing RBFE eqnpt template: {template_eq}")
+
+    with template_eq.open("rt") as fin, (windows_dir / "eqnpt0.in").open("wt") as fout:
+        for line in fin:
+            if "ntx = 5" in line:
+                line = "  ntx = 1,\n"
+            elif "irest" in line:
+                line = "  irest = 0,\n"
+            fout.write(
+                line.replace("_temperature_", str(temperature))
+                .replace("_lig_name_", mol_ref)
+                .replace("_lig2_name_", mol_alt)
+            )
+
+    with template_eq.open("rt") as fin, (windows_dir / "eqnpt.in").open("wt") as fout:
+        for line in fin:
+            fout.write(
+                line.replace("_temperature_", str(temperature))
+                .replace("_lig_name_", mol_ref)
+                .replace("_lig2_name_", mol_alt)
+            )
+
+    logger.debug(
+        f"[sim_files_x] wrote mdin/mini/eq inputs in {windows_dir} "
+        f"for comp='x', win={ctx.win}, weight={weight:0.5f}"
     )
 
 

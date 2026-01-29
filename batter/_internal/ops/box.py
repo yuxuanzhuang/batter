@@ -625,14 +625,555 @@ def create_box_default(ctx: BuildContext) -> None:
 @register_create_box("x")
 def create_box_x(ctx: BuildContext) -> None:
     """
-    RBFE (x-component) create_box placeholder.
-
-    TODO: implement ligand-pair box building (dimer) for relative transformations.
+    Create the box for RBFE (x-component) ligand-pair systems.
+    Produces vac.{prmtop,inpcrd,pdb} and full.{prmtop,inpcrd,pdb}.
     """
-    raise NotImplementedError(
-        "RBFE component 'x' create_box is not implemented yet. "
-        "Implement a ligand-pair box builder (e.g., box_dimer) before running RBFE."
+    work = ctx.working_dir
+    sim = ctx.sim
+    amber_dir = ctx.amber_dir
+    build_dir = ctx.build_dir
+    window_dir = ctx.window_dir
+    window_dir.mkdir(parents=True, exist_ok=True)
+
+    extra = ctx.extra or {}
+    mol_ref = extra.get("residue_ref") or ctx.residue_name
+    mol_alt = extra.get("residue_alt")
+    lig_ref = extra.get("ligand_ref")
+    lig_alt = extra.get("ligand_alt")
+
+    if not mol_alt:
+        raise ValueError(
+            "RBFE component 'x' requires residue_alt in BuildContext.extra."
+        )
+
+    membrane_builder = sim.membrane_simulation
+    lipid_mol = sim.lipid_mol
+    other_mol = sim.other_mol
+
+    # --- buffers ---
+    for attr in ("buffer_x", "buffer_y", "buffer_z"):
+        if not hasattr(sim, attr):
+            raise AttributeError(
+                f"SimulationConfig missing '{attr}'. Please specify this buffer in the YAML."
+            )
+    buffer_x = float(sim.buffer_x)
+    buffer_y = float(sim.buffer_y)
+    buffer_z = float(sim.buffer_z)
+    if (not membrane_builder) and (buffer_x < 5 or buffer_y < 5 or buffer_z < 5):
+        raise ValueError("For water systems, buffer_x/y/z must be ≥ 5 Å.")
+
+    if membrane_builder:
+        targeted_buffer_z = max([float(sim.buffer_z), 25.0])
+        buffer_z = get_buffer_z(window_dir / "build.pdb", targeted_buf=targeted_buffer_z)
+        buffer_x = 0.0
+        buffer_y = 0.0
+    else:
+        # reduce buffer by existing solvation shell
+        if hasattr(sim, "solv_shell"):
+            solv_shell = sim.solv_shell
+            buffer_x = max(0.0, buffer_x - solv_shell)
+            buffer_y = max(0.0, buffer_y - solv_shell)
+            buffer_z = max(0.0, buffer_z - solv_shell)
+
+    if not hasattr(sim, "water_model"):
+        raise AttributeError("SimulationConfig missing 'water_model'.")
+    water_model = str(sim.water_model).upper()
+
+    if not hasattr(sim, "ion_def"):
+        raise AttributeError("SimulationConfig missing 'ion_def'.")
+    ion_def = sim.ion_def
+
+    if not hasattr(sim, "neut"):
+        raise AttributeError("SimulationConfig missing 'neut'.")
+    neut = str(sim.neut)
+
+    # --- stage required ligand artifacts into window_dir ---
+    def _resolve_param_dir(resname: str, lig_name: str | None) -> Path | None:
+        if resname in ctx.param_dir_dict:
+            return Path(ctx.param_dir_dict[resname])
+        if lig_name:
+            candidate = ctx.system_root / "simulations" / str(lig_name) / "params"
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _stage_param_files(resname: str, param_dir: Path | None) -> None:
+        required = {"frcmod", "mol2"}
+        for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
+            dst = window_dir / f"{resname}.{ext}"
+            if dst.exists():
+                continue
+            src = param_dir / f"{resname}.{ext}" if param_dir else None
+            if src and src.exists():
+                _cp(src, dst)
+            elif ext in required:
+                raise FileNotFoundError(
+                    f"[create_box_x] Missing required ligand file: {resname}.{ext}"
+                )
+            else:
+                logger.debug(f"[create_box_x] Optional/absent: {resname}.{ext}")
+
+        # vac_ligand.* uses the reference ligand
+        if resname == mol_ref:
+            for ext in ("prmtop", "mol2", "sdf", "inpcrd"):
+                src = window_dir / f"{resname}.{ext}"
+                if src.exists():
+                    _cp(src, window_dir / f"vac_ligand.{ext}")
+
+    param_dir_ref = _resolve_param_dir(str(mol_ref), lig_ref)
+    param_dir_alt = _resolve_param_dir(str(mol_alt), lig_alt)
+    _stage_param_files(str(mol_ref), param_dir_ref)
+    _stage_param_files(str(mol_alt), param_dir_alt)
+
+    # ensure build.pdb exists in window_dir
+    build_pdb = window_dir / "build.pdb"
+    if not build_pdb.exists():
+        fallback = build_dir / "build.pdb"
+        if fallback.exists():
+            _cp(fallback, build_pdb)
+        else:
+            raise FileNotFoundError(
+                f"[create_box_x] build.pdb missing in {window_dir} (fallback: {fallback})."
+            )
+
+    if other_mol:
+        raise NotImplementedError("Other molecules not supported now.")
+
+    # --- copy tleap template into window_dir ---
+    src_tleap = amber_dir / "tleap.in.amber16"
+    if not src_tleap.exists():
+        src_tleap = amber_dir / "tleap.in"
+    _cp(src_tleap, window_dir / "tleap.in")
+
+    # water box keyword
+    if water_model == "TIP3PF":
+        water_box = "FB3BOX"
+    elif water_model == "SPCE":
+        water_box = "SPCBOX"
+    else:
+        water_box = f"{water_model}BOX"
+
+    # --- tleap solvate pre ---
+    tleap_solv_pre = window_dir / "tleap_solvate_pre.in"
+    _cp(window_dir / "tleap.in", tleap_solv_pre)
+    with tleap_solv_pre.open("a") as f:
+        f.write("# Load the necessary parameters\n")
+        f.write(f"loadamberparams {mol_ref}.frcmod\n")
+        f.write(f"{mol_ref} = loadmol2 {mol_ref}.mol2\n\n")
+        f.write(f"loadamberparams {mol_alt}.frcmod\n")
+        f.write(f"{mol_alt} = loadmol2 {mol_alt}.mol2\n\n")
+        f.write(f'set {{{mol_ref}.1}} name "{mol_ref}"\n')
+        f.write(f'set {{{mol_alt}.1}} name "{mol_alt}"\n')
+        if water_model != "TIP3PF":
+            f.write(f"source leaprc.water.{water_model.lower()}\n\n")
+        else:
+            f.write("source leaprc.water.fb3\n\n")
+        f.write("model = loadpdb build.pdb\n\n")
+        f.write(
+            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z} }} 1\n\n"
+        )
+        f.write("desc model\n")
+        f.write("savepdb model full_pre.pdb\n")
+        f.write("quit\n")
+    run_with_log(
+        f"{tleap} -s -f {tleap_solv_pre.name} > tleap_solvate_pre.log",
+        working_dir=window_dir,
     )
+
+    # Count waters in build.pdb
+    num_waters = sum(
+        1 for ln in (window_dir / "build.pdb").read_text().splitlines() if "WAT" in ln
+    )
+
+    # pdb4amber
+    run_with_log("pdb4amber -i build.pdb -o build_amber.pdb -y", working_dir=window_dir)
+    renum_df = pd.read_csv(
+        window_dir / "build_amber_renum.txt",
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+    renum_df["old_resname"] = renum_df["old_resname"].replace(
+        ["HIS", "HIE", "HIP", "HID"], "HIS"
+    )
+    revised_resids = []
+    resid_counter = 1
+    prev_resid = 0
+    for _, row in renum_df.iterrows():
+        if row["old_resid"] != prev_resid or row["old_resname"] not in lipid_mol:
+            revised_resids.append(resid_counter)
+            resid_counter += 1
+        else:
+            revised_resids.append(resid_counter - 1)
+        prev_resid = row["old_resid"]
+
+    # MDAnalysis universes
+    u = mda.Universe(str(window_dir / "full_pre.pdb"))
+    final_system = u.atoms
+    system_dimensions = u.dimensions[:3]
+
+    if membrane_builder:
+        u_ref = mda.Universe(str(window_dir / "equil-reference.pdb"))
+        u.dimensions[0] = u_ref.dimensions[0]
+        u.dimensions[1] = u_ref.dimensions[1]
+        u.dimensions[2] = u.dimensions[2] - 3
+        u.atoms.positions[:, 2] -= 3
+
+        membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
+        memb_z_max = membrane_region.select_atoms("type P").positions[:, 2].max() - 10
+        memb_z_min = membrane_region.select_atoms("type P").positions[:, 2].min() + 10
+        water_in_mem = u.select_atoms(
+            f"byres (resname WAT and prop z > {memb_z_min} and prop z < {memb_z_max})"
+        )
+        final_system = final_system - water_in_mem
+
+    box_xy = [u.dimensions[0], u.dimensions[1]]
+    water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
+    final_system = final_system | water_around_prot
+
+    if membrane_builder:
+        outside_wat = final_system.select_atoms(
+            "byres (resname WAT and "
+            f"((prop x > {box_xy[0]/2}) or (prop x < -{box_xy[0]/2}) or "
+            f"(prop y > {box_xy[1]/2}) or (prop y < -{box_xy[1]/2})))"
+        )
+        final_system = final_system - outside_wat
+
+        prot_z_max = u.select_atoms("protein").positions[:, 2].max()
+        prot_z_min = u.select_atoms("protein").positions[:, 2].min()
+        outside_wat_z = final_system.select_atoms(
+            "byres (resname WAT and "
+            f"(prop z > {prot_z_max + targeted_buffer_z} or prop z < {prot_z_min - targeted_buffer_z}))"
+        )
+        final_system = final_system - outside_wat_z
+        system_dimensions[2] = prot_z_max - prot_z_min + 2 * targeted_buffer_z
+
+    # renumber residues
+    revised_resids = np.array(revised_resids)
+    total_residues = final_system.residues.n_residues
+    final_resids = np.zeros(total_residues, dtype=int)
+    final_resids[: len(revised_resids)] = revised_resids
+    next_resnum = revised_resids[-1] + 1
+    final_resids[len(revised_resids) :] = np.arange(
+        next_resnum, total_residues - len(revised_resids) + next_resnum
+    )
+    final_system.residues.resids = final_resids
+
+    # partitions
+    final_system_dum = final_system.select_atoms("resname DUM")
+    final_system_prot = final_system.select_atoms("protein")
+    final_system_others = final_system - final_system_prot - final_system_dum
+    final_system_ligs = final_system.select_atoms(
+        f"resname {mol_ref} or resname {mol_alt}"
+    )
+    final_system_other_mol = (
+        final_system_others.select_atoms("not resname WAT") - final_system_ligs
+    )
+    final_system_water = final_system_others.select_atoms("resname WAT")
+    final_system_water_notaround = final_system.select_atoms(
+        "byres (resname WAT and not (around 6 protein))"
+    )
+    final_system_water_around = final_system_water - final_system_water_notaround
+
+    # write parts
+    _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
+
+    # set chainIDs using renum_df and write protein by chains
+    for residue in u.select_atoms("protein").residues:
+        resid_str = residue.resid
+        resid_resname = (
+            "HIS"
+            if residue.resname in ["HIS", "HIE", "HIP", "HID"]
+            else residue.resname
+        )
+        residue.atoms.chainIDs = renum_df.query(
+            "old_resid == @resid_str and old_resname == @resid_resname"
+        ).old_chain.values[0]
+    prot_lines = []
+    for chain_name in np.unique(final_system_prot.atoms.chainIDs):
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb")
+        final_system.select_atoms(f"chainID {chain_name}").write(tmp.name)
+        tmp.close()
+        with open(tmp.name) as f:
+            prot_lines += [ln for ln in f if ln.startswith("ATOM")]
+        prot_lines.append("TER\n")
+    (window_dir / "solvate_pre_prot.pdb").write_text("".join(prot_lines))
+
+    _write_res_blocks(final_system_ligs, window_dir / "solvate_pre_ligands.pdb")
+
+    other_lines_exist = len(final_system_other_mol.residues) != 0
+    if other_lines_exist:
+        _write_res_blocks(final_system_other_mol, window_dir / "solvate_pre_others.pdb")
+
+    outside_wat_exist = len(final_system_water_notaround.residues) != 0
+    if outside_wat_exist:
+        _write_res_blocks(
+            final_system_water_notaround, window_dir / "solvate_pre_outside_wat.pdb"
+        )
+
+    around_wat_exist = len(final_system_water_around.residues) != 0
+    if around_wat_exist:
+        _write_res_blocks(
+            final_system_water_around, window_dir / "solvate_pre_around_water.pdb"
+        )
+
+    # --- tleap parts (all with working_dir=window_dir) ---
+
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_dum.in")
+    with (window_dir / "tleap_solvate_dum.in").open("a") as f:
+        f.write("dum = loadpdb solvate_pre_dum.pdb\n\n")
+        f.write(
+            f"set dum box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
+        f.write("savepdb dum solvate_dum.pdb\n")
+        f.write("saveamberparm dum solvate_dum.prmtop solvate_dum.inpcrd\nquit\n")
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_dum.in > tleap_dum.log", working_dir=window_dir
+    )
+
+    # prot
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_prot.in")
+    with (window_dir / "tleap_solvate_prot.in").open("a") as f:
+        f.write("prot = loadpdb solvate_pre_prot.pdb\n\n")
+        f.write(
+            f"set prot box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
+        f.write("savepdb prot solvate_prot.pdb\n")
+        f.write("saveamberparm prot solvate_prot.prmtop solvate_prot.inpcrd\nquit\n")
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_prot.in > tleap_prot.log", working_dir=window_dir
+    )
+
+    # ligands
+    _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_ligands.in")
+    with (window_dir / "tleap_solvate_ligands.in").open("a") as f:
+        f.write("# Load the necessary parameters\n")
+        f.write(f"loadamberparams {mol_ref}.frcmod\n")
+        f.write(f"{mol_ref} = loadmol2 {mol_ref}.mol2\n\n")
+        f.write(f"loadamberparams {mol_alt}.frcmod\n")
+        f.write(f"{mol_alt} = loadmol2 {mol_alt}.mol2\n\n")
+        f.write(f'set {{{mol_ref}.1}} name "{mol_ref}"\n')
+        f.write(f'set {{{mol_alt}.1}} name "{mol_alt}"\n')
+        f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
+        f.write(
+            f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+        )
+        f.write("savepdb ligands solvate_ligands.pdb\n")
+        f.write(
+            "saveamberparm ligands solvate_ligands.prmtop solvate_ligands.inpcrd\nquit\n"
+        )
+    run_with_log(
+        f"{tleap} -s -f tleap_solvate_ligands.in > tleap_ligands.log",
+        working_dir=window_dir,
+    )
+
+    # others
+    if other_lines_exist:
+        _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_others.in")
+        with (window_dir / "tleap_solvate_others.in").open("a") as f:
+            for om in other_mol:
+                f.write(f"loadamberparams {om.lower()}.frcmod\n")
+                f.write(f"{om} = loadmol2 {om.lower()}.mol2\n")
+            if water_model != "TIP3PF":
+                f.write(f"source leaprc.water.{water_model.lower()}\n\n")
+            else:
+                f.write("source leaprc.water.fb3\n\n")
+            f.write("others = loadpdb solvate_pre_others.pdb\n\n")
+            f.write(
+                f"set others box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+            )
+            f.write("savepdb others solvate_others.pdb\n")
+            f.write(
+                "saveamberparm others solvate_others.prmtop solvate_others.inpcrd\nquit\n"
+            )
+        run_with_log(
+            f"{tleap} -s -f tleap_solvate_others.in > tleap_others.log",
+            working_dir=window_dir,
+        )
+
+    # charge accounting
+    def _sum_unit_charge_from_log(logfile: Path) -> Tuple[int, int]:
+        neu_cat = neu_ani = 0
+        if not logfile.exists():
+            return 0, 0
+        for line in logfile.read_text().splitlines():
+            if "The unperturbed charge of the unit" in line:
+                q = float(line.split()[6].strip("'\",.:;#()]["))
+                if q < 0:
+                    neu_cat += round(float(re.sub(r"[+-]", "", str(q))))
+                elif q > 0:
+                    neu_ani += round(float(re.sub(r"[+-]", "", str(q))))
+        return neu_cat, neu_ani
+
+    neu_cat, neu_ani = _sum_unit_charge_from_log(window_dir / "tleap_prot.log")
+    if (window_dir / "tleap_others.log").exists():
+        nc2, na2 = _sum_unit_charge_from_log(window_dir / "tleap_others.log")
+        neu_cat += nc2
+        neu_ani += na2
+
+    lig_charge_total = 0
+    have_charge = False
+    for resname in (mol_ref, mol_alt):
+        q = _ligand_charge_from_metadata(window_dir / f"{resname}.json")
+        if q is not None:
+            lig_charge_total += q
+            have_charge = True
+    if have_charge:
+        lig_cat = max(0, -lig_charge_total)
+        lig_ani = max(0, lig_charge_total)
+    else:
+        lig_cat, lig_ani = _sum_unit_charge_from_log(window_dir / "tleap_ligands.log")
+
+    charge_neut = neu_cat - neu_ani + lig_cat - lig_ani
+    neu_cat = max(0, charge_neut)
+    neu_ani = max(0, -charge_neut)
+
+    box_volume = system_dimensions[0] * system_dimensions[1] * system_dimensions[2]
+    num_ions = round(ion_def[2] * 6.02e23 * box_volume * 1e-27)
+    # put a minimum of 5 ions
+    num_ions = max(5, num_ions)
+    if membrane_builder:
+        num_ions //= 2
+    num_cat = num_ions
+    num_ani = num_ions - neu_cat + neu_ani
+    if num_ani < 0:
+        num_cat = neu_cat
+        num_ions = neu_cat
+        num_ani = 0
+
+    # outside water — ionization
+    if (window_dir / "solvate_pre_outside_wat.pdb").exists():
+        _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_outside_wat.in")
+        with (window_dir / "tleap_solvate_outside_wat.in").open("a") as f:
+            if water_model != "TIP3PF":
+                f.write(f"source leaprc.water.{water_model.lower()}\n\n")
+            else:
+                f.write("source leaprc.water.fb3\n\n")
+            f.write("outside_wat = loadpdb solvate_pre_outside_wat.pdb\n\n")
+            if neut == "no":
+                f.write(f"addionsrand outside_wat {ion_def[0]} {num_cat}\n")
+                f.write(f"addionsrand outside_wat {ion_def[1]} {num_ani}\n")
+            elif neut == "yes":
+                if neu_cat:
+                    f.write(f"addionsrand outside_wat {ion_def[0]} {neu_cat}\n")
+                if neu_ani:
+                    f.write(f"addionsrand outside_wat {ion_def[1]} {neu_ani}\n")
+            f.write(
+                f"set outside_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+            )
+            f.write("savepdb outside_wat solvate_outside_wat.pdb\n")
+            f.write(
+                "saveamberparm outside_wat solvate_outside_wat.prmtop solvate_outside_wat.inpcrd\nquit\n"
+            )
+        run_with_log(
+            f"{tleap} -s -f tleap_solvate_outside_wat.in > tleap_outside_wat.log",
+            working_dir=window_dir,
+        )
+
+    # around water
+    if (window_dir / "solvate_pre_around_water.pdb").exists():
+        _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_around_wat.in")
+        with (window_dir / "tleap_solvate_around_wat.in").open("a") as f:
+            if water_model != "TIP3PF":
+                f.write(f"source leaprc.water.{water_model.lower()}\n\n")
+            else:
+                f.write("source leaprc.water.fb3\n\n")
+            f.write("around_wat = loadpdb solvate_pre_around_water.pdb\n\n")
+            f.write(
+                f"set around_wat box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
+            )
+            f.write("savepdb around_wat solvate_around_wat.pdb\n")
+            f.write(
+                "saveamberparm around_wat solvate_around_wat.prmtop solvate_around_wat.inpcrd\nquit\n"
+            )
+        run_with_log(
+            f"{tleap} -s -f tleap_solvate_around_wat.in > tleap_around_wat.log",
+            working_dir=window_dir,
+        )
+
+    # combine with ParmEd
+    dum_p = pmd.load_file(
+        str(window_dir / "solvate_dum.prmtop"), str(window_dir / "solvate_dum.inpcrd")
+    )
+    prot_p = pmd.load_file(
+        str(window_dir / "solvate_prot.prmtop"), str(window_dir / "solvate_prot.inpcrd")
+    )
+    ligands_p = pmd.load_file(
+        str(window_dir / "solvate_ligands.prmtop"),
+        str(window_dir / "solvate_ligands.inpcrd"),
+    )
+
+    combined = dum_p + prot_p + ligands_p
+    vac = dum_p + prot_p + ligands_p
+
+    if (window_dir / "solvate_others.prmtop").exists():
+        others_p = pmd.load_file(
+            str(window_dir / "solvate_others.prmtop"),
+            str(window_dir / "solvate_others.inpcrd"),
+        )
+        combined += others_p
+        vac += others_p
+    if (window_dir / "solvate_outside_wat.prmtop").exists():
+        combined += pmd.load_file(
+            str(window_dir / "solvate_outside_wat.prmtop"),
+            str(window_dir / "solvate_outside_wat.inpcrd"),
+        )
+    if (window_dir / "solvate_around_wat.prmtop").exists():
+        combined += pmd.load_file(
+            str(window_dir / "solvate_around_wat.prmtop"),
+            str(window_dir / "solvate_around_wat.inpcrd"),
+        )
+
+    combined.save(str(window_dir / "full.prmtop"), overwrite=True)
+    combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
+    combined.save(str(window_dir / "full.pdb"), overwrite=True)
+
+    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
+    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
+    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+
+    u_full = mda.Universe(str(window_dir / "full.pdb"))
+    u_vac = mda.Universe(str(window_dir / "vac.pdb"))
+
+    # renumber protein residues back to original ids
+    renum_txt = build_dir / "protein_renum.txt"
+    if not renum_txt.exists():
+        renum_txt = build_dir.parent / build_dir.name / "protein_renum.txt"
+    renum_df2 = pd.read_csv(
+        renum_txt,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+    u_full.select_atoms("protein").residues.resids = renum_df2["old_resid"].values
+    u_vac.select_atoms("protein").residues.resids = renum_df2["old_resid"].values
+
+    # rebuild segments by chain
+    seg_txt = window_dir / "build_amber_renum.txt"
+    seg_df = pd.read_csv(
+        seg_txt,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+    chain_list = renum_df2.old_chain.values
+    chain_segments = {ch: u_full.add_Segment(segid=ch) for ch in chain_list}
+    for res, ch in zip(u_full.residues[: len(chain_list)], chain_list):
+        res.segment = chain_segments[ch]
+
+    u_full.atoms.write(str(window_dir / "full.pdb"))
+    u_vac.atoms.write(str(window_dir / "vac_orig.pdb"))
+
+    # HMR
+    parmed_hmr = amber_dir / "parmed-hmr.in"
+    if parmed_hmr.exists():
+        _cp(parmed_hmr, window_dir / "parmed-hmr.in")
+        run_with_log(
+            "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
+        )
+    else:
+        logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+    return
 
 
 @register_create_box("y")
