@@ -23,7 +23,14 @@ from batter.systems.core import SimSystem
 # -----------------------------
 def _system_root_for(child_root: Path) -> Path:
     """work/<sys>/simulations/<lig> → work/<sys>"""
+    # Prefer the parent of the "simulations" directory so this works for
+    # both per-ligand (simulations/<lig>) and RBFE transformations
+    # (simulations/transformations/<pair>).
     try:
+        parts = child_root.parts
+        if "simulations" in parts:
+            idx = parts.index("simulations")
+            return Path(*parts[:idx])
         return child_root.parents[1]
     except Exception:
         return child_root

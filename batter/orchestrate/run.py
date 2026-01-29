@@ -268,7 +268,10 @@ def run_from_yaml(
         or rc.create.extra_conformation_restraints,
     }
 
-    sys_exec = SimSystem(name=rc.create.system_name, root=run_dir)
+    base_meta = {}
+    if rc.protocol == "rbfe":
+        base_meta["mode"] = "RBFE"
+    sys_exec = SimSystem(name=rc.create.system_name, root=run_dir, meta=base_meta)
     sys_exec = builder.build(sys_exec, rc.create)
     sig_path.parent.mkdir(parents=True, exist_ok=True)
     sig_path.write_text(config_signature + "\n")
