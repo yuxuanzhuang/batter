@@ -319,7 +319,7 @@ def _production_windows_under(root: Path, comp: str) -> List[int]:
 
 def _progress_path(root: Path, phase: str) -> Path:
     base = root / "artifacts"
-    if phase.startswith("fe") or phase.startswith("prepare_fe"):
+    if phase.startswith(("fe", "prepare_fe", "pre_fe", "pre_prepare_fe")):
         base = root / "fe" / "artifacts"
     return base / "progress" / f"{phase}.csv"
 

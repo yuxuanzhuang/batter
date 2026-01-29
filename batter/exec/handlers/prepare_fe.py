@@ -81,7 +81,8 @@ def prepare_fe_handler(
         raise ValueError("[prepare_fe] Missing simulation configuration in payload.")
     sim = payload.sim
     partition = payload.get("partition") or payload.get("queue") or "normal"
-    components = list(getattr(sim, "components", []) or [])
+    phase_name = payload.get("phase_name") or "prepare_fe"
+    components = list(payload.get("components") or getattr(sim, "components", []) or [])
     if not components:
         raise ValueError("No components specified in sim config.")
 
@@ -94,7 +95,7 @@ def prepare_fe_handler(
     system_root = _system_root_for(child_root)
     param_dir_dict = _load_param_dir_dict(system_root)
 
-    comp_windows: dict = sim.component_lambdas  # type: ignore[attr-defined]
+    comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
     sys_params = payload.sys_params or SystemParams()
     extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
     extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
@@ -119,15 +120,29 @@ def prepare_fe_handler(
 
     artifacts: Dict[str, Any] = {}
     logger.debug(
-        f"[prepare_fe] start ligand={ligand} residue={residue_name} components={components}"
+        f"[{phase_name}] start ligand={ligand} residue={residue_name} components={components}"
     )
+
+    # Patch sim for pre-prepare cases (e.g., RBFE pre_prepare_fe uses z)
+    if any(comp == "z" for comp in components):
+        if getattr(sim, "dec_method", None) not in {"sdr", "dd"}:
+            sim = sim.model_copy(deep=True)
+            sim.dec_method = "sdr"
+        if sim.dic_n_steps.get("z", 0) <= 0:
+            sim = sim.model_copy(deep=True)
+            fallback = sim.dic_n_steps.get("x", 0) or sim.n_steps_dict.get("x_n_steps", 0)
+            if fallback <= 0:
+                fallback = int(getattr(sim, "eq_steps", 0) or 0)
+            if fallback <= 0:
+                fallback = 100000
+            sim.dic_n_steps["z"] = int(fallback)
 
     # Build per component (scaffold / templates only; win=-1)
     for comp in components:
         workdir = child_root / "fe" / comp
         workdir.mkdir(parents=True, exist_ok=True)
 
-        logger.debug(f"[prepare_fe] building component '{comp}' in {workdir}")
+        logger.debug(f"[{phase_name}] building component '{comp}' in {workdir}")
         builder = AlchemicalFEBuilder(
             ligand=ligand,
             residue_name=residue_name,
@@ -152,15 +167,15 @@ def prepare_fe_handler(
         artifacts[f"{comp}_workdir"] = str(workdir)
 
     # emit the common OK marker used by the orchestrator
-    marker = child_root / "fe" / "artifacts" / "prepare_fe.ok"
+    marker = child_root / "fe" / "artifacts" / f"{phase_name}.ok"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("ok\n")
 
-    logger.debug(f"[prepare_fe] finished ligand={ligand} → {marker}")
+    logger.debug(f"[{phase_name}] finished ligand={ligand} → {marker}")
     marker_rel = marker.relative_to(system.root).as_posix()
     register_phase_state(
         system.root,
-        "prepare_fe",
+        phase_name,
         required=[[marker_rel]],
         success=[[marker_rel]],
     )

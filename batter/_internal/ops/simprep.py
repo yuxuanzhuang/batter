@@ -142,6 +142,104 @@ def _append_ligand_to_build(
     build_pdb.write_text("\n".join(lines) + "\n")
 
 
+def _set_dummy_position(
+    build_pdb: Path, pos: np.ndarray, target_resid: int | None = None
+) -> bool:
+    """Update DUM atom coordinates in build_pdb. Returns True if updated."""
+    if not build_pdb.exists():
+        raise FileNotFoundError(f"Missing build file: {build_pdb}")
+
+    lines = build_pdb.read_text().splitlines()
+    out: List[str] = []
+    updated = False
+    for ln in lines:
+        if _is_atom_line(ln):
+            resname = _field(ln, 17, 20)
+            if resname == "DUM":
+                try:
+                    serial = int(_field(ln, 6, 11) or 1)
+                except Exception:
+                    serial = 1
+                name = _field(ln, 12, 16) or "Pb"
+                chain = _field(ln, 21, 22) or "Z"
+                try:
+                    resid = int(_field(ln, 22, 26) or 1)
+                except Exception:
+                    resid = 1
+                if target_resid is not None and resid != target_resid:
+                    out.append(ln)
+                    continue
+                out.append(
+                    _fmt_atom_line(
+                        serial,
+                        name,
+                        "DUM",
+                        chain,
+                        resid,
+                        float(pos[0]),
+                        float(pos[1]),
+                        float(pos[2]),
+                    )
+                )
+                updated = True
+                continue
+        out.append(ln)
+
+    if updated:
+        build_pdb.write_text("\n".join(out) + "\n")
+    return updated
+
+
+def _append_dummy_atom(
+    build_pdb: Path, pos: np.ndarray, target_resid: int | None = None
+) -> None:
+    """Append a new DUM atom to build_pdb (best-effort fallback)."""
+    lines = build_pdb.read_text().splitlines()
+    # strip END lines
+    while lines and lines[-1].strip().startswith("END"):
+        lines.pop()
+    last_serial = 0
+    last_resid = 0
+    for ln in lines:
+        if _is_atom_line(ln):
+            try:
+                last_serial = max(last_serial, int(_field(ln, 6, 11) or 0))
+            except Exception:
+                pass
+            try:
+                last_resid = max(last_resid, int(_field(ln, 22, 26) or 0))
+            except Exception:
+                pass
+    serial = last_serial + 1
+    resid = target_resid
+    if resid is None:
+        resid = last_resid + 1 if last_resid else 1
+    lines.append(
+        _fmt_atom_line(
+            serial,
+            "Pb",
+            "DUM",
+            "Z",
+            resid,
+            float(pos[0]),
+            float(pos[1]),
+            float(pos[2]),
+        )
+    )
+    lines.append("TER")
+    lines.append("END")
+    build_pdb.write_text("\n".join(lines) + "\n")
+
+
+def _write_build_dry_no_water(build_pdb: Path, out_dry: Path) -> None:
+    """Write build-dry.pdb by filtering out water residues (WAT)."""
+    with build_pdb.open("rt") as fin, out_dry.open("wt") as fout:
+        for ln in fin:
+            if _is_atom_line(ln) and len(ln) >= 20 and ln[17:20] == "WAT":
+                continue
+            fout.write(ln)
+
+
 # ---------------------- unified writer ----------------------
 
 
@@ -532,9 +630,7 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
 @register_create_simulation("x")
 def create_simulation_dir_x(ctx: BuildContext) -> None:
     """
-    RBFE (x-component) simulation-dir placeholder.
-
-    TODO: implement ligand-pair build.pdb assembly and anchor handling for RBFE.
+    RBFE (x-component) simulation-dir builder.
     """
     extra = ctx.extra or {}
     lig_ref = extra.get("ligand_ref")
@@ -561,7 +657,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # bring build outputs from reference ligand build (fe-<ref>.pdb, anchors, etc.)
     for s, d in [
         (build_dir / f"{res_ref}.pdb", dest_dir / f"{res_ref}.pdb"),
-        (build_dir / f"fe-{res_ref}.pdb", dest_dir / "build-ini.pdb"),
         (build_dir / f"fe-{res_ref}.pdb", dest_dir / f"fe-{res_ref}.pdb"),
         (build_dir / f"anchors-{lig_ref}.txt", dest_dir / f"anchors-{lig_ref}.txt"),
         (build_dir / "equil-reference.pdb", dest_dir / "equil-reference.pdb"),
@@ -583,13 +678,39 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     for p in ff_alt.glob(f"{res_alt}.*"):
         _copy_if_exists(p, dest_dir / p.name)
 
+    # Prefer pre_fe_equil eqnpt04 coordinates for the reference complex
+    build_ini = dest_dir / "build-ini.pdb"
+    ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "fe" / "z" / "z-1"
+    ref_prmtop = ref_pre_fe / (
+        "full.hmr.prmtop"
+        if str(getattr(ctx.sim, "hmr", "no")).lower() == "yes"
+        else "full.prmtop"
+    )
+    ref_rst7 = ref_pre_fe / "eqnpt04.rst7"
+    if ref_prmtop.exists() and ref_rst7.exists():
+        try:
+            u_ref = mda.Universe(ref_prmtop.as_posix(), ref_rst7.as_posix())
+            ion_names = " ".join(sorted(ION_NAMES))
+            try:
+                sel = u_ref.select_atoms(f"not resname WAT {ion_names} DUM")
+            except Exception:
+                sel = u_ref.select_atoms("not resname WAT DUM")
+            if sel.n_atoms == 0:
+                sel = u_ref.atoms
+            sel.write(build_ini.as_posix())
+        except Exception as exc:
+            logger.warning(f"[simprep:x] Failed to build eqnpt04 reference PDB: {exc}")
+            _copy_if_exists(build_dir / f"fe-{res_ref}.pdb", build_ini)
+    else:
+        _copy_if_exists(build_dir / f"fe-{res_ref}.pdb", build_ini)
+
     # Build base build.pdb from reference ligand
-    if (dest_dir / "build-ini.pdb").exists():
+    if build_ini.exists():
         write_build_from_aligned(
             lig=res_ref,
             window_dir=dest_dir,
             build_dir=build_dir,
-            aligned_pdb=dest_dir / "build-ini.pdb",
+            aligned_pdb=build_ini,
             other_mol=ctx.sim.other_mol,
             lipid_mol=ctx.sim.lipid_mol,
             ion_mol=ION_NAMES,
@@ -600,37 +721,86 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         )
 
     # Align alternate ligand to reference complex and append to build files
+    ref_align_pdb = build_ini if build_ini.exists() else None
     ref_equil = sys_root / "simulations" / str(lig_ref) / "equil"
     alt_equil = sys_root / "simulations" / str(lig_alt) / "equil"
-    ref_pdb = ref_equil / "representative.pdb"
     alt_pdb = alt_equil / "representative.pdb"
-    if not ref_pdb.exists():
-        ref_pdb = ref_equil / "full.pdb"
+    if ref_align_pdb is None or not ref_align_pdb.exists():
+        ref_align_pdb = ref_equil / "representative.pdb"
+        if not ref_align_pdb.exists():
+            ref_align_pdb = ref_equil / "full.pdb"
     if not alt_pdb.exists():
         alt_pdb = alt_equil / "full.pdb"
 
-    if ref_pdb.exists() and alt_pdb.exists():
+    alt_appended = False
+    if ref_align_pdb and ref_align_pdb.exists() and alt_pdb.exists():
         try:
-            u_ref = mda.Universe(ref_pdb.as_posix())
+            u_ref = mda.Universe(ref_align_pdb.as_posix())
             u_alt = mda.Universe(alt_pdb.as_posix())
             sel = (ctx.sim.protein_align or "name CA").strip()
             align.alignto(
                 mobile=u_alt.atoms,
                 reference=u_ref.atoms,
-                select=f"({sel}) and name CA and not resname NMA ACE",
+                select=f"protein and ({sel})",
             )
             alt_lig = u_alt.select_atoms(f"resname {res_alt}")
+            if alt_lig.n_atoms == 0:
+                raise RuntimeError(f"No atoms for ligand {res_alt} in {alt_pdb}")
             alt_aligned = dest_dir / f"{lig_alt}_aligned.pdb"
             alt_lig.atoms.write(alt_aligned.as_posix())
             for target in (dest_dir / "build.pdb", dest_dir / "build-dry.pdb"):
                 if target.exists():
                     _append_ligand_to_build(target, alt_aligned, resname=str(res_alt))
+                    alt_appended = True
         except Exception as exc:
             logger.warning(f"[simprep:x] Failed to align/append alt ligand: {exc}")
     else:
         logger.warning(
             "[simprep:x] Missing equil representative for ref/alt ligands; skipping alt append."
         )
+
+    # --- add DUM2 + solvent-centered alt ligand copy for RBFE ---
+    build_pdb = dest_dir / "build.pdb"
+    if build_pdb.exists():
+        try:
+            buffer_z = float(getattr(ctx.sim, "buffer_z", 25.0) or 25.0)
+            if buffer_z < 25.0:
+                buffer_z = 25.0
+            sdr_dist = get_sdr_dist(
+                build_pdb, lig_resname=str(res_ref), buffer_z=buffer_z, extra_buffer=5
+            )
+            u_ref = mda.Universe(build_pdb.as_posix())
+            ref_sel = u_ref.select_atoms(f"resname {res_ref}")
+            if ref_sel.n_atoms == 0:
+                raise RuntimeError(f"No atoms for reference ligand {res_ref} in build.pdb")
+            ref_com = ref_sel.center_of_mass()
+            dum_pos = ref_com + np.array([0.0, 0.0, float(sdr_dist)])
+
+            if not _set_dummy_position(build_pdb, dum_pos, target_resid=2):
+                logger.warning(
+                    "[simprep:x] No DUM2 atom found in build.pdb; appending a new one."
+                )
+                _append_dummy_atom(build_pdb, dum_pos, target_resid=2)
+
+            if alt_appended:
+                u_tmp = mda.Universe(build_pdb.as_posix())
+                sel = u_tmp.select_atoms(f"resname {res_alt}")
+                if sel.n_atoms == 0:
+                    logger.warning(
+                        f"[simprep:x] No atoms found for ligand {res_alt}; skipping solvent copy."
+                    )
+                else:
+                    com = sel.center_of_mass()
+                    shift = dum_pos - com
+                    sel.positions += shift
+                    tmp_pdb = dest_dir / f"{res_alt}_dum_copy.pdb"
+                    sel.atoms.write(tmp_pdb.as_posix())
+                    _append_ligand_to_build(build_pdb, tmp_pdb, resname=str(res_alt))
+        except Exception as exc:
+            logger.warning(f"[simprep:x] Failed to add DUM/solvent copies: {exc}")
+
+        # rebuild build-dry.pdb to include non-water atoms even if appended after waters
+        _write_build_dry_no_water(build_pdb, dest_dir / "build-dry.pdb")
 
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 

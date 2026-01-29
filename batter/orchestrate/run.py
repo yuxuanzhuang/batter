@@ -428,6 +428,8 @@ def run_from_yaml(
     PH_PREPARE_EQUIL = {"prepare_equil"}
     PH_EQUIL = {"equil"}
     PH_EQUIL_ANALYSIS = {"equil_analysis"}
+    PH_PRE_PREPARE_FE = {"pre_prepare_fe"}
+    PH_PRE_FE_EQUIL = {"pre_fe_equil"}
     PH_PREPARE_FE = {"prepare_fe", "prepare_fe_windows"}
     PH_FE_EQUIL = {"fe_equil"}
     PH_FE = {"fe"}
@@ -449,6 +451,8 @@ def run_from_yaml(
     phase_prepare_equil = _phase(PH_PREPARE_EQUIL)
     phase_equil = _phase(PH_EQUIL)
     phase_equil_analysis = _phase(PH_EQUIL_ANALYSIS)
+    phase_pre_prepare_fe = _phase(PH_PRE_PREPARE_FE)
+    phase_pre_fe_equil = _phase(PH_PRE_FE_EQUIL)
     phase_prepare_fe = _phase(PH_PREPARE_FE)
     phase_fe_equil = _phase(PH_FE_EQUIL)
     phase_fe = _phase(PH_FE)
@@ -520,7 +524,9 @@ def run_from_yaml(
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    def _inject_mgr(p: Pipeline, stage_name: str) -> Pipeline:
+    def _inject_mgr(
+        p: Pipeline, stage_name: str, extra_payload: dict[str, Any] | None = None
+    ) -> Pipeline:
         job_mgr.set_stage(stage_name)
         patched = []
         for s in p.ordered_steps():
@@ -532,6 +538,16 @@ def run_from_yaml(
             updates["batch_run_root"] = run_dir / "batch_run"
             updates["batch_gpus"] = getattr(rc.run, "batch_gpus", None)
             updates["batch_gpus_per_task"] = getattr(rc.run, "batch_gpus_per_task", 1)
+            if extra_payload:
+                updates.update(extra_payload)
+            payload = base_payload.copy_with(**updates)
+            patched.append(Step(name=s.name, requires=s.requires, payload=payload))
+        return Pipeline(patched)
+
+    def _inject_payload(p: Pipeline, **updates: Any) -> Pipeline:
+        patched = []
+        for s in p.ordered_steps():
+            base_payload = s.payload or StepPayload()
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
@@ -589,7 +605,57 @@ def run_from_yaml(
         logger.info("[skip] equil_analysis: no steps in this protocol.")
 
     # --------------------
-    # RBFE: build transformation systems (pairs) after equil analysis
+    # PHASE 2.6: pre_prepare_fe (RBFE ligand prep) → z-1 only
+    # --------------------
+    if phase_pre_prepare_fe.ordered_steps():
+        phase_pre_prepare_fe = _inject_payload(
+            phase_pre_prepare_fe,
+            components=["z"],
+            component_lambdas={"z": [0.0]},
+            phase_name="pre_prepare_fe",
+        )
+        run_phase_skipping_done(
+            phase_pre_prepare_fe,
+            children,
+            "pre_prepare_fe",
+            backend,
+            max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
+        )
+        children = handle_phase_failures(children, "pre_prepare_fe", rc.run.on_failure)
+    else:
+        logger.info("[skip] pre_prepare_fe: no steps in this protocol.")
+
+    # --------------------
+    # PHASE 2.7: pre_fe_equil → must COMPLETE for all ligands
+    # --------------------
+    phase_pre_fe_equil = _inject_mgr(
+        phase_pre_fe_equil,
+        "pre_fe_equil",
+        extra_payload={"phase_name": "pre_fe_equil", "extra_env": {"SKIP_WINDOW_EQ": "1"}},
+    )
+    if phase_pre_fe_equil.ordered_steps():
+        finished = run_phase_skipping_done(
+            phase_pre_fe_equil,
+            children,
+            "pre_fe_equil",
+            backend,
+            max_workers=1,
+            on_failure=rc.run.on_failure,
+        )
+        if not finished:
+            job_mgr.wait_all()
+            if dry_run and job_mgr.triggered:
+                logger.success(
+                    "[DRY-RUN] Reached first SLURM submission point (pre_fe_equil). Exiting without submitting."
+                )
+                return
+        children = handle_phase_failures(children, "pre_fe_equil", rc.run.on_failure)
+    else:
+        logger.info("[skip] pre_fe_equil: no steps in this protocol.")
+
+    # --------------------
+    # RBFE: build transformation systems (pairs) after pre_fe_equil
     # --------------------
     if rc.protocol == "rbfe":
         from batter.rbfe import RBFENetwork, resolve_mapping_fn, load_mapping_file

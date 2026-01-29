@@ -55,8 +55,10 @@ def register_local_handlers(backend: LocalBackend) -> None:
     backend.register("equil", _equil)
     backend.register("equil_analysis", _equil_analysis)
     backend.register("prepare_fe", _prepare_fe)
+    backend.register("pre_prepare_fe", _prepare_fe)
     backend.register("prepare_fe_windows", _prepare_fe_windows)
     backend.register("fe_equil", _fe_equil)
+    backend.register("pre_fe_equil", _fe_equil)
     backend.register("fe", _fe)
     backend.register("analyze", _analyze)
 

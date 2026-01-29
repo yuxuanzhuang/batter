@@ -103,6 +103,7 @@ def fe_equil_handler(
     lig = system.meta.get("ligand", system.name)
     max_jobs = int(payload.get("max_active_jobs", 500))
     stage = payload.get("job_stage") or "fe_equil"
+    phase_name = payload.get("phase_name") or "fe_equil"
 
     job_mgr = payload.get("job_mgr")
     if not isinstance(job_mgr, SlurmJobManager):
@@ -120,7 +121,7 @@ def fe_equil_handler(
 
     register_phase_state(
         system.root,
-        "fe_equil",
+        phase_name,
         required=[
             ["fe/{comp}/{comp}-1/EQ_FINISHED"],
             ["fe/{comp}/{comp}-1/FAILED"],
@@ -139,6 +140,9 @@ def fe_equil_handler(
             continue
 
         env = {"ONLY_EQ": "1", "INPCRD": "full.inpcrd"}
+        extra_env = payload.get("extra_env") or {}
+        for key, value in extra_env.items():
+            env[str(key)] = str(value)
         job_name = f"fep_{os.path.abspath(system.root)}_{comp}_fe_equil"
         spec = _spec_from_dir(
             wd,
