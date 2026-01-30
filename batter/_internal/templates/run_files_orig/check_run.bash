@@ -283,6 +283,8 @@ reduce_dt_on_failure() {
         }
     ' "$tmpl" > "${tmpl}.tmp" && mv "${tmpl}.tmp" "$tmpl"
 
+    # remove old sims if there's any.
+    rm md-*
     echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 
