@@ -651,6 +651,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     lig_alt = extra.get("ligand_alt")
     res_ref = extra.get("residue_ref") or ctx.residue_name
     res_alt = extra.get("residue_alt")
+    logger.info(f"[simprep:x] {lig_ref} → {lig_alt} ({res_ref} → {res_alt})")
 
     if not lig_ref or not lig_alt or not res_ref or not res_alt:
         raise ValueError(
@@ -664,13 +665,17 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     dest_dir = ctx.equil_dir
     sim = ctx.sim
     buffer_z = sim.buffer_z
+    ion_def = sim.ion_def
+
     membrane_builder = sim.membrane_simulation
     mol = ctx.residue_name
+    # ligand is ligand pair
     ligand = ctx.ligand
     protein_align = sim.protein_align
-    equil_dir = sys_root / "simulations" / ligand / "equil"
     ref_equil_dir = sys_root / "simulations" / str(lig_ref) / "equil"
     alt_equil_dir = sys_root / "simulations" / str(lig_alt) / "equil"
+    ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "fe" / "z" / "z-1"
+    alt_pre_fe = sys_root / "simulations" / str(lig_alt) / "fe" / "z" / "z-1"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -688,7 +693,11 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
         (build_dir / "dum.frcmod", dest_dir / "dum.frcmod"),
         (build_dir / "dum.mol2", dest_dir / "dum.mol2"),
+        (ref_pre_fe / "full.prmtop", dest_dir / "ref_full.prmtop"),
+        (ref_pre_fe / "full.pdb", dest_dir / "ref_full.pdb"),
+        (ref_pre_fe / "eq_output.pdb", dest_dir / "ref_eq_output.pdb"),
         (alt_equil_dir / "representative.pdb", dest_dir / "alter_representative.pdb"),
+        (alt_pre_fe / "solvate_ligands.prmtop", dest_dir / "alter_ligand.prmtop"),
     ]:
         _copy_if_exists(s, d)
 
@@ -704,10 +713,9 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     # Prefer pre_fe_equil eqnpt04 coordinates for the reference complex
     build_ini = dest_dir / "build-ini.pdb"
-    ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "fe" / "z" / "z-1"
     # only full.pdb have the correct resid information
-    ref_pdb = ref_pre_fe / "full.pdb"
-    ref_pdb_coord = ref_pre_fe / "eq_output.pdb"
+    ref_pdb = dest_dir / "ref_full.pdb"
+    ref_pdb_coord = dest_dir / "ref_eq_output.pdb"
     if ref_pdb.exists() and ref_pdb_coord.exists():
         try:
             u_ref = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
@@ -727,12 +735,37 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # align representative_complex.pdb to u_ref
     u_alter = mda.Universe(dest_dir / "alter_representative.pdb")
     align.alignto(mobile=u_alter.atoms, reference=u_ref.atoms, select=f'({protein_align}) and name CA and not resname NMA ACE')
-    u_alter_lig = u_alter.select_atoms(f'resname {lig_alt}')
+    u_alter_lig = u_alter.select_atoms(f'resname {res_alt}')
     u_alter_lig.write(dest_dir / f"alter_representative_ligand.pdb")
-    dum_2 = u_ref.select_atoms('resname DUM and index 1')
-    u_alter_lig.positions = u_alter_lig.positions - u_alter_lig.center_of_mass() + dum_2.center_of_mass()
-    u_alter_lig.write(dest_dir / f"alter_representative_ligand_solvent.pdb")
-    raise NotImplementedError('')
+    u_alter_lig_pocket = mda.Universe(dest_dir / f"alter_representative_ligand.pdb")
+    u_lig = u_ref.select_atoms(f'resname {res_ref}')
+    u_alter_lig.positions = u_alter_lig.positions - u_alter_lig.center_of_mass() + u_lig.residues[1].atoms.center_of_mass()
+    u_alter_lig_merged = mda.Merge(u_alter_lig_pocket.atoms, u_alter_lig)
+    u_alter_lig_merged.atoms.write(dest_dir / "alter_ligand.pdb")
+    
+    u_lig_alter = mda.Universe(dest_dir / "alter_ligand.prmtop")
+    # only one present in the system
+    u_lig_charge = int(np.ceil(u_lig_alter.atoms.charges.sum() / 2.0))
+    if u_lig_charge != 0:
+        # add ion to the system
+        ion = mda.Universe.empty(
+            n_atoms=np.abs(u_lig_charge),
+            n_residues=np.abs(u_lig_charge),
+            n_segments=np.abs(u_lig_charge),
+            trajectory=True,
+        )
+
+        # topology attrs (minimal but useful)
+        ion_name = ion_def[0] if u_lig_charge < 0 else ion_def[1]
+        ion.add_TopologyAttr("names", [ion_name] * np.abs(u_lig_charge))
+        ion.add_TopologyAttr("types", [ion_name] * np.abs(u_lig_charge))
+        ion.add_TopologyAttr("resnames", [ion_name] * np.abs(u_lig_charge))
+        ion.add_TopologyAttr("resids", list(range(1, np.abs(u_lig_charge) + 1)))
+
+        # coordinates by adding random number to last atom
+        pos = np.asarray([u_ref.atoms[-1].position + np.random.rand(3) for i in range(np.abs(u_lig_charge))]).reshape(np.abs(u_lig_charge), 3)
+        ion.positions = pos
+        ion.atoms.write(dest_dir / "ions.pdb")
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 
