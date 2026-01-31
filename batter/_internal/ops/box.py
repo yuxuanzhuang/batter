@@ -417,18 +417,8 @@ def create_box_z(ctx: BuildContext) -> None:
         neu_cat += nc2
         neu_ani += na2
     lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
-    if lig_charge is not None:
-        lig_cat = max(0, -lig_charge)
-        lig_ani = max(0, lig_charge)
-    else:
-        lig_cat, lig_ani = _sum_unit_charge_from_log(window_dir / "tleap_ligands.log")
-
-    if comp in ["x", "z", "o", "s", "v"]:
-        lig_cat //= 2
-        lig_ani //= 2
-    if comp == "e":
-        lig_cat //= 4
-        lig_ani //= 4
+    lig_cat = max(0, -lig_charge)
+    lig_ani = max(0, lig_charge)
 
     charge_neut = neu_cat - neu_ani + lig_cat - lig_ani
     neu_cat = max(0, charge_neut)
@@ -627,6 +617,7 @@ def create_box_x(ctx: BuildContext) -> None:
     Produces vac.{prmtop,inpcrd,pdb} and full.{prmtop,inpcrd,pdb}.
     """
     work = ctx.working_dir
+
     sim = ctx.sim
     amber_dir = ctx.amber_dir
     build_dir = ctx.build_dir
@@ -643,6 +634,21 @@ def create_box_x(ctx: BuildContext) -> None:
         raise ValueError(
             "RBFE component 'x' requires residue_alt in BuildContext.extra."
         )
+
+    # --- stage required ligand artifacts into window_dir ---
+    for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "pdb", "json"):
+        param_dir = work.parent.parent / "params"
+        src = param_dir / f"{mol_ref}.{ext}"
+        if src.exists():
+            _cp(src, window_dir / src.name)
+        else:
+            logger.debug(f"[create_box_x] Optional/absent: {src}")
+        param_dir = work.parent.parent.parent / lig_alt / "params"
+        src = param_dir / f"{mol_alt}.{ext}"
+        if src.exists():
+            _cp(src, window_dir / src.name)
+        else:
+            logger.debug(f"[create_box_x] Optional/absent: {src}")
 
     membrane_builder = sim.membrane_simulation
     lipid_mol = sim.lipid_mol
@@ -694,7 +700,7 @@ def create_box_x(ctx: BuildContext) -> None:
     )
     alter_ligands_p = pmd.load_file(
         str(window_dir / "alter_ligand.prmtop"),
-        str(window_dir / "alter_ligand.pdb"),
+        str(window_dir / "alter_ligand_aligned.pdb"),
     )
     ion_p = pmd.load_file(
         str(window_dir / "ions.prmtop"),
@@ -865,10 +871,7 @@ def create_box_y(ctx: BuildContext) -> None:
                     pass
         return int(round(q))
 
-    # Prefer the charge computed during parametrization; fall back to tleap log for legacy runs
     lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
-    if lig_charge is None:
-        lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
     # put a minimum of 5 ions
     box_volume_A3 = 2 * buffer_x * 2 * buffer_y * 2 * buffer_z
     num_ions = max(

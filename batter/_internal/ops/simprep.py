@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
-from typing import Iterable, List, Tuple, Optional, Set
+from typing import Iterable, List, Tuple, Optional, Set, Sequence
 import shutil
 import re
 
@@ -25,6 +25,8 @@ from batter._internal.ops.helpers import (
 
 from batter.utils import run_with_log
 from batter.config.simulation import SimulationConfig
+from rdkit import Chem
+from rdkit.Geometry import Point3D
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
 
@@ -239,6 +241,133 @@ def _write_build_dry_no_water(build_pdb: Path, out_dry: Path) -> None:
                 continue
             fout.write(ln)
 
+
+def filter_element_changes(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Forces a mapping to exclude any alchemical element changes in the core"""
+    filtered_mapping = {}
+
+    for i, j in mapping.items():
+        if (
+            molA.GetAtomWithIdx(i).GetAtomicNum()
+            != molB.GetAtomWithIdx(j).GetAtomicNum()
+        ):
+            continue
+        filtered_mapping[i] = j
+
+    return filtered_mapping
+
+def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem.Mol:
+    """
+    Set atomic coordinates for mol from xyz (shape: (n_atoms, 3)).
+    Creates a conformer if needed; otherwise overwrites existing.
+    Returns the same mol (mutated).
+    """
+    xyz = np.asarray(xyz, dtype=float)
+    if xyz.shape != (mol.GetNumAtoms(), 3):
+        raise ValueError(f"xyz must be shape {(mol.GetNumAtoms(), 3)}, got {xyz.shape}")
+
+    # Ensure we have a conformer
+    if mol.GetNumConformers() == 0:
+        conf = Chem.Conformer(mol.GetNumAtoms())
+        conf.SetId(0)
+        mol.AddConformer(conf, assignId=True)
+        conf_id = 0
+
+    conf = mol.GetConformer(conf_id)
+
+    for i, (x, y, z) in enumerate(xyz):
+        conf.SetAtomPosition(i, Point3D(float(x), float(y), float(z)))
+
+    return mol
+
+def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
+    """Merge sorted indices into inclusive consecutive ranges.
+
+    Parameters
+    ----------
+    indices : Sequence[int]
+        Integer indices. Duplicates are allowed but will be removed.
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        List of (start, end) inclusive ranges. If start == end, it's a singleton.
+    """
+    uniq = sorted(set(indices))
+    if not uniq:
+        return []
+
+    ranges: List[Tuple[int, int]] = []
+    start = prev = uniq[0]
+    for x in uniq[1:]:
+        if x == prev + 1:
+            prev = x
+            continue
+        ranges.append((start, prev))
+        start = prev = x
+    ranges.append((start, prev))
+    return ranges
+
+
+def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
+    """Convert ranges to selection segments like '5-8,10,12-14'."""
+    parts: List[str] = []
+    for a, b in ranges:
+        parts.append(f"{a}" if a == b else f"{a}-{b}")
+    return ",".join(parts)
+
+
+def indices_to_selection(
+    include: Iterable[int],
+    exclude: Iterable[int] = (),
+    *,
+    prefix: str = "@",
+    negate_op: str = "!",
+    and_op: str = "&",
+) -> str:
+    """Build a selection string from include/exclude indices with merged ranges.
+
+    Parameters
+    ----------
+    include : Iterable[int]
+        Indices to include.
+    exclude : Iterable[int], optional
+        Indices to exclude. Indices not present in `include` are ignored.
+    prefix : str, optional
+        Prefix for the include expression (default '@', e.g., AMBER-style atom selection).
+    negate_op : str, optional
+        Negation operator (default '!').
+    and_op : str, optional
+        Conjunction operator (default '&').
+
+    Returns
+    -------
+    str
+        Selection string, e.g. '@1-10 & ! (@3-4,7)'.
+
+    Raises
+    ------
+    ValueError
+        If `include` is empty.
+    """
+    inc = sorted(set(include))
+    if not inc:
+        raise ValueError("include must be non-empty")
+
+    inc_ranges = _merge_consecutive(inc)
+    inc_str = _ranges_to_str(inc_ranges)
+
+    # Only exclude indices that are actually in include
+    inc_set = set(inc)
+    exc_in_inc = [i for i in set(exclude) if i in inc_set]
+    if not exc_in_inc:
+        return f"{prefix}{inc_str}"
+
+    exc_ranges = _merge_consecutive(exc_in_inc)
+    exc_str = _ranges_to_str(exc_ranges)
+    return f"{prefix}{inc_str} {and_op} {negate_op} ({prefix}{exc_str})"
 
 # ---------------------- unified writer ----------------------
 
@@ -651,7 +780,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     lig_alt = extra.get("ligand_alt")
     res_ref = extra.get("residue_ref") or ctx.residue_name
     res_alt = extra.get("residue_alt")
-    logger.info(f"[simprep:x] {lig_ref} → {lig_alt} ({res_ref} → {res_alt})")
+    logger.debug(f"[simprep:x] {lig_ref} → {lig_alt} ({res_ref} → {res_alt})")
 
     if not lig_ref or not lig_alt or not res_ref or not res_alt:
         raise ValueError(
@@ -782,6 +911,76 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms:]
     ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
 
+
+    # get alt and ref mapping and create new coordinates for alt
+    sdf_ref = dest_dir / f"{res_ref}.sdf"
+    sdf_alt = dest_dir / f"{ref_alt}.sdf"
+
+    mol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
+    mol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
+
+    ref_pos = u_lig.residues[0].positions
+    mol_ref = set_mol_positions(mol_ref, ref_pos)
+    from kartograf.atom_aligner import align_mol_shape
+    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+        
+    mapper = KartografAtomMapper()
+    #mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
+
+    # Get Mapping
+    kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
+    logger.info(f'mapping: {kartograf_mapping.componentA_to_componentB}')
+
+    # save mol_alt_aligned as PDB
+    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned)
+    with open('alter_ligand_aligned_site.pdb', 'w') as f:
+        f.write(pdb_block_m)
+
+    ref_pos = u_lig.residues[1].positions
+    mol_ref = set_mol_positions(mol_ref, ref_pos)
+    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+        
+    mapper = KartografAtomMapper()
+    #mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
+
+    # Get Mapping
+    kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
+    logger.info(f'mapping: {kartograf_mapping.componentA_to_componentB}')
+
+    # save mol_alt_aligned as PDB
+    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned)
+    with open('alter_ligand_aligned_solvent.pdb', 'w') as f:
+        f.write(pdb_block_m)
+
+    u_alt_site = mda.Universe('alter_ligand_aligned_site.pdb')
+    u_alt_solvent = mda.Universe('alter_ligand_aligned_solvent.pdb')
+    u_alt = mda.Merge([u_alt_site.atoms, u_alt_solvent.atoms])
+    u_alt.atoms.write('alter_ligand_aligned.pdb')
+
+
+    # get mapping file
+    ref_site = u_full.select_atoms(f'resname {res_ref}').residues[0]
+    ref_solvent = u_full.select_atoms(f'resname {res_ref}').residues[1]
+    alt_site = u_full.select_atoms(f'resname {res_alt}').residues[0]
+    alt_solvent = u_full.select_atoms(f'resname {res_alt}').residues[1]
+
+    # select cc parts
+    ref_index_list = list(kartograf_mapping.componentA_to_componentB.keys())
+    alt_index_list = list(kartograf_mapping.componentA_to_componentB.values())
+    print(ref_index_list)
+    print(alt_index_list)
+    cc_indices_t0 = np.concatenate((ref_site.atoms[ref_index_list].indices, alt_solvent.atoms[alt_index_list].indices)) + 1
+    cc_indices_t1 = np.concatenate((ref_solvent.atoms[ref_index_list].indices, alt_site.atoms[alt_index_list].indices)) + 1
+    all_indices_t0 = np.concatenate((ref_site.atoms.indices, alt_solvent.atoms.indices)) + 1
+    all_indices_t1 = np.concatenate((ref_solvent.atoms.indices, alt_site.atoms.indices)) + 1
+
+    dict_sc_mask = {
+        'scmask1': indices_to_selection(all_indices_t0, cc_indices_t0),
+        'scmask2': indices_to_selection(all_indices_t1, cc_indices_t1)
+    }
+    with open(dest_dir / "scmask.json", "w") as f:
+        json.dump(dict_sc_mask, f)
+        
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 

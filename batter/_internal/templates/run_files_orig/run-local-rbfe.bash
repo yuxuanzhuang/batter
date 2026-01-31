@@ -64,6 +64,8 @@ if [[ $only_eq -eq 1 ]]; then
                     exit 1
                 fi
             fi
+            print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
+            check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
             cd ../COMPONENT-1
 
     print_and_run "cpptraj -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
@@ -107,7 +109,7 @@ if [[ $seg_idx -lt 0 ]]; then
 fi
 
 # Choose initial restart input (needed to run, not for progress)
-rst_in="mini.in.rst7"
+rst_in="eq.rst7"
 if [[ -s md-current.rst7 ]]; then
     rst_in="md-current.rst7"
 elif [[ -s md-previous.rst7 ]]; then

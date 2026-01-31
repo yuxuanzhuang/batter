@@ -636,7 +636,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         if not full_pdb.exists():
             raise FileNotFoundError(f"Missing required file: {full_pdb}")
         vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
-        vac_pdb = windows_dir / "vac.pdb"  # still needed for residue ids
+        vac_pdb = windows_dir / "vac.pdb"
 
     # Find residue indices for the reference and alternate ligands in vac.pdb
     if not vac_pdb.exists():
@@ -663,6 +663,11 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk1 = int(ref_resid)
     mk2 = int(alt_resid)
 
+    # load scmask.json for scmk1, scmk2
+    scmk_dict = json.loads((windows_dir / "scmask.json").read_text())
+    scmk1 = scmk_dict['scmk1']
+    scmk2 = scmk_dict['scmk2']
+
     amber_dir = ctx.amber_dir
 
     # optional extra restraints (only applied to mdin-template)
@@ -672,7 +677,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     if not template_mdin.exists():
         raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")
 
-    eq_path = windows_dir / "eq.in"
+    eq_path = windows_dir / "eqnpt-ex.in"
     n_steps_run = 5000
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
@@ -687,8 +692,10 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("_num-atoms_", str(vac_atoms))
                 .replace("_num-steps_", str(n_steps_run))
                 .replace("lbd_val", f"{float(weight):6.5f}")
-                .replace("mk1", str(mk1))
-                .replace("mk2", str(mk2))
+                .replace("timk1", str(mk1))
+                .replace("timk2", str(mk2))
+                .replace("scmk1", scmk1)
+                .replace("scmk2", scmk2)
             )
             fout.write(line)
     with eq_path.open("a") as mdin:
@@ -718,8 +725,10 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("_num-atoms_", str(vac_atoms))
                 .replace("_num-steps_", str(steps2))
                 .replace("lbd_val", f"{float(weight):6.5f}")
-                .replace("mk1", str(mk1))
-                .replace("mk2", str(mk2))
+                .replace("timk1", str(mk1))
+                .replace("timk2", str(mk2))
+                .replace("scmk1", scmk1)
+                .replace("scmk2", scmk2)
             )
             fout.write(line)
     with out_path.open("a") as mdin:
@@ -764,7 +773,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for line in fin:
             fout.write(line.replace("_lig_name_", lig_mask))
 
-    # --- eqnpt0.in / eqnpt.in from eqnpt-ex.in ---
     template_eq = amber_dir / "eqnpt-ex.in"
     if not template_eq.exists():
         raise FileNotFoundError(f"Missing RBFE eqnpt template: {template_eq}")

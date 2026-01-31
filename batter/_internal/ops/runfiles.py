@@ -95,10 +95,12 @@ def write_fe_run_file(
 
     # templates (fail clearly if missing)
     tpl_check = src_dir / "check_run.bash"
-    if comp != "m":
-        tpl_local = src_dir / "run-local.bash"
-    else:
+    if comp == "m":
         tpl_local = src_dir / "run-local-vacuum.bash"
+    elif comp == "x":
+        tpl_local = src_dir / "run-local-remd.bash"
+    else:
+        tpl_local = src_dir / "run-local.bash"
 
     tpl_slurm = src_dir / "SLURMM-Am"
     if not hasattr(ctx.sim, "system_name"):
