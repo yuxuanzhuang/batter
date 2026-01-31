@@ -978,7 +978,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     u_alt_site = mda.Universe(alter_site_pdb.as_posix())
     u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
-    u_alt = mda.Merge([u_alt_site.atoms, u_alt_solvent.atoms])
+    u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
     u_alt.atoms.write(alter_merged_pdb.as_posix())
 
     # get mapping file
