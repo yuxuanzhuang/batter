@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import os
 from typing import Iterable, List, Tuple, Optional, Set, Sequence
 import shutil
@@ -27,6 +28,7 @@ from batter.utils import run_with_log
 from batter.config.simulation import SimulationConfig
 from rdkit import Chem
 from rdkit.Geometry import Point3D
+from kartograf.atom_mapper import KartografAtomMapper
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
 
@@ -258,6 +260,7 @@ def filter_element_changes(
 
     return filtered_mapping
 
+
 def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem.Mol:
     """
     Set atomic coordinates for mol from xyz (shape: (n_atoms, 3)).
@@ -281,6 +284,7 @@ def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem
         conf.SetAtomPosition(i, Point3D(float(x), float(y), float(z)))
 
     return mol
+
 
 def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
     """Merge sorted indices into inclusive consecutive ranges.
@@ -368,6 +372,7 @@ def indices_to_selection(
     exc_ranges = _merge_consecutive(exc_in_inc)
     exc_str = _ranges_to_str(exc_ranges)
     return f"{prefix}{inc_str} {and_op} {negate_op} ({prefix}{exc_str})"
+
 
 # ---------------------- unified writer ----------------------
 
@@ -853,6 +858,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     if ref_pdb.exists() and ref_pdb_coord.exists():
         try:
             u_ref = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
+            u_full = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
             ion_names = " ".join(sorted(ION_NAMES))
             try:
                 sel = u_ref.select_atoms(f"not resname WAT {ion_names} DUM")
@@ -864,19 +870,29 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         except Exception as exc:
             raise RuntimeError(f"Failed to build eqnpt04 reference PDB: {exc}")
     else:
-        raise FileNotFoundError(f"[simprep:x] Missing reference pdb or coordinate: {ref_pdb}, {ref_pdb_coord}")
+        raise FileNotFoundError(
+            f"[simprep:x] Missing reference pdb or coordinate: {ref_pdb}, {ref_pdb_coord}"
+        )
 
     # align representative_complex.pdb to u_ref
     u_alter = mda.Universe(dest_dir / "alter_representative.pdb")
-    align.alignto(mobile=u_alter.atoms, reference=u_ref.atoms, select=f'({protein_align}) and name CA and not resname NMA ACE')
-    u_alter_lig = u_alter.select_atoms(f'resname {res_alt}')
+    align.alignto(
+        mobile=u_alter.atoms,
+        reference=u_ref.atoms,
+        select=f"({protein_align}) and name CA and not resname NMA ACE",
+    )
+    u_alter_lig = u_alter.select_atoms(f"resname {res_alt}")
     u_alter_lig.write(dest_dir / f"alter_representative_ligand.pdb")
     u_alter_lig_pocket = mda.Universe(dest_dir / f"alter_representative_ligand.pdb")
-    u_lig = u_ref.select_atoms(f'resname {res_ref}')
-    u_alter_lig.positions = u_alter_lig.positions - u_alter_lig.center_of_mass() + u_lig.residues[1].atoms.center_of_mass()
+    u_lig = u_ref.select_atoms(f"resname {res_ref}")
+    u_alter_lig.positions = (
+        u_alter_lig.positions
+        - u_alter_lig.center_of_mass()
+        + u_lig.residues[1].atoms.center_of_mass()
+    )
     u_alter_lig_merged = mda.Merge(u_alter_lig_pocket.atoms, u_alter_lig)
     u_alter_lig_merged.atoms.write(dest_dir / "alter_ligand.pdb")
-    
+
     u_lig_alter = mda.Universe(dest_dir / "alter_ligand.prmtop")
     # only one present in the system
     u_lig_charge = int(np.ceil(u_lig_alter.atoms.charges.sum() / 2.0))
@@ -897,24 +913,28 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         ion.add_TopologyAttr("resids", list(range(1, np.abs(u_lig_charge) + 1)))
 
         # coordinates by adding random number to last atom
-        pos = np.asarray([u_ref.atoms[-1].position + np.random.rand(3) for i in range(np.abs(u_lig_charge))]).reshape(np.abs(u_lig_charge), 3)
+        pos = np.asarray(
+            [
+                u_ref.atoms[-1].position + np.random.rand(3)
+                for i in range(np.abs(u_lig_charge))
+            ]
+        ).reshape(np.abs(u_lig_charge), 3)
         ion.positions = pos
         ion.atoms.write(dest_dir / "ions.pdb")
-    
+
     # update ref_vac positions
     ref_vac = mda.Universe(dest_dir / "ref_vac.pdb")
-    ref_vac.atoms.positions = u_ref.atoms.positions[:ref_vac.atoms.n_atoms]
+    ref_vac.atoms.positions = u_ref.atoms.positions[: ref_vac.atoms.n_atoms]
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
     # update other_parts positions
     ref_other_parts = mda.Universe(dest_dir / "other_parts.pdb")
-    ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms:]
+    ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms :]
     ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
-
 
     # get alt and ref mapping and create new coordinates for alt
     sdf_ref = dest_dir / f"{res_ref}.sdf"
-    sdf_alt = dest_dir / f"{ref_alt}.sdf"
+    sdf_alt = dest_dir / f"{res_alt}.sdf"
 
     mol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
     mol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
@@ -922,65 +942,88 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_pos = u_lig.residues[0].positions
     mol_ref = set_mol_positions(mol_ref, ref_pos)
     from kartograf.atom_aligner import align_mol_shape
+
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
-        
+
     mapper = KartografAtomMapper()
-    #mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
+    # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.info(f'mapping: {kartograf_mapping.componentA_to_componentB}')
+    logger.info(f"mapping: {kartograf_mapping.componentA_to_componentB}")
 
     # save mol_alt_aligned as PDB
     pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned)
-    with open('alter_ligand_aligned_site.pdb', 'w') as f:
+    alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
+    alter_solvent_pdb = dest_dir / "alter_ligand_aligned_solvent.pdb"
+    alter_merged_pdb = dest_dir / "alter_ligand_aligned.pdb"
+    with alter_site_pdb.open("w") as f:
         f.write(pdb_block_m)
 
     ref_pos = u_lig.residues[1].positions
     mol_ref = set_mol_positions(mol_ref, ref_pos)
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
-        
+
     mapper = KartografAtomMapper()
-    #mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
+    # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.info(f'mapping: {kartograf_mapping.componentA_to_componentB}')
+    logger.info(f"mapping: {kartograf_mapping.componentA_to_componentB}")
 
     # save mol_alt_aligned as PDB
     pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned)
-    with open('alter_ligand_aligned_solvent.pdb', 'w') as f:
+    with alter_solvent_pdb.open("w") as f:
         f.write(pdb_block_m)
 
-    u_alt_site = mda.Universe('alter_ligand_aligned_site.pdb')
-    u_alt_solvent = mda.Universe('alter_ligand_aligned_solvent.pdb')
+    u_alt_site = mda.Universe(alter_site_pdb.as_posix())
+    u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
     u_alt = mda.Merge([u_alt_site.atoms, u_alt_solvent.atoms])
-    u_alt.atoms.write('alter_ligand_aligned.pdb')
-
+    u_alt.atoms.write(alter_merged_pdb.as_posix())
 
     # get mapping file
-    ref_site = u_full.select_atoms(f'resname {res_ref}').residues[0]
-    ref_solvent = u_full.select_atoms(f'resname {res_ref}').residues[1]
-    alt_site = u_full.select_atoms(f'resname {res_alt}').residues[0]
-    alt_solvent = u_full.select_atoms(f'resname {res_alt}').residues[1]
+    ref_site = u_full.select_atoms(f"resname {res_ref}").residues[0]
+    ref_solvent = u_full.select_atoms(f"resname {res_ref}").residues[1]
+    alt_site = u_full.select_atoms(f"resname {res_alt}").residues[0]
+    alt_solvent = u_full.select_atoms(f"resname {res_alt}").residues[1]
 
     # select cc parts
     ref_index_list = list(kartograf_mapping.componentA_to_componentB.keys())
     alt_index_list = list(kartograf_mapping.componentA_to_componentB.values())
-    print(ref_index_list)
-    print(alt_index_list)
-    cc_indices_t0 = np.concatenate((ref_site.atoms[ref_index_list].indices, alt_solvent.atoms[alt_index_list].indices)) + 1
-    cc_indices_t1 = np.concatenate((ref_solvent.atoms[ref_index_list].indices, alt_site.atoms[alt_index_list].indices)) + 1
-    all_indices_t0 = np.concatenate((ref_site.atoms.indices, alt_solvent.atoms.indices)) + 1
-    all_indices_t1 = np.concatenate((ref_solvent.atoms.indices, alt_site.atoms.indices)) + 1
+    cc_indices_t0 = (
+        np.concatenate(
+            (
+                ref_site.atoms[ref_index_list].indices,
+                alt_solvent.atoms[alt_index_list].indices,
+            )
+        )
+        + 1
+    )
+    cc_indices_t1 = (
+        np.concatenate(
+            (
+                ref_solvent.atoms[ref_index_list].indices,
+                alt_site.atoms[alt_index_list].indices,
+            )
+        )
+        + 1
+    )
+    all_indices_t0 = (
+        np.concatenate((ref_site.atoms.indices, alt_solvent.atoms.indices)) + 1
+    )
+    all_indices_t1 = (
+        np.concatenate((ref_solvent.atoms.indices, alt_site.atoms.indices)) + 1
+    )
 
     dict_sc_mask = {
-        'scmask1': indices_to_selection(all_indices_t0, cc_indices_t0),
-        'scmask2': indices_to_selection(all_indices_t1, cc_indices_t1)
+        "scmask1": indices_to_selection(all_indices_t0, cc_indices_t0),
+        "scmask2": indices_to_selection(all_indices_t1, cc_indices_t1),
     }
+    logger.info(f"scmask1: {dict_sc_mask['scmask1']}")
+    logger.info(f"scmask2: {dict_sc_mask['scmask2']}")
     with open(dest_dir / "scmask.json", "w") as f:
         json.dump(dict_sc_mask, f)
-        
+
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 
