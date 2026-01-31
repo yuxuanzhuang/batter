@@ -118,6 +118,11 @@ def _resolve_run_dir_for_submission(
 )
 @click.option("--dry-run/--no-dry-run", default=None, help="Override YAML run.dry_run.")
 @click.option(
+    "--clean-failures/--no-clean-failures",
+    default=None,
+    help="Clear FAILED markers and progress caches before rerunning.",
+)
+@click.option(
     "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
 )
 @click.option(
@@ -138,6 +143,7 @@ def cmd_run(
     run_id: Optional[str],
     allow_run_id_mismatch: Optional[bool],
     dry_run: Optional[bool],
+    clean_failures: Optional[bool],
     only_equil: Optional[bool],
     slurm_submit: bool,
     slurm_manager_path: Optional[Path],
@@ -154,6 +160,8 @@ def cmd_run(
         run_over["allow_run_id_mismatch"] = allow_run_id_mismatch
     if dry_run is not None:
         run_over["dry_run"] = dry_run
+    if clean_failures is not None:
+        run_over["clean_failures"] = clean_failures
     if only_equil is not None:
         run_over["only_fe_preparation"] = only_equil
 
@@ -201,6 +209,10 @@ def cmd_run(
             ]
         if dry_run is not None:
             parts += ["--dry-run" if dry_run else "--no-dry-run"]
+        if clean_failures is not None:
+            parts += [
+                "--clean-failures" if clean_failures else "--no-clean-failures"
+            ]
         if only_equil is not None:
             parts += ["--only-equil" if only_equil else "--full"]
 
@@ -213,6 +225,9 @@ def cmd_run(
             output_folder=str(Path(output_folder).resolve()) if output_folder else "",
             run_id=run_id or "",
             dry_run=("1" if dry_run else "0") if dry_run is not None else "",
+            clean_failures=("1" if clean_failures else "0")
+            if clean_failures is not None
+            else "",
             only_equil=("1" if only_equil else "0") if only_equil is not None else "",
         )
         base_path = (

@@ -768,6 +768,10 @@ class RunSection(BaseModel):
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
     )
+    clean_failures: bool = Field(
+        False,
+        description="Clear FAILED markers and progress caches before rerunning.",
+    )
     remd: Literal["yes", "no"] = Field(
         "no",
         description="Enable REMD execution.",

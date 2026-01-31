@@ -96,6 +96,31 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
         logger.warning(f"Could not store run YAML copy at {dst}: {exc}")
 
 
+def _clear_failure_markers(run_dir: Path) -> None:
+    """Remove FAILED markers and progress caches under a run directory."""
+    sim_root = run_dir / "simulations"
+    if not sim_root.exists():
+        return
+    removed = 0
+    for path in sim_root.rglob("FAILED"):
+        try:
+            path.unlink()
+            removed += 1
+        except Exception:
+            continue
+    for path in sim_root.rglob("progress"):
+        if not path.is_dir():
+            continue
+        for csv in path.glob("*.csv"):
+            try:
+                csv.unlink()
+                removed += 1
+            except Exception:
+                continue
+    if removed:
+        logger.info(f"[cleanup] Removed {removed} failure/progress marker(s).")
+
+
 def _materialize_extra_conf_restraints(
     source: Path | str | None, run_dir: Path, yaml_dir: Path
 ) -> Path | None:
@@ -735,6 +760,9 @@ def run_from_yaml(
                 input_ref=str(ref_dst),
                 input_alt=str(alt_dst),
             )
+
+    if getattr(rc.run, "clean_failures", False):
+        _clear_failure_markers(run_dir)
 
             rbfe_children.append(
                 SimSystem(
