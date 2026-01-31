@@ -668,7 +668,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     # optional extra restraints (only applied to mdin-template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
 
-    # --- eq.in (short equilibration) ---
     template_mdin = amber_dir / "mdin-ex"
     if not template_mdin.exists():
         raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")

@@ -526,6 +526,7 @@ def create_box_z(ctx: BuildContext) -> None:
 
     combined = dum_p + prot_p + ligands_p
     vac = dum_p + prot_p + ligands_p
+    other_parts = []
 
     if (window_dir / "solvate_others.prmtop").exists():
         others_p = pmd.load_file(
@@ -533,17 +534,30 @@ def create_box_z(ctx: BuildContext) -> None:
             str(window_dir / "solvate_others.inpcrd"),
         )
         combined += others_p
-        vac += others_p
+        other_parts.append(others_p)
     if (window_dir / "solvate_outside_wat.prmtop").exists():
-        combined += pmd.load_file(
+        out_wat_pmd =  pmd.load_file(
             str(window_dir / "solvate_outside_wat.prmtop"),
             str(window_dir / "solvate_outside_wat.inpcrd"),
         )
+        combined += out_wat_pmd
+        other_parts.append(out_wat_pmd)
     if (window_dir / "solvate_around_wat.prmtop").exists():
-        combined += pmd.load_file(
+        around_wat_pmd = pmd.load_file(
             str(window_dir / "solvate_around_wat.prmtop"),
             str(window_dir / "solvate_around_wat.inpcrd"),
         )
+        combined += around_wat_pmd
+        other_parts.append(around_wat_pmd)
+
+    if len(other_parts) == 1:
+        other_parts_pmd = other_parts[0]
+    elif len(other_parts) == 2:
+        other_parts_pmd = other_parts[0] + other_parts[1]
+    elif len(other_parts) == 3:
+        other_parts_pmd = other_parts[0] + other_parts[1] + other_parts[2]
+    else:
+        raise ValueError(f"Unsupported number of other_parts: {len(other_parts)}")
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
@@ -552,6 +566,10 @@ def create_box_z(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+
+    other_parts_pmd.save(str(window_dir / "other_parts.prmtop"), overwrite=True)
+    other_parts_pmd.save(str(window_dir / "other_parts.inpcrd"), overwrite=True)
+    other_parts_pmd.save(str(window_dir / "other_parts.pdb"), overwrite=True)
 
     u_full = mda.Universe(str(window_dir / "full.pdb"))
     u_vac = mda.Universe(str(window_dir / "vac.pdb"))
@@ -630,10 +648,33 @@ def create_box_x(ctx: BuildContext) -> None:
     lipid_mol = sim.lipid_mol
     other_mol = sim.other_mol
     
+    # tleap template
+    src_tleap = amber_dir / "tleap.in.amber16"
+    if not src_tleap.exists():
+        src_tleap = amber_dir / "tleap.in"
+    _cp(src_tleap, window_dir / "tleap.in")
+
+    # water box keyword
+    water_model = str(sim.water_model).upper()
+
+    if water_model == "TIP3PF":
+        # still uses leaprc.water.fb3
+        water_box = "FB3BOX"
+    elif water_model == "SPCE":
+        water_box = "SPCBOX"
+    else:
+        water_box = f"{water_model}BOX"
+
+    if water_model != "TIP3PF":
+        water_line = f"source leaprc.water.{water_model.lower()}\n\n"
+    else:
+        water_line = "source leaprc.water.fb3\n\n"
+
     # build the ion prmtop
     tleap_ion_txt = (window_dir / "tleap.in").read_text().splitlines()
     tleap_ion_txt += [
         "# ion topology",
+        water_line,
         f"ions = loadpdb ions.pdb",
         "saveamberparm ions ions.prmtop ions.inpcrd",
         "quit",
@@ -644,8 +685,12 @@ def create_box_x(ctx: BuildContext) -> None:
     )
 
     # combine with ParmEd
-    full_p = pmd.load_file(
-        str(window_dir / "full.prmtop"), str(window_dir / "ref_eq_output.pdb")
+    vac_p = pmd.load_file(
+        str(window_dir / "ref_vac.prmtop"), str(window_dir / "ref_vac.pdb")
+    )
+    other_part_p = pmd.load_file(
+        str(window_dir / "other_parts.prmtop"),
+        str(window_dir / "other_parts.pdb"),
     )
     alter_ligands_p = pmd.load_file(
         str(window_dir / "alter_ligand.prmtop"),
@@ -655,12 +700,16 @@ def create_box_x(ctx: BuildContext) -> None:
         str(window_dir / "ions.prmtop"),
         str(window_dir / "ions.inpcrd"),
     )
-
-    combined = prot_p + ion_p + alter_ligands_p
+    combined = vac_p + alter_ligands_p + ion_p + other_part_p
+    vac = vac_p + alter_ligands_p
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
     combined.save(str(window_dir / "full.pdb"), overwrite=True)
+
+    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
+    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
+    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
 
     u_full = mda.Universe(str(window_dir / "full.pdb"))
 

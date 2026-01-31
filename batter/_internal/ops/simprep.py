@@ -695,7 +695,12 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         (build_dir / "dum.mol2", dest_dir / "dum.mol2"),
         (ref_pre_fe / "full.prmtop", dest_dir / "ref_full.prmtop"),
         (ref_pre_fe / "full.pdb", dest_dir / "ref_full.pdb"),
+        (ref_pre_fe / "other_parts.prmtop", dest_dir / "other_parts.prmtop"),
+        (ref_pre_fe / "other_parts.pdb", dest_dir / "other_parts.pdb"),
+        (ref_pre_fe / "vac.prmtop", dest_dir / "ref_vac.prmtop"),
+        (ref_pre_fe / "vac.pdb", dest_dir / "ref_vac.pdb"),
         (ref_pre_fe / "eq_output.pdb", dest_dir / "ref_eq_output.pdb"),
+        (ref_pre_fe / "build_amber_renum.txt", dest_dir / "build_amber_renum.txt"),
         (alt_equil_dir / "representative.pdb", dest_dir / "alter_representative.pdb"),
         (alt_pre_fe / "solvate_ligands.prmtop", dest_dir / "alter_ligand.prmtop"),
     ]:
@@ -766,6 +771,17 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         pos = np.asarray([u_ref.atoms[-1].position + np.random.rand(3) for i in range(np.abs(u_lig_charge))]).reshape(np.abs(u_lig_charge), 3)
         ion.positions = pos
         ion.atoms.write(dest_dir / "ions.pdb")
+    
+    # update ref_vac positions
+    ref_vac = mda.Universe(dest_dir / "ref_vac.pdb")
+    ref_vac.atoms.positions = u_ref.atoms.positions[:ref_vac.atoms.n_atoms]
+    ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
+
+    # update other_parts positions
+    ref_other_parts = mda.Universe(dest_dir / "other_parts.pdb")
+    ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms:]
+    ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
+
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 
