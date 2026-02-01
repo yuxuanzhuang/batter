@@ -171,9 +171,7 @@ def _build_rbfe_network_plan(
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
     logger.info(
-        "RBFE network planned before prepare_equil: %d ligands, %d pairs.",
-        len(network.ligands),
-        len(network.pairs),
+        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs."
     )
     return payload
 

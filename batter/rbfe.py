@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence, Tuple, List, Any, Mapping
+from loguru import logger
 
 from batter.config.utils import sanitize_ligand_name
 
@@ -161,7 +162,7 @@ def _load_rdkit_mol(path: Path):
 
 def _resolve_konnektor_generator(layout: str | None):
     try:
-        from konnektor.network_planners import generators as gen
+        from konnektor import network_planners as gen
     except ImportError as exc:
         raise RuntimeError(
             "Konnektor mapping requires the 'konnektor' package to be installed."
@@ -173,15 +174,13 @@ def _resolve_konnektor_generator(layout: str | None):
         if not name.endswith("NetworkGenerator"):
             continue
         cls = getattr(gen, name)
-        if not isinstance(cls, type):
-            continue
         short = name[: -len("NetworkGenerator")].lower()
         candidates[short] = cls
         candidates[name.lower()] = cls
+    logger.debug(f'Available Konnektor network generators: {list(candidates.keys())}')
     if layout_key not in candidates:
-        options = sorted({k for k in candidates if not k.endswith("networkgenerator")})
         raise ValueError(
-            f"Unknown Konnektor layout '{layout_key}'. Available: {', '.join(options)}"
+            f"Unknown Konnektor layout '{layout_key}'. Available: {', '.join(candidates.keys())}"
         )
     return candidates[layout_key]
 
