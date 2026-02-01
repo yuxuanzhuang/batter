@@ -33,11 +33,11 @@ Production runs elec-LJ sdr
   restraintmask = ':1-2',
   icfe = 1,
   clambda = lbd_val,
-  timask1 = ':timk1',
-  timask2 = ':timk2',
+  timask1 = 'timk1',
+  timask2 = 'timk2',
   ifsc=1,
-  scmask1=':scmk1',
-  scmask2=':scmk2',
+  scmask1='scmk1',
+  scmask2='scmk2',
   ifmbar = 1,
   scalpha         = 0.5
   scbeta          = 1.0

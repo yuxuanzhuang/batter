@@ -41,13 +41,12 @@ if [[ $only_eq -eq 1 ]]; then
     # run minimization for each windows at this stage
     for i in $(seq 0 $((NWINDOWS - 1))); do
         win_folder=$(printf "../COMPONENT%02d" $i)
-        if [[ -s $win_folder/mini.rst7 ]]; then
+        if [[ -s $win_folder/eq.rst7 ]]; then
             echo "Skipping equilibration for window $i, already exists."
         else
             echo "Running equilibration for window $i"
             cd $win_folder
             print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/mini.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/mini.rst7 >> \"$log_file\" 2>&1"
-            check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
             if ! check_min_energy "mini.in.out" -1000; then
                 echo "Minimization not passed with cuda; try CPU"
                 rm -f "$log_file"
@@ -171,7 +170,7 @@ if (( remaining_steps > 0 )); then
         fi
     fi
 
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc"
 
     # Update progress from restart

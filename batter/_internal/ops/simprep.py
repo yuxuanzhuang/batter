@@ -809,7 +809,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     u_lig_alter = mda.Universe(dest_dir / "alter_ligand.prmtop")
     # only one present in the system
-    u_lig_charge = int(np.ceil(u_lig_alter.atoms.charges.sum() / 2.0))
+    q = u_lig_alter.atoms.charges.sum() / 2.0
+    u_lig_charge = int(np.rint(q))
     if u_lig_charge != 0:
         # add ion to the system
         ion = mda.Universe.empty(
@@ -880,7 +881,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
-    mapper = KartografAtomMapper()
+    mapper = KartografAtomMapper(atom_max_distance=1.5, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False)
     # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
 
     # Get Mapping

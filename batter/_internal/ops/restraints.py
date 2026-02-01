@@ -708,7 +708,6 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
     # ---- disang.rest: empty (legacy behavior) ----
     (windows_dir / "disang.rest").write_text("\n")
 
-    # (Optional) very small analysis driver to keep downstream scripts happy
     rest_in = windows_dir / "restraints.in"
     with rest_in.open("w") as fh:
         fh.write("# ligand-only; no &rst metrics\nnoexitonerror\nparm vac.prmtop\n")
@@ -802,11 +801,10 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
         cvf.write("/\n")
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
-    if ctx.comp in {"z", "o", "x"}:
-        _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
+    _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
     
-    # write empty restraints.in
-    (windows_dir / "restraints.in").write_text("")
+    # write empty disang.rest
+    (windows_dir / "disang.rest").write_text("")
 
     logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
 

@@ -643,7 +643,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     if not vac_pdb.exists():
         raise FileNotFoundError(f"Missing required file: {vac_pdb}")
     ref_resid = None
-    alt_resid = None
     with vac_pdb.open("rt") as f:
         for line in f:
             rec = line[:6].strip()
@@ -653,17 +652,15 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             resid = line[22:26].strip()
             if resname.lower() == mol_ref.lower():
                 ref_resid = resid
-            elif resname.lower() == mol_alt.lower():
-                alt_resid = resid
-    if ref_resid is None or alt_resid is None:
+                break
+    if ref_resid is None:
         raise ValueError(
             f"Could not resolve ligand residue ids in {vac_pdb.name} "
-            f"(ref={mol_ref} -> {ref_resid}, alt={mol_alt} -> {alt_resid})."
+            f"(ref={mol_ref} -> {ref_resid})."
         )
 
-    mk1 = int(ref_resid)
-    mk2 = int(alt_resid)
-
+    mk1 = f':{int(ref_resid)},{int(ref_resid)+3}'
+    mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
     # load scmask.json for scmk1, scmk2
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
     scmk1 = scmk_dict['scmk1']
@@ -678,7 +675,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     if not template_mdin.exists():
         raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")
 
-    eq_path = windows_dir / "eqnpt-ex.in"
+    eq_path = windows_dir / "eq.in"
     n_steps_run = 5000
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
@@ -693,8 +690,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("_num-atoms_", str(vac_atoms))
                 .replace("_num-steps_", str(n_steps_run))
                 .replace("lbd_val", f"{float(weight):6.5f}")
-                .replace("timk1", str(mk1))
-                .replace("timk2", str(mk2))
+                .replace("timk1", mk1)
+                .replace("timk2", mk2)
                 .replace("scmk1", scmk1)
                 .replace("scmk2", scmk2)
             )
@@ -761,17 +758,27 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
 
     # --- mini.in / mini_eq.in ---
-    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini.in").open(
+    with (amber_dir / "mini-ex").open("rt") as fin, (windows_dir / "mini.in").open(
         "wt"
     ) as fout:
         for line in fin:
-            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_",  mol_alt))
+            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_",  mol_alt).replace("timk1", mk1)
+                .replace("timk2", mk2)
+                .replace("scmk1", scmk1)
+                .replace("scmk2", scmk2)
+                .replace('lbd_val', f"{float(weight):6.5f}")
+            )
 
-    with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open(
+    with (amber_dir / "mini-ex").open("rt") as fin, (windows_dir / "mini_eq.in").open(
         "wt"
     ) as fout:
         for line in fin:
-            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_", mol_alt))
+            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_", mol_alt).replace("timk1", str(mk1))
+                .replace("timk2", str(mk2))
+                .replace("scmk1", scmk1)
+                .replace("scmk2", scmk2)
+                .replace('lbd_val', f"{float(weight):6.5f}")
+            )
 
     logger.debug(
         f"[sim_files_x] wrote mdin/mini/eq inputs in {windows_dir} "
