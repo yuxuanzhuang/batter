@@ -688,6 +688,7 @@ def run_from_yaml(
             resolve_mapping_fn,
             load_mapping_file,
             load_edges_file,
+            konnektor_pairs,
         )
         from batter.config.run import RBFENetworkArgs
         from batter.config.utils import sanitize_ligand_name
@@ -725,9 +726,22 @@ def run_from_yaml(
             mapping_source["mapping_file"] = str(rbfe_cfg.mapping_file)
         else:
             mapping_name = rbfe_cfg.mapping or "default"
-            mapping_fn = resolve_mapping_fn(mapping_name)
-            network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
-            mapping_source["mapping"] = mapping_name
+            if mapping_name == "konnektor":
+                pairs = konnektor_pairs(
+                    available,
+                    {name: Path(lig_map[name]) for name in available},
+                    layout=rbfe_cfg.konnektor_layout,
+                )
+                network = RBFENetwork.from_ligands(
+                    available, mapping_fn=lambda _: pairs
+                )
+                mapping_source["mapping"] = "konnektor"
+                if rbfe_cfg.konnektor_layout:
+                    mapping_source["konnektor_layout"] = rbfe_cfg.konnektor_layout
+            else:
+                mapping_fn = resolve_mapping_fn(mapping_name)
+                network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+                mapping_source["mapping"] = mapping_name
 
         # Persist the resolved mapping for reproducibility
         rbfe_network_path = config_dir / "rbfe_network.json"

@@ -687,7 +687,11 @@ class RBFENetworkArgs(BaseModel):
 
     mapping: Optional[str] = Field(
         "default",
-        description="Mapping strategy name (e.g., 'default').",
+        description="Mapping strategy name (e.g., 'default', 'konnektor').",
+    )
+    konnektor_layout: Optional[str] = Field(
+        None,
+        description="Optional Konnektor layout name (e.g., 'star', 'radial', 'maximal') used when mapping='konnektor'.",
     )
     mapping_file: Optional[Path] = Field(
         None,

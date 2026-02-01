@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 from dataclasses import dataclass
-from typing import Callable, Iterable, Sequence, Tuple, List, Any
+from typing import Callable, Iterable, Sequence, Tuple, List, Any, Mapping
 
 from batter.config.utils import sanitize_ligand_name
 
@@ -129,7 +129,142 @@ def resolve_mapping_fn(name: str | None) -> RBFEMapFn:
     key = str(name).strip().lower()
     if key in {"default", "star", "first"}:
         return RBFENetwork.default_mapping
-    raise ValueError(f"Unknown RBFE mapping '{name}'. Available: default")
+    if key in {"konnektor"}:
+        raise ValueError(
+            "RBFE mapping 'konnektor' requires ligand inputs; it must be resolved "
+            "in the orchestrator when building the network."
+        )
+    raise ValueError(f"Unknown RBFE mapping '{name}'. Available: default, konnektor")
+
+
+def _load_rdkit_mol(path: Path):
+    from rdkit import Chem
+
+    suffix = path.suffix.lower()
+    if suffix in {".sdf", ".sd"}:
+        supplier = Chem.SDMolSupplier(str(path), removeHs=False)
+        mol = supplier[0] if supplier and len(supplier) > 0 else None
+    elif suffix == ".mol2":
+        mol = Chem.MolFromMol2File(str(path), removeHs=False)
+    elif suffix == ".pdb":
+        from MDAnalysis import Universe
+
+        u = Universe(str(path))
+        mol = u.atoms.convert_to("RDKIT")
+    else:
+        mol = Chem.MolFromMolFile(str(path), removeHs=False)
+
+    if mol is None:
+        raise ValueError(f"Failed to load ligand from {path} with RDKit.")
+    return mol
+
+
+def _resolve_konnektor_generator(layout: str | None):
+    try:
+        from konnektor.network_planners import generators as gen
+    except ImportError as exc:
+        raise RuntimeError(
+            "Konnektor mapping requires the 'konnektor' package to be installed."
+        ) from exc
+
+    layout_key = (layout or "star").strip().lower()
+    candidates: dict[str, type] = {}
+    for name in dir(gen):
+        if not name.endswith("NetworkGenerator"):
+            continue
+        cls = getattr(gen, name)
+        if not isinstance(cls, type):
+            continue
+        short = name[: -len("NetworkGenerator")].lower()
+        candidates[short] = cls
+        candidates[name.lower()] = cls
+    if layout_key not in candidates:
+        options = sorted({k for k in candidates if not k.endswith("networkgenerator")})
+        raise ValueError(
+            f"Unknown Konnektor layout '{layout_key}'. Available: {', '.join(options)}"
+        )
+    return candidates[layout_key]
+
+
+def _pairs_from_konnektor_network(network) -> List[RBFEPair]:
+    edges = getattr(network, "edges", None)
+    if edges is None and hasattr(network, "to_edges"):
+        edges = network.to_edges()
+    if edges is None:
+        raise RuntimeError("Konnektor network did not expose edges.")
+
+    pairs: List[RBFEPair] = []
+    for edge in edges:
+        if isinstance(edge, (list, tuple)) and len(edge) == 2:
+            a, b = edge
+        elif hasattr(edge, "componentA") and hasattr(edge, "componentB"):
+            a, b = edge.componentA, edge.componentB
+        elif hasattr(edge, "component1") and hasattr(edge, "component2"):
+            a, b = edge.component1, edge.component2
+        elif hasattr(edge, "components"):
+            comps = list(edge.components)
+            if len(comps) != 2:
+                raise RuntimeError("Konnektor edge did not include two components.")
+            a, b = comps
+        else:
+            raise RuntimeError("Unsupported Konnektor edge object format.")
+
+        name_a = sanitize_ligand_name(getattr(a, "name", str(a)))
+        name_b = sanitize_ligand_name(getattr(b, "name", str(b)))
+        pairs.append((name_a, name_b))
+    return pairs
+
+
+def konnektor_pairs(
+    ligands: Sequence[str],
+    ligand_files: Mapping[str, Path],
+    layout: str | None = None,
+) -> List[RBFEPair]:
+    """
+    Build RBFE pairs using Konnektor network planners.
+    """
+    try:
+        from gufe import SmallMoleculeComponent
+        from kartograf.atom_mapper import KartografAtomMapper
+    except ImportError as exc:
+        raise RuntimeError(
+            "Konnektor mapping requires 'gufe' and 'kartograf' dependencies."
+        ) from exc
+
+    generator_cls = _resolve_konnektor_generator(layout)
+    if generator_cls.__name__.lower().startswith("explicit"):
+        raise ValueError(
+            "Konnektor 'explicit' layout requires explicit edges; use rbfe.edges_file."
+        )
+    mapper = KartografAtomMapper()
+
+    def _null_scorer(_mapping):
+        return 0.0
+
+    try:
+        generator = generator_cls(mappers=mapper, scorer=_null_scorer)
+    except TypeError:
+        generator = generator_cls(mappers=mapper)
+
+    components: List[SmallMoleculeComponent] = []
+    for lig in ligands:
+        path = Path(ligand_files[lig])
+        mol = _load_rdkit_mol(path)
+        components.append(SmallMoleculeComponent(mol, name=lig))
+
+    if hasattr(generator, "generate_ligand_network"):
+        network = generator.generate_ligand_network(components)
+    elif hasattr(generator, "generate_network"):
+        network = generator.generate_network(components)
+    elif callable(generator):
+        network = generator(components)
+    else:
+        raise RuntimeError("Unsupported Konnektor generator API.")
+
+    pairs = _pairs_from_konnektor_network(network)
+    if not pairs:
+        raise ValueError("Konnektor mapping produced no ligand pairs.")
+    return pairs
 
 
 @dataclass(frozen=True)
