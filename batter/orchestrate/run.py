@@ -121,6 +121,63 @@ def _clear_failure_markers(run_dir: Path) -> None:
         logger.info(f"[cleanup] Removed {removed} failure/progress marker(s).")
 
 
+def _build_rbfe_network_plan(
+    ligands: List[str],
+    lig_map: Dict[str, str],
+    rbfe_cfg,
+    config_dir: Path,
+) -> dict:
+    from batter.rbfe import (
+        RBFENetwork,
+        resolve_mapping_fn,
+        load_mapping_file,
+        load_edges_file,
+        konnektor_pairs,
+    )
+    from batter.config.utils import sanitize_ligand_name
+
+    available = [sanitize_ligand_name(x) for x in ligands if x]
+    if len(available) < 2:
+        raise RuntimeError("RBFE requires at least two ligands.")
+
+    mapping_source: Dict[str, Any] = {}
+    if rbfe_cfg.edges_file:
+        pairs = load_edges_file(Path(rbfe_cfg.edges_file))
+        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+        mapping_source["edges_file"] = str(rbfe_cfg.edges_file)
+    elif rbfe_cfg.mapping_file:
+        pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
+        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+        mapping_source["mapping_file"] = str(rbfe_cfg.mapping_file)
+    else:
+        mapping_name = rbfe_cfg.mapping or "default"
+        if mapping_name == "konnektor":
+            pairs = konnektor_pairs(
+                available,
+                {name: Path(lig_map[name]) for name in available},
+                layout=rbfe_cfg.konnektor_layout,
+            )
+            network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+            mapping_source["mapping"] = "konnektor"
+            if rbfe_cfg.konnektor_layout:
+                mapping_source["konnektor_layout"] = rbfe_cfg.konnektor_layout
+        else:
+            mapping_fn = resolve_mapping_fn(mapping_name)
+            network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+            mapping_source["mapping"] = mapping_name
+
+    payload = network.to_mapping()
+    payload.update(mapping_source)
+    rbfe_network_path = config_dir / "rbfe_network.json"
+    rbfe_network_path.write_text(json.dumps(payload, indent=2))
+    logger.info(
+        "RBFE network planned before prepare_equil: %d ligands, %d pairs.",
+        len(network.ligands),
+        len(network.pairs),
+    )
+    return payload
+
+
 def _materialize_extra_conf_restraints(
     source: Path | str | None, run_dir: Path, yaml_dir: Path
 ) -> Path | None:
@@ -401,6 +458,12 @@ def run_from_yaml(
     config_dir.mkdir(parents=True, exist_ok=True)
     overrides_path = config_dir / "sim_overrides.json"
     sim_cfg_updated = sim_cfg
+
+    if rc.protocol == "rbfe":
+        from batter.config.run import RBFENetworkArgs
+
+        rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+        _build_rbfe_network_plan(list(lig_map.keys()), lig_map, rbfe_cfg, config_dir)
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
         sim_cfg_updated = sim_cfg.model_copy(
@@ -683,14 +746,7 @@ def run_from_yaml(
     # RBFE: build transformation systems (pairs) after pre_fe_equil
     # --------------------
     if rc.protocol == "rbfe":
-        from batter.rbfe import (
-            RBFENetwork,
-            resolve_mapping_fn,
-            load_mapping_file,
-            load_edges_file,
-            konnektor_pairs,
-        )
-        from batter.config.run import RBFENetworkArgs
+        from batter.rbfe import RBFENetwork
         from batter.config.utils import sanitize_ligand_name
 
         available = [c.meta.get("ligand") for c in children if c.meta.get("ligand")]
@@ -701,53 +757,51 @@ def run_from_yaml(
         available = [sanitize_ligand_name(x) for x in available]
         available_set = set(available)
 
-        rbfe_cfg = rc.rbfe or RBFENetworkArgs()
-        mapping_source: dict[str, Any] = {}
-
-        if rbfe_cfg.edges_file:
-            pairs = load_edges_file(Path(rbfe_cfg.edges_file))
-            if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-                pairs = [p for p in pairs if p[0] in available_set and p[1] in available_set]
-                if not pairs:
-                    raise RuntimeError(
-                        "RBFE edges file does not include any available ligands after pruning."
-                    )
-            network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
-            mapping_source["edges_file"] = str(rbfe_cfg.edges_file)
-        elif rbfe_cfg.mapping_file:
-            pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
-            if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-                pairs = [p for p in pairs if p[0] in available_set and p[1] in available_set]
-                if not pairs:
-                    raise RuntimeError(
-                        "RBFE mapping does not include any available ligands after pruning."
-                    )
-            network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
-            mapping_source["mapping_file"] = str(rbfe_cfg.mapping_file)
-        else:
-            mapping_name = rbfe_cfg.mapping or "default"
-            if mapping_name == "konnektor":
-                pairs = konnektor_pairs(
-                    available,
-                    {name: Path(lig_map[name]) for name in available},
-                    layout=rbfe_cfg.konnektor_layout,
-                )
-                network = RBFENetwork.from_ligands(
-                    available, mapping_fn=lambda _: pairs
-                )
-                mapping_source["mapping"] = "konnektor"
-                if rbfe_cfg.konnektor_layout:
-                    mapping_source["konnektor_layout"] = rbfe_cfg.konnektor_layout
-            else:
-                mapping_fn = resolve_mapping_fn(mapping_name)
-                network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
-                mapping_source["mapping"] = mapping_name
-
-        # Persist the resolved mapping for reproducibility
         rbfe_network_path = config_dir / "rbfe_network.json"
-        payload = network.to_mapping()
-        payload.update(mapping_source)
-        rbfe_network_path.write_text(json.dumps(payload, indent=2))
+        if rbfe_network_path.exists():
+            payload = json.loads(rbfe_network_path.read_text())
+        else:
+            from batter.config.run import RBFENetworkArgs
+
+            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+            payload = _build_rbfe_network_plan(
+                list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+            )
+
+        pairs = payload.get("pairs") or []
+        if not pairs:
+            raise RuntimeError("RBFE mapping produced no ligand pairs.")
+
+        cleaned_pairs = []
+        for pair in pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                raise RuntimeError(f"RBFE mapping entries must be 2-tuples; got {pair!r}.")
+            cleaned_pairs.append(
+                (
+                    sanitize_ligand_name(str(pair[0])),
+                    sanitize_ligand_name(str(pair[1])),
+                )
+            )
+
+        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+            pruned = [
+                p
+                for p in cleaned_pairs
+                if p[0] in available_set and p[1] in available_set
+            ]
+            if not pruned:
+                raise RuntimeError(
+                    "RBFE mapping does not include any available ligands after pruning."
+                )
+            if len(pruned) != len(cleaned_pairs):
+                logger.warning(
+                    "Pruned %d RBFE pair(s) due to on_failure=%s.",
+                    len(cleaned_pairs) - len(pruned),
+                    rc.run.on_failure,
+                )
+            cleaned_pairs = pruned
+
+        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
 
         # Build transformation systems under simulations/transformations/
         trans_root = run_dir / "simulations" / "transformations"
