@@ -603,6 +603,9 @@ def run_from_yaml(
     # start with all children
     children = children_all
     fe_children_all: List[SimSystem] = children_all
+    if getattr(rc.run, "clean_failures", False):
+        _clear_failure_markers(run_dir)
+
     # --------------------
     # PHASE 1: prepare_equil (parallel)
     # --------------------
@@ -873,9 +876,6 @@ def run_from_yaml(
         children = rbfe_children
         fe_children_all = rbfe_children
     
-    if getattr(rc.run, "clean_failures", False):
-        _clear_failure_markers(run_dir)
-
     # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------

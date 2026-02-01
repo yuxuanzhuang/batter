@@ -167,7 +167,7 @@ def prepare_fe_handler(
         artifacts[f"{comp}_workdir"] = str(workdir)
 
     # emit the common OK marker used by the orchestrator
-    marker = child_root / "fe" / "artifacts" / f"{phase_name}.ok"
+    marker = child_root / "fe" / f"{phase_name}.ok"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("ok\n")
 
@@ -305,12 +305,12 @@ def prepare_fe_windows_handler(
     windows_json.parent.mkdir(parents=True, exist_ok=True)
     windows_json.write_text(json.dumps(windows_summary, indent=2) + "\n")
 
-    prepare_finished = child_root / "fe" / "artifacts" / "prepare_fe_windows.ok"
+    prepare_finished = child_root / "fe" / "prepare_fe_windows.ok"
     open(prepare_finished, "w").close()
 
     windows_rel = prepare_finished.relative_to(system.root).as_posix()
     prepare_rel = (
-        (child_root / "fe" / "artifacts" / "prepare_fe.ok")
+        (child_root / "fe" / "prepare_fe.ok")
         .relative_to(system.root)
         .as_posix()
     )

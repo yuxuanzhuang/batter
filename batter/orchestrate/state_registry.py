@@ -29,11 +29,11 @@ LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
     },
     "prepare_equil": {
         "required": [
-            ["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"],
-            ["equil/artifacts/prepare_equil.failed"],
+            ["equil/full.prmtop", "equil/prepare_equil.ok"],
+            ["equil/prepare_equil.failed"],
         ],
-        "success": [["equil/full.prmtop", "equil/artifacts/prepare_equil.ok"]],
-        "failure": [["equil/artifacts/prepare_equil.failed"]],
+        "success": [["equil/full.prmtop", "equil/prepare_equil.ok"]],
+        "failure": [["equil/prepare_equil.failed"]],
     },
     "equil": {
         "required": [["equil/FINISHED"], ["equil/FAILED"]],
@@ -46,13 +46,13 @@ LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
         "failure": [],
     },
     "prepare_fe": {
-        "required": [["fe/artifacts/prepare_fe.ok", "fe/artifacts/prepare_fe_windows.ok"]],
-        "success": [["fe/artifacts/prepare_fe.ok", "fe/artifacts/prepare_fe_windows.ok"]],
+        "required": [["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]],
+        "success": [["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]],
         "failure": [],
     },
     "pre_prepare_fe": {
-        "required": [["fe/artifacts/pre_prepare_fe.ok"]],
-        "success": [["fe/artifacts/pre_prepare_fe.ok"]],
+        "required": [["fe/pre_prepare_fe.ok"]],
+        "success": [["fe/pre_prepare_fe.ok"]],
         "failure": [],
     },
     "pre_fe_equil": {
@@ -71,8 +71,8 @@ LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
         "failure": [["fe/{comp}/{comp}{win:02d}/FAILED"]],
     },
     "analyze": {
-        "required": [["fe/artifacts/analyze.ok", "fe/Results/Results.dat"]],
-        "success": [["fe/artifacts/analyze.ok", "fe/Results/Results.dat"]],
+        "required": [["fe/analyze.ok", "fe/Results/Results.dat"]],
+        "success": [["fe/analyze.ok", "fe/Results/Results.dat"]],
         "failure": [],
     },
 }

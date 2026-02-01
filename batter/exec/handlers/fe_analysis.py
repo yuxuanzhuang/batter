@@ -160,7 +160,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         if ts_png.exists():
             arts["fe_timeseries_png"] = ts_png
 
-    analyzed_finished = fe_root / "artifacts" / "analyze.ok"
+    analyzed_finished = fe_root / "analyze.ok"
     open(analyzed_finished, "w").close()
 
     analyze_rel = analyzed_finished.relative_to(system.root).as_posix()
