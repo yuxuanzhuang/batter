@@ -20,29 +20,31 @@ Minimizing.
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '(@CA,C,N,P31 | :_lig1_name_ | :_lig2_name_ | :2) & !@H=',
+  restraintmask = '(@CA,C,N,P31 | :_lig_name_ | :2) & !@H=',
   infe = 1,
   icfe = 1,
   clambda = lbd_val,
-  timask1 = ':timk1',
-  timask2 = ':timk2',
+  timask1 = ':mk1',
+  timask2 = ':mk2',
   ifsc=1,
-  scmask1=':scmk1',
-  scmask2=':scmk2',
-  scalpha         = 0.5
-  scbeta          = 1.0
-  gti_cut         = 1
-  gti_output      = 1
-  gti_add_sc      = 5
-  gti_scale_beta  = 1
-  gti_cut_sc_on   = 7
-  gti_cut_sc_off  = 9
-  gti_lam_sch     = 1
-  gti_ele_sc      = 1
-  gti_vdw_sc      = 1
-  gti_cut_sc      = 2
-  gti_ele_exp     = 2
-  gti_vdw_exp     = 2
+  scmask1=':mk1',
+  scmask2=':mk2',
+  gti_cut   = 1,
+  gti_output = 1,
+  gti_add_sc = 25,
+  gti_scale_beta  = 1,
+  gti_lam_sch = 1,
+  gti_ele_sc  = 1,
+  gti_vdw_sc  = 1,
+  gti_cut_sc  = 2,
+  scalpha = 0.5,
+  scbeta = 1.0,
+  gti_cut_sc_on   = 7,
+  gti_cut_sc_off  = 9,
+  gti_ele_exp     = 2,
+  gti_vdw_exp     = 2,
+  gti_chg_keep    = 1,
+  gti_bat_sc      = 1,
  /
  &pmd
  output_file = 'cmass.txt'
@@ -50,3 +52,4 @@ Minimizing.
  cv_file = 'cv.in'
  /
  &wt type = 'END', /
+
