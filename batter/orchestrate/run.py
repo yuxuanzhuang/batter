@@ -120,6 +120,14 @@ def _clear_failure_markers(run_dir: Path) -> None:
     if removed:
         logger.info(f"[cleanup] Removed {removed} failure/progress marker(s).")
 
+    progress_root = run_dir / "artifacts" / "progress"
+    if progress_root.exists():
+        try:
+            shutil.rmtree(progress_root)
+            logger.info(f"[cleanup] Removed progress cache folder: {progress_root}")
+        except Exception:
+            logger.warning(f"[cleanup] Failed to remove progress cache folder: {progress_root}")
+
 
 def _build_rbfe_network_plan(
     ligands: List[str],

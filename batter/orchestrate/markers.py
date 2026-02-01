@@ -317,26 +317,71 @@ def _production_windows_under(root: Path, comp: str) -> List[int]:
     return sorted(out)
 
 
+def _run_root_for(root: Path) -> Path:
+    for candidate in (root, *root.parents):
+        if (candidate / "artifacts").exists() and (candidate / "simulations").exists():
+            return candidate
+    return root
+
+
+def _progress_key(run_root: Path, root: Path) -> str:
+    try:
+        rel = root.relative_to(run_root).as_posix()
+    except ValueError:
+        rel = root.name
+    return rel.replace("/", "__")
+
+
 def _progress_path(root: Path, phase: str) -> Path:
-    base = root / "artifacts"
-    if phase.startswith(("fe", "prepare_fe", "pre_fe", "pre_prepare_fe")):
-        base = root / "fe" / "artifacts"
-    return base / "progress" / f"{phase}.csv"
+    run_root = _run_root_for(root)
+    key = _progress_key(run_root, root)
+    return run_root / "artifacts" / "progress" / phase / f"{key}.csv"
 
 
 def _load_progress(root: Path, phase: str) -> Dict[str, str]:
     path = _progress_path(root, phase)
     out: Dict[str, str] = {}
-    if not path.exists():
+    if path.exists():
+        try:
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                rel, state = line.split(",", 1)
+                out[rel] = state
+        except Exception:
+            return {}
+        return out
+
+    legacy_paths = [root / "artifacts" / "progress" / f"{phase}.csv"]
+    if phase.startswith(("fe", "prepare_fe", "pre_fe", "pre_prepare_fe")):
+        legacy_paths.append(root / "fe" / "artifacts" / "progress" / f"{phase}.csv")
+    legacy = next((p for p in legacy_paths if p.exists()), None)
+    if not legacy:
         return out
     try:
-        for line in path.read_text().splitlines():
+        for line in legacy.read_text().splitlines():
             if not line.strip():
                 continue
             rel, state = line.split(",", 1)
             out[rel] = state
     except Exception:
         return {}
+    if out:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [f"{k},{v}\n" for k, v in sorted(out.items())]
+        tmp = path.with_suffix(".tmp")
+        try:
+            tmp.write_text("".join(lines))
+            tmp.replace(path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+    try:
+        legacy.unlink()
+    except Exception:
+        pass
     return out
 
 
