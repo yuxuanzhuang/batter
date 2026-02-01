@@ -693,12 +693,19 @@ class RBFENetworkArgs(BaseModel):
         None,
         description="Optional path to a mapping file (JSON/YAML/text).",
     )
+    edges_file: Optional[Path] = Field(
+        None,
+        description="Optional path to a JSON file containing a dict of edges.",
+    )
 
     def resolve_paths(self, base: Path) -> "RBFENetworkArgs":
         mf = self.mapping_file
         if mf is not None and not mf.is_absolute():
             mf = (base / mf).resolve()
-        return self.model_copy(update={"mapping_file": mf})
+        ef = self.edges_file
+        if ef is not None and not ef.is_absolute():
+            ef = (base / ef).resolve()
+        return self.model_copy(update={"mapping_file": mf, "edges_file": ef})
 
     @field_validator("mapping", mode="before")
     @classmethod
@@ -710,8 +717,10 @@ class RBFENetworkArgs(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mapping(self) -> "RBFENetworkArgs":
-        if self.mapping_file is None and not self.mapping:
-            raise ValueError("rbfe.mapping or rbfe.mapping_file must be provided.")
+        if self.mapping_file is None and self.edges_file is None and not self.mapping:
+            raise ValueError(
+                "rbfe.mapping, rbfe.mapping_file, or rbfe.edges_file must be provided."
+            )
         return self
 
 

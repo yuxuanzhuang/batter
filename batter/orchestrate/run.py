@@ -683,7 +683,12 @@ def run_from_yaml(
     # RBFE: build transformation systems (pairs) after pre_fe_equil
     # --------------------
     if rc.protocol == "rbfe":
-        from batter.rbfe import RBFENetwork, resolve_mapping_fn, load_mapping_file
+        from batter.rbfe import (
+            RBFENetwork,
+            resolve_mapping_fn,
+            load_mapping_file,
+            load_edges_file,
+        )
         from batter.config.run import RBFENetworkArgs
         from batter.config.utils import sanitize_ligand_name
 
@@ -698,7 +703,17 @@ def run_from_yaml(
         rbfe_cfg = rc.rbfe or RBFENetworkArgs()
         mapping_source: dict[str, Any] = {}
 
-        if rbfe_cfg.mapping_file:
+        if rbfe_cfg.edges_file:
+            pairs = load_edges_file(Path(rbfe_cfg.edges_file))
+            if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+                pairs = [p for p in pairs if p[0] in available_set and p[1] in available_set]
+                if not pairs:
+                    raise RuntimeError(
+                        "RBFE edges file does not include any available ligands after pruning."
+                    )
+            network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+            mapping_source["edges_file"] = str(rbfe_cfg.edges_file)
+        elif rbfe_cfg.mapping_file:
             pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
             if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
                 pairs = [p for p in pairs if p[0] in available_set and p[1] in available_set]
