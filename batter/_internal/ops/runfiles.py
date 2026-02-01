@@ -21,7 +21,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     sim = ctx.sim
     ligand_name = ctx.ligand
     work = Path(ctx.working_dir)
-    hmr = ctx.sim.hmr
+    hmr = str(ctx.sim.hmr).lower() == "yes"
 
     logger.debug(f"[Equil] Creating run scripts in {work}")
 
@@ -49,7 +49,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
         if hmr:
             text = text.replace("full.prmtop", "full.hmr.prmtop")
         else:
-            text = text.replace("full.prmtop", "full.prmtop")
+            text = text.replace("full.hmr.prmtop", "full.prmtop")
         dst.write_text(text)
 
         try:
@@ -90,7 +90,7 @@ def write_fe_run_file(
     pose = ctx.ligand
     comp = ctx.comp
     win_idx = ctx.win if ctx.win != -1 else 0
-    hmr = ctx.sim.hmr
+    hmr = str(ctx.sim.hmr).lower() == "yes"
     n_windows = len(lambdas)
 
     # templates (fail clearly if missing)
@@ -124,6 +124,8 @@ def write_fe_run_file(
     )
     if hmr:
         txt = txt.replace("full.prmtop", "full.hmr.prmtop")
+    else:
+        txt = txt.replace("full.hmr.prmtop", "full.prmtop")
 
     out_local.write_text(txt)
     os.chmod(out_local, 0o755)

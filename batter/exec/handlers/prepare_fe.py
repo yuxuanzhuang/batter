@@ -291,6 +291,7 @@ def prepare_fe_windows_handler(
             workdir,
             comp=comp,
             n_windows=len(lambdas),
+            hmr=str(sim.hmr).lower() == "yes",
         )
         remd_ops.prepare_remd_component(
             workdir,

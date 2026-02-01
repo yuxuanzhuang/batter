@@ -324,10 +324,18 @@ def write_remd_run_scripts(
 
     gpus = n_windows if n_windows > 0 else 1
 
-    def _copy_template(src: Path, dst: Path, repl: dict[str, str], override_text: str | None = None) -> None:
+    hmr = str(sim.hmr).lower() == "yes"
+
+    def _copy_template(
+        src: Path, dst: Path, repl: dict[str, str], override_text: str | None = None
+    ) -> None:
         text = override_text if override_text is not None else src.read_text()
         for k, v in repl.items():
             text = text.replace(k, v)
+        if hmr:
+            text = text.replace("full.prmtop", "full.hmr.prmtop")
+        else:
+            text = text.replace("full.hmr.prmtop", "full.prmtop")
         dst.write_text(text)
 
     run_local_tpl = RUN_TPL["local"]

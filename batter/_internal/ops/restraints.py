@@ -279,14 +279,15 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     vac_pdb         = work / "vac.pdb"
     vac_lig_pdb     = work / f"{lig}.pdb"
     vac_lig_prmtop  = work / f"{mol}.prmtop"
-    full_hmr_prmtop = work / "full.hmr.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = work / ("full.hmr.prmtop" if hmr else "full.prmtop")
     full_inpcrd     = work / "full.inpcrd"
     lig_mol2        = work / f"{mol}.mol2"
     anchors_pdb     = build_dir / f"equil-{mol}.pdb"
 
     if not anchors_pdb.exists():
         raise FileNotFoundError(f"Anchor header not found: {anchors_pdb}")
-    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_hmr_prmtop, full_inpcrd):
+    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_prmtop, full_inpcrd):
         if not p.exists():
             raise FileNotFoundError(f"Required file missing for restraints: {p}")
 
@@ -321,7 +322,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
 
     full_rst = rst + msk
 
-    vals = _write_assign_and_read_vals(work, full_rst, full_hmr_prmtop, full_inpcrd)
+    vals = _write_assign_and_read_vals(work, full_rst, full_prmtop, full_inpcrd)
 
     rest = ctx.sim.rest              # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     release_eq = ctx.sim.release_eq  # e.g., [0, 20, 50, 80, 100]
@@ -433,11 +434,12 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     vac_pdb         = windows_dir / "vac.pdb"
     vac_lig_pdb     = windows_dir / f"{lig}.pdb"
     vac_lig_prmtop  = windows_dir / "vac_ligand.prmtop"
-    full_hmr_prmtop = windows_dir / "full.hmr.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
     full_inpcrd     = windows_dir / "full.inpcrd"
     lig_mol2        = windows_dir / f"{mol}.mol2"
 
-    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_hmr_prmtop, full_inpcrd):
+    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_prmtop, full_inpcrd):
         if not p.exists():
             raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
 
@@ -488,7 +490,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
         lig_msks = _filter_sp_carbons(lig_msks, lig_mol2)
 
     rst_full = rst + lig_msks
-    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_hmr_prmtop, full_inpcrd)
+    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
 
     # weights (single stage in FE)
     rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
@@ -734,11 +736,12 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     vac_pdb         = windows_dir / "vac.pdb"
     vac_ref_prmtop  = windows_dir / f"{mol_ref}.prmtop"
     vac_alt_prmtop  = windows_dir / f"{mol_alt}.prmtop"
-    full_hmr_prmtop = windows_dir / "full.hmr.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
     full_inpcrd     = windows_dir / "full.inpcrd"
     lig_mol2        = windows_dir / f"{mol_ref}.mol2"
 
-    for p in (vac_pdb, vac_ref_prmtop, vac_alt_prmtop, full_hmr_prmtop, full_inpcrd):
+    for p in (vac_pdb, vac_ref_prmtop, vac_alt_prmtop, full_prmtop, full_inpcrd):
         if not p.exists():
             raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
 
@@ -828,11 +831,20 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
     vac_ref_prmtop  = windows_dir / f"{mol_ref}.prmtop"
     vac_alt_pdb     = windows_dir / f"{mol_alt}.pdb"
     vac_alt_prmtop  = windows_dir / f"{mol_alt}.prmtop"
-    full_hmr_prmtop = windows_dir / "full.hmr.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
     full_inpcrd     = windows_dir / "full.inpcrd"
     lig_mol2        = windows_dir / f"{mol_ref}.mol2"
 
-    for p in (vac_pdb, vac_ref_pdb, vac_ref_prmtop, vac_alt_pdb, vac_alt_prmtop, full_hmr_prmtop, full_inpcrd):
+    for p in (
+        vac_pdb,
+        vac_ref_pdb,
+        vac_ref_prmtop,
+        vac_alt_pdb,
+        vac_alt_prmtop,
+        full_prmtop,
+        full_inpcrd,
+    ):
         if not p.exists():
             raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
 
@@ -878,7 +890,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
         lig_msks = _filter_sp_carbons(lig_msks, lig_mol2)
 
     rst_full = rst + lig_msks
-    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_hmr_prmtop, full_inpcrd)
+    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
 
     # weights (single stage in FE)
     rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]

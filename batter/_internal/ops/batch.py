@@ -16,7 +16,9 @@ CHECK_TEMPLATE = (
 )
 
 
-def prepare_batch_component(comp_dir: Path, comp: str, n_windows: int) -> List[Path]:
+def prepare_batch_component(
+    comp_dir: Path, comp: str, n_windows: int, *, hmr: bool = True
+) -> List[Path]:
     """
     Patch batch mdin templates and write helper scripts under ``comp_dir``.
 
@@ -28,6 +30,10 @@ def prepare_batch_component(comp_dir: Path, comp: str, n_windows: int) -> List[P
     if RUN_TEMPLATE.exists():
         text = RUN_TEMPLATE.read_text()
         text = text.replace("COMPONENT", comp).replace("NWINDOWS", str(n_windows))
+        if hmr:
+            text = text.replace("full.prmtop", "full.hmr.prmtop")
+        else:
+            text = text.replace("full.hmr.prmtop", "full.prmtop")
         run_local = comp_dir / "run-local-batch.bash"
         run_local.write_text(text)
         try:
