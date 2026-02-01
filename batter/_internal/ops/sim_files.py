@@ -354,7 +354,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
-            mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+            mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
                 mdin.write(f" {lam:6.5f},")
@@ -389,7 +389,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
-            mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+            mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
                 mdin.write(f" {lam:6.5f},")
@@ -478,7 +478,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 )
                 fout.write(line)
         with eq_path.open("a") as mdin:
-            mdin.write(f"  mbar_states = {len(lambdas)}\n")
+            mdin.write(f" \n mbar_states = {len(lambdas)}\n")
             mdin.write("  mbar_lambda =")
             for lbd in lambdas:
                 mdin.write(f" {lbd:6.5f},")
@@ -510,7 +510,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
-            mdin.write(f"  mbar_states = {len(lambdas)}\n")
+            mdin.write(f" \n mbar_states = {len(lambdas)}\n")
             mdin.write("  mbar_lambda =")
             for lbd in lambdas:
                 mdin.write(f" {lbd:6.5f},")
@@ -618,6 +618,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         )
 
     windows_dir = ctx.window_dir
+    
     temperature = sim.temperature
     steps2 = sim.dic_n_steps[comp]
     ntwx = sim.ntwx
@@ -664,7 +665,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk2 = int(alt_resid)
 
     # load scmask.json for scmk1, scmk2
-    scmk_dict = json.loads((windows_dir / "scmask.json").read_text())
+    scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
     scmk1 = scmk_dict['scmk1']
     scmk2 = scmk_dict['scmk2']
 
@@ -699,7 +700,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
             fout.write(line)
     with eq_path.open("a") as mdin:
-        mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+        mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
             mdin.write(f" {lam:6.5f},")
@@ -732,7 +733,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
             fout.write(line)
     with out_path.open("a") as mdin:
-        mdin.write(f"  mbar_states = {len(lambdas):02d}\n")
+        mdin.write(f" \n  mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
             mdin.write(f" {lam:6.5f},")
@@ -760,42 +761,17 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
 
     # --- mini.in / mini_eq.in ---
-    lig_mask = f"{mol_ref} | :{mol_alt}"
     with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini.in").open(
         "wt"
     ) as fout:
         for line in fin:
-            fout.write(line.replace("_lig_name_", lig_mask))
+            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_",  mol_alt))
 
     with (amber_dir / "mini.in").open("rt") as fin, (windows_dir / "mini_eq.in").open(
         "wt"
     ) as fout:
         for line in fin:
-            fout.write(line.replace("_lig_name_", lig_mask))
-
-    template_eq = amber_dir / "eqnpt-ex.in"
-    if not template_eq.exists():
-        raise FileNotFoundError(f"Missing RBFE eqnpt template: {template_eq}")
-
-    with template_eq.open("rt") as fin, (windows_dir / "eqnpt0.in").open("wt") as fout:
-        for line in fin:
-            if "ntx = 5" in line:
-                line = "  ntx = 1,\n"
-            elif "irest" in line:
-                line = "  irest = 0,\n"
-            fout.write(
-                line.replace("_temperature_", str(temperature))
-                .replace("_lig_name_", mol_ref)
-                .replace("_lig2_name_", mol_alt)
-            )
-
-    with template_eq.open("rt") as fin, (windows_dir / "eqnpt.in").open("wt") as fout:
-        for line in fin:
-            fout.write(
-                line.replace("_temperature_", str(temperature))
-                .replace("_lig_name_", mol_ref)
-                .replace("_lig2_name_", mol_alt)
-            )
+            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_", mol_alt))
 
     logger.debug(
         f"[sim_files_x] wrote mdin/mini/eq inputs in {windows_dir} "
@@ -903,7 +879,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             fout.write(line)
 
     with eq_path.open("a") as mdin:
-        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write(f" \n  mbar_states = {len(lambdas)}\n")
         mdin.write("  mbar_lambda =")
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")
@@ -935,7 +911,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             fout.write(line)
 
     with out_path.open("a") as mdin:
-        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write(f" \n mbar_states = {len(lambdas)}\n")
         mdin.write("  mbar_lambda =")
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")
@@ -1022,7 +998,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             fout.write(line)
 
     with eq_path.open("a") as mdin:
-        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write(f" \n mbar_states = {len(lambdas)}\n")
         mdin.write("  mbar_lambda =")
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")
@@ -1054,7 +1030,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             fout.write(line)
 
     with out_path.open("a") as mdin:
-        mdin.write(f"  mbar_states = {len(lambdas)}\n")
+        mdin.write(f" \n mbar_states = {len(lambdas)}\n")
         mdin.write("  mbar_lambda =")
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")

@@ -29,6 +29,8 @@ from batter.config.simulation import SimulationConfig
 from rdkit import Chem
 from rdkit.Geometry import Point3D
 from kartograf.atom_mapper import KartografAtomMapper
+from kartograf import SmallMoleculeComponent
+from kartograf.atom_aligner import align_mol_shape
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
 
@@ -284,94 +286,6 @@ def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem
         conf.SetAtomPosition(i, Point3D(float(x), float(y), float(z)))
 
     return mol
-
-
-def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
-    """Merge sorted indices into inclusive consecutive ranges.
-
-    Parameters
-    ----------
-    indices : Sequence[int]
-        Integer indices. Duplicates are allowed but will be removed.
-
-    Returns
-    -------
-    list[tuple[int, int]]
-        List of (start, end) inclusive ranges. If start == end, it's a singleton.
-    """
-    uniq = sorted(set(indices))
-    if not uniq:
-        return []
-
-    ranges: List[Tuple[int, int]] = []
-    start = prev = uniq[0]
-    for x in uniq[1:]:
-        if x == prev + 1:
-            prev = x
-            continue
-        ranges.append((start, prev))
-        start = prev = x
-    ranges.append((start, prev))
-    return ranges
-
-
-def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
-    """Convert ranges to selection segments like '5-8,10,12-14'."""
-    parts: List[str] = []
-    for a, b in ranges:
-        parts.append(f"{a}" if a == b else f"{a}-{b}")
-    return ",".join(parts)
-
-
-def indices_to_selection(
-    include: Iterable[int],
-    exclude: Iterable[int] = (),
-    *,
-    prefix: str = "@",
-    negate_op: str = "!",
-    and_op: str = "&",
-) -> str:
-    """Build a selection string from include/exclude indices with merged ranges.
-
-    Parameters
-    ----------
-    include : Iterable[int]
-        Indices to include.
-    exclude : Iterable[int], optional
-        Indices to exclude. Indices not present in `include` are ignored.
-    prefix : str, optional
-        Prefix for the include expression (default '@', e.g., AMBER-style atom selection).
-    negate_op : str, optional
-        Negation operator (default '!').
-    and_op : str, optional
-        Conjunction operator (default '&').
-
-    Returns
-    -------
-    str
-        Selection string, e.g. '@1-10 & ! (@3-4,7)'.
-
-    Raises
-    ------
-    ValueError
-        If `include` is empty.
-    """
-    inc = sorted(set(include))
-    if not inc:
-        raise ValueError("include must be non-empty")
-
-    inc_ranges = _merge_consecutive(inc)
-    inc_str = _ranges_to_str(inc_ranges)
-
-    # Only exclude indices that are actually in include
-    inc_set = set(inc)
-    exc_in_inc = [i for i in set(exclude) if i in inc_set]
-    if not exc_in_inc:
-        return f"{prefix}{inc_str}"
-
-    exc_ranges = _merge_consecutive(exc_in_inc)
-    exc_str = _ranges_to_str(exc_ranges)
-    return f"{prefix}{inc_str} {and_op} {negate_op} ({prefix}{exc_str})"
 
 
 # ---------------------- unified writer ----------------------
@@ -936,13 +850,15 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     sdf_ref = dest_dir / f"{res_ref}.sdf"
     sdf_alt = dest_dir / f"{res_alt}.sdf"
 
-    mol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
-    mol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
+    rdmol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
+    rdmol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
+    mol_ref = SmallMoleculeComponent.from_rdkit(rdmol_ref)
+    mol_alt = SmallMoleculeComponent.from_rdkit(rdmol_alt)
 
-    ref_pos = u_lig.residues[0].positions
-    mol_ref = set_mol_positions(mol_ref, ref_pos)
-    from kartograf.atom_aligner import align_mol_shape
+    ref_pos = u_lig.residues[0].atoms.positions
+    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
 
+    # align ligands
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
     mapper = KartografAtomMapper()
@@ -950,18 +866,18 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.info(f"mapping: {kartograf_mapping.componentA_to_componentB}")
+    logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
 
     # save mol_alt_aligned as PDB
-    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned)
     alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
     alter_solvent_pdb = dest_dir / "alter_ligand_aligned_solvent.pdb"
     alter_merged_pdb = dest_dir / "alter_ligand_aligned.pdb"
+    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned._rdkit)
     with alter_site_pdb.open("w") as f:
         f.write(pdb_block_m)
 
-    ref_pos = u_lig.residues[1].positions
-    mol_ref = set_mol_positions(mol_ref, ref_pos)
+    ref_pos = u_lig.residues[1].atoms.positions
+    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
     mapper = KartografAtomMapper()
@@ -969,10 +885,10 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.info(f"mapping: {kartograf_mapping.componentA_to_componentB}")
+    logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
 
     # save mol_alt_aligned as PDB
-    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned)
+    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned._rdkit)
     with alter_solvent_pdb.open("w") as f:
         f.write(pdb_block_m)
 
@@ -981,48 +897,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
     u_alt.atoms.write(alter_merged_pdb.as_posix())
 
-    # get mapping file
-    ref_site = u_full.select_atoms(f"resname {res_ref}").residues[0]
-    ref_solvent = u_full.select_atoms(f"resname {res_ref}").residues[1]
-    alt_site = u_full.select_atoms(f"resname {res_alt}").residues[0]
-    alt_solvent = u_full.select_atoms(f"resname {res_alt}").residues[1]
-
-    # select cc parts
-    ref_index_list = list(kartograf_mapping.componentA_to_componentB.keys())
-    alt_index_list = list(kartograf_mapping.componentA_to_componentB.values())
-    cc_indices_t0 = (
-        np.concatenate(
-            (
-                ref_site.atoms[ref_index_list].indices,
-                alt_solvent.atoms[alt_index_list].indices,
-            )
-        )
-        + 1
-    )
-    cc_indices_t1 = (
-        np.concatenate(
-            (
-                ref_solvent.atoms[ref_index_list].indices,
-                alt_site.atoms[alt_index_list].indices,
-            )
-        )
-        + 1
-    )
-    all_indices_t0 = (
-        np.concatenate((ref_site.atoms.indices, alt_solvent.atoms.indices)) + 1
-    )
-    all_indices_t1 = (
-        np.concatenate((ref_solvent.atoms.indices, alt_site.atoms.indices)) + 1
-    )
-
-    dict_sc_mask = {
-        "scmask1": indices_to_selection(all_indices_t0, cc_indices_t0),
-        "scmask2": indices_to_selection(all_indices_t1, cc_indices_t1),
-    }
-    logger.info(f"scmask1: {dict_sc_mask['scmask1']}")
-    logger.info(f"scmask2: {dict_sc_mask['scmask2']}")
-    with open(dest_dir / "scmask.json", "w") as f:
-        json.dump(dict_sc_mask, f)
+    with open(dest_dir / "kartograf.json", "w") as f:
+        json.dump(kartograf_mapping.componentA_to_componentB, f)
 
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 

@@ -98,7 +98,7 @@ def write_fe_run_file(
     if comp == "m":
         tpl_local = src_dir / "run-local-vacuum.bash"
     elif comp == "x":
-        tpl_local = src_dir / "run-local-remd.bash"
+        tpl_local = src_dir / "run-local-rbfe.bash"
     else:
         tpl_local = src_dir / "run-local.bash"
 

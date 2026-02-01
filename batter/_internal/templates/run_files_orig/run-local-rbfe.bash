@@ -67,6 +67,8 @@ if [[ $only_eq -eq 1 ]]; then
             print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
             check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
             cd ../COMPONENT-1
+        fi
+    done
 
     print_and_run "cpptraj -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import glob
 import json
 import shutil
@@ -18,6 +19,95 @@ from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
+
+
+def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
+    """Merge sorted indices into inclusive consecutive ranges.
+
+    Parameters
+    ----------
+    indices : Sequence[int]
+        Integer indices. Duplicates are allowed but will be removed.
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        List of (start, end) inclusive ranges. If start == end, it's a singleton.
+    """
+    uniq = sorted(set(indices))
+    if not uniq:
+        return []
+
+    ranges: List[Tuple[int, int]] = []
+    start = prev = uniq[0]
+    for x in uniq[1:]:
+        if x == prev + 1:
+            prev = x
+            continue
+        ranges.append((start, prev))
+        start = prev = x
+    ranges.append((start, prev))
+    return ranges
+
+
+def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
+    """Convert ranges to selection segments like '5-8,10,12-14'."""
+    parts: List[str] = []
+    for a, b in ranges:
+        parts.append(f"{a}" if a == b else f"{a}-{b}")
+    return ",".join(parts)
+
+
+def indices_to_selection(
+    include: Iterable[int],
+    exclude: Iterable[int] = (),
+    *,
+    prefix: str = "@",
+    negate_op: str = "!",
+    and_op: str = "&",
+) -> str:
+    """Build a selection string from include/exclude indices with merged ranges.
+
+    Parameters
+    ----------
+    include : Iterable[int]
+        Indices to include.
+    exclude : Iterable[int], optional
+        Indices to exclude. Indices not present in `include` are ignored.
+    prefix : str, optional
+        Prefix for the include expression (default '@', e.g., AMBER-style atom selection).
+    negate_op : str, optional
+        Negation operator (default '!').
+    and_op : str, optional
+        Conjunction operator (default '&').
+
+    Returns
+    -------
+    str
+        Selection string, e.g. '@1-10 & ! (@3-4,7)'.
+
+    Raises
+    ------
+    ValueError
+        If `include` is empty.
+    """
+    inc = sorted(set(include))
+    exc = sorted(set(exclude))
+    if not inc:
+        raise ValueError("include must be non-empty")
+
+    inc_ranges = _merge_consecutive(inc)
+    inc_str = _ranges_to_str(inc_ranges)
+
+    # Only exclude indices that are actually in include
+    inc_set = set(inc)
+    exc_in_inc = [i for i in set(exc) if i in inc_set]
+    if not exc_in_inc:
+        return f"{prefix}{inc_str}"
+
+    exc_ranges = _merge_consecutive(exc_in_inc)
+    exc_str = _ranges_to_str(exc_ranges)
+    return f"{prefix}{inc_str} {and_op} {negate_op} ({prefix}{exc_str})"
 
 
 def _cp(src: Path, dst: Path) -> None:
@@ -625,12 +715,12 @@ def create_box_x(ctx: BuildContext) -> None:
     window_dir.mkdir(parents=True, exist_ok=True)
 
     extra = ctx.extra or {}
-    mol_ref = extra.get("residue_ref") or ctx.residue_name
-    mol_alt = extra.get("residue_alt")
     lig_ref = extra.get("ligand_ref")
     lig_alt = extra.get("ligand_alt")
+    res_ref = extra.get("residue_ref") or ctx.residue_name
+    res_alt = extra.get("residue_alt")
 
-    if not mol_alt:
+    if not res_alt:
         raise ValueError(
             "RBFE component 'x' requires residue_alt in BuildContext.extra."
         )
@@ -638,13 +728,13 @@ def create_box_x(ctx: BuildContext) -> None:
     # --- stage required ligand artifacts into window_dir ---
     for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "pdb", "json"):
         param_dir = work.parent.parent / "params"
-        src = param_dir / f"{mol_ref}.{ext}"
+        src = param_dir / f"{res_ref}.{ext}"
         if src.exists():
             _cp(src, window_dir / src.name)
         else:
             logger.debug(f"[create_box_x] Optional/absent: {src}")
         param_dir = work.parent.parent.parent / lig_alt / "params"
-        src = param_dir / f"{mol_alt}.{ext}"
+        src = param_dir / f"{res_alt}.{ext}"
         if src.exists():
             _cp(src, window_dir / src.name)
         else:
@@ -676,19 +766,6 @@ def create_box_x(ctx: BuildContext) -> None:
     else:
         water_line = "source leaprc.water.fb3\n\n"
 
-    # build the ion prmtop
-    tleap_ion_txt = (window_dir / "tleap.in").read_text().splitlines()
-    tleap_ion_txt += [
-        "# ion topology",
-        water_line,
-        f"ions = loadpdb ions.pdb",
-        "saveamberparm ions ions.prmtop ions.inpcrd",
-        "quit",
-    ]
-    _write(window_dir / "tleap_ions.in", "\n".join(tleap_ion_txt) + "\n")
-    run_with_log(
-        f"{tleap} -s -f tleap_ions.in > tleap_ions.log", working_dir=window_dir
-    )
 
     # combine with ParmEd
     vac_p = pmd.load_file(
@@ -702,11 +779,29 @@ def create_box_x(ctx: BuildContext) -> None:
         str(window_dir / "alter_ligand.prmtop"),
         str(window_dir / "alter_ligand_aligned.pdb"),
     )
-    ion_p = pmd.load_file(
+
+    combined = vac_p + alter_ligands_p + other_part_p
+
+    # build the ion prmtop if exists
+    if os.path.exists(window_dir / "ions.pdb"):
+        tleap_ion_txt = (window_dir / "tleap.in").read_text().splitlines()
+        tleap_ion_txt += [
+            "# ion topology",
+            water_line,
+            f"ions = loadpdb ions.pdb",
+            "saveamberparm ions ions.prmtop ions.inpcrd",
+            "quit",
+        ]
+        _write(window_dir / "tleap_ions.in", "\n".join(tleap_ion_txt) + "\n")
+        run_with_log(
+            f"{tleap} -s -f tleap_ions.in > tleap_ions.log", working_dir=window_dir
+        )
+        ion_p = pmd.load_file(
         str(window_dir / "ions.prmtop"),
         str(window_dir / "ions.inpcrd"),
-    )
-    combined = vac_p + alter_ligands_p + ion_p + other_part_p
+        )
+        combined += ion_p
+
     vac = vac_p + alter_ligands_p
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
@@ -755,6 +850,53 @@ def create_box_x(ctx: BuildContext) -> None:
         )
     else:
         logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+
+    # get mapping file
+
+    kartograf_mapping = json.load(open(window_dir / "kartograf.json"))
+    ref_site = u_full.select_atoms(f"resname {res_ref}").residues[0]
+    ref_solvent = u_full.select_atoms(f"resname {res_ref}").residues[1]
+    alt_site = u_full.select_atoms(f"resname {res_alt}").residues[0]
+    alt_solvent = u_full.select_atoms(f"resname {res_alt}").residues[1]
+
+    # select cc parts
+    ref_index_list = [int(i) for i in kartograf_mapping.keys()]
+    alt_index_list = [int(i) for i in kartograf_mapping.values()]
+    cc_indices_t0 = (
+        np.concatenate(
+            (
+                ref_site.atoms[ref_index_list].indices,
+                alt_solvent.atoms[alt_index_list].indices,
+            )
+        )
+        + 1
+    )
+    cc_indices_t1 = (
+        np.concatenate(
+            (
+                ref_solvent.atoms[ref_index_list].indices,
+                alt_site.atoms[alt_index_list].indices,
+            )
+        )
+        + 1
+    )
+    all_indices_t0 = (
+        np.concatenate((ref_site.atoms.indices, alt_solvent.atoms.indices)) + 1
+    )
+    all_indices_t1 = (
+        np.concatenate((ref_solvent.atoms.indices, alt_site.atoms.indices)) + 1
+    )
+
+    dict_sc_mask = {
+        "scmk1": indices_to_selection(all_indices_t0, cc_indices_t0),
+        "scmk2": indices_to_selection(all_indices_t1, cc_indices_t1),
+    }
+    logger.debug(f"scmk1: {dict_sc_mask['scmk1']}")
+    logger.debug(f"scmk2: {dict_sc_mask['scmk2']}")
+
+    with open(window_dir / "scmask.json", "w") as f:
+        json.dump(dict_sc_mask, f)
+
     return
 
 

@@ -761,9 +761,6 @@ def run_from_yaml(
                 input_alt=str(alt_dst),
             )
 
-    if getattr(rc.run, "clean_failures", False):
-        _clear_failure_markers(run_dir)
-
             rbfe_children.append(
                 SimSystem(
                     name=f"{sys_exec.name}:{pair_id}:{run_id}",
@@ -782,6 +779,9 @@ def run_from_yaml(
         # Switch to transformation systems for FE stages/results
         children = rbfe_children
         fe_children_all = rbfe_children
+    
+    if getattr(rc.run, "clean_failures", False):
+        _clear_failure_markers(run_dir)
 
     # --------------------
     # PHASE 3: prepare_fe (parallel)
