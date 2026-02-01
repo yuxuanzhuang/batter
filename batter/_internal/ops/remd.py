@@ -7,6 +7,7 @@ import re
 from loguru import logger
 
 from batter.config.simulation import SimulationConfig
+from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter.utils.components import COMPONENTS_DICT
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
@@ -332,10 +333,7 @@ def write_remd_run_scripts(
         text = override_text if override_text is not None else src.read_text()
         for k, v in repl.items():
             text = text.replace(k, v)
-        if hmr:
-            text = text.replace("full.prmtop", "full.hmr.prmtop")
-        else:
-            text = text.replace("full.hmr.prmtop", "full.prmtop")
+        text = rewrite_prmtop_reference(text, hmr=hmr)
         dst.write_text(text)
 
     run_local_tpl = RUN_TPL["local"]

@@ -7,6 +7,7 @@ from typing import List
 
 from loguru import logger
 
+from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter._internal.ops.remd import patch_batch_component_inputs
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "remd_run_files"
@@ -30,10 +31,7 @@ def prepare_batch_component(
     if RUN_TEMPLATE.exists():
         text = RUN_TEMPLATE.read_text()
         text = text.replace("COMPONENT", comp).replace("NWINDOWS", str(n_windows))
-        if hmr:
-            text = text.replace("full.prmtop", "full.hmr.prmtop")
-        else:
-            text = text.replace("full.hmr.prmtop", "full.prmtop")
+        text = rewrite_prmtop_reference(text, hmr=hmr)
         run_local = comp_dir / "run-local-batch.bash"
         run_local.write_text(text)
         try:

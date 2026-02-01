@@ -36,15 +36,6 @@ from batter._internal.ops.helpers import (
     save_anchors,
 )
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # type: ignore
-
-
-def _copy_if_exists(src: Path, dst: Path) -> None:
-    if not src.exists():
-        raise FileNotFoundError(f"Missing required file: {src}")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-
-
 def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     """
     Creates the aligned + cleaned PDBs (protein/others/lipids), finds

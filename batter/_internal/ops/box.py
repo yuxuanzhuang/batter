@@ -19,6 +19,7 @@ from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
+from batter._internal.ops.helpers import run_parmed_hmr_if_enabled
 
 
 def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
@@ -683,18 +684,7 @@ def create_box_z(ctx: BuildContext) -> None:
     u_full.atoms.write(str(window_dir / "full.pdb"))
     u_vac.atoms.write(str(window_dir / "vac_orig.pdb"))
 
-    # HMR
-    if str(sim.hmr).lower() == "yes":
-        parmed_hmr = amber_dir / "parmed-hmr.in"
-        if parmed_hmr.exists():
-            _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-            run_with_log(
-                "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
-            )
-        else:
-            logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
-    else:
-        logger.debug("[box] HMR disabled; skipping parmed-hmr.")
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return
 
 
@@ -844,18 +834,7 @@ def create_box_x(ctx: BuildContext) -> None:
 
     u_full.atoms.write(str(window_dir / "full.pdb"))
 
-    # HMR
-    if str(sim.hmr).lower() == "yes":
-        parmed_hmr = amber_dir / "parmed-hmr.in"
-        if parmed_hmr.exists():
-            _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-            run_with_log(
-                "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
-            )
-        else:
-            logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
-    else:
-        logger.debug("[box] HMR disabled; skipping parmed-hmr.")
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
 
     # get mapping file
 
@@ -1155,18 +1134,7 @@ def create_box_y(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
 
-    # HMR
-    if str(sim.hmr).lower() == "yes":
-        parmed_hmr = amber_dir / "parmed-hmr.in"
-        if parmed_hmr.exists():
-            _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-            run_with_log(
-                "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
-            )
-        else:
-            logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
-    else:
-        logger.debug("[box] HMR disabled; skipping parmed-hmr.")
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return
 
 
@@ -1242,16 +1210,5 @@ def create_box_m(ctx: BuildContext) -> None:
     _cp(window_dir / "vac.prmtop", window_dir / "full.prmtop")
     _cp(window_dir / "vac.inpcrd", window_dir / "full.inpcrd")
     
-    # HMR
-    if str(sim.hmr).lower() == "yes":
-        parmed_hmr = amber_dir / "parmed-hmr.in"
-        if parmed_hmr.exists():
-            _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-            run_with_log(
-                "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
-            )
-        else:
-            logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
-    else:
-        logger.debug("[box] HMR disabled; skipping parmed-hmr.")
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return

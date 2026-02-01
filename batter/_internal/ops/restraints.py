@@ -10,20 +10,17 @@ from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_restraints
-from batter._internal.ops.helpers import num_to_mask, load_anchors
+from batter._internal.ops.helpers import (
+    num_to_mask,
+    load_anchors,
+    is_atom_line as _is_atom_line,
+    field_slice as _field,
+)
 from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
 
-
 # ────────────────────────── small helpers (working-dir aware) ──────────────────────────
-
-def _is_atom_line(line: str) -> bool:
-    tag = line[0:6].strip()
-    return tag == "ATOM" or tag == "HETATM"
-
-def _field(line: str, start: int, end: int) -> str:
-    return line[start:end].strip()
 
 def _collect_backbone_heavy_and_lig(vac_pdb: Path, lig_res: str, offset: int = 0) -> List[List[str]]:
     """Return ([protein_backbone_heavy_atom_serials], [ligand_heavy_atom_serials])."""

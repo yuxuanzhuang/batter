@@ -22,6 +22,9 @@ from batter._internal.ops.helpers import (
     save_anchors,
     Anchors,
     get_sdr_dist,
+    copy_if_exists as _copy_if_exists,
+    is_atom_line as _is_atom_line,
+    field_slice as _field,
 )
 
 from batter.utils import run_with_log
@@ -43,28 +46,8 @@ def _rel_symlink(target: Path, link_path: Path) -> None:
         link_path.unlink()
     rel = os.path.relpath(target, start=link_path.parent)
     link_path.symlink_to(rel)
-
-
-def _copy_if_exists(src: Path, dst: Path) -> None:
-    if src.exists():
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-    else:
-        logger.warning(f"[simprep] expected file not found: {src} (continuing)")
-
-
 def _read_nonblank_lines(p: Path) -> List[str]:
     return [ln.rstrip("\n") for ln in p.read_text().splitlines() if ln.strip()]
-
-
-def _is_atom_line(line: str) -> bool:
-    tag = line[0:6].strip()
-    return tag == "ATOM" or tag == "HETATM"
-
-
-def _field(line: str, start: int, end: int) -> str:
-    # 0-based, end exclusive
-    return line[start:end].strip()
 
 
 def _safe_resid(resid: int) -> int:

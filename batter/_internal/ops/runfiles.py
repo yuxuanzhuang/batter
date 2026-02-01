@@ -8,6 +8,7 @@ from pathlib import Path
 from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
+from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
@@ -46,10 +47,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("SYSTEMNAME", sim.system_name)
         )
 
-        if hmr:
-            text = text.replace("full.prmtop", "full.hmr.prmtop")
-        else:
-            text = text.replace("full.hmr.prmtop", "full.prmtop")
+        text = rewrite_prmtop_reference(text, hmr=hmr)
         dst.write_text(text)
 
         try:
@@ -122,10 +120,7 @@ def write_fe_run_file(
         txt.replace("NWINDOWS", str(n_windows))
            .replace("COMPONENT", comp)
     )
-    if hmr:
-        txt = txt.replace("full.prmtop", "full.hmr.prmtop")
-    else:
-        txt = txt.replace("full.hmr.prmtop", "full.prmtop")
+    txt = rewrite_prmtop_reference(txt, hmr=hmr)
 
     out_local.write_text(txt)
     os.chmod(out_local, 0o755)
