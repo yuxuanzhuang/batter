@@ -458,10 +458,14 @@ def run_from_yaml(
     sim_cfg_updated = sim_cfg
 
     if rc.protocol == "rbfe":
-        from batter.config.run import RBFENetworkArgs
+        rbfe_network_path = config_dir / "rbfe_network.json"
+        if not rbfe_network_path.exists():
+            from batter.config.run import RBFENetworkArgs
 
-        rbfe_cfg = rc.rbfe or RBFENetworkArgs()
-        _build_rbfe_network_plan(list(lig_map.keys()), lig_map, rbfe_cfg, config_dir)
+            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+            _build_rbfe_network_plan(
+                list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+            )
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
         sim_cfg_updated = sim_cfg.model_copy(
