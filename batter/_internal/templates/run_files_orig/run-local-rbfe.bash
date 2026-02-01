@@ -31,6 +31,18 @@ if [[ -f FAILED ]]; then
     rm -f FAILED
 fi
 
+# Build an MPI launch prefix that works for mpirun or srun.
+if [[ -z "${MPI_FLAGS}" ]]; then
+    mpi_base=$(echo "${MPI_EXEC}" | awk '{print $1}')
+    mpi_base=${mpi_base##*/}
+    if [[ "${mpi_base}" == srun* ]]; then
+        MPI_FLAGS="-n ${SLURM_JOB_CPUS_PER_NODE:-1}"
+    else
+        MPI_FLAGS="--oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1}"
+    fi
+fi
+MPI_LAUNCH="${MPI_EXEC} ${MPI_FLAGS}"
+
 source check_run.bash
 
 # ------------------------- only_eq mode -------------------------
