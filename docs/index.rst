@@ -66,6 +66,7 @@ Primary Guides
    tutorial
    slurm_headers
    configuration
+   rbfe
    cli
    api
    developer_guide
