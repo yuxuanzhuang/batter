@@ -50,8 +50,24 @@ else
         )
         echo "Bad node: ${bad_node:-<empty>}"
         if [ -n "$bad_node" ]; then
-            # If NodeList is a bracket expression or list, turn it into concrete hostnames and exclude them all
-            exc_nodes=$(scontrol show hostnames "$bad_node" | paste -sd, -)
+            # Expand failed NodeList to concrete hostnames.
+            bad_exc_nodes=$(scontrol show hostnames "$bad_node" | paste -sd, -)
+
+            # Merge with any pre-existing exclusion list on this job.
+            cur_exc_nodes=$(
+                scontrol show job "$SLURM_JOB_ID" |
+                    grep -m1 '^[[:space:]]*ExcNodeList=' |
+                    awk -F= '{print $2}' |
+                    tr -d '[:space:]'
+            )
+
+            if [ -n "$cur_exc_nodes" ] && [ "$cur_exc_nodes" != "(null)" ] && [ "$cur_exc_nodes" != "None" ]; then
+                cur_exc_nodes=$(scontrol show hostnames "$cur_exc_nodes" | paste -sd, -)
+                exc_nodes=$(printf "%s\n%s\n" "$cur_exc_nodes" "$bad_exc_nodes" | tr ',' '\n' | awk 'NF' | sort -u | paste -sd, -)
+            else
+                exc_nodes="$bad_exc_nodes"
+            fi
+
             echo "Excluding: $exc_nodes"
             scontrol update JobId="$SLURM_JOB_ID" ExcNodeList="$exc_nodes"
         fi
