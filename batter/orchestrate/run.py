@@ -139,7 +139,6 @@ def _build_rbfe_network_plan(
         RBFENetwork,
         resolve_mapping_fn,
         load_mapping_file,
-        load_edges_file,
         konnektor_pairs,
     )
     from batter.config.utils import sanitize_ligand_name
@@ -149,11 +148,7 @@ def _build_rbfe_network_plan(
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
-    if rbfe_cfg.edges_file:
-        pairs = load_edges_file(Path(rbfe_cfg.edges_file))
-        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
-        mapping_source["edges_file"] = str(rbfe_cfg.edges_file)
-    elif rbfe_cfg.mapping_file:
+    if rbfe_cfg.mapping_file:
         pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
         network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
         mapping_source["mapping_file"] = str(rbfe_cfg.mapping_file)

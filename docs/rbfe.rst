@@ -45,11 +45,10 @@ Mapping options and precedence
 
 RBFE mapping is controlled by ``rbfe`` in ``run.yaml``:
 
-* ``rbfe.edges_file`` (highest priority)
 * ``rbfe.mapping_file``
-* ``rbfe.mapping`` (lowest priority; default ``default``)
+* ``rbfe.mapping`` (default ``default``)
 
-If multiple are provided, BATTER uses the first one above.
+If both are provided, BATTER uses ``mapping_file``.
 
 Supported ``rbfe.mapping`` values
 ---------------------------------
@@ -65,8 +64,8 @@ When using ``konnektor``, you can optionally set ``rbfe.konnektor_layout``.
      mapping: konnektor
      konnektor_layout: star
 
-``mapping_file`` and ``edges_file`` formats
--------------------------------------------
+``mapping_file`` formats
+------------------------
 
 ``rbfe.mapping_file`` supports:
 
@@ -74,12 +73,6 @@ When using ``konnektor``, you can optionally set ``rbfe.konnektor_layout``.
 * JSON/YAML dict with ``pairs`` or ``edges`` keys
 * JSON/YAML adjacency dict, e.g. ``{"LIG1": ["LIG2","LIG3"]}``
 * text file with one pair per line (``A~B``, ``A,B``, or ``A B``)
-
-``rbfe.edges_file`` expects a JSON object (dict), for example:
-
-* ``{"edges": [["LIG1","LIG2"], ...]}``
-* ``{"pairs": [["LIG1","LIG2"], ...]}``
-* adjacency dict form
 
 Konnektor layouts: how to list all available options
 -----------------------------------------------------
@@ -103,7 +96,7 @@ To list available layout names in your environment:
    PY
 
 Note: Konnektor ``explicit`` layouts require explicit edges; in BATTER use
-``rbfe.edges_file`` for that case.
+``rbfe.mapping_file`` for that case.
 
 Where RBFE mapping is stored
 ----------------------------

@@ -11,7 +11,6 @@ import pytest
 from batter.rbfe import (
     RBFENetwork,
     konnektor_pairs,
-    load_edges_file,
     load_mapping_file,
     resolve_mapping_fn,
 )
@@ -43,13 +42,6 @@ def test_load_mapping_file_json_adjacency(tmp_path: Path) -> None:
     mapping_file.write_text(json.dumps({"A": ["B", "C"]}))
     pairs = load_mapping_file(mapping_file)
     assert pairs == [("A", "B"), ("A", "C")]
-
-
-def test_load_edges_file_requires_dict(tmp_path: Path) -> None:
-    edges_file = tmp_path / "edges.json"
-    edges_file.write_text(json.dumps([["A", "B"]]))
-    with pytest.raises(ValueError, match="must contain a JSON object"):
-        load_edges_file(edges_file)
 
 
 def test_rbfe_network_default_mapping() -> None:

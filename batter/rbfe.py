@@ -101,26 +101,6 @@ def load_mapping_file(path: Path) -> List[RBFEPair]:
     return pairs
 
 
-def load_edges_file(path: Path) -> List[RBFEPair]:
-    """
-    Load RBFE mapping pairs from a JSON file containing a dict of edges.
-
-    Supported dict forms:
-      - {"edges": [[A,B], ...]}
-      - {"pairs": [[A,B], ...]}
-      - adjacency mapping: {A: [B, C], ...}
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"RBFE edges file not found: {path}")
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict):
-        raise ValueError("RBFE edges file must contain a JSON object (dict).")
-    pairs = _pairs_from_data(data)
-    if not pairs:
-        raise ValueError(f"RBFE edges file produced no pairs: {path}")
-    return pairs
-
-
 def resolve_mapping_fn(name: str | None) -> RBFEMapFn:
     """
     Resolve a mapping function by name.
@@ -233,7 +213,7 @@ def konnektor_pairs(
     generator_cls = _resolve_konnektor_generator(layout)
     if generator_cls.__name__.lower().startswith("explicit"):
         raise ValueError(
-            "Konnektor 'explicit' layout requires explicit edges; use rbfe.edges_file."
+            "Konnektor 'explicit' layout requires explicit edges; use rbfe.mapping_file."
         )
     mapper = KartografAtomMapper()
 
