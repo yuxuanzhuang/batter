@@ -14,7 +14,7 @@ import click
 from batter.api import run_from_yaml
 from batter.cli.root import cli
 from batter.cli.shared import _upsert_sbatch_option, _which_batter
-from batter.config.run import RunConfig
+from batter.config.run import RunConfig, SlurmConfig
 from batter.data import job_manager
 from batter.orchestrate.run_support import (
     compute_run_signature,
@@ -136,6 +136,12 @@ def _resolve_run_dir_for_submission(
     default=None,
     help="Optional path to a SLURM header/template to prepend to the generated script.",
 )
+@click.option(
+    "--partition",
+    "-p",
+    default=None,
+    help="Override run.slurm.partition from the YAML.",
+)
 def cmd_run(
     yaml_path: Path,
     on_failure: str,
@@ -147,6 +153,7 @@ def cmd_run(
     only_equil: Optional[bool],
     slurm_submit: bool,
     slurm_manager_path: Optional[Path],
+    partition: Optional[str],
 ) -> None:
     """
     Execute a BATTER workflow defined in ``YAML_PATH``.
@@ -169,6 +176,13 @@ def cmd_run(
     try:
         base_cfg = RunConfig.load(yaml_path)
         cfg_for_validation = base_cfg
+        if partition:
+            merged_slurm = (
+                base_cfg.run.slurm.model_copy(update={"partition": partition})
+                if base_cfg.run.slurm
+                else SlurmConfig(partition=partition)
+            )
+            run_over["slurm"] = merged_slurm
         if run_over:
             cfg_for_validation = cfg_for_validation.model_copy(
                 update={"run": cfg_for_validation.run.model_copy(update=run_over)}
@@ -215,6 +229,8 @@ def cmd_run(
             ]
         if only_equil is not None:
             parts += ["--only-equil" if only_equil else "--full"]
+        if partition:
+            parts += ["--partition", shlex.quote(partition)]
 
         run_cmd = " ".join(parts)
 
@@ -229,6 +245,7 @@ def cmd_run(
             if clean_failures is not None
             else "",
             only_equil=("1" if only_equil else "0") if only_equil is not None else "",
+            partition=partition or "",
         )
         base_path = (
             Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
