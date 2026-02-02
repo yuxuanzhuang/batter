@@ -27,7 +27,11 @@ def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
 
     system_root, tail = body.split("/simulations/", 1)
     if "/" in tail:
-        tail = tail.split("/", 1)[0]
+        head, rest = tail.split("/", 1)
+        if head == "transformations":
+            tail = rest
+        else:
+            tail = head
 
     if not tail:
         return None
