@@ -76,6 +76,8 @@ def _install_fake_konnektor(monkeypatch, generator_classes: dict[str, type]) -> 
 
     for name, cls in generator_classes.items():
         setattr(generators_mod, name, cls)
+        # rbfe imports `konnektor.network_planners` directly and inspects it
+        setattr(planners_mod, name, cls)
 
     planners_mod.generators = generators_mod
     konnektor_mod.network_planners = planners_mod
