@@ -693,6 +693,10 @@ class RBFENetworkArgs(BaseModel):
         None,
         description="Optional Konnektor layout name (e.g., 'star', 'radial', 'maximal') used when mapping='konnektor'.",
     )
+    both_directions: bool = Field(
+        False,
+        description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
+    )
     mapping_file: Optional[Path] = Field(
         None,
         description="Optional path to a mapping file (JSON/YAML/text).",

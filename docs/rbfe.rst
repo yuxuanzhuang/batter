@@ -63,6 +63,16 @@ When using ``konnektor``, you can optionally set ``rbfe.konnektor_layout``.
    rbfe:
      mapping: konnektor
      konnektor_layout: star
+     both_directions: false
+
+Bidirectional RBFE edges
+------------------------
+
+Set ``rbfe.both_directions: true`` to run both directions for each mapped edge.
+For example, a mapped pair ``LIG1~LIG2`` will generate both:
+
+* ``LIG1~LIG2``
+* ``LIG2~LIG1``
 
 ``mapping_file`` formats
 ------------------------

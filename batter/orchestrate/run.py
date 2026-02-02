@@ -170,6 +170,17 @@ def _build_rbfe_network_plan(
             mapping_source["mapping"] = mapping_name
 
     payload = network.to_mapping()
+    if bool(getattr(rbfe_cfg, "both_directions", False)):
+        bidirectional_pairs: List[List[str]] = []
+        seen: set[tuple[str, str]] = set()
+        for ref, alt in payload.get("pairs", []):
+            for pair in ((ref, alt), (alt, ref)):
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                bidirectional_pairs.append([pair[0], pair[1]])
+        payload["pairs"] = bidirectional_pairs
+        mapping_source["both_directions"] = True
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
