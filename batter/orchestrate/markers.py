@@ -138,6 +138,9 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
     list[SimSystem]
         Subset of systems lacking the necessary success sentinels.
     """
+    if children:
+        _maybe_invalidate_progress_for_phase(children, phase_name)
+
     need, done = [], []
     for child in children:
         if is_done(child, phase_name):
@@ -148,6 +151,50 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
         names = ", ".join(c.meta.get("ligand", c.name) for c in done)
         logger.debug(f"[skip] {phase_name}: {len(done)} ligand(s) already complete → {names}")
     return need
+
+
+def _phase_ok_paths(root: Path, phase_name: str) -> List[Path]:
+    if phase_name == "prepare_fe":
+        return [
+            root / "fe" / "prepare_fe.ok",
+            root / "fe" / "prepare_fe_windows.ok",
+        ]
+    if phase_name == "prepare_fe_windows":
+        return [root / "fe" / "prepare_fe_windows.ok"]
+    if phase_name == "pre_prepare_fe":
+        return [root / "fe" / "pre_prepare_fe.ok"]
+    return []
+
+
+def _maybe_invalidate_progress_for_phase(
+    children: List[SimSystem], phase_name: str
+) -> None:
+    if phase_name not in {"prepare_fe", "prepare_fe_windows", "pre_prepare_fe"}:
+        return
+    total = len(children)
+    if total == 0:
+        return
+    ok_count = 0
+    for child in children:
+        ok_paths = _phase_ok_paths(child.root, phase_name)
+        if ok_paths and all(p.exists() for p in ok_paths):
+            ok_count += 1
+    if ok_count == total:
+        return
+
+    run_root = _run_root_for(children[0].root)
+    progress_dir = run_root / "artifacts" / "progress" / phase_name
+    if progress_dir.exists():
+        try:
+            for p in progress_dir.glob("*.csv"):
+                p.unlink(missing_ok=True)
+            logger.info(
+                f"[progress] {phase_name}: ok_count={ok_count}/{total}; cleared cached progress."
+            )
+        except Exception:
+            logger.warning(
+                f"[progress] {phase_name}: ok_count={ok_count}/{total}; failed to clear cached progress."
+            )
 
 
 def run_phase_skipping_done(
