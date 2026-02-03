@@ -876,6 +876,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
     logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
+    kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
 
     # set mol_alt_aligned common core positions to be exactly the same as mol_ref
     mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
@@ -894,16 +895,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
-    mapper = KartografAtomMapper(atom_max_distance=1.5, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
-                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
-    )
-    # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
-
-    # Get Mapping
-    kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
-
-    # set coordniates of common core atoms in mol_alt_aligned to match mol_ref
     mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
         mol_ref._rdkit, mol_alt_aligned._rdkit, kartograf_mapping.componentA_to_componentB
     )
