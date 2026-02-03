@@ -21,12 +21,12 @@ Quick walkthrough
 embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
 protein binding site. The main steps are:
 
-#. **system staging and loading** – A executon folder will be created under ``<run.output_folder>/executions/``
+#. **system staging and loading** – An execution folder will be created under ``<run.output_folder>/executions/``
    to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
    resumed from the last successful step.
 #. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
    options to choose charges (AM1-BCC by default)
-#. **Equilbration system preparation** – builds solvated/membrane-embedded
+#. **Equilibration system preparation** – builds solvated/membrane-embedded
    systems with the ligand in the binding site.
 #. **Equilibration** – Steps to run before FE production run. During this phase,
    the ligand and protein are not restrained (unless explicitly configured).
