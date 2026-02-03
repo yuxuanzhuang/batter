@@ -464,7 +464,7 @@ class FESimArgs(BaseModel):
     )
     eq_steps: int = Field(
         1_000_000,
-        gt=0,
+        ge=0,
         description="Total equilibration steps (entire equilibration run).",
     )
     n_steps: Dict[str, int] = Field(
@@ -651,7 +651,7 @@ class MDSimArgs(BaseModel):
     )
     eq_steps: int = Field(
         100_000,
-        gt=0,
+        ge=0,
         description="Total equilibration steps (entire equilibration run).",
     )
     ntpr: int = Field(100, description="Energy print frequency.")
