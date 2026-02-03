@@ -140,6 +140,7 @@ def save_fe_records(
         mol_name = child.meta["residue_name"]
         results_dir = child.root / "fe" / "Results"
         total_dG, total_se = None, None
+        is_rbfe = str(child.meta.get("mode", "")).upper() == "RBFE"
 
         dat = results_dir / "Results.dat"
         if dat.exists():
@@ -173,9 +174,35 @@ def save_fe_records(
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
             )
-            _copy_equil_artifacts(
-                repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
-            )
+            if is_rbfe:
+                ref = child.meta.get("ligand_ref")
+                alt = child.meta.get("ligand_alt")
+                res_ref = child.meta.get("residue_ref") or mol_name
+                res_alt = child.meta.get("residue_alt")
+                if ref:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_ref,
+                        run_dir / "simulations" / ref / "equil",
+                        protein_align,
+                        dest_subdir="Equil_ref",
+                    )
+                if alt:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_alt or mol_name,
+                        run_dir / "simulations" / alt / "equil",
+                        protein_align,
+                        dest_subdir="Equil_alt",
+                    )
+            else:
+                _copy_equil_artifacts(
+                    repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+                )
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
 
@@ -203,9 +230,35 @@ def save_fe_records(
                 analysis_start_step=analysis_start_step_val,
             )
             repo.save(rec, copy_from=results_dir)
-            _copy_equil_artifacts(
-                repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
-            )
+            if is_rbfe:
+                ref = child.meta.get("ligand_ref")
+                alt = child.meta.get("ligand_alt")
+                res_ref = child.meta.get("residue_ref") or mol_name
+                res_alt = child.meta.get("residue_alt")
+                if ref:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_ref,
+                        run_dir / "simulations" / ref / "equil",
+                        protein_align,
+                        dest_subdir="Equil_ref",
+                    )
+                if alt:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_alt or mol_name,
+                        run_dir / "simulations" / alt / "equil",
+                        protein_align,
+                        dest_subdir="Equil_alt",
+                    )
+            else:
+                _copy_equil_artifacts(
+                    repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+                )
             logger.info(
                 f"Saved FE record for ligand {lig_name}"
                 f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
@@ -227,9 +280,35 @@ def save_fe_records(
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
             )
-            _copy_equil_artifacts(
-                repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
-            )
+            if is_rbfe:
+                ref = child.meta.get("ligand_ref")
+                alt = child.meta.get("ligand_alt")
+                res_ref = child.meta.get("residue_ref") or mol_name
+                res_alt = child.meta.get("residue_alt")
+                if ref:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_ref,
+                        run_dir / "simulations" / ref / "equil",
+                        protein_align,
+                        dest_subdir="Equil_ref",
+                    )
+                if alt:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_alt or mol_name,
+                        run_dir / "simulations" / alt / "equil",
+                        protein_align,
+                        dest_subdir="Equil_alt",
+                    )
+            else:
+                _copy_equil_artifacts(
+                    repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+                )
 
     return failures
 
@@ -241,13 +320,15 @@ def _copy_equil_artifacts(
     mol_name: str,
     equil_dir: Path,
     protein_align: str | None,
+    *,
+    dest_subdir: str = "Equil",
 ) -> None:
     if not equil_dir.exists():
         logger.warning(
             f"Equilibration directory {equil_dir} does not exist; skipping copy."
         )
         return
-    dest_dir = repo.ligand_dir(run_id, ligand) / "Equil"
+    dest_dir = repo.ligand_dir(run_id, ligand) / dest_subdir
     dest_dir.mkdir(parents=True, exist_ok=True)
     candidates_map = {
         "equilibration_analysis_results.npz": "equilibration_analysis_results.npz",
