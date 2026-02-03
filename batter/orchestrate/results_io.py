@@ -231,6 +231,10 @@ def save_fe_records(
             )
             repo.save(rec, copy_from=results_dir)
             if is_rbfe:
+                _copy_kartograf_artifacts(
+                    child.root / "fe" / "x" / "x-1",
+                    repo.ligand_dir(run_id, lig_name),
+                )
                 ref = child.meta.get("ligand_ref")
                 alt = child.meta.get("ligand_alt")
                 res_ref = child.meta.get("residue_ref") or mol_name
@@ -371,3 +375,14 @@ def _copy_equil_artifacts(
             f"- initial_pose.pdb: Initial ligand pose extracted from the initial complex.\n"
             f"- representative_pose.pdb: Representative ligand pose extracted from the representative complex.\n"
         )
+
+
+def _copy_kartograf_artifacts(src_dir: Path, dest_root: Path) -> None:
+    """Copy Kartograf mapping artifacts if present in the source directory."""
+    if not src_dir.exists():
+        return
+    dest_dir = dest_root / "Results"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for src in src_dir.glob("kartograf*"):
+        if src.is_file():
+            shutil.copy2(src, dest_dir / src.name)
