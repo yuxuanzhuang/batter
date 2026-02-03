@@ -163,7 +163,7 @@ fi
     exit 1
 }
 
-last_rst="md-current.rst7"
+last_rst="$rst_in"
 
 # determine current segment index from OUT files (not from time)
 seg_idx=$(latest_md_index "md-*.out")
