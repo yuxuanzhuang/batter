@@ -20,7 +20,7 @@ Quick Links
       New to BATTER? Begin with environment setup, the core workflow, and example inputs.
 
    .. grid-item-card:: Tutorial
-      :link: tutorial
+      :link: tutorial/index
       :link-type: doc
       :margin: 0 3 0 3
 
@@ -63,7 +63,7 @@ Primary Guides
    :titlesonly:
 
    getting_started
-   tutorial
+   tutorial/index
    slurm_headers
    configuration
    rbfe

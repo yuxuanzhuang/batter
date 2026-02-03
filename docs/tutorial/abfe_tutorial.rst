@@ -1,7 +1,7 @@
-.. _tutorial:
+.. _abfe_tutorial:
 
-Tutorial
-========
+ABFE Tutorial
+=============
 
 Currently, only the tutorial of absolute binding free energy (ABFE) calculation
 for the membrane protein system is available. More tutorials will be added in the future.
