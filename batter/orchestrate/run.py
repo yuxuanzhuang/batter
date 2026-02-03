@@ -141,13 +141,15 @@ def _build_rbfe_network_plan(
         load_mapping_file,
         konnektor_pairs,
     )
-    from batter.config.utils import sanitize_ligand_name
+from batter.config.utils import sanitize_ligand_name
+from batter.analysis.network import plot_rbfe_network
 
     available = [sanitize_ligand_name(x) for x in ligands if x]
     if len(available) < 2:
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
+    pairs: List[tuple[str, str]] = []
     if rbfe_cfg.mapping_file:
         pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
         network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
@@ -181,10 +183,12 @@ def _build_rbfe_network_plan(
                 )
                 mapping_fn = resolve_mapping_fn(mapping_name)
                 network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+                pairs = list(network.pairs)
                 mapping_source["mapping"] = mapping_name
         else:
             mapping_fn = resolve_mapping_fn(mapping_name)
             network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+            pairs = list(network.pairs)
             mapping_source["mapping"] = mapping_name
 
     payload = network.to_mapping()
@@ -202,10 +206,21 @@ def _build_rbfe_network_plan(
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
+    plot_rbfe_network(
+        available=available,
+        lig_map=lig_map,
+        pairs=pairs,
+        mapping_name=mapping_source.get("mapping") or "default",
+        mapping_file=rbfe_cfg.mapping_file,
+        layout=rbfe_cfg.konnektor_layout,
+        out_dir=config_dir,
+    )
     logger.info(
         f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs."
     )
     return payload
+
+
 
 
 def _materialize_extra_conf_restraints(
