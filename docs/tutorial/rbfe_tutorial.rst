@@ -1,22 +1,23 @@
 .. _abfe_tutorial:
 
-ABFE Tutorial
+RBFE Tutorial
 =============
 
-Absolute Binding Free Energy (ABFE) Workflow with ``batter``
+Relative Binding Free Energy (RBFE) Workflow with ``batter``
 ------------------------------------------------------------
 
-This tutorial walks through a membrane ABFE run powered by ``batter``. The workflow
-applies λ-dependent Boresch restraints, uses the simultaneous decoupling/recoupling
-(SDR) protocol with both interacting and dummy ligands present, and relies on softcore
+This tutorial walks through a membrane RBFE run powered by ``batter``. The workflow
+applies a hybrid topology that behaves like dual-topology with a shared core.
+It uses the simultaneous decoupling/recoupling
+(SDR) protocol with both ligands present, and relies on softcore
 electrostatics/van der Waals potentials so the entire calculation completes in a
-single leg. We reference ``examples/mabfe_example.yaml`` so you can reproduce the run locally
+single leg. We reference ``examples/rbfe.yaml`` so you can reproduce the run locally
 before adapting it to your own system.
 
 Quick walkthrough
 -----------------
 
-``batter`` orchestrates an end-to-end AMBER ABFE workflow that starts from protein +
+``batter`` orchestrates an end-to-end AMBER RBFE workflow that starts from protein +
 embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
 protein binding site. The main steps are:
 
