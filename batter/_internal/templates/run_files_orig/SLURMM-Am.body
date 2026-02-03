@@ -28,78 +28,64 @@ echo "Attempt $RETRY_COUNT to run simulations..."
 OVERWRITE=$OVERWRITE ONLY_EQ=$ONLY_EQ RETRY_COUNT=$RETRY_COUNT source run-local.bash 2>&1 | tee run.log
 error_code=${PIPESTATUS[0]}  # Capture the exit status of 'source run-local.bash'
 
-if [ $error_code -eq 0 ]; then
-    echo "Simulation completed successfully on attempt $RETRY_COUNT."
-else
-    echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
-
-    if [ "$RETRY_COUNT" -lt "$MAX_ATTEMPTS" ]; then
-        NEXT_RETRY=$((RETRY_COUNT + 1))
-        echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
-        echo "Requeuing the job for attempt $NEXT_RETRY..."
-
-        sleep 30
-
-        bad_node="${SLURMD_NODENAME:-$(hostname -s)}"
-        echo "Bad node: ${bad_node:-<empty>}"
-
-        if [ -n "$bad_node" ]; then
-            echo "Requeuehold -> wait PENDING -> update exclusion -> release"
-            scontrol requeuehold "$SLURM_JOB_ID"
-
-            # wait for PENDING (held) so update sticks
-            pending_ok=0
-            for _ in {1..60}; do
-                state=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/JobState=/{print $2}' | awk '{print $1; exit}')
-                if [[ "$state" == "PENDING" ]]; then
-                    pending_ok=1
-                    break
-                fi
-                sleep 1
-            done
-
-            if [[ "$pending_ok" -ne 1 ]]; then
-                echo "WARNING: job did not reach PENDING after requeuehold (state=$state). Requeueing without exclusion."
-                scontrol requeue "$SLURM_JOB_ID"
-                exit 0
-            fi
-
-            # NOW read existing ExcNodeList (while PENDING) and merge
-            cur_exc_nodes=$(
-                scontrol show job "$SLURM_JOB_ID" |
-                awk -F= '/ExcNodeList=/{print $2}' |
-                awk '{print $1; exit}'
-            )
-
-            if [[ -n "$cur_exc_nodes" && "$cur_exc_nodes" != "(null)" && "$cur_exc_nodes" != "None" ]]; then
-                exc_nodes=$(printf "%s,%s\n" "$cur_exc_nodes" "$bad_node" | tr ',' '\n' | awk 'NF' | sort -u | paste -sd, -)
-            else
-                exc_nodes="$bad_node"
-            fi
-
-            echo "Excluding: $exc_nodes"
-            if ! out=$(scontrol update JobId="$SLURM_JOB_ID" ExcNodeList="$exc_nodes" 2>&1); then
-                echo "scontrol update FAILED: $out"
-            else
-                echo "scontrol update OK: $out"
-            fi
-
-            # Confirm it stuck (should show ExcNodeList=... not (null))
-            scontrol show job "$SLURM_JOB_ID" | egrep -i 'JobState=|Reason=|BatchHost=|NodeList=|ExcNodeList='
-
-            scontrol release "$SLURM_JOB_ID"
-            exit 0
-        fi
-
-        # If bad_node is empty, just requeue
-        scontrol requeue "$SLURM_JOB_ID"
-        exit 0
-    else
-        echo "FAILED" > FAILED
-        echo "Maximum attempts ($MAX_ATTEMPTS) reached. Simulation failed."
-        exit 1
-    fi
+if [ "$error_code" -eq 0 ]; then
+  echo "Simulation completed successfully on attempt $RETRY_COUNT."
+  exit 0
 fi
+
+echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
+
+if [ "$RETRY_COUNT" -ge "$MAX_ATTEMPTS" ]; then
+  echo "FAILED" > FAILED
+  echo "Maximum attempts ($MAX_ATTEMPTS) reached. Simulation failed."
+  exit 1
+fi
+
+NEXT_RETRY=$((RETRY_COUNT + 1))
+echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
+echo "Retrying as attempt $NEXT_RETRY..."
+
+bad_node="${SLURMD_NODENAME:-$(hostname -s)}"
+echo "Bad node: ${bad_node:-<empty>}"
+
+sleep 5
+
+exc_nodes="$bad_node"
+if [[ -n "$bad_node" ]]; then
+  if cur_exc_nodes=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | awk -F= '/ExcNodeList=/{print $2}' | awk '{print $1; exit}'); then
+    if [[ -n "$cur_exc_nodes" && "$cur_exc_nodes" != "(null)" && "$cur_exc_nodes" != "None" ]]; then
+      exc_nodes=$(printf "%s,%s\n" "$cur_exc_nodes" "$bad_node" | tr ',' '\n' | awk 'NF' | sort -u | paste -sd, -)
+    fi
+  fi
+fi
+echo "Excluding: $exc_nodes"
+
+export_vars="OVERWRITE=${OVERWRITE},ONLY_EQ=${ONLY_EQ},RETRY_COUNT=${NEXT_RETRY}"
+if [[ -n "${SKIP_WINDOW_EQ-}" ]]; then
+  export_vars="${export_vars},SKIP_WINDOW_EQ=${SKIP_WINDOW_EQ}"
+fi
+
+SBATCH_SCRIPT="${SBATCH_SCRIPT:-SLURMM-run}"
+if [[ ! -f "$SBATCH_SCRIPT" ]]; then
+  echo "ERROR: SBATCH_SCRIPT=$SBATCH_SCRIPT not found. Not resubmitting."
+  exit 1
+fi
+
+new_jobid=$(sbatch --parsable --export=ALL,"$export_vars" --exclude="$exc_nodes" "$SBATCH_SCRIPT" 2>/dev/null)
+rc=$?
+if [[ $rc -eq 0 && -n "$new_jobid" ]]; then
+  echo "Resubmitted as JobId=$new_jobid"
+  echo "$new_jobid" > RESUBMITTED_JOBID
+  echo "Canceling current job $SLURM_JOB_ID"
+  scancel "$SLURM_JOB_ID"
+  exit 0
+fi
+
+# If sbatch failed, print the error and don't destroy the current job
+echo "sbatch resubmit FAILED (rc=$rc). Falling back to scontrol requeue."
+sbatch --export=ALL,"$export_vars" --exclude="$exc_nodes" "$SBATCH_SCRIPT"  # prints error
+scontrol requeue "$SLURM_JOB_ID" || true
+exit 0
 
 if [ $ONLY_EQ -eq 1 ]; then
     echo "ONLY_EQ is set to 1. Simulation is complete."
