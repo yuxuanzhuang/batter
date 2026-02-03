@@ -164,6 +164,24 @@ def _build_rbfe_network_plan(
             mapping_source["mapping"] = "konnektor"
             if rbfe_cfg.konnektor_layout:
                 mapping_source["konnektor_layout"] = rbfe_cfg.konnektor_layout
+        elif mapping_name in {"default", "star", "first"}:
+            try:
+                pairs = konnektor_pairs(
+                    available,
+                    {name: Path(lig_map[name]) for name in available},
+                    layout="star",
+                )
+                network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+                mapping_source["mapping"] = mapping_name
+                mapping_source["konnektor_layout"] = "star"
+            except Exception as exc:
+                logger.warning(
+                    f"RBFE default mapping requested StarNetworkGenerator but failed "
+                    f"({exc}); falling back to internal default mapping."
+                )
+                mapping_fn = resolve_mapping_fn(mapping_name)
+                network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+                mapping_source["mapping"] = mapping_name
         else:
             mapping_fn = resolve_mapping_fn(mapping_name)
             network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
