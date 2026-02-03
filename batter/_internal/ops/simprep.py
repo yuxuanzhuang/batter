@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import pickle
 import os
 from typing import Iterable, List, Tuple, Optional, Set, Sequence
 import shutil
@@ -270,6 +271,28 @@ def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem
 
     return mol
 
+def set_alt_coords_from_ref_mapping(
+    ref: Chem.Mol,
+    alt: Chem.Mol,
+    ref_to_alt: Dict[int, int],
+) -> Chem.Mol:
+    """
+    Return a copy of `alt` where coordinates of mapped atoms are overwritten
+    to match those atoms' coordinates in `ref`.
+
+    Assumptions:
+      - `ref` and `alt` each have exactly one conformer (3D coords exist).
+      - `ref_to_alt` maps 0-based atom indices: {ref_idx: alt_idx}.
+    """
+    ref_conf = ref.GetConformer()  # only one
+    alt_out = Chem.Mol(alt)        # copy
+    alt_conf = alt_out.GetConformer()
+
+    for ref_idx, alt_idx in ref_to_alt.items():
+        p = ref_conf.GetAtomPosition(ref_idx)
+        alt_conf.SetAtomPosition(alt_idx, Point3D(p.x, p.y, p.z))
+
+    return alt_out
 
 # ---------------------- unified writer ----------------------
 
@@ -845,12 +868,19 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # align ligands
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
-    mapper = KartografAtomMapper()
+    mapper = KartografAtomMapper(atom_max_distance=1.5, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
+                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
+    )
     # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
     logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
+
+    # set mol_alt_aligned common core positions to be exactly the same as mol_ref
+    mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
+        mol_ref._rdkit, mol_alt_aligned._rdkit, kartograf_mapping.componentA_to_componentB
+    )
 
     # save mol_alt_aligned as PDB
     alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
@@ -864,12 +894,19 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
-    mapper = KartografAtomMapper(atom_max_distance=1.5, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False)
+    mapper = KartografAtomMapper(atom_max_distance=1.5, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
+                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
+    )
     # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
     logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
+
+    # set coordniates of common core atoms in mol_alt_aligned to match mol_ref
+    mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
+        mol_ref._rdkit, mol_alt_aligned._rdkit, kartograf_mapping.componentA_to_componentB
+    )
 
     # save mol_alt_aligned as PDB
     pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned._rdkit)
@@ -883,6 +920,10 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     with open(dest_dir / "kartograf.json", "w") as f:
         json.dump(kartograf_mapping.componentA_to_componentB, f)
+    
+    # serialize kartograf
+    with open(dest_dir / "kartograf.pkl", "wb") as f:
+        pickle.dump(kartograf_mapping, f)
 
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 

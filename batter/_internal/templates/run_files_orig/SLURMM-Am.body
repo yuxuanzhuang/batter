@@ -33,45 +33,65 @@ if [ $error_code -eq 0 ]; then
 else
     echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
 
-    if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
+    if [ "$RETRY_COUNT" -lt "$MAX_ATTEMPTS" ]; then
         NEXT_RETRY=$((RETRY_COUNT + 1))
-        # Update the file with the new retry count.
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
         echo "Requeuing the job for attempt $NEXT_RETRY..."
-        # Requeue the same job (retains the same job ID).
-        # Exclude the node where the job failed.
-        # wait for 2 min
-        sleep 30
-        bad_node=$(
-            scontrol show job "$SLURM_JOB_ID" |
-                grep -m1 '^[[:space:]]*NodeList=' |
-                awk -F= '{print $2}' |
-                tr -d '[:space:]'
-        )
-        echo "Bad node: ${bad_node:-<empty>}"
-        if [ -n "$bad_node" ]; then
-            # Expand failed NodeList to concrete hostnames.
-            bad_exc_nodes=$(scontrol show hostnames "$bad_node" | paste -sd, -)
 
-            # Merge with any pre-existing exclusion list on this job.
+        sleep 30
+
+        bad_node="${SLURMD_NODENAME:-$(hostname -s)}"
+        echo "Bad node: ${bad_node:-<empty>}"
+
+        if [ -n "$bad_node" ]; then
+            echo "Requeuehold -> wait PENDING -> update exclusion -> release"
+            scontrol requeuehold "$SLURM_JOB_ID"
+
+            # wait for PENDING (held) so update sticks
+            pending_ok=0
+            for _ in {1..60}; do
+                state=$(scontrol show job "$SLURM_JOB_ID" | awk -F= '/JobState=/{print $2}' | awk '{print $1; exit}')
+                if [[ "$state" == "PENDING" ]]; then
+                    pending_ok=1
+                    break
+                fi
+                sleep 1
+            done
+
+            if [[ "$pending_ok" -ne 1 ]]; then
+                echo "WARNING: job did not reach PENDING after requeuehold (state=$state). Requeueing without exclusion."
+                scontrol requeue "$SLURM_JOB_ID"
+                exit 0
+            fi
+
+            # NOW read existing ExcNodeList (while PENDING) and merge
             cur_exc_nodes=$(
                 scontrol show job "$SLURM_JOB_ID" |
-                    grep -m1 '^[[:space:]]*ExcNodeList=' |
-                    awk -F= '{print $2}' |
-                    tr -d '[:space:]'
+                awk -F= '/ExcNodeList=/{print $2}' |
+                awk '{print $1; exit}'
             )
 
-            if [ -n "$cur_exc_nodes" ] && [ "$cur_exc_nodes" != "(null)" ] && [ "$cur_exc_nodes" != "None" ]; then
-                cur_exc_nodes=$(scontrol show hostnames "$cur_exc_nodes" | paste -sd, -)
-                exc_nodes=$(printf "%s\n%s\n" "$cur_exc_nodes" "$bad_exc_nodes" | tr ',' '\n' | awk 'NF' | sort -u | paste -sd, -)
+            if [[ -n "$cur_exc_nodes" && "$cur_exc_nodes" != "(null)" && "$cur_exc_nodes" != "None" ]]; then
+                exc_nodes=$(printf "%s,%s\n" "$cur_exc_nodes" "$bad_node" | tr ',' '\n' | awk 'NF' | sort -u | paste -sd, -)
             else
-                exc_nodes="$bad_exc_nodes"
+                exc_nodes="$bad_node"
             fi
 
             echo "Excluding: $exc_nodes"
-            scontrol update JobId="$SLURM_JOB_ID" ExcNodeList="$exc_nodes"
+            if ! out=$(scontrol update JobId="$SLURM_JOB_ID" ExcNodeList="$exc_nodes" 2>&1); then
+                echo "scontrol update FAILED: $out"
+            else
+                echo "scontrol update OK: $out"
+            fi
+
+            # Confirm it stuck (should show ExcNodeList=... not (null))
+            scontrol show job "$SLURM_JOB_ID" | egrep -i 'JobState=|Reason=|BatchHost=|NodeList=|ExcNodeList='
+
+            scontrol release "$SLURM_JOB_ID"
+            exit 0
         fi
 
+        # If bad_node is empty, just requeue
         scontrol requeue "$SLURM_JOB_ID"
         exit 0
     else
