@@ -230,7 +230,10 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     base_text = mdin_src.read_text()
     total_steps = int(getattr(sim, "eq_steps", 0) or 0)
     if total_steps <= 0:
-        raise ValueError("total_steps must be > 0 to write equilibration templates.")
+        logger.warning(
+            "[equil] eq_steps <= 0; writing mdin-template with total_steps=0"
+        )
+        total_steps = 0
 
     # compute extra mask once for equil (applied to template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, work)

@@ -157,6 +157,30 @@ def equil_analysis_handler(
     if not p["full_pdb"].exists():
         raise FileNotFoundError(f"[equil_check:{lig}] missing {p['full_pdb']}")
 
+    eq_steps = int(getattr(sim, "eq_steps", 0) or 0)
+    if eq_steps == 0:
+        eqnpt_appear = p["equil_dir"] / "eqnpt_appear.rst7"
+        if not eqnpt_appear.exists():
+            raise FileNotFoundError(
+                f"[equil_check:{lig}] eq_steps=0 but missing {eqnpt_appear}"
+            )
+        shutil.copyfile(eqnpt_appear, p["rep_rst"])
+        run_with_log(
+            f"{cpptraj} -p {prmtop} -y representative.rst7 -x representative.pdb",
+            working_dir=p["equil_dir"],
+        )
+        logger.debug(
+            f"[equil_check:{lig}] eq_steps=0; copied {eqnpt_appear.name} as representative"
+        )
+        # Skip trajectory-based validation/analysis when no equilibration steps ran.
+        return ExecResult(
+            job_ids=[],
+            artifacts={
+                "representative_pdb": p["rep_pdb"],
+                "representative_rst7": p["rep_rst"],
+            },
+        )
+
     # Run validation
     prmtop = "full.hmr.prmtop" if hmr == "yes" else "full.prmtop"
 
