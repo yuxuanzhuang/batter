@@ -130,6 +130,7 @@ def equil_analysis_handler(
         payload.get("unbound_threshold", getattr(sim, "unbound_threshold", 8.0))
     )
     hmr = str(sim.hmr)
+    prmtop = "full.hmr.prmtop" if hmr == "yes" else "full.prmtop"
 
     # hard requirements
     if not p["finished"].exists():
@@ -182,7 +183,6 @@ def equil_analysis_handler(
         )
 
     # Run validation
-    prmtop = "full.hmr.prmtop" if hmr == "yes" else "full.prmtop"
 
     try:
         # Build trajectory list from completed equil segments
