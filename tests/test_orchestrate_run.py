@@ -69,6 +69,51 @@ def test_save_fe_records_failure(tmp_path: Path, has_results: bool) -> None:
     assert failure_json.exists()
 
 
+def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run1"
+    config_dir = run_dir / "artifacts" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "rbfe_network.png").write_text("png")
+
+    child_root = run_dir / "simulations" / "pair1"
+    results_dir = child_root / "fe" / "Results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "Results.dat").write_text("Total\t-1.0\t0.1\n")
+
+    sim_cfg = _make_sim_cfg()
+    child = SimSystem(
+        name="sys:pair1:run1",
+        root=child_root,
+        meta=SystemMeta(
+            ligand="pair1",
+            residue_name="lig1",
+            mode="RBFE",
+            extras={
+                "ligand_ref": "A",
+                "ligand_alt": "B",
+                "residue_ref": "A",
+                "residue_alt": "B",
+            },
+        ),
+    )
+
+    store = ArtifactStore(run_dir)
+    repo = FEResultsRepository(store)
+
+    failures = save_fe_records(
+        run_dir=run_dir,
+        run_id="run1",
+        children_all=[child],
+        sim_cfg_updated=sim_cfg,
+        repo=repo,
+        protocol="rbfe",
+    )
+
+    assert not failures
+    out = run_dir / "results" / "run1" / "pair1" / "Results" / "rbfe_network.png"
+    assert out.exists()
+
+
 def test_compute_run_signature_excludes_run_section(tmp_path: Path) -> None:
     yaml_path = tmp_path / "run.yaml"
     yaml_path.write_text(

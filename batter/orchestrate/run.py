@@ -141,8 +141,7 @@ def _build_rbfe_network_plan(
         load_mapping_file,
         konnektor_pairs,
     )
-from batter.config.utils import sanitize_ligand_name
-from batter.analysis.network import plot_rbfe_network
+    from batter.config.utils import sanitize_ligand_name
 
     available = [sanitize_ligand_name(x) for x in ligands if x]
     if len(available) < 2:
@@ -161,6 +160,7 @@ from batter.analysis.network import plot_rbfe_network
                 available,
                 {name: Path(lig_map[name]) for name in available},
                 layout=rbfe_cfg.konnektor_layout,
+                plot_path=config_dir / "rbfe_network.png",
             )
             network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
             mapping_source["mapping"] = "konnektor"
@@ -172,6 +172,7 @@ from batter.analysis.network import plot_rbfe_network
                     available,
                     {name: Path(lig_map[name]) for name in available},
                     layout="star",
+                    plot_path=config_dir / "rbfe_network.png",
                 )
                 network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
                 mapping_source["mapping"] = mapping_name
@@ -206,15 +207,6 @@ from batter.analysis.network import plot_rbfe_network
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
-    plot_rbfe_network(
-        available=available,
-        lig_map=lig_map,
-        pairs=pairs,
-        mapping_name=mapping_source.get("mapping") or "default",
-        mapping_file=rbfe_cfg.mapping_file,
-        layout=rbfe_cfg.konnektor_layout,
-        out_dir=config_dir,
-    )
     logger.info(
         f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs."
     )

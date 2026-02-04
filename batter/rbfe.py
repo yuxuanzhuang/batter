@@ -198,6 +198,7 @@ def konnektor_pairs(
     ligands: Sequence[str],
     ligand_files: Mapping[str, Path],
     layout: str | None = None,
+    plot_path: Path | None = None,
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
@@ -240,10 +241,94 @@ def konnektor_pairs(
     else:
         raise RuntimeError("Unsupported Konnektor generator API.")
 
+    if plot_path is not None:
+        try:
+            from konnektor.visualization import draw_ligand_network
+
+            fig = draw_ligand_network(network=network, title=getattr(network, "name", None))
+            plot_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(plot_path, dpi=200)
+        except Exception:
+            pass
+
     pairs = _pairs_from_konnektor_network(network)
     if not pairs:
         raise ValueError("Konnektor mapping produced no ligand pairs.")
     return pairs
+
+
+def draw_explicit_konnektor_network(
+    pairs: Sequence[Sequence[str] | tuple[str, str]],
+    ligand_files: Mapping[str, Path],
+    plot_path: Path,
+) -> None:
+    """Build an explicit Konnektor network from pairs and draw it."""
+    try:
+        from konnektor.network_planners import ExplicitNetworkGenerator
+        from konnektor.visualization import draw_ligand_network
+        from gufe import SmallMoleculeComponent
+        from kartograf.atom_mapper import KartografAtomMapper
+        from kartograf.atom_aligner import align_mol_shape
+        from kartograf.atom_mapping_scorer import MappingRMSDScorer
+        from rdkit import Chem
+        from rdkit.Chem import rdDistGeom
+    except Exception:
+        return
+
+    mapper = KartografAtomMapper()
+    rmsd_scorer = MappingRMSDScorer()
+
+    comp_by_name: dict[str, SmallMoleculeComponent] = {}
+    edges = []
+    nodes_by_name: dict[str, SmallMoleculeComponent] = {}
+    for ref, alt in pairs:
+        name_a = str(ref)
+        name_b = str(alt)
+        if name_a not in ligand_files or name_b not in ligand_files:
+            continue
+        if name_a not in comp_by_name:
+            mol_a = _load_rdkit_mol(Path(ligand_files[name_a]))
+            try:
+                mol_a = Chem.AddHs(mol_a, addCoords=True)
+                rdDistGeom.EmbedMolecule(mol_a, useRandomCoords=False, randomSeed=0)
+            except Exception:
+                pass
+            comp_by_name[name_a] = SmallMoleculeComponent(mol_a, name=name_a)
+        if name_b not in comp_by_name:
+            mol_b = _load_rdkit_mol(Path(ligand_files[name_b]))
+            try:
+                mol_b = Chem.AddHs(mol_b, addCoords=True)
+                rdDistGeom.EmbedMolecule(mol_b, useRandomCoords=False, randomSeed=0)
+            except Exception:
+                pass
+            comp_by_name[name_b] = SmallMoleculeComponent(mol_b, name=name_b)
+
+        comp_a = comp_by_name[name_a]
+        comp_b = comp_by_name[name_b]
+        try:
+            comp_b = align_mol_shape(comp_b, ref_mol=comp_a)
+        except Exception:
+            pass
+        edges.append((comp_a, comp_b))
+        nodes_by_name.setdefault(name_a, comp_a)
+        nodes_by_name.setdefault(name_b, comp_b)
+
+    if not edges:
+        return
+
+    nodes = list(nodes_by_name.values())
+    try:
+        generator = ExplicitNetworkGenerator(mappers=mapper, scorer=rmsd_scorer)
+    except TypeError:
+        generator = ExplicitNetworkGenerator(mappers=mapper)
+
+    try:
+        network = generator.generate_ligand_network(edges=edges, nodes=nodes)
+        fig = draw_ligand_network(network=network, title=getattr(network, "name", None))
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(plot_path, dpi=200)
+    except Exception:
+        return
 
 
 @dataclass(frozen=True)

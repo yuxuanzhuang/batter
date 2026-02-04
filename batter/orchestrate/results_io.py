@@ -175,6 +175,7 @@ def save_fe_records(
                 analysis_start_step=analysis_start_step_val,
             )
             if is_rbfe:
+                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
                 ref = child.meta.get("ligand_ref")
                 alt = child.meta.get("ligand_alt")
                 res_ref = child.meta.get("residue_ref") or mol_name
@@ -231,6 +232,7 @@ def save_fe_records(
             )
             repo.save(rec, copy_from=results_dir)
             if is_rbfe:
+                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
                 _copy_kartograf_artifacts(
                     child.root / "fe" / "x" / "x-1",
                     repo.ligand_dir(run_id, lig_name),
@@ -285,6 +287,7 @@ def save_fe_records(
                 analysis_start_step=analysis_start_step_val,
             )
             if is_rbfe:
+                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
                 ref = child.meta.get("ligand_ref")
                 alt = child.meta.get("ligand_alt")
                 res_ref = child.meta.get("residue_ref") or mol_name
@@ -386,3 +389,17 @@ def _copy_kartograf_artifacts(src_dir: Path, dest_root: Path) -> None:
     for src in src_dir.glob("kartograf*"):
         if src.is_file():
             shutil.copy2(src, dest_dir / src.name)
+
+
+def _copy_rbfe_network_plot(
+    run_dir: Path, repo: FEResultsRepository, run_id: str, ligand: str
+) -> None:
+    src = run_dir / "artifacts" / "config" / "rbfe_network.png"
+    if not src.exists():
+        return
+    dest_dir = repo.ligand_dir(run_id, ligand) / "Results"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copy2(src, dest_dir / src.name)
+    except Exception:
+        pass
