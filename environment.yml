@@ -28,6 +28,8 @@ dependencies:
   - openff-interchange
   - openff-interchange-base
   - openff-toolkit-base >=0.16.2
+  - kartograf
+  - konnektor
   # Tests
   - pytest
   - pytest-xdist

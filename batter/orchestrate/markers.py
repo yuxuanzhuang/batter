@@ -138,6 +138,9 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
     list[SimSystem]
         Subset of systems lacking the necessary success sentinels.
     """
+    if children:
+        _maybe_invalidate_progress_for_phase(children, phase_name)
+
     need, done = [], []
     for child in children:
         if is_done(child, phase_name):
@@ -148,6 +151,50 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
         names = ", ".join(c.meta.get("ligand", c.name) for c in done)
         logger.debug(f"[skip] {phase_name}: {len(done)} ligand(s) already complete → {names}")
     return need
+
+
+def _phase_ok_paths(root: Path, phase_name: str) -> List[Path]:
+    if phase_name == "prepare_fe":
+        return [
+            root / "fe" / "prepare_fe.ok",
+            root / "fe" / "prepare_fe_windows.ok",
+        ]
+    if phase_name == "prepare_fe_windows":
+        return [root / "fe" / "prepare_fe_windows.ok"]
+    if phase_name == "pre_prepare_fe":
+        return [root / "fe" / "pre_prepare_fe.ok"]
+    return []
+
+
+def _maybe_invalidate_progress_for_phase(
+    children: List[SimSystem], phase_name: str
+) -> None:
+    if phase_name not in {"prepare_fe", "prepare_fe_windows", "pre_prepare_fe"}:
+        return
+    total = len(children)
+    if total == 0:
+        return
+    ok_count = 0
+    for child in children:
+        ok_paths = _phase_ok_paths(child.root, phase_name)
+        if ok_paths and all(p.exists() for p in ok_paths):
+            ok_count += 1
+    if ok_count == total:
+        return
+
+    run_root = _run_root_for(children[0].root)
+    progress_dir = run_root / "artifacts" / "progress" / phase_name
+    if progress_dir.exists():
+        try:
+            for p in progress_dir.glob("*.csv"):
+                p.unlink(missing_ok=True)
+            logger.info(
+                f"[progress] {phase_name}: ok_count={ok_count}/{total}; cleared cached progress."
+            )
+        except Exception:
+            logger.warning(
+                f"[progress] {phase_name}: ok_count={ok_count}/{total}; failed to clear cached progress."
+            )
 
 
 def run_phase_skipping_done(
@@ -317,26 +364,71 @@ def _production_windows_under(root: Path, comp: str) -> List[int]:
     return sorted(out)
 
 
+def _run_root_for(root: Path) -> Path:
+    for candidate in (root, *root.parents):
+        if (candidate / "artifacts").exists() and (candidate / "simulations").exists():
+            return candidate
+    return root
+
+
+def _progress_key(run_root: Path, root: Path) -> str:
+    try:
+        rel = root.relative_to(run_root).as_posix()
+    except ValueError:
+        rel = root.name
+    return rel.replace("/", "__")
+
+
 def _progress_path(root: Path, phase: str) -> Path:
-    base = root / "artifacts"
-    if phase.startswith("fe") or phase.startswith("prepare_fe"):
-        base = root / "fe" / "artifacts"
-    return base / "progress" / f"{phase}.csv"
+    run_root = _run_root_for(root)
+    key = _progress_key(run_root, root)
+    return run_root / "artifacts" / "progress" / phase / f"{key}.csv"
 
 
 def _load_progress(root: Path, phase: str) -> Dict[str, str]:
     path = _progress_path(root, phase)
     out: Dict[str, str] = {}
-    if not path.exists():
+    if path.exists():
+        try:
+            for line in path.read_text().splitlines():
+                if not line.strip():
+                    continue
+                rel, state = line.split(",", 1)
+                out[rel] = state
+        except Exception:
+            return {}
+        return out
+
+    legacy_paths = [root / "artifacts" / "progress" / f"{phase}.csv"]
+    if phase.startswith(("fe", "prepare_fe", "pre_fe", "pre_prepare_fe")):
+        legacy_paths.append(root / "fe" / "artifacts" / "progress" / f"{phase}.csv")
+    legacy = next((p for p in legacy_paths if p.exists()), None)
+    if not legacy:
         return out
     try:
-        for line in path.read_text().splitlines():
+        for line in legacy.read_text().splitlines():
             if not line.strip():
                 continue
             rel, state = line.split(",", 1)
             out[rel] = state
     except Exception:
         return {}
+    if out:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [f"{k},{v}\n" for k, v in sorted(out.items())]
+        tmp = path.with_suffix(".tmp")
+        try:
+            tmp.write_text("".join(lines))
+            tmp.replace(path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+    try:
+        legacy.unlink()
+    except Exception:
+        pass
     return out
 
 

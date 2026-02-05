@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
 import json
+import shutil
 
 from loguru import logger
 
@@ -19,6 +20,7 @@ from batter.systemprep import (
     get_sdr_dist,
     select_ions_away_from_complex,
 )
+from batter.utils import run_with_log
 
 __all__ = [
     "Anchors",
@@ -27,6 +29,11 @@ __all__ = [
     "get_ligand_candidates",
     "load_anchors",
     "num_to_mask",
+    "copy_if_exists",
+    "field_slice",
+    "is_atom_line",
+    "rewrite_prmtop_reference",
+    "run_parmed_hmr_if_enabled",
     "save_anchors",
     "select_ions_away_from_complex",
 ]
@@ -91,6 +98,59 @@ def num_to_mask(pdb_file: str | Path) -> list[str]:
             resid = line[22:26].strip()
             atm_num.append(f":{resid}@{atom_name}")
     return atm_num
+
+
+def is_atom_line(line: str) -> bool:
+    """Return True when a PDB line is an ATOM/HETATM record."""
+    tag = line[0:6].strip()
+    return tag in {"ATOM", "HETATM"}
+
+
+def field_slice(line: str, start: int, end: int) -> str:
+    """Extract a fixed-width PDB-style field (0-based, end-exclusive)."""
+    return line[start:end].strip()
+
+
+def copy_if_exists(src: Path, dst: Path, *, on_missing: str = "warn") -> bool:
+    """Copy ``src`` to ``dst`` when present.
+
+    Parameters
+    ----------
+    on_missing
+        ``"warn"`` to log a warning and continue, or ``"raise"`` to raise.
+    """
+    if src.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        return True
+    if on_missing == "raise":
+        raise FileNotFoundError(f"Missing required file: {src}")
+    logger.warning(f"Expected file not found: {src} (continuing)")
+    return False
+
+
+def rewrite_prmtop_reference(text: str, *, hmr: bool) -> str:
+    """Rewrite run-script PRMTOP references for HMR on/off modes."""
+    if hmr:
+        return text.replace("full.prmtop", "full.hmr.prmtop")
+    return text.replace("full.hmr.prmtop", "full.prmtop")
+
+
+def run_parmed_hmr_if_enabled(sim_hmr: str | bool, amber_dir: Path, window_dir: Path) -> None:
+    """Run parmed HMR conversion if enabled by the simulation config."""
+    hmr = str(sim_hmr).lower() == "yes" if not isinstance(sim_hmr, bool) else sim_hmr
+    if not hmr:
+        logger.debug("[box] HMR disabled; skipping parmed-hmr.")
+        return
+    parmed_hmr = amber_dir / "parmed-hmr.in"
+    if not parmed_hmr.exists():
+        logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+        return
+    shutil.copy2(parmed_hmr, window_dir / "parmed-hmr.in")
+    run_with_log(
+        "parmed -O -n -i parmed-hmr.in > parmed-hmr.log",
+        working_dir=window_dir,
+    )
 
 
 def format_ranges(numbers: Iterable[int]) -> str:

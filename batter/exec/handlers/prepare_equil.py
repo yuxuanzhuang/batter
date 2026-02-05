@@ -83,9 +83,9 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
         }
     )
     def _mark_prepare_equil_failed() -> None:
-        artifacts_dir = system_root / "equil" / "artifacts"
-        os.makedirs(artifacts_dir, exist_ok=True)
-        (artifacts_dir / "prepare_equil.failed").touch()
+        equil_dir = system_root / "equil"
+        os.makedirs(equil_dir, exist_ok=True)
+        (equil_dir / "prepare_equil.failed").touch()
 
     try:
         ok = builder.build()
@@ -96,13 +96,13 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
         _mark_prepare_equil_failed()
         raise RuntimeError(f"[prepare_equil] anchor detection failed for ligand={ligand}")
 
-    os.makedirs(system_root / "equil" / "artifacts", exist_ok=True)
-    prepare_finished = system_root / "equil" / "artifacts" / "prepare_equil.ok"
+    os.makedirs(system_root / "equil", exist_ok=True)
+    prepare_finished = system_root / "equil" / "prepare_equil.ok"
     open(prepare_finished, "w").close()
 
     prepare_rel = prepare_finished.relative_to(system.root).as_posix()
     full_prmtop = (system_root / "equil" / "full.prmtop").relative_to(system.root).as_posix()
-    failed_rel = (system_root / "equil" / "artifacts" / "prepare_equil.failed").relative_to(
+    failed_rel = (system_root / "equil" / "prepare_equil.failed").relative_to(
         system.root
     ).as_posix()
     register_phase_state(

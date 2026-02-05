@@ -10,20 +10,17 @@ from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_restraints
-from batter._internal.ops.helpers import num_to_mask, load_anchors
+from batter._internal.ops.helpers import (
+    num_to_mask,
+    load_anchors,
+    is_atom_line as _is_atom_line,
+    field_slice as _field,
+)
 from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
 
-
 # ────────────────────────── small helpers (working-dir aware) ──────────────────────────
-
-def _is_atom_line(line: str) -> bool:
-    tag = line[0:6].strip()
-    return tag == "ATOM" or tag == "HETATM"
-
-def _field(line: str, start: int, end: int) -> str:
-    return line[start:end].strip()
 
 def _collect_backbone_heavy_and_lig(vac_pdb: Path, lig_res: str, offset: int = 0) -> List[List[str]]:
     """Return ([protein_backbone_heavy_atom_serials], [ligand_heavy_atom_serials])."""
@@ -279,14 +276,15 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     vac_pdb         = work / "vac.pdb"
     vac_lig_pdb     = work / f"{lig}.pdb"
     vac_lig_prmtop  = work / f"{mol}.prmtop"
-    full_hmr_prmtop = work / "full.hmr.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = work / ("full.hmr.prmtop" if hmr else "full.prmtop")
     full_inpcrd     = work / "full.inpcrd"
     lig_mol2        = work / f"{mol}.mol2"
     anchors_pdb     = build_dir / f"equil-{mol}.pdb"
 
     if not anchors_pdb.exists():
         raise FileNotFoundError(f"Anchor header not found: {anchors_pdb}")
-    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_hmr_prmtop, full_inpcrd):
+    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_prmtop, full_inpcrd):
         if not p.exists():
             raise FileNotFoundError(f"Required file missing for restraints: {p}")
 
@@ -321,7 +319,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
 
     full_rst = rst + msk
 
-    vals = _write_assign_and_read_vals(work, full_rst, full_hmr_prmtop, full_inpcrd)
+    vals = _write_assign_and_read_vals(work, full_rst, full_prmtop, full_inpcrd)
 
     rest = ctx.sim.rest              # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     release_eq = ctx.sim.release_eq  # e.g., [0, 20, 50, 80, 100]
@@ -433,11 +431,12 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     vac_pdb         = windows_dir / "vac.pdb"
     vac_lig_pdb     = windows_dir / f"{lig}.pdb"
     vac_lig_prmtop  = windows_dir / "vac_ligand.prmtop"
-    full_hmr_prmtop = windows_dir / "full.hmr.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
     full_inpcrd     = windows_dir / "full.inpcrd"
     lig_mol2        = windows_dir / f"{mol}.mol2"
 
-    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_hmr_prmtop, full_inpcrd):
+    for p in (vac_pdb, vac_lig_pdb, vac_lig_prmtop, full_prmtop, full_inpcrd):
         if not p.exists():
             raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
 
@@ -488,7 +487,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
         lig_msks = _filter_sp_carbons(lig_msks, lig_mol2)
 
     rst_full = rst + lig_msks
-    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_hmr_prmtop, full_inpcrd)
+    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
 
     # weights (single stage in FE)
     rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
@@ -708,7 +707,6 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
     # ---- disang.rest: empty (legacy behavior) ----
     (windows_dir / "disang.rest").write_text("\n")
 
-    # (Optional) very small analysis driver to keep downstream scripts happy
     rest_in = windows_dir / "restraints.in"
     with rest_in.open("w") as fh:
         fh.write("# ligand-only; no &rst metrics\nnoexitonerror\nparm vac.prmtop\n")
@@ -717,8 +715,278 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
 
     logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
 
-
 @register_restraints("x")
 def _build_restraints_x(builder, ctx: BuildContext) -> None:
-    _write_component_restraints(ctx, skip_lig_tr=False, lig_only=False)
-    # (append x-specific reference-ligand restraints here if needed)
+    """
+    For two ligands
+    """
+    work = ctx.working_dir
+    windows_dir = ctx.window_dir
+    lig = ctx.ligand
+    extra = ctx.extra or {}
+    mol_ref = extra.get("residue_ref") or ctx.residue_name
+    mol_alt = extra.get("residue_alt")
+    lig_ref = extra.get("ligand_ref")
+    lig_alt = extra.get("ligand_alt")
+    comp = ctx.comp
+
+    vac_pdb         = windows_dir / "vac.pdb"
+    vac_ref_prmtop  = windows_dir / f"{mol_ref}.prmtop"
+    vac_alt_prmtop  = windows_dir / f"{mol_alt}.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
+    full_inpcrd     = windows_dir / "full.inpcrd"
+    lig_mol2        = windows_dir / f"{mol_ref}.mol2"
+
+    for p in (vac_pdb, vac_ref_prmtop, vac_alt_prmtop, full_prmtop, full_inpcrd):
+        if not p.exists():
+            raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
+
+    anchors = load_anchors(work / f"{ctx.comp}_build_files")
+    P1, P2, P3 = anchors.P1, anchors.P2, anchors.P3
+    p1_res = P1.split('@')[0][1:]
+    p2_res = P2.split('@')[0][1:]
+    p3_res = P3.split('@')[0][1:]
+    p1_atom = P1.split('@')[1]
+    p2_atom = P2.split('@')[1]
+    p3_atom = P3.split('@')[1]
+    # add 1 to Px resid if  dec_method == 'sdr'
+    if ctx.sim.dec_method == 'sdr':
+        P1 = f":{int(p1_res)+1}@{p1_atom}"
+        P2 = f":{int(p2_res)+1}@{p2_atom}"
+        P3 = f":{int(p3_res)+1}@{p3_atom}"
+        
+    L1, L2, L3 = anchors.L1, anchors.L2, anchors.L3
+    lig_res    = anchors.lig_res
+    rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
+    rdhf, rdsf, ldf, laf, ldhf, rcom, lcom = rest
+
+    offset = 3
+    hvy_h, hvy_lig = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, offset)
+    atm_num         = num_to_mask(vac_pdb.as_posix())
+    
+    # cv.in
+    cv_in = windows_dir / "cv.in"
+    with cv_in.open("w") as cvf:
+        # protein COM restraint
+        cvf.write("cv_file\n&colvar\n")
+        if len(hvy_h) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
+            for a in hvy_h:
+                cvf.write(a + ",")
+        cvf.write("\n")
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
+        cvf.write("/\n")
+
+        # ligand COM restraint
+        cvf.write("&colvar\n")
+        if len(hvy_lig) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
+            for a in hvy_lig:
+                cvf.write(a + ",")
+        cvf.write("\n")
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
+        cvf.write("/\n")
+
+    # ---- integrate extra conformation restraints (FE) only for z/o ----
+    _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
+    
+    # write empty disang.rest
+    (windows_dir / "disang.rest").write_text("")
+
+    logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
+
+
+def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
+    """
+    For two ligands
+    """
+    work = ctx.working_dir
+    windows_dir = ctx.window_dir
+    lig = ctx.ligand
+    extra = ctx.extra or {}
+    mol_ref = extra.get("residue_ref") or ctx.residue_name
+    mol_alt = extra.get("residue_alt")
+    lig_ref = extra.get("ligand_ref")
+    lig_alt = extra.get("ligand_alt")
+    comp = ctx.comp
+
+    vac_pdb         = windows_dir / "vac.pdb"
+    vac_ref_pdb     = windows_dir / f"{mol_ref}.pdb"
+    vac_ref_prmtop  = windows_dir / f"{mol_ref}.prmtop"
+    vac_alt_pdb     = windows_dir / f"{mol_alt}.pdb"
+    vac_alt_prmtop  = windows_dir / f"{mol_alt}.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
+    full_inpcrd     = windows_dir / "full.inpcrd"
+    lig_mol2        = windows_dir / f"{mol_ref}.mol2"
+
+    for p in (
+        vac_pdb,
+        vac_ref_pdb,
+        vac_ref_prmtop,
+        vac_alt_pdb,
+        vac_alt_prmtop,
+        full_prmtop,
+        full_inpcrd,
+    ):
+        if not p.exists():
+            raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
+
+    anchors = load_anchors(work / f"{ctx.comp}_build_files")
+    P1, P2, P3 = anchors.P1, anchors.P2, anchors.P3
+    p1_res = P1.split('@')[0][1:]
+    p2_res = P2.split('@')[0][1:]
+    p3_res = P3.split('@')[0][1:]
+    p1_atom = P1.split('@')[1]
+    p2_atom = P2.split('@')[1]
+    p3_atom = P3.split('@')[1]
+    # add 1 to Px resid if  dec_method == 'sdr'
+    if ctx.sim.dec_method == 'sdr':
+        P1 = f":{int(p1_res)+1}@{p1_atom}"
+        P2 = f":{int(p2_res)+1}@{p2_atom}"
+        P3 = f":{int(p3_res)+1}@{p3_atom}"
+        
+    L1, L2, L3 = anchors.L1, anchors.L2, anchors.L3
+    lig_res    = anchors.lig_res
+
+    offset = 3
+    hvy_h, hvy_lig = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, offset)
+    atm_num         = num_to_mask(vac_pdb.as_posix())
+    ligand_atm_num  = num_to_mask(vac_ref_pdb.as_posix())
+
+    # protein triad
+    rst: List[str] = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
+    # TR chain (unless skipping or ligand-only)
+    if (not lig_only) and (not skip_lig_tr):
+        rst += [
+            f"{P1} {L1}",
+            f"{P2} {P1} {L1}",
+            f"{P3} {P2} {P1} {L1}",
+            f"{P1} {L1} {L2}",
+            f"{P2} {P1} {L1} {L2}",
+            f"{P1} {L1} {L2} {L3}",
+        ]
+
+    # ligand dihedrals
+    lig_msks = _scan_dihedrals_from_prmtop(vac_ref_prmtop, ligand_atm_num)
+    lig_msks = [m.replace(":1", f":{lig_res}") for m in lig_msks]
+    if lig_mol2.exists():
+        lig_msks = _filter_sp_carbons(lig_msks, lig_mol2)
+
+    rst_full = rst + lig_msks
+    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
+
+    # weights (single stage in FE)
+    rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
+    rdhf, rdsf, ldf, laf, ldhf, rcom, lcom = rest
+
+    # cv.in
+    cv_in = windows_dir / "cv.in"
+    with cv_in.open("w") as cvf:
+        # protein COM restraint
+        cvf.write("cv_file\n&colvar\n")
+        if len(hvy_h) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
+            for a in hvy_h:
+                cvf.write(a + ",")
+        cvf.write("\n")
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
+        cvf.write("/\n")
+
+        # ligand COM restraint
+        cvf.write("&colvar\n")
+        if len(hvy_lig) == 1:
+            # if only one atom, use DISTANCE instead of COM_DISTANCE
+            cvf.write(" cv_type = 'DISTANCE'\n")
+            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
+        else:
+            cvf.write(" cv_type = 'COM_DISTANCE'\n")
+            cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
+            for a in hvy_lig:
+                cvf.write(a + ",")
+        cvf.write("\n")
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
+        cvf.write("/\n")
+
+    # ---- integrate extra conformation restraints (FE) only for z/o ----
+    if ctx.comp in {"z", "o"}:
+        _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
+
+    # disang.rest
+    disang = windows_dir / "disang.rest"
+    with disang.open("w") as df:
+        df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}  comp={comp}\n")
+        for i, expr in enumerate(rst_full):
+            fields = expr.split()
+            n = len(fields)
+            # protein triangle
+            if i < 3 and n == 2:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Rec_C\n"
+                         % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf))
+                continue
+            # TR (if included)
+            if (not lig_only) and (i >= 3) and (i < 9):
+                if n == 2:
+                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                             % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf))
+                    continue
+                if n == 3:
+                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                             % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf))
+                    continue
+                if n == 4:
+                    iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                    df.write(f"&rst iat={iat:<23s} ")
+                    df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                             % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, laf, laf))
+                    continue
+            # ligand dihedrals
+            if False:
+                if n == 4:
+                    try:
+                        iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                        df.write(f"&rst iat={iat:<23s} ")
+                        df.write("r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                                % (float(vals[i]) - 180.0, float(vals[i]), float(vals[i]), float(vals[i]) + 180.0, ldhf, ldhf))
+                    except:
+                        logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
+
+    # analysis driver
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write(f"# comp={comp}\nnoexitonerror\nparm vac.prmtop\n")
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+        start = 3 if (not lig_only) else 0
+        for i, expr in enumerate((rst_full[start:]), start=start):
+            arr = expr.split()
+            tag = "distance" if len(arr) == 2 else ("angle" if len(arr) == 3 else "dihedral")
+            fh.write(f"{tag} r{i} {expr} out restraints.dat\n")
+
+    logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")

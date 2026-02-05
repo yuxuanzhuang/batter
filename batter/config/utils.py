@@ -61,7 +61,9 @@ def sanitize_ligand_name(name: str) -> str:
     str
         Uppercase alphanumeric token with unsafe characters replaced by underscores.
     """
-    cleaned = _SANITIZE_RE.sub("_", name.strip())
+    # Ensure pair delimiters are preserved as underscores before regex cleanup.
+    cleaned = name.replace("~", "_").strip()
+    cleaned = _SANITIZE_RE.sub("_", cleaned)
     return cleaned.strip("_").upper()
 
 
