@@ -141,6 +141,10 @@ def _build_rbfe_network_plan(
         load_mapping_file,
         konnektor_pairs,
     )
+    try:
+        import konnektor
+    except ImportError:
+        raise ImportError('konnektor package is not installed, install it with `conda install konnektor`')
     from batter.config.utils import sanitize_ligand_name
 
     available = [sanitize_ligand_name(x) for x in ligands if x]

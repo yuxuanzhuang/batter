@@ -374,6 +374,7 @@ class MBARAnalysis(FEAnalysisBase):
                 dfs.append(df_part)
 
         df = pd.concat(dfs)
+        # exclude 
 
         # Drop early frames if requested (convert steps -> ps)
         if analysis_start_step > 0:
@@ -391,7 +392,7 @@ class MBARAnalysis(FEAnalysisBase):
                 )
                 df = df[df.index.get_level_values(0) > threshold]
                 # reduce index to start from zero time
-                df.index = df.index.set_levels(df.index.levels[0] - threshold, level=0)
+                df.index = df.index.map(lambda t: (t[0] - threshold, *t[1:]))
         # Mixed precision spikes guard
         df = exclude_outliers(df, iclam=win_i)
 
