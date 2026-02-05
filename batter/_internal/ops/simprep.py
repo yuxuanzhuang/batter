@@ -7,6 +7,7 @@ import os
 from typing import Iterable, List, Tuple, Optional, Set, Sequence
 import shutil
 import re
+import random
 
 from batter.param import ligand
 from batter_v1.utils.builder_utils import get_buffer_z
@@ -822,25 +823,27 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         ion = mda.Universe.empty(
             n_atoms=np.abs(u_lig_charge),
             n_residues=np.abs(u_lig_charge),
-            n_segments=np.abs(u_lig_charge),
+            atom_resindex=list(range(np.abs(u_lig_charge))),
             trajectory=True,
         )
 
         # topology attrs (minimal but useful)
         ion_name = ion_def[0] if u_lig_charge < 0 else ion_def[1]
-        ion.add_TopologyAttr("names", [ion_name] * np.abs(u_lig_charge))
-        ion.add_TopologyAttr("types", [ion_name] * np.abs(u_lig_charge))
-        ion.add_TopologyAttr("resnames", [ion_name] * np.abs(u_lig_charge))
+        ion.add_TopologyAttr("name", [ion_name] * np.abs(u_lig_charge))
+        ion.add_TopologyAttr("type", [ion_name] * np.abs(u_lig_charge))
+        ion.add_TopologyAttr("resname", [ion_name] * np.abs(u_lig_charge))
         ion.add_TopologyAttr("resids", list(range(1, np.abs(u_lig_charge) + 1)))
 
-        # coordinates by adding random number to last atom
+        # coordinates by adding random number to a random water
+        water = u_ref.select_atoms(f"water and not around 10 (protein or resname {res_ref})")
+
         pos = np.asarray(
             [
-                u_ref.atoms[-1].position + np.random.rand(3)
+                random.choice(water).position + np.random.rand(3)
                 for i in range(np.abs(u_lig_charge))
             ]
         ).reshape(np.abs(u_lig_charge), 3)
-        ion.positions = pos
+        ion.atoms.positions = pos
         ion.atoms.write(dest_dir / "ions.pdb")
 
     # update ref_vac positions
@@ -868,7 +871,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # align ligands
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
-    mapper = KartografAtomMapper(atom_max_distance=1.5, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
+    mapper = KartografAtomMapper(atom_max_distance=2, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
     )
     # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])

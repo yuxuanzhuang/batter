@@ -76,20 +76,14 @@ else
                 resubmit_script="${RESUBMIT_SCRIPT}"
             fi
 
-            # Capture partition/QOS/account/time from current job (fallback to env if missing)
+            # Capture partition/time from current job
             cur_part=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | awk -F= '/Partition=/{print $2}' | awk '{print $1; exit}')
-            cur_qos=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | awk -F= '/QOS=/{print $2}' | awk '{print $1; exit}')
-            cur_acct=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | awk -F= '/Account=/{print $2}' | awk '{print $1; exit}')
             cur_time=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | awk -F= '/TimeLimit=/{print $2}' | awk '{print $1; exit}')
             [[ -z "${cur_part}" || "${cur_part}" == "(null)" ]] && cur_part="${SLURM_JOB_PARTITION-}"
-            [[ -z "${cur_qos}" || "${cur_qos}" == "(null)" ]] && cur_qos="${SLURM_JOB_QOS-}"
-            [[ -z "${cur_acct}" || "${cur_acct}" == "(null)" ]] && cur_acct="${SLURM_JOB_ACCOUNT-}"
             [[ -z "${cur_time}" || "${cur_time}" == "(null)" ]] && cur_time="${SLURM_TIMELIMIT-}"
 
             sbatch_args=(--parsable --job-name="${SLURM_JOB_NAME}" --export=ALL,"$export_vars" --exclude="$exc_nodes")
             [[ -n "${cur_part}" ]] && sbatch_args+=(-p "${cur_part}")
-            [[ -n "${cur_qos}" ]] && sbatch_args+=(--qos "${cur_qos}")
-            [[ -n "${cur_acct}" ]] && sbatch_args+=(--account "${cur_acct}")
             [[ -n "${cur_time}" ]] && sbatch_args+=(-t "${cur_time}")
 
             # Submit retry as a *new job* with node exclusion

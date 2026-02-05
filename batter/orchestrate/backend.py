@@ -8,7 +8,7 @@ from batter.exec.local import LocalBackend
 
 MISSING_DEPENDENCY_MSG = (
     "Required optional dependency '{name}' not found. "
-    "Install it to enable local execution handlers (e.g., `pip install {package}`)."
+    "Install it to enable local execution handlers (e.g., `pip install {package}`). Note `kartograf` is only available with conda."
 )
 
 
