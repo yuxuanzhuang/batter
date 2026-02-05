@@ -97,14 +97,12 @@ check_min_energy() {
     fi
 
     # Only check the last energy block for overflow markers.
-    if awk '
-        /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {block=""; inblock=1}
-        inblock {block = block $0 "\n"}
-        inblock && NF==0 {inblock=0}
-        END {print block}
-    ' "$energy_file" | grep -q "********"; then
-        echo "Error: Overflow detected in last energy block of $energy_file"
-        return 1
+    last_hdr=$(awk '/^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {ln=NR} END {print ln+0}' "$energy_file")
+    if [[ "$last_hdr" -gt 0 ]]; then
+        if awk -v start="$last_hdr" -v end="$((last_hdr+60))" 'NR>=start && NR<=end {print}' "$energy_file" | grep -q "********"; then
+            echo "Error: Overflow detected in last energy block of $energy_file"
+            return 1
+        fi
     fi
 
     if ! [[ $energy_value =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
