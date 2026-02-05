@@ -7,6 +7,7 @@ from typing import List
 
 from loguru import logger
 
+from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter._internal.ops.remd import patch_batch_component_inputs
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "remd_run_files"
@@ -16,7 +17,9 @@ CHECK_TEMPLATE = (
 )
 
 
-def prepare_batch_component(comp_dir: Path, comp: str, n_windows: int) -> List[Path]:
+def prepare_batch_component(
+    comp_dir: Path, comp: str, n_windows: int, *, hmr: bool = True
+) -> List[Path]:
     """
     Patch batch mdin templates and write helper scripts under ``comp_dir``.
 
@@ -28,6 +31,7 @@ def prepare_batch_component(comp_dir: Path, comp: str, n_windows: int) -> List[P
     if RUN_TEMPLATE.exists():
         text = RUN_TEMPLATE.read_text()
         text = text.replace("COMPONENT", comp).replace("NWINDOWS", str(n_windows))
+        text = rewrite_prmtop_reference(text, hmr=hmr)
         run_local = comp_dir / "run-local-batch.bash"
         run_local.write_text(text)
         try:

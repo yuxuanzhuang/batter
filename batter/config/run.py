@@ -464,7 +464,7 @@ class FESimArgs(BaseModel):
     )
     eq_steps: int = Field(
         1_000_000,
-        gt=0,
+        ge=0,
         description="Total equilibration steps (entire equilibration run).",
     )
     n_steps: Dict[str, int] = Field(
@@ -651,7 +651,7 @@ class MDSimArgs(BaseModel):
     )
     eq_steps: int = Field(
         100_000,
-        gt=0,
+        ge=0,
         description="Total equilibration steps (entire equilibration run).",
     )
     ntpr: int = Field(100, description="Energy print frequency.")
@@ -673,6 +673,56 @@ class MDSimArgs(BaseModel):
     @classmethod
     def _coerce_hmr(cls, v):
         return coerce_yes_no(v) or "no"
+
+
+class RBFENetworkArgs(BaseModel):
+    """
+    RBFE network mapping controls.
+
+    Users can specify a mapping strategy by name (``mapping``) or provide
+    an explicit mapping file (``mapping_file``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mapping: Optional[str] = Field(
+        "default",
+        description="Mapping strategy name (e.g., 'default', 'konnektor').",
+    )
+    konnektor_layout: Optional[str] = Field(
+        None,
+        description="Optional Konnektor layout name (e.g., 'star', 'radial', 'maximal') used when mapping='konnektor'.",
+    )
+    both_directions: bool = Field(
+        False,
+        description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
+    )
+    mapping_file: Optional[Path] = Field(
+        None,
+        description="Optional path to a mapping file (JSON/YAML/text).",
+    )
+
+    def resolve_paths(self, base: Path) -> "RBFENetworkArgs":
+        mf = self.mapping_file
+        if mf is not None and not mf.is_absolute():
+            mf = (base / mf).resolve()
+        return self.model_copy(update={"mapping_file": mf})
+
+    @field_validator("mapping", mode="before")
+    @classmethod
+    def _lower_mapping(cls, v):
+        if v is None:
+            return None
+        text = str(v).strip()
+        return text.lower() if text else None
+
+    @model_validator(mode="after")
+    def _validate_mapping(self) -> "RBFENetworkArgs":
+        if self.mapping_file is None and not self.mapping:
+            raise ValueError(
+                "rbfe.mapping or rbfe.mapping_file must be provided."
+            )
+        return self
 
 
 class RunSection(BaseModel):
@@ -727,6 +777,10 @@ class RunSection(BaseModel):
     )
     dry_run: bool = Field(
         False, description="Force dry-run mode regardless of YAML setting."
+    )
+    clean_failures: bool = Field(
+        False,
+        description="Clear FAILED markers and progress caches before rerunning.",
     )
     remd: Literal["yes", "no"] = Field(
         "no",
@@ -807,7 +861,7 @@ class RunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(1, description="Schema version of the run configuration.")
-    protocol: Literal["abfe", "asfe", "md"] = Field(
+    protocol: Literal["abfe", "rbfe", "asfe", "md"] = Field(
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(
@@ -820,6 +874,9 @@ class RunConfig(BaseModel):
     )
     run: RunSection = Field(
         ..., description="Execution controls and artifact destination."
+    )
+    rbfe: RBFENetworkArgs | None = Field(
+        default=None, description="RBFE network mapping configuration."
     )
 
     @model_validator(mode="after")
@@ -837,6 +894,12 @@ class RunConfig(BaseModel):
         else:
             payload = dict(current or {})
         self.fe_sim = target.model_validate(payload)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_rbfe_section(self) -> "RunConfig":
+        if self.rbfe is not None and self.protocol != "rbfe":
+            raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
         return self
 
     @field_validator("protocol", mode="before")
@@ -931,7 +994,14 @@ class RunConfig(BaseModel):
         """
         resolved_create = self.create.resolve_paths(base_dir)
         resolved_run = self.run.resolve_paths(base_dir)
-        return self.model_copy(update={"create": resolved_create, "run": resolved_run})
+        resolved_rbfe = self.rbfe.resolve_paths(base_dir) if self.rbfe else None
+        return self.model_copy(
+            update={
+                "create": resolved_create,
+                "run": resolved_run,
+                "rbfe": resolved_rbfe,
+            }
+        )
 
 
 RunConfig.model_rebuild()

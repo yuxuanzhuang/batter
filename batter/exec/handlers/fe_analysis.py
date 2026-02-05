@@ -81,6 +81,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     fe_root = system.root / "fe"
     if not fe_root.exists():
         raise FileNotFoundError(f"[analyze:{lig}] Missing FE folder: {fe_root}")
+    is_rbfe_pair = str(system.meta.get("mode", "")).upper() == "RBFE"
 
     default_components = components_under(fe_root)
     components: List[str] = list(default_components)
@@ -110,6 +111,12 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     water_model = str(payload.get("water_model", water_model)).lower()
     rocklin_correction = bool(payload.get("rocklin_correction", rocklin_correction))
     n_workers = int(payload.get("n_workers", n_workers))
+
+    # RBFE pair analysis is currently x-component only.
+    if is_rbfe_pair:
+        if (fe_root / "x").exists():
+            components = ["x"]
+        rocklin_correction = False
 
     # Optional: analysis start step override; else use config default
     sim_start_step = int(payload.get("analysis_start_step", sim_start_step or 0))
@@ -159,8 +166,31 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         ts_png = results_dir / "fe_timeseries.png"
         if ts_png.exists():
             arts["fe_timeseries_png"] = ts_png
+        if is_rbfe_pair and res_file.exists():
+            summary_path = results_dir / "rbfe_pair_summary.json"
+            total_fe = None
+            total_se = None
+            for raw in res_file.read_text().splitlines():
+                parts = [p for p in raw.replace("\t", " ").split() if p]
+                if len(parts) >= 3 and parts[0].lower() == "total":
+                    try:
+                        total_fe = float(parts[1])
+                        total_se = float(parts[2])
+                    except ValueError:
+                        pass
+                    break
+            summary = {
+                "pair_id": system.meta.get("pair_id", lig),
+                "ligand_ref": system.meta.get("ligand_ref"),
+                "ligand_alt": system.meta.get("ligand_alt"),
+                "total_dg_kcal_mol": total_fe,
+                "total_se_kcal_mol": total_se,
+                "components": components,
+            }
+            summary_path.write_text(json.dumps(summary, indent=2) + "\n")
+            arts["rbfe_pair_summary_json"] = summary_path
 
-    analyzed_finished = fe_root / "artifacts" / "analyze.ok"
+    analyzed_finished = fe_root / "analyze.ok"
     open(analyzed_finished, "w").close()
 
     analyze_rel = analyzed_finished.relative_to(system.root).as_posix()

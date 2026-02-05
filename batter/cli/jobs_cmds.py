@@ -27,7 +27,11 @@ def _parse_jobname(jobname: str) -> dict[str, Optional[object]] | None:
 
     system_root, tail = body.split("/simulations/", 1)
     if "/" in tail:
-        tail = tail.split("/", 1)[0]
+        head, rest = tail.split("/", 1)
+        if head == "transformations":
+            tail = rest
+        else:
+            tail = head
 
     if not tail:
         return None
@@ -242,7 +246,13 @@ def report_jobs(partition=None, detailed=False):
     required=True,
     help="Cancel all jobs whose SLURM job name contains this substring (match against full 'fep_...').",
 )
-def cancel_jobs(contains: str):
+@click.option(
+    "--batch-size",
+    default=500,
+    show_default=True,
+    help="How many job IDs to pass to scancel per call.",
+)
+def cancel_jobs(contains: str, batch_size: int):
     """Cancel all SLURM jobs whose names contain ``contains``."""
     try:
         res = subprocess.run(
@@ -270,8 +280,9 @@ def cancel_jobs(contains: str):
         return
 
     click.echo(f"Cancelling {len(ids)} job(s)")
-    for i in range(0, len(ids), 30):
-        batch = ids[i : i + 30]
+    batch_size = max(1, int(batch_size))
+    for i in range(0, len(ids), batch_size):
+        batch = ids[i : i + batch_size]
         try:
             subprocess.run(["scancel"] + batch, check=True)
         except subprocess.CalledProcessError as e:

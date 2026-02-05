@@ -8,7 +8,12 @@ from .payloads import StepPayload, SystemParams
 from .pipeline import Pipeline
 from .step import Step
 
-__all__ = ["make_abfe_pipeline", "make_asfe_pipeline", "make_md_pipeline"]
+__all__ = [
+    "make_abfe_pipeline",
+    "make_asfe_pipeline",
+    "make_rbfe_pipeline",
+    "make_md_pipeline",
+]
 
 
 def _step(
@@ -148,6 +153,155 @@ def make_abfe_pipeline(
             "prepare_fe",
             "prepare_fe_windows",
             "fe_equil"
+        }
+        steps = [s for s in steps if s.name in keep]
+
+    return Pipeline(steps)
+
+
+def make_rbfe_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """
+    RBFE pipeline:
+
+    Adds RBFE pre-equilibration steps before transformation prep.
+    """
+    steps: List[Step] = []
+    params_model = (
+        sys_params
+        if isinstance(sys_params, SystemParams)
+        else SystemParams.model_validate(sys_params or {})
+    )
+
+    # 0) system prep — runs once at system root
+    steps.append(
+        _step(
+            name="system_prep",
+            requires=[],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            name="param_ligands",
+            requires=["system_prep"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+
+    # Per-ligand steps
+    steps.append(
+        _step(
+            "prepare_equil",
+            requires=["param_ligands"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "equil",
+            requires=["prepare_equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "equil_analysis",
+            requires=["equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "pre_prepare_fe",
+            requires=["equil_analysis"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "pre_fe_equil",
+            requires=["pre_prepare_fe"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "prepare_fe",
+            requires=["pre_fe_equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "prepare_fe_windows",
+            requires=["prepare_fe"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "fe_equil",
+            requires=["prepare_fe_windows"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "fe",
+            requires=["fe_equil"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+    steps.append(
+        _step(
+            "analyze",
+            requires=["fe"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
+
+    if only_fe_preparation:
+        keep = {
+            "system_prep",
+            "param_ligands",
+            "prepare_equil",
+            "equil",
+            "equil_analysis",
+            "pre_prepare_fe",
+            "pre_fe_equil",
+            "prepare_fe",
+            "prepare_fe_windows",
+            "fe_equil",
         }
         steps = [s for s in steps if s.name in keep]
 

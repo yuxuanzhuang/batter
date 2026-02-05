@@ -57,53 +57,63 @@ check_sim_failure() {
 }
 
 check_min_energy() {
-    local energy_file=$1
-    local threshold=$2
+    local energy_file="$1"
+    local threshold="$2"
 
     local energy_value source_label
-    energy_value=$(awk '/FINAL RESULTS/,/EAMBER/ { if ($1 == "EAMBER") { print $3; exit } }' "$energy_file")
-    source_label="EAMBER energy"
 
-    if [[ -z $energy_value ]]; then
+    # 1) Try last EAMBER in the file (most direct)
+    energy_value=$(awk '
+        $1=="EAMBER" && $2=="=" { v=$3 }
+        END { if (v!="") print v }
+    ' "$energy_file")
+    source_label="EAMBER"
+
+    # 2) Fallback: last ENERGY from the NSTEP table (take the second column of the data line)
+    if [[ -z "$energy_value" ]]; then
         energy_value=$(awk '
-            /FINAL RESULTS/ { in_final=1; next }
-            in_final && /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {
-                if (getline line) {
-                    split(line, fields)
-                    if (length(fields) >= 2) found=fields[2]
-                }
+            /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ { in_tbl=1; next }
+            in_tbl && NF>=2 {
+                # data lines usually start with an integer step
+                if ($1 ~ /^[0-9]+$/) v=$2
             }
-            END { if (found) print found }
+            END { if (v!="") print v }
         ' "$energy_file")
-        source_label="ENERGY (NSTEP table)"
+        source_label="ENERGY"
     fi
 
-    if [[ -z $energy_value ]]; then
-        energy_value=$(awk '
-            /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {
-                if (getline line) {
-                    split(line, fields)
-                    if (length(fields) >= 2) last=fields[2]
-                }
-            }
-            END { if (last) print last }
-        ' "$energy_file")
-        source_label="ENERGY (NSTEP table)"
-    fi
-
-    if [[ -z $energy_value ]]; then
+    if [[ -z "$energy_value" ]]; then
         echo "Error: Could not find EAMBER or ENERGY in $energy_file"
         return 2
     fi
 
-    if ! [[ $energy_value =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
+    # 3) Overflow detection (only look for stars in energy fields)
+    # - ENERGY column in NSTEP table: second field becomes ********
+    # - EAMBER line: value after '=' becomes ********
+    if tail -n 600 "$energy_file" | awk '
+        # NSTEP table overflow
+        /^[[:space:]]*[0-9]+[[:space:]]+\*{6,}/ { exit 0 }
+        # EAMBER overflow
+        $1=="EAMBER" && $2=="=" && $3 ~ /\*{6,}/ { exit 0 }
+        END { exit 1 }
+    '; then
+        echo "Error: Overflow detected in ENERGY/EAMBER field in $energy_file"
+        return 1
+    fi
+
+    # 4) Validate numeric
+    if ! [[ "$energy_value" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
         echo "Error: Energy value '$energy_value' is not a valid number"
         return 1
     fi
 
-    local formatted_value
-    formatted_value=$(printf "%.4f" "$energy_value")
-    echo "$source_label: $formatted_value kcal/mol (threshold: $threshold)"
+    # 5) Catch absurd energies (blow-up heuristic)
+    if awk -v val="$energy_value" 'BEGIN { exit (val < -1.0e8 || val > 1.0e8) ? 0 : 1 }'; then
+        echo "Error: Energy magnitude too large: $energy_value"
+        return 1
+    fi
+
+    printf "%s: %.4f kcal/mol (threshold: %s)\n" "$source_label" "$energy_value" "$threshold"
 
     if awk -v val="$energy_value" -v thr="$threshold" 'BEGIN { exit (val < thr ? 0 : 1) }'; then
         echo "Energy is below threshold."
@@ -283,6 +293,8 @@ reduce_dt_on_failure() {
         }
     ' "$tmpl" > "${tmpl}.tmp" && mv "${tmpl}.tmp" "$tmpl"
 
+    # remove old sims if there's any.
+    rm md-*
     echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 

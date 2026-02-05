@@ -170,26 +170,40 @@ def test_run_phase_skipping_done_allows_prune_on_backend_error(tmp_path):
 
 
 def test_spec_satisfied_writes_progress(tmp_path):
-    target = tmp_path / "foo" / "FINISHED"
+    run_root = tmp_path / "run"
+    root = run_root / "simulations" / "LIG1"
+    (run_root / "artifacts").mkdir(parents=True)
+    (run_root / "simulations").mkdir(parents=True)
+    target = root / "foo" / "FINISHED"
     target.parent.mkdir(parents=True)
     target.write_text("")
     spec = [["foo/FINISHED"]]
 
-    assert _spec_satisfied(tmp_path, spec, "fe") is True
+    assert _spec_satisfied(root, spec, "fe") is True
 
-    progress = tmp_path / "fe" / "artifacts" / "progress" / "fe.csv"
+    progress = run_root / "artifacts" / "progress" / "fe" / "simulations__LIG1.csv"
     assert progress.exists()
     assert "foo/FINISHED" in progress.read_text()
 
 
 def test_prepare_fe_progress_path(tmp_path):
-    target = tmp_path / "foo" / "FINISHED"
+    run_root = tmp_path / "run"
+    root = run_root / "simulations" / "LIG1"
+    (run_root / "artifacts").mkdir(parents=True)
+    (run_root / "simulations").mkdir(parents=True)
+    target = root / "foo" / "FINISHED"
     target.parent.mkdir(parents=True)
     target.write_text("")
     spec = [["foo/FINISHED"]]
 
-    assert _spec_satisfied(tmp_path, spec, "prepare_fe") is True
+    assert _spec_satisfied(root, spec, "prepare_fe") is True
 
-    progress = tmp_path / "fe" / "artifacts" / "progress" / "prepare_fe.csv"
+    progress = (
+        run_root
+        / "artifacts"
+        / "progress"
+        / "prepare_fe"
+        / "simulations__LIG1.csv"
+    )
     assert progress.exists()
     assert "foo/FINISHED" in progress.read_text()

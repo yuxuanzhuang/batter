@@ -6,7 +6,12 @@ from typing import Optional
 
 from batter.pipeline.pipeline import Pipeline
 from batter.config.simulation import SimulationConfig
-from batter.pipeline.factory import make_abfe_pipeline, make_asfe_pipeline, make_md_pipeline
+from batter.pipeline.factory import (
+    make_abfe_pipeline,
+    make_asfe_pipeline,
+    make_md_pipeline,
+    make_rbfe_pipeline,
+)
 from batter.pipeline.payloads import SystemParams
 
 
@@ -23,7 +28,7 @@ def select_pipeline(
     Parameters
     ----------
     protocol : str
-        Name of the requested protocol (``"abfe"``, ``"asfe"``, or ``"md"``).
+        Name of the requested protocol (``"abfe"``, ``"rbfe"``, ``"asfe"``, or ``"md"``).
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
@@ -40,8 +45,6 @@ def select_pipeline(
     ------
     ValueError
         If the protocol name is not recognised.
-    NotImplementedError
-        Raised for protocols that are planned but not yet available (e.g., RBFE).
     """
     name = (protocol or "abfe").lower()
     params_model = (
@@ -73,5 +76,10 @@ def select_pipeline(
             extra=extra,
         )
     if name == "rbfe":
-        raise NotImplementedError("RBFE protocol is not yet implemented.")
+        return make_rbfe_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+            extra=extra,
+        )
     raise ValueError(f"Unsupported protocol: {protocol!r}")

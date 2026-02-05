@@ -32,6 +32,8 @@ Options:
    Emit an ``sbatch`` script and submit the job instead of running locally.
 ``--slurm-manager-path PATH``
    Optional path to a custom SLURM header/body pair for the manager submission.
+``--partition / -p``
+   Override ``run.slurm.partition`` from the YAML.
 
 Resume an existing execution (no YAML needed once seeded)::
 

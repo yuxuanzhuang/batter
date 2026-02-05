@@ -288,12 +288,12 @@ def run_analysis_from_execution(
     def _analysis_outputs_present(fe_root: Path) -> bool:
         return (
             (fe_root / "Results" / "Results.dat").exists()
-            and (fe_root / "artifacts" / "analyze.ok").exists()
+            and (fe_root / "analyze.ok").exists()
         )
 
     def _clear_analysis_outputs(fe_root: Path) -> None:
         shutil.rmtree(fe_root / "Results", ignore_errors=True)
-        (fe_root / "artifacts" / "analyze.ok").unlink(missing_ok=True)
+        (fe_root / "analyze.ok").unlink(missing_ok=True)
 
     skipped = 0
     for child in tqdm(children, desc="Running analysis", unit="ligand"):

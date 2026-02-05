@@ -8,6 +8,7 @@ from pathlib import Path
 from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
+from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter._internal.templates import RUN_FILES_DIR as run_files_orig
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
@@ -21,7 +22,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
     sim = ctx.sim
     ligand_name = ctx.ligand
     work = Path(ctx.working_dir)
-    hmr = ctx.sim.hmr
+    hmr = str(ctx.sim.hmr).lower() == "yes"
 
     logger.debug(f"[Equil] Creating run scripts in {work}")
 
@@ -46,10 +47,7 @@ def write_equil_run_files(ctx: BuildContext, stage: str) -> None:
                 .replace("SYSTEMNAME", sim.system_name)
         )
 
-        if hmr:
-            text = text.replace("full.prmtop", "full.hmr.prmtop")
-        else:
-            text = text.replace("full.prmtop", "full.prmtop")
+        text = rewrite_prmtop_reference(text, hmr=hmr)
         dst.write_text(text)
 
         try:
@@ -90,15 +88,17 @@ def write_fe_run_file(
     pose = ctx.ligand
     comp = ctx.comp
     win_idx = ctx.win if ctx.win != -1 else 0
-    hmr = ctx.sim.hmr
+    hmr = str(ctx.sim.hmr).lower() == "yes"
     n_windows = len(lambdas)
 
     # templates (fail clearly if missing)
     tpl_check = src_dir / "check_run.bash"
-    if comp != "m":
-        tpl_local = src_dir / "run-local.bash"
-    else:
+    if comp == "m":
         tpl_local = src_dir / "run-local-vacuum.bash"
+    elif comp == "x":
+        tpl_local = src_dir / "run-local-rbfe.bash"
+    else:
+        tpl_local = src_dir / "run-local.bash"
 
     tpl_slurm = src_dir / "SLURMM-Am"
     if not hasattr(ctx.sim, "system_name"):
@@ -120,8 +120,7 @@ def write_fe_run_file(
         txt.replace("NWINDOWS", str(n_windows))
            .replace("COMPONENT", comp)
     )
-    if hmr:
-        txt = txt.replace("full.prmtop", "full.hmr.prmtop")
+    txt = rewrite_prmtop_reference(txt, hmr=hmr)
 
     out_local.write_text(txt)
     os.chmod(out_local, 0o755)

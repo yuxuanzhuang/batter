@@ -52,70 +52,8 @@ fi
 report_progress
 
 if [[ $only_eq -eq 1 ]]; then
-    # Minimization
-    # if mini_eq is found use mini_eq.in
-    if [[ -f mini_eq.in ]]; then
-        echo "Using mini_eq.in for minimization."
-    else
-        echo "mini_eq.in not found, using mini.in instead."
-        cp mini.in mini_eq.in
-    fi
-    print_and_run "$PMEMD_DPFP_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-    check_sim_failure "Minimization" "$log_file" mini.rst7
-    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-    else
-        print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-    fi
-    check_sim_failure "Minimization" "$log_file" mini2.rst7
-
-    if ! check_min_energy "mini2.out" -1000; then
-        echo "Minimization not passed with cuda; try CPU"
-        rm -f "$log_file"
-        rm -f mini.rst7 mini.nc mini.out
-        rm -f mini2.rst7 mini2.nc mini2.out
-        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        else
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-        fi
-        check_sim_failure "Minimization" "$log_file" mini.rst7
-        check_sim_failure "Minimization" "$log_file" mini2.rst7
-
-        if ! check_min_energy "mini2.out" -1000; then
-            echo "Minimization with CPU also failed, exiting."
-            rm -f mini.rst7 mini.nc mini.out
-            rm -f mini2.rst7 mini2.nc mini2.out
-            exit 1
-        fi
-    fi
-
-    if [[ $overwrite -eq 0 && -s eqnpt04.rst7 ]]; then
-        echo "Skipping equilibration steps."
-    else
-        # Equilibration with protein and lipid restrained
-        # this is to equilibrate the density of water
-        # Note we are not using the GPU version here
-        # because for large box size change, an error will be raised.
-        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
-        else
-            print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
-        fi
-        check_sim_failure "Pre equilibration" "$log_file" eqnpt_pre.rst7
-
-        # Equilibration with protein restrained
-        print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
-        check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
-        for step in {1..4}; do
-            prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
-            curr=$(printf "eqnpt%02d" $step)
-            print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
-            check_sim_failure "Equilibration stage $step" "$log_file" ${curr}.rst7 $prev $retry
-        done
-    fi
+    # no equilibration needed here; just seed a restart
+    cp "$INPCRD" mini.rst7
 
     if [[ $skip_window_eq -eq 1 ]]; then
         echo "Skipping per-window equilibration (SKIP_WINDOW_EQ=1)."
@@ -128,16 +66,15 @@ if [[ $only_eq -eq 1 ]]; then
             else
                 echo "Running equilibration for window $i"
                 cd $win_folder
-                print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
-                check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
+                print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/mini.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/mini.rst7 >> \"$log_file\" 2>&1"
                 if ! check_min_energy "mini.in.out" -1000; then
                     echo "Minimization not passed with cuda; try CPU"
                     rm -f "$log_file"
                     rm -f mini.in.rst7 mini.in.nc mini.in.out
                     if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-                        print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
+                        print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/mini.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/mini.rst7 >> \"$log_file\" 2>&1"
                     else
-                        print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
+                        print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/mini.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/mini.rst7 >> \"$log_file\" 2>&1"
                     fi
                     check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
                     if ! check_min_energy "mini.in.out" -1000; then
@@ -153,7 +90,7 @@ if [[ $only_eq -eq 1 ]]; then
         done
     fi
 
-    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
