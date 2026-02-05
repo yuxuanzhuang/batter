@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Dict, Tuple, List
 
@@ -12,7 +13,10 @@ from batter.config.simulation import SimulationConfig
 from batter.runtime.fe_repo import FEResultsRepository, FERecord
 from batter.systems.core import SimSystem
 
-def parse_results_dat(path: Path) -> Tuple[float | None, float | None, Dict[str, float]]:
+
+def parse_results_dat(
+    path: Path,
+) -> Tuple[float | None, float | None, Dict[str, float]]:
     """Parse ``fe/Results/Results.dat`` and return totals plus per-component values.
 
     The file is expected to contain rows with ``LABEL FE SE``. ``total`` rows set the
@@ -115,6 +119,7 @@ def save_fe_records(
     repo: FEResultsRepository,
     protocol: str,
     original_map: Dict[str, str] | None = None,
+    analysis_start_step: int | None = None,
 ) -> list[tuple[str, str, str]]:
     """Persist FE totals for all ligands to the FE repository, recording failures.
 
@@ -124,12 +129,18 @@ def save_fe_records(
     ``(ligand, status, reason)`` tuples.
     """
     failures: list[tuple[str, str, str]] = []
-    analysis_range = None
+    analysis_start_step_val = analysis_start_step
+    if analysis_start_step_val is None:
+        analysis_start_step_val = getattr(sim_cfg_updated, "analysis_start_step", None)
+    if analysis_start_step_val is not None:
+        analysis_start_step_val = int(analysis_start_step_val)
+    protein_align = getattr(sim_cfg_updated, "protein_align", None)
     for child in children_all:
         lig_name = child.meta["ligand"]
         mol_name = child.meta["residue_name"]
         results_dir = child.root / "fe" / "Results"
         total_dG, total_se = None, None
+        is_rbfe = str(child.meta.get("mode", "")).upper() == "RBFE"
 
         dat = results_dir / "Results.dat"
         if dat.exists():
@@ -161,8 +172,38 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
-                sim_range=analysis_range,
+                analysis_start_step=analysis_start_step_val,
             )
+            if is_rbfe:
+                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
+                ref = child.meta.get("ligand_ref")
+                alt = child.meta.get("ligand_alt")
+                res_ref = child.meta.get("residue_ref") or mol_name
+                res_alt = child.meta.get("residue_alt")
+                if ref:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_ref,
+                        run_dir / "simulations" / ref / "equil",
+                        protein_align,
+                        dest_subdir="Equil_ref",
+                    )
+                if alt:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_alt or mol_name,
+                        run_dir / "simulations" / alt / "equil",
+                        protein_align,
+                        dest_subdir="Equil_alt",
+                    )
+            else:
+                _copy_equil_artifacts(
+                    repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+                )
             logger.warning(f"[{lig_name}] No totals found under {results_dir}")
             continue
 
@@ -187,9 +228,43 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
-                sim_range=analysis_range,
+                analysis_start_step=analysis_start_step_val,
             )
             repo.save(rec, copy_from=results_dir)
+            if is_rbfe:
+                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
+                _copy_kartograf_artifacts(
+                    child.root / "fe" / "x" / "x-1",
+                    repo.ligand_dir(run_id, lig_name),
+                )
+                ref = child.meta.get("ligand_ref")
+                alt = child.meta.get("ligand_alt")
+                res_ref = child.meta.get("residue_ref") or mol_name
+                res_alt = child.meta.get("residue_alt")
+                if ref:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_ref,
+                        run_dir / "simulations" / ref / "equil",
+                        protein_align,
+                        dest_subdir="Equil_ref",
+                    )
+                if alt:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_alt or mol_name,
+                        run_dir / "simulations" / alt / "equil",
+                        protein_align,
+                        dest_subdir="Equil_alt",
+                    )
+            else:
+                _copy_equil_artifacts(
+                    repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+                )
             logger.info(
                 f"Saved FE record for ligand {lig_name}"
                 f"(ΔG={total_dG:.2f} ± {total_se:.2f} kcal/mol; run_id={run_id})"
@@ -209,7 +284,122 @@ def save_fe_records(
                 original_name=original_name,
                 original_path=original_path,
                 protocol=protocol,
-                sim_range=analysis_range,
+                analysis_start_step=analysis_start_step_val,
             )
+            if is_rbfe:
+                _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
+                ref = child.meta.get("ligand_ref")
+                alt = child.meta.get("ligand_alt")
+                res_ref = child.meta.get("residue_ref") or mol_name
+                res_alt = child.meta.get("residue_alt")
+                if ref:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_ref,
+                        run_dir / "simulations" / ref / "equil",
+                        protein_align,
+                        dest_subdir="Equil_ref",
+                    )
+                if alt:
+                    _copy_equil_artifacts(
+                        repo,
+                        run_id,
+                        lig_name,
+                        res_alt or mol_name,
+                        run_dir / "simulations" / alt / "equil",
+                        protein_align,
+                        dest_subdir="Equil_alt",
+                    )
+            else:
+                _copy_equil_artifacts(
+                    repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
+                )
 
     return failures
+
+
+def _copy_equil_artifacts(
+    repo: FEResultsRepository,
+    run_id: str,
+    ligand: str,
+    mol_name: str,
+    equil_dir: Path,
+    protein_align: str | None,
+    *,
+    dest_subdir: str = "Equil",
+) -> None:
+    if not equil_dir.exists():
+        logger.warning(
+            f"Equilibration directory {equil_dir} does not exist; skipping copy."
+        )
+        return
+    dest_dir = repo.ligand_dir(run_id, ligand) / dest_subdir
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    candidates_map = {
+        "equilibration_analysis_results.npz": "equilibration_analysis_results.npz",
+        "simulation_analysis.png": "simulation_analysis.png",
+        "dihed_hist.png": "dihed_hist.png",
+        "representative.pdb": "representative.pdb",
+        "representative_complex.pdb": "representative_complex.pdb",
+        "representative_pose.pdb": "representative_pose.pdb",
+        "initial_pose.pdb": "initial_pose.pdb",
+        f"{mol_name}.sdf": f"{mol_name}.sdf",
+        f"{mol_name}.prmtop": f"{mol_name}.prmtop",
+        f"{mol_name}.pdb": f"{mol_name}.pdb",
+        f"full.pdb": f"initial_complex.pdb",
+    }
+
+    for name in candidates_map:
+        src = equil_dir / name
+        if src.exists():
+            shutil.copy2(src, dest_dir / candidates_map[name])
+        else:
+            logger.warning(f"Equilibration artifact {src} not found; skipping copy.")
+
+    # add README file
+    readme_path = dest_dir / "README.txt"
+    with open(readme_path, "w") as f:
+        f.write(
+            "This directory contains equilibration artifacts for the ligand.\n"
+            "Files may include analysis results, representative structures, and input files.\n"
+            "These were copied from the equilibration phase for reference.\n\n\n"
+            f"File list:\n"
+            f"- equilibration_analysis_results.npz: NumPy archive with equilibration analysis data.\n"
+            f"- simulation_analysis.png: Plot of equilibration simulation metrics over time.\n"
+            f"- dihed_hist.png: Histogram of dihedral angle distributions during equilibration.\n"
+            f"- representative.pdb: Representative snapshot from equilibration that is used for further FEP.\n\n"
+            f"- {mol_name}.sdf: Ligand structure file in SDF format.\n"
+            f"- {mol_name}.prmtop: AMBER parameter/topology file for the ligand.\n"
+            f"- {mol_name}.pdb: PDB structure file for the ligand.\n\n"
+            f"- initial_complex.pdb: Initial complex structure used for equilibration.\n"
+            f"- representative_complex.pdb: Aligned representative structure to initial complex.\n"
+            f"- initial_pose.pdb: Initial ligand pose extracted from the initial complex.\n"
+            f"- representative_pose.pdb: Representative ligand pose extracted from the representative complex.\n"
+        )
+
+
+def _copy_kartograf_artifacts(src_dir: Path, dest_root: Path) -> None:
+    """Copy Kartograf mapping artifacts if present in the source directory."""
+    if not src_dir.exists():
+        return
+    dest_dir = dest_root / "Results"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for src in src_dir.glob("kartograf*"):
+        if src.is_file():
+            shutil.copy2(src, dest_dir / src.name)
+
+
+def _copy_rbfe_network_plot(
+    run_dir: Path, repo: FEResultsRepository, run_id: str, ligand: str
+) -> None:
+    src = run_dir / "artifacts" / "config" / "rbfe_network.png"
+    if not src.exists():
+        return
+    dest_dir = repo.ligand_dir(run_id, ligand) / "Results"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copy2(src, dest_dir / src.name)
+    except Exception:
+        pass

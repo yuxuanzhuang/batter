@@ -7,6 +7,7 @@ import re
 from loguru import logger
 
 from batter.config.simulation import SimulationConfig
+from batter._internal.ops.helpers import rewrite_prmtop_reference
 from batter.utils.components import COMPONENTS_DICT
 from batter.utils.slurm_templates import render_slurm_with_header_body, render_slurm_body
 
@@ -234,6 +235,36 @@ def patch_component_inputs(
     return patched
 
 
+def patch_batch_component_inputs(comp_dir: Path, comp: str) -> List[Path]:
+    """
+    Prepare batch-specific mdin copies:
+      - mdin-template → mdin-batch-template (paths rewritten relative to comp_dir)
+
+    Only production windows (comp00, comp01, ...) are touched; the scaffold
+    window (comp-1) is left intact.
+    """
+    patched: List[Path] = []
+    for window_dir in _component_window_dirs(comp_dir, comp):
+        if window_dir.name == f"{comp}-1":
+            continue
+        prefix = window_dir.relative_to(comp_dir).as_posix()
+        base_template = window_dir / "mdin-template"
+        tmpl = window_dir / "mdin-batch-template"
+        if not tmpl.exists() and base_template.exists():
+            tmpl.write_text(base_template.read_text())
+            changed = patch_mdin_file(tmpl, prefix, add_numexchg=False)
+            if changed:
+                patched.append(tmpl)
+        elif not tmpl.exists():
+            logger.warning(
+                f"[batch] Missing mdin-template under {window_dir}; cannot write batch template."
+            )
+
+    if patched:
+        logger.debug(f"[batch] Patched {len(patched)} mdin files under {comp_dir}")
+    return patched
+
+
 def _write_groupfile(path: Path, n_windows: int, builder) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as f:
@@ -294,10 +325,15 @@ def write_remd_run_scripts(
 
     gpus = n_windows if n_windows > 0 else 1
 
-    def _copy_template(src: Path, dst: Path, repl: dict[str, str], override_text: str | None = None) -> None:
+    hmr = str(sim.hmr).lower() == "yes"
+
+    def _copy_template(
+        src: Path, dst: Path, repl: dict[str, str], override_text: str | None = None
+    ) -> None:
         text = override_text if override_text is not None else src.read_text()
         for k, v in repl.items():
             text = text.replace(k, v)
+        text = rewrite_prmtop_reference(text, hmr=hmr)
         dst.write_text(text)
 
     run_local_tpl = RUN_TPL["local"]

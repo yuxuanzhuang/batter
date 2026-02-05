@@ -88,8 +88,8 @@ class FERecord(BaseModel):
         Source path of the ligand before staging.
     protocol : str
         Logical protocol used to generate the result (e.g., ``"abfe"``).
-    sim_range : tuple[int, int], optional
-        (start, end) lambda range used for analysis.
+    analysis_start_step : int, optional
+        First production step included in analysis.
     status : {"success","failed","unbound"}
         Final status recorded for the ligand.
     """
@@ -112,21 +112,20 @@ class FERecord(BaseModel):
     original_name: str | None = None
     original_path: str | None = None
     protocol: str = "abfe"
-    sim_range: tuple[int, int] | None = None
+    analysis_start_step: int | None = None
     status: Literal["success", "failed", "unbound"] = "success"
 
-    @field_validator("sim_range", mode="before")
+    @field_validator("analysis_start_step", mode="before")
     @classmethod
-    def _coerce_sim_range(cls, v: Any) -> Any:
-        if v in (None, "", pd.NA):
+    def _coerce_analysis_start_step(cls, v: Any) -> Any:
+        if v is None or v is pd.NA:
             return None
-        if isinstance(v, (list, tuple)) and len(v) == 2:
-            try:
-                return (int(v[0]), int(v[1]))
-            except Exception:
-                return None
-        # legacy ints/strings are ignored to avoid validation failures
-        return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
 
 
 class FEResultsRepository:
@@ -139,6 +138,9 @@ class FEResultsRepository:
     def _lig_dir(self, run_id: str, ligand: str) -> Path:
         return self._root / run_id / ligand
 
+    def ligand_dir(self, run_id: str, ligand: str) -> Path:
+        return self._lig_dir(run_id, ligand)
+
     def _normalize_row(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(row)
         normalized.setdefault("temperature", pd.NA)
@@ -148,7 +150,7 @@ class FEResultsRepository:
         normalized.setdefault("original_name", "")
         normalized.setdefault("original_path", "")
         normalized.setdefault("protocol", "")
-        normalized.setdefault("sim_range", "")
+        normalized.setdefault("analysis_start_step", pd.NA)
         normalized.setdefault(
             "created_at", datetime.now(timezone.utc).isoformat(timespec="seconds")
         )
@@ -171,7 +173,7 @@ class FEResultsRepository:
             "original_name",
             "original_path",
             "protocol",
-            "sim_range",
+            "analysis_start_step",
             "status",
             "failure_reason",
             "created_at",
@@ -233,12 +235,7 @@ class FEResultsRepository:
             shutil.rmtree(lig_dir / "Results", ignore_errors=True)
             shutil.copytree(copy_from, lig_dir / "Results")
         # update index table (append-or-upsert by (run_id, ligand))
-        sim_range_val = rec.sim_range
-        sim_range_str = (
-            f"{sim_range_val[0]}-{sim_range_val[1]}"
-            if sim_range_val is not None
-            else ""
-        )
+        analysis_start_step_val = rec.analysis_start_step
         row = {
             "run_id": rec.run_id,
             "ligand": rec.ligand,
@@ -251,7 +248,11 @@ class FEResultsRepository:
             "original_name": rec.original_name or "",
             "original_path": rec.original_path or "",
             "protocol": rec.protocol,
-            "sim_range": sim_range_str,
+            "analysis_start_step": (
+                int(analysis_start_step_val)
+                if analysis_start_step_val is not None
+                else pd.NA
+            ),
             "created_at": rec.created_at,
             "status": rec.status,
             "failure_reason": pd.NA,
@@ -271,7 +272,7 @@ class FEResultsRepository:
             "original_name",
             "original_path",
             "protocol",
-            "sim_range",
+            "analysis_start_step",
             "created_at",
         ]
         if self._idx.exists():
@@ -282,6 +283,8 @@ class FEResultsRepository:
         for drop in ("fe_type", "components", "method"):
             if drop in df.columns:
                 df = df.drop(columns=[drop])
+        if "sim_range" in df.columns:
+            df = df.drop(columns=["sim_range"])
         # ensure columns exist
         for key in ("status", "failure_reason"):
             if key not in df.columns:
@@ -305,7 +308,7 @@ class FEResultsRepository:
         original_name: str | None = None,
         original_path: str | None = None,
         protocol: str = "abfe",
-        sim_range: tuple[int, int] | None = None,
+        analysis_start_step: int | None = None,
     ) -> None:
         lig_dir = self._lig_dir(run_id, ligand)
         lig_dir.mkdir(parents=True, exist_ok=True)
@@ -318,9 +321,9 @@ class FEResultsRepository:
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         (lig_dir / "failure.json").write_text(json.dumps(failure_detail, indent=2))
-        sim_range_str = ""
-        if isinstance(sim_range, (list, tuple)) and len(sim_range) == 2:
-            sim_range_str = f"{sim_range[0]}-{sim_range[1]}"
+        analysis_start_step_val = (
+            int(analysis_start_step) if analysis_start_step is not None else pd.NA
+        )
         row = {
             "run_id": run_id,
             "ligand": ligand,
@@ -333,7 +336,7 @@ class FEResultsRepository:
             "original_name": original_name or "",
             "original_path": original_path or "",
             "protocol": protocol,
-            "sim_range": sim_range_str,
+            "analysis_start_step": analysis_start_step_val,
             "status": status,
             "failure_reason": reason or "",
             "created_at": failure_detail["timestamp"],

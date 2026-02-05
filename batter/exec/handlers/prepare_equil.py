@@ -47,9 +47,11 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
     working_dir: Path = system.root / "equil"
     comp_windows: dict = payload.get("component_windows", {})
     sys_params = payload.sys_params or SystemParams()
-    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
-    extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
-    extra_conformation_restraints: Optional[Path] = sys_params.get("extra_conformation_restraints", None)
+    extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
+    extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
+    extra_conformation_restraints: Optional[Path] = sys_params.get(
+        "extra_conformation_restraints", None
+    )
     
     infe = bool(sim.infe)
     
@@ -75,15 +77,15 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
         param_dir_dict=param_dir_dict,
         extra={
             "extra_restraints": extra_restraints,
-            "extra_restraints_fc": extra_restraints_fc,
+            "extra_restraint_fc": extra_restraint_fc,
             "extra_conformation_restraints": extra_conformation_restraints,
             "partition": partition,
         }
     )
     def _mark_prepare_equil_failed() -> None:
-        artifacts_dir = system_root / "equil" / "artifacts"
-        os.makedirs(artifacts_dir, exist_ok=True)
-        (artifacts_dir / "prepare_equil.failed").touch()
+        equil_dir = system_root / "equil"
+        os.makedirs(equil_dir, exist_ok=True)
+        (equil_dir / "prepare_equil.failed").touch()
 
     try:
         ok = builder.build()
@@ -94,13 +96,13 @@ def prepare_equil_handler(step: Step, system: SimSystem, params: Dict[str, Any])
         _mark_prepare_equil_failed()
         raise RuntimeError(f"[prepare_equil] anchor detection failed for ligand={ligand}")
 
-    os.makedirs(system_root / "equil" / "artifacts", exist_ok=True)
-    prepare_finished = system_root / "equil" / "artifacts" / "prepare_equil.ok"
+    os.makedirs(system_root / "equil", exist_ok=True)
+    prepare_finished = system_root / "equil" / "prepare_equil.ok"
     open(prepare_finished, "w").close()
 
     prepare_rel = prepare_finished.relative_to(system.root).as_posix()
     full_prmtop = (system_root / "equil" / "full.prmtop").relative_to(system.root).as_posix()
-    failed_rel = (system_root / "equil" / "artifacts" / "prepare_equil.failed").relative_to(
+    failed_rel = (system_root / "equil" / "prepare_equil.failed").relative_to(
         system.root
     ).as_posix()
     register_phase_state(

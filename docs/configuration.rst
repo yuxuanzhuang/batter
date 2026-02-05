@@ -173,6 +173,48 @@ resources per run via the ``run.slurm`` block (partition, time, nodes, ntasks_pe
 Those values are substituted into SLURM scripts when rendered. Combine the two mechanisms by
 setting cluster defaults in the headers and per-run overrides in the YAML when needed.
 
+SLURM configuration block
+-------------------------
+
+The ``run.slurm`` block maps directly onto ``sbatch`` flags. All fields are optional; if a
+value is omitted it will not be added to the submission command. You can also use
+``run.slurm_header_dir`` to point at a custom header directory seeded with
+``batter seed-headers``.
+
+Example:
+
+.. code-block:: yaml
+
+   backend: slurm
+   run:
+     slurm_header_dir: /path/to/slurm_headers
+     slurm:
+       partition: gpu
+       time: "08:00:00"
+       nodes: 2
+       ntasks_per_node: 8
+       mem_per_cpu: "8G"
+       gres: "gpu:8"
+       account: my-account
+       qos: normal
+       constraint: "a100"
+       extra_sbatch:
+         - "--exclusive"
+         - "--mail-type=FAIL"
+
+Supported keys in ``run.slurm``:
+
+* ``partition`` – SLURM partition/queue name (``-p``).
+* ``time`` – Walltime in ``HH:MM:SS`` (``-t``).
+* ``nodes`` – Node count (``-N``).
+* ``ntasks_per_node`` – Tasks per node (``--ntasks-per-node``).
+* ``mem_per_cpu`` – Memory per CPU (``--mem-per-cpu``).
+* ``gres`` – Generic resources, e.g. GPUs (``--gres``).
+* ``account`` – Account/project string (``--account``).
+* ``qos`` – QoS string (``--qos``).
+* ``constraint`` – Constraint string (``--constraint``).
+* ``extra_sbatch`` – Additional ``sbatch`` flags appended verbatim.
+
 Batch mode (single allocation)
 ------------------------------
 

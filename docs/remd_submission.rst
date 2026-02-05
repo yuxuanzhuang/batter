@@ -17,6 +17,6 @@ Key behaviours:
 * The Slurm submit script for REMD is ``SLURMM-BATCH-remd`` sitting in the component folder.
   Submissions use this script directly and rely on the same sentinels above.
 * Job names are formatted as ``fep_<system_root>_<comp>_remd`` so CLI reporting
-  (:func:`batter.cli.run.report_jobs`) can classify them with stage ``remd``.
+  (:func:`batter.cli.jobs_cmds.report_jobs`) can classify them with stage ``remd``.
 
 Keep these conventions in mind if modifying the REMD pipeline or backends.

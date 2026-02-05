@@ -96,6 +96,129 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
         logger.warning(f"Could not store run YAML copy at {dst}: {exc}")
 
 
+def _clear_failure_markers(run_dir: Path) -> None:
+    """Remove FAILED markers and progress caches under a run directory."""
+    sim_root = run_dir / "simulations"
+    if not sim_root.exists():
+        return
+    removed = 0
+    for path in sim_root.rglob("FAILED"):
+        try:
+            path.unlink()
+            removed += 1
+        except Exception:
+            continue
+    for path in sim_root.rglob("progress"):
+        if not path.is_dir():
+            continue
+        for csv in path.glob("*.csv"):
+            try:
+                csv.unlink()
+                removed += 1
+            except Exception:
+                continue
+    if removed:
+        logger.info(f"[cleanup] Removed {removed} failure/progress marker(s).")
+
+    progress_root = run_dir / "artifacts" / "progress"
+    if progress_root.exists():
+        try:
+            shutil.rmtree(progress_root)
+            logger.info(f"[cleanup] Removed progress cache folder: {progress_root}")
+        except Exception:
+            logger.warning(f"[cleanup] Failed to remove progress cache folder: {progress_root}")
+
+
+def _build_rbfe_network_plan(
+    ligands: List[str],
+    lig_map: Dict[str, str],
+    rbfe_cfg,
+    config_dir: Path,
+) -> dict:
+    from batter.rbfe import (
+        RBFENetwork,
+        resolve_mapping_fn,
+        load_mapping_file,
+        konnektor_pairs,
+    )
+    try:
+        import konnektor
+    except ImportError:
+        raise ImportError('konnektor package is not installed, install it with `conda install konnektor`')
+    from batter.config.utils import sanitize_ligand_name
+
+    available = [sanitize_ligand_name(x) for x in ligands if x]
+    if len(available) < 2:
+        raise RuntimeError("RBFE requires at least two ligands.")
+
+    mapping_source: Dict[str, Any] = {}
+    pairs: List[tuple[str, str]] = []
+    if rbfe_cfg.mapping_file:
+        pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
+        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+        mapping_source["mapping_file"] = str(rbfe_cfg.mapping_file)
+    else:
+        mapping_name = rbfe_cfg.mapping or "default"
+        if mapping_name == "konnektor":
+            pairs = konnektor_pairs(
+                available,
+                {name: Path(lig_map[name]) for name in available},
+                layout=rbfe_cfg.konnektor_layout,
+                plot_path=config_dir / "rbfe_network.png",
+            )
+            network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+            mapping_source["mapping"] = "konnektor"
+            if rbfe_cfg.konnektor_layout:
+                mapping_source["konnektor_layout"] = rbfe_cfg.konnektor_layout
+        elif mapping_name in {"default", "star", "first"}:
+            try:
+                pairs = konnektor_pairs(
+                    available,
+                    {name: Path(lig_map[name]) for name in available},
+                    layout="star",
+                    plot_path=config_dir / "rbfe_network.png",
+                )
+                network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+                mapping_source["mapping"] = mapping_name
+                mapping_source["konnektor_layout"] = "star"
+            except Exception as exc:
+                logger.warning(
+                    f"RBFE default mapping requested StarNetworkGenerator but failed "
+                    f"({exc}); falling back to internal default mapping."
+                )
+                mapping_fn = resolve_mapping_fn(mapping_name)
+                network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+                pairs = list(network.pairs)
+                mapping_source["mapping"] = mapping_name
+        else:
+            mapping_fn = resolve_mapping_fn(mapping_name)
+            network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
+            pairs = list(network.pairs)
+            mapping_source["mapping"] = mapping_name
+
+    payload = network.to_mapping()
+    if bool(getattr(rbfe_cfg, "both_directions", False)):
+        bidirectional_pairs: List[List[str]] = []
+        seen: set[tuple[str, str]] = set()
+        for ref, alt in payload.get("pairs", []):
+            for pair in ((ref, alt), (alt, ref)):
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                bidirectional_pairs.append([pair[0], pair[1]])
+        payload["pairs"] = bidirectional_pairs
+        mapping_source["both_directions"] = True
+    payload.update(mapping_source)
+    rbfe_network_path = config_dir / "rbfe_network.json"
+    rbfe_network_path.write_text(json.dumps(payload, indent=2))
+    logger.info(
+        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs."
+    )
+    return payload
+
+
+
+
 def _materialize_extra_conf_restraints(
     source: Path | str | None, run_dir: Path, yaml_dir: Path
 ) -> Path | None:
@@ -268,7 +391,10 @@ def run_from_yaml(
         or rc.create.extra_conformation_restraints,
     }
 
-    sys_exec = SimSystem(name=rc.create.system_name, root=run_dir)
+    base_meta = {}
+    if rc.protocol == "rbfe":
+        base_meta["mode"] = "RBFE"
+    sys_exec = SimSystem(name=rc.create.system_name, root=run_dir, meta=base_meta)
     sys_exec = builder.build(sys_exec, rc.create)
     sig_path.parent.mkdir(parents=True, exist_ok=True)
     sig_path.write_text(config_signature + "\n")
@@ -373,6 +499,16 @@ def run_from_yaml(
     config_dir.mkdir(parents=True, exist_ok=True)
     overrides_path = config_dir / "sim_overrides.json"
     sim_cfg_updated = sim_cfg
+
+    if rc.protocol == "rbfe":
+        rbfe_network_path = config_dir / "rbfe_network.json"
+        if not rbfe_network_path.exists():
+            from batter.config.run import RBFENetworkArgs
+
+            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+            _build_rbfe_network_plan(
+                list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+            )
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
         sim_cfg_updated = sim_cfg.model_copy(
@@ -425,6 +561,8 @@ def run_from_yaml(
     PH_PREPARE_EQUIL = {"prepare_equil"}
     PH_EQUIL = {"equil"}
     PH_EQUIL_ANALYSIS = {"equil_analysis"}
+    PH_PRE_PREPARE_FE = {"pre_prepare_fe"}
+    PH_PRE_FE_EQUIL = {"pre_fe_equil"}
     PH_PREPARE_FE = {"prepare_fe", "prepare_fe_windows"}
     PH_FE_EQUIL = {"fe_equil"}
     PH_FE = {"fe"}
@@ -446,6 +584,8 @@ def run_from_yaml(
     phase_prepare_equil = _phase(PH_PREPARE_EQUIL)
     phase_equil = _phase(PH_EQUIL)
     phase_equil_analysis = _phase(PH_EQUIL_ANALYSIS)
+    phase_pre_prepare_fe = _phase(PH_PRE_PREPARE_FE)
+    phase_pre_fe_equil = _phase(PH_PRE_FE_EQUIL)
     phase_prepare_fe = _phase(PH_PREPARE_FE)
     phase_fe_equil = _phase(PH_FE_EQUIL)
     phase_fe = _phase(PH_FE)
@@ -497,6 +637,10 @@ def run_from_yaml(
         )
     # start with all children
     children = children_all
+    fe_children_all: List[SimSystem] = children_all
+    if getattr(rc.run, "clean_failures", False):
+        _clear_failure_markers(run_dir)
+
     # --------------------
     # PHASE 1: prepare_equil (parallel)
     # --------------------
@@ -516,7 +660,9 @@ def run_from_yaml(
     # --------------------
     # PHASE 2: equil (parallel) → must COMPLETE for all ligands
     # --------------------
-    def _inject_mgr(p: Pipeline, stage_name: str) -> Pipeline:
+    def _inject_mgr(
+        p: Pipeline, stage_name: str, extra_payload: dict[str, Any] | None = None
+    ) -> Pipeline:
         job_mgr.set_stage(stage_name)
         patched = []
         for s in p.ordered_steps():
@@ -528,6 +674,16 @@ def run_from_yaml(
             updates["batch_run_root"] = run_dir / "batch_run"
             updates["batch_gpus"] = getattr(rc.run, "batch_gpus", None)
             updates["batch_gpus_per_task"] = getattr(rc.run, "batch_gpus_per_task", 1)
+            if extra_payload:
+                updates.update(extra_payload)
+            payload = base_payload.copy_with(**updates)
+            patched.append(Step(name=s.name, requires=s.requires, payload=payload))
+        return Pipeline(patched)
+
+    def _inject_payload(p: Pipeline, **updates: Any) -> Pipeline:
+        patched = []
+        for s in p.ordered_steps():
+            base_payload = s.payload or StepPayload()
             payload = base_payload.copy_with(**updates)
             patched.append(Step(name=s.name, requires=s.requires, payload=payload))
         return Pipeline(patched)
@@ -584,6 +740,177 @@ def run_from_yaml(
     else:
         logger.info("[skip] equil_analysis: no steps in this protocol.")
 
+    # --------------------
+    # PHASE 2.6: pre_prepare_fe (RBFE ligand prep) → z-1 only
+    # --------------------
+    if phase_pre_prepare_fe.ordered_steps():
+        phase_pre_prepare_fe = _inject_payload(
+            phase_pre_prepare_fe,
+            components=["z"],
+            component_lambdas={"z": [0.0]},
+            phase_name="pre_prepare_fe",
+        )
+        run_phase_skipping_done(
+            phase_pre_prepare_fe,
+            children,
+            "pre_prepare_fe",
+            backend,
+            max_workers=rc.run.max_workers,
+            on_failure=rc.run.on_failure,
+        )
+        children = handle_phase_failures(children, "pre_prepare_fe", rc.run.on_failure)
+    else:
+        logger.info("[skip] pre_prepare_fe: no steps in this protocol.")
+
+    # --------------------
+    # PHASE 2.7: pre_fe_equil → must COMPLETE for all ligands
+    # --------------------
+    phase_pre_fe_equil = _inject_mgr(
+        phase_pre_fe_equil,
+        "pre_fe_equil",
+        extra_payload={"phase_name": "pre_fe_equil", "extra_env": {"SKIP_WINDOW_EQ": "1"}},
+    )
+    if phase_pre_fe_equil.ordered_steps():
+        finished = run_phase_skipping_done(
+            phase_pre_fe_equil,
+            children,
+            "pre_fe_equil",
+            backend,
+            max_workers=1,
+            on_failure=rc.run.on_failure,
+        )
+        if not finished:
+            job_mgr.wait_all()
+            if dry_run and job_mgr.triggered:
+                logger.success(
+                    "[DRY-RUN] Reached first SLURM submission point (pre_fe_equil). Exiting without submitting."
+                )
+                return
+        children = handle_phase_failures(children, "pre_fe_equil", rc.run.on_failure)
+    else:
+        logger.info("[skip] pre_fe_equil: no steps in this protocol.")
+
+    # --------------------
+    # RBFE: build transformation systems (pairs) after pre_fe_equil
+    # --------------------
+    if rc.protocol == "rbfe":
+        from batter.rbfe import RBFENetwork
+        from batter.config.utils import sanitize_ligand_name
+
+        available = [c.meta.get("ligand") for c in children if c.meta.get("ligand")]
+        if len(available) < 2:
+            raise RuntimeError(
+                "RBFE requires at least two ligands that completed equilibration."
+            )
+        available = [sanitize_ligand_name(x) for x in available]
+        available_set = set(available)
+
+        rbfe_network_path = config_dir / "rbfe_network.json"
+        if rbfe_network_path.exists():
+            payload = json.loads(rbfe_network_path.read_text())
+        else:
+            from batter.config.run import RBFENetworkArgs
+
+            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+            payload = _build_rbfe_network_plan(
+                list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+            )
+
+        pairs = payload.get("pairs") or []
+        if not pairs:
+            raise RuntimeError("RBFE mapping produced no ligand pairs.")
+
+        cleaned_pairs = []
+        for pair in pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                raise RuntimeError(f"RBFE mapping entries must be 2-tuples; got {pair!r}.")
+            cleaned_pairs.append(
+                (
+                    sanitize_ligand_name(str(pair[0])),
+                    sanitize_ligand_name(str(pair[1])),
+                )
+            )
+
+        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+            pruned = [
+                p
+                for p in cleaned_pairs
+                if p[0] in available_set and p[1] in available_set
+            ]
+            if not pruned:
+                raise RuntimeError(
+                    "RBFE mapping does not include any available ligands after pruning."
+                )
+            if len(pruned) != len(cleaned_pairs):
+                logger.warning(
+                    "Pruned %d RBFE pair(s) due to on_failure=%s.",
+                    len(cleaned_pairs) - len(pruned),
+                    rc.run.on_failure,
+                )
+            cleaned_pairs = pruned
+
+        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
+
+        # Build transformation systems under simulations/transformations/
+        trans_root = run_dir / "simulations" / "transformations"
+        trans_root.mkdir(parents=True, exist_ok=True)
+        rbfe_children: List[SimSystem] = []
+
+        for ref, alt in network.pairs:
+            pair_id = f"{ref}~{alt}"
+            pair_dir = trans_root / pair_id
+            inputs_dir = pair_dir / "inputs"
+            inputs_dir.mkdir(parents=True, exist_ok=True)
+
+            ref_src = Path(lig_map[ref])
+            alt_src = Path(lig_map[alt])
+            ref_dst = inputs_dir / f"{ref}{ref_src.suffix}"
+            alt_dst = inputs_dir / f"{alt}{alt_src.suffix}"
+            if not ref_dst.exists():
+                shutil.copy2(ref_src, ref_dst)
+            if not alt_dst.exists():
+                shutil.copy2(alt_src, alt_dst)
+
+            resn_ref = lig_resname_map.get(ref)
+            resn_alt = lig_resname_map.get(alt)
+            if not resn_ref or not resn_alt:
+                raise RuntimeError(
+                    f"Missing residue names for RBFE pair {pair_id}: {ref}={resn_ref}, {alt}={resn_alt}."
+                )
+
+            pair_meta = sys_exec.meta.merge(
+                ligand=pair_id,
+                residue_name=resn_ref,
+                mode="RBFE",
+                param_dir_dict=param_dir_dict,
+                pair_id=pair_id,
+                ligand_ref=ref,
+                ligand_alt=alt,
+                residue_ref=resn_ref,
+                residue_alt=resn_alt,
+                input_ref=str(ref_dst),
+                input_alt=str(alt_dst),
+            )
+
+            rbfe_children.append(
+                SimSystem(
+                    name=f"{sys_exec.name}:{pair_id}:{run_id}",
+                    root=pair_dir,
+                    protein=sys_exec.protein,
+                    topology=sys_exec.topology,
+                    coordinates=sys_exec.coordinates,
+                    ligands=tuple([ref_dst, alt_dst]),
+                    lipid_mol=sys_exec.lipid_mol,
+                    other_mol=sys_exec.other_mol,
+                    anchors=sys_exec.anchors,
+                    meta=pair_meta,
+                )
+            )
+
+        # Switch to transformation systems for FE stages/results
+        children = rbfe_children
+        fe_children_all = rbfe_children
+    
     # --------------------
     # PHASE 3: prepare_fe (parallel)
     # --------------------
@@ -686,40 +1013,40 @@ def run_from_yaml(
 
     store = ArtifactStore(rc.run.output_folder)
     repo = FEResultsRepository(store)
-    analysis_range = (
-        sim_cfg_updated.analysis_start_step
-        if sim_cfg_updated.analysis_start_step is not None
-        else None
-    )
+    analysis_start_step = sim_cfg_updated.analysis_start_step
+    if analysis_start_step is not None:
+        analysis_start_step = int(analysis_start_step)
     failures: list[tuple[str, str, str]] = []
-    for child in unbound_children:
-        ligand = child.meta["ligand"]
-        reason = "UNBOUND detected during equilibration"
-        canonical_smiles, original_name, original_path = extract_ligand_metadata(
-            child, lig_original_names
-        )
-        repo.record_failure(
-            run_id=run_id,
-            ligand=ligand,
-            system_name=sim_cfg_updated.system_name,
-            temperature=sim_cfg_updated.temperature,
-            status="unbound",
-            reason=reason,
-            canonical_smiles=canonical_smiles,
-            original_name=original_name,
-            original_path=original_path,
-            protocol=rc.protocol,
-            sim_range=analysis_range,
-        )
-        failures.append((ligand, "unbound", reason))
+    if rc.protocol != "rbfe":
+        for child in unbound_children:
+            ligand = child.meta["ligand"]
+            reason = "UNBOUND detected during equilibration"
+            canonical_smiles, original_name, original_path = extract_ligand_metadata(
+                child, lig_original_names
+            )
+            repo.record_failure(
+                run_id=run_id,
+                ligand=ligand,
+                system_name=sim_cfg_updated.system_name,
+                temperature=sim_cfg_updated.temperature,
+                status="unbound",
+                reason=reason,
+                canonical_smiles=canonical_smiles,
+                original_name=original_name,
+                original_path=original_path,
+                protocol=rc.protocol,
+                analysis_start_step=analysis_start_step,
+            )
+            failures.append((ligand, "unbound", reason))
     failures.extend(
         save_fe_records(
             run_dir=run_dir,
             run_id=run_id,
-            children_all=children_all,
+            children_all=fe_children_all,
             sim_cfg_updated=sim_cfg_updated,
             repo=repo,
             protocol=rc.protocol,
+            analysis_start_step=analysis_start_step,
         )
     )
 

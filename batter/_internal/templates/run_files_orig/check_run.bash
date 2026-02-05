@@ -26,6 +26,9 @@ check_sim_failure() {
         rm -f "$log_file"
         rm -f "$rst_file"
         cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+        fi
 
         # if not the first retry attempt, remove the previous restart file to avoid repeated failure
         if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
@@ -40,6 +43,9 @@ check_sim_failure() {
         rm -f "$log_file"
         rm -f "$rst_file"
         cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+        fi
         if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
             echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
             rm -f "$rst_file_prev"
@@ -51,53 +57,63 @@ check_sim_failure() {
 }
 
 check_min_energy() {
-    local energy_file=$1
-    local threshold=$2
+    local energy_file="$1"
+    local threshold="$2"
 
     local energy_value source_label
-    energy_value=$(awk '/FINAL RESULTS/,/EAMBER/ { if ($1 == "EAMBER") { print $3; exit } }' "$energy_file")
-    source_label="EAMBER energy"
 
-    if [[ -z $energy_value ]]; then
+    # 1) Try last EAMBER in the file (most direct)
+    energy_value=$(awk '
+        $1=="EAMBER" && $2=="=" { v=$3 }
+        END { if (v!="") print v }
+    ' "$energy_file")
+    source_label="EAMBER"
+
+    # 2) Fallback: last ENERGY from the NSTEP table (take the second column of the data line)
+    if [[ -z "$energy_value" ]]; then
         energy_value=$(awk '
-            /FINAL RESULTS/ { in_final=1; next }
-            in_final && /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {
-                if (getline line) {
-                    split(line, fields)
-                    if (length(fields) >= 2) found=fields[2]
-                }
+            /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ { in_tbl=1; next }
+            in_tbl && NF>=2 {
+                # data lines usually start with an integer step
+                if ($1 ~ /^[0-9]+$/) v=$2
             }
-            END { if (found) print found }
+            END { if (v!="") print v }
         ' "$energy_file")
-        source_label="ENERGY (NSTEP table)"
+        source_label="ENERGY"
     fi
 
-    if [[ -z $energy_value ]]; then
-        energy_value=$(awk '
-            /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {
-                if (getline line) {
-                    split(line, fields)
-                    if (length(fields) >= 2) last=fields[2]
-                }
-            }
-            END { if (last) print last }
-        ' "$energy_file")
-        source_label="ENERGY (NSTEP table)"
-    fi
-
-    if [[ -z $energy_value ]]; then
+    if [[ -z "$energy_value" ]]; then
         echo "Error: Could not find EAMBER or ENERGY in $energy_file"
         return 2
     fi
 
-    if ! [[ $energy_value =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
+    # 3) Overflow detection (only look for stars in energy fields)
+    # - ENERGY column in NSTEP table: second field becomes ********
+    # - EAMBER line: value after '=' becomes ********
+    if tail -n 600 "$energy_file" | awk '
+        # NSTEP table overflow
+        /^[[:space:]]*[0-9]+[[:space:]]+\*{6,}/ { exit 0 }
+        # EAMBER overflow
+        $1=="EAMBER" && $2=="=" && $3 ~ /\*{6,}/ { exit 0 }
+        END { exit 1 }
+    '; then
+        echo "Error: Overflow detected in ENERGY/EAMBER field in $energy_file"
+        return 1
+    fi
+
+    # 4) Validate numeric
+    if ! [[ "$energy_value" =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
         echo "Error: Energy value '$energy_value' is not a valid number"
         return 1
     fi
 
-    local formatted_value
-    formatted_value=$(printf "%.4f" "$energy_value")
-    echo "$source_label: $formatted_value kcal/mol (threshold: $threshold)"
+    # 5) Catch absurd energies (blow-up heuristic)
+    if awk -v val="$energy_value" 'BEGIN { exit (val < -1.0e8 || val > 1.0e8) ? 0 : 1 }'; then
+        echo "Error: Energy magnitude too large: $energy_value"
+        return 1
+    fi
+
+    printf "%s: %.4f kcal/mol (threshold: %s)\n" "$source_label" "$energy_value" "$threshold"
 
     if awk -v val="$energy_value" -v thr="$threshold" 'BEGIN { exit (val < thr ? 0 : 1) }'; then
         echo "Energy is below threshold."
@@ -143,6 +159,29 @@ highest_out_index_for_pattern() {
 latest_md_index() {
     local pattern=${1:-"md-*.out"}
     highest_out_index_for_pattern "$pattern"
+}
+
+cleanup_failed_md_segment() {
+    local comp=$1
+    local seg_idx=$2
+    local n_windows=$3
+    local pfolder=${4:-.}
+
+    if [[ -z $comp || -z $seg_idx || -z $n_windows ]]; then
+        echo "[WARN] cleanup_failed_md_segment missing args; skip."
+        return
+    fi
+
+    local out_tag win
+    out_tag=$(printf "md-%02d" "$seg_idx")
+    for ((i = 0; i < n_windows; i++)); do
+        win=$(printf "%s%02d" "$comp" "$i")
+        rm -f "${pfolder}/${win}/${out_tag}.out" \
+              "${pfolder}/${win}/${out_tag}.nc" \
+              "${pfolder}/${win}/${out_tag}.log" \
+              "${pfolder}/${win}/${out_tag}.mden" \
+              "${pfolder}/${win}/md-current.rst7"
+    done
 }
 
 # Report stage based ONLY on which OUT files exist.
@@ -221,6 +260,42 @@ parse_dt_ps() {
     )
 
     [[ -n $dt ]] && echo "$dt" || echo 0.001
+}
+
+reduce_dt_on_failure() {
+    local tmpl=${1:-mdin-template}
+    local dec=${2:-0.001}
+    local stage=${3:-unknown}
+    local retry_count=${4:-0}
+
+    [[ -f "$tmpl" ]] || { echo "[WARN] $tmpl not found; skip dt reduction."; return; }
+    if ! awk 'BEGIN{IGNORECASE=1} /^[[:space:]]*dt[[:space:]]*=/ {found=1; exit} END{exit !found}' "$tmpl"; then
+        echo "[WARN] dt not found in $tmpl; skip dt reduction."
+        return
+    fi
+
+    local dt new_dt
+    dt=$(parse_dt_ps "$tmpl")
+    new_dt=$(awk -v dt="$dt" -v dec="$dec" 'BEGIN{printf "%.6f\n", dt-dec}')
+    if ! awk -v nd="$new_dt" 'BEGIN{exit !(nd>0)}'; then
+        echo "[WARN] dt reduction skipped (current dt=${dt}, dec=${dec})."
+        return
+    fi
+
+    awk -v newdt="$new_dt" '
+        BEGIN{IGNORECASE=1; done=0}
+        {
+            if (!done && match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/)) {
+                sub(/dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/, "dt=" newdt)
+                done=1
+            }
+            print
+        }
+    ' "$tmpl" > "${tmpl}.tmp" && mv "${tmpl}.tmp" "$tmpl"
+
+    # remove old sims if there's any.
+    rm md-*
+    echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 
 completed_time_ps_from_out() {

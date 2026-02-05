@@ -93,8 +93,9 @@ class MABFEBuilder(SystemBuilder):
             anchors=tuple(args.anchor_atoms),
             meta=system.meta.merge(ligand_ff=getattr(args, "ligand_ff", "gaff2")),
         )
+        mode_label = updated.meta.mode or "MABFE"
         logger.info(
-            f"Prepared MABFE system '{updated.name}' at {updated.root} (ligands: {len(updated.ligands)})")
+            f"Prepared {mode_label} system '{updated.name}' at {updated.root} (ligands: {len(updated.ligands)})")
         logger.info("  Protein:    {}", updated.protein)
         logger.info("  System Topology:   {}", updated.topology)
         logger.info("  System Coord:      {}", updated.coordinates)

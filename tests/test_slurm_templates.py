@@ -126,7 +126,7 @@ def test_cli_seed_headers(tmp_path, monkeypatch):
     """The CLI command should copy headers into the requested destination."""
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
     from click.testing import CliRunner
-    from batter.cli.run import seed_headers
+    from batter.cli.root import seed_headers
 
     runner = CliRunner()
     dest = tmp_path / "custom"
@@ -152,7 +152,7 @@ def test_cli_seed_headers_skips_existing(tmp_path, monkeypatch):
         (hdr_root / name).write_text(f"# existing {name}\n")
 
     from click.testing import CliRunner
-    from batter.cli.run import seed_headers
+    from batter.cli.root import seed_headers
 
     runner = CliRunner()
     res = runner.invoke(seed_headers, [])
@@ -189,8 +189,23 @@ def test_diff_headers_detects_changes(tmp_path):
 
 def test_non_remd_templates_use_cpu_mpi_exec():
     """Non-REMD templates should rely on the CPU MPI executable override."""
-    run_local = Path("batter/_internal/templates/run_files_orig/run-local.bash")
-    run_equil = Path("batter/_internal/templates/run_files_orig/run-equil.bash")
+    repo_root = Path(__file__).resolve().parents[1]
+    run_local = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-local.bash"
+    )
+    run_equil = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "run-equil.bash"
+    )
     text_local = run_local.read_text()
     text_equil = run_equil.read_text()
 

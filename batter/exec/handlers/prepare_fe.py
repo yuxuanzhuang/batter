@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Type, Optional
+from typing import Any, Dict, Optional
 
 from loguru import logger
 
@@ -12,6 +12,7 @@ from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
 from batter._internal.ops import remd as remd_ops
+from batter._internal.ops import batch as batch_ops
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
@@ -22,7 +23,14 @@ from batter.systems.core import SimSystem
 # -----------------------------
 def _system_root_for(child_root: Path) -> Path:
     """work/<sys>/simulations/<lig> → work/<sys>"""
+    # Prefer the parent of the "simulations" directory so this works for
+    # both per-ligand (simulations/<lig>) and RBFE transformations
+    # (simulations/transformations/<pair>).
     try:
+        parts = child_root.parts
+        if "simulations" in parts:
+            idx = parts.index("simulations")
+            return Path(*parts[:idx])
         return child_root.parents[1]
     except Exception:
         return child_root
@@ -73,7 +81,8 @@ def prepare_fe_handler(
         raise ValueError("[prepare_fe] Missing simulation configuration in payload.")
     sim = payload.sim
     partition = payload.get("partition") or payload.get("queue") or "normal"
-    components = list(getattr(sim, "components", []) or [])
+    phase_name = payload.get("phase_name") or "prepare_fe"
+    components = list(payload.get("components") or getattr(sim, "components", []) or [])
     if not components:
         raise ValueError("No components specified in sim config.")
 
@@ -86,27 +95,54 @@ def prepare_fe_handler(
     system_root = _system_root_for(child_root)
     param_dir_dict = _load_param_dir_dict(system_root)
 
-    comp_windows: dict = sim.component_lambdas  # type: ignore[attr-defined]
+    comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
     sys_params = payload.sys_params or SystemParams()
-    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
-    extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
+    extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
+    extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get(
         "extra_conformation_restraints", None
     )
+    pair_meta = {
+        key: system.meta.get(key)
+        for key in (
+            "pair_id",
+            "ligand_ref",
+            "ligand_alt",
+            "residue_ref",
+            "residue_alt",
+            "input_ref",
+            "input_alt",
+        )
+        if system.meta.get(key) is not None
+    }
 
     infe = bool(sim.infe)
 
     artifacts: Dict[str, Any] = {}
     logger.debug(
-        f"[prepare_fe] start ligand={ligand} residue={residue_name} components={components}"
+        f"[{phase_name}] start ligand={ligand} residue={residue_name} components={components}"
     )
+
+    # Patch sim for pre-prepare cases (e.g., RBFE pre_prepare_fe uses z)
+    if any(comp == "z" for comp in components):
+        if getattr(sim, "dec_method", None) not in {"sdr", "dd"}:
+            sim = sim.model_copy(deep=True)
+            sim.dec_method = "sdr"
+        if sim.dic_n_steps.get("z", 0) <= 0:
+            sim = sim.model_copy(deep=True)
+            fallback = sim.dic_n_steps.get("x", 0) or sim.n_steps_dict.get("x_n_steps", 0)
+            if fallback <= 0:
+                fallback = int(getattr(sim, "eq_steps", 0) or 0)
+            if fallback <= 0:
+                fallback = 100000
+            sim.dic_n_steps["z"] = int(fallback)
 
     # Build per component (scaffold / templates only; win=-1)
     for comp in components:
         workdir = child_root / "fe" / comp
         workdir.mkdir(parents=True, exist_ok=True)
 
-        logger.debug(f"[prepare_fe] building component '{comp}' in {workdir}")
+        logger.debug(f"[{phase_name}] building component '{comp}' in {workdir}")
         builder = AlchemicalFEBuilder(
             ligand=ligand,
             residue_name=residue_name,
@@ -120,9 +156,10 @@ def prepare_fe_handler(
             win=-1,
             extra={
                 "extra_restraints": extra_restraints,
-                "extra_restraints_fc": extra_restraints_fc,
+                "extra_restraint_fc": extra_restraint_fc,
                 "extra_conformation_restraints": extra_conformation_restraints,
                 "partition": partition,
+                **pair_meta,
             },
         )
         builder.build()  # will create <comp>-1, amber templates, run files, etc.
@@ -130,15 +167,15 @@ def prepare_fe_handler(
         artifacts[f"{comp}_workdir"] = str(workdir)
 
     # emit the common OK marker used by the orchestrator
-    marker = child_root / "fe" / "artifacts" / "prepare_fe.ok"
+    marker = child_root / "fe" / f"{phase_name}.ok"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("ok\n")
 
-    logger.debug(f"[prepare_fe] finished ligand={ligand} → {marker}")
+    logger.debug(f"[{phase_name}] finished ligand={ligand} → {marker}")
     marker_rel = marker.relative_to(system.root).as_posix()
     register_phase_state(
         system.root,
-        "prepare_fe",
+        phase_name,
         required=[[marker_rel]],
         success=[[marker_rel]],
     )
@@ -185,11 +222,24 @@ def prepare_fe_windows_handler(
 
     comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
     sys_params = payload.sys_params or SystemParams()
-    extra_restraints: Optional[dict] = sys_params.get("extra_restraints", None)
-    extra_restraints_fc: float = float(sys_params.get("extra_restraints_fc", 10.0))
+    extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
+    extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get(
         "extra_conformation_restraints", None
     )
+    pair_meta = {
+        key: system.meta.get(key)
+        for key in (
+            "pair_id",
+            "ligand_ref",
+            "ligand_alt",
+            "residue_ref",
+            "residue_alt",
+            "input_ref",
+            "input_alt",
+        )
+        if system.meta.get(key) is not None
+    }
 
     infe = False
     if extra_restraints is not None:
@@ -226,9 +276,10 @@ def prepare_fe_windows_handler(
                 win=win_idx,
                 extra={
                     "extra_restraints": extra_restraints,
-                    "extra_restraints_fc": extra_restraints_fc,
+                    "extra_restraint_fc": extra_restraint_fc,
                     "extra_conformation_restraints": extra_conformation_restraints,
                     "partition": partition,
+                    **pair_meta,
                 },
             )
             builder.build()
@@ -236,6 +287,12 @@ def prepare_fe_windows_handler(
         windows_summary[comp] = {"n_windows": len(lambdas), "lambdas": lambdas}
 
         # Always write REMD inputs; run.remd controls whether they are submitted.
+        batch_ops.prepare_batch_component(
+            workdir,
+            comp=comp,
+            n_windows=len(lambdas),
+            hmr=str(sim.hmr).lower() == "yes",
+        )
         remd_ops.prepare_remd_component(
             workdir,
             comp=comp,
@@ -249,12 +306,12 @@ def prepare_fe_windows_handler(
     windows_json.parent.mkdir(parents=True, exist_ok=True)
     windows_json.write_text(json.dumps(windows_summary, indent=2) + "\n")
 
-    prepare_finished = child_root / "fe" / "artifacts" / "prepare_fe_windows.ok"
+    prepare_finished = child_root / "fe" / "prepare_fe_windows.ok"
     open(prepare_finished, "w").close()
 
     windows_rel = prepare_finished.relative_to(system.root).as_posix()
     prepare_rel = (
-        (child_root / "fe" / "artifacts" / "prepare_fe.ok")
+        (child_root / "fe" / "prepare_fe.ok")
         .relative_to(system.root)
         .as_posix()
     )

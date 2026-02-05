@@ -134,7 +134,7 @@ else
     check_sim_failure "Equilibration disappear" "$log_file" eqnpt_disappear.rst7
 
     print_and_run "$PMEMD_EXEC -O -i eqnpt_appear.in -p $PRMTOP -c eqnpt_disappear.rst7 -o eqnpt_appear.out -r eqnpt_appear.rst7 -x eqnpt_appear.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "Equilibration appear" "$log_file" eqnpt_appear.rst7
+    check_sim_failure "Equilibration appear" "$log_file" eqnpt_appear.rst7 0 "eqnpt_appear.rst7" "eqnpt_appear.nc"
 fi
 
 if [[ $only_eq -eq 1 ]]; then
@@ -163,7 +163,7 @@ fi
     exit 1
 }
 
-last_rst="md-current.rst7"
+last_rst="$rst_in"
 
 # determine current segment index from OUT files (not from time)
 seg_idx=$(latest_md_index "md-*.out")

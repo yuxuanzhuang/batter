@@ -36,15 +36,6 @@ from batter._internal.ops.helpers import (
     save_anchors,
 )
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # type: ignore
-
-
-def _copy_if_exists(src: Path, dst: Path) -> None:
-    if not src.exists():
-        raise FileNotFoundError(f"Missing required file: {src}")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-
-
 def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     """
     Creates the aligned + cleaned PDBs (protein/others/lipids), finds
@@ -681,6 +672,67 @@ def build_complex_z(ctx) -> bool:
     save_anchors(
         workdir, Anchors(P1=P1, P2=P2, P3=P3, L1=L1, L2=L2, L3=L3, lig_res=lig_resid)
     )
+
+    return True
+
+
+@register_build_complex("x")
+def build_complex_x(ctx) -> bool:
+    """
+    RBFE (x-component) build_complex.
+
+    Builds the reference-ligand complex using the equilibrated reference ligand,
+    and stages auxiliary files for the alternate ligand (for downstream RBFE steps).
+    """
+    extra = ctx.extra or {}
+    lig_ref = extra.get("ligand_ref")
+    lig_alt = extra.get("ligand_alt")
+    res_ref = extra.get("residue_ref") or ctx.residue_name
+    res_alt = extra.get("residue_alt")
+
+    if not lig_ref or not lig_alt or not res_ref or not res_alt:
+        raise ValueError(
+            "RBFE component 'x' requires pair metadata "
+            "(ligand_ref/ligand_alt/residue_ref/residue_alt)."
+        )
+
+    # Reuse the z-build logic with a reference-ligand context to build the complex.
+    ref_ctx = BuildContext(
+        ligand=str(lig_ref),
+        residue_name=str(res_ref),
+        param_dir_dict=ctx.param_dir_dict,
+        sim=ctx.sim,
+        working_dir=ctx.working_dir,
+        system_root=ctx.system_root,
+        comp=ctx.comp,
+        win=ctx.win,
+        anchors=ctx.anchors,
+        lipid_mol=ctx.lipid_mol,
+        other_mol=ctx.other_mol,
+        extra=dict(extra),
+    )
+
+    ok = build_complex_z(ref_ctx)
+    if not ok:
+        return False
+
+    # Stage alternate-ligand inputs alongside build files for downstream RBFE steps.
+    build_dir = ctx.build_dir
+    sys_root = ctx.system_root
+    all_ligs = sys_root / "all-ligands"
+    alt_pdb = all_ligs / f"{lig_alt}.pdb"
+    if alt_pdb.exists():
+        shutil.copy2(alt_pdb, build_dir / alt_pdb.name)
+    else:
+        logger.warning("[build_complex_x] Missing alt ligand PDB: {}", alt_pdb)
+
+    alt_params = sys_root / "simulations" / str(lig_alt) / "params"
+    for ext in (".mol2", ".sdf"):
+        src = alt_params / f"{res_alt}{ext}"
+        if src.exists():
+            shutil.copy2(src, build_dir / src.name)
+        else:
+            logger.warning("[build_complex_x] Missing alt ligand param file: {}", src)
 
     return True
 

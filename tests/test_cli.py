@@ -62,7 +62,7 @@ def test_cli_run_invokes_run_from_yaml(
             return object()
 
     monkeypatch.setattr(
-        "batter.cli.run.RunConfig.load",
+        "batter.cli.run_cmds.RunConfig.load",
         staticmethod(lambda path: DummyRunConfig()),
     )
 
@@ -72,7 +72,7 @@ def test_cli_run_invokes_run_from_yaml(
         called["path"] = path
         called["kwargs"] = kwargs
 
-    monkeypatch.setattr("batter.cli.run.run_from_yaml", fake_run_from_yaml)
+    monkeypatch.setattr("batter.cli.run_cmds.run_from_yaml", fake_run_from_yaml)
 
     result = runner.invoke(
         cli,
@@ -113,7 +113,7 @@ def test_cli_fe_list_table(monkeypatch, tmp_path: Path, runner: CliRunner) -> No
             }
         ]
     )
-    monkeypatch.setattr("batter.cli.run.list_fe_runs", lambda path: df)
+    monkeypatch.setattr("batter.cli.fe_cmds.list_fe_runs", lambda path: df)
 
     result = runner.invoke(cli, ["fe", "list", str(work_dir)])
     assert result.exit_code == 0
@@ -140,7 +140,7 @@ def test_cli_fe_show(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
         ],
     )
     monkeypatch.setattr(
-        "batter.cli.run.load_fe_run",
+        "batter.cli.fe_cmds.load_fe_run",
         lambda path, run_id, ligand=None: record,
     )
 
@@ -195,7 +195,7 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
             return object()
 
     monkeypatch.setattr(
-        "batter.cli.run.RunConfig.load",
+        "batter.cli.run_cmds.RunConfig.load",
         staticmethod(lambda path: DummyRunConfig()),
     )
 
@@ -205,7 +205,9 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
         rendered["header_root"] = header_root
         return "#SBATCH --dummy\n"
 
-    monkeypatch.setattr("batter.cli.run.render_slurm_with_header_body", fake_render)
+    monkeypatch.setattr(
+        "batter.cli.run_cmds.render_slurm_with_header_body", fake_render
+    )
 
     class DummyProc:
         returncode = 0
@@ -249,7 +251,8 @@ def test_cli_fe_analyze_invokes_api(
         ligand,
         components=None,
         n_workers,
-        sim_range,
+        analysis_start_step,
+        overwrite=True,
         raise_on_error=True,
     ):
         called["work_dir"] = work_dir
@@ -257,10 +260,11 @@ def test_cli_fe_analyze_invokes_api(
         called["ligand"] = ligand
         called["components"] = components
         called["n_workers"] = n_workers
-        called["sim_range"] = sim_range
+        called["analysis_start_step"] = analysis_start_step
+        called["overwrite"] = overwrite
         called["raise_on_error"] = raise_on_error
 
-    monkeypatch.setattr("batter.cli.run.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
     monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
     result = runner.invoke(
         cli,
@@ -273,8 +277,8 @@ def test_cli_fe_analyze_invokes_api(
             "LIG1",
             "--workers",
             "3",
-            "--sim-range",
-            "0,5",
+            "--analysis-start-step",
+            "2500",
         ],
     )
     assert result.exit_code == 0
@@ -282,7 +286,8 @@ def test_cli_fe_analyze_invokes_api(
     assert called["run_id"] == "run1"
     assert called["ligand"] == "LIG1"
     assert called["n_workers"] == 3
-    assert called["sim_range"] == (0, 5)
+    assert called["analysis_start_step"] == 2500
+    assert called["overwrite"] is True
     assert called["raise_on_error"] is True
 
 
@@ -298,12 +303,13 @@ def test_cli_fe_analyze_can_disable_raise(
         ligand,
         components=None,
         n_workers,
-        sim_range,
+        analysis_start_step,
+        overwrite=True,
         raise_on_error=True,
     ):
         called["raise_on_error"] = raise_on_error
 
-    monkeypatch.setattr("batter.cli.run.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
     monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
     result = runner.invoke(
         cli,
@@ -347,7 +353,7 @@ def test_cli_fe_analyze_on_finished_run(
             raise RuntimeError("boom")
 
     monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
-    monkeypatch.setattr("batter.cli.run.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
 
     result = runner.invoke(cli, ["fe", "analyze", str(work_dir), "rep1"])
     assert result.exit_code == 1
@@ -371,7 +377,7 @@ def test_cli_clone_exec(tmp_path: Path, runner: CliRunner, monkeypatch) -> None:
         called.update(kwargs)
         return work_dir / "executions" / "src-clone"
 
-    monkeypatch.setattr("batter.cli.run.clone_execution", fake_clone_execution)
+    monkeypatch.setattr("batter.cli.exec_cmds.clone_execution", fake_clone_execution)
 
     result = runner.invoke(
         cli,

@@ -52,3 +52,4 @@ Minimizing.
  cv_file = 'cv.in'
  /
  &wt type = 'END', /
+

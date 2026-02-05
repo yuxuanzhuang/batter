@@ -1,4 +1,4 @@
-from batter.cli.run import _parse_jobname
+from batter.cli.jobs_cmds import _parse_jobname
 
 
 def test_parse_jobname_remd():

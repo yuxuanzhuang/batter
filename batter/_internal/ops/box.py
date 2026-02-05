@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import glob
 import json
 import shutil
@@ -18,6 +19,96 @@ from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
+from batter._internal.ops.helpers import run_parmed_hmr_if_enabled
+
+
+def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
+    """Merge sorted indices into inclusive consecutive ranges.
+
+    Parameters
+    ----------
+    indices : Sequence[int]
+        Integer indices. Duplicates are allowed but will be removed.
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        List of (start, end) inclusive ranges. If start == end, it's a singleton.
+    """
+    uniq = sorted(set(indices))
+    if not uniq:
+        return []
+
+    ranges: List[Tuple[int, int]] = []
+    start = prev = uniq[0]
+    for x in uniq[1:]:
+        if x == prev + 1:
+            prev = x
+            continue
+        ranges.append((start, prev))
+        start = prev = x
+    ranges.append((start, prev))
+    return ranges
+
+
+def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
+    """Convert ranges to selection segments like '5-8,10,12-14'."""
+    parts: List[str] = []
+    for a, b in ranges:
+        parts.append(f"{a}" if a == b else f"{a}-{b}")
+    return ",".join(parts)
+
+
+def indices_to_selection(
+    include: Iterable[int],
+    exclude: Iterable[int] = (),
+    *,
+    prefix: str = "@",
+    negate_op: str = "!",
+    and_op: str = "&",
+) -> str:
+    """Build a selection string from include/exclude indices with merged ranges.
+
+    Parameters
+    ----------
+    include : Iterable[int]
+        Indices to include.
+    exclude : Iterable[int], optional
+        Indices to exclude. Indices not present in `include` are ignored.
+    prefix : str, optional
+        Prefix for the include expression (default '@', e.g., AMBER-style atom selection).
+    negate_op : str, optional
+        Negation operator (default '!').
+    and_op : str, optional
+        Conjunction operator (default '&').
+
+    Returns
+    -------
+    str
+        Selection string, e.g. '@1-10 & ! (@3-4,7)'.
+
+    Raises
+    ------
+    ValueError
+        If `include` is empty.
+    """
+    inc = sorted(set(include))
+    exc = sorted(set(exclude))
+    if not inc:
+        raise ValueError("include must be non-empty")
+
+    inc_ranges = _merge_consecutive(inc)
+    inc_str = _ranges_to_str(inc_ranges)
+
+    # Only exclude indices that are actually in include
+    inc_set = set(inc)
+    exc_in_inc = [i for i in set(exc) if i in inc_set]
+    if not exc_in_inc:
+        return f"{prefix}{inc_str}"
+
+    exc_ranges = _merge_consecutive(exc_in_inc)
+    exc_str = _ranges_to_str(exc_ranges)
+    return f"{prefix}{inc_str} {and_op} {negate_op} ({prefix}{exc_str})"
 
 
 def _cp(src: Path, dst: Path) -> None:
@@ -61,7 +152,7 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         return None
 
 
-def create_box(ctx: BuildContext) -> None:
+def create_box_z(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
     """
@@ -81,12 +172,7 @@ def create_box(ctx: BuildContext) -> None:
     ligand = ctx.ligand
     mol = ctx.residue_name
 
-    if comp == "x":
-        raise NotImplementedError(
-            "Comp=x (rbfe) not supported in box.py; use box_dimer.py."
-        )
-    else:
-        molr = mol
+    molr = mol
 
     for attr in ("buffer_x", "buffer_y", "buffer_z"):
         if not hasattr(sim, attr):
@@ -141,21 +227,6 @@ def create_box(ctx: BuildContext) -> None:
         shutil.copy2(src, window_dir / f"vac_ligand.{ext}")
 
     shutil.copy2(build_dir / f"{ligand}.pdb", window_dir / f"{ligand}.pdb")
-
-    # molr
-    if comp == "x":
-        # need FIX
-        raise NotImplementedError(
-            "Comp=x (rbfe) not supported in box.py; use box_dimer.py."
-        )
-        param_dir = work.parent.parent / lig2 / "param"
-        if not param_dir:
-            raise FileNotFoundError(
-                f"Param dir not found for ligand {ctx.ligandr} in param_dir_dict"
-            )
-        for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
-            src = param_dir / f"{ctx.residuer}.{ext}"
-            shutil.copy2(src, window_dir / src.name)
 
     # other_mol
     if other_mol:
@@ -437,18 +508,8 @@ def create_box(ctx: BuildContext) -> None:
         neu_cat += nc2
         neu_ani += na2
     lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
-    if lig_charge is not None:
-        lig_cat = max(0, -lig_charge)
-        lig_ani = max(0, lig_charge)
-    else:
-        lig_cat, lig_ani = _sum_unit_charge_from_log(window_dir / "tleap_ligands.log")
-
-    if comp in ["x", "z", "o", "s", "v"]:
-        lig_cat //= 2
-        lig_ani //= 2
-    if comp == "e":
-        lig_cat //= 4
-        lig_ani //= 4
+    lig_cat = max(0, -lig_charge)
+    lig_ani = max(0, lig_charge)
 
     charge_neut = neu_cat - neu_ani + lig_cat - lig_ani
     neu_cat = max(0, charge_neut)
@@ -546,6 +607,7 @@ def create_box(ctx: BuildContext) -> None:
 
     combined = dum_p + prot_p + ligands_p
     vac = dum_p + prot_p + ligands_p
+    other_parts = []
 
     if (window_dir / "solvate_others.prmtop").exists():
         others_p = pmd.load_file(
@@ -553,17 +615,30 @@ def create_box(ctx: BuildContext) -> None:
             str(window_dir / "solvate_others.inpcrd"),
         )
         combined += others_p
-        vac += others_p
+        other_parts.append(others_p)
     if (window_dir / "solvate_outside_wat.prmtop").exists():
-        combined += pmd.load_file(
+        out_wat_pmd =  pmd.load_file(
             str(window_dir / "solvate_outside_wat.prmtop"),
             str(window_dir / "solvate_outside_wat.inpcrd"),
         )
+        combined += out_wat_pmd
+        other_parts.append(out_wat_pmd)
     if (window_dir / "solvate_around_wat.prmtop").exists():
-        combined += pmd.load_file(
+        around_wat_pmd = pmd.load_file(
             str(window_dir / "solvate_around_wat.prmtop"),
             str(window_dir / "solvate_around_wat.inpcrd"),
         )
+        combined += around_wat_pmd
+        other_parts.append(around_wat_pmd)
+
+    if len(other_parts) == 1:
+        other_parts_pmd = other_parts[0]
+    elif len(other_parts) == 2:
+        other_parts_pmd = other_parts[0] + other_parts[1]
+    elif len(other_parts) == 3:
+        other_parts_pmd = other_parts[0] + other_parts[1] + other_parts[2]
+    else:
+        raise ValueError(f"Unsupported number of other_parts: {len(other_parts)}")
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
@@ -572,6 +647,10 @@ def create_box(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+
+    other_parts_pmd.save(str(window_dir / "other_parts.prmtop"), overwrite=True)
+    other_parts_pmd.save(str(window_dir / "other_parts.inpcrd"), overwrite=True)
+    other_parts_pmd.save(str(window_dir / "other_parts.pdb"), overwrite=True)
 
     u_full = mda.Universe(str(window_dir / "full.pdb"))
     u_vac = mda.Universe(str(window_dir / "vac.pdb"))
@@ -605,21 +684,205 @@ def create_box(ctx: BuildContext) -> None:
     u_full.atoms.write(str(window_dir / "full.pdb"))
     u_vac.atoms.write(str(window_dir / "vac_orig.pdb"))
 
-    # HMR
-    parmed_hmr = amber_dir / "parmed-hmr.in"
-    if parmed_hmr.exists():
-        _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-        run_with_log(
-            "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
-        )
-    else:
-        logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return
 
 
 @register_create_box("z")
-def create_box_default(ctx: BuildContext) -> None:
-    create_box(ctx)
+def create_box_z_default(ctx: BuildContext) -> None:
+    create_box_z(ctx)
+
+
+@register_create_box("x")
+def create_box_x(ctx: BuildContext) -> None:
+    """
+    Create the box for RBFE (x-component) ligand-pair systems.
+    Produces vac.{prmtop,inpcrd,pdb} and full.{prmtop,inpcrd,pdb}.
+    """
+    work = ctx.working_dir
+
+    sim = ctx.sim
+    amber_dir = ctx.amber_dir
+    build_dir = ctx.build_dir
+    window_dir = ctx.window_dir
+    window_dir.mkdir(parents=True, exist_ok=True)
+
+    extra = ctx.extra or {}
+    lig_ref = extra.get("ligand_ref")
+    lig_alt = extra.get("ligand_alt")
+    res_ref = extra.get("residue_ref") or ctx.residue_name
+    res_alt = extra.get("residue_alt")
+
+    if not res_alt:
+        raise ValueError(
+            "RBFE component 'x' requires residue_alt in BuildContext.extra."
+        )
+
+    # --- stage required ligand artifacts into window_dir ---
+    for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "pdb", "json"):
+        param_dir = work.parent.parent / "params"
+        src = param_dir / f"{res_ref}.{ext}"
+        if src.exists():
+            _cp(src, window_dir / src.name)
+        else:
+            logger.debug(f"[create_box_x] Optional/absent: {src}")
+        param_dir = work.parent.parent.parent / lig_alt / "params"
+        src = param_dir / f"{res_alt}.{ext}"
+        if src.exists():
+            _cp(src, window_dir / src.name)
+        else:
+            logger.debug(f"[create_box_x] Optional/absent: {src}")
+
+    membrane_builder = sim.membrane_simulation
+    lipid_mol = sim.lipid_mol
+    other_mol = sim.other_mol
+    
+    # tleap template
+    src_tleap = amber_dir / "tleap.in.amber16"
+    if not src_tleap.exists():
+        src_tleap = amber_dir / "tleap.in"
+    _cp(src_tleap, window_dir / "tleap.in")
+
+    # water box keyword
+    water_model = str(sim.water_model).upper()
+
+    if water_model == "TIP3PF":
+        # still uses leaprc.water.fb3
+        water_box = "FB3BOX"
+    elif water_model == "SPCE":
+        water_box = "SPCBOX"
+    else:
+        water_box = f"{water_model}BOX"
+
+    if water_model != "TIP3PF":
+        water_line = f"source leaprc.water.{water_model.lower()}\n\n"
+    else:
+        water_line = "source leaprc.water.fb3\n\n"
+
+
+    # combine with ParmEd
+    vac_p = pmd.load_file(
+        str(window_dir / "ref_vac.prmtop"), str(window_dir / "ref_vac.pdb")
+    )
+    other_part_p = pmd.load_file(
+        str(window_dir / "other_parts.prmtop"),
+        str(window_dir / "other_parts.pdb"),
+    )
+    alter_ligands_p = pmd.load_file(
+        str(window_dir / "alter_ligand.prmtop"),
+        str(window_dir / "alter_ligand_aligned.pdb"),
+    )
+
+    combined = vac_p + alter_ligands_p + other_part_p
+
+    # build the ion prmtop if exists
+    if os.path.exists(window_dir / "ions.pdb"):
+        tleap_ion_txt = (window_dir / "tleap.in").read_text().splitlines()
+        tleap_ion_txt += [
+            "# ion topology",
+            water_line,
+            f"ions = loadpdb ions.pdb",
+            "saveamberparm ions ions.prmtop ions.inpcrd",
+            "quit",
+        ]
+        _write(window_dir / "tleap_ions.in", "\n".join(tleap_ion_txt) + "\n")
+        run_with_log(
+            f"{tleap} -s -f tleap_ions.in > tleap_ions.log", working_dir=window_dir
+        )
+        ion_p = pmd.load_file(
+        str(window_dir / "ions.prmtop"),
+        str(window_dir / "ions.inpcrd"),
+        )
+        combined += ion_p
+
+    vac = vac_p + alter_ligands_p
+
+    combined.save(str(window_dir / "full.prmtop"), overwrite=True)
+    combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
+    combined.save(str(window_dir / "full.pdb"), overwrite=True)
+
+    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
+    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
+    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+
+    u_full = mda.Universe(str(window_dir / "full.pdb"))
+
+    # renumber protein residues back to original ids
+    renum_txt = build_dir / "protein_renum.txt"
+    if not renum_txt.exists():
+        renum_txt = build_dir.parent / build_dir.name / "protein_renum.txt"
+    renum_df2 = pd.read_csv(
+        renum_txt,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+    u_full.select_atoms("protein").residues.resids = renum_df2["old_resid"].values
+
+    # rebuild segments by chain
+    seg_txt = window_dir / "build_amber_renum.txt"
+    seg_df = pd.read_csv(
+        seg_txt,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+    chain_list = renum_df2.old_chain.values
+    chain_segments = {ch: u_full.add_Segment(segid=ch) for ch in chain_list}
+    for res, ch in zip(u_full.residues[: len(chain_list)], chain_list):
+        res.segment = chain_segments[ch]
+
+    u_full.atoms.write(str(window_dir / "full.pdb"))
+
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
+
+    # get mapping file
+
+    kartograf_mapping = json.load(open(window_dir / "kartograf.json"))
+    ref_site = u_full.select_atoms(f"resname {res_ref}").residues[0]
+    ref_solvent = u_full.select_atoms(f"resname {res_ref}").residues[1]
+    alt_site = u_full.select_atoms(f"resname {res_alt}").residues[0]
+    alt_solvent = u_full.select_atoms(f"resname {res_alt}").residues[1]
+
+    # select cc parts
+    ref_index_list = [int(i) for i in kartograf_mapping.keys()]
+    alt_index_list = [int(i) for i in kartograf_mapping.values()]
+    cc_indices_t0 = (
+        np.concatenate(
+            (
+                ref_site.atoms[ref_index_list].indices,
+                alt_solvent.atoms[alt_index_list].indices,
+            )
+        )
+        + 1
+    )
+    cc_indices_t1 = (
+        np.concatenate(
+            (
+                ref_solvent.atoms[ref_index_list].indices,
+                alt_site.atoms[alt_index_list].indices,
+            )
+        )
+        + 1
+    )
+    all_indices_t0 = (
+        np.concatenate((ref_site.atoms.indices, alt_solvent.atoms.indices)) + 1
+    )
+    all_indices_t1 = (
+        np.concatenate((ref_solvent.atoms.indices, alt_site.atoms.indices)) + 1
+    )
+
+    dict_sc_mask = {
+        "scmk1": indices_to_selection(all_indices_t0, cc_indices_t0),
+        "scmk2": indices_to_selection(all_indices_t1, cc_indices_t1),
+    }
+    logger.debug(f"scmk1: {dict_sc_mask['scmk1']}")
+    logger.debug(f"scmk2: {dict_sc_mask['scmk2']}")
+
+    with open(window_dir / "scmask.json", "w") as f:
+        json.dump(dict_sc_mask, f)
+
+    return
 
 
 @register_create_box("y")
@@ -735,10 +998,7 @@ def create_box_y(ctx: BuildContext) -> None:
                     pass
         return int(round(q))
 
-    # Prefer the charge computed during parametrization; fall back to tleap log for legacy runs
     lig_charge = _ligand_charge_from_metadata(param_dir / f"{ctx.residue_name}.json")
-    if lig_charge is None:
-        lig_charge = _unit_charge_from_log(window_dir / "tleap_ligands.log")
     # put a minimum of 5 ions
     box_volume_A3 = 2 * buffer_x * 2 * buffer_y * 2 * buffer_z
     num_ions = max(
@@ -874,15 +1134,7 @@ def create_box_y(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
 
-    # HMR
-    parmed_hmr = amber_dir / "parmed-hmr.in"
-    if parmed_hmr.exists():
-        _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-        run_with_log(
-            "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
-        )
-    else:
-        logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return
 
 
@@ -958,13 +1210,5 @@ def create_box_m(ctx: BuildContext) -> None:
     _cp(window_dir / "vac.prmtop", window_dir / "full.prmtop")
     _cp(window_dir / "vac.inpcrd", window_dir / "full.inpcrd")
     
-    # HMR
-    parmed_hmr = amber_dir / "parmed-hmr.in"
-    if parmed_hmr.exists():
-        _cp(parmed_hmr, window_dir / "parmed-hmr.in")
-        run_with_log(
-            "parmed -O -n -i parmed-hmr.in > parmed-hmr.log", working_dir=window_dir
-        )
-    else:
-        logger.warning("[box] parmed-hmr.in not found in amber_dir; skipping HMR.")
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return

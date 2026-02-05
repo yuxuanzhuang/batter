@@ -8,7 +8,7 @@ from batter.config.simulation import SimulationConfig
 from batter.pipeline.pipeline import Pipeline
 from batter.pipeline.step import Step
 
-ProtocolName = Literal["abfe", "asfe", "md"]
+ProtocolName = Literal["abfe", "rbfe", "asfe", "md"]
 
 class ProtocolContext(BaseModel):
     """

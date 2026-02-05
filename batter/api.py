@@ -35,6 +35,7 @@ For more examples, refer to ``docs/getting_started.rst`` and the tutorials.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any, TYPE_CHECKING, Sequence, Union
 
@@ -113,7 +114,7 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
         DataFrame with one row per stored FE run. Columns include ``run_id``,
         ``ligand``, ``mol_name``, ``system_name``, ``temperature``, ``total_dG``,
         ``total_se``, ``canonical_smiles``, ``original_name``, ``original_path``,
-        ``protocol``, ``sim_range``, ``status``, ``failure_reason``, and
+        ``protocol``, ``analysis_start_step``, ``status``, ``failure_reason``, and
         ``created_at``.
     """
     store = ArtifactStore(Path(work_dir))
@@ -169,7 +170,8 @@ def run_analysis_from_execution(
     ligand: str | None = None,
     components: Sequence[str] | None = None,
     n_workers: int | None = None,
-    sim_range: tuple[int, int] | None = None,
+    analysis_start_step: int | None = None,
+    overwrite: bool = True,
     raise_on_error: bool = True,
 ) -> None:
     """
@@ -187,8 +189,11 @@ def run_analysis_from_execution(
         Components to include during analysis (overrides ``sim_cfg.components``).
     n_workers : int, optional
         Number of worker processes requested for the analysis handler.
-    sim_range : (int, int), optional
-        (start, end) range of lambda windows to analyze.
+    analysis_start_step : int, optional
+        First production step to include in analysis (per window); overrides config.
+    overwrite: bool, optional
+        When ``True`` (default), overwrite any existing analysis results for the run_id.
+        When ``False``, skip ligands that already have analysis outputs.
     raise_on_error : bool, optional
         When ``True`` (default) propagate errors raised by the analysis handler.
         Set to ``False`` to log the failure and continue with other ligands.
@@ -264,30 +269,54 @@ def run_analysis_from_execution(
     if n_workers is not None:
         payload_data["analysis_n_workers"] = n_workers
         payload_data["n_workers"] = n_workers
-    if sim_range is not None:
-        payload_data["sim_range"] = sim_range
-        logger.info(f"Lambda window range set to: {sim_range}")
+    if analysis_start_step is not None:
+        if analysis_start_step < 0:
+            raise ValueError("analysis_start_step must be >= 0.")
+        analysis_start_step_val = int(analysis_start_step)
+        payload_data["analysis_start_step"] = analysis_start_step_val
+        logger.info(f"Analysis start step set to: {analysis_start_step_val}")
     else:
-        sim_range_cfg = getattr(sim_cfg, "analysis_start_step", None)
-        if sim_range_cfg is not None:
-            payload_data["sim_range"] = sim_range_cfg
-        sim_range = sim_range_cfg
-        logger.info(f"Lambda window range loaded: {sim_range}")
+        analysis_start_step_val = int(getattr(sim_cfg, "analysis_start_step", 0))
+        payload_data["analysis_start_step"] = analysis_start_step_val
+        logger.info(f"Analysis start step loaded: {analysis_start_step_val}")
 
     payload = StepPayload(**payload_data)
     params = payload.to_mapping()
     analyze_step = Step(name="analyze")
     from batter.exec.handlers.fe_analysis import analyze_handler
 
+    def _analysis_outputs_present(fe_root: Path) -> bool:
+        return (
+            (fe_root / "Results" / "Results.dat").exists()
+            and (fe_root / "analyze.ok").exists()
+        )
+
+    def _clear_analysis_outputs(fe_root: Path) -> None:
+        shutil.rmtree(fe_root / "Results", ignore_errors=True)
+        (fe_root / "analyze.ok").unlink(missing_ok=True)
+
+    skipped = 0
     for child in tqdm(children, desc="Running analysis", unit="ligand"):
+        fe_root = child.root / "fe"
+        ligand_name = child.meta.get("ligand") or child.name
+        if not overwrite and _analysis_outputs_present(fe_root):
+            logger.info(
+                f"Skipping analysis for ligand '{ligand_name}' (results already exist; overwrite=False)."
+            )
+            skipped += 1
+            continue
+        if overwrite:
+            _clear_analysis_outputs(fe_root)
         try:
             analyze_handler(analyze_step, child, params)
         except Exception as exc:
-            msg = f"Analysis failed for ligand '{child.meta.get('ligand')}' in run '{run_id}': {exc}"
+            msg = f"Analysis failed for ligand '{ligand_name}' in run '{run_id}': {exc}"
             if raise_on_error:
                 raise RuntimeError(msg) from exc
             logger.warning(msg)
             continue
+    if skipped:
+        logger.info(f"Skipped analysis for {skipped} ligand(s) with existing results.")
 
     store = ArtifactStore(work_root)
     repo = FEResultsRepository(store)
@@ -298,6 +327,7 @@ def run_analysis_from_execution(
         sim_cfg_updated=sim_cfg,
         repo=repo,
         protocol=protocol,
+        analysis_start_step=analysis_start_step_val,
     )
     if failures:
         failed = ", ".join(
