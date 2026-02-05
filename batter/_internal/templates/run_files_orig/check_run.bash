@@ -96,8 +96,25 @@ check_min_energy() {
         return 2
     fi
 
+    # Only check the last energy block for overflow markers.
+    if awk '
+        /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {block=""; inblock=1}
+        inblock {block = block $0 "\n"}
+        inblock && NF==0 {inblock=0}
+        END {print block}
+    ' "$energy_file" | grep -q "********"; then
+        echo "Error: Overflow detected in last energy block of $energy_file"
+        return 1
+    fi
+
     if ! [[ $energy_value =~ ^-?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
         echo "Error: Energy value '$energy_value' is not a valid number"
+        return 1
+    fi
+
+    # Catch absurd energies that often signal numerical blow-up.
+    if awk -v val="$energy_value" 'BEGIN { exit (val < -1.0e8 || val > 1.0e8) ? 0 : 1 }'; then
+        echo "Error: Energy magnitude too large: $energy_value"
         return 1
     fi
 
