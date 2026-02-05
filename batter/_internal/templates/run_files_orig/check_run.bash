@@ -96,8 +96,14 @@ check_min_energy() {
         return 2
     fi
 
-    # Only check the last energy block for overflow markers.
-    last_hdr=$(awk '/^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {ln=NR} END {print ln+0}' "$energy_file")
+    last_hdr=$(awk '
+        /FINAL RESULTS/ {in_final=1}
+        in_final && /^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {ln=NR}
+        END {print ln+0}
+    ' "$energy_file")
+    if [[ "$last_hdr" -eq 0 ]]; then
+        last_hdr=$(awk '/^[[:space:]]*NSTEP[[:space:]]+ENERGY[[:space:]]+RMS[[:space:]]+GMAX/ {ln=NR} END {print ln+0}' "$energy_file")
+    fi
     if [[ "$last_hdr" -gt 0 ]]; then
         if awk -v start="$last_hdr" -v end="$((last_hdr+60))" 'NR>=start && NR<=end {print}' "$energy_file" | grep -q "********"; then
             echo "Error: Overflow detected in last energy block of $energy_file"
