@@ -10,7 +10,7 @@ import re
 import random
 
 from batter.param import ligand
-from batter_v1.utils.builder_utils import get_buffer_z
+from batter.utils.builder_utils import get_buffer_z
 from loguru import logger
 
 import numpy as np
