@@ -310,6 +310,17 @@ def cmd_run(
     "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
 )
 @click.option(
+    "--slurm-submit/--local-run",
+    default=False,
+    help="Submit this run via SLURM (sbatch) instead of running locally.",
+)
+@click.option(
+    "--slurm-manager-path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional path to a SLURM header/template to prepend to the generated script.",
+)
+@click.option(
     "--partition",
     "-p",
     default=None,
@@ -321,6 +332,8 @@ def cmd_run_exec(
     dry_run: Optional[bool],
     clean_failures: Optional[bool],
     only_equil: Optional[bool],
+    slurm_submit: bool,
+    slurm_manager_path: Optional[Path],
     partition: Optional[str],
 ) -> None:
     """
@@ -353,6 +366,74 @@ def cmd_run_exec(
             else SlurmConfig(partition=partition)
         )
         run_overrides["slurm"] = merged_slurm
+    if slurm_submit:
+        manager_job_name = (
+            "fep_" + (PurePosixPath(exec_dir) / "simulations" / "manager").as_posix()
+        )
+        log_base = f"manager-{exec_dir.name or 'run'}"
+
+        batter_cmd = _which_batter()
+        parts = [batter_cmd, "run-exec", shlex.quote(str(exec_dir))]
+        parts += ["--on-failure", shlex.quote(on_failure)]
+        if dry_run is not None:
+            parts += ["--dry-run" if dry_run else "--no-dry-run"]
+        if clean_failures is not None:
+            parts += [
+                "--clean-failures" if clean_failures else "--no-clean-failures"
+            ]
+        if only_equil is not None:
+            parts += ["--only-equil" if only_equil else "--full"]
+        if partition:
+            parts += ["--partition", shlex.quote(partition)]
+
+        run_cmd = " ".join(parts)
+
+        run_hash = hash_run_input(
+            yaml_copy,
+            on_failure=on_failure.lower(),
+            dry_run=("1" if dry_run else "0") if dry_run is not None else "",
+            clean_failures=("1" if clean_failures else "0")
+            if clean_failures is not None
+            else "",
+            only_equil=("1" if only_equil else "0") if only_equil is not None else "",
+            partition=partition or "",
+        )
+        base_path = (
+            Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
+        )
+        tpl_header = base_path.with_suffix(".header")
+        tpl_body = base_path.with_suffix(".body")
+        manager_code = render_slurm_with_header_body(
+            "job_manager.header",
+            tpl_header,
+            tpl_body,
+            {
+                "__JOB_NAME__": manager_job_name,
+                "__JOB_LOG_BASE__": log_base,
+            },
+            header_root=RunConfig.load(yaml_copy).run.slurm_header_dir,
+        )
+        manager_code = _upsert_sbatch_option(manager_code, "job-name", manager_job_name)
+        if partition:
+            manager_code = _upsert_sbatch_option(manager_code, "partition", partition)
+        with open(f"{run_hash}_job_manager.sbatch", "w") as f:
+            f.write(manager_code)
+            f.write("\n")
+            f.write(run_cmd)
+            f.write("\n")
+            f.write("echo 'Job completed.'\n")
+            f.write("\n")
+
+        result = subprocess.run(
+            ["sbatch", f"{run_hash}_job_manager.sbatch"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        click.echo(f"Submitted jobscript: {run_hash}_job_manager.sbatch")
+        click.echo(f"STDOUT: {result.stdout}")
+        click.echo(f"STDERR: {result.stderr}")
+        return
     try:
         run_from_yaml(
             yaml_copy,
