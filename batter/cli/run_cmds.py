@@ -300,7 +300,29 @@ def cmd_run(
     default="raise",
     show_default=True,
 )
-def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
+@click.option("--dry-run/--no-dry-run", default=None, help="Override YAML run.dry_run.")
+@click.option(
+    "--clean-failures/--no-clean-failures",
+    default=None,
+    help="Clear FAILED markers and progress caches before rerunning.",
+)
+@click.option(
+    "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
+)
+@click.option(
+    "--partition",
+    "-p",
+    default=None,
+    help="Override run.slurm.partition from the YAML.",
+)
+def cmd_run_exec(
+    execution_dir: Path,
+    on_failure: str,
+    dry_run: Optional[bool],
+    clean_failures: Optional[bool],
+    only_equil: Optional[bool],
+    partition: Optional[str],
+) -> None:
     """
     Resume/extend a run using only an existing execution directory.
     """
@@ -312,11 +334,25 @@ def cmd_run_exec(execution_dir: Path, on_failure: str) -> None:
             "Run once with `batter run` to seed artifacts/config."
         )
 
-    run_overrides = {
+    run_overrides: Dict[str, Any] = {
         "output_folder": exec_dir.parent.parent,
         "run_id": exec_dir.name,
         "allow_run_id_mismatch": True,
     }
+    if dry_run is not None:
+        run_overrides["dry_run"] = dry_run
+    if clean_failures is not None:
+        run_overrides["clean_failures"] = clean_failures
+    if only_equil is not None:
+        run_overrides["only_fe_preparation"] = only_equil
+    if partition:
+        base_cfg = RunConfig.load(yaml_copy)
+        merged_slurm = (
+            base_cfg.run.slurm.model_copy(update={"partition": partition})
+            if base_cfg.run.slurm
+            else SlurmConfig(partition=partition)
+        )
+        run_overrides["slurm"] = merged_slurm
     try:
         run_from_yaml(
             yaml_copy,
