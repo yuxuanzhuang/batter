@@ -24,21 +24,9 @@ ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs t
 
 def _collect_backbone_heavy_and_lig(vac_pdb: Path, lig_res: str, offset: int = 0) -> List[List[str]]:
     """Return ([protein_backbone_heavy_atom_serials], [ligand_heavy_atom_serials])."""
-    hvy = []
-    hvy_lig = []
-    with vac_pdb.open() as f:
-        for line in f:
-            if not _is_atom_line(line):
-                continue
-            resi = int(_field(line, 22, 26) or "0")
-            if 2 <= resi < int(lig_res):
-                name = _field(line, 12, 16)
-                if name in ("CA", "N", "C", "O"):
-                    hvy.append(_field(line, 6, 11))  # atom serial as string
-            elif resi == int(lig_res) + offset:
-                name = _field(line, 12, 16)
-                if name and name[0] != "H":
-                    hvy_lig.append(_field(line, 6, 11))
+    u = mda.Universe(str(vac_pdb))
+    hvy = list((u.select_atoms('protein and name CA N C O').indices + 1).astype(str))
+    hvy_lig = list((u.select_atoms(f'not type H and resid {int(lig_res) + offset}').indices + 1).astype(str))
     return hvy, hvy_lig
 
 def _scan_dihedrals_from_prmtop(prmtop_path: Path, ligand_atm_num: List[str]) -> List[str]:
@@ -761,8 +749,11 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     rdhf, rdsf, ldf, laf, ldhf, rcom, lcom = rest
 
-    offset = 3
-    hvy_h, hvy_lig = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, offset)
+    # orig lig
+    hvy_h, hvy_lig_1 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 1)
+    # alt lig
+    hvy_h_2, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
+    hvy_lig = hvy_lig_1 + hvy_lig_2
     atm_num         = num_to_mask(vac_pdb.as_posix())
     
     # cv.in
