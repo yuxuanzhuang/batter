@@ -153,31 +153,45 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
     return need
 
 
-def _phase_ok_paths(root: Path, phase_name: str) -> List[Path]:
+def _phase_ok_patterns(phase_name: str) -> List[str]:
     if phase_name == "prepare_fe":
-        return [
-            root / "fe" / "prepare_fe.ok",
-            root / "fe" / "prepare_fe_windows.ok",
-        ]
+        return ["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]
     if phase_name == "prepare_fe_windows":
-        return [root / "fe" / "prepare_fe_windows.ok"]
+        return ["fe/prepare_fe_windows.ok"]
     if phase_name == "pre_prepare_fe":
-        return [root / "fe" / "pre_prepare_fe.ok"]
+        return ["fe/pre_prepare_fe.ok"]
+    if phase_name in {"pre_fe_equil", "fe_equil"}:
+        return ["fe/{comp}/{comp}-1/EQ_FINISHED"]
     return []
 
 
 def _maybe_invalidate_progress_for_phase(
     children: List[SimSystem], phase_name: str
 ) -> None:
-    if phase_name not in {"prepare_fe", "prepare_fe_windows", "pre_prepare_fe"}:
+    if phase_name not in {
+        "prepare_fe",
+        "prepare_fe_windows",
+        "pre_prepare_fe",
+        "pre_fe_equil",
+        "fe_equil",
+    }:
         return
     total = len(children)
     if total == 0:
         return
     ok_count = 0
     for child in children:
-        ok_paths = _phase_ok_paths(child.root, phase_name)
-        if ok_paths and all(p.exists() for p in ok_paths):
+        ok_patterns = _phase_ok_patterns(phase_name)
+        if not ok_patterns:
+            continue
+        comp_cache = components_under(child.root)
+        ok = True
+        for pattern in ok_patterns:
+            expanded = _expand_pattern(child.root, pattern, comp_cache, {})
+            if not expanded or not all(p.exists() for p in expanded):
+                ok = False
+                break
+        if ok:
             ok_count += 1
     if ok_count == total:
         return
