@@ -162,6 +162,10 @@ def _phase_ok_patterns(phase_name: str) -> List[str]:
         return ["fe/pre_prepare_fe.ok"]
     if phase_name in {"pre_fe_equil", "fe_equil"}:
         return ["fe/{comp}/{comp}-1/EQ_FINISHED"]
+    if phase_name == "fe":
+        return ["fe/{comp}/{comp}{win:02d}/FINISHED"]
+    if phase_name == "analyze":
+        return ["fe/analyze.ok", "fe/Results/Results.dat"]
     return []
 
 
@@ -174,6 +178,8 @@ def _maybe_invalidate_progress_for_phase(
         "pre_prepare_fe",
         "pre_fe_equil",
         "fe_equil",
+        "fe",
+        "analyze",
     }:
         return
     total = len(children)
