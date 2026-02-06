@@ -202,6 +202,17 @@ def _maybe_invalidate_progress_for_phase(
         try:
             for p in progress_dir.glob("*.csv"):
                 p.unlink(missing_ok=True)
+            for child in children:
+                legacy_paths = [
+                    child.root / "artifacts" / "progress" / f"{phase_name}.csv",
+                    child.root
+                    / "fe"
+                    / "artifacts"
+                    / "progress"
+                    / f"{phase_name}.csv",
+                ]
+                for legacy in legacy_paths:
+                    legacy.unlink(missing_ok=True)
             logger.info(
                 f"[progress] {phase_name}: ok_count={ok_count}/{total}; cleared cached progress."
             )
