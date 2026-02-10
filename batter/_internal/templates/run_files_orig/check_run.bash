@@ -124,9 +124,6 @@ check_min_energy() {
     fi
 }
 
-# Highest numeric index in files matching pattern, where the index is the digits
-# immediately before the ".out" extension.
-# Works in bash and zsh; ignores non-matching names; safe when glob matches nothing.
 highest_out_index_for_pattern() {
     local pattern=$1
     local max=-1
@@ -335,7 +332,6 @@ completed_steps() {
 
     tps=$(completed_time_ps_from_rst "md-current.rst7")
 
-    # ---- fallback if latest restart is missing/bad ----
     if [[ -z $tps || $tps == 0 || $tps == 0.0 || $tps == 0.000 || $tps == 0.0000 ]]; then
         prev_tps=$(completed_time_ps_from_rst "md-previous.rst7")
         if [[ -n $prev_tps && $prev_tps != 0 && $prev_tps != 0.0 ]]; then
@@ -346,11 +342,6 @@ completed_steps() {
         fi
     fi
 
-    # ---- align to restart-write boundary from mdin template ----
-    # We interpret "divisible by ntwr" as: floor TIME(PS) to a multiple of (ntwr * dt_ps)
-    # because ntwr is in steps, while tps is in picoseconds.
-    #
-    # If we can't parse ntwr or dt, we just return tps unchanged.
     if [[ -f $tmpl ]]; then
         local ntwr dt dt_ps
         ntwr=$(
@@ -383,24 +374,31 @@ completed_steps() {
               }' "$tmpl"
         )
 
-        # Default Amber dt is ps (e.g., 0.002). If dt is missing, we can't align.
         if [[ -n $ntwr && $ntwr -gt 0 && -n $dt ]]; then
             # compute restart interval in ps: ntwr * dt
             dt_ps=$(awk -v dt="$dt" 'BEGIN{printf "%.10f", dt+0.0}')
             local interval_ps
             interval_ps=$(awk -v n="$ntwr" -v dt="$dt_ps" 'BEGIN{printf "%.10f", n*dt}')
 
-            # Floor tps to nearest multiple of interval_ps (never increase).
-            # Guard against interval_ps == 0 due to parse weirdness.
             if awk -v x="$interval_ps" 'BEGIN{exit !(x>0)}'; then
                 tps=$(awk -v t="$tps" -v step="$interval_ps" '
                     BEGIN{
-                      # number of full intervals completed:
-                      k = int(t/step + 1e-12)
-                      out = k*step
-                      # print with reasonable precision; trim trailing zeros via %g-like logic
-                      printf "%.10f\n", out
-                    }' | sed -E 's/([0-9])0+$/\1/; s/\.$//')
+                        # Snap-to-grid tolerance:
+                        # - absolute floor to handle ps-level floating noise
+                        # - plus a tiny relative part proportional to step
+                        eps = 1e-6
+                        rel = step * 1e-12
+                        if (rel > eps) eps = rel
+
+                        # "Floor with tolerance": if t is extremely close to next boundary, snap up.
+                        k = int((t + eps) / step)
+                        out = k * step
+
+                        # Format & trim trailing zeros
+                        s = sprintf("%.10f", out)
+                        sub(/\.?0+$/, "", s)
+                        print s
+                    }')
             fi
         fi
     fi
