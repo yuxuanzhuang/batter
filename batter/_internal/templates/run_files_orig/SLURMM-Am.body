@@ -1,4 +1,3 @@
-scontrol show job $SLURM_JOB_ID
 # start time
 echo "Job started at $(date)"
 
