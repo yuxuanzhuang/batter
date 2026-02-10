@@ -38,76 +38,11 @@ else
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
         echo "Requeuing the job for attempt $NEXT_RETRY..."
 
-        # Grab bad node early (before any delays / teardown)
-        bad_node="${SLURMD_NODENAME:-$(hostname -s)}"
-        echo "Bad node: ${bad_node:-<empty>}"
-
         # Small delay to let filesystem/logs settle (optional)
-        sleep 5
-
-        if [ -n "$bad_node" ]; then
-            # Try to read existing exclusions, but don't fail if job is disappearing
-            cur_exc_nodes=$(
-                scontrol show job "$SLURM_JOB_ID" 2>/dev/null |
-                awk -F= '/ExcNodeList=/{print $2}' |
-                awk '{print $1; exit}'
-            )
-
-            if [[ -n "$cur_exc_nodes" && "$cur_exc_nodes" != "(null)" && "$cur_exc_nodes" != "None" ]]; then
-                exc_nodes=$(printf "%s,%s\n" "$cur_exc_nodes" "$bad_node" | tr ',' '\n' | awk 'NF' | sort -u | paste -sd, -)
-            else
-                exc_nodes="$bad_node"
-            fi
-
-            echo "Excluding: $exc_nodes"
-
-            export_vars="OVERWRITE=${OVERWRITE},ONLY_EQ=${ONLY_EQ},RETRY_COUNT=${NEXT_RETRY}"
-            if [[ -n "${SKIP_WINDOW_EQ-}" ]]; then
-                export_vars="${export_vars},SKIP_WINDOW_EQ=${SKIP_WINDOW_EQ}"
-            fi
-
-            if [[ -z "${RESUBMIT_SCRIPT-}" ]]; then
-                if [[ -n "${SLURM_SUBMIT_DIR-}" && -f "${SLURM_SUBMIT_DIR}/SLURMM-run" ]]; then
-                    resubmit_script="${SLURM_SUBMIT_DIR}/SLURMM-run"
-                else
-                    resubmit_script="$0"
-                fi
-            else
-                resubmit_script="${RESUBMIT_SCRIPT}"
-            fi
-
-            # Capture partition/time from current job
-            cur_part=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | awk -F= '/Partition=/{print $2}' | awk '{print $1; exit}')
-            cur_time=$(scontrol show job "$SLURM_JOB_ID" 2>/dev/null | awk -F= '/TimeLimit=/{print $2}' | awk '{print $1; exit}')
-            [[ -z "${cur_part}" || "${cur_part}" == "(null)" ]] && cur_part="${SLURM_JOB_PARTITION-}"
-            [[ -z "${cur_time}" || "${cur_time}" == "(null)" ]] && cur_time="${SLURM_TIMELIMIT-}"
-
-            sbatch_args=(--parsable --job-name="${SLURM_JOB_NAME}" --export=ALL,"$export_vars" --exclude="$exc_nodes")
-            [[ -n "${cur_part}" ]] && sbatch_args+=(-p "${cur_part}")
-            [[ -n "${cur_time}" ]] && sbatch_args+=(-t "${cur_time}")
-
-            # Submit retry as a *new job* with node exclusion
-            submit_out=$(sbatch "${sbatch_args[@]}" "$resubmit_script" 2>&1)
-            rc=$?
-
-            if [[ $rc -eq 0 && -n "$submit_out" ]]; then
-                echo "Resubmitted as JobId=$submit_out"
-                echo "$submit_out" > RESUBMITTED_JOBID
-                echo "$submit_out" > JOBID
-
-                echo "Canceling current job $SLURM_JOB_ID"
-                scancel "$SLURM_JOB_ID"
-                exit 0
-            fi
-
-            echo "sbatch resubmit FAILED (rc=$rc): $submit_out"
-            echo "Falling back to scontrol requeue (no exclusion guarantee)."
-            scontrol requeue "$SLURM_JOB_ID" || true
-            exit 0
-        fi
+        sleep 60
 
         # If bad_node is empty, just requeue
-        scontrol requeue "$SLURM_JOB_ID" || true
+        scontrol requeue $SLURM_JOB_ID
         exit 0
     else
         echo "FAILED" > FAILED
