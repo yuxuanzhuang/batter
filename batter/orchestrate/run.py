@@ -412,6 +412,8 @@ def run_from_yaml(
     # SLURM manager (registry per execution)
     slurm_flags = rc.run.slurm.to_sbatch_flags() if rc.run.slurm else None
     batch_mode = bool(getattr(rc.run, "batch_mode", False))
+    if batch_mode:
+        raise NotImplementedError('batch mode not implemented')
     batch_poll = 10.0 if batch_mode else 60 * 15
     registry_file = None if batch_mode else _slurm_registry_path(run_dir)
     job_mgr = SlurmJobManager(
@@ -421,10 +423,10 @@ def run_from_yaml(
         registry_file=registry_file,
         dry_run=dry_run,
         sbatch_flags=slurm_flags,
-        batch_mode=batch_mode,
-        batch_gpus=getattr(rc.run, "batch_gpus", None),
-        gpus_per_task=getattr(rc.run, "batch_gpus_per_task", 1),
-        srun_extra=getattr(rc.run, "batch_srun_extra", None),
+        #batch_mode=batch_mode,
+        #batch_gpus=getattr(rc.run, "batch_gpus", None),
+        #gpus_per_task=getattr(rc.run, "batch_gpus_per_task", 1),
+        #srun_extra=getattr(rc.run, "batch_srun_extra", None),
         max_active_jobs=rc.run.max_active_jobs,
         partition=rc.run.slurm.partition if rc.run.slurm else None,
     )

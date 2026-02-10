@@ -24,19 +24,8 @@ else
         NEXT_RETRY=$((RETRY_COUNT + 1))
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
         echo "Requeuing the job for attempt $NEXT_RETRY..."
-        sleep 30
-        bad_node=$(
-        scontrol show job $SLURM_JOB_ID |
-            grep -m1 '^[[:space:]]*NodeList=' |
-            awk -F= '{print $2}' |
-            tr -d '[:space:}'
-        )
-        echo "Bad node: $bad_node"
-        if [ -z "$bad_node" ]; then
-            scontrol requeue "$SLURM_JOB_ID"
-        else
-            scontrol update JobId=$SLURM_JOB_ID ExcNodeList=="$bad_node"
-            scontrol requeue "$SLURM_JOB_ID"
+        sleep 60
+        scontrol requeue "$SLURM_JOB_ID"
         fi
         
         exit 0
