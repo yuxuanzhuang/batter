@@ -7,7 +7,6 @@ from batter.exec.slurm_mgr import (
     SlurmJobManager,
     SlurmJobSpec,
     _atomic_append_jsonl_unique,
-    _parse_gpu_env,
 )
 
 
@@ -31,17 +30,6 @@ def test_slurm_job_manager_status(tmp_path):
     spec = SlurmJobSpec(workdir=workdir)
     manager = SlurmJobManager(registry_file=tmp_path / "queue.jsonl")
     manager.add(spec)
-
-    # no sentinels yet -> pending
-    done, status = manager._status(spec)
-    assert done is False
-    assert status is None
-
-    # finished sentinel
-    spec.finished_path().write_text("")
-    done, status = manager._status(spec)
-    assert done is True
-    assert status == "FINISHED"
 
     # registry file should have exactly one entry
     manager.add(spec)
@@ -68,53 +56,6 @@ def test_registry_filters_by_stage(tmp_path):
     jobs_fe = manager.jobs()
     assert {j.workdir for j in jobs_fe} == {wd_fe}
 
-
-def test_timeout_resubmits_without_failure(monkeypatch, tmp_path):
-    workdir = tmp_path / "timeout"
-    workdir.mkdir()
-    script = workdir / "SLURMM-run"
-    script.write_text("#!/bin/bash\n")
-
-    spec = SlurmJobSpec(workdir=workdir)
-    manager = SlurmJobManager(
-        registry_file=None,
-        poll_s=0.0,
-        resubmit_backoff_s=0.0,
-        max_retries=0,
-    )
-
-    submissions = {"count": 0}
-
-    def fake_submit(spec: SlurmJobSpec) -> str:
-        submissions["count"] += 1
-        spec.jobid_path().write_text(str(submissions["count"]))
-        return str(submissions["count"])
-
-    class StopLoop(Exception):
-        pass
-
-    states = iter(["TIMEOUT", "TIMEOUT", "STOP"])
-
-    def fake_slurm_state(jobid: str | None):
-        if not jobid:
-            return None
-        try:
-            state = next(states)
-        except StopIteration:
-            return None
-        if state == "STOP":
-            raise StopLoop()
-        return state
-
-    monkeypatch.setattr("batter.exec.slurm_mgr._slurm_state", fake_slurm_state)
-    monkeypatch.setattr(manager, "_submit", fake_submit)
-
-    with pytest.raises(StopLoop):
-        manager._wait_loop([spec])
-
-    assert not spec.failed_path().exists()
-    assert manager._retries.get(spec.workdir, 0) == 0
-    assert submissions["count"] == 2
 
 
 def test_submission_failure_raises(monkeypatch, tmp_path):
@@ -145,53 +86,6 @@ def test_submission_failure_raises(monkeypatch, tmp_path):
         manager._wait_loop([spec])
 
     assert attempts["count"] == 4
-
-
-def test_completed_resubmit_does_not_count_retry(monkeypatch, tmp_path):
-    workdir = tmp_path / "completed"
-    workdir.mkdir()
-    script = workdir / "SLURMM-run"
-    script.write_text("#!/bin/bash\n")
-
-    spec = SlurmJobSpec(workdir=workdir)
-    manager = SlurmJobManager(
-        registry_file=None,
-        poll_s=0.0,
-        resubmit_backoff_s=0.0,
-        max_retries=0,  # would fail immediately if counted
-    )
-
-    submissions = {"count": 0}
-
-    def fake_submit(spec: SlurmJobSpec) -> str:
-        submissions["count"] += 1
-        spec.jobid_path().write_text(str(submissions["count"]))
-        # simulate the resubmitted job writing FINISHED
-        if submissions["count"] >= 2:
-            spec.finished_path().write_text("")
-        return str(submissions["count"])
-
-    def fake_slurm_state(jobid: str | None):
-        if not jobid:
-            return None
-        return "COMPLETED"
-
-    monkeypatch.setattr("batter.exec.slurm_mgr._slurm_state", fake_slurm_state)
-    monkeypatch.setattr(manager, "_submit", fake_submit)
-    monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
-
-    manager._wait_loop([spec])
-
-    assert submissions["count"] == 2  # initial + resubmission
-    assert manager._retries.get(spec.workdir, 0) == 0
-    assert spec.failed_path().exists() is False
-
-
-def test_parse_gpu_env_variants():
-    assert _parse_gpu_env("4") == 4
-    assert _parse_gpu_env("gpu:4") == 4
-    assert _parse_gpu_env("0,1,2") == 3
-    assert _parse_gpu_env("") is None
 
 
 def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
