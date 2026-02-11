@@ -35,11 +35,6 @@ else
     if [ "$RETRY_COUNT" -lt "$MAX_ATTEMPTS" ]; then
         NEXT_RETRY=$((RETRY_COUNT + 1))
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
-        echo "Requeuing the job for attempt $NEXT_RETRY..."
-
-        sleep 60
-
-        scontrol requeue $SLURM_JOB_ID
         exit 0
     else
         echo "FAILED" > FAILED
@@ -52,7 +47,6 @@ if [ $ONLY_EQ -eq 1 ]; then
     echo "ONLY_EQ is set to 1. Simulation is complete."
     if [[ ! -f EQ_FINISHED ]]; then
         echo "EQ failed for some unknown reason."
-        scontrol requeue $SLURM_JOB_ID
         exit 0
     fi
     echo "Job completed at $(date)"
@@ -60,7 +54,6 @@ if [ $ONLY_EQ -eq 1 ]; then
 fi
 if [[ ! -f FINISHED ]]; then
     echo "Simulation is not complete."
-    scontrol requeue $SLURM_JOB_ID
     exit 0
 fi
 echo "Job completed at $(date)"

@@ -750,11 +750,6 @@ class SlurmJobManager:
             else specs
         )
         for s in submit_iter:
-            if self.max_active_jobs is not None and self.n_active >= self.max_active_jobs:
-                logger.info(
-                    f"[SLURM] reached max_active_jobs={self.max_active_jobs}; deferring submissions"
-                )
-                self.wait_for_slot()
             try:
                 # do not resubmit here; just ensure it has a JOBID if needed
                 if not _read_text(s.jobid_path()):
@@ -854,7 +849,6 @@ class SlurmJobManager:
                     )
 
                 time.sleep(self.resubmit_backoff_s)
-                self.wait_for_slot()
                 try:
                     self._submit(sp)
                     if not timeout_state and not completed_state:
