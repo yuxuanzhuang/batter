@@ -356,7 +356,7 @@ def _copy_equil_artifacts(
         if src.exists():
             shutil.copy2(src, dest_dir / candidates_map[name])
         else:
-            logger.warning(f"Equilibration artifact {src} not found; skipping copy.")
+            logger.debug(f"Equilibration artifact {src} not found; skipping copy.")
 
     # add README file
     readme_path = dest_dir / "README.txt"
