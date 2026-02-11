@@ -37,10 +37,8 @@ else
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
         echo "Requeuing the job for attempt $NEXT_RETRY..."
 
-        # Small delay to let filesystem/logs settle (optional)
         sleep 60
 
-        # If bad_node is empty, just requeue
         scontrol requeue $SLURM_JOB_ID
         exit 0
     else
