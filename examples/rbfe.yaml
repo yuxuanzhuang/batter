@@ -36,6 +36,7 @@ run:
 rbfe:
   mapping: konnektor
   konnektor_layout: minimalspanningtree
+  both_directions: false
 
 fe_sim:
   # 24 windows for Lambda schedule required for RBFE.
