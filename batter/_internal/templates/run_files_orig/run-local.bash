@@ -19,6 +19,11 @@ only_eq=${ONLY_EQ:-0}
 skip_window_eq=${SKIP_WINDOW_EQ:-0}
 retry=${RETRY_COUNT:-0}
 
+# if retry > 3, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
+if [[ $retry -gt 3 ]]; then
+    PMEMD_EXEC=${PMEMD_DPFP_EXEC}
+fi
+
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"

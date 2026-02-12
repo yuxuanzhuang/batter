@@ -814,7 +814,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alter_lig_merged = mda.Merge(u_alter_lig_pocket.atoms, u_alter_lig)
     u_alter_lig_merged.atoms.write(dest_dir / "alter_ligand.pdb")
 
-    u_lig_alter = mda.Universe(dest_dir / "alter_ligand.prmtop")
+    u_lig_alter = mda.Universe(dest_dir / "alter_ligand.prmtop", dest_dir / "alter_ligand.pdb")
     # only one present in the system
     q = u_lig_alter.atoms.charges.sum() / 2.0
     u_lig_charge = int(np.rint(q))

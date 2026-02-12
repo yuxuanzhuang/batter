@@ -153,31 +153,51 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
     return need
 
 
-def _phase_ok_paths(root: Path, phase_name: str) -> List[Path]:
+def _phase_ok_patterns(phase_name: str) -> List[str]:
     if phase_name == "prepare_fe":
-        return [
-            root / "fe" / "prepare_fe.ok",
-            root / "fe" / "prepare_fe_windows.ok",
-        ]
+        return ["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]
     if phase_name == "prepare_fe_windows":
-        return [root / "fe" / "prepare_fe_windows.ok"]
+        return ["fe/prepare_fe_windows.ok"]
     if phase_name == "pre_prepare_fe":
-        return [root / "fe" / "pre_prepare_fe.ok"]
+        return ["fe/pre_prepare_fe.ok"]
+    if phase_name in {"pre_fe_equil", "fe_equil"}:
+        return ["fe/{comp}/{comp}-1/EQ_FINISHED"]
+    if phase_name == "fe":
+        return ["fe/{comp}/{comp}{win:02d}/FINISHED"]
+    if phase_name == "analyze":
+        return ["fe/analyze.ok", "fe/Results/Results.dat"]
     return []
 
 
 def _maybe_invalidate_progress_for_phase(
     children: List[SimSystem], phase_name: str
 ) -> None:
-    if phase_name not in {"prepare_fe", "prepare_fe_windows", "pre_prepare_fe"}:
+    if phase_name not in {
+        "prepare_fe",
+        "prepare_fe_windows",
+        "pre_prepare_fe",
+        "pre_fe_equil",
+        "fe_equil",
+        "fe",
+        "analyze",
+    }:
         return
     total = len(children)
     if total == 0:
         return
     ok_count = 0
     for child in children:
-        ok_paths = _phase_ok_paths(child.root, phase_name)
-        if ok_paths and all(p.exists() for p in ok_paths):
+        ok_patterns = _phase_ok_patterns(phase_name)
+        if not ok_patterns:
+            continue
+        comp_cache = components_under(child.root)
+        ok = True
+        for pattern in ok_patterns:
+            expanded = _expand_pattern(child.root, pattern, comp_cache, {})
+            if not expanded or not all(p.exists() for p in expanded):
+                ok = False
+                break
+        if ok:
             ok_count += 1
     if ok_count == total:
         return
@@ -188,6 +208,17 @@ def _maybe_invalidate_progress_for_phase(
         try:
             for p in progress_dir.glob("*.csv"):
                 p.unlink(missing_ok=True)
+            for child in children:
+                legacy_paths = [
+                    child.root / "artifacts" / "progress" / f"{phase_name}.csv",
+                    child.root
+                    / "fe"
+                    / "artifacts"
+                    / "progress"
+                    / f"{phase_name}.csv",
+                ]
+                for legacy in legacy_paths:
+                    legacy.unlink(missing_ok=True)
             logger.info(
                 f"[progress] {phase_name}: ok_count={ok_count}/{total}; cleared cached progress."
             )

@@ -191,7 +191,7 @@ def test_runs_prepare_fe(tmp_path: Path) -> None:
     # both ligands should have FE prep markers emitted
     for lig in ("CAU", "G1I"):
         lig_dir = (
-            work_dir / "executions" / "rep1" / "simulations" / lig / "fe" / "artifacts"
+            work_dir / "executions" / "rep1" / "simulations" / lig / "fe"
         )
         assert (lig_dir / "prepare_fe.ok").exists()
         assert (lig_dir / "prepare_fe_windows.ok").exists()
