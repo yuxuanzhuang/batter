@@ -26,7 +26,7 @@ check_sim_failure() {
         rm -f "$log_file"
         rm -f "$rst_file"
         cleanup_outputs
-        if [[ $retry_count -ge 2 ]]; then
+        if [[ $retry_count -ge 3 ]]; then
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
         fi
 
