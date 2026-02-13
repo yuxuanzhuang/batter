@@ -99,6 +99,33 @@ __all__ = [
 ]
 
 
+def _resolve_execution_run(work_root: Path, run_id: str | None) -> tuple[str, Path]:
+    """Resolve an execution directory, defaulting to the most recent run."""
+    requested = (run_id or "").strip() or None
+    runs_root = work_root / "executions"
+
+    if requested:
+        run_dir = runs_root / requested
+        if not run_dir.is_dir():
+            raise FileNotFoundError(
+                f"Run '{requested}' does not exist under {work_root}."
+            )
+        return requested, run_dir
+
+    if not runs_root.is_dir():
+        raise FileNotFoundError(f"No executions found under {work_root}.")
+
+    candidates = [p for p in runs_root.iterdir() if p.is_dir()]
+    if not candidates:
+        raise FileNotFoundError(f"No executions found under {work_root}.")
+
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    logger.info(
+        f"No run_id provided; using latest execution '{latest.name}' under {work_root}."
+    )
+    return latest.name, latest
+
+
 def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
     """
     Return an index of FE runs contained in a portable work directory.
@@ -166,7 +193,7 @@ def load_fe_run(
 
 def run_analysis_from_execution(
     work_dir: Union[str, Path],
-    run_id: str,
+    run_id: str | None = None,
     *,
     ligand: str | None = None,
     components: Sequence[str] | None = None,
@@ -182,8 +209,9 @@ def run_analysis_from_execution(
     ----------
     work_dir : str or Path
         Root directory containing the portable execution store.
-    run_id : str
-        Identifier of the execution (e.g., ``run-20240101``).
+    run_id : str, optional
+        Identifier of the execution (e.g., ``run-20240101``). When omitted,
+        the most recently modified execution under ``<work_dir>/executions`` is used.
     ligand : str, optional
         Ligand identifier to target when only a subset should be analyzed.
     components : sequence of str, optional
@@ -200,9 +228,7 @@ def run_analysis_from_execution(
         Set to ``False`` to log the failure and continue with other ligands.
     """
     work_root = Path(work_dir)
-    run_dir = work_root / "executions" / run_id
-    if not run_dir.exists():
-        raise FileNotFoundError(f"Run '{run_id}' does not exist under {work_root}.")
+    run_id, run_dir = _resolve_execution_run(work_root, run_id)
 
     config_dir = run_dir / "artifacts" / "config"
     sim_cfg_path = config_dir / "sim.resolved.yaml"

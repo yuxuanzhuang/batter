@@ -187,7 +187,7 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 @click.argument(
     "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
 )
-@click.argument("run_id", type=str)
+@click.argument("run_id", type=str, required=False)
 @click.option(
     "--ligand",
     "-l",
@@ -228,7 +228,7 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 )
 def fe_analyze(
     work_dir: Path,
-    run_id: str,
+    run_id: str | None,
     ligand: str | None,
     workers: int | None,
     raise_on_error: bool,
@@ -263,6 +263,6 @@ def fe_analyze(
         raise click.ClickException(str(exc))
 
     click.echo(
-        f"Analysis run finished for '{run_id}'"
+        f"Analysis run finished for '{run_id or 'latest execution'}'"
         f"{' (ligand ' + ligand + ')' if ligand else ''}."
     )

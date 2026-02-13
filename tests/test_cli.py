@@ -325,6 +325,36 @@ def test_cli_fe_analyze_can_disable_raise(
     assert called["raise_on_error"] is False
 
 
+def test_cli_fe_analyze_uses_latest_when_run_id_omitted(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called["work_dir"] = work_dir
+        called["run_id"] = run_id
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(cli, ["fe", "analyze", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert called["work_dir"] == tmp_path
+    assert called["run_id"] is None
+    assert "latest execution" in result.output
+
+
 def _copy_finished_run(tmp_path: Path) -> Path:
     src = FE_FINISHED_EXECUTION_DIR
     dest = tmp_path / "work" / "executions" / "rep1"
