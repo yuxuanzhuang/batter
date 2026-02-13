@@ -17,7 +17,7 @@ import logging
 from loguru import logger
 from joblib import Parallel, delayed
 
-from pymbar.timeseries import detect_equilibration
+from pymbar.timeseries import detect_equilibration, subsample_correlated_data
 import MDAnalysis as mda
 from MDAnalysis.lib.distances import calc_bonds, calc_angles, calc_dihedrals
 
@@ -399,11 +399,13 @@ class MBARAnalysis(FEAnalysisBase):
         # detect_equilibration on the reference column of this window
         if truncate:
             with SilenceAlchemlybOnly():
-                t0, _, _ = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                df = df.iloc[t0:, :]
+                indices = subsample_correlated_data(df.iloc[:, win_i], g=g)
+                df = df.iloc[indices, :]
             logger.debug(
                 f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}"
             )
-            df = df.iloc[t0:, :]
         # subtract reference (this window) to yield reduced potentials
         ref = df.iloc[:, win_i]
         df = df.subtract(ref, axis=0)
