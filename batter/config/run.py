@@ -497,6 +497,11 @@ class FESimArgs(BaseModel):
         ge=0,
         description="Only analyze FE production steps after this step (per window).",
     )
+    n_bootstraps: int = Field(
+        0,
+        ge=0,
+        description="Number of MBAR bootstrap resamples used during FE analysis.",
+    )
 
     @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
     @classmethod

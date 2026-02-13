@@ -194,6 +194,15 @@ class SimulationConfig(BaseModel):
             analysis_start_step_val = int(fe.get("analysis_start_step") or 0)
         if analysis_start_step_val < 0:
             raise ValueError("analysis_start_step must be >= 0.")
+
+        n_bootstraps_val = 0
+        if hasattr(fe, "n_bootstraps"):
+            n_bootstraps_val = int(getattr(fe, "n_bootstraps") or 0)
+        elif isinstance(fe, Mapping) and "n_bootstraps" in fe:
+            n_bootstraps_val = int(fe.get("n_bootstraps") or 0)
+        if n_bootstraps_val < 0:
+            raise ValueError("n_bootstraps must be >= 0.")
+
         max_fe_steps = max((int(v) for v in n_steps.values() if v is not None), default=0)
         if max_fe_steps and analysis_start_step_val >= max_fe_steps:
             raise ValueError(
@@ -250,6 +259,7 @@ class SimulationConfig(BaseModel):
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
+            "n_bootstraps": n_bootstraps_val,
             "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
         }
 
@@ -353,6 +363,11 @@ class SimulationConfig(BaseModel):
         0,
         ge=0,
         description="Analyze only steps after this (per FE window).",
+    )
+    n_bootstraps: int = Field(
+        0,
+        ge=0,
+        description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
 
     # --- Force constants ---
