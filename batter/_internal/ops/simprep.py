@@ -33,6 +33,7 @@ from batter.utils import run_with_log
 from batter.config.simulation import SimulationConfig
 from rdkit import Chem
 from rdkit.Geometry import Point3D
+from rdkit.Chem import rdMolAlign, AllChem
 from kartograf.atom_mapper import KartografAtomMapper
 from kartograf import SmallMoleculeComponent
 from kartograf.atom_aligner import align_mol_shape
@@ -294,6 +295,67 @@ def set_alt_coords_from_ref_mapping(
         alt_conf.SetAtomPosition(alt_idx, Point3D(p.x, p.y, p.z))
 
     return alt_out
+
+
+
+def force_mapped_coords_and_minimize(
+    lig1: Chem.Mol,
+    lig2: Chem.Mol,
+    atom_map_1to2: list[tuple[int, int]],
+    ff: str = "MMFF",
+    maxIters: int = 500,
+    restrain_instead_of_freeze: bool = False,
+    k: float = 1e6,
+):
+    """
+    lig1, lig2 must have at least one conformer each.
+    atom_map_1to2: list of (idx_in_lig1, idx_in_lig2), 0-based indices.
+    Returns lig2 (modified) with minimized geometry.
+    """
+    if lig1.GetNumConformers() == 0 or lig2.GetNumConformers() == 0:
+        raise ValueError("Both ligands must already have 3D conformers.")
+
+    conf1 = lig1.GetConformer()
+    conf2 = lig2.GetConformer()
+
+    # 1) Align lig2 -> lig1 based on mapped atoms (moves lig2 conformer)
+    # rdMolAlign uses (probeAtomIdx, refAtomIdx) pairs for atomMap
+    atomMap_probe_to_ref = [(j, i) for (i, j) in atom_map_1to2]
+    rdMolAlign.AlignMol(lig2, lig1, atomMap=atomMap_probe_to_ref)
+
+    # 2) Overwrite mapped atom coordinates in lig2 to EXACTLY match lig1
+    for i1, i2 in atom_map_1to2:
+        p = conf1.GetAtomPosition(i1)
+        conf2.SetAtomPosition(i2, p)
+
+    # 3) Build force field
+    lig2_ffmol = Chem.Mol(lig2)  # keep same object; just being explicit
+    if ff.upper() == "MMFF":
+        props = AllChem.MMFFGetMoleculeProperties(lig2_ffmol, mmffVariant="MMFF94s")
+        if props is None:
+            raise ValueError("MMFF properties failed (missing params?). Try ff='UFF'.")
+        ffobj = AllChem.MMFFGetMoleculeForceField(lig2_ffmol, props)
+    elif ff.upper() == "UFF":
+        ffobj = AllChem.UFFGetMoleculeForceField(lig2_ffmol)
+    else:
+        raise ValueError("ff must be 'MMFF' or 'UFF'")
+
+    # 4) Freeze or strongly restrain mapped atoms, then minimize
+    mapped2 = [i2 for _, i2 in atom_map_1to2]
+    if restrain_instead_of_freeze:
+        # Keep atoms near their exact target coords; still allows tiny relaxation
+        # (maxDispl=0.0 means hard constraint in practice; you can set small >0 if needed)
+        for a in mapped2:
+            ffobj.AddPositionConstraint(a, maxDispl=0.0, forceConstant=k)
+    else:
+        # Truly freeze atoms at their current coordinates
+        for a in mapped2:
+            ffobj.AddFixedPoint(a)
+
+    ffobj.Initialize()
+    ffobj.Minimize(maxIts=maxIters)
+
+    return lig2_ffmol
 
 # ---------------------- unified writer ----------------------
 
@@ -865,12 +927,9 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_ref = SmallMoleculeComponent.from_rdkit(rdmol_ref)
     mol_alt = SmallMoleculeComponent.from_rdkit(rdmol_alt)
 
-    ref_pos = u_lig.residues[0].atoms.positions
-    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
-
-    # align ligands
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
+    # 1. get mapper based on inital poses
     mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
     )
@@ -880,12 +939,17 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
     logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
     kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
+    atomMap = [(probe, ref) for ref, probe in sorted(kartograf_mapping.componentB_to_componentA.items())]
+
+    # 2. use reference ligand, steer alt ligand to the atom mapped position.
+    ref_pos = u_lig.residues[0].atoms.positions
+    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
 
     # set mol_alt_aligned common core positions to be exactly the same as mol_ref
-    mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
-        mol_ref._rdkit, mol_alt_aligned._rdkit, kartograf_mapping.componentA_to_componentB
+    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+    mol_alt_aligned._rdkit = force_mapped_coords_and_minimize(
+                mol_ref._rdkit, mol_alt_aligned._rdkit, atom_map_1to2=atomMap, 
     )
-
     # save mol_alt_aligned as PDB
     alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
     alter_solvent_pdb = dest_dir / "alter_ligand_aligned_solvent.pdb"
@@ -898,8 +962,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
-    mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
-        mol_ref._rdkit, mol_alt_aligned._rdkit, kartograf_mapping.componentA_to_componentB
+    mol_alt_aligned._rdkit = force_mapped_coords_and_minimize(
+                mol_ref._rdkit, mol_alt_aligned._rdkit, atom_map_1to2=atomMap, 
     )
 
     # save mol_alt_aligned as PDB
