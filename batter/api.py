@@ -199,6 +199,7 @@ def run_analysis_from_execution(
     components: Sequence[str] | None = None,
     n_workers: int | None = None,
     analysis_start_step: int | None = None,
+    n_bootstraps: int | None = None,
     overwrite: bool = True,
     raise_on_error: bool = True,
 ) -> None:
@@ -220,6 +221,8 @@ def run_analysis_from_execution(
         Number of worker processes requested for the analysis handler.
     analysis_start_step : int, optional
         First production step to include in analysis (per window); overrides config.
+    n_bootstraps : int, optional
+        Number of MBAR bootstrap resamples; overrides config.
     overwrite: bool, optional
         When ``True`` (default), overwrite any existing analysis results for the run_id.
         When ``False``, skip ligands that already have analysis outputs.
@@ -306,6 +309,16 @@ def run_analysis_from_execution(
         analysis_start_step_val = int(getattr(sim_cfg, "analysis_start_step", 0))
         payload_data["analysis_start_step"] = analysis_start_step_val
         logger.info(f"Analysis start step loaded: {analysis_start_step_val}")
+    if n_bootstraps is not None:
+        if n_bootstraps < 0:
+            raise ValueError("n_bootstraps must be >= 0.")
+        n_bootstraps_val = int(n_bootstraps)
+        payload_data["n_bootstraps"] = n_bootstraps_val
+        logger.info(f"MBAR bootstrap resamples set to: {n_bootstraps_val}")
+    else:
+        n_bootstraps_val = int(getattr(sim_cfg, "n_bootstraps", 0) or 0)
+        payload_data["n_bootstraps"] = n_bootstraps_val
+        logger.info(f"MBAR bootstrap resamples loaded: {n_bootstraps_val}")
 
     payload = StepPayload(**payload_data)
     params = payload.to_mapping()
@@ -355,6 +368,7 @@ def run_analysis_from_execution(
         repo=repo,
         protocol=protocol,
         analysis_start_step=analysis_start_step_val,
+        n_bootstraps=n_bootstraps_val,
     )
     if failures:
         failed = ", ".join(

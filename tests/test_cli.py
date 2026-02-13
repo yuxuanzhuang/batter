@@ -252,6 +252,7 @@ def test_cli_fe_analyze_invokes_api(
         components=None,
         n_workers,
         analysis_start_step,
+        n_bootstraps=None,
         overwrite=True,
         raise_on_error=True,
     ):
@@ -261,6 +262,7 @@ def test_cli_fe_analyze_invokes_api(
         called["components"] = components
         called["n_workers"] = n_workers
         called["analysis_start_step"] = analysis_start_step
+        called["n_bootstraps"] = n_bootstraps
         called["overwrite"] = overwrite
         called["raise_on_error"] = raise_on_error
 
@@ -279,6 +281,8 @@ def test_cli_fe_analyze_invokes_api(
             "3",
             "--analysis-start-step",
             "2500",
+            "--n-bootstrap",
+            "64",
         ],
     )
     assert result.exit_code == 0
@@ -287,6 +291,7 @@ def test_cli_fe_analyze_invokes_api(
     assert called["ligand"] == "LIG1"
     assert called["n_workers"] == 3
     assert called["analysis_start_step"] == 2500
+    assert called["n_bootstraps"] == 64
     assert called["overwrite"] is True
     assert called["raise_on_error"] is True
 
@@ -304,6 +309,7 @@ def test_cli_fe_analyze_can_disable_raise(
         components=None,
         n_workers,
         analysis_start_step,
+        n_bootstraps=None,
         overwrite=True,
         raise_on_error=True,
     ):
@@ -338,6 +344,7 @@ def test_cli_fe_analyze_uses_latest_when_run_id_omitted(
         components=None,
         n_workers,
         analysis_start_step,
+        n_bootstraps=None,
         overwrite=True,
         raise_on_error=True,
     ):

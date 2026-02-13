@@ -214,6 +214,14 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="First production step (per window) to include in analysis.",
 )
 @click.option(
+    "--n-bootstrap",
+    "--n-bootstraps",
+    "n_bootstraps",
+    type=int,
+    default=None,
+    help="Number of MBAR bootstrap resamples to use during analysis.",
+)
+@click.option(
     "--overwrite/--no-overwrite",
     default=True,
     help="Overwrite existing analysis results when present.",
@@ -233,6 +241,7 @@ def fe_analyze(
     workers: int | None,
     raise_on_error: bool,
     analysis_start_step: int | None,
+    n_bootstraps: int | None,
     overwrite: bool,
     log_level: str = "INFO",
 ) -> None:
@@ -256,6 +265,7 @@ def fe_analyze(
             ligand=ligand,
             n_workers=workers,
             analysis_start_step=analysis_start_step,
+            n_bootstraps=n_bootstraps,
             overwrite=overwrite,
             raise_on_error=raise_on_error,
         )
