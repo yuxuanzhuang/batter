@@ -304,6 +304,46 @@ def test_sim_config_asfe_requires_y_steps(tmp_path: Path) -> None:
         SimulationConfig.from_sections(create, fe_args, protocol="asfe")
 
 
+def test_sim_config_rbfe_forces_eq_steps_to_zero(tmp_path: Path, monkeypatch) -> None:
+    create = _minimal_create(tmp_path)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "batter.config.simulation.logger.warning",
+        lambda msg, *a, **k: warnings.append(str(msg)),
+    )
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"x": 300_000},
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+
+    assert cfg.eq_steps == 0
+    assert any("forces eq_steps=0" in w for w in warnings)
+
+
+def test_sim_config_rbfe_no_warning_when_eq_steps_already_zero(
+    tmp_path: Path, monkeypatch
+) -> None:
+    create = _minimal_create(tmp_path)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        "batter.config.simulation.logger.warning",
+        lambda msg, *a, **k: warnings.append(str(msg)),
+    )
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=0,
+        n_steps={"x": 300_000},
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="rbfe")
+
+    assert cfg.eq_steps == 0
+    assert not any("forces eq_steps=0" in w for w in warnings)
+
+
 def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
