@@ -374,7 +374,6 @@ class MBARAnalysis(FEAnalysisBase):
                 dfs.append(df_part)
 
         df = pd.concat(dfs)
-        # exclude 
 
         # Drop early frames if requested (convert steps -> ps)
         if analysis_start_step > 0:

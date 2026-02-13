@@ -753,7 +753,6 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     hvy_h, hvy_lig_1 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 1)
     # alt lig
     hvy_h_2, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
-    hvy_lig = hvy_lig_1 + hvy_lig_2
     atm_num         = num_to_mask(vac_pdb.as_posix())
     
     # cv.in
@@ -776,20 +775,21 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
         cvf.write("/\n")
 
         # ligand COM restraint
-        cvf.write("&colvar\n")
-        if len(hvy_lig) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
-            for a in hvy_lig:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-        cvf.write("/\n")
+        for hvy_lig in [hvy_lig_1, hvy_lig_2]:
+            cvf.write("&colvar\n")
+            if len(hvy_lig) == 1:
+                # if only one atom, use DISTANCE instead of COM_DISTANCE
+                cvf.write(" cv_type = 'DISTANCE'\n")
+                cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
+            else:
+                cvf.write(" cv_type = 'COM_DISTANCE'\n")
+                cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
+                for a in hvy_lig:
+                    cvf.write(a + ",")
+            cvf.write("\n")
+            cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+            cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
+            cvf.write("/\n")
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
