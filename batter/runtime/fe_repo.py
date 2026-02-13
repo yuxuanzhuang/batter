@@ -90,6 +90,8 @@ class FERecord(BaseModel):
         Logical protocol used to generate the result (e.g., ``"abfe"``).
     analysis_start_step : int, optional
         First production step included in analysis.
+    n_bootstraps : int, optional
+        Number of MBAR bootstrap resamples used during analysis.
     status : {"success","failed","unbound"}
         Final status recorded for the ligand.
     """
@@ -113,11 +115,12 @@ class FERecord(BaseModel):
     original_path: str | None = None
     protocol: str = "abfe"
     analysis_start_step: int | None = None
+    n_bootstraps: int | None = None
     status: Literal["success", "failed", "unbound"] = "success"
 
-    @field_validator("analysis_start_step", mode="before")
+    @field_validator("analysis_start_step", "n_bootstraps", mode="before")
     @classmethod
-    def _coerce_analysis_start_step(cls, v: Any) -> Any:
+    def _coerce_optional_int(cls, v: Any) -> Any:
         if v is None or v is pd.NA:
             return None
         if isinstance(v, str) and not v.strip():
@@ -142,7 +145,7 @@ class FEResultsRepository:
         return self._lig_dir(run_id, ligand)
 
     @staticmethod
-    def _normalize_analysis_start_step(value: Any) -> int | None:
+    def _normalize_optional_int(value: Any) -> int | None:
         if value is None or value is pd.NA:
             return None
         if isinstance(value, str):
@@ -154,6 +157,11 @@ class FEResultsRepository:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _normalize_n_bootstraps(value: Any) -> int:
+        normalized = FEResultsRepository._normalize_optional_int(value)
+        return 0 if normalized is None else normalized
+
     def _normalize_row(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(row)
         normalized.setdefault("temperature", pd.NA)
@@ -164,6 +172,7 @@ class FEResultsRepository:
         normalized.setdefault("original_path", "")
         normalized.setdefault("protocol", "")
         normalized.setdefault("analysis_start_step", pd.NA)
+        normalized.setdefault("n_bootstraps", 0)
         normalized.setdefault(
             "created_at", datetime.now(timezone.utc).isoformat(timespec="seconds")
         )
@@ -187,6 +196,7 @@ class FEResultsRepository:
             "original_path",
             "protocol",
             "analysis_start_step",
+            "n_bootstraps",
             "status",
             "failure_reason",
             "created_at",
@@ -207,27 +217,28 @@ class FEResultsRepository:
                     df[col] = pd.NA
 
             if {"run_id", "ligand"}.issubset(df.columns):
-                row_step = self._normalize_analysis_start_step(
-                    row.get("analysis_start_step")
-                )
-                step_series = df["analysis_start_step"].map(
-                    self._normalize_analysis_start_step
-                )
+                row_step = self._normalize_optional_int(row.get("analysis_start_step"))
+                row_bootstraps = self._normalize_n_bootstraps(row.get("n_bootstraps"))
+                step_series = df["analysis_start_step"].map(self._normalize_optional_int)
+                bootstrap_series = df["n_bootstraps"].map(self._normalize_n_bootstraps)
                 if row_step is None:
                     same_step = step_series.isna()
                 else:
                     same_step = step_series == row_step
+                same_bootstrap = bootstrap_series == row_bootstraps
                 logger.info(
-                    "Updating index for run_id={}, ligand={}, analysis_start_step={}",
+                    "Updating index for run_id={}, ligand={}, analysis_start_step={}, n_bootstraps={}",
                     row["run_id"],
                     row["ligand"],
                     row_step,
+                    row_bootstraps,
                 )
                 df = df[
                     ~(
                         (df["run_id"] == row["run_id"])
                         & (df["ligand"] == row["ligand"])
                         & same_step
+                        & same_bootstrap
                     )
                 ].copy().reset_index(drop=True)
 
@@ -264,8 +275,9 @@ class FEResultsRepository:
             # keep raw artifacts alongside the record
             shutil.rmtree(lig_dir / "Results", ignore_errors=True)
             shutil.copytree(copy_from, lig_dir / "Results")
-        # update index table (append-or-upsert by (run_id, ligand, analysis_start_step))
+        # update index table (append-or-upsert by (run_id, ligand, analysis_start_step, n_bootstraps))
         analysis_start_step_val = rec.analysis_start_step
+        n_bootstraps_val = rec.n_bootstraps
         row = {
             "run_id": rec.run_id,
             "ligand": rec.ligand,
@@ -282,6 +294,9 @@ class FEResultsRepository:
                 int(analysis_start_step_val)
                 if analysis_start_step_val is not None
                 else pd.NA
+            ),
+            "n_bootstraps": (
+                int(n_bootstraps_val) if n_bootstraps_val is not None else 0
             ),
             "created_at": rec.created_at,
             "status": rec.status,
@@ -303,6 +318,7 @@ class FEResultsRepository:
             "original_path",
             "protocol",
             "analysis_start_step",
+            "n_bootstraps",
             "created_at",
         ]
         if self._idx.exists():
@@ -321,7 +337,9 @@ class FEResultsRepository:
                 df[key] = pd.NA
         for col in cols:
             if col not in df.columns:
-                df[col] = pd.NA
+                df[col] = 0 if col == "n_bootstraps" else pd.NA
+        if "n_bootstraps" in df.columns:
+            df["n_bootstraps"] = df["n_bootstraps"].fillna(0)
         df["failure_reason"] = df["failure_reason"].fillna("")
         return df[cols + ["status", "failure_reason"]]
 
@@ -339,6 +357,7 @@ class FEResultsRepository:
         original_path: str | None = None,
         protocol: str = "abfe",
         analysis_start_step: int | None = None,
+        n_bootstraps: int | None = None,
     ) -> None:
         lig_dir = self._lig_dir(run_id, ligand)
         lig_dir.mkdir(parents=True, exist_ok=True)
@@ -354,6 +373,7 @@ class FEResultsRepository:
         analysis_start_step_val = (
             int(analysis_start_step) if analysis_start_step is not None else pd.NA
         )
+        n_bootstraps_val = int(n_bootstraps) if n_bootstraps is not None else 0
         row = {
             "run_id": run_id,
             "ligand": ligand,
@@ -367,6 +387,7 @@ class FEResultsRepository:
             "original_path": original_path or "",
             "protocol": protocol,
             "analysis_start_step": analysis_start_step_val,
+            "n_bootstraps": n_bootstraps_val,
             "status": status,
             "failure_reason": reason or "",
             "created_at": failure_detail["timestamp"],

@@ -120,6 +120,7 @@ def save_fe_records(
     protocol: str,
     original_map: Dict[str, str] | None = None,
     analysis_start_step: int | None = None,
+    n_bootstraps: int | None = None,
 ) -> list[tuple[str, str, str]]:
     """Persist FE totals for all ligands to the FE repository, recording failures.
 
@@ -134,6 +135,11 @@ def save_fe_records(
         analysis_start_step_val = getattr(sim_cfg_updated, "analysis_start_step", None)
     if analysis_start_step_val is not None:
         analysis_start_step_val = int(analysis_start_step_val)
+    n_bootstraps_val = n_bootstraps
+    if n_bootstraps_val is None:
+        n_bootstraps_val = getattr(sim_cfg_updated, "n_bootstraps", None)
+    if n_bootstraps_val is not None:
+        n_bootstraps_val = int(n_bootstraps_val)
     protein_align = getattr(sim_cfg_updated, "protein_align", None)
     for child in children_all:
         lig_name = child.meta["ligand"]
@@ -173,6 +179,7 @@ def save_fe_records(
                 original_path=original_path,
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
+                n_bootstraps=n_bootstraps_val,
             )
             if is_rbfe:
                 _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
@@ -229,6 +236,7 @@ def save_fe_records(
                 original_path=original_path,
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
+                n_bootstraps=n_bootstraps_val,
             )
             repo.save(rec, copy_from=results_dir)
             if is_rbfe:
@@ -285,6 +293,7 @@ def save_fe_records(
                 original_path=original_path,
                 protocol=protocol,
                 analysis_start_step=analysis_start_step_val,
+                n_bootstraps=n_bootstraps_val,
             )
             if is_rbfe:
                 _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
