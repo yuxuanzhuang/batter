@@ -182,14 +182,16 @@ class SimulationConfig(BaseModel):
                 "set fe_sim.eq_steps to the total equilibration steps instead."
             )
         eq_steps_raw = int(_fe_attr("eq_steps", lambda: 1_000_000))
-        if proto_key == "rbfe":
-            if eq_steps_raw != 0:
-                logger.warning(
-                    "RBFE ignores fe_sim.eq_steps and forces eq_steps=0 (equilibration skipped)."
-                )
-            eq_steps_value = 0
-        else:
-            eq_steps_value = eq_steps_raw
+        if False:
+            if proto_key == "rbfe":
+                if eq_steps_raw != 0:
+                    logger.warning(
+                        "RBFE ignores fe_sim.eq_steps and forces eq_steps=0 (equilibration skipped)."
+                    )
+                eq_steps_value = 0
+            else:
+                eq_steps_value = eq_steps_raw
+        eq_steps_value = eq_steps_raw
         fe_release_eq = [0.0]
 
         extra_conf_rest = create.extra_conformation_restraints
