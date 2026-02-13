@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from batter.runtime.fe_repo import FEResultsRepository
+from batter.runtime.fe_repo import FERecord, FEResultsRepository
 from batter.runtime.portable import ArtifactStore
 
 
@@ -68,8 +68,6 @@ def test_save_clears_stale_failure_artifact(tmp_path: Path) -> None:
     assert failure_file.exists()
 
     # now save a success and ensure the failure marker is removed
-    from batter.runtime.fe_repo import FERecord
-
     rec = FERecord(
         run_id="run1",
         ligand="lig1",
@@ -94,3 +92,34 @@ def test_save_clears_stale_failure_artifact(tmp_path: Path) -> None:
     idx = repo.index()
     row2 = idx[(idx["run_id"] == "run1") & (idx["ligand"] == "lig1")].iloc[0]
     assert row2["failure_reason"] == ""
+
+
+def test_index_upsert_key_includes_analysis_start_step(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+
+    def _mk_record(step: int, total_dg: float) -> FERecord:
+        return FERecord(
+            run_id="run1",
+            ligand="lig1",
+            mol_name="lig1",
+            system_name="sys",
+            fe_type="rest",
+            temperature=300.0,
+            method="mbar",
+            total_dG=total_dg,
+            total_se=0.1,
+            components=["z"],
+            analysis_start_step=step,
+        )
+
+    repo.save(_mk_record(step=0, total_dg=-1.0))
+    repo.save(_mk_record(step=5000, total_dg=-2.0))
+    repo.save(_mk_record(step=5000, total_dg=-3.0))
+
+    df = pd.read_csv(tmp_path / "results" / "index.csv")
+    rows = df[(df["run_id"] == "run1") & (df["ligand"] == "lig1")]
+    assert len(rows) == 2
+    assert {int(v) for v in rows["analysis_start_step"].tolist()} == {0, 5000}
+    updated = rows[rows["analysis_start_step"] == 5000].iloc[0]
+    assert updated["total_dG"] == pytest.approx(-3.0)

@@ -141,6 +141,19 @@ class FEResultsRepository:
     def ligand_dir(self, run_id: str, ligand: str) -> Path:
         return self._lig_dir(run_id, ligand)
 
+    @staticmethod
+    def _normalize_analysis_start_step(value: Any) -> int | None:
+        if value is None or value is pd.NA:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _normalize_row(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(row)
         normalized.setdefault("temperature", pd.NA)
@@ -186,20 +199,37 @@ class FEResultsRepository:
         with lock:  # (optionally: lock.acquire(timeout=120) if you want a timeout)
             if self._idx.exists():
                 df = pd.read_csv(self._idx)
-                if {"run_id", "ligand"}.issubset(df.columns):
-                    logger.info("Updating index for run_id={}, ligand={}", row["run_id"], row["ligand"])
-                    df = df[
-                        ~(
-                            (df["run_id"] == row["run_id"])
-                            & (df["ligand"] == row["ligand"])
-                        )
-                    ].copy().reset_index(drop=True)
             else:
                 df = pd.DataFrame(columns=cols)
 
             for col in cols:
                 if col not in df.columns:
                     df[col] = pd.NA
+
+            if {"run_id", "ligand"}.issubset(df.columns):
+                row_step = self._normalize_analysis_start_step(
+                    row.get("analysis_start_step")
+                )
+                step_series = df["analysis_start_step"].map(
+                    self._normalize_analysis_start_step
+                )
+                if row_step is None:
+                    same_step = step_series.isna()
+                else:
+                    same_step = step_series == row_step
+                logger.info(
+                    "Updating index for run_id={}, ligand={}, analysis_start_step={}",
+                    row["run_id"],
+                    row["ligand"],
+                    row_step,
+                )
+                df = df[
+                    ~(
+                        (df["run_id"] == row["run_id"])
+                        & (df["ligand"] == row["ligand"])
+                        & same_step
+                    )
+                ].copy().reset_index(drop=True)
 
             # append/upsert row
             new_row = {col: row.get(col, pd.NA) for col in cols}
@@ -234,7 +264,7 @@ class FEResultsRepository:
             # keep raw artifacts alongside the record
             shutil.rmtree(lig_dir / "Results", ignore_errors=True)
             shutil.copytree(copy_from, lig_dir / "Results")
-        # update index table (append-or-upsert by (run_id, ligand))
+        # update index table (append-or-upsert by (run_id, ligand, analysis_start_step))
         analysis_start_step_val = rec.analysis_start_step
         row = {
             "run_id": rec.run_id,
