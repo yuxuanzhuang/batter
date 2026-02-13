@@ -871,7 +871,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # align ligands
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
-    mapper = KartografAtomMapper(atom_max_distance=2, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
+    mapper = KartografAtomMapper(atom_max_distance=1.2, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
     )
     # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
