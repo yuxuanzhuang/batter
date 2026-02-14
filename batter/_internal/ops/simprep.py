@@ -841,7 +841,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     if ref_pdb.exists() and ref_pdb_coord.exists():
         try:
             u_ref = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
-            u_full = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
             ion_names = " ".join(sorted(ION_NAMES))
             try:
                 sel = u_ref.select_atoms(f"not resname WAT {ion_names} DUM")
@@ -911,6 +910,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # update ref_vac positions
     ref_vac = mda.Universe(dest_dir / "ref_vac.pdb")
     ref_vac.atoms.positions = u_ref.atoms.positions[: ref_vac.atoms.n_atoms]
+    ref_vac.dimensions = u_ref.dimensions
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
     # update other_parts positions
@@ -930,7 +930,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
     # 1. get mapper based on inital poses
-    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
+    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
     )
     # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
@@ -938,7 +938,10 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
     logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
-    kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
+    try:
+        kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
+    except RuntimeError:
+        pass
     atomMap = [(probe, ref) for ref, probe in sorted(kartograf_mapping.componentB_to_componentA.items())]
 
     # 2. use reference ligand, steer alt ligand to the atom mapped position.

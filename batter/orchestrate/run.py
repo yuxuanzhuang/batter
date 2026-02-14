@@ -212,7 +212,7 @@ def _build_rbfe_network_plan(
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
     logger.info(
-        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs."
+        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs with both directions={mapping_source.get('both_directions', False)}"
     )
     return payload
 

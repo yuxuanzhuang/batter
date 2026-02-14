@@ -425,11 +425,9 @@ def build_complex_z(ctx) -> bool:
             raise FileNotFoundError(f"[build_complex_z] Missing ligand FF file: {src}")
         shutil.copy2(src, workdir / src.name)
 
-    prmtop_f = "full.prmtop" if str(hmr).lower() == "no" else "full.hmr.prmtop"
-
     # 3) extract receptor-only PDB from representative.rst7
     run_with_log(
-        f"{cpptraj} -p {prmtop_f} -y representative.rst7 -x rec_file.pdb",
+        f"{cpptraj} -p full.prmtop -y representative.rst7 -x rec_file.pdb",
         working_dir=workdir,
     )
 
