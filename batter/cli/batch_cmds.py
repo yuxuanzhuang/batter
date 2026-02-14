@@ -69,20 +69,42 @@ def _hash_path_list(paths: Sequence[Path]) -> str:
 
 def _resolve_ligand_dirs(exec_path: Path) -> List[Path]:
     """
-    Return ligand directories under an execution path or the path itself if it is already a ligand root.
-    """
-    if (exec_path / "simulations").is_dir():
-        lig_base = exec_path / "simulations"
-    elif exec_path.name == "simulations" and exec_path.is_dir():
-        lig_base = exec_path
-    elif (exec_path / "fe").is_dir():
-        return [exec_path]
-    else:
-        raise ValueError(
-            f"{exec_path} is not an execution folder (missing simulations/ or fe/)."
-        )
+    Return FE leaf directories under an execution path.
 
-    return [p for p in lig_base.iterdir() if p.is_dir()]
+    Supports both ABFE layout:
+      executions/<run>/simulations/<ligand>/fe/...
+    and RBFE layout:
+      executions/<run>/simulations/transformations/<pair>/fe/...
+    """
+    def _leaf_dirs_under_simulations(sim_root: Path) -> List[Path]:
+        out: List[Path] = []
+        for entry in sim_root.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name == "transformations":
+                for pair_dir in entry.iterdir():
+                    if pair_dir.is_dir() and (pair_dir / "fe").is_dir():
+                        out.append(pair_dir)
+                continue
+            if (entry / "fe").is_dir():
+                out.append(entry)
+        return out
+
+    if (exec_path / "simulations").is_dir():
+        return _leaf_dirs_under_simulations(exec_path / "simulations")
+
+    if exec_path.name == "simulations" and exec_path.is_dir():
+        return _leaf_dirs_under_simulations(exec_path)
+
+    if exec_path.name == "transformations" and exec_path.is_dir():
+        return [p for p in exec_path.iterdir() if p.is_dir() and (p / "fe").is_dir()]
+
+    if (exec_path / "fe").is_dir():
+        return [exec_path]
+
+    raise ValueError(
+        f"{exec_path} is not an execution folder (missing simulations/ or fe/)."
+    )
 
 
 def _load_windows_counts(fe_root: Path) -> dict[str, int]:
@@ -455,7 +477,7 @@ def _render_remd_batch_script(
     multiple=True,
     required=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
-    help="Execution directories to include (run root or a ligand folder under simulations/).",
+    help="Execution paths to include (run root, simulations/, transformations/, or a leaf folder containing fe/).",
 )
 @click.option(
     "--output",
@@ -818,7 +840,7 @@ def remd_batch(
     multiple=True,
     required=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
-    help="Execution directories to include (run root or a ligand folder under simulations/).",
+    help="Execution paths to include (run root, simulations/, transformations/, or a leaf folder containing fe/).",
 )
 @click.option(
     "--output",
