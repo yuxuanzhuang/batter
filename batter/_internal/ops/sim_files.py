@@ -327,7 +327,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mini = amber_dir / "mini-unorest"
 
         # first write eq.in
-        n_steps_run = 5000
+        n_steps_run = 1000
         out_path = windows_dir / "eq.in"
         with template_eqin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
@@ -337,6 +337,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
                     line = "dt = 0.001,\n"
+                # disable ntr to enable dum atom pop to center
+                elif "ntr = " in line:
+                    line = "ntr = 0,\n"
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
@@ -677,7 +680,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")
 
     eq_path = windows_dir / "eq.in"
-    n_steps_run = 5000
+    n_steps_run = 1000
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
             if "ntx = 5" in line:
@@ -686,6 +689,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = "  irest = 0,\n"
             elif "dt = " in line:
                 line = "  dt = 0.001,\n"
+            # disable ntr to allow dum atom to get into the center
+            elif "ntr = " in line:
+                line = "  ntr = 0,\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
