@@ -338,8 +338,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "dt = " in line:
                     line = "dt = 0.001,\n"
                 # disable ntr to enable dum atom pop to center
-                elif "ntr = " in line:
-                    line = "ntr = 0,\n"
+                #elif "ntr = " in line:
+                #    line = "ntr = 0,\n"
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
@@ -690,8 +690,14 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "dt = " in line:
                 line = "  dt = 0.001,\n"
             # disable ntr to allow dum atom to get into the center
-            elif "ntr = " in line:
-                line = "  ntr = 0,\n"
+            # elif "ntr = " in line:
+            #  line = "  ntr = 0,\n"
+            elif "restraintmask" in line:
+                rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                if rm == "":
+                    line = f"restraintmask = '(@CA | :{mol_ref}) | :{mol_alt} | & !@H='\n"
+                else:
+                    line = f"restraintmask = '(@CA | :{mol_ref} | :{mol_alt} | {rm}) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
