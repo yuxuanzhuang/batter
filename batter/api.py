@@ -264,34 +264,104 @@ def run_analysis_from_execution(
         if entry.get("residue_name") and entry.get("store_dir")
     }
 
-    requested: Sequence[str] | None = [ligand] if ligand else None
+    requested = (ligand or "").strip() or None
+    protocol_lower = str(protocol).lower()
     children: list[SimSystem] = []
-    for entry in entries:
-        lig_name = entry["ligand"]
-        if requested and lig_name not in requested:
-            continue
-        child_root = run_dir / "simulations" / lig_name
-        if not child_root.is_dir():
+
+    if protocol_lower == "rbfe":
+        trans_root = run_dir / "simulations" / "transformations"
+        if not trans_root.is_dir():
             raise FileNotFoundError(
-                f"Simulation directory for ligand '{lig_name}' was not found at {child_root}."
+                f"RBFE transformations directory not found for run '{run_id}': {trans_root}"
             )
-        meta = SystemMeta(
-            ligand=lig_name,
-            residue_name=entry.get("residue_name"),
-            param_dir_dict=dict(param_dir_dict) if param_dir_dict else {},
-        )
-        children.append(
-            SimSystem(
-                name=f"{system_name}:{lig_name}:{run_id}",
-                root=child_root,
-                meta=meta,
+
+        lig_resname_map = {
+            entry.get("ligand"): entry.get("residue_name")
+            for entry in entries
+            if entry.get("ligand")
+        }
+
+        pair_dirs = sorted([p for p in trans_root.iterdir() if p.is_dir()])
+        for pair_dir in pair_dirs:
+            pair_id = pair_dir.name
+            ref = None
+            alt = None
+            if "~" in pair_id:
+                ref, alt = pair_id.split("~", 1)
+
+            # For RBFE runs, keep --ligand for compatibility:
+            # it can target an exact pair id or either endpoint ligand.
+            if requested:
+                endpoint_match = requested == ref or requested == alt
+                if requested != pair_id and not endpoint_match:
+                    continue
+
+            fe_root = pair_dir / "fe"
+            if not fe_root.is_dir():
+                raise FileNotFoundError(
+                    f"Simulation directory for RBFE pair '{pair_id}' is missing FE data at {fe_root}."
+                )
+
+            residue_ref = lig_resname_map.get(ref) if ref else None
+            residue_alt = lig_resname_map.get(alt) if alt else None
+            meta = SystemMeta.from_mapping(
+                {
+                    "ligand": pair_id,
+                    "residue_name": residue_ref,
+                    "mode": "RBFE",
+                    "param_dir_dict": dict(param_dir_dict) if param_dir_dict else {},
+                    "pair_id": pair_id,
+                    "ligand_ref": ref,
+                    "ligand_alt": alt,
+                    "residue_ref": residue_ref,
+                    "residue_alt": residue_alt,
+                }
             )
-        )
+            children.append(
+                SimSystem(
+                    name=f"{system_name}:{pair_id}:{run_id}",
+                    root=pair_dir,
+                    meta=meta,
+                )
+            )
 
-    if requested and not children:
-        raise KeyError(f"Ligand '{ligand}' not present in run '{run_id}'.")
+        if requested and not children:
+            raise KeyError(
+                f"RBFE target '{ligand}' not present in run '{run_id}' "
+                "(expected a pair id like 'LIG1~LIG2' or an endpoint ligand name)."
+            )
+        if not children:
+            raise RuntimeError(f"No RBFE transformation pairs found in run '{run_id}'.")
+        target_label = "transformations"
+    else:
+        requested_set: Sequence[str] | None = [requested] if requested else None
+        for entry in entries:
+            lig_name = entry["ligand"]
+            if requested_set and lig_name not in requested_set:
+                continue
+            child_root = run_dir / "simulations" / lig_name
+            if not child_root.is_dir():
+                raise FileNotFoundError(
+                    f"Simulation directory for ligand '{lig_name}' was not found at {child_root}."
+                )
+            meta = SystemMeta(
+                ligand=lig_name,
+                residue_name=entry.get("residue_name"),
+                param_dir_dict=dict(param_dir_dict) if param_dir_dict else {},
+            )
+            children.append(
+                SimSystem(
+                    name=f"{system_name}:{lig_name}:{run_id}",
+                    root=child_root,
+                    meta=meta,
+                )
+            )
 
-    logger.info(f"Running analysis for {len(children)} ligands in run '{run_id}'.")
+        if requested_set and not children:
+            raise KeyError(f"Ligand '{ligand}' not present in run '{run_id}'.")
+        target_label = "ligands"
+
+    logger.info(f"Running analysis for {len(children)} {target_label} in run '{run_id}'.")
     logger.info(f"Number of workers: {n_workers}")
     payload_data: dict[str, Any] = {"sim": sim_cfg}
     if components:
