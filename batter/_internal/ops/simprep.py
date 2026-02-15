@@ -916,7 +916,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     dum_p = ref_vac.select_atoms('resname DUM')[0]
     dum_p.position = ref_vac.select_atoms('protein and name CA N C O').center_of_mass()
     dum_l = ref_vac.select_atoms('resname DUM')[1]
-    dum_l.position = ref_vac.select_atoms(f'resname {res_ref}').center_of_mass()
+    dum_l.position = ref_vac.select_atoms(f'resname {res_ref}').residues[1].atoms.center_of_mass()
 
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
