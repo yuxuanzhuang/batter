@@ -78,13 +78,15 @@ def _resolve_ligand_dirs(exec_path: Path) -> List[Path]:
     """
     def _leaf_dirs_under_simulations(sim_root: Path) -> List[Path]:
         out: List[Path] = []
+        # if transformations/ exists
+        if (sim_root / "transformations").is_dir():
+            for entry in (sim_root / "transformations").iterdir():
+                if entry.is_dir() and (entry / "fe").is_dir():
+                    out.append(entry)
+            return out
+        
         for entry in sim_root.iterdir():
             if not entry.is_dir():
-                continue
-            if entry.name == "transformations":
-                for pair_dir in entry.iterdir():
-                    if pair_dir.is_dir() and (pair_dir / "fe").is_dir():
-                        out.append(pair_dir)
                 continue
             if (entry / "fe").is_dir():
                 out.append(entry)
