@@ -223,7 +223,7 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 )
 @click.option(
     "--overwrite/--no-overwrite",
-    default=True,
+    default=False,
     help="Overwrite existing analysis results when present.",
 )
 @click.option(
