@@ -855,6 +855,34 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         raise FileNotFoundError(
             f"[simprep:x] Missing reference pdb or coordinate: {ref_pdb}, {ref_pdb_coord}"
         )
+    
+    # get alt and ref mapping and create new coordinates for alt
+    sdf_ref = dest_dir / f"{res_ref}.sdf"
+    sdf_alt = dest_dir / f"{res_alt}.sdf"
+
+    rdmol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
+    rdmol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
+    mol_ref = SmallMoleculeComponent.from_rdkit(rdmol_ref)
+    mol_alt = SmallMoleculeComponent.from_rdkit(rdmol_alt)
+
+    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+
+    # get mapper based on inital poses
+    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
+                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
+    )
+    # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
+
+    # Get Mapping
+    kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
+    logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
+    try:
+        kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
+    except RuntimeError:
+        pass
+    atomMap = [(probe, ref) for ref, probe in sorted(kartograf_mapping.componentB_to_componentA.items())]
+    if not atomMap:
+        raise ValueError(f"No atom mapping found between {res_ref} and {res_alt}.")
 
     # align representative_complex.pdb to u_ref
     u_alter = mda.Universe(dest_dir / "alter_representative.pdb")
@@ -916,7 +944,9 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     dum_p = ref_vac.select_atoms('resname DUM')[0]
     dum_p.position = ref_vac.select_atoms('protein and name CA N C O').center_of_mass()
     dum_l = ref_vac.select_atoms('resname DUM')[1]
-    dum_l.position = ref_vac.select_atoms(f'resname {res_ref}').residues[1].atoms.center_of_mass()
+    ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
+    mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
+    dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
 
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
@@ -925,33 +955,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms :]
     ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
 
-    # get alt and ref mapping and create new coordinates for alt
-    sdf_ref = dest_dir / f"{res_ref}.sdf"
-    sdf_alt = dest_dir / f"{res_alt}.sdf"
-
-    rdmol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
-    rdmol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
-    mol_ref = SmallMoleculeComponent.from_rdkit(rdmol_ref)
-    mol_alt = SmallMoleculeComponent.from_rdkit(rdmol_alt)
-
-    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
-
-    # 1. get mapper based on inital poses
-    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
-                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
-    )
-    # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
-
-    # Get Mapping
-    kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
-    try:
-        kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
-    except RuntimeError:
-        pass
-    atomMap = [(probe, ref) for ref, probe in sorted(kartograf_mapping.componentB_to_componentA.items())]
-
-    # 2. use reference ligand, steer alt ligand to the atom mapped position.
+    # use reference ligand, steer alt ligand to the atom mapped position.
     ref_pos = u_lig.residues[0].atoms.positions
     mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
 
