@@ -292,7 +292,7 @@ def test_cli_fe_analyze_invokes_api(
     assert called["n_workers"] == 3
     assert called["analysis_start_step"] == 2500
     assert called["n_bootstraps"] == 64
-    assert called["overwrite"] is True
+    assert called["overwrite"] is False
     assert called["raise_on_error"] is True
 
 
@@ -331,10 +331,14 @@ def test_cli_fe_analyze_can_disable_raise(
     assert called["raise_on_error"] is False
 
 
-def test_cli_fe_analyze_uses_latest_when_run_id_omitted(
+def test_cli_fe_analyze_uses_all_runs_when_run_id_omitted(
     monkeypatch, tmp_path: Path, runner: CliRunner
 ) -> None:
-    called: dict[str, Any] = {}
+    called: list[tuple[Path, str | None]] = []
+
+    executions = tmp_path / "executions"
+    (executions / "rep1").mkdir(parents=True)
+    (executions / "rep2").mkdir(parents=True)
 
     def fake_run(
         work_dir,
@@ -348,8 +352,7 @@ def test_cli_fe_analyze_uses_latest_when_run_id_omitted(
         overwrite=True,
         raise_on_error=True,
     ):
-        called["work_dir"] = work_dir
-        called["run_id"] = run_id
+        called.append((work_dir, run_id))
 
     monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
     monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
@@ -357,9 +360,8 @@ def test_cli_fe_analyze_uses_latest_when_run_id_omitted(
     result = runner.invoke(cli, ["fe", "analyze", str(tmp_path)])
 
     assert result.exit_code == 0
-    assert called["work_dir"] == tmp_path
-    assert called["run_id"] is None
-    assert "latest execution" in result.output
+    assert called == [(tmp_path, "rep1"), (tmp_path, "rep2")]
+    assert "2 run(s)" in result.output
 
 
 def _copy_finished_run(tmp_path: Path) -> Path:
