@@ -78,13 +78,15 @@ def _resolve_ligand_dirs(exec_path: Path) -> List[Path]:
     """
     def _leaf_dirs_under_simulations(sim_root: Path) -> List[Path]:
         out: List[Path] = []
+        # if transformations/ exists
+        if (sim_root / "transformations").is_dir():
+            for entry in (sim_root / "transformations").iterdir():
+                if entry.is_dir() and (entry / "fe").is_dir():
+                    out.append(entry)
+            return out
+        
         for entry in sim_root.iterdir():
             if not entry.is_dir():
-                continue
-            if entry.name == "transformations":
-                for pair_dir in entry.iterdir():
-                    if pair_dir.is_dir() and (pair_dir / "fe").is_dir():
-                        out.append(pair_dir)
                 continue
             if (entry / "fe").is_dir():
                 out.append(entry)
@@ -195,6 +197,12 @@ def _component_finished(comp_dir: Path, comp: str, windows: Sequence[Path]) -> b
     return False
 
 
+def _component_blocked_by_pre_window_failure(comp_dir: Path, comp: str) -> bool:
+    """Return True when pre-window equilibration failed for this component."""
+    pre_window_failed = comp_dir / f"{comp}-1" / "FAILED"
+    return pre_window_failed.exists()
+
+
 def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
     from batter._internal.ops.remd import patch_batch_component_inputs
     text = BATCH_RUN_TEMPLATE.read_text()
@@ -252,6 +260,13 @@ def _collect_batch_tasks(exec_path: Path) -> List[BatchTask]:
                 )
                 n_windows = len(window_dirs)
 
+            if _component_blocked_by_pre_window_failure(comp_dir, comp):
+                logger.warning(
+                    f"[batch] {comp_dir} pre-window equilibration failed "
+                    f"({comp_dir / f'{comp}-1' / 'FAILED'}); skipping."
+                )
+                continue
+
             if _component_finished(comp_dir, comp, window_dirs):
                 logger.debug(f"[batch] {comp_dir} already finished; skipping.")
                 continue
@@ -285,6 +300,12 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
         windows_counts = _load_windows_counts(lig_dir / "fe")
         for comp in comps:
             comp_dir = (lig_dir / "fe" / comp).resolve()
+            if _component_blocked_by_pre_window_failure(comp_dir, comp):
+                logger.warning(
+                    f"[remd-batch] {comp_dir} pre-window equilibration failed "
+                    f"({comp_dir / f'{comp}-1' / 'FAILED'}); skipping."
+                )
+                continue
             finished_marker = comp_dir / "FINISHED"
             run_script = comp_dir / "run-local-remd.bash"
             if not run_script.is_file():

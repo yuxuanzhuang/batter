@@ -217,6 +217,64 @@ def _build_rbfe_network_plan(
     return payload
 
 
+def _maybe_regenerate_rbfe_network_after_pruning(
+    *,
+    available_ligands: List[str],
+    lig_map: Dict[str, str],
+    payload: Dict[str, Any],
+    rbfe_cfg,
+    config_dir: Path,
+) -> Dict[str, Any]:
+    """Rebuild RBFE network if some planned ligands were pruned before transformations."""
+    from batter.config.utils import sanitize_ligand_name
+
+    available = [sanitize_ligand_name(x) for x in available_ligands if x]
+    available_set = set(available)
+    planned = [
+        sanitize_ligand_name(str(x))
+        for x in (payload.get("ligands") or [])
+        if x
+    ]
+    pruned = [name for name in planned if name not in available_set]
+    if not pruned:
+        return payload
+    if len(available) < 2:
+        return payload
+
+    lig_map_sanitized = {
+        sanitize_ligand_name(str(name)): path for name, path in lig_map.items()
+    }
+    missing_paths = [name for name in available if name not in lig_map_sanitized]
+    if missing_paths:
+        logger.warning(
+            f"RBFE network regeneration skipped: missing ligand input path(s) for {', '.join(missing_paths)}."
+        )
+        return payload
+
+    logger.warning(
+        f"Detected {len(pruned)} pruned ligand(s) before RBFE transformations ({', '.join(pruned)}). "
+        "Regenerating RBFE network on remaining ligands."
+    )
+    try:
+        regenerated = _build_rbfe_network_plan(
+            available,
+            {name: lig_map_sanitized[name] for name in available},
+            rbfe_cfg,
+            config_dir,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"RBFE network regeneration failed ({exc}); continuing with existing network payload."
+        )
+        return payload
+
+    logger.info(
+        f"RBFE network regenerated after pruning: {len(regenerated.get('ligands') or [])} ligands, "
+        f"{len(regenerated.get('pairs') or [])} pairs."
+    )
+    return regenerated
+
+
 
 
 def _materialize_extra_conf_restraints(
@@ -798,6 +856,7 @@ def run_from_yaml(
     if rc.protocol == "rbfe":
         from batter.rbfe import RBFENetwork
         from batter.config.utils import sanitize_ligand_name
+        from batter.config.run import RBFENetworkArgs
 
         available = [c.meta.get("ligand") for c in children if c.meta.get("ligand")]
         if len(available) < 2:
@@ -811,11 +870,19 @@ def run_from_yaml(
         if rbfe_network_path.exists():
             payload = json.loads(rbfe_network_path.read_text())
         else:
-            from batter.config.run import RBFENetworkArgs
-
             rbfe_cfg = rc.rbfe or RBFENetworkArgs()
             payload = _build_rbfe_network_plan(
                 list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+            )
+
+        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+            payload = _maybe_regenerate_rbfe_network_after_pruning(
+                available_ligands=available,
+                lig_map=lig_map,
+                payload=payload,
+                rbfe_cfg=rbfe_cfg,
+                config_dir=config_dir,
             )
 
         pairs = payload.get("pairs") or []
