@@ -46,22 +46,21 @@ def _make_test_universe(tmp_path: Path) -> mda.Universe:
     return mda.Universe(str(pdb))
 
 
-def _make_validator(u: mda.Universe, workdir: Path) -> SimValidator:
+def _make_validator(
+    u: mda.Universe, workdir: Path, protein_anchor_masks: list[str] | None = None
+) -> SimValidator:
     validator = SimValidator.__new__(SimValidator)
     validator.universe = u
     validator.workdir = workdir
     validator.ligand = "LIG"
+    validator.protein_anchor_masks = protein_anchor_masks or []
     validator.results = {}
     return validator
 
 
 def test_ligand_bs_uses_min_distance_to_anchor_atoms(tmp_path: Path) -> None:
     u = _make_test_universe(tmp_path)
-    anchors_dir = tmp_path / "q_build_files"
-    anchors_dir.mkdir(parents=True, exist_ok=True)
-    (anchors_dir / "protein_anchors.txt").write_text(":92@CA\n:61@CA\n:257@CA\n")
-
-    validator = _make_validator(u, tmp_path)
+    validator = _make_validator(u, tmp_path, [":92@CA", ":61@CA", ":257@CA"])
     validator._ligand_bs()
 
     assert np.allclose(validator.results["ligand_bs"], np.array([3.0]))

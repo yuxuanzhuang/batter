@@ -49,7 +49,13 @@ class SimValidator:
     plot_rmsf()
         Plot the RMSF of the protein
     """
-    def __init__(self, universe, ligand=None, directory: str | Path = "."):
+    def __init__(
+        self,
+        universe,
+        ligand=None,
+        directory: str | Path = ".",
+        protein_anchor_masks: list[str] | tuple[str, str, str] | None = None,
+    ):
         """
         Parameters
         ----------
@@ -61,6 +67,11 @@ class SimValidator:
         """
         self.universe = universe
         self.workdir = Path(directory).resolve()
+        self.protein_anchor_masks = (
+            [m.strip() for m in protein_anchor_masks if isinstance(m, str) and m.strip()]
+            if protein_anchor_masks is not None
+            else []
+        )
         if ligand is not None:
             self.ligand = ligand
         else:
@@ -169,31 +180,23 @@ class SimValidator:
         return f'protein and resid {resid} and name {atom}'
 
     def _get_protein_anchor_atoms(self):
-        anchor_candidates = [
-            self.workdir / 'q_build_files' / 'protein_anchors.txt',
-            self.workdir / 'protein_anchors.txt',
-        ]
-        anchor_file = next((p for p in anchor_candidates if p.exists()), None)
-        if anchor_file is None:
-            logger.warning(f'No protein_anchors.txt found under {self.workdir}')
-            return None
-
-        lines = [line.strip() for line in anchor_file.read_text().splitlines() if line.strip()]
-        if len(lines) < 3:
-            logger.warning(f'Anchor file {anchor_file} is malformed: expected >=3 lines, got {len(lines)}')
+        if len(self.protein_anchor_masks) != 3:
+            logger.warning(
+                f'Expected 3 protein anchors from YAML/sim config, got {len(self.protein_anchor_masks)}.'
+            )
             return None
 
         atoms = []
-        for mask in lines[:3]:
+        for mask in self.protein_anchor_masks:
             try:
                 sel = self._anchor_mask_to_selection(mask)
             except ValueError as exc:
-                logger.warning(f'Invalid anchor entry {mask!r} in {anchor_file}: {exc}')
+                logger.warning(f'Invalid anchor entry {mask!r}: {exc}')
                 return None
             ag = self.universe.select_atoms(sel)
             if ag.n_atoms != 1:
                 logger.warning(
-                    f'Anchor selection {sel!r} from {anchor_file} matched {ag.n_atoms} atoms (expected 1).'
+                    f'Anchor selection {sel!r} matched {ag.n_atoms} atoms (expected 1).'
                 )
                 return None
             atoms.append(ag[0])
