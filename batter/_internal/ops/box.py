@@ -151,7 +151,7 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         logger.debug(f"Failed to read ligand charge from {meta_path}: {exc}")
         return None
 
-
+@register_create_box("z")
 def create_box_z(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
@@ -171,8 +171,6 @@ def create_box_z(ctx: BuildContext) -> None:
 
     ligand = ctx.ligand
     mol = ctx.residue_name
-
-    molr = mol
 
     for attr in ("buffer_x", "buffer_y", "buffer_z"):
         if not hasattr(sim, attr):
@@ -260,8 +258,8 @@ def create_box_z(ctx: BuildContext) -> None:
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
 
         if comp == "x":
-            f.write(f"loadamberparams {molr}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
+            f.write(f"loadamberparams {mol}.frcmod\n")
+            f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         if water_model != "TIP3PF":
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
@@ -360,9 +358,12 @@ def create_box_z(ctx: BuildContext) -> None:
 
     # partitions
     final_system_dum = final_system.select_atoms("resname DUM")
+    final_system_dum[0].position = final_system.select_atoms("protein and name CA N C O").center_of_mass()
+    if comp == 'z':
+        final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
     final_system_prot = final_system.select_atoms("protein")
     final_system_others = final_system - final_system_prot - final_system_dum
-    final_system_ligs = final_system.select_atoms(f"resname {mol} or resname {molr}")
+    final_system_ligs = final_system.select_atoms(f"resname {mol}")
     final_system_other_mol = (
         final_system_others.select_atoms("not resname WAT") - final_system_ligs
     )
@@ -449,8 +450,8 @@ def create_box_z(ctx: BuildContext) -> None:
         f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
         if comp == "x":
-            f.write(f"loadamberparams {molr}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
+            f.write(f"loadamberparams {mol}.frcmod\n")
+            f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
         f.write(
             f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
@@ -686,11 +687,6 @@ def create_box_z(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return
-
-
-@register_create_box("z")
-def create_box_z_default(ctx: BuildContext) -> None:
-    create_box_z(ctx)
 
 
 @register_create_box("x")

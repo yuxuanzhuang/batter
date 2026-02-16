@@ -9,9 +9,9 @@ create:
   system_coordinate: reference/adrb2_A_membrane.rst7
   protein_align: name CA and resid 50 to 200
   ligand_input: reference/ligands_dict.json
-  ligand_ff: openff-2.2.1
+  ligand_ff: openff-2.3.0
   retain_lig_prot: true
-  param_charge: am1bcc
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
@@ -49,11 +49,8 @@ fe_sim:
     0.59453, 0.60923, 0.62468, 0.63991, 0.65631, 0.67222, 0.68487, 0.69656, 0.70897, 0.72458,
     0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
   ]
-  eq_steps: 100000
-  # total 10 * 100000 = 1000000 steps -> 4 ns
-  num_equil_extends: 10
-  z_n_steps: 100000
-  # total 10 * 100000 = 1000000 steps -> 4 ns per window
+  eq_steps: 1000000
+  z_n_steps: 1000000
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
@@ -63,9 +60,9 @@ fe_sim:
   # 4 fs time step with HMR
   dt: 0.004
   # buffer_z for solvation layer above and below membrane
-  buffer_z: 25.0
+  buffer_z: 20.0
   temperature: 298.15 
-  # analysis only start from 4th extension (exclude the first three FE extensions)
-  analysis_start_step: 0
+  # analysis only start from 100000 steps
+  analysis_start_step: 100000
   # MBAR analysis blocks
   blocks: 5

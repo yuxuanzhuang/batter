@@ -29,6 +29,54 @@ def _collect_backbone_heavy_and_lig(vac_pdb: Path, lig_res: str, offset: int = 0
     hvy_lig = list((u.select_atoms(f'not type H and resid {int(lig_res) + offset}').indices + 1).astype(str))
     return hvy, hvy_lig
 
+
+def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]:
+    """Load 0-based (ref_indices, alt_indices) from kartograf.json mapping."""
+    if not mapping_path.exists():
+        return [], []
+    try:
+        data = json.loads(mapping_path.read_text())
+    except Exception as exc:
+        logger.warning(f"[restraints:x] Failed to parse {mapping_path}: {exc}")
+        return [], []
+
+    if not isinstance(data, dict):
+        logger.warning(f"[restraints:x] Unexpected mapping format in {mapping_path}: {type(data)}")
+        return [], []
+
+    ref_indices = set()
+    alt_indices = set()
+    for ref_idx, alt_idx in data.items():
+        try:
+            ref_indices.add(int(ref_idx))
+            alt_indices.add(int(alt_idx))
+        except Exception:
+            continue
+    return sorted(ref_indices), sorted(alt_indices)
+
+
+def _collect_common_core_heavy_ligand(
+    vac_pdb: Path,
+    lig_res: str,
+    offset: int,
+    mapped_indices: Iterable[int],
+) -> List[str]:
+    """Return 1-based atom serials for mapped heavy atoms in one ligand residue."""
+    u = mda.Universe(str(vac_pdb))
+    lig_atoms = u.select_atoms(f"resid {int(lig_res) + offset}")
+    if lig_atoms.n_atoms == 0:
+        return []
+
+    valid = sorted({int(i) for i in mapped_indices if 0 <= int(i) < lig_atoms.n_atoms})
+    if not valid:
+        return []
+
+    cc_atoms = lig_atoms[valid].select_atoms("not name H*")
+    if cc_atoms.n_atoms == 0:
+        return []
+
+    return list((cc_atoms.indices + 1).astype(str))
+
 def _scan_dihedrals_from_prmtop(prmtop_path: Path, ligand_atm_num: List[str]) -> List[str]:
     """Build ligand dihedral masks (non-H) from vac_ligand.prmtop."""
     mlines: List[str] = []
@@ -326,7 +374,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
             for a in hvy_h:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rest[5], rest[5]))
         cvf.write("/\n")
 
@@ -496,7 +544,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
             for a in hvy_h:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
         cvf.write("/\n")
 
@@ -512,7 +560,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
             for a in hvy_lig:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 
@@ -639,7 +687,7 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
             cvf.write(f" cv_ni = {len(hvy_serials) + 2}, cv_i = 1,0,")
             cvf.write(",".join(hvy_serials))
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 
@@ -752,10 +800,29 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     # orig lig
     hvy_h, hvy_lig_1 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 1)
     # alt lig
-    hvy_h_2, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
-    hvy_lig = hvy_lig_1 + hvy_lig_2
-    atm_num         = num_to_mask(vac_pdb.as_posix())
-    
+    _, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
+
+    # Use common-core atoms for ligand COM restraints when RBFE mapping is present.
+    mapping_path = ctx.equil_dir / "kartograf.json"
+    ref_cc_indices, alt_cc_indices = _load_common_core_indices(mapping_path)
+    if ref_cc_indices:
+        cc_lig_1 = _collect_common_core_heavy_ligand(vac_pdb, lig_res, 1, ref_cc_indices)
+        if cc_lig_1:
+            hvy_lig_1 = cc_lig_1
+        else:
+            logger.warning(
+                f"[restraints:{comp}] Could not build common-core heavy set for reference ligand from {mapping_path}; "
+                "falling back to all heavy atoms."
+            )
+    if alt_cc_indices:
+        cc_lig_2 = _collect_common_core_heavy_ligand(vac_pdb, lig_res, 3, alt_cc_indices)
+        if cc_lig_2:
+            hvy_lig_2 = cc_lig_2
+        else:
+            logger.warning(
+                f"[restraints:{comp}] Could not build common-core heavy set for alternate ligand from {mapping_path}; "
+                "falling back to all heavy atoms."
+            )
     # cv.in
     cv_in = windows_dir / "cv.in"
     with cv_in.open("w") as cvf:
@@ -771,25 +838,26 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
             for a in hvy_h:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
         cvf.write("/\n")
 
         # ligand COM restraint
-        cvf.write("&colvar\n")
-        if len(hvy_lig) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
-            for a in hvy_lig:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-        cvf.write("/\n")
+        for hvy_lig in [hvy_lig_1, hvy_lig_2]:
+            cvf.write("&colvar\n")
+            if len(hvy_lig) == 1:
+                # if only one atom, use DISTANCE instead of COM_DISTANCE
+                cvf.write(" cv_type = 'DISTANCE'\n")
+                cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
+            else:
+                cvf.write(" cv_type = 'COM_DISTANCE'\n")
+                cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
+                for a in hvy_lig:
+                    cvf.write(a + ",")
+            cvf.write("\n")
+            cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
+            cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
+            cvf.write("/\n")
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
@@ -899,7 +967,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             for a in hvy_h:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
         cvf.write("/\n")
 
@@ -915,7 +983,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             for a in hvy_lig:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 1.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 

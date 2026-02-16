@@ -252,6 +252,7 @@ def test_cli_fe_analyze_invokes_api(
         components=None,
         n_workers,
         analysis_start_step,
+        n_bootstraps=None,
         overwrite=True,
         raise_on_error=True,
     ):
@@ -261,6 +262,7 @@ def test_cli_fe_analyze_invokes_api(
         called["components"] = components
         called["n_workers"] = n_workers
         called["analysis_start_step"] = analysis_start_step
+        called["n_bootstraps"] = n_bootstraps
         called["overwrite"] = overwrite
         called["raise_on_error"] = raise_on_error
 
@@ -279,6 +281,8 @@ def test_cli_fe_analyze_invokes_api(
             "3",
             "--analysis-start-step",
             "2500",
+            "--n-bootstrap",
+            "64",
         ],
     )
     assert result.exit_code == 0
@@ -287,7 +291,8 @@ def test_cli_fe_analyze_invokes_api(
     assert called["ligand"] == "LIG1"
     assert called["n_workers"] == 3
     assert called["analysis_start_step"] == 2500
-    assert called["overwrite"] is True
+    assert called["n_bootstraps"] == 64
+    assert called["overwrite"] is False
     assert called["raise_on_error"] is True
 
 
@@ -304,6 +309,7 @@ def test_cli_fe_analyze_can_disable_raise(
         components=None,
         n_workers,
         analysis_start_step,
+        n_bootstraps=None,
         overwrite=True,
         raise_on_error=True,
     ):
@@ -323,6 +329,39 @@ def test_cli_fe_analyze_can_disable_raise(
     )
     assert result.exit_code == 0
     assert called["raise_on_error"] is False
+
+
+def test_cli_fe_analyze_uses_all_runs_when_run_id_omitted(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: list[tuple[Path, str | None]] = []
+
+    executions = tmp_path / "executions"
+    (executions / "rep1").mkdir(parents=True)
+    (executions / "rep2").mkdir(parents=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called.append((work_dir, run_id))
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(cli, ["fe", "analyze", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert called == [(tmp_path, "rep1"), (tmp_path, "rep2")]
+    assert "2 run(s)" in result.output
 
 
 def _copy_finished_run(tmp_path: Path) -> Path:

@@ -9,9 +9,10 @@ create:
   system_coordinate: reference/adrb2_A_membrane.rst7
   protein_align: name CA and resid 50 to 200
   ligand_input: reference/ligands_dict.json
-  ligand_ff: openff-2.2.1
+  ligand_ff: openff-2.3.0
   retain_lig_prot: true
-  param_charge: am1bcc
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
+
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
@@ -45,12 +46,11 @@ fe_sim:
       0.43478261, 0.47826087, 0.52173913, 0.56521739, 0.60869565,
       0.65217391, 0.69565217, 0.73913043, 0.7826087 , 0.82608696,
       0.86956522, 0.91304348, 0.95652174, 1.        ]
-  # RBFE uses only the x component.
   x_n_steps: 300000
   eq_steps: 0
   cut: 9.0
   barostat: 2
   hmr: no
   dt: 0.002
-  buffer_z: 25.0
+  buffer_z: 20.0
   temperature: 298.15

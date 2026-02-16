@@ -92,6 +92,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     n_workers: int = int(n_workers_override) if n_workers_override is not None else 4
     rest: Tuple[str, ...] = tuple()
     sim_start_step: Optional[int] = None
+    sim_n_bootstraps: int = 0
     sim_dt: float = 0.0
     sim_ntwx: int = 0
 
@@ -103,6 +104,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
         rocklin_correction = bool(sim_cfg.rocklin_correction)
         rest = tuple(sim_cfg.rest)
         sim_start_step = int(getattr(sim_cfg, "analysis_start_step", 0))
+        sim_n_bootstraps = int(getattr(sim_cfg, "n_bootstraps", 0))
         sim_dt = float(getattr(sim_cfg, "dt", 0.0))
         sim_ntwx = int(getattr(sim_cfg, "ntwx", 0))
 
@@ -120,6 +122,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
 
     # Optional: analysis start step override; else use config default
     sim_start_step = int(payload.get("analysis_start_step", sim_start_step or 0))
+    sim_n_bootstraps = int(payload.get("n_bootstraps", sim_n_bootstraps))
     sim_dt = float(payload.get("dt", sim_dt))
     sim_ntwx = int(payload.get("ntwx", sim_ntwx))
 
@@ -146,6 +149,7 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
             raise_on_error=True,
             mol=mol,
             n_workers=n_workers,
+            n_bootstraps=sim_n_bootstraps,
             dt=sim_dt,
             ntwx=sim_ntwx,
         )

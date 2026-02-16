@@ -13,6 +13,7 @@ CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 PRMTOP="full.hmr.prmtop"
 N_WINDOWS=NWINDOWS
 PFOLDER="."
+PFOLDER_ABS=$(cd "${PFOLDER}" 2>/dev/null && pwd -P)
 REMD=1
 overwrite=${OVERWRITE:-0}
 COMP=${COMP:-$(basename "$PWD")}
@@ -190,9 +191,9 @@ if (( remaining_steps > 0 )); then
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${seg_idx}.log"
     print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${groupfile} >> \"$log_file\" 2>&1"
     rc=$?
-    echo "[INFO] pmemd step rc=$rc dir=${PFOLDER} at $(date)" | tee -a "$log_file"
+    echo "[INFO] pmemd step rc=$rc dir=${PFOLDER_ABS} at $(date)" | tee -a "$log_file"
     if (( rc != 0 )); then
-        echo "[ERROR] pmemd failed in ${PFOLDER}; skipping post-step" | tee -a "$log_file"
+        echo "[ERROR] pmemd failed in ${PFOLDER_ABS}; skipping post-step" | tee -a "$log_file"
         cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
         exit $rc
     fi

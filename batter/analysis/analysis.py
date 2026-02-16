@@ -17,7 +17,7 @@ import logging
 from loguru import logger
 from joblib import Parallel, delayed
 
-from pymbar.timeseries import detect_equilibration
+from pymbar.timeseries import detect_equilibration, subsample_correlated_data
 import MDAnalysis as mda
 from MDAnalysis.lib.distances import calc_bonds, calc_angles, calc_dihedrals
 
@@ -374,7 +374,6 @@ class MBARAnalysis(FEAnalysisBase):
                 dfs.append(df_part)
 
         df = pd.concat(dfs)
-        # exclude 
 
         # Drop early frames if requested (convert steps -> ps)
         if analysis_start_step > 0:
@@ -399,11 +398,13 @@ class MBARAnalysis(FEAnalysisBase):
         # detect_equilibration on the reference column of this window
         if truncate:
             with SilenceAlchemlybOnly():
-                t0, _, _ = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                df = df.iloc[t0:, :]
+                indices = subsample_correlated_data(df.iloc[:, win_i], g=g)
+                df = df.iloc[indices, :]
             logger.debug(
                 f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}"
             )
-            df = df.iloc[t0:, :]
         # subtract reference (this window) to yield reduced potentials
         ref = df.iloc[:, win_i]
         df = df.subtract(ref, axis=0)
@@ -971,6 +972,7 @@ def analyze_lig_task(
     raise_on_error: bool = True,
     mol: str = "LIG",
     n_workers: int = 4,
+    n_bootstraps: int = 0,
     dt: float = 0.0,
     ntwx: int = 0,
 ):
@@ -1021,7 +1023,7 @@ def analyze_lig_task(
 
             logger.debug(
                 f"[analyze_lig] {lig} comp={comp} windows={windows} "
-                f"analysis_start_step={analysis_start_step}, dt={dt}, ntwx={ntwx}"
+                f"analysis_start_step={analysis_start_step}, n_bootstraps={n_bootstraps}, dt={dt}, ntwx={ntwx}"
             )
 
             if comp in COMPONENTS_DICT["dd"]:
@@ -1031,6 +1033,7 @@ def analyze_lig_task(
                     windows=windows,
                     temperature=temperature,
                     analysis_start_step=analysis_start_step,
+                    n_bootstraps=n_bootstraps,
                     load=False,
                     n_jobs=n_workers,
                     dt=dt,
@@ -1055,6 +1058,7 @@ def analyze_lig_task(
                     windows=windows,
                     temperature=temperature,
                     analysis_start_step=analysis_start_step,
+                    n_bootstraps=n_bootstraps,
                     load=False,
                     n_jobs=n_workers,
                     dt=dt,

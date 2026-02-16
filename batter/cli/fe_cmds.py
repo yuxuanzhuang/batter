@@ -187,7 +187,7 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 @click.argument(
     "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
 )
-@click.argument("run_id", type=str)
+@click.argument("run_id", type=str, required=False)
 @click.option(
     "--ligand",
     "-l",
@@ -214,8 +214,16 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="First production step (per window) to include in analysis.",
 )
 @click.option(
+    "--n-bootstrap",
+    "--n-bootstraps",
+    "n_bootstraps",
+    type=int,
+    default=None,
+    help="Number of MBAR bootstrap resamples to use during analysis.",
+)
+@click.option(
     "--overwrite/--no-overwrite",
-    default=True,
+    default=False,
     help="Overwrite existing analysis results when present.",
 )
 @click.option(
@@ -228,16 +236,17 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 )
 def fe_analyze(
     work_dir: Path,
-    run_id: str,
+    run_id: str | None,
     ligand: str | None,
     workers: int | None,
     raise_on_error: bool,
     analysis_start_step: int | None,
+    n_bootstraps: int | None,
     overwrite: bool,
     log_level: str = "INFO",
 ) -> None:
     """
-    Re-run the FE analysis stage for a stored execution.
+    Re-run the FE analysis stage for stored execution(s).
     """
     logger.remove()
     logger.add(
@@ -249,20 +258,45 @@ def fe_analyze(
         "<level>{message}</level>",
     )
 
-    try:
-        run_analysis_from_execution(
-            work_dir,
-            run_id,
-            ligand=ligand,
-            n_workers=workers,
-            analysis_start_step=analysis_start_step,
-            overwrite=overwrite,
-            raise_on_error=raise_on_error,
-        )
-    except Exception as exc:
-        raise click.ClickException(str(exc))
+    if run_id:
+        run_ids = [run_id]
+    else:
+        runs_root = work_dir / "executions"
+        if not runs_root.is_dir():
+            raise click.ClickException(f"No executions found under {work_dir}.")
+        run_ids = sorted([p.name for p in runs_root.iterdir() if p.is_dir()])
+        if not run_ids:
+            raise click.ClickException(f"No executions found under {work_dir}.")
+        logger.info(f"No run_id provided; analyzing all {len(run_ids)} available runs.")
 
-    click.echo(
-        f"Analysis run finished for '{run_id}'"
-        f"{' (ligand ' + ligand + ')' if ligand else ''}."
-    )
+    failed_runs: list[tuple[str, str]] = []
+    for rid in run_ids:
+        try:
+            run_analysis_from_execution(
+                work_dir,
+                rid,
+                ligand=ligand,
+                n_workers=workers,
+                analysis_start_step=analysis_start_step,
+                n_bootstraps=n_bootstraps,
+                overwrite=overwrite,
+                raise_on_error=raise_on_error,
+            )
+        except Exception as exc:
+            if raise_on_error:
+                raise click.ClickException(str(exc))
+            failed_runs.append((rid, str(exc)))
+            logger.error(f"Analysis failed for run '{rid}': {exc}")
+
+    if failed_runs:
+        click.secho(
+            "Analysis finished with failures: "
+            + ", ".join(f"{rid} ({msg})" for rid, msg in failed_runs),
+            fg="yellow",
+        )
+    else:
+        target = run_id or f"{len(run_ids)} run(s)"
+        click.echo(
+            f"Analysis run finished for '{target}'"
+            f"{' (ligand ' + ligand + ')' if ligand else ''}."
+        )

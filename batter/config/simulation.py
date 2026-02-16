@@ -181,7 +181,17 @@ class SimulationConfig(BaseModel):
                 "fe_sim.num_equil_extends is deprecated and ignored; "
                 "set fe_sim.eq_steps to the total equilibration steps instead."
             )
-        eq_steps_value = int(_fe_attr("eq_steps", lambda: 1_000_000))
+        eq_steps_raw = int(_fe_attr("eq_steps", lambda: 1_000_000))
+        if False:
+            if proto_key == "rbfe":
+                if eq_steps_raw != 0:
+                    logger.warning(
+                        "RBFE ignores fe_sim.eq_steps and forces eq_steps=0 (equilibration skipped)."
+                    )
+                eq_steps_value = 0
+            else:
+                eq_steps_value = eq_steps_raw
+        eq_steps_value = eq_steps_raw
         fe_release_eq = [0.0]
 
         extra_conf_rest = create.extra_conformation_restraints
@@ -194,6 +204,15 @@ class SimulationConfig(BaseModel):
             analysis_start_step_val = int(fe.get("analysis_start_step") or 0)
         if analysis_start_step_val < 0:
             raise ValueError("analysis_start_step must be >= 0.")
+
+        n_bootstraps_val = 0
+        if hasattr(fe, "n_bootstraps"):
+            n_bootstraps_val = int(getattr(fe, "n_bootstraps") or 0)
+        elif isinstance(fe, Mapping) and "n_bootstraps" in fe:
+            n_bootstraps_val = int(fe.get("n_bootstraps") or 0)
+        if n_bootstraps_val < 0:
+            raise ValueError("n_bootstraps must be >= 0.")
+
         max_fe_steps = max((int(v) for v in n_steps.values() if v is not None), default=0)
         if max_fe_steps and analysis_start_step_val >= max_fe_steps:
             raise ValueError(
@@ -250,6 +269,7 @@ class SimulationConfig(BaseModel):
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
+            "n_bootstraps": n_bootstraps_val,
             "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
         }
 
@@ -353,6 +373,11 @@ class SimulationConfig(BaseModel):
         0,
         ge=0,
         description="Analyze only steps after this (per FE window).",
+    )
+    n_bootstraps: int = Field(
+        0,
+        ge=0,
+        description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
 
     # --- Force constants ---
