@@ -152,13 +152,13 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         return None
 
 @register_create_box("z")
-def create_box_z(ctx: BuildContext) -> None:
+def create_box(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
     """
     work = ctx.working_dir
     comp = ctx.comp
-    param_dir = work.parent.parent / "params"
+    param_dir = work.parent.parent / "params" if comp != "q" else work.parent / "params"
     sim = ctx.sim
     build_dir = ctx.build_dir
     window_dir = ctx.window_dir
@@ -171,6 +171,8 @@ def create_box_z(ctx: BuildContext) -> None:
 
     ligand = ctx.ligand
     mol = ctx.residue_name
+
+    molr = mol
 
     for attr in ("buffer_x", "buffer_y", "buffer_z"):
         if not hasattr(sim, attr):
@@ -328,12 +330,13 @@ def create_box_z(ctx: BuildContext) -> None:
         )
         final_system = final_system - outside_wat
 
-    system_dimensions[2] = abs_z
-    outside_wat_z = final_system.select_atoms(
-        "byres (resname WAT and "
-        f"(prop z > {abs_z} or prop z < 0))"
-    )
-    final_system = final_system - outside_wat_z
+    if comp in ["e", "v", "o", "z"]:
+        system_dimensions[2] = abs_z
+        outside_wat_z = final_system.select_atoms(
+            "byres (resname WAT and "
+            f"(prop z > {abs_z} or prop z < 0))"
+        )
+        final_system = final_system - outside_wat_z
 
     # renumber residues
     revised_resids = np.array(revised_resids)

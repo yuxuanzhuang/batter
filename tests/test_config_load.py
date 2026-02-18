@@ -182,8 +182,8 @@ def test_args_negative_force():
         ),
         ({"fe_type": "uno_rest", "lambdas": []}, "No lambdas defined"),
         (
-            {"buffer_x": 4.0, "buffer_y": 15.0, "buffer_z": 15.0},
-            "buffer_x must be >= 15.0",
+            {"buffer_x": 4.0, "buffer_y": 15.0, "buffer_z": 10.0},
+            "buffer_x must be >= 10.0",
         ),
         ({"neutralize_only": "maybe"}, "Invalid yes/no"),
     ],
