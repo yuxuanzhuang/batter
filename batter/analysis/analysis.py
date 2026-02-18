@@ -266,6 +266,21 @@ class MBARAnalysis(FEAnalysisBase):
             self.results["fe"] = float(delta_kT)
             self.results["fe_error"] = float(err_kT)
 
+        # plot mbar.delta_f_.T[0] to see the free energy differences between all windows (debug)
+        # with error bars from mbar.d_delta_f_.T[0]
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.errorbar(
+            range(len(mbar.delta_f_.columns)),
+            mbar.delta_f_.iloc[0, :],
+            yerr=mbar.d_delta_f_.iloc[0, :])
+        ax.set_xlabel("Lambda Window Index")
+        ax.set_ylabel("Free Energy Difference (kT)")
+
+        plt.title(f"MBAR Free Energy Differences for Component {self.component}")
+        plt.tight_layout()
+        plt.savefig(f"{self.result_folder}/{self.component}_mbar_delta_f.png", dpi=200)
+        plt.close(fig)
+
         # Convergence summaries
         with SilenceAlchemlybOnly():
             tc = forward_backward_convergence(
