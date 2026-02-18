@@ -494,7 +494,7 @@ def write_build_from_aligned(
             # read dum{i}.pdb for the x,y shift of the extra ligand copy
             lig_x_y_shift = (0.0, 0.0)
             if shift:
-                dum_pdb = build_dir / f"dum{i}.pdb"
+                dum_pdb = build_dir / f"dum{i+1}.pdb"
                 if dum_pdb.exists():
                     dlines = [ln for ln in dum_pdb.read_text().splitlines() if ln.strip()]
                     if len(dlines) >= 2 and _is_atom_line(dlines[1]):
