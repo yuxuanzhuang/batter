@@ -329,6 +329,11 @@ def create_box_z(ctx: BuildContext) -> None:
         final_system = final_system - outside_wat
 
     system_dimensions[2] = abs_z
+    outside_wat_z = final_system.select_atoms(
+        "byres (resname WAT and "
+        f"(prop z > {abs_z} or prop z < 0))"
+    )
+    final_system = final_system - outside_wat_z
 
     # renumber residues
     revised_resids = np.array(revised_resids)
