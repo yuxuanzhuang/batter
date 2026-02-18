@@ -158,7 +158,7 @@ def create_box_z(ctx: BuildContext) -> None:
     """
     work = ctx.working_dir
     comp = ctx.comp
-    param_dir = work.parent.parent / "params" if comp != "q" else work.parent / "params"
+    param_dir = work.parent.parent / "params"
     sim = ctx.sim
     build_dir = ctx.build_dir
     window_dir = ctx.window_dir
@@ -185,19 +185,16 @@ def create_box_z(ctx: BuildContext) -> None:
 
     if membrane_builder:
         targeted_buffer_z = max([float(sim.buffer_z), 25.0])
-        buffer_z = get_buffer_z(
-            window_dir / "build.pdb", targeted_buf=targeted_buffer_z
-        )
         buffer_x = 0.0
         buffer_y = 0.0
     else:
-        # for non-equilibration non-membrane systems,
+        # for non-membrane systems,
         # reduce the buffer by existing solvation shell
-        if comp != 'q':
-            solv_shell = sim.solv_shell
-            buffer_x = max(0.0, buffer_x - solv_shell)
-            buffer_y = max(0.0, buffer_y - solv_shell)
-            buffer_z = max(0.0, buffer_z - solv_shell)
+        solv_shell = sim.solv_shell
+        buffer_x = max(0.0, buffer_x - solv_shell)
+        buffer_y = max(0.0, buffer_y - solv_shell)
+
+    sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
 
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
@@ -256,17 +253,13 @@ def create_box_z(ctx: BuildContext) -> None:
         f.write(f"loadamberparams {mol}.frcmod\n")
         f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
-
-        if comp == "x":
-            f.write(f"loadamberparams {mol}.frcmod\n")
-            f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         if water_model != "TIP3PF":
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
             f.write("source leaprc.water.fb3\n\n")
         f.write("model = loadpdb build.pdb\n\n")
         f.write(
-            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z} }} 1\n\n"
+            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z_left} }} 1\n\n"
         )
         f.write("desc model\n")
         f.write("savepdb model full_pre.pdb\n")
@@ -335,15 +328,7 @@ def create_box_z(ctx: BuildContext) -> None:
         )
         final_system = final_system - outside_wat
 
-        if comp in ["e", "v", "o", "z"]:
-            prot_z_max = u.select_atoms("protein").positions[:, 2].max()
-            prot_z_min = u.select_atoms("protein").positions[:, 2].min()
-            outside_wat_z = final_system.select_atoms(
-                "byres (resname WAT and "
-                f"(prop z > {prot_z_max + targeted_buffer_z} or prop z < {prot_z_min - targeted_buffer_z}))"
-            )
-            final_system = final_system - outside_wat_z
-            system_dimensions[2] = prot_z_max - prot_z_min + 2 * targeted_buffer_z
+    system_dimensions[2] = abs_z
 
     # renumber residues
     revised_resids = np.array(revised_resids)

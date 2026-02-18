@@ -232,7 +232,9 @@ def select_ions_away_from_complex(
 
 def get_buffer_z(protein_file: str | Path, targeted_buf: float = 20.0) -> float:
     """
-    Extra buffer (Å) needed along Z to maintain ``targeted_buf`` water thickness.
+    Extra buffer (Å) needed along Z to maintain ``targeted_buf`` water thickness from
+    the solute to the protein.
+    e.g. from the solute in the solvent to the protein.
     """
     u = mda.Universe(str(protein_file))
     protein = u.select_atoms("protein")
@@ -242,6 +244,7 @@ def get_buffer_z(protein_file: str | Path, targeted_buf: float = 20.0) -> float:
 
     sys_z_min = u.atoms.positions[:, 2].min()
     sys_z_max = u.atoms.positions[:, 2].max()
+    u.dimensions = 
 
     buffer_top = sys_z_max - prot_z_max
     buffer_bottom = prot_z_min - sys_z_min
@@ -255,10 +258,15 @@ def get_sdr_dist(
     protein_file: str | Path,
     lig_resname: str,
     buffer_z: float,
-    extra_buffer: float = 5.0,
-) -> float:
+) -> (float, float, float):
     """
     Compute a Z-shift (Å) for the ligand to place it roughly mid-solvent.
+
+    return
+    -------
+    sdr_dist: Z-shift (Å) to apply to the ligand to achieve the targeted buffer distance from the protein.
+    z_abs: Absolute z box size (Å) needed to fit the system with the targeted buffer.
+    z_left: Remaining buffer distance on the top side of the ligand after placing the ligand.
     """
     u = mda.Universe(str(protein_file))
     ligand = u.select_atoms(f"resname {lig_resname}")
@@ -273,10 +281,17 @@ def get_sdr_dist(
     )
 
     prot_z_max = protein.positions[:, 2].max()
+    prot_z_min = protein.positions[:, 2].min()
 
     lig_cog = ligand.positions.mean(axis=0)
     lig_radius = np.max(np.linalg.norm(ligand.positions - lig_cog, axis=1))
-
-    targeted_lig_z = prot_z_max + buffer_z + extra_buffer + lig_radius
-    z_shift = targeted_lig_z - lig_cog[2]
-    return float(z_shift)
+    # z box size should be
+    # |--(buffer_z)--ligand (rotatable)--(buffer_z)--protein-----|
+    # this assume ligand will not stretch
+    # add extra 2.0 Å to account for ligand flexibility.
+    abs_z = prot_z_max - prot_z_min + 2 * buffer_z + 2 * lig_radius + 2.0
+    # now determine the placement of the ligand in z to achieve the above buffer condition
+    box_below_protein = prot_z_min
+    buffer_z_left = buffer_z - box_below_protein
+    z_shift = buffer_z_left + lig_radius + 1.0  # add extra 1.0 Å to avoid clashes
+    return z_shift, float(abs_z), float(buffer_z_left)

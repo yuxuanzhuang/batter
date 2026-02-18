@@ -721,23 +721,8 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
                 except Exception:
                     pass
 
-    if buffer_z <= 25:
-        buffer_z = 25
-        logger.debug(
-            f"buffer_z too small ({sim.buffer_z}); setting to 25 Å for SDR calculation."
-        )
-    if membrane_builder:
-        equil_dir = sys_root / "simulations" / ligand / "equil"
-        buf_source = equil_dir / f"equil-{mol}.pdb"
-        if not buf_source.exists():
-            raise FileNotFoundError(
-                f"[simprep:z] Missing equil buffer source: {buf_source}"
-            )
-        buffer_z = get_buffer_z(buf_source, targeted_buf=buffer_z)
-
-    sdr_dist = get_sdr_dist(
-        build_dir / "complex.pdb", lig_resname=mol, buffer_z=buffer_z, extra_buffer=5
-    )
+    # open sdr_info to read SDR distance
+    sdr_dist, abs_z, buffer_z_left = map(float, open(dest_dir / "sdr_info.txt").read().split())
 
     # write build files for z
     write_build_from_aligned(

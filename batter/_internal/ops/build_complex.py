@@ -527,17 +527,19 @@ def build_complex_z(ctx) -> bool:
     p2_vmd = p2_resid
 
     # 8) SDR distance
-    if buffer_z <= 25:
-        buffer_z = 25
+    if buffer_z <= 20:
+        buffer_z = 20
         logger.debug(
-            f"buffer_z too small ({sim.buffer_z}); setting to 25 Å for SDR calculation."
+            f"buffer_z too small ({sim.buffer_z}); setting to 20 Å for SDR calculation."
         )
-    if membrane_builder:
-        buffer_z = get_buffer_z(equil_dir / f"equil-{mol}.pdb", targeted_buf=buffer_z)
 
-    sdr_dist = get_sdr_dist(
-        str(_p("complex.pdb")), lig_resname=mol, buffer_z=buffer_z, extra_buffer=5
+    sdr_dist, abs_z, buffer_z_left = get_sdr_dist(
+        str(_p("complex.pdb")), lig_resname=mol, buffer_z=buffer_z
     )
+    # save for future stages
+    with open(_p("sdr_info.txt"), "wt") as f:
+        f.write(f"{sdr_dist}\n{abs_z}\n{buffer_z_left}\n")
+    logger.debug(f"[build_complex_z] SDR distance: {sdr_dist:.2f} Å, abs_z: {abs_z:.2f} Å, buffer_z_left: {buffer_z_left:.2f} Å")
 
     # 9) align & pdb4amber
     run_with_log(
