@@ -251,8 +251,8 @@ class SimulationConfig(BaseModel):
             "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
             "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
             "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
-            "buffer_x": float(_fe_attr("buffer_x", lambda: 15.0)),
-            "buffer_y": float(_fe_attr("buffer_y", lambda: 15.0)),
+            "buffer_x": float(_fe_attr("buffer_x", lambda: 10.0)),
+            "buffer_y": float(_fe_attr("buffer_y", lambda: 10.0)),
             "buffer_z": float(_fe_attr("buffer_z", lambda: 15.0)),
             "temperature": float(_fe_attr("temperature", lambda: 298.15)),
             "dt": float(_fe_attr("dt", lambda: 0.004)),
@@ -399,7 +399,7 @@ class SimulationConfig(BaseModel):
     )
     buffer_x: float = Field(10.0, description="Box buffer X (Å)")
     buffer_y: float = Field(10.0, description="Box buffer Y (Å)")
-    buffer_z: float = Field(10.0, description="Box buffer Z (Å)")
+    buffer_z: float = Field(15.0, description="Box buffer Z (Å)")
     lig_buffer: float = Field(10.0, description="Ligand box buffer (Å)")
 
     # --- Ions ---
@@ -680,13 +680,13 @@ class SimulationConfig(BaseModel):
         pass
 
     def _check_water_compatibility(self) -> None:
-        # make sure buffer_x/y/z is > 5.0 Å
+        # make sure buffer_x/y/z is > 10.0 Å
         for dim, buf in zip(
             ("X", "Y", "Z"), (self.buffer_x, self.buffer_y, self.buffer_z)
         ):
-            if buf < 15.0:
+            if buf < 10.0:
                 raise ValueError(
-                    f"For water simulations, buffer_{dim.lower()} must be >= 15.0 Å (got {buf})."
+                    f"For water simulations, buffer_{dim.lower()} must be >= 10.0 Å (got {buf})."
                 )
 
     # convenience
