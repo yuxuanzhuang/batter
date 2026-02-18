@@ -491,6 +491,20 @@ def write_build_from_aligned(
         # Optional shifted ligand copy (+sdr_dist along z) for z/v/o with SDR/EXCHANGE
         # extra_ligand_shift is a list of whether to shift the ligand or not
         for i, shift in enumerate(extra_ligand_shift, start=1):
+            # read dum{i}.pdb for the x,y shift of the extra ligand copy
+            lig_x_y_shift = (0.0, 0.0)
+            if shift:
+                dum_pdb = build_dir / f"dum{i}.pdb"
+                if dum_pdb.exists():
+                    dlines = [ln for ln in dum_pdb.read_text().splitlines() if ln.strip()]
+                    if len(dlines) >= 2 and _is_atom_line(dlines[1]):
+                        x = float(_field(dlines[1], 30, 38) or 0.0)
+                        y = float(_field(dlines[1], 38, 46) or 0.0)
+                        lig_x_y_shift = (x, y)
+                    else:
+                        logger.warning(f"[simprep] {dum_pdb} is malformed; using no x/y shift for extra ligand copy.")
+                else:
+                    logger.warning(f"[simprep] {dum_pdb} not found; using no x/y shift for extra ligand copy.")
             shift_sdr_dist = sdr_dist if shift else 0.0
             for name, _, __, chain, x, y, z in lig_block:
                 fout.write(
@@ -500,8 +514,8 @@ def write_build_from_aligned(
                         lig,
                         chain,
                         resid + i,
-                        x,
-                        y,
+                        x - float(lig_x_y_shift[0]),
+                        y - float(lig_x_y_shift[1]),
                         z + float(shift_sdr_dist),
                     )
                     + "\n"
