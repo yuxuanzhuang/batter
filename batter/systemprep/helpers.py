@@ -291,6 +291,6 @@ def get_sdr_dist(
     abs_z = prot_z_max - prot_z_min + 2 * buffer_z + 2 * lig_radius + 2.0
     # now determine the placement of the ligand in z to achieve the above buffer condition
     box_below_protein = prot_z_min
-    buffer_z_left = buffer_z - box_below_protein
-    z_shift = buffer_z_left + lig_radius + 1.0  # add extra 1.0 Å to avoid clashes
+    buffer_z_left = buffer_z - box_below_protein + lig_radius
+    z_shift = buffer_z + lig_radius + 1.0  # add extra 1.0 Å to avoid clashes
     return z_shift, float(abs_z), float(buffer_z_left)
