@@ -244,7 +244,6 @@ def get_buffer_z(protein_file: str | Path, targeted_buf: float = 20.0) -> float:
 
     sys_z_min = u.atoms.positions[:, 2].min()
     sys_z_max = u.atoms.positions[:, 2].max()
-    u.dimensions = 
 
     buffer_top = sys_z_max - prot_z_max
     buffer_bottom = prot_z_min - sys_z_min

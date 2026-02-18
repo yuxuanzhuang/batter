@@ -690,6 +690,7 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         (build_dir / f"fe-{mol}.pdb", dest_dir / "build-ini.pdb"),
         (build_dir / f"fe-{mol}.pdb", dest_dir / f"fe-{mol}.pdb"),
         (build_dir / f"anchors-{ligand}.txt", dest_dir / f"anchors-{ligand}.txt"),
+        (build_dir / "sdr_info.txt", dest_dir / "sdr_info.txt"),
         (build_dir / "equil-reference.pdb", dest_dir / "equil-reference.pdb"),
         (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
         (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
