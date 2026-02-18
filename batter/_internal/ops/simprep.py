@@ -403,8 +403,6 @@ def write_build_from_aligned(
             resid = int(float(_field(dlines[1], 22, 26) or 1))
             chain = _field(dlines[1], 21, 22) or "A"
             coords_dum.append((x, y, z))
-            x_max = max(x_max, x)
-            y_max = max(y_max, y)
             atom_dum.append((name, resname, resid, chain))
     if not coords_dum:
         coords_dum.append((0.0, 0.0, 0.0))
@@ -431,8 +429,6 @@ def write_build_from_aligned(
         x = float(_field(ln, 30, 38) or 0.0)
         y = float(_field(ln, 38, 46) or 0.0)
         z = float(_field(ln, 46, 54) or 0.0)
-        x_max = max(x_max, x)
-        y_max = max(y_max, y)
         if (
             resname not in {lig, "DUM", "WAT"}
             and resname not in om
@@ -441,7 +437,8 @@ def write_build_from_aligned(
         ):
             recep_block.append((name, resname, resid - start_off_set, chain, x, y, z))
             recep_last_resid = max(recep_last_resid, resid - start_off_set)
-            
+            x_max = max(x_max, x)
+            y_max = max(y_max, y)
         elif resname == lig:
             lig_block.append((name, resname, resid - start_off_set, chain, x, y, z))
         else:
