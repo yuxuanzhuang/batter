@@ -334,8 +334,11 @@ def create_box(ctx: BuildContext) -> None:
         final_system = final_system - outside_wat
 
     if comp in ["e", "v", "o", "z"]:
-        final_system.positions[:, 2] -= final_system.positions[:, 2].min()
+        pos = final_system.positions.copy()
+        pos[:, 2] -= pos[:, 2].min()
+        final_system.positions = pos
         system_dimensions[2] = abs_z
+
         outside_wat_z = final_system.select_atoms(
             "byres (resname WAT and "
             f"(prop z > {abs_z} or prop z < 0))"
