@@ -467,6 +467,7 @@ class _SystemPrepRunner:
         ligand_ph: float = 7.4,
         lipid_mol: List[str] = [],
         lipid_ff: str = "lipid21",
+        unbound_threshold: float | None = None,
         overwrite: bool = False,
         verbose: bool = False,
     ) -> Dict[str, Any]:
@@ -583,7 +584,12 @@ class _SystemPrepRunner:
         lig_sdf = str(Path(ligand_paths[self.unique_mol_names[0]]))
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
-            u_prot, u_lig, lig_sdf, anchor_atoms, ligand_anchor_atom
+            u_prot,
+            u_lig,
+            lig_sdf,
+            anchor_atoms,
+            ligand_anchor_atom,
+            unbound_threshold=unbound_threshold,
         )
         self.anchor_atoms = anchor_atoms
         self.ligand_anchor_atom = ligand_anchor_atom
@@ -642,12 +648,19 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     payload = StepPayload.model_validate(params)
     sys_params = payload.sys_params or SystemParams()
     yaml_dir = Path(sys_params["yaml_dir"]).resolve()
+    threshold_val = sys_params.get(
+        "unbound_threshold",
+        getattr(payload.sim, "unbound_threshold", 8.0),
+    )
+    unbound_threshold = (
+        float(threshold_val) if threshold_val is not None else None
+    )
 
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
         system_name=sys_params["system_name"],
         protein_input=sys_params["protein_input"],
-        system_topology= sys_params.get("system_input", None),
+        system_topology=sys_params.get("system_input", None),
         ligand_paths=sys_params["ligand_paths"],
         anchor_atoms=list(sys_params.get("anchor_atoms", [])),
         ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),
@@ -659,6 +672,7 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
         ligand_ph=float(sys_params.get("ligand_ph", 7.4)),
         lipid_mol=list(sys_params.get("lipid_mol", [])),
         lipid_ff=sys_params.get("lipid_ff", "lipid21"),
+        unbound_threshold=unbound_threshold,
         overwrite=bool(sys_params.get("overwrite", False)),
         verbose=bool(sys_params.get("verbose", False)),
     )

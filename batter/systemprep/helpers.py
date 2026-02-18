@@ -29,6 +29,7 @@ def find_anchor_atoms(
     lig_sdf: Optional[str | Path],
     anchor_atoms: Sequence[str],
     ligand_anchor_atom: Optional[str] = None,
+    unbound_threshold: Optional[float] = None,
 ) -> Tuple[float, float, float, str, str, str, float]:
     """
     Identify Boresch-style anchor atoms and pocket geometry.
@@ -38,6 +39,13 @@ def find_anchor_atoms(
     (l1_x, l1_y, l1_z, p1_str, p2_str, p3_str, r_dist)
         Translation vector from P1 to ligand COM (Å), formatted protein anchor
         strings (``:RESID@NAME``), and the ligand distance magnitude + 1 Å.
+
+    Raises
+    ------
+    ValueError
+        If ``unbound_threshold`` is set and the minimum distance between any
+        ligand atom and the three anchor atoms is greater than or equal to the
+        threshold.
     """
     if len(anchor_atoms) != 3:
         raise ValueError("anchor_atoms must contain exactly 3 selection strings.")
@@ -68,6 +76,26 @@ def find_anchor_atoms(
             f"P2_atom.n_atoms={P2_atom.n_atoms}, "
             f"P3_atom.n_atoms={P3_atom.n_atoms}"
         )
+
+    if unbound_threshold is not None:
+        if unbound_threshold < 0:
+            raise ValueError("unbound_threshold must be >= 0.")
+        anchor_positions = np.vstack(
+            (P1_atom.positions, P2_atom.positions, P3_atom.positions)
+        )
+        min_anchor_dist = float(
+            distance_array(
+                u_lig.atoms.positions,
+                anchor_positions,
+                box=u_merge.dimensions,
+            ).min()
+        )
+        if min_anchor_dist >= float(unbound_threshold):
+            raise ValueError(
+                "Ligand appears unbound during system prep: "
+                f"minimum ligand-anchor distance ({min_anchor_dist:.3f} Å) "
+                f">= unbound threshold ({float(unbound_threshold):.3f} Å)."
+            )
 
     if ligand_anchor_atom:
         lig_sel = u_merge.select_atoms(ligand_anchor_atom)
