@@ -216,7 +216,7 @@ class MBARAnalysis(FEAnalysisBase):
 
     def get_mbar_data(self) -> None:
         """
-        Parse and cache the reduced potentials for all lambda windows.
+        Parse and cache the not reduced potentials for all lambda windows.
 
         Notes
         -----
@@ -233,8 +233,10 @@ class MBARAnalysis(FEAnalysisBase):
             df_list = self._get_data_list()
 
         self._data_list = df_list
-        self._u_df = pd.concat(df_list)
-        self.timeseries = [df.index.get_level_values("time").values for df in df_list]
+        # get reduced df_list by substracting the reference U from the lambda simulation
+        self._data_list = [df.subtract(df.iloc[:, i], axis=0) for i, df in enumerate(self._data_list)]
+        self._u_df = pd.concat(self._data_list)
+        self.timeseries = [df.index.get_level_values("time").values for df in self._data_list]
         self._data_initialized = True
 
     def run_analysis(self) -> None:
@@ -406,8 +408,9 @@ class MBARAnalysis(FEAnalysisBase):
                 f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}"
             )
         # subtract reference (this window) to yield reduced potentials
-        ref = df.iloc[:, win_i]
-        df = df.subtract(ref, axis=0)
+        # do it later
+        # ref = df.iloc[:, win_i]
+        # df = df.subtract(ref, axis=0)
 
         logger.debug(
             f"[MBARAnalysis] {component}{win_i:02d} final data shape: {df.shape}"
