@@ -389,6 +389,8 @@ def write_build_from_aligned(
     # ---- load ALL dumN.pdb. If none, synthesize one at origin.
     coords_dum: List[Tuple[float, float, float]] = []
     atom_dum: List[Tuple[str, str, int, str]] = []  # (name, resname, resid, chain)
+    x_max = float(0.0)
+    y_max = float(0.0)
     for dfile in sorted(build_dir.glob("dum[0-9]*.pdb")):
         dlines = [ln for ln in dfile.read_text().splitlines() if ln.strip()]
         # convention: coordinates on the 2nd line (index 1)
@@ -401,6 +403,8 @@ def write_build_from_aligned(
             resid = int(float(_field(dlines[1], 22, 26) or 1))
             chain = _field(dlines[1], 21, 22) or "A"
             coords_dum.append((x, y, z))
+            x_max = max(x_max, x)
+            y_max = max(y_max, y)
             atom_dum.append((name, resname, resid, chain))
     if not coords_dum:
         coords_dum.append((0.0, 0.0, 0.0))
@@ -427,7 +431,8 @@ def write_build_from_aligned(
         x = float(_field(ln, 30, 38) or 0.0)
         y = float(_field(ln, 38, 46) or 0.0)
         z = float(_field(ln, 46, 54) or 0.0)
-
+        x_max = max(x_max, x)
+        y_max = max(y_max, y)
         if (
             resname not in {lig, "DUM", "WAT"}
             and resname not in om
@@ -436,6 +441,7 @@ def write_build_from_aligned(
         ):
             recep_block.append((name, resname, resid - start_off_set, chain, x, y, z))
             recep_last_resid = max(recep_last_resid, resid - start_off_set)
+            
         elif resname == lig:
             lig_block.append((name, resname, resid - start_off_set, chain, x, y, z))
         else:
@@ -491,20 +497,7 @@ def write_build_from_aligned(
         # Optional shifted ligand copy (+sdr_dist along z) for z/v/o with SDR/EXCHANGE
         # extra_ligand_shift is a list of whether to shift the ligand or not
         for i, shift in enumerate(extra_ligand_shift, start=1):
-            # read dum{i}.pdb for the x,y shift of the extra ligand copy
-            lig_x_y_shift = (0.0, 0.0)
-            if shift:
-                dum_pdb = build_dir / f"dum{i+1}.pdb"
-                if dum_pdb.exists():
-                    dlines = [ln for ln in dum_pdb.read_text().splitlines() if ln.strip()]
-                    if len(dlines) >= 2 and _is_atom_line(dlines[1]):
-                        x = float(_field(dlines[1], 30, 38) or 0.0)
-                        y = float(_field(dlines[1], 38, 46) or 0.0)
-                        lig_x_y_shift = (x, y)
-                    else:
-                        logger.warning(f"[simprep] {dum_pdb} is malformed; using no x/y shift for extra ligand copy.")
-                else:
-                    logger.warning(f"[simprep] {dum_pdb} not found; using no x/y shift for extra ligand copy.")
+            
             shift_sdr_dist = sdr_dist if shift else 0.0
             for name, _, __, chain, x, y, z in lig_block:
                 fout.write(
@@ -514,8 +507,8 @@ def write_build_from_aligned(
                         lig,
                         chain,
                         resid + i,
-                        x - float(lig_x_y_shift[0]),
-                        y - float(lig_x_y_shift[1]),
+                        x + x_max,
+                        y + y_max,
                         z + float(shift_sdr_dist),
                     )
                     + "\n"
