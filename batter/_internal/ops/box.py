@@ -196,7 +196,10 @@ def create_box(ctx: BuildContext) -> None:
         buffer_x = max(0.0, buffer_x - solv_shell)
         buffer_y = max(0.0, buffer_y - solv_shell)
 
-    sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
+    if comp != "q":
+        sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
+    else:
+        buffer_z_left = buffer_z
 
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
