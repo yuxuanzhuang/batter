@@ -668,7 +668,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
     scmk1 = scmk_dict['scmk1']
     scmk2 = scmk_dict['scmk2']
-    noshakemk = f':{int(ref_resid)},{int(ref_resid)+1},{int(ref_resid)+2},{int(ref_resid)+3}'
 
     amber_dir = ctx.amber_dir
 
@@ -707,7 +706,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("timk2", mk2)
                 .replace("scmk1", scmk1)
                 .replace("scmk2", scmk2)
-                .replace("noshakemk", noshakemk)
             )
             fout.write(line)
     with eq_path.open("a") as mdin:
@@ -741,7 +739,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("timk2", str(mk2))
                 .replace("scmk1", scmk1)
                 .replace("scmk2", scmk2)
-                .replace("noshakemk", noshakemk)
             )
             fout.write(line)
     with out_path.open("a") as mdin:
@@ -781,7 +778,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("timk2", mk2)
                 .replace("scmk1", scmk1)
                 .replace("scmk2", scmk2)
-                .replace("noshakemk", noshakemk)
                 .replace('lbd_val', f"{float(weight):6.5f}")
             )
 
@@ -793,7 +789,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("timk2", str(mk2))
                 .replace("scmk1", scmk1)
                 .replace("scmk2", scmk2)
-                .replace("noshakemk", noshakemk)
                 .replace('lbd_val', f"{float(weight):6.5f}")
             )
 

@@ -172,8 +172,6 @@ def create_box(ctx: BuildContext) -> None:
     ligand = ctx.ligand
     mol = ctx.residue_name
 
-    molr = mol
-
     for attr in ("buffer_x", "buffer_y", "buffer_z"):
         if not hasattr(sim, attr):
             raise AttributeError(
@@ -190,11 +188,14 @@ def create_box(ctx: BuildContext) -> None:
         buffer_x = 0.0
         buffer_y = 0.0
     else:
-        # for non-membrane systems,
+        # for non-equilibration non-membrane systems,
         # reduce the buffer by existing solvation shell
-        solv_shell = sim.solv_shell
-        buffer_x = max(0.0, buffer_x - solv_shell)
-        buffer_y = max(0.0, buffer_y - solv_shell)
+        if comp != 'q':
+            solv_shell = sim.solv_shell
+            buffer_x = max(0.0, buffer_x - solv_shell)
+            buffer_y = max(0.0, buffer_y - solv_shell)
+            buffer_z = max(0.0, buffer_z - solv_shell)
+
 
     if comp != "q":
         sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
@@ -334,14 +335,12 @@ def create_box(ctx: BuildContext) -> None:
         final_system = final_system - outside_wat
 
     if comp in ["e", "v", "o", "z"]:
-        pos = final_system.positions.copy()
-        pos[:, 2] -= pos[:, 2].min()
-        final_system.positions = pos
+        min_pos = final_system.positions[:, 2].min()
         system_dimensions[2] = abs_z
 
         outside_wat_z = final_system.select_atoms(
             "byres (resname WAT and "
-            f"(prop z > {abs_z} or prop z < 0))"
+            f"(prop z > {abs_z + min_pos}))"
         )
         final_system = final_system - outside_wat_z
 
