@@ -368,6 +368,52 @@ def _clear_analysis_outputs(fe_root: Path) -> None:
     (fe_root / "analyze.ok").unlink(missing_ok=True)
 
 
+def _infer_analysis_timing_from_fe(fe_dir: Path) -> tuple[float, int]:
+    """
+    Best-effort timing inference for in-place analysis without run config.
+
+    Returns ``(dt, ntwx)`` and falls back to ``(0.004, 0)`` when unavailable.
+    """
+    import re
+
+    dt: float | None = None
+    ntwx: int | None = None
+
+    for comp_dir in sorted([p for p in fe_dir.iterdir() if p.is_dir()]):
+        for win_dir in sorted([p for p in comp_dir.iterdir() if p.is_dir()]):
+            if win_dir.name.endswith("-1"):
+                continue
+            for fname in (
+                "mdin-template",
+                "mdin.in",
+                "mdin-00",
+                "mdin-01",
+                "mdin",
+            ):
+                candidate = win_dir / fname
+                if not candidate.is_file():
+                    continue
+                text = candidate.read_text(errors="ignore")
+                if dt is None:
+                    m_dt = re.search(r"\bdt\s*=\s*([0-9]*\.?[0-9]+)", text)
+                    if m_dt:
+                        try:
+                            dt = float(m_dt.group(1))
+                        except ValueError:
+                            pass
+                if ntwx is None:
+                    m_ntwx = re.search(r"\bntwx\s*=\s*([0-9]+)", text)
+                    if m_ntwx:
+                        try:
+                            ntwx = int(m_ntwx.group(1))
+                        except ValueError:
+                            pass
+                if dt is not None and ntwx is not None:
+                    return dt, ntwx
+
+    return (dt if dt is not None and dt > 0 else 0.004), (ntwx if ntwx is not None else 0)
+
+
 def _run_in_place_ligand_analysis(system, params: dict[str, object]) -> None:
     from batter.exec.handlers.fe_analysis import analyze_handler
     from batter.pipeline.step import Step
@@ -473,6 +519,9 @@ def fe_ligand_analyze(
         params["analysis_start_step"] = int(analysis_start_step)
     if n_bootstraps is not None:
         params["n_bootstraps"] = int(n_bootstraps)
+    dt, ntwx = _infer_analysis_timing_from_fe(fe_dir)
+    params["dt"] = dt
+    params["ntwx"] = ntwx
 
     system = SimSystem(
         name=ligand_name,

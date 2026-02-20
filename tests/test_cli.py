@@ -519,13 +519,17 @@ def test_cli_fe_ligand_analyze_runs_in_place_without_execution_layout(
 ) -> None:
     called: dict[str, Any] = {}
     pair_dir = tmp_path / "EJM_31~EJM_46"
-    (pair_dir / "fe" / "x").mkdir(parents=True, exist_ok=True)
+    win_dir = pair_dir / "fe" / "x" / "x00"
+    win_dir.mkdir(parents=True, exist_ok=True)
+    (win_dir / "mdin-template").write_text(" &cntrl\n  dt = 0.002,\n  ntwx = 250,\n /\n")
 
     def fake_run_in_place(system, params):
         called["root"] = system.root
         called["ligand"] = system.meta.get("ligand")
         called["mode"] = system.meta.get("mode")
         called["n_workers"] = params.get("n_workers")
+        called["dt"] = params.get("dt")
+        called["ntwx"] = params.get("ntwx")
 
     def fake_run_analysis(*args, **kwargs):
         raise AssertionError("run_analysis_from_execution should not be used")
@@ -544,6 +548,8 @@ def test_cli_fe_ligand_analyze_runs_in_place_without_execution_layout(
     assert called["ligand"] == "EJM_31~EJM_46"
     assert called["mode"] == "RBFE"
     assert called["n_workers"] == 6
+    assert called["dt"] == 0.002
+    assert called["ntwx"] == 250
 
 
 def test_cli_clone_exec(tmp_path: Path, runner: CliRunner, monkeypatch) -> None:
