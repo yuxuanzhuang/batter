@@ -405,6 +405,116 @@ def test_cli_fe_analyze_on_finished_run(
     assert called == [True, False]
 
 
+def test_cli_fe_ligand_analyze_invokes_api_abfe(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    lig_dir = tmp_path / "executions" / "rep1" / "simulations" / "LIG1"
+    (lig_dir / "fe").mkdir(parents=True, exist_ok=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called["work_dir"] = work_dir
+        called["run_id"] = run_id
+        called["ligand"] = ligand
+        called["n_workers"] = n_workers
+        called["analysis_start_step"] = analysis_start_step
+        called["n_bootstraps"] = n_bootstraps
+        called["overwrite"] = overwrite
+        called["raise_on_error"] = raise_on_error
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "ligand-analyze",
+            str(lig_dir),
+            "--workers",
+            "2",
+            "--analysis-start-step",
+            "500",
+            "--n-bootstrap",
+            "8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["work_dir"] == tmp_path
+    assert called["run_id"] == "rep1"
+    assert called["ligand"] == "LIG1"
+    assert called["n_workers"] == 2
+    assert called["analysis_start_step"] == 500
+    assert called["n_bootstraps"] == 8
+    assert called["overwrite"] is False
+    assert called["raise_on_error"] is True
+
+
+def test_cli_fe_ligand_analyze_invokes_api_rbfe_pair(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    fe_dir = (
+        tmp_path
+        / "executions"
+        / "rep2"
+        / "simulations"
+        / "transformations"
+        / "A~B"
+        / "fe"
+    )
+    fe_dir.mkdir(parents=True, exist_ok=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called["work_dir"] = work_dir
+        called["run_id"] = run_id
+        called["ligand"] = ligand
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(cli, ["fe", "ligand-analyze", str(fe_dir)])
+
+    assert result.exit_code == 0
+    assert called["work_dir"] == tmp_path
+    assert called["run_id"] == "rep2"
+    assert called["ligand"] == "A~B"
+
+
+def test_cli_fe_ligand_analyze_requires_fe_folder(
+    tmp_path: Path, runner: CliRunner
+) -> None:
+    lig_dir = tmp_path / "executions" / "rep1" / "simulations" / "LIG1"
+    lig_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(cli, ["fe", "ligand-analyze", str(lig_dir)])
+    assert result.exit_code == 1
+    assert "Expected FE folder" in result.output
+
+
 def test_cli_clone_exec(tmp_path: Path, runner: CliRunner, monkeypatch) -> None:
     work_dir = _copy_finished_run(tmp_path)
     src_exec = work_dir / "executions" / "src"
