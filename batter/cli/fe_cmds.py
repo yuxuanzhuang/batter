@@ -302,9 +302,17 @@ def fe_analyze(
         )
 
 
-def _resolve_ligand_analysis_target(ligand_dir: Path) -> tuple[Path, str, str]:
+def _resolve_ligand_analysis_path(
+    ligand_dir: Path,
+) -> tuple[Path, Path, str, Path | None, str | None]:
     """
-    Resolve ``work_dir``, ``run_id``, and ligand identifier from a ligand folder.
+    Resolve FE/ligand paths and optional execution context.
+
+    Returns
+    -------
+    tuple
+        ``(fe_dir, lig_root, ligand_name, work_dir, run_id)`` where ``work_dir`` and
+        ``run_id`` are ``None`` when the folder is outside the portable execution layout.
     """
     target = ligand_dir.resolve()
     if target.name == "fe":
@@ -324,36 +332,47 @@ def _resolve_ligand_analysis_target(ligand_dir: Path) -> tuple[Path, str, str]:
         (p for p in (lig_root, *lig_root.parents) if p.parent.name == "executions"),
         None,
     )
+
     if run_dir is None:
-        raise click.ClickException(
-            f"Could not locate execution run directory above '{lig_root}'. "
-            "Expected layout .../executions/<run_id>/simulations/<ligand>/fe."
-        )
+        return fe_dir, lig_root, lig_root.name, None, None
 
     sims_root = run_dir / "simulations"
     try:
         rel = lig_root.relative_to(sims_root)
-    except ValueError as exc:
-        raise click.ClickException(
-            f"Ligand folder '{lig_root}' is not under expected simulations root '{sims_root}'."
-        ) from exc
+    except ValueError:
+        # Path is under executions/<run> but not simulations; run direct in-place.
+        return fe_dir, lig_root, lig_root.name, None, None
 
     if not rel.parts:
-        raise click.ClickException(
-            f"Could not infer ligand from '{lig_root}' under '{sims_root}'."
-        )
+        return fe_dir, lig_root, lig_root.name, None, None
 
-    if rel.parts[0] == "transformations":
-        if len(rel.parts) < 2:
-            raise click.ClickException(
-                f"RBFE transformations path is incomplete: '{lig_root}'."
-            )
+    if rel.parts[0] == "transformations" and len(rel.parts) >= 2:
         ligand_name = rel.parts[1]
     else:
         ligand_name = rel.parts[0]
 
     work_dir = run_dir.parent.parent
-    return work_dir, run_dir.name, ligand_name
+    return fe_dir, lig_root, ligand_name, work_dir, run_dir.name
+
+
+def _analysis_outputs_present(fe_root: Path) -> bool:
+    return (fe_root / "Results" / "Results.dat").exists() and (
+        fe_root / "analyze.ok"
+    ).exists()
+
+
+def _clear_analysis_outputs(fe_root: Path) -> None:
+    import shutil
+
+    shutil.rmtree(fe_root / "Results", ignore_errors=True)
+    (fe_root / "analyze.ok").unlink(missing_ok=True)
+
+
+def _run_in_place_ligand_analysis(system, params: dict[str, object]) -> None:
+    from batter.exec.handlers.fe_analysis import analyze_handler
+    from batter.pipeline.step import Step
+
+    analyze_handler(Step(name="analyze"), system, params)
 
 
 @fe.command("ligand-analyze")
@@ -402,24 +421,73 @@ def fe_ligand_analyze(
     """
     Re-run FE analysis for exactly one ligand folder.
 
-    The folder must contain an ``fe/`` directory and be under
-    ``.../executions/<run_id>/simulations/...``.
+    The folder must contain an ``fe/`` directory. When it is under
+    ``.../executions/<run_id>/simulations/...`` BATTER also updates run-scoped
+    FE records; otherwise analysis runs in-place for that ligand folder only.
     """
-    work_dir, run_id, ligand_name = _resolve_ligand_analysis_target(ligand_dir)
-    try:
-        run_analysis_from_execution(
-            work_dir,
-            run_id,
-            ligand=ligand_name,
-            n_workers=workers,
-            analysis_start_step=analysis_start_step,
-            n_bootstraps=n_bootstraps,
-            overwrite=overwrite,
-            raise_on_error=raise_on_error,
+    fe_dir, lig_root, ligand_name, work_dir, run_id = _resolve_ligand_analysis_path(
+        ligand_dir
+    )
+
+    if work_dir is not None and run_id is not None:
+        try:
+            run_analysis_from_execution(
+                work_dir,
+                run_id,
+                ligand=ligand_name,
+                n_workers=workers,
+                analysis_start_step=analysis_start_step,
+                n_bootstraps=n_bootstraps,
+                overwrite=overwrite,
+                raise_on_error=raise_on_error,
+            )
+        except Exception as exc:
+            raise click.ClickException(str(exc))
+
+        click.echo(
+            f"Analysis run finished for ligand '{ligand_name}' in run '{run_id}'."
         )
+        return
+
+    # Fallback: run in-place when the folder is outside portable execution layout.
+    from batter.systems.core import SimSystem, SystemMeta
+
+    if not overwrite and _analysis_outputs_present(fe_dir):
+        click.echo(
+            f"Skipping analysis for '{ligand_name}' "
+            "(results already exist; overwrite=False)."
+        )
+        return
+    if overwrite:
+        _clear_analysis_outputs(fe_dir)
+
+    meta = {"ligand": ligand_name}
+    if "~" in ligand_name or lig_root.parent.name == "transformations":
+        meta["mode"] = "RBFE"
+
+    params: dict[str, object] = {}
+    if workers is not None:
+        params["analysis_n_workers"] = workers
+        params["n_workers"] = workers
+    if analysis_start_step is not None:
+        params["analysis_start_step"] = int(analysis_start_step)
+    if n_bootstraps is not None:
+        params["n_bootstraps"] = int(n_bootstraps)
+
+    system = SimSystem(
+        name=ligand_name,
+        root=lig_root,
+        meta=SystemMeta.from_mapping(meta),
+    )
+
+    try:
+        _run_in_place_ligand_analysis(system, params)
     except Exception as exc:
-        raise click.ClickException(str(exc))
+        if raise_on_error:
+            raise click.ClickException(str(exc))
+        logger.error(f"Analysis failed for '{ligand_name}': {exc}")
+        return
 
     click.echo(
-        f"Analysis run finished for ligand '{ligand_name}' in run '{run_id}'."
+        f"Analysis run finished for ligand '{ligand_name}' at '{lig_root}'."
     )

@@ -14,7 +14,6 @@ from click.testing import CliRunner
 from batter.cli.run import cli
 from batter.api import run_analysis_from_execution
 from batter.runtime.fe_repo import FERecord, WindowResult
-from batter.pipeline.step import ExecResult
 from tests.data import EQUIL_FINISHED_DIR, FE_FINISHED_EXECUTION_DIR
 
 
@@ -513,6 +512,38 @@ def test_cli_fe_ligand_analyze_requires_fe_folder(
     result = runner.invoke(cli, ["fe", "ligand-analyze", str(lig_dir)])
     assert result.exit_code == 1
     assert "Expected FE folder" in result.output
+
+
+def test_cli_fe_ligand_analyze_runs_in_place_without_execution_layout(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    pair_dir = tmp_path / "EJM_31~EJM_46"
+    (pair_dir / "fe" / "x").mkdir(parents=True, exist_ok=True)
+
+    def fake_run_in_place(system, params):
+        called["root"] = system.root
+        called["ligand"] = system.meta.get("ligand")
+        called["mode"] = system.meta.get("mode")
+        called["n_workers"] = params.get("n_workers")
+
+    def fake_run_analysis(*args, **kwargs):
+        raise AssertionError("run_analysis_from_execution should not be used")
+
+    monkeypatch.setattr("batter.cli.fe_cmds._run_in_place_ligand_analysis", fake_run_in_place)
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run_analysis)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run_analysis)
+
+    result = runner.invoke(
+        cli,
+        ["fe", "ligand-analyze", str(pair_dir), "--workers", "6"],
+    )
+
+    assert result.exit_code == 0
+    assert called["root"] == pair_dir
+    assert called["ligand"] == "EJM_31~EJM_46"
+    assert called["mode"] == "RBFE"
+    assert called["n_workers"] == 6
 
 
 def test_cli_clone_exec(tmp_path: Path, runner: CliRunner, monkeypatch) -> None:
