@@ -249,6 +249,27 @@ def filter_element_changes(
     return filtered_mapping
 
 
+def filter_mismatched_attached_h_count(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """
+    Exclude mapped heavy-atom pairs where the number of directly attached H differs.
+    This helps avoid HMR mass mismatches for 'common/core' atoms.
+    """
+    filtered = {}
+    for i, j in mapping.items():
+        a = molA.GetAtomWithIdx(i)
+        b = molB.GetAtomWithIdx(j)
+
+        hA = a.GetTotalNumHs(includeNeighbors=True)
+        hB = b.GetTotalNumHs(includeNeighbors=True)
+
+        if hA != hB:
+            continue
+
+        filtered[i] = j
+    return filtered
+
 def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem.Mol:
     """
     Set atomic coordinates for mol from xyz (shape: (n_atoms, 3)).
@@ -858,11 +879,15 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
     # get mapper based on inital poses
+    additional_mapping_filter_functions = [filter_element_changes]
+    # if set hmr, don't include atom with different number of H attached
+    if sim.hmr:
+        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+
     mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
-                                additional_mapping_filter_functions=[filter_element_changes]
+                                additional_mapping_filter_functions=additional_mapping_filter_functions
     )
-    # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
