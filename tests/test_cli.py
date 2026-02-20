@@ -521,7 +521,9 @@ def test_cli_fe_ligand_analyze_runs_in_place_without_execution_layout(
     pair_dir = tmp_path / "EJM_31~EJM_46"
     win_dir = pair_dir / "fe" / "x" / "x00"
     win_dir.mkdir(parents=True, exist_ok=True)
-    (win_dir / "mdin-template").write_text(" &cntrl\n  dt = 0.002,\n  ntwx = 250,\n /\n")
+    (win_dir / "mdin-template").write_text(
+        " &cntrl\n  dt = 0.002,\n  ntwx = 250,\n  temp0 = 310.0,\n /\n"
+    )
 
     def fake_run_in_place(system, params):
         called["root"] = system.root
@@ -530,6 +532,7 @@ def test_cli_fe_ligand_analyze_runs_in_place_without_execution_layout(
         called["n_workers"] = params.get("n_workers")
         called["dt"] = params.get("dt")
         called["ntwx"] = params.get("ntwx")
+        called["temperature"] = params.get("temperature")
 
     def fake_run_analysis(*args, **kwargs):
         raise AssertionError("run_analysis_from_execution should not be used")
@@ -550,6 +553,7 @@ def test_cli_fe_ligand_analyze_runs_in_place_without_execution_layout(
     assert called["n_workers"] == 6
     assert called["dt"] == 0.002
     assert called["ntwx"] == 250
+    assert called["temperature"] == 310.0
 
 
 def test_cli_clone_exec(tmp_path: Path, runner: CliRunner, monkeypatch) -> None:
