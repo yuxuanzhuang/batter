@@ -368,29 +368,34 @@ def _clear_analysis_outputs(fe_root: Path) -> None:
     (fe_root / "analyze.ok").unlink(missing_ok=True)
 
 
-def _infer_analysis_timing_from_fe(fe_dir: Path) -> tuple[float, int]:
+def _infer_analysis_timing_from_fe(fe_dir: Path) -> tuple[float, int, float]:
     """
     Best-effort timing inference for in-place analysis without run config.
 
-    Returns ``(dt, ntwx)`` and falls back to ``(0.004, 0)`` when unavailable.
+    Returns ``(dt, ntwx, temperature)`` and falls back to
+    ``(0.004, 0, 298.15)`` when unavailable.
     """
     import re
 
     dt: float | None = None
     ntwx: int | None = None
+    temperature: float | None = None
 
     for comp_dir in sorted([p for p in fe_dir.iterdir() if p.is_dir()]):
         for win_dir in sorted([p for p in comp_dir.iterdir() if p.is_dir()]):
             if win_dir.name.endswith("-1"):
                 continue
-            for fname in (
+            candidates = [win_dir / fname for fname in (
                 "mdin-template",
                 "mdin.in",
                 "mdin-00",
                 "mdin-01",
                 "mdin",
-            ):
-                candidate = win_dir / fname
+            )]
+            candidates.extend(sorted(win_dir.glob("mdin-*.out")))
+            candidates.extend(sorted(win_dir.glob("md-*.out")))
+
+            for candidate in candidates:
                 if not candidate.is_file():
                     continue
                 text = candidate.read_text(errors="ignore")
@@ -408,10 +413,23 @@ def _infer_analysis_timing_from_fe(fe_dir: Path) -> tuple[float, int]:
                             ntwx = int(m_ntwx.group(1))
                         except ValueError:
                             pass
-                if dt is not None and ntwx is not None:
-                    return dt, ntwx
+                if temperature is None:
+                    m_t = re.search(r"\btemp0\s*=\s*([0-9]*\.?[0-9]+)", text)
+                    if m_t is None:
+                        m_t = re.search(r"\btempi\s*=\s*([0-9]*\.?[0-9]+)", text)
+                    if m_t:
+                        try:
+                            temperature = float(m_t.group(1))
+                        except ValueError:
+                            pass
+                if dt is not None and ntwx is not None and temperature is not None:
+                    return dt, ntwx, temperature
 
-    return (dt if dt is not None and dt > 0 else 0.004), (ntwx if ntwx is not None else 0)
+    return (
+        (dt if dt is not None and dt > 0 else 0.004),
+        (ntwx if ntwx is not None else 0),
+        (temperature if temperature is not None and temperature > 0 else 298.15),
+    )
 
 
 def _run_in_place_ligand_analysis(system, params: dict[str, object]) -> None:
@@ -519,9 +537,10 @@ def fe_ligand_analyze(
         params["analysis_start_step"] = int(analysis_start_step)
     if n_bootstraps is not None:
         params["n_bootstraps"] = int(n_bootstraps)
-    dt, ntwx = _infer_analysis_timing_from_fe(fe_dir)
+    dt, ntwx, temperature = _infer_analysis_timing_from_fe(fe_dir)
     params["dt"] = dt
     params["ntwx"] = ntwx
+    params["temperature"] = temperature
 
     system = SimSystem(
         name=ligand_name,
