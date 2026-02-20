@@ -300,3 +300,126 @@ def fe_analyze(
             f"Analysis run finished for '{target}'"
             f"{' (ligand ' + ligand + ')' if ligand else ''}."
         )
+
+
+def _resolve_ligand_analysis_target(ligand_dir: Path) -> tuple[Path, str, str]:
+    """
+    Resolve ``work_dir``, ``run_id``, and ligand identifier from a ligand folder.
+    """
+    target = ligand_dir.resolve()
+    if target.name == "fe":
+        fe_dir = target
+        lig_root = target.parent
+    else:
+        fe_dir = target / "fe"
+        lig_root = target
+
+    if not fe_dir.is_dir():
+        raise click.ClickException(
+            f"Expected FE folder at '{fe_dir}'. "
+            "Pass a ligand directory containing 'fe/' or the 'fe/' directory itself."
+        )
+
+    run_dir = next(
+        (p for p in (lig_root, *lig_root.parents) if p.parent.name == "executions"),
+        None,
+    )
+    if run_dir is None:
+        raise click.ClickException(
+            f"Could not locate execution run directory above '{lig_root}'. "
+            "Expected layout .../executions/<run_id>/simulations/<ligand>/fe."
+        )
+
+    sims_root = run_dir / "simulations"
+    try:
+        rel = lig_root.relative_to(sims_root)
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Ligand folder '{lig_root}' is not under expected simulations root '{sims_root}'."
+        ) from exc
+
+    if not rel.parts:
+        raise click.ClickException(
+            f"Could not infer ligand from '{lig_root}' under '{sims_root}'."
+        )
+
+    if rel.parts[0] == "transformations":
+        if len(rel.parts) < 2:
+            raise click.ClickException(
+                f"RBFE transformations path is incomplete: '{lig_root}'."
+            )
+        ligand_name = rel.parts[1]
+    else:
+        ligand_name = rel.parts[0]
+
+    work_dir = run_dir.parent.parent
+    return work_dir, run_dir.name, ligand_name
+
+
+@fe.command("ligand-analyze")
+@click.argument(
+    "ligand_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--workers",
+    "-w",
+    type=int,
+    default=4,
+    help="Number of local workers to pass to the FE analysis handler.",
+)
+@click.option(
+    "--raise-on-error/--no-raise-on-error",
+    default=True,
+    help="Whether analysis failures should raise (default) or be logged and skipped.",
+)
+@click.option(
+    "--analysis-start-step",
+    type=int,
+    default=None,
+    help="First production step (per window) to include in analysis.",
+)
+@click.option(
+    "--n-bootstrap",
+    "--n-bootstraps",
+    "n_bootstraps",
+    type=int,
+    default=None,
+    help="Number of MBAR bootstrap resamples to use during analysis.",
+)
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=False,
+    help="Overwrite existing analysis results when present.",
+)
+def fe_ligand_analyze(
+    ligand_dir: Path,
+    workers: int | None,
+    raise_on_error: bool,
+    analysis_start_step: int | None,
+    n_bootstraps: int | None,
+    overwrite: bool,
+) -> None:
+    """
+    Re-run FE analysis for exactly one ligand folder.
+
+    The folder must contain an ``fe/`` directory and be under
+    ``.../executions/<run_id>/simulations/...``.
+    """
+    work_dir, run_id, ligand_name = _resolve_ligand_analysis_target(ligand_dir)
+    try:
+        run_analysis_from_execution(
+            work_dir,
+            run_id,
+            ligand=ligand_name,
+            n_workers=workers,
+            analysis_start_step=analysis_start_step,
+            n_bootstraps=n_bootstraps,
+            overwrite=overwrite,
+            raise_on_error=raise_on_error,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+
+    click.echo(
+        f"Analysis run finished for ligand '{ligand_name}' in run '{run_id}'."
+    )
