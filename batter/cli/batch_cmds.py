@@ -69,20 +69,44 @@ def _hash_path_list(paths: Sequence[Path]) -> str:
 
 def _resolve_ligand_dirs(exec_path: Path) -> List[Path]:
     """
-    Return ligand directories under an execution path or the path itself if it is already a ligand root.
-    """
-    if (exec_path / "simulations").is_dir():
-        lig_base = exec_path / "simulations"
-    elif exec_path.name == "simulations" and exec_path.is_dir():
-        lig_base = exec_path
-    elif (exec_path / "fe").is_dir():
-        return [exec_path]
-    else:
-        raise ValueError(
-            f"{exec_path} is not an execution folder (missing simulations/ or fe/)."
-        )
+    Return FE leaf directories under an execution path.
 
-    return [p for p in lig_base.iterdir() if p.is_dir()]
+    Supports both ABFE layout:
+      executions/<run>/simulations/<ligand>/fe/...
+    and RBFE layout:
+      executions/<run>/simulations/transformations/<pair>/fe/...
+    """
+    def _leaf_dirs_under_simulations(sim_root: Path) -> List[Path]:
+        out: List[Path] = []
+        # if transformations/ exists
+        if (sim_root / "transformations").is_dir():
+            for entry in (sim_root / "transformations").iterdir():
+                if entry.is_dir() and (entry / "fe").is_dir():
+                    out.append(entry)
+            return out
+        
+        for entry in sim_root.iterdir():
+            if not entry.is_dir():
+                continue
+            if (entry / "fe").is_dir():
+                out.append(entry)
+        return out
+
+    if (exec_path / "simulations").is_dir():
+        return _leaf_dirs_under_simulations(exec_path / "simulations")
+
+    if exec_path.name == "simulations" and exec_path.is_dir():
+        return _leaf_dirs_under_simulations(exec_path)
+
+    if exec_path.name == "transformations" and exec_path.is_dir():
+        return [p for p in exec_path.iterdir() if p.is_dir() and (p / "fe").is_dir()]
+
+    if (exec_path / "fe").is_dir():
+        return [exec_path]
+
+    raise ValueError(
+        f"{exec_path} is not an execution folder (missing simulations/ or fe/)."
+    )
 
 
 def _load_windows_counts(fe_root: Path) -> dict[str, int]:
@@ -173,6 +197,12 @@ def _component_finished(comp_dir: Path, comp: str, windows: Sequence[Path]) -> b
     return False
 
 
+def _component_blocked_by_pre_window_failure(comp_dir: Path, comp: str) -> bool:
+    """Return True when pre-window equilibration failed for this component."""
+    pre_window_failed = comp_dir / f"{comp}-1" / "FAILED"
+    return pre_window_failed.exists()
+
+
 def _write_batch_run_script(comp_dir: Path, comp: str, n_windows: int) -> Path:
     from batter._internal.ops.remd import patch_batch_component_inputs
     text = BATCH_RUN_TEMPLATE.read_text()
@@ -230,6 +260,13 @@ def _collect_batch_tasks(exec_path: Path) -> List[BatchTask]:
                 )
                 n_windows = len(window_dirs)
 
+            if _component_blocked_by_pre_window_failure(comp_dir, comp):
+                logger.warning(
+                    f"[batch] {comp_dir} pre-window equilibration failed "
+                    f"({comp_dir / f'{comp}-1' / 'FAILED'}); skipping."
+                )
+                continue
+
             if _component_finished(comp_dir, comp, window_dirs):
                 logger.debug(f"[batch] {comp_dir} already finished; skipping.")
                 continue
@@ -263,6 +300,12 @@ def _collect_remd_tasks(exec_path: Path) -> List[RemdTask]:
         windows_counts = _load_windows_counts(lig_dir / "fe")
         for comp in comps:
             comp_dir = (lig_dir / "fe" / comp).resolve()
+            if _component_blocked_by_pre_window_failure(comp_dir, comp):
+                logger.warning(
+                    f"[remd-batch] {comp_dir} pre-window equilibration failed "
+                    f"({comp_dir / f'{comp}-1' / 'FAILED'}); skipping."
+                )
+                continue
             finished_marker = comp_dir / "FINISHED"
             run_script = comp_dir / "run-local-remd.bash"
             if not run_script.is_file():
@@ -448,87 +491,7 @@ def _render_remd_batch_script(
             pass
 
 
-@cli.command("remd-batch")
-@click.option(
-    "--execution",
-    "-e",
-    multiple=True,
-    required=True,
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    help="Execution directories to include (run root or a ligand folder under simulations/).",
-)
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Destination for the rendered sbatch script (defaults to CWD).",
-)
-@click.option(
-    "--header-root",
-    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
-    default=None,
-    help="Directory containing SLURM headers (default: ~/.batter).",
-)
-@click.option(
-    "--partition",
-    type=str,
-    default=None,
-    help="Optional partition override for the sbatch header.",
-)
-@click.option(
-    "--time-limit",
-    type=str,
-    default=None,
-    help="Optional time limit override for the sbatch header (e.g., 08:00:00).",
-)
-@click.option(
-    "--gpus",
-    type=int,
-    default=None,
-    help="Total GPUs to request; defaults to the total REMD window count found.",
-)
-@click.option(
-    "--nodes",
-    type=int,
-    default=None,
-    help="Optional node count override for the sbatch header.",
-)
-@click.option(
-    "--gpus-per-node",
-    type=int,
-    default=8,
-    show_default=True,
-    help="GPUs available per node (used to size per-task node allocations).",
-)
-@click.option(
-    "--auto-resubmit/--no-auto-resubmit",
-    default=True,
-    show_default=True,
-    help="Regenerate and resubmit the remd-batch script until all components finish.",
-)
-@click.option(
-    "--signal-mins",
-    type=float,
-    default=90.0,
-    show_default=True,
-    help="Minutes before time limit to trigger auto-resubmit (requires --auto-resubmit).",
-)
-@click.option(
-    "--max-resubmit-count",
-    type=int,
-    default=4,
-    show_default=True,
-    help="Maximum total submissions (including the first run) when auto-resubmitting.",
-)
-@click.option(
-    "--current-submission-time",
-    type=int,
-    default=0,
-    show_default=True,
-    help="Internal counter for auto-resubmit; increments on each resubmission.",
-)
-def remd_batch(
+def _run_remd_batch(
     execution: tuple[Path, ...],
     output: Path | None,
     header_root: Path | None,
@@ -619,7 +582,7 @@ def remd_batch(
     resubmit_cmd = None
     if auto_resubmit:
         batter_cmd = _which_batter()
-        resubmit_args = ["remd-batch"]
+        resubmit_args = ["batch", "--remd"]
         for p in exec_paths:
             resubmit_args.extend(["-e", str(p)])
         resubmit_args.extend(["--output", str(output_path_abs)])
@@ -818,7 +781,7 @@ def remd_batch(
     multiple=True,
     required=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
-    help="Execution directories to include (run root or a ligand folder under simulations/).",
+    help="Execution paths to include (run root, simulations/, transformations/, or a leaf folder containing fe/).",
 )
 @click.option(
     "--output",
@@ -891,6 +854,12 @@ def remd_batch(
     show_default=True,
     help="Internal counter for auto-resubmit; increments on each resubmission.",
 )
+@click.option(
+    "--remd/--no-remd",
+    default=False,
+    show_default=True,
+    help="Run in REMD mode (uses run-local-remd.bash).",
+)
 def batch(
     execution: tuple[Path, ...],
     output: Path | None,
@@ -904,10 +873,29 @@ def batch(
     signal_mins: float,
     max_resubmit_count: int,
     current_submission_time: int,
+    remd: bool,
 ) -> None:
     """
-    Generate an sbatch script that runs ``run-local-batch.bash`` for provided executions.
+    Generate an sbatch script that runs batch workflows for provided executions.
     """
+    if remd:
+        # Reuse the REMD implementation so behavior stays consistent.
+        _run_remd_batch(
+            execution=execution,
+            output=output,
+            header_root=header_root,
+            partition=partition,
+            time_limit=time_limit,
+            gpus=gpus,
+            nodes=nodes,
+            gpus_per_node=gpus_per_node,
+            auto_resubmit=auto_resubmit,
+            signal_mins=signal_mins,
+            max_resubmit_count=max_resubmit_count,
+            current_submission_time=current_submission_time,
+        )
+        return
+
     exec_paths = [p.resolve() for p in execution]
     tasks: List[BatchTask] = []
     seen: set[Path] = set()

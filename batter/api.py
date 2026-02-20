@@ -99,6 +99,33 @@ __all__ = [
 ]
 
 
+def _resolve_execution_run(work_root: Path, run_id: str | None) -> tuple[str, Path]:
+    """Resolve an execution directory, defaulting to the most recent run."""
+    requested = (run_id or "").strip() or None
+    runs_root = work_root / "executions"
+
+    if requested:
+        run_dir = runs_root / requested
+        if not run_dir.is_dir():
+            raise FileNotFoundError(
+                f"Run '{requested}' does not exist under {work_root}."
+            )
+        return requested, run_dir
+
+    if not runs_root.is_dir():
+        raise FileNotFoundError(f"No executions found under {work_root}.")
+
+    candidates = [p for p in runs_root.iterdir() if p.is_dir()]
+    if not candidates:
+        raise FileNotFoundError(f"No executions found under {work_root}.")
+
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    logger.info(
+        f"No run_id provided; using latest execution '{latest.name}' under {work_root}."
+    )
+    return latest.name, latest
+
+
 def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
     """
     Return an index of FE runs contained in a portable work directory.
@@ -114,7 +141,8 @@ def list_fe_runs(work_dir: Union[str, Path]) -> "pd.DataFrame":
         DataFrame with one row per stored FE run. Columns include ``run_id``,
         ``ligand``, ``mol_name``, ``system_name``, ``temperature``, ``total_dG``,
         ``total_se``, ``canonical_smiles``, ``original_name``, ``original_path``,
-        ``protocol``, ``analysis_start_step``, ``status``, ``failure_reason``, and
+        ``protocol``, ``analysis_start_step``, ``n_bootstraps``, ``status``,
+        ``failure_reason``, and
         ``created_at``.
     """
     store = ArtifactStore(Path(work_dir))
@@ -165,12 +193,13 @@ def load_fe_run(
 
 def run_analysis_from_execution(
     work_dir: Union[str, Path],
-    run_id: str,
+    run_id: str | None = None,
     *,
     ligand: str | None = None,
     components: Sequence[str] | None = None,
     n_workers: int | None = None,
     analysis_start_step: int | None = None,
+    n_bootstraps: int | None = None,
     overwrite: bool = True,
     raise_on_error: bool = True,
 ) -> None:
@@ -181,8 +210,9 @@ def run_analysis_from_execution(
     ----------
     work_dir : str or Path
         Root directory containing the portable execution store.
-    run_id : str
-        Identifier of the execution (e.g., ``run-20240101``).
+    run_id : str, optional
+        Identifier of the execution (e.g., ``run-20240101``). When omitted,
+        the most recently modified execution under ``<work_dir>/executions`` is used.
     ligand : str, optional
         Ligand identifier to target when only a subset should be analyzed.
     components : sequence of str, optional
@@ -191,6 +221,8 @@ def run_analysis_from_execution(
         Number of worker processes requested for the analysis handler.
     analysis_start_step : int, optional
         First production step to include in analysis (per window); overrides config.
+    n_bootstraps : int, optional
+        Number of MBAR bootstrap resamples; overrides config.
     overwrite: bool, optional
         When ``True`` (default), overwrite any existing analysis results for the run_id.
         When ``False``, skip ligands that already have analysis outputs.
@@ -199,9 +231,7 @@ def run_analysis_from_execution(
         Set to ``False`` to log the failure and continue with other ligands.
     """
     work_root = Path(work_dir)
-    run_dir = work_root / "executions" / run_id
-    if not run_dir.exists():
-        raise FileNotFoundError(f"Run '{run_id}' does not exist under {work_root}.")
+    run_id, run_dir = _resolve_execution_run(work_root, run_id)
 
     config_dir = run_dir / "artifacts" / "config"
     sim_cfg_path = config_dir / "sim.resolved.yaml"
@@ -234,34 +264,104 @@ def run_analysis_from_execution(
         if entry.get("residue_name") and entry.get("store_dir")
     }
 
-    requested: Sequence[str] | None = [ligand] if ligand else None
+    requested = (ligand or "").strip() or None
+    protocol_lower = str(protocol).lower()
     children: list[SimSystem] = []
-    for entry in entries:
-        lig_name = entry["ligand"]
-        if requested and lig_name not in requested:
-            continue
-        child_root = run_dir / "simulations" / lig_name
-        if not child_root.is_dir():
+
+    if protocol_lower == "rbfe":
+        trans_root = run_dir / "simulations" / "transformations"
+        if not trans_root.is_dir():
             raise FileNotFoundError(
-                f"Simulation directory for ligand '{lig_name}' was not found at {child_root}."
+                f"RBFE transformations directory not found for run '{run_id}': {trans_root}"
             )
-        meta = SystemMeta(
-            ligand=lig_name,
-            residue_name=entry.get("residue_name"),
-            param_dir_dict=dict(param_dir_dict) if param_dir_dict else {},
-        )
-        children.append(
-            SimSystem(
-                name=f"{system_name}:{lig_name}:{run_id}",
-                root=child_root,
-                meta=meta,
+
+        lig_resname_map = {
+            entry.get("ligand"): entry.get("residue_name")
+            for entry in entries
+            if entry.get("ligand")
+        }
+
+        pair_dirs = sorted([p for p in trans_root.iterdir() if p.is_dir()])
+        for pair_dir in pair_dirs:
+            pair_id = pair_dir.name
+            ref = None
+            alt = None
+            if "~" in pair_id:
+                ref, alt = pair_id.split("~", 1)
+
+            # For RBFE runs, keep --ligand for compatibility:
+            # it can target an exact pair id or either endpoint ligand.
+            if requested:
+                endpoint_match = requested == ref or requested == alt
+                if requested != pair_id and not endpoint_match:
+                    continue
+
+            fe_root = pair_dir / "fe"
+            if not fe_root.is_dir():
+                raise FileNotFoundError(
+                    f"Simulation directory for RBFE pair '{pair_id}' is missing FE data at {fe_root}."
+                )
+
+            residue_ref = lig_resname_map.get(ref) if ref else None
+            residue_alt = lig_resname_map.get(alt) if alt else None
+            meta = SystemMeta.from_mapping(
+                {
+                    "ligand": pair_id,
+                    "residue_name": residue_ref,
+                    "mode": "RBFE",
+                    "param_dir_dict": dict(param_dir_dict) if param_dir_dict else {},
+                    "pair_id": pair_id,
+                    "ligand_ref": ref,
+                    "ligand_alt": alt,
+                    "residue_ref": residue_ref,
+                    "residue_alt": residue_alt,
+                }
             )
-        )
+            children.append(
+                SimSystem(
+                    name=f"{system_name}:{pair_id}:{run_id}",
+                    root=pair_dir,
+                    meta=meta,
+                )
+            )
 
-    if requested and not children:
-        raise KeyError(f"Ligand '{ligand}' not present in run '{run_id}'.")
+        if requested and not children:
+            raise KeyError(
+                f"RBFE target '{ligand}' not present in run '{run_id}' "
+                "(expected a pair id like 'LIG1~LIG2' or an endpoint ligand name)."
+            )
+        if not children:
+            raise RuntimeError(f"No RBFE transformation pairs found in run '{run_id}'.")
+        target_label = "transformations"
+    else:
+        requested_set: Sequence[str] | None = [requested] if requested else None
+        for entry in entries:
+            lig_name = entry["ligand"]
+            if requested_set and lig_name not in requested_set:
+                continue
+            child_root = run_dir / "simulations" / lig_name
+            if not child_root.is_dir():
+                raise FileNotFoundError(
+                    f"Simulation directory for ligand '{lig_name}' was not found at {child_root}."
+                )
+            meta = SystemMeta(
+                ligand=lig_name,
+                residue_name=entry.get("residue_name"),
+                param_dir_dict=dict(param_dir_dict) if param_dir_dict else {},
+            )
+            children.append(
+                SimSystem(
+                    name=f"{system_name}:{lig_name}:{run_id}",
+                    root=child_root,
+                    meta=meta,
+                )
+            )
 
-    logger.info(f"Running analysis for {len(children)} ligands in run '{run_id}'.")
+        if requested_set and not children:
+            raise KeyError(f"Ligand '{ligand}' not present in run '{run_id}'.")
+        target_label = "ligands"
+
+    logger.info(f"Running analysis for {len(children)} {target_label} in run '{run_id}'.")
     logger.info(f"Number of workers: {n_workers}")
     payload_data: dict[str, Any] = {"sim": sim_cfg}
     if components:
@@ -279,6 +379,16 @@ def run_analysis_from_execution(
         analysis_start_step_val = int(getattr(sim_cfg, "analysis_start_step", 0))
         payload_data["analysis_start_step"] = analysis_start_step_val
         logger.info(f"Analysis start step loaded: {analysis_start_step_val}")
+    if n_bootstraps is not None:
+        if n_bootstraps < 0:
+            raise ValueError("n_bootstraps must be >= 0.")
+        n_bootstraps_val = int(n_bootstraps)
+        payload_data["n_bootstraps"] = n_bootstraps_val
+        logger.info(f"MBAR bootstrap resamples set to: {n_bootstraps_val}")
+    else:
+        n_bootstraps_val = int(getattr(sim_cfg, "n_bootstraps", 0) or 0)
+        payload_data["n_bootstraps"] = n_bootstraps_val
+        logger.info(f"MBAR bootstrap resamples loaded: {n_bootstraps_val}")
 
     payload = StepPayload(**payload_data)
     params = payload.to_mapping()
@@ -328,6 +438,7 @@ def run_analysis_from_execution(
         repo=repo,
         protocol=protocol,
         analysis_start_step=analysis_start_step_val,
+        n_bootstraps=n_bootstraps_val,
     )
     if failures:
         failed = ", ".join(

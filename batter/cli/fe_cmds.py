@@ -187,7 +187,7 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 @click.argument(
     "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
 )
-@click.argument("run_id", type=str)
+@click.argument("run_id", type=str, required=False)
 @click.option(
     "--ligand",
     "-l",
@@ -214,8 +214,16 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="First production step (per window) to include in analysis.",
 )
 @click.option(
+    "--n-bootstrap",
+    "--n-bootstraps",
+    "n_bootstraps",
+    type=int,
+    default=None,
+    help="Number of MBAR bootstrap resamples to use during analysis.",
+)
+@click.option(
     "--overwrite/--no-overwrite",
-    default=True,
+    default=False,
     help="Overwrite existing analysis results when present.",
 )
 @click.option(
@@ -228,16 +236,17 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 )
 def fe_analyze(
     work_dir: Path,
-    run_id: str,
+    run_id: str | None,
     ligand: str | None,
     workers: int | None,
     raise_on_error: bool,
     analysis_start_step: int | None,
+    n_bootstraps: int | None,
     overwrite: bool,
     log_level: str = "INFO",
 ) -> None:
     """
-    Re-run the FE analysis stage for a stored execution.
+    Re-run the FE analysis stage for stored execution(s).
     """
     logger.remove()
     logger.add(
@@ -249,20 +258,304 @@ def fe_analyze(
         "<level>{message}</level>",
     )
 
-    try:
-        run_analysis_from_execution(
-            work_dir,
-            run_id,
-            ligand=ligand,
-            n_workers=workers,
-            analysis_start_step=analysis_start_step,
-            overwrite=overwrite,
-            raise_on_error=raise_on_error,
+    if run_id:
+        run_ids = [run_id]
+    else:
+        runs_root = work_dir / "executions"
+        if not runs_root.is_dir():
+            raise click.ClickException(f"No executions found under {work_dir}.")
+        run_ids = sorted([p.name for p in runs_root.iterdir() if p.is_dir()])
+        if not run_ids:
+            raise click.ClickException(f"No executions found under {work_dir}.")
+        logger.info(f"No run_id provided; analyzing all {len(run_ids)} available runs.")
+
+    failed_runs: list[tuple[str, str]] = []
+    for rid in run_ids:
+        try:
+            run_analysis_from_execution(
+                work_dir,
+                rid,
+                ligand=ligand,
+                n_workers=workers,
+                analysis_start_step=analysis_start_step,
+                n_bootstraps=n_bootstraps,
+                overwrite=overwrite,
+                raise_on_error=raise_on_error,
+            )
+        except Exception as exc:
+            if raise_on_error:
+                raise click.ClickException(str(exc))
+            failed_runs.append((rid, str(exc)))
+            logger.error(f"Analysis failed for run '{rid}': {exc}")
+
+    if failed_runs:
+        click.secho(
+            "Analysis finished with failures: "
+            + ", ".join(f"{rid} ({msg})" for rid, msg in failed_runs),
+            fg="yellow",
         )
+    else:
+        target = run_id or f"{len(run_ids)} run(s)"
+        click.echo(
+            f"Analysis run finished for '{target}'"
+            f"{' (ligand ' + ligand + ')' if ligand else ''}."
+        )
+
+
+def _resolve_ligand_analysis_path(
+    ligand_dir: Path,
+) -> tuple[Path, Path, str, Path | None, str | None]:
+    """
+    Resolve FE/ligand paths and optional execution context.
+
+    Returns
+    -------
+    tuple
+        ``(fe_dir, lig_root, ligand_name, work_dir, run_id)`` where ``work_dir`` and
+        ``run_id`` are ``None`` when the folder is outside the portable execution layout.
+    """
+    target = ligand_dir.resolve()
+    if target.name == "fe":
+        fe_dir = target
+        lig_root = target.parent
+    else:
+        fe_dir = target / "fe"
+        lig_root = target
+
+    if not fe_dir.is_dir():
+        raise click.ClickException(
+            f"Expected FE folder at '{fe_dir}'. "
+            "Pass a ligand directory containing 'fe/' or the 'fe/' directory itself."
+        )
+
+    run_dir = next(
+        (p for p in (lig_root, *lig_root.parents) if p.parent.name == "executions"),
+        None,
+    )
+
+    if run_dir is None:
+        return fe_dir, lig_root, lig_root.name, None, None
+
+    sims_root = run_dir / "simulations"
+    try:
+        rel = lig_root.relative_to(sims_root)
+    except ValueError:
+        # Path is under executions/<run> but not simulations; run direct in-place.
+        return fe_dir, lig_root, lig_root.name, None, None
+
+    if not rel.parts:
+        return fe_dir, lig_root, lig_root.name, None, None
+
+    if rel.parts[0] == "transformations" and len(rel.parts) >= 2:
+        ligand_name = rel.parts[1]
+    else:
+        ligand_name = rel.parts[0]
+
+    work_dir = run_dir.parent.parent
+    return fe_dir, lig_root, ligand_name, work_dir, run_dir.name
+
+
+def _analysis_outputs_present(fe_root: Path) -> bool:
+    return (fe_root / "Results" / "Results.dat").exists() and (
+        fe_root / "analyze.ok"
+    ).exists()
+
+
+def _clear_analysis_outputs(fe_root: Path) -> None:
+    import shutil
+
+    shutil.rmtree(fe_root / "Results", ignore_errors=True)
+    (fe_root / "analyze.ok").unlink(missing_ok=True)
+
+
+def _infer_analysis_timing_from_fe(fe_dir: Path) -> tuple[float, int, float]:
+    """
+    Best-effort timing inference for in-place analysis without run config.
+
+    Returns ``(dt, ntwx, temperature)`` and falls back to
+    ``(0.004, 0, 298.15)`` when unavailable.
+    """
+    import re
+
+    dt: float | None = None
+    ntwx: int | None = None
+    temperature: float | None = None
+
+    for comp_dir in sorted([p for p in fe_dir.iterdir() if p.is_dir()]):
+        for win_dir in sorted([p for p in comp_dir.iterdir() if p.is_dir()]):
+            if win_dir.name.endswith("-1"):
+                continue
+            candidates = [win_dir / fname for fname in (
+                "mdin-template",
+                "mdin.in",
+                "mdin-00",
+                "mdin-01",
+                "mdin",
+            )]
+            candidates.extend(sorted(win_dir.glob("mdin-*.out")))
+            candidates.extend(sorted(win_dir.glob("md-*.out")))
+
+            for candidate in candidates:
+                if not candidate.is_file():
+                    continue
+                text = candidate.read_text(errors="ignore")
+                if dt is None:
+                    m_dt = re.search(r"\bdt\s*=\s*([0-9]*\.?[0-9]+)", text)
+                    if m_dt:
+                        try:
+                            dt = float(m_dt.group(1))
+                        except ValueError:
+                            pass
+                if ntwx is None:
+                    m_ntwx = re.search(r"\bntwx\s*=\s*([0-9]+)", text)
+                    if m_ntwx:
+                        try:
+                            ntwx = int(m_ntwx.group(1))
+                        except ValueError:
+                            pass
+                if temperature is None:
+                    m_t = re.search(r"\btemp0\s*=\s*([0-9]*\.?[0-9]+)", text)
+                    if m_t is None:
+                        m_t = re.search(r"\btempi\s*=\s*([0-9]*\.?[0-9]+)", text)
+                    if m_t:
+                        try:
+                            temperature = float(m_t.group(1))
+                        except ValueError:
+                            pass
+                if dt is not None and ntwx is not None and temperature is not None:
+                    return dt, ntwx, temperature
+
+    return (
+        (dt if dt is not None and dt > 0 else 0.004),
+        (ntwx if ntwx is not None else 0),
+        (temperature if temperature is not None and temperature > 0 else 298.15),
+    )
+
+
+def _run_in_place_ligand_analysis(system, params: dict[str, object]) -> None:
+    from batter.exec.handlers.fe_analysis import analyze_handler
+    from batter.pipeline.step import Step
+
+    analyze_handler(Step(name="analyze"), system, params)
+
+
+@fe.command("ligand-analyze")
+@click.argument(
+    "ligand_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--workers",
+    "-w",
+    type=int,
+    default=4,
+    help="Number of local workers to pass to the FE analysis handler.",
+)
+@click.option(
+    "--raise-on-error/--no-raise-on-error",
+    default=True,
+    help="Whether analysis failures should raise (default) or be logged and skipped.",
+)
+@click.option(
+    "--analysis-start-step",
+    type=int,
+    default=None,
+    help="First production step (per window) to include in analysis.",
+)
+@click.option(
+    "--n-bootstrap",
+    "--n-bootstraps",
+    "n_bootstraps",
+    type=int,
+    default=None,
+    help="Number of MBAR bootstrap resamples to use during analysis.",
+)
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=False,
+    help="Overwrite existing analysis results when present.",
+)
+def fe_ligand_analyze(
+    ligand_dir: Path,
+    workers: int | None,
+    raise_on_error: bool,
+    analysis_start_step: int | None,
+    n_bootstraps: int | None,
+    overwrite: bool,
+) -> None:
+    """
+    Re-run FE analysis for exactly one ligand folder.
+
+    The folder must contain an ``fe/`` directory. When it is under
+    ``.../executions/<run_id>/simulations/...`` BATTER also updates run-scoped
+    FE records; otherwise analysis runs in-place for that ligand folder only.
+    """
+    fe_dir, lig_root, ligand_name, work_dir, run_id = _resolve_ligand_analysis_path(
+        ligand_dir
+    )
+
+    if work_dir is not None and run_id is not None:
+        try:
+            run_analysis_from_execution(
+                work_dir,
+                run_id,
+                ligand=ligand_name,
+                n_workers=workers,
+                analysis_start_step=analysis_start_step,
+                n_bootstraps=n_bootstraps,
+                overwrite=overwrite,
+                raise_on_error=raise_on_error,
+            )
+        except Exception as exc:
+            raise click.ClickException(str(exc))
+
+        click.echo(
+            f"Analysis run finished for ligand '{ligand_name}' in run '{run_id}'."
+        )
+        return
+
+    # Fallback: run in-place when the folder is outside portable execution layout.
+    from batter.systems.core import SimSystem, SystemMeta
+
+    if not overwrite and _analysis_outputs_present(fe_dir):
+        click.echo(
+            f"Skipping analysis for '{ligand_name}' "
+            "(results already exist; overwrite=False)."
+        )
+        return
+    if overwrite:
+        _clear_analysis_outputs(fe_dir)
+
+    meta = {"ligand": ligand_name}
+    if "~" in ligand_name or lig_root.parent.name == "transformations":
+        meta["mode"] = "RBFE"
+
+    params: dict[str, object] = {}
+    if workers is not None:
+        params["analysis_n_workers"] = workers
+        params["n_workers"] = workers
+    if analysis_start_step is not None:
+        params["analysis_start_step"] = int(analysis_start_step)
+    if n_bootstraps is not None:
+        params["n_bootstraps"] = int(n_bootstraps)
+    dt, ntwx, temperature = _infer_analysis_timing_from_fe(fe_dir)
+    params["dt"] = dt
+    params["ntwx"] = ntwx
+    params["temperature"] = temperature
+
+    system = SimSystem(
+        name=ligand_name,
+        root=lig_root,
+        meta=SystemMeta.from_mapping(meta),
+    )
+
+    try:
+        _run_in_place_ligand_analysis(system, params)
     except Exception as exc:
-        raise click.ClickException(str(exc))
+        if raise_on_error:
+            raise click.ClickException(str(exc))
+        logger.error(f"Analysis failed for '{ligand_name}': {exc}")
+        return
 
     click.echo(
-        f"Analysis run finished for '{run_id}'"
-        f"{' (ligand ' + ligand + ')' if ligand else ''}."
+        f"Analysis run finished for ligand '{ligand_name}' at '{lig_root}'."
     )

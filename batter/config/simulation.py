@@ -181,7 +181,11 @@ class SimulationConfig(BaseModel):
                 "fe_sim.num_equil_extends is deprecated and ignored; "
                 "set fe_sim.eq_steps to the total equilibration steps instead."
             )
-        eq_steps_value = int(_fe_attr("eq_steps", lambda: 1_000_000))
+        eq_steps_raw = int(_fe_attr("eq_steps", lambda: 1_000_000))
+        if eq_steps_raw <= 2500 and eq_steps_raw != 0:
+            logger.warning("Setting fe_sim.eq_steps to 2500 (minimum allowed non-zerovalue). If you don't want equilibration, set fe_sim.eq_steps=0.")
+            eq_steps_raw = 2500
+        eq_steps_value = eq_steps_raw
         fe_release_eq = [0.0]
 
         extra_conf_rest = create.extra_conformation_restraints
@@ -194,6 +198,15 @@ class SimulationConfig(BaseModel):
             analysis_start_step_val = int(fe.get("analysis_start_step") or 0)
         if analysis_start_step_val < 0:
             raise ValueError("analysis_start_step must be >= 0.")
+
+        n_bootstraps_val = 0
+        if hasattr(fe, "n_bootstraps"):
+            n_bootstraps_val = int(getattr(fe, "n_bootstraps") or 0)
+        elif isinstance(fe, Mapping) and "n_bootstraps" in fe:
+            n_bootstraps_val = int(fe.get("n_bootstraps") or 0)
+        if n_bootstraps_val < 0:
+            raise ValueError("n_bootstraps must be >= 0.")
+
         max_fe_steps = max((int(v) for v in n_steps.values() if v is not None), default=0)
         if max_fe_steps and analysis_start_step_val >= max_fe_steps:
             raise ValueError(
@@ -232,8 +245,8 @@ class SimulationConfig(BaseModel):
             "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
             "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
             "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
-            "buffer_x": float(_fe_attr("buffer_x", lambda: 15.0)),
-            "buffer_y": float(_fe_attr("buffer_y", lambda: 15.0)),
+            "buffer_x": float(_fe_attr("buffer_x", lambda: 10.0)),
+            "buffer_y": float(_fe_attr("buffer_y", lambda: 10.0)),
             "buffer_z": float(_fe_attr("buffer_z", lambda: 15.0)),
             "temperature": float(_fe_attr("temperature", lambda: 298.15)),
             "dt": float(_fe_attr("dt", lambda: 0.004)),
@@ -250,6 +263,7 @@ class SimulationConfig(BaseModel):
             "barostat": int(_fe_attr("barostat", lambda: 2)),
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
+            "n_bootstraps": n_bootstraps_val,
             "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
         }
 
@@ -354,6 +368,11 @@ class SimulationConfig(BaseModel):
         ge=0,
         description="Analyze only steps after this (per FE window).",
     )
+    n_bootstraps: int = Field(
+        0,
+        ge=0,
+        description="Number of MBAR bootstrap resamples used during FE analysis.",
+    )
 
     # --- Force constants ---
     lig_distance_force: float = Field(
@@ -374,7 +393,7 @@ class SimulationConfig(BaseModel):
     )
     buffer_x: float = Field(10.0, description="Box buffer X (Å)")
     buffer_y: float = Field(10.0, description="Box buffer Y (Å)")
-    buffer_z: float = Field(10.0, description="Box buffer Z (Å)")
+    buffer_z: float = Field(15.0, description="Box buffer Z (Å)")
     lig_buffer: float = Field(10.0, description="Ligand box buffer (Å)")
 
     # --- Ions ---
@@ -655,13 +674,13 @@ class SimulationConfig(BaseModel):
         pass
 
     def _check_water_compatibility(self) -> None:
-        # make sure buffer_x/y/z is > 5.0 Å
+        # make sure buffer_x/y/z is > 10.0 Å
         for dim, buf in zip(
             ("X", "Y", "Z"), (self.buffer_x, self.buffer_y, self.buffer_z)
         ):
-            if buf < 15.0:
+            if buf < 10.0:
                 raise ValueError(
-                    f"For water simulations, buffer_{dim.lower()} must be >= 15.0 Å (got {buf})."
+                    f"For water simulations, buffer_{dim.lower()} must be >= 10.0 Å (got {buf})."
                 )
 
     # convenience

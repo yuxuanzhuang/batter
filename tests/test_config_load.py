@@ -182,8 +182,8 @@ def test_args_negative_force():
         ),
         ({"fe_type": "uno_rest", "lambdas": []}, "No lambdas defined"),
         (
-            {"buffer_x": 4.0, "buffer_y": 15.0, "buffer_z": 15.0},
-            "buffer_x must be >= 15.0",
+            {"buffer_x": 4.0, "buffer_y": 15.0, "buffer_z": 10.0},
+            "buffer_x must be >= 10.0",
         ),
         ({"neutralize_only": "maybe"}, "Invalid yes/no"),
     ],
@@ -386,20 +386,27 @@ def test_analysis_start_step_respects_user_override(tmp_path: Path) -> None:
     assert cfg.analysis_start_step == 5000
 
 
+def test_n_bootstraps_default(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
-    payload = {
-        "protocol": "abfe",
-        "backend": "local",
-        "run": {"output_folder": str(tmp_path / "out")},
-        "create": create.model_dump(),
-        "fe_sim": {
-            "lambdas": [0.0, 1.0],
-            "eq_steps": 1000,
-            "n_steps": {"z": 300_000},
-        },
-    }
-    cfg = RunConfig.model_validate(payload)
-    sim_cfg = cfg.resolved_sim_config()
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.n_bootstraps == 0
+
+
+def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+        n_bootstraps=64,
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.n_bootstraps == 64
 
 
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:

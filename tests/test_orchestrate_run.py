@@ -133,6 +133,78 @@ protocol: abfe
     assert payload["run_overrides"] == {}
 
 
+def test_maybe_regenerate_rbfe_network_after_pruning_triggers_rebuild(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {
+        "ligands": ["A", "B", "C"],
+        "pairs": [["A", "B"], ["A", "C"]],
+        "mapping": "default",
+    }
+    called: dict[str, object] = {}
+
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir):
+        called["ligands"] = list(ligands)
+        called["lig_map"] = dict(lig_map)
+        called["config_dir"] = config_dir
+        return {"ligands": ["B", "C"], "pairs": [["B", "C"]], "mapping": "default"}
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _fake_build)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["B", "C"],
+        lig_map={"A": "a.sdf", "B": "b.sdf", "C": "c.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+
+    assert called["ligands"] == ["B", "C"]
+    assert set(called["lig_map"]) == {"B", "C"}
+    assert called["config_dir"] == tmp_path
+    assert out["pairs"] == [["B", "C"]]
+
+
+def test_maybe_regenerate_rbfe_network_after_pruning_noop_when_no_prune(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {"ligands": ["A", "B"], "pairs": [["A", "B"]], "mapping": "default"}
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("regeneration should not be called")
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _unexpected)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["A", "B"],
+        lig_map={"A": "a.sdf", "B": "b.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+    assert out is payload
+
+
+def test_maybe_regenerate_rbfe_network_after_pruning_falls_back_on_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {"ligands": ["A", "B", "C"], "pairs": [["A", "B"], ["A", "C"]]}
+
+    def _raises(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _raises)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["B", "C"],
+        lig_map={"A": "a.sdf", "B": "b.sdf", "C": "c.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+    assert out is payload
+
+
 def test_stored_payload_roundtrip(tmp_path: Path) -> None:
     run_dir = tmp_path / "exec"
     path = run_mod._payload_path(run_dir)

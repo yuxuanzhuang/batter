@@ -195,7 +195,17 @@ def equil_analysis_handler(
                 f"[equil_check:{lig}] no md-*.nc trajectories found for analysis"
             )
         u = mda.Universe(str(p["full_pdb"]), [str(t) for t in trajs])
-        sim_val = SimValidator(u, ligand=residue_name, directory=p["equil_dir"])
+        anchor_masks = [
+            str(getattr(sim, "p1", "") or "").strip(),
+            str(getattr(sim, "p2", "") or "").strip(),
+            str(getattr(sim, "p3", "") or "").strip(),
+        ]
+        sim_val = SimValidator(
+            u,
+            ligand=residue_name,
+            directory=p["equil_dir"],
+            protein_anchor_masks=anchor_masks,
+        )
         sim_val.plot_analysis(savefig=True)
 
         # bound vs unbound

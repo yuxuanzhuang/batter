@@ -206,6 +206,7 @@ def konnektor_pairs(
     try:
         from gufe import SmallMoleculeComponent
         from kartograf.atom_mapper import KartografAtomMapper
+        from kartograf.atom_mapping_scorer import MappingRMSDScorer
     except ImportError as exc:
         raise RuntimeError(
             "Konnektor mapping requires 'gufe' and 'kartograf' dependencies."
@@ -217,14 +218,9 @@ def konnektor_pairs(
             "Konnektor 'explicit' layout requires explicit edges; use rbfe.mapping_file."
         )
     mapper = KartografAtomMapper()
+    rmsd_scorer = MappingRMSDScorer()
 
-    def _null_scorer(_mapping):
-        return 0.0
-
-    try:
-        generator = generator_cls(mappers=mapper, scorer=_null_scorer)
-    except TypeError:
-        generator = generator_cls(mappers=mapper)
+    generator = generator_cls(mappers=mapper, scorer=rmsd_scorer)
 
     components: List[SmallMoleculeComponent] = []
     for lig in ligands:
@@ -317,10 +313,7 @@ def draw_explicit_konnektor_network(
         return
 
     nodes = list(nodes_by_name.values())
-    try:
-        generator = ExplicitNetworkGenerator(mappers=mapper, scorer=rmsd_scorer)
-    except TypeError:
-        generator = ExplicitNetworkGenerator(mappers=mapper)
+    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=rmsd_scorer)
 
     try:
         network = generator.generate_ligand_network(edges=edges, nodes=nodes)

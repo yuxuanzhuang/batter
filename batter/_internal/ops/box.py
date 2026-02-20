@@ -151,8 +151,8 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         logger.debug(f"Failed to read ligand charge from {meta_path}: {exc}")
         return None
 
-
-def create_box_z(ctx: BuildContext) -> None:
+@register_create_box("z")
+def create_box(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
     """
@@ -172,8 +172,6 @@ def create_box_z(ctx: BuildContext) -> None:
     ligand = ctx.ligand
     mol = ctx.residue_name
 
-    molr = mol
-
     for attr in ("buffer_x", "buffer_y", "buffer_z"):
         if not hasattr(sim, attr):
             raise AttributeError(
@@ -187,9 +185,6 @@ def create_box_z(ctx: BuildContext) -> None:
 
     if membrane_builder:
         targeted_buffer_z = max([float(sim.buffer_z), 25.0])
-        buffer_z = get_buffer_z(
-            window_dir / "build.pdb", targeted_buf=targeted_buffer_z
-        )
         buffer_x = 0.0
         buffer_y = 0.0
     else:
@@ -200,6 +195,12 @@ def create_box_z(ctx: BuildContext) -> None:
             buffer_x = max(0.0, buffer_x - solv_shell)
             buffer_y = max(0.0, buffer_y - solv_shell)
             buffer_z = max(0.0, buffer_z - solv_shell)
+
+
+    if comp != "q":
+        sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
+    else:
+        buffer_z_left = buffer_z
 
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
@@ -258,17 +259,13 @@ def create_box_z(ctx: BuildContext) -> None:
         f.write(f"loadamberparams {mol}.frcmod\n")
         f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
-
-        if comp == "x":
-            f.write(f"loadamberparams {molr}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
         if water_model != "TIP3PF":
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
             f.write("source leaprc.water.fb3\n\n")
         f.write("model = loadpdb build.pdb\n\n")
         f.write(
-            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z} }} 1\n\n"
+            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z_left} }} 1\n\n"
         )
         f.write("desc model\n")
         f.write("savepdb model full_pre.pdb\n")
@@ -337,15 +334,15 @@ def create_box_z(ctx: BuildContext) -> None:
         )
         final_system = final_system - outside_wat
 
-        if comp in ["e", "v", "o", "z"]:
-            prot_z_max = u.select_atoms("protein").positions[:, 2].max()
-            prot_z_min = u.select_atoms("protein").positions[:, 2].min()
-            outside_wat_z = final_system.select_atoms(
-                "byres (resname WAT and "
-                f"(prop z > {prot_z_max + targeted_buffer_z} or prop z < {prot_z_min - targeted_buffer_z}))"
-            )
-            final_system = final_system - outside_wat_z
-            system_dimensions[2] = prot_z_max - prot_z_min + 2 * targeted_buffer_z
+    if comp in ["e", "v", "o", "z"]:
+        min_pos = final_system.positions[:, 2].min()
+        system_dimensions[2] = abs_z
+
+        outside_wat_z = final_system.select_atoms(
+            "byres (resname WAT and "
+            f"(prop z > {abs_z + min_pos}))"
+        )
+        final_system = final_system - outside_wat_z
 
     # renumber residues
     revised_resids = np.array(revised_resids)
@@ -360,9 +357,12 @@ def create_box_z(ctx: BuildContext) -> None:
 
     # partitions
     final_system_dum = final_system.select_atoms("resname DUM")
+    final_system_dum[0].position = final_system.select_atoms("protein and name CA N C O").center_of_mass()
+    if comp == 'z':
+        final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
     final_system_prot = final_system.select_atoms("protein")
     final_system_others = final_system - final_system_prot - final_system_dum
-    final_system_ligs = final_system.select_atoms(f"resname {mol} or resname {molr}")
+    final_system_ligs = final_system.select_atoms(f"resname {mol}")
     final_system_other_mol = (
         final_system_others.select_atoms("not resname WAT") - final_system_ligs
     )
@@ -449,8 +449,8 @@ def create_box_z(ctx: BuildContext) -> None:
         f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
         if comp == "x":
-            f.write(f"loadamberparams {molr}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
+            f.write(f"loadamberparams {mol}.frcmod\n")
+            f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
         f.write(
             f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
@@ -686,11 +686,6 @@ def create_box_z(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     return
-
-
-@register_create_box("z")
-def create_box_z_default(ctx: BuildContext) -> None:
-    create_box_z(ctx)
 
 
 @register_create_box("x")
