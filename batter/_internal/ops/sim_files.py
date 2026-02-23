@@ -327,7 +327,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mini = amber_dir / "mini-unorest"
 
         # first write eq.in
-        n_steps_run = 1000
+        n_steps_run = 20000
         out_path = windows_dir / "eq.in"
         with template_eqin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
@@ -336,10 +336,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
-                    line = "dt = 0.001,\n"
-                # disable ntr to enable dum atom pop to center
-                #elif "ntr = " in line:
-                #    line = "ntr = 0,\n"
+                    line = "dt = 0.002,\n"
+                elif "restraint_wt = " in line:
+                    line = f"restraint_wt = 0.2,\n"
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
@@ -357,12 +356,21 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            # run mcwat
+            mdin.write(f"  mcwat = 1,\n")
+            mdin.write(f"  nmd = 1000,\n")
+            mdin.write(f"  nmc = 1000,\n")
+            mdin.write(f"  mcwatmask = \":{mol}\",\n")
+            mdin.write(f"  mcligshift = 40,\n")
+            mdin.write(f"  mcwatretry = 3000,\n")
+            mdin.write(f"  mcresstr = \"WAT\",\n")
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
                 mdin.write(f" {lam:6.5f},")
             mdin.write("\n")
-            mdin.write("  infe = 1,\n")
+            # no need to run infe as everything is restrainted
+            mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
             mdin.write(" &pmd \n")
             mdin.write("  output_file = 'cmass.txt'\n")
@@ -680,7 +688,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")
 
     eq_path = windows_dir / "eq.in"
-    n_steps_run = 1000
+    n_steps_run = 20000
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
             if "ntx = 5" in line:
@@ -688,10 +696,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "irest" in line:
                 line = "  irest = 0,\n"
             elif "dt = " in line:
-                line = "  dt = 0.001,\n"
-            # disable ntr to allow dum atom to get into the center
-            # elif "ntr = " in line:
-            #  line = "  ntr = 0,\n"
+                line = "  dt = 0.002,\n"
+            elif "restraint_wt = " in line:
+                line = f"  restraint_wt = 0.2,\n"
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
@@ -711,12 +718,21 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
             fout.write(line)
     with eq_path.open("a") as mdin:
+        # run mcwat
+        mdin.write(f"  mcwat = 1,\n")
+        mdin.write(f"  nmd = 1000,\n")
+        mdin.write(f"  nmc = 1000,\n")
+        mdin.write(f"  mcwatmask = \"(:{mol_ref} | :{mol_alt})\",\n")
+        mdin.write(f"  mcligshift = 40,\n")
+        mdin.write(f"  mcwatretry = 3000,\n")
+        mdin.write(f"  mcresstr = \"WAT\",\n")
         mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
             mdin.write(f" {lam:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        # no need to run infe as everything is restrainted
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         mdin.write(" &pmd \n")
         mdin.write("  output_file = 'cmass.txt'\n")
