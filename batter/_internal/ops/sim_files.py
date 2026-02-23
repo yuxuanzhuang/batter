@@ -183,7 +183,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
     )
 
-    # eqnpt0.in (membrane vs water variant)
+    # eqnpt0.in
     eqnpt0_src = amber_dir / (
         "eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in"
     )
@@ -193,13 +193,23 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
     )
 
-    # eqnpt.in  (no extra restraints here)
+    # eqnpt.in
     eqnpt_src = amber_dir / (
         "eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in"
     )
     _sub_write(
         eqnpt_src,
         work / "eqnpt.in",
+        {"_temperature_": f"{temperature}", "_lig_name_": mol},
+    )
+
+    # eqnpt-eq.in (longer equil for membrane system)
+    eqnpt_src = amber_dir / (
+        "eqnpt-eq.in" if sim.membrane_simulation else "eqnpt-water.in"
+    )
+    _sub_write(
+        eqnpt_src,
+        work / "eqnpt_eq.in",
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
     )
 
