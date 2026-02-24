@@ -14,6 +14,7 @@ import MDAnalysis as mda
 import numpy as np
 import pandas as pd
 from MDAnalysis.analysis import align
+from MDAnalysis.analysis.dssp import DSSP
 from loguru import logger
 
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
@@ -169,6 +170,30 @@ class _SystemPrepRunner:
         lipid_mol.extend(amber_lipid_mol)
         self.lipid_mol = lipid_mol
         logger.debug(f"New lipid_mol list: {self.lipid_mol}")
+
+    def _run_input_protein_dssp(self) -> Dict[str, Any]:
+        """
+        Run DSSP on the input protein structure and persist the assignments.
+        """
+        dssp_npy = self.ligands_folder / "protein_input_dssp.npy"
+        dssp_json = self.ligands_folder / "protein_input_dssp.json"
+        try:
+            u_prot = mda.Universe(self._protein_input)
+            dssp_ana = DSSP(u_prot).run()
+            dssp_array = np.asarray(dssp_ana.results["dssp"])
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to run DSSP on protein input {self._protein_input}: {exc}"
+            ) from exc
+
+        np.save(dssp_npy, dssp_array)
+        dssp_json.write_text(json.dumps(dssp_array.tolist()))
+        return {
+            "npy": str(dssp_npy),
+            "json": str(dssp_json),
+            "shape": list(dssp_array.shape),
+            "results": dssp_array.tolist(),
+        }
 
     def _get_alignment(self):
         """
@@ -510,6 +535,7 @@ class _SystemPrepRunner:
 
         # Directories
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
+        dssp_result = self._run_input_protein_dssp()
 
         # Box dimensions
         if self.membrane_simulation or self._system_topology is not None:
@@ -603,6 +629,7 @@ class _SystemPrepRunner:
             "reference": str(self.ligands_folder / "reference.pdb"),
             "docked": str(self.ligands_folder / f"{self._system_name}.pdb"),
             "ligands": dict(self.ligand_dict),
+            "dssp": dssp_result,
             "anchors": {"p1": self.p1, "p2": self.p2, "p3": self.p3},
             "l1": {
                 "x": self.l1_x,
