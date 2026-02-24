@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -137,3 +138,24 @@ def test_index_upsert_key_includes_analysis_start_step_and_n_bootstraps(
         (rows["analysis_start_step"] == 5000) & (rows["n_bootstraps"] == 64)
     ].iloc[0]
     assert updated["total_dG"] == pytest.approx(-4.0)
+
+
+def test_save_does_not_emit_futurewarning_on_index_append(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+    rec = FERecord(
+        run_id="run1",
+        ligand="lig1",
+        mol_name="lig1",
+        system_name="sys",
+        fe_type="rest",
+        temperature=300.0,
+        method="mbar",
+        total_dG=-1.0,
+        total_se=0.1,
+        components=["z"],
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        repo.save(rec)

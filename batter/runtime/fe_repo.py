@@ -244,8 +244,12 @@ class FEResultsRepository:
 
             # append/upsert row
             new_row = {col: row.get(col, pd.NA) for col in cols}
-            df.loc[len(df)] = new_row
-            df = df[cols]
+            if df.empty:
+                df = pd.DataFrame([new_row], columns=cols)
+            else:
+                rows = df[cols].to_dict(orient="records")
+                rows.append(new_row)
+                df = pd.DataFrame.from_records(rows, columns=cols)
 
             # atomic write: write tmp then replace
             fd, tmp = tempfile.mkstemp(
