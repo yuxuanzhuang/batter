@@ -23,6 +23,132 @@ from batter._internal.ops.remd import patch_mdin_file
 # ----------------------------- helpers ----------------------------- #
 
 
+def _non_loop_mask_from_dssp_assignments(
+    assignments: Sequence[str], *, min_len: int = 4
+) -> str:
+    """
+    Convert DSSP assignments to a compact AMBER residue range string.
+
+    Keeps contiguous non-loop segments (assignment != '-') with length >= min_len.
+    Uses 1-based residue indices.
+    """
+    if min_len < 1:
+        raise ValueError("min_len must be >= 1")
+
+    keep: list[int] = []
+    run_start: int | None = None
+    seq = [str(x).strip() for x in assignments]
+
+    for idx, ss in enumerate(seq, start=1):
+        if ss and ss != "-":
+            if run_start is None:
+                run_start = idx
+            continue
+        if run_start is not None:
+            run_len = idx - run_start
+            if run_len >= min_len:
+                keep.extend(range(run_start, idx))
+            run_start = None
+
+    if run_start is not None:
+        run_len = len(seq) + 1 - run_start
+        if run_len >= min_len:
+            keep.extend(range(run_start, len(seq) + 1))
+
+    return format_ranges(keep)
+
+
+def _fallback_non_loop_mask_from_renum(build_dir: Path) -> str:
+    """
+    Fallback to all mapped protein residues when DSSP-derived mask is unavailable.
+    """
+    renum_txt = build_dir / "protein_renum.txt"
+    if not renum_txt.exists():
+        logger.warning(
+            f"[dssp] Missing renumber map for fallback mask: {renum_txt}; using ':1'."
+        )
+        return "1"
+
+    renum_data = pd.read_csv(
+        renum_txt,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+    if renum_data.empty:
+        logger.warning(
+            f"[dssp] Empty renumber map for fallback mask: {renum_txt}; using ':1'."
+        )
+        return "1"
+
+    ranges = format_ranges(renum_data["new_resid"].astype(int).tolist())
+    if not ranges:
+        logger.warning(
+            f"[dssp] Failed to build fallback residue ranges from {renum_txt}; using ':1'."
+        )
+        return "1"
+    return ranges
+
+
+def _resolve_non_loop_mask(ctx: BuildContext) -> str:
+    """
+    Build the `_non_loop_` replacement mask from system_prep DSSP artifacts.
+    """
+    manifest_path = ctx.system_root / "all-ligands" / "manifest.json"
+    if not manifest_path.exists():
+        logger.warning(
+            f"[dssp] Missing system_prep manifest: {manifest_path}; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        logger.warning(
+            f"[dssp] Could not parse manifest {manifest_path}: {exc}; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+
+    dssp_info = manifest.get("dssp") or {}
+    dssp_results = dssp_info.get("results")
+    if dssp_results is None:
+        dssp_json = dssp_info.get("json")
+        if dssp_json:
+            try:
+                dssp_results = json.loads(Path(dssp_json).read_text())
+            except Exception as exc:
+                logger.warning(
+                    f"[dssp] Could not read DSSP JSON {dssp_json}: {exc}; using fallback mask."
+                )
+                return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+
+    if dssp_results is None:
+        logger.warning(
+            "[dssp] No DSSP results found in manifest; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+
+    dssp_arr = np.asarray(dssp_results)
+    if dssp_arr.size == 0:
+        logger.warning("[dssp] Empty DSSP results; using fallback mask.")
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+
+    if dssp_arr.ndim == 1:
+        assignments = dssp_arr.tolist()
+    else:
+        assignments = dssp_arr[0].tolist()
+
+    mask_ranges = _non_loop_mask_from_dssp_assignments(assignments, min_len=4)
+    if not mask_ranges:
+        logger.warning(
+            "[dssp] No non-loop DSSP stretches with len>=4; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+
+    logger.debug(f"[dssp] Non-loop restraint mask ranges: {mask_ranges}")
+    return mask_ranges
+
+
 def _patch_restraint_block(
     text: str, new_mask_component: str, force_const: float
 ) -> str:
@@ -203,14 +329,19 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
     )
 
-    # eqnpt-eq.in (longer equil for membrane system)
+    # eqnpt-eq.in (longer equil with restraints on non-loop regions)
+    non_loop_mask = _resolve_non_loop_mask(ctx)
     eqnpt_src = amber_dir / (
-        "eqnpt-eq.in" if sim.membrane_simulation else "eqnpt-water.in"
+        "eqnpt-eq.in" if sim.membrane_simulation else "eqnpt-water-eq.in"
     )
     _sub_write(
         eqnpt_src,
         work / "eqnpt_eq.in",
-        {"_temperature_": f"{temperature}", "_lig_name_": mol},
+        {
+            "_temperature_": f"{temperature}",
+            "_lig_name_": mol,
+            "_non_loop_": non_loop_mask,
+        },
     )
 
     # Additional equilibration inputs for disappear/appear stages
