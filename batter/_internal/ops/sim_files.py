@@ -24,13 +24,13 @@ from batter._internal.ops.remd import patch_mdin_file
 
 
 def _non_loop_mask_from_dssp_assignments(
-    assignments: Sequence[str], *, min_len: int = 4
+    assignments: Sequence[str], *, min_len: int = 4, shift: int = 0
 ) -> str:
     """
     Convert DSSP assignments to a compact AMBER residue range string.
 
     Keeps contiguous non-loop segments (assignment != '-') with length >= min_len.
-    Uses 1-based residue indices.
+    Default shift-based residue indices.
     """
     if min_len < 1:
         raise ValueError("min_len must be >= 1")
@@ -39,7 +39,7 @@ def _non_loop_mask_from_dssp_assignments(
     run_start: int | None = None
     seq = [str(x).strip() for x in assignments]
 
-    for idx, ss in enumerate(seq, start=1):
+    for idx, ss in enumerate(seq, start=shift):
         if ss and ss != "-":
             if run_start is None:
                 run_start = idx
@@ -138,7 +138,7 @@ def _resolve_non_loop_mask(ctx: BuildContext) -> str:
     else:
         assignments = dssp_arr[0].tolist()
 
-    mask_ranges = _non_loop_mask_from_dssp_assignments(assignments, min_len=4)
+    mask_ranges = _non_loop_mask_from_dssp_assignments(assignments, min_len=4, shift=2)
     if not mask_ranges:
         logger.warning(
             "[dssp] No non-loop DSSP stretches with len>=4; using fallback mask."
