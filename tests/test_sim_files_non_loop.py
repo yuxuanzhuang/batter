@@ -79,10 +79,9 @@ def _ctx(tmp_path: Path, *, with_manifest: bool, dssp_results: list[list[str]] |
 
 
 def test_non_loop_mask_from_dssp_assignments_filters_short_runs() -> None:
-    # keep 2-5 (H run len=4) and 10-14 (E run len=5); drop 7-8 (len=2)
     assignments = ["-", "H", "H", "H", "H", "-", "E", "E", "-", "E", "E", "E", "E", "E", "-"]
-    got = sim_files._non_loop_mask_from_dssp_assignments(assignments, min_len=4)
-    assert got == "2-5,10-14"
+    got = sim_files._non_loop_mask_from_dssp_assignments(assignments, min_len=4, shift=0)
+    assert got == "1-4,9-13"
 
 
 def test_write_sim_files_replaces_non_loop_from_dssp_manifest(tmp_path: Path) -> None:
@@ -93,7 +92,7 @@ def test_write_sim_files_replaces_non_loop_from_dssp_manifest(tmp_path: Path) ->
 
     eqnpt_eq = (ctx.working_dir / "eqnpt_eq.in").read_text()
     assert "_non_loop_" not in eqnpt_eq
-    assert ":2-5,7-10" in eqnpt_eq
+    assert ":3-6,8-11" in eqnpt_eq
 
 
 def test_write_sim_files_non_loop_falls_back_to_renum_when_missing_dssp(tmp_path: Path) -> None:

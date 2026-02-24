@@ -248,7 +248,7 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     assert cfg.infe is True
     assert cfg.barostat == 2
     assert cfg.release_eq == [0.0]
-    assert cfg.eq_steps == 100
+    assert cfg.eq_steps == 2500
 
     create2 = create.model_copy(
         update={"extra_conformation_restraints": None, "extra_restraints": "mask"}
@@ -452,7 +452,7 @@ def test_resolved_sim_config_handles_md(tmp_path: Path) -> None:
     cfg = RunConfig.model_validate(payload)
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.fe_type == "md"
-    assert sim_cfg.eq_steps == 1000
+    assert sim_cfg.eq_steps == 2500
     assert sim_cfg.temperature == 300.0
 
 

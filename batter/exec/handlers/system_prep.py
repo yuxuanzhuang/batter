@@ -179,12 +179,12 @@ class _SystemPrepRunner:
         dssp_json = self.ligands_folder / "protein_input_dssp.json"
         try:
             u_prot = mda.Universe(self._protein_input)
-            dssp_ana = DSSP(u_prot).run()
+            dssp_ana = DSSP(u_prot.select_atoms('protein and not resname NMA ACE')).run()
             dssp_array = np.asarray(dssp_ana.results["dssp"])
         except Exception as exc:
-            raise RuntimeError(
-                f"Failed to run DSSP on protein input {self._protein_input}: {exc}"
-            ) from exc
+            logger.warning(
+                f"Failed to run DSSP on protein input {self._protein_input}: {exc}")
+            dssp_array = np.array([])
 
         np.save(dssp_npy, dssp_array)
         dssp_json.write_text(json.dumps(dssp_array.tolist()))
