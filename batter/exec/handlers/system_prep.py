@@ -182,9 +182,16 @@ class _SystemPrepRunner:
             dssp_ana = DSSP(u_prot.select_atoms('protein and not resname NMA ACE')).run()
             dssp_array = np.asarray(dssp_ana.results["dssp"])
         except Exception as exc:
-            logger.warning(
-                f"Failed to run DSSP on protein input {self._protein_input}: {exc}")
-            dssp_array = np.array([])
+            try:
+                logger.warning(f"Failed to run DSSP on full protein input {self._protein_input}, trying with last residue removed")
+                dssp_ana = DSSP(u_prot.select_atoms('protein and not resname NMA ACE').residues[:-1].atoms).run()
+                dssp_array = np.asarray(dssp_ana.results["dssp"])
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to run DSSP on protein input {self._protein_input}: {exc}. No secondary-structure conditioned restraints. "
+                    "If you want to debug, please run `DSSP` in MDAnalysis on the input protein file."
+                )
+                dssp_array = np.array([])
 
         np.save(dssp_npy, dssp_array)
         dssp_json.write_text(json.dumps(dssp_array.tolist()))
