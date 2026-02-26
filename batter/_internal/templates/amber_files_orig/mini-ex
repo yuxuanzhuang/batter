@@ -23,7 +23,7 @@ Minimizing.
   restraintmask = '(@CA,C,N,P31 | :_lig1_name_ | :_lig2_name_ | :2) & !@H=',
   infe = 1,
   icfe = 1,
-  clambda = lbd_val,
+  clambda = 0.5,
   timask1 = 'timk1',
   timask2 = 'timk2',
   ifsc=1,
