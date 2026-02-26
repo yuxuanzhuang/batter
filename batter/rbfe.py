@@ -51,7 +51,6 @@ def filter_mismatched_attached_h_count(
         filtered[i] = j
     return filtered
 
-
 RBFEPair = Tuple[str, str]
 RBFEMapFn = Callable[[Sequence[str]], Iterable[RBFEPair]]
 
@@ -249,11 +248,13 @@ def konnektor_pairs(
     try:
         from gufe import SmallMoleculeComponent
         from kartograf.atom_mapper import KartografAtomMapper
-        from kartograf.atom_mapping_scorer import MappingRMSDScorer
+        from lomap.gufe_bindings.scorers import default_lomap_score
+
     except ImportError as exc:
         raise RuntimeError(
             "Konnektor mapping requires 'gufe' and 'kartograf' dependencies."
         ) from exc
+
 
     generator_cls = _resolve_konnektor_generator(layout)
     if generator_cls.__name__.lower().startswith("explicit"):
@@ -270,9 +271,8 @@ def konnektor_pairs(
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
                                 additional_mapping_filter_functions=additional_mapping_filter_functions
     )
-    rmsd_scorer = MappingRMSDScorer()
 
-    generator = generator_cls(mappers=mapper, scorer=rmsd_scorer)
+    generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
 
     components: List[SmallMoleculeComponent] = []
     for lig in ligands:
@@ -316,14 +316,14 @@ def draw_explicit_konnektor_network(
         from konnektor.network_planners import ExplicitNetworkGenerator
         from konnektor.visualization import draw_ligand_network
         from gufe import SmallMoleculeComponent
+        from lomap.gufe_bindings.scorers import default_lomap_score
         from kartograf.atom_mapper import KartografAtomMapper
         from kartograf.atom_aligner import align_mol_shape
-        from kartograf.atom_mapping_scorer import MappingRMSDScorer
         from rdkit import Chem
         from rdkit.Chem import rdDistGeom
     except Exception:
         return
-
+    
     additional_mapping_filter_functions = [filter_element_changes]
     # if set hmr, don't include atom with different number of H attached
     if hmr:
@@ -333,7 +333,6 @@ def draw_explicit_konnektor_network(
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
                                 additional_mapping_filter_functions=additional_mapping_filter_functions
     )
-    rmsd_scorer = MappingRMSDScorer()
 
     comp_by_name: dict[str, SmallMoleculeComponent] = {}
     edges = []
@@ -374,7 +373,7 @@ def draw_explicit_konnektor_network(
         return
 
     nodes = list(nodes_by_name.values())
-    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=rmsd_scorer)
+    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=default_lomap_score)
 
     try:
         network = generator.generate_ligand_network(edges=edges, nodes=nodes)
