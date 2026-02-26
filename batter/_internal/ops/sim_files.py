@@ -90,7 +90,7 @@ def _fallback_non_loop_mask_from_renum(build_dir: Path) -> str:
     return ranges
 
 
-def _resolve_non_loop_mask(ctx: BuildContext) -> str:
+def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
     """
     Build the `_non_loop_` replacement mask from system_prep DSSP artifacts.
     """
@@ -138,7 +138,7 @@ def _resolve_non_loop_mask(ctx: BuildContext) -> str:
     else:
         assignments = dssp_arr[0].tolist()
 
-    mask_ranges = _non_loop_mask_from_dssp_assignments(assignments, min_len=4, shift=2)
+    mask_ranges = _non_loop_mask_from_dssp_assignments(assignments, min_len=4, shift=shift)
     if not mask_ranges:
         logger.warning(
             "[dssp] No non-loop DSSP stretches with len>=4; using fallback mask."
@@ -267,6 +267,10 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
+def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 5000, n_lambdas = 11):
+    dynlmb = 1 / (n_lambdas-1)
+    n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
+    return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
 
 # ------------------------- generic equil files ------------------------- #
 
@@ -330,7 +334,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     )
 
     # eqnpt-eq.in (longer equil with restraints on non-loop regions)
-    non_loop_mask = _resolve_non_loop_mask(ctx)
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=2)
     eqnpt_src = amber_dir / (
         "eqnpt-eq.in" if sim.membrane_simulation else "eqnpt-water-eq.in"
     )
@@ -399,7 +403,6 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
 # ------------------------- FE component: z ------------------------- #
 
-
 @register_sim_files("z")
 def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
@@ -414,6 +417,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     win = ctx.win
     windows_dir = ctx.window_dir
     all_atoms = sim.all_atoms
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
+
 
     if not hasattr(sim, "dec_method"):
         raise AttributeError(
@@ -467,12 +472,21 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mini = amber_dir / "mini-unorest"
 
         # first write eq.in
+        # it will gradually increase lambda value
+        # n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
         n_steps_run = 20000
+        
         out_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
                 if "ntx = 5" in line:
                     line = "ntx = 1,\n"
+                # save every lambda value
+                # elif "ntwx = " in line:
+                #    line = f"ntwx = {n_steps_run_per_lambda},\n"
+                # write all atoms
+                # elif "ntwprt = " in line:
+                #    line = f"\n"
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
@@ -482,9 +496,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol}) & !@H='\n"
                     else:
-                        line = f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -496,6 +510,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            # run dynlmb
+            # mdin.write(f" dynlmb = {dynlmb},\n")
+            # mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
             # run mcwat
             mdin.write(f"  mcwat = 1,\n")
             mdin.write(f"  nmd = 1000,\n")
@@ -597,6 +614,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mini = amber_dir / "mini-unorest-dd"
 
         # optional short equilibration input
+        n_steps_run = 20000
         eq_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
             for line in fin:
@@ -605,7 +623,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
-                    line = "dt = 0.001,\n"
+                    line = "dt = 0.002,\n"
+                elif "restraint_wt = " in line:
+                    line = f"restraint_wt = 0.2,\n"
                 elif "restraintmask" in line:
                     rm = (
                         line.split("=", 1)[1]
@@ -614,15 +634,15 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         .replace("'", "")
                     )
                     if rm == "":
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol}) & !@H='\n"
                     else:
                         line = (
-                            f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                            f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
                         )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
-                    .replace("_num-steps_", "5000")
+                    .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
                 )
@@ -761,6 +781,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mol_ref = ctx.residue_name
     extra = ctx.extra or {}
     mol_alt = extra.get("residue_alt")
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
+
 
     if not mol_alt:
         raise ValueError(
@@ -827,13 +849,20 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")
 
     eq_path = windows_dir / "eq.in"
-    n_steps_run = 20000
+    n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
+
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
             if "ntx = 5" in line:
                 line = "  ntx = 1,\n"
             elif "irest" in line:
                 line = "  irest = 0,\n"
+            # save every lambda value
+            elif "ntwx = " in line:
+                line = f"ntwx = {n_steps_run_per_lambda},\n"
+            # write all atoms
+            elif "ntwprt = " in line:
+                line = f"\n"
             elif "dt = " in line:
                 line = "  dt = 0.002,\n"
             elif "restraint_wt = " in line:
@@ -841,9 +870,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
-                    line = f"restraintmask = '(@CA | :{mol_ref}) | :{mol_alt} | & !@H='\n"
+                    line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol_ref}) | :{mol_alt} ) & !@H='\n"
                 else:
-                    line = f"restraintmask = '(@CA | :{mol_ref} | :{mol_alt} | {rm}) & !@H='\n"
+                    line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol_ref} | :{mol_alt} | {rm} ) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
@@ -857,6 +886,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
             fout.write(line)
     with eq_path.open("a") as mdin:
+        # run dynlmb
+        mdin.write(f" dynlmb = {dynlmb},\n")
+        mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
         # run mcwat
         mdin.write(f"  mcwat = 1,\n")
         mdin.write(f"  nmd = 1000,\n")

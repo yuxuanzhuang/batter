@@ -375,7 +375,8 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                 cvf.write(a + ",")
         cvf.write("\n")
         cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rest[5], rest[5]))
+        # no restraints on COM in equil
+        cvf.write(" anchor_strength = 0,  0\n")
         cvf.write("/\n")
 
     # ---- integrate extra conformation restraints (equil) ----
