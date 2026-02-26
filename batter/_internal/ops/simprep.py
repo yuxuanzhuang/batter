@@ -879,23 +879,20 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
 
     # get mapper based on inital poses
-    additional_mapping_filter_functions = [filter_element_changes]
+    # additional_mapping_filter_functions = [filter_element_changes]
     # if set hmr, don't include atom with different number of H attached
-    if sim.hmr:
-        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+    #if sim.hmr:
+    #    additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
 
     mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
-                                additional_mapping_filter_functions=additional_mapping_filter_functions
+    #                            additional_mapping_filter_functions=additional_mapping_filter_functions
     )
 
     # Get Mapping
     kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
     logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
-    try:
-        kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
-    except RuntimeError:
-        pass
+
     atomMap = [(probe, ref) for ref, probe in sorted(kartograf_mapping.componentB_to_componentA.items())]
     if not atomMap:
         raise ValueError(f"No atom mapping found between {res_ref} and {res_alt}.")
@@ -1013,6 +1010,13 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     with open(dest_dir / "kartograf.pkl", "wb") as f:
         pickle.dump(kartograf_mapping, f)
 
+    try:
+        # remove H from rdkit for asthetics
+        # kartograf_mapping.componentA._rdkit = Chem.RemoveHs(kartograf_mapping.componentA._rdkit)
+        # kartograf_mapping.componentB._rdkit = Chem.RemoveHs(kartograf_mapping.componentB._rdkit)
+        kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
+    except RuntimeError:
+        pass
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 

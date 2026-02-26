@@ -262,14 +262,14 @@ def konnektor_pairs(
             "Konnektor 'explicit' layout requires explicit edges; use rbfe.mapping_file."
         )
     
-    additional_mapping_filter_functions = [filter_element_changes]
+    # additional_mapping_filter_functions = [filter_element_changes]
     # if set hmr, don't include atom with different number of H attached
-    if hmr:
-        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+    # if hmr:
+    #    additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
 
     mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
-                                additional_mapping_filter_functions=additional_mapping_filter_functions
+                                #additional_mapping_filter_functions=additional_mapping_filter_functions
     )
 
     generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
@@ -326,14 +326,14 @@ def draw_explicit_konnektor_network(
     except Exception:
         return
     
-    additional_mapping_filter_functions = [filter_element_changes]
+    # additional_mapping_filter_functions = [filter_element_changes]
     # if set hmr, don't include atom with different number of H attached
-    if hmr:
-        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+    # if hmr:
+    #     additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
 
     mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
                                 map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
-                                additional_mapping_filter_functions=additional_mapping_filter_functions
+                                # additional_mapping_filter_functions=additional_mapping_filter_functions
     )
 
     comp_by_name: dict[str, SmallMoleculeComponent] = {}
@@ -346,19 +346,9 @@ def draw_explicit_konnektor_network(
             continue
         if name_a not in comp_by_name:
             mol_a = _load_rdkit_mol(Path(ligand_files[name_a]))
-            try:
-                mol_a = Chem.AddHs(mol_a, addCoords=True)
-                rdDistGeom.EmbedMolecule(mol_a, useRandomCoords=False, randomSeed=0)
-            except Exception:
-                pass
             comp_by_name[name_a] = SmallMoleculeComponent(mol_a, name=name_a)
         if name_b not in comp_by_name:
             mol_b = _load_rdkit_mol(Path(ligand_files[name_b]))
-            try:
-                mol_b = Chem.AddHs(mol_b, addCoords=True)
-                rdDistGeom.EmbedMolecule(mol_b, useRandomCoords=False, randomSeed=0)
-            except Exception:
-                pass
             comp_by_name[name_b] = SmallMoleculeComponent(mol_b, name=name_b)
 
         comp_a = comp_by_name[name_a]

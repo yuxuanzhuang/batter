@@ -58,9 +58,9 @@ if [[ $only_eq -eq 1 ]]; then
         rm -f "$log_file"
         rm -f mini.in.rst7 mini.in.nc mini.in.out
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/mini.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/mini.rst7 >> \"$log_file\" 2>&1"
+            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         else
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/mini.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/mini.rst7 >> \"$log_file\" 2>&1"
+            print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         fi
         check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
         if ! check_min_energy "mini.in.out" -1000; then
@@ -80,7 +80,7 @@ if [[ $only_eq -eq 1 ]]; then
     lambda_set_list=(LAMBDA_SET_LIST)
 
     # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
-    cpptraj -p full.hmr.prmtop -i /dev/stdin <<'EOF'
+    cpptraj -p full.prmtop -i /dev/stdin <<'EOF'
 trajin eq.nc
 trajout eq.rst7 multi restart
 run

@@ -58,7 +58,7 @@ def _non_loop_mask_from_dssp_assignments(
     return format_ranges(keep)
 
 
-def _fallback_non_loop_mask_from_renum(build_dir: Path) -> str:
+def _fallback_non_loop_mask_from_renum(build_dir: Path, shift: int) -> str:
     """
     Fallback to all mapped protein residues when DSSP-derived mask is unavailable.
     """
@@ -67,7 +67,7 @@ def _fallback_non_loop_mask_from_renum(build_dir: Path) -> str:
         logger.warning(
             f"[dssp] Missing renumber map for fallback mask: {renum_txt}; using ':1'."
         )
-        return "1"
+        return f"@CA"
 
     renum_data = pd.read_csv(
         renum_txt,
@@ -79,15 +79,17 @@ def _fallback_non_loop_mask_from_renum(build_dir: Path) -> str:
         logger.warning(
             f"[dssp] Empty renumber map for fallback mask: {renum_txt}; using ':1'."
         )
-        return "1"
+        return f"@CA"
 
-    ranges = format_ranges(renum_data["new_resid"].astype(int).tolist())
+    # one-based
+    ranges = renum_data["new_resid"].astype(int) + shift - 1
+    ranges = format_ranges(ranges.tolist())
     if not ranges:
         logger.warning(
             f"[dssp] Failed to build fallback residue ranges from {renum_txt}; using ':1'."
         )
-        return "1"
-    return ranges
+        return f"@CA"
+    return f':{ranges}'
 
 
 def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
@@ -99,7 +101,7 @@ def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
         logger.warning(
             f"[dssp] Missing system_prep manifest: {manifest_path}; using fallback mask."
         )
-        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
 
     try:
         manifest = json.loads(manifest_path.read_text())
@@ -107,7 +109,7 @@ def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
         logger.warning(
             f"[dssp] Could not parse manifest {manifest_path}: {exc}; using fallback mask."
         )
-        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
 
     dssp_info = manifest.get("dssp") or {}
     dssp_results = dssp_info.get("results")
@@ -120,18 +122,18 @@ def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
                 logger.warning(
                     f"[dssp] Could not read DSSP JSON {dssp_json}: {exc}; using fallback mask."
                 )
-                return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+                return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
 
     if dssp_results is None:
         logger.warning(
             "[dssp] No DSSP results found in manifest; using fallback mask."
         )
-        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
 
     dssp_arr = np.asarray(dssp_results)
     if dssp_arr.size == 0:
         logger.warning("[dssp] Empty DSSP results; using fallback mask.")
-        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
 
     if dssp_arr.ndim == 1:
         assignments = dssp_arr.tolist()
@@ -143,10 +145,10 @@ def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
         logger.warning(
             "[dssp] No non-loop DSSP stretches with len>=4; using fallback mask."
         )
-        return _fallback_non_loop_mask_from_renum(ctx.build_dir)
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
 
     logger.debug(f"[dssp] Non-loop restraint mask ranges: {mask_ranges}")
-    return mask_ranges
+    return f':{mask_ranges}'
 
 
 def _patch_restraint_block(
@@ -267,7 +269,7 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
-def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 5000, n_lambdas = 11):
+def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 20000, n_lambdas = 11):
     dynlmb = 1 / (n_lambdas-1)
     n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
     return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
@@ -473,8 +475,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
         # first write eq.in
         # it will gradually increase lambda value
-        # n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
-        n_steps_run = 20000
+        n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
         
         out_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
@@ -482,11 +483,11 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 if "ntx = 5" in line:
                     line = "ntx = 1,\n"
                 # save every lambda value
-                # elif "ntwx = " in line:
-                #    line = f"ntwx = {n_steps_run_per_lambda},\n"
+                elif "ntwx = " in line:
+                    line = f"ntwx = {n_steps_run_per_lambda},\n"
                 # write all atoms
-                # elif "ntwprt = " in line:
-                #    line = f"\n"
+                elif "ntwprt = " in line:
+                    line = f"\n"
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
@@ -496,9 +497,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
-                        line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
                     else:
-                        line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -511,8 +512,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
         with out_path.open("a") as mdin:
             # run dynlmb
-            # mdin.write(f" dynlmb = {dynlmb},\n")
-            # mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
+            mdin.write(f" dynlmb = {dynlmb},\n")
+            mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
             # run mcwat
             mdin.write(f"  mcwat = 1,\n")
             mdin.write(f"  nmd = 1000,\n")
@@ -634,10 +635,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         .replace("'", "")
                     )
                     if rm == "":
-                        line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
                     else:
                         line = (
-                            f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+                            f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
                         )
                 line = (
                     line.replace("_temperature_", str(temperature))
@@ -870,9 +871,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
-                    line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol_ref}) | :{mol_alt} ) & !@H='\n"
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol_ref}) | :{mol_alt} ) & !@H='\n"
                 else:
-                    line = f"restraintmask = '((@CA & :{non_loop_mask}) | :{mol_ref} | :{mol_alt} | {rm} ) & !@H='\n"
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol_ref} | :{mol_alt} | {rm} ) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
