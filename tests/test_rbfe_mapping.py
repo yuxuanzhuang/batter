@@ -87,7 +87,15 @@ def _install_fake_konnektor(monkeypatch, generator_classes: dict[str, type]) -> 
             self.name = name or "lig"
             self.mol = mol
 
+    class AtomMapper:
+        pass
+
+    class LigandAtomMapping:
+        pass
+
     gufe_mod.SmallMoleculeComponent = SmallMoleculeComponent
+    gufe_mod.AtomMapper = AtomMapper
+    gufe_mod.LigandAtomMapping = LigandAtomMapping
     monkeypatch.setitem(sys.modules, "gufe", gufe_mod)
 
     kartograf_mod = types.ModuleType("kartograf")
@@ -102,6 +110,18 @@ def _install_fake_konnektor(monkeypatch, generator_classes: dict[str, type]) -> 
     kartograf_mod.atom_mapper = atom_mapper_mod
     monkeypatch.setitem(sys.modules, "kartograf", kartograf_mod)
     monkeypatch.setitem(sys.modules, "kartograf.atom_mapper", atom_mapper_mod)
+
+    lomap_mod = types.ModuleType("lomap")
+    lomap_gufe_bindings_mod = types.ModuleType("lomap.gufe_bindings")
+    lomap_scorers_mod = types.ModuleType("lomap.gufe_bindings.scorers")
+    lomap_scorers_mod.default_lomap_score = object()
+    lomap_gufe_bindings_mod.scorers = lomap_scorers_mod
+    lomap_mod.gufe_bindings = lomap_gufe_bindings_mod
+    monkeypatch.setitem(sys.modules, "lomap", lomap_mod)
+    monkeypatch.setitem(sys.modules, "lomap.gufe_bindings", lomap_gufe_bindings_mod)
+    monkeypatch.setitem(
+        sys.modules, "lomap.gufe_bindings.scorers", lomap_scorers_mod
+    )
 
 
 def test_konnektor_pairs_layout_resolution(monkeypatch, tmp_path: Path) -> None:
