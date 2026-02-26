@@ -9,6 +9,48 @@ from typing import Callable, Iterable, Sequence, Tuple, List, Any, Mapping
 from loguru import logger
 
 from batter.config.utils import sanitize_ligand_name
+from rdkit import Chem
+from rdkit.Geometry import Point3D
+from rdkit.Chem import rdMolAlign, AllChem
+
+def filter_element_changes(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Forces a mapping to exclude any alchemical element changes in the core"""
+    filtered_mapping = {}
+
+    for i, j in mapping.items():
+        if (
+            molA.GetAtomWithIdx(i).GetAtomicNum()
+            != molB.GetAtomWithIdx(j).GetAtomicNum()
+        ):
+            continue
+        filtered_mapping[i] = j
+
+    return filtered_mapping
+
+
+def filter_mismatched_attached_h_count(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """
+    Exclude mapped heavy-atom pairs where the number of directly attached H differs.
+    This helps avoid HMR mass mismatches for 'common/core' atoms.
+    """
+    filtered = {}
+    for i, j in mapping.items():
+        a = molA.GetAtomWithIdx(i)
+        b = molB.GetAtomWithIdx(j)
+
+        hA = a.GetTotalNumHs(includeNeighbors=True)
+        hB = b.GetTotalNumHs(includeNeighbors=True)
+
+        if hA != hB:
+            continue
+
+        filtered[i] = j
+    return filtered
+
 
 RBFEPair = Tuple[str, str]
 RBFEMapFn = Callable[[Sequence[str]], Iterable[RBFEPair]]
@@ -199,6 +241,7 @@ def konnektor_pairs(
     ligand_files: Mapping[str, Path],
     layout: str | None = None,
     plot_path: Path | None = None,
+    hmr: bool = True
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
@@ -217,7 +260,16 @@ def konnektor_pairs(
         raise ValueError(
             "Konnektor 'explicit' layout requires explicit edges; use rbfe.mapping_file."
         )
-    mapper = KartografAtomMapper()
+    
+    additional_mapping_filter_functions = [filter_element_changes]
+    # if set hmr, don't include atom with different number of H attached
+    if hmr:
+        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+
+    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
+                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
+                                additional_mapping_filter_functions=additional_mapping_filter_functions
+    )
     rmsd_scorer = MappingRMSDScorer()
 
     generator = generator_cls(mappers=mapper, scorer=rmsd_scorer)
@@ -257,6 +309,7 @@ def draw_explicit_konnektor_network(
     pairs: Sequence[Sequence[str] | tuple[str, str]],
     ligand_files: Mapping[str, Path],
     plot_path: Path,
+    hmr: bool = True,
 ) -> None:
     """Build an explicit Konnektor network from pairs and draw it."""
     try:
@@ -271,7 +324,15 @@ def draw_explicit_konnektor_network(
     except Exception:
         return
 
-    mapper = KartografAtomMapper()
+    additional_mapping_filter_functions = [filter_element_changes]
+    # if set hmr, don't include atom with different number of H attached
+    if hmr:
+        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+
+    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
+                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
+                                additional_mapping_filter_functions=additional_mapping_filter_functions
+    )
     rmsd_scorer = MappingRMSDScorer()
 
     comp_by_name: dict[str, SmallMoleculeComponent] = {}
