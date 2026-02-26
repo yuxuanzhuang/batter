@@ -102,4 +102,4 @@ def test_write_sim_files_non_loop_falls_back_to_renum_when_missing_dssp(tmp_path
 
     eqnpt_eq = (ctx.working_dir / "eqnpt_eq.in").read_text()
     assert "_non_loop_" not in eqnpt_eq
-    assert ":1-6" in eqnpt_eq
+    assert ":2-7" in eqnpt_eq
