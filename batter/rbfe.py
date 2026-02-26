@@ -296,6 +296,8 @@ def konnektor_pairs(
             fig = draw_ligand_network(network=network, title=getattr(network, "name", None))
             plot_path.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(plot_path, dpi=200)
+            with open(f"{plot_path.parent}/network.graphml", "w") as writer:
+                writer.write(network.to_graphml())
         except Exception:
             pass
 
@@ -380,6 +382,8 @@ def draw_explicit_konnektor_network(
         fig = draw_ligand_network(network=network, title=getattr(network, "name", None))
         plot_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(plot_path, dpi=200)
+        with open(f"{plot_path.parent}/network.graphml", "w") as writer:
+            writer.write(network.to_graphml())
     except Exception:
         return
 
