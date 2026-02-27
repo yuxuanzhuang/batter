@@ -112,6 +112,7 @@ def prepare_fe_handler(
             "residue_alt",
             "input_ref",
             "input_alt",
+            "atom_mapper",
         )
         if system.meta.get(key) is not None
     }
@@ -237,6 +238,7 @@ def prepare_fe_windows_handler(
             "residue_alt",
             "input_ref",
             "input_alt",
+            "atom_mapper",
         )
         if system.meta.get(key) is not None
     }

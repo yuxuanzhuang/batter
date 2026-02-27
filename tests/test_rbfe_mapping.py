@@ -115,6 +115,11 @@ def _install_fake_konnektor(monkeypatch, generator_classes: dict[str, type]) -> 
     lomap_gufe_bindings_mod = types.ModuleType("lomap.gufe_bindings")
     lomap_scorers_mod = types.ModuleType("lomap.gufe_bindings.scorers")
     lomap_scorers_mod.default_lomap_score = object()
+    class LomapAtomMapper:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+    lomap_gufe_bindings_mod.LomapAtomMapper = LomapAtomMapper
     lomap_gufe_bindings_mod.scorers = lomap_scorers_mod
     lomap_mod.gufe_bindings = lomap_gufe_bindings_mod
     monkeypatch.setitem(sys.modules, "lomap", lomap_mod)
@@ -193,4 +198,55 @@ def test_konnektor_pairs_explicit_requires_edges(monkeypatch, tmp_path: Path) ->
             ["L1", "L2"],
             {"L1": tmp_path / "l1.sdf", "L2": tmp_path / "l2.sdf"},
             layout="explicit",
+        )
+
+
+def test_konnektor_pairs_uses_lomap_mapper(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    class StarNetworkGenerator:
+        def __init__(self, *args, **kwargs):
+            seen["mapper"] = kwargs.get("mappers")
+
+        def generate_ligand_network(self, components):
+            class Network:
+                def __init__(self, comps):
+                    self.edges = [(comps[0], comps[1])]
+
+            return Network(components)
+
+    _install_fake_konnektor(monkeypatch, {"StarNetworkGenerator": StarNetworkGenerator})
+    monkeypatch.setattr("batter.rbfe._load_rdkit_mol", lambda path: object())
+
+    pairs = konnektor_pairs(
+        ["L1", "L2"],
+        {"L1": tmp_path / "l1.sdf", "L2": tmp_path / "l2.sdf"},
+        layout="star",
+        atom_mapper="lomap",
+    )
+    assert pairs == [("L1", "L2")]
+    assert type(seen["mapper"]).__name__ == "LomapAtomMapper"
+
+
+def test_konnektor_pairs_rejects_unknown_atom_mapper(monkeypatch, tmp_path: Path) -> None:
+    class StarNetworkGenerator:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def generate_ligand_network(self, components):
+            class Network:
+                def __init__(self, comps):
+                    self.edges = [(comps[0], comps[1])]
+
+            return Network(components)
+
+    _install_fake_konnektor(monkeypatch, {"StarNetworkGenerator": StarNetworkGenerator})
+    monkeypatch.setattr("batter.rbfe._load_rdkit_mol", lambda path: object())
+
+    with pytest.raises(ValueError, match="Unknown atom mapper"):
+        konnektor_pairs(
+            ["L1", "L2"],
+            {"L1": tmp_path / "l1.sdf", "L2": tmp_path / "l2.sdf"},
+            layout="star",
+            atom_mapper="bad_mapper",
         )

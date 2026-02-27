@@ -694,6 +694,10 @@ class RBFENetworkArgs(BaseModel):
         "default",
         description="Mapping strategy name (e.g., 'default', 'konnektor').",
     )
+    atom_mapper: Literal["kartograf", "lomap"] = Field(
+        "kartograf",
+        description="Atom mapper backend for RBFE pair mapping ('kartograf' or 'lomap').",
+    )
     konnektor_layout: Optional[str] = Field(
         None,
         description="Optional Konnektor layout name (e.g., 'star', 'radial', 'maximal') used when mapping='konnektor'.",
@@ -720,6 +724,13 @@ class RBFENetworkArgs(BaseModel):
             return None
         text = str(v).strip()
         return text.lower() if text else None
+
+    @field_validator("atom_mapper", mode="before")
+    @classmethod
+    def _lower_atom_mapper(cls, v):
+        if v is None:
+            return "kartograf"
+        return str(v).strip().lower()
 
     @model_validator(mode="after")
     def _validate_mapping(self) -> "RBFENetworkArgs":

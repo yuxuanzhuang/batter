@@ -34,9 +34,6 @@ from batter.config.simulation import SimulationConfig
 from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
-from kartograf.atom_mapper import KartografAtomMapper
-from kartograf import SmallMoleculeComponent
-from kartograf.atom_aligner import align_mol_shape
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
 
@@ -231,6 +228,16 @@ def _write_build_dry_no_water(build_pdb: Path, out_dry: Path) -> None:
                 continue
             fout.write(ln)
 
+def filter_exclude_hydroge_atoms(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Force a mapping to exclde H atoms"""
+    filtered_mapping = {}
+    for i, j in mapping.items():
+        if molA.GetAtomWithIdx(i).GetAtomicNum() == 1 or molB.GetAtomWithIdx(j).GetAtomicNum() == 1:
+            continue
+        filtered_mapping[i] = j
+    return filtered_mapping
 
 def filter_element_changes(
     molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
@@ -873,27 +880,60 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     rdmol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
     rdmol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
-    mol_ref = SmallMoleculeComponent.from_rdkit(rdmol_ref)
-    mol_alt = SmallMoleculeComponent.from_rdkit(rdmol_alt)
+    atom_mapper_name = str(extra.get("atom_mapper", "kartograf") or "kartograf").lower()
+    if atom_mapper_name not in {"kartograf", "lomap"}:
+        raise ValueError(
+            f"Unsupported RBFE atom_mapper '{atom_mapper_name}'. Choose 'kartograf' or 'lomap'."
+        )
 
-    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+    atom_mapping_obj = None
+    if atom_mapper_name == "lomap":
+        from gufe import SmallMoleculeComponent as GufeSmallMoleculeComponent
+        from lomap.gufe_bindings import LomapAtomMapper
 
-    # get mapper based on inital poses
-    additional_mapping_filter_functions = [filter_element_changes]
-    # if set hmr, don't include atom with different number of H attached
-    #if sim.hmr:
-    #    additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+        mol_ref_component = GufeSmallMoleculeComponent(rdmol_ref, name=str(res_ref))
+        mol_alt_component = GufeSmallMoleculeComponent(rdmol_alt, name=str(res_alt))
+        mapper = LomapAtomMapper(
+            time=20,
+            threed=True,
+            max3d=1.0,
+            element_change=False,
+            shift=True,
+        )
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
+        )
+        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+        # need to exclude hydrogens from the atom mapping
+        map_b_to_a = filter_exclude_hydroge_atoms(rdmol_ref, rdmol_alt, map_b_to_a)
 
-    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
-                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
-                                additional_mapping_filter_functions=additional_mapping_filter_functions
-    )
+    else:
+        from kartograf import SmallMoleculeComponent
+        from kartograf.atom_aligner import align_mol_shape
+        from kartograf.atom_mapper import KartografAtomMapper
 
-    # Get Mapping
-    kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
+        mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
+        mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
+        mol_alt_aligned = align_mol_shape(mol_alt_component, ref_mol=mol_ref_component)
 
-    atomMap = [(probe, ref) for ref, probe in sorted(kartograf_mapping.componentB_to_componentA.items())]
+        # keep current kartograf mapping settings
+        additional_mapping_filter_functions = [filter_element_changes]
+        mapper = KartografAtomMapper(
+            atom_max_distance=0.95,
+            map_hydrogens_on_hydrogens_only=True,
+            atom_map_hydrogens=False,
+            map_exact_ring_matches_only=True,
+            allow_partial_fused_rings=True,
+            allow_bond_breaks=False,
+            additional_mapping_filter_functions=additional_mapping_filter_functions,
+        )
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
+        )
+        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+
+    logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
+    atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
     if not atomMap:
         raise ValueError(f"No atom mapping found between {res_ref} and {res_alt}.")
 
@@ -969,32 +1009,51 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
 
     # use reference ligand, steer alt ligand to the atom mapped position.
+    rdmol_ref_work = Chem.Mol(rdmol_ref)
     ref_pos = u_lig.residues[0].atoms.positions
-    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
+    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
 
-    # set mol_alt_aligned common core positions to be exactly the same as mol_ref
-    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
-    mol_alt_aligned._rdkit = force_mapped_coords_and_minimize(
-                mol_ref._rdkit, mol_alt_aligned._rdkit, atom_map_1to2=atomMap, 
+    if atom_mapper_name == "kartograf":
+        from kartograf import SmallMoleculeComponent
+        from kartograf.atom_aligner import align_mol_shape
+
+        _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+        _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+        rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
+    else:
+        rdmol_alt_site = Chem.Mol(rdmol_alt)
+
+    rdmol_alt_site = force_mapped_coords_and_minimize(
+        rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
     )
     # save mol_alt_aligned as PDB
     alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
     alter_solvent_pdb = dest_dir / "alter_ligand_aligned_solvent.pdb"
     alter_merged_pdb = dest_dir / "alter_ligand_aligned.pdb"
-    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned._rdkit)
+    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_site)
     with alter_site_pdb.open("w") as f:
         f.write(pdb_block_m)
 
     ref_pos = u_lig.residues[1].atoms.positions
-    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
-    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
+    if atom_mapper_name == "kartograf":
+        from kartograf import SmallMoleculeComponent
+        from kartograf.atom_aligner import align_mol_shape
 
-    mol_alt_aligned._rdkit = force_mapped_coords_and_minimize(
-                mol_ref._rdkit, mol_alt_aligned._rdkit, atom_map_1to2=atomMap, 
+        _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+        _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+        rdmol_alt_solvent = align_mol_shape(
+            _mol_alt_solvent, ref_mol=_mol_ref_solvent
+        )._rdkit
+    else:
+        rdmol_alt_solvent = Chem.Mol(rdmol_alt)
+
+    rdmol_alt_solvent = force_mapped_coords_and_minimize(
+        rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
     )
 
     # save mol_alt_aligned as PDB
-    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned._rdkit)
+    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_solvent)
     with alter_solvent_pdb.open("w") as f:
         f.write(pdb_block_m)
 
@@ -1003,19 +1062,21 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
     u_alt.atoms.write(alter_merged_pdb.as_posix())
 
+    map_a_to_b = getattr(atom_mapping_obj, "componentA_to_componentB", None)
+    if map_a_to_b is None:
+        map_a_to_b = {ref: probe for ref, probe in atomMap}
     with open(dest_dir / "kartograf.json", "w") as f:
-        json.dump(kartograf_mapping.componentA_to_componentB, f)
-    
-    # serialize kartograf
-    with open(dest_dir / "kartograf.pkl", "wb") as f:
-        pickle.dump(kartograf_mapping, f)
+        json.dump(map_a_to_b, f)
 
     try:
-        # remove H from rdkit for asthetics
-        # kartograf_mapping.componentA._rdkit = Chem.RemoveHs(kartograf_mapping.componentA._rdkit)
-        # kartograf_mapping.componentB._rdkit = Chem.RemoveHs(kartograf_mapping.componentB._rdkit)
-        kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
-    except RuntimeError:
+        with open(dest_dir / "kartograf.pkl", "wb") as f:
+            pickle.dump(atom_mapping_obj, f)
+    except Exception:
+        pass
+
+    try:
+        atom_mapping_obj.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
+    except Exception:
         pass
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 

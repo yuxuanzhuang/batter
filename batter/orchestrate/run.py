@@ -152,6 +152,7 @@ def _build_rbfe_network_plan(
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
+    atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf")
     pairs: List[tuple[str, str]] = []
     if rbfe_cfg.mapping_file:
         pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
@@ -165,6 +166,7 @@ def _build_rbfe_network_plan(
                 {name: Path(lig_map[name]) for name in available},
                 layout=rbfe_cfg.konnektor_layout,
                 plot_path=config_dir / "rbfe_network.png",
+                atom_mapper=atom_mapper,
             )
             network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
             mapping_source["mapping"] = "konnektor"
@@ -177,6 +179,7 @@ def _build_rbfe_network_plan(
                     {name: Path(lig_map[name]) for name in available},
                     layout="star",
                     plot_path=config_dir / "rbfe_network.png",
+                    atom_mapper=atom_mapper,
                 )
                 network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
                 mapping_source["mapping"] = mapping_name
@@ -195,6 +198,7 @@ def _build_rbfe_network_plan(
             network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
             pairs = list(network.pairs)
             mapping_source["mapping"] = mapping_name
+    mapping_source["atom_mapper"] = atom_mapper
 
     payload = network.to_mapping()
     if bool(getattr(rbfe_cfg, "both_directions", False)):
@@ -919,6 +923,11 @@ def run_from_yaml(
             cleaned_pairs = pruned
 
         network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
+        atom_mapper = str(
+            payload.get("atom_mapper")
+            or getattr(rc.rbfe, "atom_mapper", "kartograf")
+            or "kartograf"
+        ).lower()
 
         # Build transformation systems under simulations/transformations/
         trans_root = run_dir / "simulations" / "transformations"
@@ -959,6 +968,7 @@ def run_from_yaml(
                 residue_alt=resn_alt,
                 input_ref=str(ref_dst),
                 input_alt=str(alt_dst),
+                atom_mapper=atom_mapper,
             )
 
             rbfe_children.append(

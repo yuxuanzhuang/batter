@@ -13,6 +13,44 @@ from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
 
+
+def _normalize_atom_mapper(atom_mapper: str | None) -> str:
+    mapper = str(atom_mapper or "kartograf").strip().lower()
+    if mapper not in {"kartograf", "lomap"}:
+        raise ValueError(
+            f"Unknown atom mapper '{atom_mapper}'. Available: kartograf, lomap"
+        )
+    return mapper
+
+
+def _build_konnektor_atom_mapper(atom_mapper: str, *, hmr: bool = True):
+    mapper_name = _normalize_atom_mapper(atom_mapper)
+    if mapper_name == "lomap":
+        from lomap import LomapAtomMapper
+
+        return LomapAtomMapper(
+            time=20,
+            threed=True,
+            max3d=1.5,
+            element_change=False,
+            shift=True,
+        )
+
+    from kartograf.atom_mapper import KartografAtomMapper
+
+    # keep current kartograf mapping behavior
+    additional_mapping_filter_functions = [filter_element_changes]
+    return KartografAtomMapper(
+        atom_max_distance=0.95,
+        map_hydrogens_on_hydrogens_only=True,
+        atom_map_hydrogens=False,
+        map_exact_ring_matches_only=True,
+        allow_partial_fused_rings=True,
+        allow_bond_breaks=False,
+        additional_mapping_filter_functions=additional_mapping_filter_functions,
+    )
+
+
 def filter_element_changes(
     molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
 ) -> dict[int, int]:
@@ -240,19 +278,19 @@ def konnektor_pairs(
     ligand_files: Mapping[str, Path],
     layout: str | None = None,
     plot_path: Path | None = None,
-    hmr: bool = True
+    hmr: bool = True,
+    atom_mapper: str = "kartograf",
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
     """
     try:
         from gufe import SmallMoleculeComponent
-        from kartograf.atom_mapper import KartografAtomMapper
         from lomap.gufe_bindings.scorers import default_lomap_score
 
     except ImportError as exc:
         raise RuntimeError(
-            "Konnektor mapping requires 'gufe' and 'kartograf' dependencies."
+            "Konnektor mapping requires 'gufe' and 'lomap' dependencies."
         ) from exc
 
 
@@ -262,17 +300,7 @@ def konnektor_pairs(
             "Konnektor 'explicit' layout requires explicit edges; use rbfe.mapping_file."
         )
     
-    # need to filter element changes
-    additional_mapping_filter_functions = [filter_element_changes]
-    # if set hmr, don't include atom with different number of H attached
-    # necessary?
-    # if hmr:
-    #    additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
-
-    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
-                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
-                                additional_mapping_filter_functions=additional_mapping_filter_functions
-    )
+    mapper = _build_konnektor_atom_mapper(atom_mapper, hmr=hmr)
 
     generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
 
@@ -314,29 +342,27 @@ def draw_explicit_konnektor_network(
     ligand_files: Mapping[str, Path],
     plot_path: Path,
     hmr: bool = True,
+    atom_mapper: str = "kartograf",
 ) -> None:
     """Build an explicit Konnektor network from pairs and draw it."""
+    mapper_name = _normalize_atom_mapper(atom_mapper)
     try:
         from konnektor.network_planners import ExplicitNetworkGenerator
         from konnektor.visualization import draw_ligand_network
         from gufe import SmallMoleculeComponent
         from lomap.gufe_bindings.scorers import default_lomap_score
-        from kartograf.atom_mapper import KartografAtomMapper
-        from kartograf.atom_aligner import align_mol_shape
-        from rdkit import Chem
-        from rdkit.Chem import rdDistGeom
+        align_mol_shape = None
+        if mapper_name == "kartograf":
+            from kartograf.atom_aligner import align_mol_shape as _align_mol_shape
+
+            align_mol_shape = _align_mol_shape
     except Exception:
         return
-    
-    # additional_mapping_filter_functions = [filter_element_changes]
-    # if set hmr, don't include atom with different number of H attached
-    # if hmr:
-    #     additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
 
-    mapper = KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False,
-                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False,
-                                # additional_mapping_filter_functions=additional_mapping_filter_functions
-    )
+    try:
+        mapper = _build_konnektor_atom_mapper(mapper_name, hmr=hmr)
+    except Exception:
+        return
 
     comp_by_name: dict[str, SmallMoleculeComponent] = {}
     edges = []
@@ -355,10 +381,11 @@ def draw_explicit_konnektor_network(
 
         comp_a = comp_by_name[name_a]
         comp_b = comp_by_name[name_b]
-        try:
-            comp_b = align_mol_shape(comp_b, ref_mol=comp_a)
-        except Exception:
-            pass
+        if align_mol_shape is not None:
+            try:
+                comp_b = align_mol_shape(comp_b, ref_mol=comp_a)
+            except Exception:
+                pass
         edges.append((comp_a, comp_b))
         nodes_by_name.setdefault(name_a, comp_a)
         nodes_by_name.setdefault(name_b, comp_b)
