@@ -115,10 +115,13 @@ def _install_fake_konnektor(monkeypatch, generator_classes: dict[str, type]) -> 
     lomap_gufe_bindings_mod = types.ModuleType("lomap.gufe_bindings")
     lomap_scorers_mod = types.ModuleType("lomap.gufe_bindings.scorers")
     lomap_scorers_mod.default_lomap_score = object()
+
     class LomapAtomMapper:
         def __init__(self, *args, **kwargs):
             self.args = args
             self.kwargs = kwargs
+
+    lomap_mod.LomapAtomMapper = LomapAtomMapper
     lomap_gufe_bindings_mod.LomapAtomMapper = LomapAtomMapper
     lomap_gufe_bindings_mod.scorers = lomap_scorers_mod
     lomap_mod.gufe_bindings = lomap_gufe_bindings_mod
@@ -224,8 +227,10 @@ def test_konnektor_pairs_uses_lomap_mapper(monkeypatch, tmp_path: Path) -> None:
         layout="star",
         atom_mapper="lomap",
     )
+    from lomap import LomapAtomMapper
+
     assert pairs == [("L1", "L2")]
-    assert type(seen["mapper"]).__name__ == "LomapAtomMapper"
+    assert isinstance(seen["mapper"], LomapAtomMapper)
 
 
 def test_konnektor_pairs_rejects_unknown_atom_mapper(monkeypatch, tmp_path: Path) -> None:
