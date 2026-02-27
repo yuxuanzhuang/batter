@@ -284,6 +284,21 @@ def filter_mismatched_attached_h_count(
         filtered[i] = j
     return filtered
 
+
+def _build_current_kartograf_atom_mapper_for_simprep_x():
+    """Return the Kartograf mapper currently used by RBFE simprep x-component."""
+    additional_mapping_filter_functions = [filter_element_changes]
+    return KartografAtomMapper(
+        atom_max_distance=0.95,
+        map_hydrogens_on_hydrogens_only=True,
+        atom_map_hydrogens=True,
+        map_exact_ring_matches_only=True,
+        allow_partial_fused_rings=True,
+        allow_bond_breaks=False,
+        additional_mapping_filter_functions=additional_mapping_filter_functions,
+    )
+
+
 def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem.Mol:
     """
     Set atomic coordinates for mol from xyz (shape: (n_atoms, 3)).
@@ -912,17 +927,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     else:
         mol_alt_aligned = align_mol_shape(mol_alt_component, ref_mol=mol_ref_component)
 
-        # keep current kartograf mapping settings
-        additional_mapping_filter_functions = [filter_element_changes]
-        mapper = KartografAtomMapper(
-            atom_max_distance=0.95,
-            map_hydrogens_on_hydrogens_only=True,
-            atom_map_hydrogens=True,
-            map_exact_ring_matches_only=True,
-            allow_partial_fused_rings=True,
-            allow_bond_breaks=False,
-            additional_mapping_filter_functions=additional_mapping_filter_functions,
-        )
+        mapper = _build_current_kartograf_atom_mapper_for_simprep_x()
         atom_mapping_obj = next(
             mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
         )
