@@ -1,5 +1,5 @@
 version: 1
-protocol: abfe
+protocol: rbfe
 backend: local
 
 create:
@@ -49,4 +49,4 @@ fe_sim:
   temperature: 298.15
 
 rbfe:
-  atom_mapper: kartograf
+  atom_mapper: lomap
