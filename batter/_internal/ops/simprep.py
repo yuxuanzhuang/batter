@@ -16,6 +16,8 @@ from loguru import logger
 import numpy as np
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
+import logging
+logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
 
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
@@ -34,6 +36,11 @@ from batter.config.simulation import SimulationConfig
 from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
+
+from kartograf import SmallMoleculeComponent
+from kartograf.atom_aligner import align_mol_shape
+from kartograf.atom_mapper import KartografAtomMapper
+from lomap import LomapAtomMapper
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
 
@@ -886,17 +893,15 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
             f"Unsupported RBFE atom_mapper '{atom_mapper_name}'. Choose 'kartograf' or 'lomap'."
         )
 
+    mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
+    mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
+    
     atom_mapping_obj = None
     if atom_mapper_name == "lomap":
-        from gufe import SmallMoleculeComponent as GufeSmallMoleculeComponent
-        from lomap.gufe_bindings import LomapAtomMapper
-
-        mol_ref_component = GufeSmallMoleculeComponent(rdmol_ref, name=str(res_ref))
-        mol_alt_component = GufeSmallMoleculeComponent(rdmol_alt, name=str(res_alt))
         mapper = LomapAtomMapper(
             time=20,
             threed=True,
-            max3d=1.0,
+            max3d=1.5,
             element_change=False,
             shift=True,
         )
@@ -904,16 +909,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
             mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
         )
         map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
-        # need to exclude hydrogens from the atom mapping
-        map_b_to_a = filter_exclude_hydroge_atoms(rdmol_ref, rdmol_alt, map_b_to_a)
-
     else:
-        from kartograf import SmallMoleculeComponent
-        from kartograf.atom_aligner import align_mol_shape
-        from kartograf.atom_mapper import KartografAtomMapper
-
-        mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
-        mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
         mol_alt_aligned = align_mol_shape(mol_alt_component, ref_mol=mol_ref_component)
 
         # keep current kartograf mapping settings
@@ -921,7 +917,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         mapper = KartografAtomMapper(
             atom_max_distance=0.95,
             map_hydrogens_on_hydrogens_only=True,
-            atom_map_hydrogens=False,
+            atom_map_hydrogens=True,
             map_exact_ring_matches_only=True,
             allow_partial_fused_rings=True,
             allow_bond_breaks=False,
@@ -931,6 +927,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
             mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
         )
         map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+    # need to exclude hydrogens from the atom mapping
+    map_b_to_a = filter_exclude_hydroge_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
 
     logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
     atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
@@ -1013,15 +1011,9 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_pos = u_lig.residues[0].atoms.positions
     rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
 
-    if atom_mapper_name == "kartograf":
-        from kartograf import SmallMoleculeComponent
-        from kartograf.atom_aligner import align_mol_shape
-
-        _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
-        _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
-        rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
-    else:
-        rdmol_alt_site = Chem.Mol(rdmol_alt)
+    _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+    _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+    rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
 
     rdmol_alt_site = force_mapped_coords_and_minimize(
         rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
@@ -1036,17 +1028,12 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     ref_pos = u_lig.residues[1].atoms.positions
     rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
-    if atom_mapper_name == "kartograf":
-        from kartograf import SmallMoleculeComponent
-        from kartograf.atom_aligner import align_mol_shape
-
-        _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
-        _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
-        rdmol_alt_solvent = align_mol_shape(
-            _mol_alt_solvent, ref_mol=_mol_ref_solvent
-        )._rdkit
-    else:
-        rdmol_alt_solvent = Chem.Mol(rdmol_alt)
+    
+    _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+    _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+    rdmol_alt_solvent = align_mol_shape(
+        _mol_alt_solvent, ref_mol=_mol_ref_solvent
+    )._rdkit
 
     rdmol_alt_solvent = force_mapped_coords_and_minimize(
         rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
@@ -1062,20 +1049,17 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
     u_alt.atoms.write(alter_merged_pdb.as_posix())
 
-    map_a_to_b = getattr(atom_mapping_obj, "componentA_to_componentB", None)
-    if map_a_to_b is None:
-        map_a_to_b = {ref: probe for ref, probe in atomMap}
-    with open(dest_dir / "kartograf.json", "w") as f:
-        json.dump(map_a_to_b, f)
+    with open(dest_dir / "mapping.json", "w") as f:
+        json.dump(map_b_to_a, f)
 
     try:
-        with open(dest_dir / "kartograf.pkl", "wb") as f:
+        with open(dest_dir / "mapping.pkl", "wb") as f:
             pickle.dump(atom_mapping_obj, f)
     except Exception:
         pass
 
     try:
-        atom_mapping_obj.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
+        atom_mapping_obj.draw_to_file(fname=dest_dir / "mapping.png")
     except Exception:
         pass
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")

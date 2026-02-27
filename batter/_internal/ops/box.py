@@ -833,15 +833,15 @@ def create_box_x(ctx: BuildContext) -> None:
 
     # get mapping file
 
-    kartograf_mapping = json.load(open(window_dir / "kartograf.json"))
+    mapping = json.load(open(window_dir / "mapping.json"))
     ref_site = u_full.select_atoms(f"resname {res_ref}").residues[0]
     ref_solvent = u_full.select_atoms(f"resname {res_ref}").residues[1]
     alt_site = u_full.select_atoms(f"resname {res_alt}").residues[0]
     alt_solvent = u_full.select_atoms(f"resname {res_alt}").residues[1]
 
     # select cc parts
-    ref_index_list = [int(i) for i in kartograf_mapping.keys()]
-    alt_index_list = [int(i) for i in kartograf_mapping.values()]
+    alt_index_list = [int(i) for i in mapping.keys()]
+    ref_index_list = [int(i) for i in mapping.values()]
     cc_indices_t0 = (
         np.concatenate(
             (
