@@ -71,7 +71,7 @@ For ``protocol: rbfe``, the ``rbfe`` block controls network planning and atom ma
 * ``rbfe.atom_mapper`` – atom mapper backend used for RBFE mapping:
 
   - ``kartograf`` (default), configured as ``KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False, map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False, additional_mapping_filter_functions=[filter_element_changes])`` during network planning.
-  - ``lomap``, using ``LomapAtomMapper(time=20, threed=True, max3d=1.0, element_change=False, shift=True)``.
+  - ``lomap``, using ``LomapAtomMapper(time=20, threed=True, max3d=1.5, element_change=False, shift=True)``.
 
 See :doc:`rbfe` for RBFE-specific examples.
 

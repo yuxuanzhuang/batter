@@ -98,7 +98,7 @@ RBFE atom mapping backend is controlled by ``rbfe.atom_mapper``:
      LomapAtomMapper(
          time=20,
          threed=True,
-         max3d=1.0,
+         max3d=1.5,
          element_change=False,
          shift=True,
      )
