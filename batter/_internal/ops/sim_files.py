@@ -359,6 +359,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
             "_lig_name_": mol,
             "_enable_infe_": infe_flag,
             "disang_file": "disang",
+            "_non_loop_": non_loop_mask,
         },
     )
     _sub_write(
@@ -369,6 +370,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
             "_lig_name_": mol,
             "_enable_infe_": infe_flag,
             "disang_file": "disang",
+            "_non_loop_": non_loop_mask,
         },
     )
 
