@@ -151,7 +151,7 @@ The orchestrator enforces that both are positive before pipeline execution.
 Practical constraints
 ---------------------
 
-- Water boxes require ``buffer_x/y/z >= 15 Å``; the validator will reject smaller
+- Water boxes require ``buffer_x/y/z >= 10 Å``; the validator will reject smaller
   padding to avoid vacuum artifacts. For membranes, automatic Z padding is applied if
   needed.
 - Resume semantics rely on ``run_id`` plus the stored configuration signature (only

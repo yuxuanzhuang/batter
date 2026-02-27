@@ -100,10 +100,22 @@ Re-run FE analysis for a saved execution::
 
    batter fe analyze work/adrb2 run-20240101 --ligand LIG1 --workers 4
 
+To analyze every run under ``work/adrb2/executions`` (instead of one run), omit
+``run_id``::
+
+   batter fe analyze work/adrb2 --workers 4
+
 Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
-production steps in each window.
-Pass ``--no-overwrite`` to skip ligands that already have analysis outputs.
-Pass ``--no-raise-on-error`` to continue even if a ligand's analysis fails.
+production steps in each window. By default existing analysis outputs are preserved;
+pass ``--overwrite`` to regenerate them. Pass ``--n-bootstrap`` to request MBAR
+bootstrap resamples and ``--no-raise-on-error`` to continue if one ligand fails.
+
+Re-run FE analysis for exactly one ligand folder::
+
+   batter fe ligand-analyze work/adrb2/executions/run-20240101/simulations/LIG1 --overwrite
+
+``ligand-analyze`` also accepts directories outside ``executions/<run_id>`` as long
+as they contain an ``fe/`` folder.
 
 Clone Executions
 ================
