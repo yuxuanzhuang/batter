@@ -12,7 +12,7 @@ from batter.config.utils import (
     coerce_yes_no,
     expand_env_vars,
     normalize_optional_path,
-    sanitize_ligand_name,
+    sanitize_user_ligand_name,
 )
 
 # ----------------------------- SLURM ---------------------------------
@@ -271,7 +271,7 @@ class CreateArgs(BaseModel):
                 p = normalize_optional_path(s)
                 if p is None:
                     continue
-                d[sanitize_ligand_name(p.stem)] = p
+                d[sanitize_user_ligand_name(p.stem)] = p
             return d
         # mapping
         if isinstance(v, Mapping):
@@ -280,7 +280,7 @@ class CreateArgs(BaseModel):
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue
-                out[sanitize_ligand_name(str(k))] = path_obj
+                out[sanitize_user_ligand_name(str(k))] = path_obj
             return out
         # iterable of paths
         if isinstance(v, Iterable):
@@ -289,7 +289,7 @@ class CreateArgs(BaseModel):
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue
-                d[sanitize_ligand_name(path_obj.stem)] = path_obj
+                d[sanitize_user_ligand_name(path_obj.stem)] = path_obj
             return d
         raise ValueError(f"Unsupported ligand_paths type: {type(v).__name__}")
 
