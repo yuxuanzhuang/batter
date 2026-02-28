@@ -9,7 +9,7 @@ Equilibrate, NPT.
   irest = 1,
   ntpr = 2000,
   ntwr = 2000,
-  ntwx = 2000,
+  ntwx = 50000,
   ioutfm = 1,
   iwrap = 1,
   ntf = 1,

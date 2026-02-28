@@ -450,19 +450,11 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     else:
         full_pdb = windows_dir / "full.pdb"
         vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
-        vac_pdb = windows_dir / "vac.pdb"  # still needed below to find last_lig
+        vac_pdb = windows_dir / "vac.pdb"
 
-    # find *last* residue index of this ligand in vac.pdb
-    last_lig: Optional[str] = None
-    with vac_pdb.open("rt") as f:
-        for line in f:
-            rec = line[:6].strip()
-            if rec not in ("ATOM", "HETATM"):
-                continue
-            if line[17:20].strip().lower() == mol.lower():
-                last_lig = line[22:26].strip()
-    if last_lig is None:
-        raise ValueError(f"No ligand residue matching '{mol}' found in {vac_pdb.name}")
+    u = mda.Universe(vac_pdb.as_posix())
+    mol_ref_ag = u.select_atoms(f'resname {mol_ref}')
+    ref_resid = mol_ref_ag.resids[0]
 
     amber_dir = ctx.amber_dir
 
@@ -470,8 +462,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
 
     if dec_method == "sdr":
-        mk2 = int(last_lig)
-        mk1 = mk2 - 1
+        mk1 = ref_resid
+        mk2 = mk1 + 1
         template_mdin = amber_dir / "mdin-unorest"
         template_mini = amber_dir / "mini-unorest"
 
@@ -612,7 +604,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 "BuildContext.extra missing 'infe'. Ensure BaseBuilder sets this flag."
             )
         infe_flag = 1 if extra_ctx["infe"] else 0
-        mk1 = int(last_lig)
+        mk1 = ref_resid
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
@@ -814,25 +806,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
         vac_pdb = windows_dir / "vac.pdb"
 
-    # Find residue indices for the reference and alternate ligands in vac.pdb
-    if not vac_pdb.exists():
-        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-    ref_resid = None
-    with vac_pdb.open("rt") as f:
-        for line in f:
-            rec = line[:6].strip()
-            if rec not in ("ATOM", "HETATM"):
-                continue
-            resname = line[17:20].strip()
-            resid = line[22:26].strip()
-            if resname.lower() == mol_ref.lower():
-                ref_resid = resid
-                break
-    if ref_resid is None:
-        raise ValueError(
-            f"Could not resolve ligand residue ids in {vac_pdb.name} "
-            f"(ref={mol_ref} -> {ref_resid})."
-        )
+    u = mda.Universe(vac_pdb.as_posix())
+    mol_ref_ag = u.select_atoms(f'resname {mol_ref}')
+    ref_resid = mol_ref_ag.resids[0]
 
     mk1 = f':{int(ref_resid)},{int(ref_resid)+3}'
     mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
