@@ -59,6 +59,22 @@ Lambda schedules can be customized per component using ``fe_sim.component_lambda
 inherits the top-level ``fe_sim.lambdas`` list. Values can be written as YAML lists
 or comma/space separated strings; validation ensures ascending order.
 
+RBFE mapping options
+--------------------
+
+For ``protocol: rbfe``, the ``rbfe`` block controls network planning and atom mapping.
+
+* ``rbfe.mapping`` – mapping strategy (for example ``default`` or ``konnektor``).
+* ``rbfe.mapping_file`` – explicit pair list file; takes precedence over ``mapping``.
+* ``rbfe.konnektor_layout`` – optional Konnektor layout when ``mapping: konnektor``.
+* ``rbfe.both_directions`` – when true, run both directions for each mapped edge.
+* ``rbfe.atom_mapper`` – atom mapper backend used for RBFE mapping:
+
+  - ``kartograf`` (default), configured as ``KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False, map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False, additional_mapping_filter_functions=[filter_element_changes])`` during network planning.
+  - ``lomap``, using ``LomapAtomMapper(time=20, threed=True, max3d=1.5, element_change=False, shift=True)``.
+
+See :doc:`rbfe` for RBFE-specific examples.
+
 Component-Specific Inputs
 -------------------------
 

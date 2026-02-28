@@ -897,8 +897,10 @@ def create_box_y(ctx: BuildContext) -> None:
     buffer_x = float(sim.buffer_x)
     buffer_y = float(sim.buffer_y)
     buffer_z = float(sim.buffer_z)
-    if buffer_x < 15 or buffer_y < 15 or buffer_z < 15:
-        raise ValueError(f"For water systems, buffer_x/y/z must be ≥ 15 Å; got {buffer_x}/{buffer_y}/{buffer_z}.")
+    if buffer_x < 10 or buffer_y < 10 or buffer_z < 10:
+        raise ValueError(
+            f"For water systems, buffer_x/y/z must be ≥ 10 Å; got {buffer_x}/{buffer_y}/{buffer_z}."
+        )
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
     water_model = str(sim.water_model).upper()

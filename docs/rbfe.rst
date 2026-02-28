@@ -25,6 +25,7 @@ Minimal RBFE configuration
 
    rbfe:
      mapping: default
+     atom_mapper: kartograf
 
 If you omit ``rbfe.mapping`` (and do not provide files), BATTER uses
 ``default``.
@@ -62,8 +63,53 @@ When using ``konnektor``, you can optionally set ``rbfe.konnektor_layout``.
 
    rbfe:
      mapping: konnektor
+     atom_mapper: kartograf
      konnektor_layout: star
      both_directions: false
+
+Atom mapper backends
+--------------------
+
+RBFE atom mapping backend is controlled by ``rbfe.atom_mapper``:
+
+* ``kartograf`` (default) – current BATTER Kartograf-based mapping behavior:
+
+  .. code-block:: python
+
+     # network planning mapper (rbfe.py)
+     KartografAtomMapper(
+         atom_max_distance=0.95,
+         map_hydrogens_on_hydrogens_only=True,
+         atom_map_hydrogens=False,
+         map_exact_ring_matches_only=True,
+         allow_partial_fused_rings=True,
+         allow_bond_breaks=False,
+         additional_mapping_filter_functions=[filter_element_changes],
+     )
+
+  During RBFE transformation setup (``_internal/ops/simprep.py``), BATTER uses
+  the same Kartograf settings except ``atom_map_hydrogens=True`` and then removes
+  hydrogen pairs from the final core mapping.
+
+* ``lomap`` – uses:
+
+  .. code-block:: python
+
+     LomapAtomMapper(
+         time=20,
+         threed=True,
+         max3d=1.5,
+         element_change=False,
+         shift=True,
+     )
+
+Example:
+
+.. code-block:: yaml
+
+   rbfe:
+     mapping: konnektor
+     atom_mapper: lomap
 
 Bidirectional RBFE edges
 ------------------------

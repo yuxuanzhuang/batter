@@ -36,9 +36,13 @@ def _build_konnektor_atom_mapper(atom_mapper: str, *, hmr: bool = True):
             shift=True,
         )
 
+    return _build_current_kartograf_atom_mapper_for_network()
+
+
+def _build_current_kartograf_atom_mapper_for_network():
+    """Return the Kartograf mapper currently used for RBFE network generation."""
     from kartograf.atom_mapper import KartografAtomMapper
 
-    # keep current kartograf mapping behavior
     additional_mapping_filter_functions = [filter_element_changes]
     return KartografAtomMapper(
         atom_max_distance=0.95,

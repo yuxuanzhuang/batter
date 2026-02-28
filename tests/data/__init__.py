@@ -27,6 +27,8 @@ __all__ = [
     "MABFE_GAFF2_END2END_YAML",
     "MASFE_YAML",
     "MD_YAML",
+    "RBFE_KARTOGRAF_YAML",
+    "RBFE_LOMAP_YAML",
 ]
 
 DATA_DIR = Path(__file__).resolve().parent
@@ -75,3 +77,5 @@ MABFE_END2END_YAML = data_path("mabfe_end2end.yaml")
 MABFE_GAFF2_END2END_YAML = data_path("mabfe_gaff2_end2end.yaml")
 MASFE_YAML = data_path("masfe_nofe_type.yaml")
 MD_YAML = data_path("md.yaml")
+RBFE_KARTOGRAF_YAML = data_path("rbfe_kartograf.yaml")
+RBFE_LOMAP_YAML = data_path("rbfe_lomap.yaml")

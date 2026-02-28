@@ -270,3 +270,35 @@ fe_sim:
         run_from_yaml(run_yaml)
 
     assert seen["max_active_jobs"] == 7
+
+
+@pytest.mark.heavy
+def test_cli_rbfe_lomap_dry_run(tmp_path: Path) -> None:
+    """
+    End-to-end RBFE dry-run smoke test for the LoMap atom mapper configuration.
+
+    This test is skipped by default. Enable with:
+        BATTER_TEST_RUN_CLI=1
+    """
+    run_yaml = DATA_DIR / "rbfe_lomap.yaml"
+    out_dir = tmp_path / "rbfe_lomap_out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    proc = subprocess.run(
+        [
+            "batter",
+            "run",
+            "--dry-run",
+            str(run_yaml),
+            "--output-folder",
+            str(out_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if proc.returncode != 0:
+        sys.stderr.write(f"\n--- STDERR (rbfe_lomap.yaml) ---\n{proc.stderr}\n")
+        sys.stderr.write(f"\n--- STDOUT (rbfe_lomap.yaml) ---\n{proc.stdout}\n")
+
+    assert proc.returncode == 0
