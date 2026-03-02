@@ -101,7 +101,11 @@ if (( remaining_steps > 0 )); then
     fi
     run_ps=$(awk -v s="$run_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-    seg_idx=$((last_idx + 1))
+    if (( last_idx < 0 )); then
+        seg_idx=1
+    else
+        seg_idx=$((last_idx + 1))
+    fi
     first_run=$([[ $last_idx -lt 0 ]] && echo 1 || echo 0)
 
     # Build per-window mdin and groupfile for this segment

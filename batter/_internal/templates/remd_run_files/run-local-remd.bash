@@ -151,7 +151,11 @@ if (( remaining_steps > 0 )); then
     run_exchg=$(( (run_steps + chunk_steps - 1) / chunk_steps ))
     (( run_exchg > 0 )) || { echo "[ERROR] Computed run_exchg=0"; exit 1; }
 
-    seg_idx=$((last_idx + 1))
+    if (( last_idx < 0 )); then
+        seg_idx=1
+    else
+        seg_idx=$((last_idx + 1))
+    fi
     first_run=$([[ $last_idx -lt 0 ]] && echo 1 || echo 0)
 
     # Build per-window mdin and groupfile for this segment

@@ -417,15 +417,9 @@ write_mdin_current() {
     local text
     text=$(<"$tmpl")
 
-    if [[ $first_run -eq 1 ]]; then
-        text=$(echo "$text" \
-            | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' \
-            | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
-    else
-        text=$(echo "$text" \
-            | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' \
-            | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
-    fi
+    text=$(echo "$text" \
+        | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' \
+        | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
 
     text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
     echo "$text"
