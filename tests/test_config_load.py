@@ -116,6 +116,13 @@ def test_create_args_requires_ligand_spec():
         CreateArgs()
 
 
+def test_create_args_rejects_reserved_ligand_name(tmp_path: Path) -> None:
+    lig = tmp_path / "lig.sdf"
+    lig.write_text("dummy\n")
+    with pytest.raises(ValidationError, match="reserved"):
+        CreateArgs(system_name="sys", ligand_paths={"transformations": lig})
+
+
 def test_fesim_args_invalid_remd_type():
     with pytest.raises(ValidationError, match="fe_sim\\.remd"):
         FESimArgs(remd="maybe")
