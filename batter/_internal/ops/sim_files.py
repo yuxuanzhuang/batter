@@ -453,7 +453,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         vac_pdb = windows_dir / "vac.pdb"
 
     u = mda.Universe(vac_pdb.as_posix())
-    mol_ref_ag = u.select_atoms(f'resname {mol_ref}')
+    mol_ref_ag = u.select_atoms(f'resname {mol}')
     ref_resid = mol_ref_ag.resids[0]
 
     amber_dir = ctx.amber_dir
