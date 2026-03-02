@@ -31,7 +31,7 @@ def _collect_backbone_heavy_and_lig(vac_pdb: Path, lig_res: str, offset: int = 0
 
 
 def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]:
-    """Load 0-based (ref_indices, alt_indices) from kartograf.json mapping."""
+    """Load 0-based (ref_indices, alt_indices) from RBFE mapping JSON."""
     if not mapping_path.exists():
         return [], []
     try:
@@ -804,7 +804,7 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     _, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
 
     # Use common-core atoms for ligand COM restraints when RBFE mapping is present.
-    mapping_path = ctx.equil_dir / "kartograf.json"
+    mapping_path = ctx.equil_dir / "mapping.json"
     ref_cc_indices, alt_cc_indices = _load_common_core_indices(mapping_path)
     if ref_cc_indices:
         cc_lig_1 = _collect_common_core_heavy_ligand(vac_pdb, lig_res, 1, ref_cc_indices)

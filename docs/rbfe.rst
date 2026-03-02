@@ -165,6 +165,15 @@ Transformation systems are created under:
 
 * ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/``
 
+For each transformation pair, BATTER stores atom-mapping artifacts in:
+
+* ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/fe/x/x-1/mapping.json``
+* ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/fe/x/x-1/mapping.pkl``
+* ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/fe/x/x-1/mapping.png``
+
+These generic ``mapping.*`` filenames are used for both ``kartograf`` and
+``lomap`` atom-mapper backends.
+
 Pipeline notes
 --------------
 

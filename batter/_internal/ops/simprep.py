@@ -16,8 +16,6 @@ from loguru import logger
 import numpy as np
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
-import logging
-logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
 
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext

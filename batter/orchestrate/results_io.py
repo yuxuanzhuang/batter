@@ -241,7 +241,7 @@ def save_fe_records(
             repo.save(rec, copy_from=results_dir)
             if is_rbfe:
                 _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
-                _copy_kartograf_artifacts(
+                _copy_mapping_artifacts(
                     child.root / "fe" / "x" / "x-1",
                     repo.ligand_dir(run_id, lig_name),
                 )
@@ -389,15 +389,16 @@ def _copy_equil_artifacts(
         )
 
 
-def _copy_kartograf_artifacts(src_dir: Path, dest_root: Path) -> None:
-    """Copy Kartograf mapping artifacts if present in the source directory."""
+def _copy_mapping_artifacts(src_dir: Path, dest_root: Path) -> None:
+    """Copy RBFE atom-mapping artifacts from the source directory."""
     if not src_dir.exists():
         return
     dest_dir = dest_root / "Results"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for src in src_dir.glob("kartograf*"):
+    for src_name in ("mapping.json", "mapping.pkl", "mapping.png"):
+        src = src_dir / src_name
         if src.is_file():
-            shutil.copy2(src, dest_dir / src.name)
+            shutil.copy2(src, dest_dir / src_name)
 
 
 def _copy_rbfe_network_plot(
