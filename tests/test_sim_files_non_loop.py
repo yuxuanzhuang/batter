@@ -103,3 +103,63 @@ def test_write_sim_files_non_loop_falls_back_to_renum_when_missing_dssp(tmp_path
     eqnpt_eq = (ctx.working_dir / "eqnpt_eq.in").read_text()
     assert "_non_loop_" not in eqnpt_eq
     assert ":2-7" in eqnpt_eq
+
+
+@pytest.mark.parametrize(
+    ("resid_shift", "expected_mask"),
+    [
+        (1, "(:2-3) & @CA"),
+        (2, "(:3-4) & @CA"),
+    ],
+)
+def test_maybe_extra_mask_applies_residue_shift(
+    tmp_path: Path, resid_shift: int, expected_mask: str
+) -> None:
+    work = tmp_path / "work"
+    build_dir = tmp_path / "build"
+    (work / "build_files").mkdir(parents=True, exist_ok=True)
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    (work / "full.pdb").write_text(
+        "ATOM      1  CA  ALA A  10       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  CA  ALA A  11       1.000   0.000   0.000  1.00  0.00           C\n"
+        "TER\nEND\n"
+    )
+    (work / "build_files" / "protein_renum.txt").write_text(
+        "ALA A 10 ALA 1\n"
+        "ALA A 11 ALA 2\n"
+    )
+
+    ctx = SimpleNamespace(
+        extra={"extra_restraints": "resid 10:11", "extra_restraint_fc": 12.5},
+        win=-1,
+        equil_dir=work,
+        build_dir=build_dir,
+    )
+
+    mask, force_const = sim_files._maybe_extra_mask(ctx, work, resid_shift=resid_shift)
+
+    assert mask == expected_mask
+    assert force_const == pytest.approx(12.5)
+    saved = json.loads((work / "extra_restraints.json").read_text())
+    assert saved["resid_shift"] == resid_shift
+
+
+def test_maybe_extra_mask_reuses_equil_json_for_non_minus_one_windows(tmp_path: Path) -> None:
+    equil_dir = tmp_path / "equil"
+    equil_dir.mkdir(parents=True, exist_ok=True)
+    (equil_dir / "extra_restraints.json").write_text(
+        json.dumps({"mask": "(:9) & @CA", "force_const": 9.0})
+    )
+
+    ctx = SimpleNamespace(
+        extra={"extra_restraints": "resid 10"},
+        win=0,
+        equil_dir=equil_dir,
+        build_dir=tmp_path / "build",
+    )
+    mask, force_const = sim_files._maybe_extra_mask(
+        ctx, tmp_path / "unused", resid_shift=2
+    )
+    assert mask == "(:9) & @CA"
+    assert force_const == pytest.approx(9.0)

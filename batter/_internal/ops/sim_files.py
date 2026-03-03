@@ -203,9 +203,12 @@ def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
     patch_mdin_file(batch_template, prefix, add_numexchg=False)
 
 
-def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], float]:
+def _maybe_extra_mask(
+    ctx: BuildContext, work: Path, *, resid_shift: int = 0
+) -> tuple[Optional[str], float]:
     """
     Build '(:a-b,c-... ) & @CA' + force constant from ctx.extra.
+    Optionally shifts mapped residue ids (Amber numbering offset).
     Returns (mask or None, force_const).
     """
     extra = ctx.extra or {}
@@ -255,6 +258,8 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
         names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
     amber_resids = ren.loc[ren["old_resid"].isin(sel.residues.resids), "new_resid"]
+    if resid_shift:
+        amber_resids = amber_resids.astype(int) + int(resid_shift)
     mask_ranges = format_ranges(amber_resids)
     if not mask_ranges:
         logger.warning("[extra_restraints] No mapped residues after renumber; skip.")
@@ -263,7 +268,7 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
     mask = f"(:{mask_ranges}) & @CA"
     # save as json
     json.dump(
-        {"mask": mask, "force_const": force_const},
+        {"mask": mask, "force_const": force_const, "resid_shift": int(resid_shift)},
         (work / "extra_restraints.json").open("wt"),
     )
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
@@ -382,7 +387,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         total_steps = 0
 
     # compute extra mask once for equil (applied to template)
-    extra_mask, extra_fc = _maybe_extra_mask(ctx, work)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, work, resid_shift=1)
 
     text = (
         base_text.replace("_temperature_", f"{temperature}")
@@ -459,7 +464,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     amber_dir = ctx.amber_dir
 
     # compute extra mask once for this window root; applied to mdin-XX only
-    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
 
     if dec_method == "sdr":
         mk1 = ref_resid
@@ -823,7 +828,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     amber_dir = ctx.amber_dir
 
     # optional extra restraints (only applied to mdin-template)
-    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
 
     template_mdin = amber_dir / "mdin-ex"
     if not template_mdin.exists():
