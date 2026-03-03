@@ -505,6 +505,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            # also save velocity info
+            mdin.write(f" ntwv = -1,\n")
             # run dynlmb
             mdin.write(f" dynlmb = {dynlmb},\n")
             mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
@@ -865,6 +867,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
             fout.write(line)
     with eq_path.open("a") as mdin:
+        # also write velocity info
+        mdin.write(f" ntwv = -1,\n")
         # run dynlmb
         mdin.write(f" dynlmb = {dynlmb},\n")
         mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
