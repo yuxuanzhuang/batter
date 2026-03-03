@@ -122,8 +122,8 @@ if [[ $only_eq -eq 1 ]]; then
         done
     fi
 
-    # only do it if N_WINDOWS is not 0
-    if [[ NWINDOWS -gt 0 ]]; then
+    # only do it if N_WINDOWS is not 1
+    if [[ NWINDOWS -gt 1 ]]; then
         print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Minimization for FEP" "$log_file" mini.in.rst7
         if ! check_min_energy "mini.in.out" -1000; then
