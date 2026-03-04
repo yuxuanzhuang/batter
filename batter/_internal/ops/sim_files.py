@@ -821,8 +821,14 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
     # load scmask.json for scmk1, scmk2
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
-    scmk1 = scmk_dict['scmk1']
-    scmk2 = scmk_dict['scmk2']
+    scmk1_all_indice = scmk_dict['scmk1_all_indices']
+    scmk1_exclude_indice = scmk_dict['scmk1_cc_indices']
+    scmk2_all_indice = scmk_dict['scmk2_all_indices']
+    scmk2_exclude_indice = scmk_dict['scmk2_cc_indices']
+
+    scmk1 = f'{scmk1_all_indice} & (!{scmk1_exclude_indice} | @H=)'
+    scmk2 = f'{scmk2_all_indice} & (!{scmk2_exclude_indice} | @H=)'
+
     noshakemk = f':{int(ref_resid)},{int(ref_resid)+1},{int(ref_resid)+2},{int(ref_resid)+3}'
 
     amber_dir = ctx.amber_dir
@@ -852,13 +858,16 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "dt = " in line:
                 line = "  dt = 0.002,\n"
             elif "restraint_wt = " in line:
-                line = f"  restraint_wt = 0.2,\n"
+                line = f"  restraint_wt = 1,\n"
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
-                    line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol_ref}) | :{mol_alt} ) & !@H='\n"
+                    # restraining 1) non loop C-alpha 2) common core of ligands
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
                 else:
-                    line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol_ref} | :{mol_alt} | {rm} ) & !@H='\n"
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                if len(line) > 256:
+                    logger.warning(f"restraintmask line too long for AMBER: {len(line)} but proceeding")
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))

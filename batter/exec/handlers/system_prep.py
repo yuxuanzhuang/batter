@@ -414,14 +414,42 @@ class _SystemPrepRunner:
         u_merged.dimensions = box_dim
 
         charmm_2_std_resname_map = {
-            "HIS": "HIE",   # generic HIS → HID (or change to HIE if that’s your default)
+            "HIS": "HIE",   # generic HIS → HIE
             "HSD": "HID",   # δ-protonated
             "HSE": "HIE",   # ε-protonated
             "HIP": "HIP",   # doubly protonated
         }
+        def infer_histidine_resname(res) -> str:
+            """
+            Infer HID/HIE/HIP from explicit hydrogens, if present.
+            Falls back to HIE when ambiguous or hydrogens absent.
+            """
+            # Atom names are the most informative for histidine protonation
+            atom_names = {a.name.upper() for a in res.atoms}
+
+            # Common naming across force fields: HD1 on ND1, HE2 on NE2
+            has_hd1 = "HD1" in atom_names
+            has_he2 = "HE2" in atom_names
+
+            if has_hd1 and has_he2:
+                logger.warning(f"Found both HD1 and HE2 in residue {res.resname} {res.resid}; setting to HIP")
+                return "HIP"
+            if has_hd1:
+                return "HID"
+            if has_he2:
+                return "HIE"
+
+            # If hydrogens exist but aren't named HD1/HE2, we can't reliably infer
+            # (or hydrogens are absent entirely). Default to HIE.
+            return "HIE"
+
         # replace CHARMM specific resname
         for res in u_merged.residues:
-            new_name = charmm_2_std_resname_map.get(res.resname, res.resname)
+            # if the protein contains hydrogen and use a generic HIS name, get the correct resname based on protonation
+            if res.resname == "HIS":
+                new_name = infer_histidine_resname(res)
+            else:
+                new_name = charmm_2_std_resname_map.get(res.resname, res.resname)
             res.resname = new_name
 
         charmm_2_std_resname_map = {

@@ -60,55 +60,18 @@ def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
 
 
 def indices_to_selection(
-    include: Iterable[int],
-    exclude: Iterable[int] = (),
-    *,
-    prefix: str = "@",
-    negate_op: str = "!",
-    and_op: str = "&",
+    indices: Iterable[int],
 ) -> str:
-    """Build a selection string from include/exclude indices with merged ranges.
-
-    Parameters
-    ----------
-    include : Iterable[int]
-        Indices to include.
-    exclude : Iterable[int], optional
-        Indices to exclude. Indices not present in `include` are ignored.
-    prefix : str, optional
-        Prefix for the include expression (default '@', e.g., AMBER-style atom selection).
-    negate_op : str, optional
-        Negation operator (default '!').
-    and_op : str, optional
-        Conjunction operator (default '&').
-
-    Returns
-    -------
-    str
-        Selection string, e.g. '@1-10 & ! (@3-4,7)'.
-
-    Raises
-    ------
-    ValueError
-        If `include` is empty.
+    """Build a selection string from include or exclude indices
     """
-    inc = sorted(set(include))
-    exc = sorted(set(exclude))
+    inc = sorted(set(indices))
     if not inc:
-        raise ValueError("include must be non-empty")
+        raise ValueError("indices must be non-empty")
 
     inc_ranges = _merge_consecutive(inc)
     inc_str = _ranges_to_str(inc_ranges)
 
-    # Only exclude indices that are actually in include
-    inc_set = set(inc)
-    exc_in_inc = [i for i in set(exc) if i in inc_set]
-    if not exc_in_inc:
-        return f"{prefix}{inc_str}"
-
-    exc_ranges = _merge_consecutive(exc_in_inc)
-    exc_str = _ranges_to_str(exc_ranges)
-    return f"{prefix}{inc_str} {and_op} {negate_op} ({prefix}{exc_str})"
+    return f"@{inc_str}"
 
 
 def _cp(src: Path, dst: Path) -> None:
@@ -842,11 +805,14 @@ def create_box_x(ctx: BuildContext) -> None:
     # select cc parts
     alt_index_list = [int(i) for i in mapping.keys()]
     ref_index_list = [int(i) for i in mapping.values()]
+    # include H here and exclude in the string to avoid the string being too long
     cc_indices_t0 = (
         np.concatenate(
             (
                 ref_site.atoms[ref_index_list].indices,
+                ref_site.atoms.select_atoms('type H').indices,
                 alt_solvent.atoms[alt_index_list].indices,
+                alt_solvent.atoms.select_atoms('type H').indices,
             )
         )
         + 1
@@ -855,7 +821,9 @@ def create_box_x(ctx: BuildContext) -> None:
         np.concatenate(
             (
                 ref_solvent.atoms[ref_index_list].indices,
+                ref_solvent.atoms.select_atoms('type H').indices,
                 alt_site.atoms[alt_index_list].indices,
+                alt_site.atoms.select_atoms('type H').indices,
             )
         )
         + 1
@@ -868,11 +836,11 @@ def create_box_x(ctx: BuildContext) -> None:
     )
 
     dict_sc_mask = {
-        "scmk1": indices_to_selection(all_indices_t0, cc_indices_t0),
-        "scmk2": indices_to_selection(all_indices_t1, cc_indices_t1),
+        "scmk1_all_indices": indices_to_selection(all_indices_t0),
+        "scmk1_cc_indices": indices_to_selection(cc_indices_t0),
+        "scmk2_all_indices": indices_to_selection(all_indices_t1),
+        "scmk2_cc_indices": indices_to_selection(cc_indices_t1),
     }
-    logger.debug(f"scmk1: {dict_sc_mask['scmk1']}")
-    logger.debug(f"scmk2: {dict_sc_mask['scmk2']}")
 
     with open(window_dir / "scmask.json", "w") as f:
         json.dump(dict_sc_mask, f)
