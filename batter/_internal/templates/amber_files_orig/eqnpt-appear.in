@@ -26,7 +26,7 @@ Equil re-appear ligand
   nmropt = 1,
   pencut = -1,
   ntr = 1,
-  restraint_wt = 50.0,
+  restraint_wt = 10,
   restraintmask = '(@CA | :_lig_name_) & !@H=',
   mcwat = _enable_mcwat_,
   nmd = 1000,

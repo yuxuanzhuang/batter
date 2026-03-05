@@ -12,7 +12,7 @@ from batter.config.utils import (
     coerce_yes_no,
     expand_env_vars,
     normalize_optional_path,
-    sanitize_ligand_name,
+    sanitize_user_ligand_name,
 )
 
 # ----------------------------- SLURM ---------------------------------
@@ -271,7 +271,7 @@ class CreateArgs(BaseModel):
                 p = normalize_optional_path(s)
                 if p is None:
                     continue
-                d[sanitize_ligand_name(p.stem)] = p
+                d[sanitize_user_ligand_name(p.stem)] = p
             return d
         # mapping
         if isinstance(v, Mapping):
@@ -280,7 +280,7 @@ class CreateArgs(BaseModel):
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue
-                out[sanitize_ligand_name(str(k))] = path_obj
+                out[sanitize_user_ligand_name(str(k))] = path_obj
             return out
         # iterable of paths
         if isinstance(v, Iterable):
@@ -289,7 +289,7 @@ class CreateArgs(BaseModel):
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue
-                d[sanitize_ligand_name(path_obj.stem)] = path_obj
+                d[sanitize_user_ligand_name(path_obj.stem)] = path_obj
             return d
         raise ValueError(f"Unsupported ligand_paths type: {type(v).__name__}")
 
@@ -497,6 +497,11 @@ class FESimArgs(BaseModel):
         ge=0,
         description="Only analyze FE production steps after this step (per window).",
     )
+    n_bootstraps: int = Field(
+        0,
+        ge=0,
+        description="Number of MBAR bootstrap resamples used during FE analysis.",
+    )
 
     @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
     @classmethod
@@ -689,6 +694,10 @@ class RBFENetworkArgs(BaseModel):
         "default",
         description="Mapping strategy name (e.g., 'default', 'konnektor').",
     )
+    atom_mapper: Literal["kartograf", "lomap"] = Field(
+        "kartograf",
+        description="Atom mapper backend for RBFE pair mapping ('kartograf' or 'lomap').",
+    )
     konnektor_layout: Optional[str] = Field(
         None,
         description="Optional Konnektor layout name (e.g., 'star', 'radial', 'maximal') used when mapping='konnektor'.",
@@ -715,6 +724,13 @@ class RBFENetworkArgs(BaseModel):
             return None
         text = str(v).strip()
         return text.lower() if text else None
+
+    @field_validator("atom_mapper", mode="before")
+    @classmethod
+    def _lower_atom_mapper(cls, v):
+        if v is None:
+            return "kartograf"
+        return str(v).strip().lower()
 
     @model_validator(mode="after")
     def _validate_mapping(self) -> "RBFENetworkArgs":

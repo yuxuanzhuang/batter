@@ -14,7 +14,6 @@ from click.testing import CliRunner
 from batter.cli.run import cli
 from batter.api import run_analysis_from_execution
 from batter.runtime.fe_repo import FERecord, WindowResult
-from batter.pipeline.step import ExecResult
 from tests.data import EQUIL_FINISHED_DIR, FE_FINISHED_EXECUTION_DIR
 
 
@@ -252,6 +251,7 @@ def test_cli_fe_analyze_invokes_api(
         components=None,
         n_workers,
         analysis_start_step,
+        n_bootstraps=None,
         overwrite=True,
         raise_on_error=True,
     ):
@@ -261,6 +261,7 @@ def test_cli_fe_analyze_invokes_api(
         called["components"] = components
         called["n_workers"] = n_workers
         called["analysis_start_step"] = analysis_start_step
+        called["n_bootstraps"] = n_bootstraps
         called["overwrite"] = overwrite
         called["raise_on_error"] = raise_on_error
 
@@ -279,6 +280,8 @@ def test_cli_fe_analyze_invokes_api(
             "3",
             "--analysis-start-step",
             "2500",
+            "--n-bootstrap",
+            "64",
         ],
     )
     assert result.exit_code == 0
@@ -287,7 +290,8 @@ def test_cli_fe_analyze_invokes_api(
     assert called["ligand"] == "LIG1"
     assert called["n_workers"] == 3
     assert called["analysis_start_step"] == 2500
-    assert called["overwrite"] is True
+    assert called["n_bootstraps"] == 64
+    assert called["overwrite"] is False
     assert called["raise_on_error"] is True
 
 
@@ -304,6 +308,7 @@ def test_cli_fe_analyze_can_disable_raise(
         components=None,
         n_workers,
         analysis_start_step,
+        n_bootstraps=None,
         overwrite=True,
         raise_on_error=True,
     ):
@@ -323,6 +328,39 @@ def test_cli_fe_analyze_can_disable_raise(
     )
     assert result.exit_code == 0
     assert called["raise_on_error"] is False
+
+
+def test_cli_fe_analyze_uses_all_runs_when_run_id_omitted(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: list[tuple[Path, str | None]] = []
+
+    executions = tmp_path / "executions"
+    (executions / "rep1").mkdir(parents=True)
+    (executions / "rep2").mkdir(parents=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called.append((work_dir, run_id))
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(cli, ["fe", "analyze", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert called == [(tmp_path, "rep1"), (tmp_path, "rep2")]
+    assert "2 run(s)" in result.output
 
 
 def _copy_finished_run(tmp_path: Path) -> Path:
@@ -364,6 +402,158 @@ def test_cli_fe_analyze_on_finished_run(
     )
     assert result.exit_code == 0
     assert called == [True, False]
+
+
+def test_cli_fe_ligand_analyze_invokes_api_abfe(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    lig_dir = tmp_path / "executions" / "rep1" / "simulations" / "LIG1"
+    (lig_dir / "fe").mkdir(parents=True, exist_ok=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called["work_dir"] = work_dir
+        called["run_id"] = run_id
+        called["ligand"] = ligand
+        called["n_workers"] = n_workers
+        called["analysis_start_step"] = analysis_start_step
+        called["n_bootstraps"] = n_bootstraps
+        called["overwrite"] = overwrite
+        called["raise_on_error"] = raise_on_error
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "ligand-analyze",
+            str(lig_dir),
+            "--workers",
+            "2",
+            "--analysis-start-step",
+            "500",
+            "--n-bootstrap",
+            "8",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["work_dir"] == tmp_path
+    assert called["run_id"] == "rep1"
+    assert called["ligand"] == "LIG1"
+    assert called["n_workers"] == 2
+    assert called["analysis_start_step"] == 500
+    assert called["n_bootstraps"] == 8
+    assert called["overwrite"] is False
+    assert called["raise_on_error"] is True
+
+
+def test_cli_fe_ligand_analyze_invokes_api_rbfe_pair(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    fe_dir = (
+        tmp_path
+        / "executions"
+        / "rep2"
+        / "simulations"
+        / "transformations"
+        / "A~B"
+        / "fe"
+    )
+    fe_dir.mkdir(parents=True, exist_ok=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called["work_dir"] = work_dir
+        called["run_id"] = run_id
+        called["ligand"] = ligand
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(cli, ["fe", "ligand-analyze", str(fe_dir)])
+
+    assert result.exit_code == 0
+    assert called["work_dir"] == tmp_path
+    assert called["run_id"] == "rep2"
+    assert called["ligand"] == "A~B"
+
+
+def test_cli_fe_ligand_analyze_requires_fe_folder(
+    tmp_path: Path, runner: CliRunner
+) -> None:
+    lig_dir = tmp_path / "executions" / "rep1" / "simulations" / "LIG1"
+    lig_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(cli, ["fe", "ligand-analyze", str(lig_dir)])
+    assert result.exit_code == 1
+    assert "Expected FE folder" in result.output
+
+
+def test_cli_fe_ligand_analyze_runs_in_place_without_execution_layout(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    pair_dir = tmp_path / "EJM_31~EJM_46"
+    win_dir = pair_dir / "fe" / "x" / "x00"
+    win_dir.mkdir(parents=True, exist_ok=True)
+    (win_dir / "mdin-template").write_text(
+        " &cntrl\n  dt = 0.002,\n  ntwx = 250,\n  temp0 = 310.0,\n /\n"
+    )
+
+    def fake_run_in_place(system, params):
+        called["root"] = system.root
+        called["ligand"] = system.meta.get("ligand")
+        called["mode"] = system.meta.get("mode")
+        called["n_workers"] = params.get("n_workers")
+        called["dt"] = params.get("dt")
+        called["ntwx"] = params.get("ntwx")
+        called["temperature"] = params.get("temperature")
+
+    def fake_run_analysis(*args, **kwargs):
+        raise AssertionError("run_analysis_from_execution should not be used")
+
+    monkeypatch.setattr("batter.cli.fe_cmds._run_in_place_ligand_analysis", fake_run_in_place)
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run_analysis)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run_analysis)
+
+    result = runner.invoke(
+        cli,
+        ["fe", "ligand-analyze", str(pair_dir), "--workers", "6"],
+    )
+
+    assert result.exit_code == 0
+    assert called["root"] == pair_dir
+    assert called["ligand"] == "EJM_31~EJM_46"
+    assert called["mode"] == "RBFE"
+    assert called["n_workers"] == 6
+    assert called["dt"] == 0.002
+    assert called["ntwx"] == 250
+    assert called["temperature"] == 310.0
 
 
 def test_cli_clone_exec(tmp_path: Path, runner: CliRunner, monkeypatch) -> None:

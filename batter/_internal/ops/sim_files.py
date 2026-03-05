@@ -23,6 +23,134 @@ from batter._internal.ops.remd import patch_mdin_file
 # ----------------------------- helpers ----------------------------- #
 
 
+def _non_loop_mask_from_dssp_assignments(
+    assignments: Sequence[str], *, min_len: int = 4, shift: int = 0
+) -> str:
+    """
+    Convert DSSP assignments to a compact AMBER residue range string.
+
+    Keeps contiguous non-loop segments (assignment != '-') with length >= min_len.
+    Default shift-based residue indices.
+    """
+    if min_len < 1:
+        raise ValueError("min_len must be >= 1")
+
+    keep: list[int] = []
+    run_start: int | None = None
+    seq = [str(x).strip() for x in assignments]
+
+    for idx, ss in enumerate(seq, start=shift):
+        if ss and ss != "-":
+            if run_start is None:
+                run_start = idx
+            continue
+        if run_start is not None:
+            run_len = idx - run_start
+            if run_len >= min_len:
+                keep.extend(range(run_start, idx))
+            run_start = None
+
+    if run_start is not None:
+        run_len = len(seq) + 1 - run_start
+        if run_len >= min_len:
+            keep.extend(range(run_start, len(seq) + 1))
+
+    return format_ranges(keep)
+
+
+def _fallback_non_loop_mask_from_renum(build_dir: Path, shift: int) -> str:
+    """
+    Fallback to all mapped protein residues when DSSP-derived mask is unavailable.
+    """
+    renum_txt = build_dir / "protein_renum.txt"
+    if not renum_txt.exists():
+        logger.warning(
+            f"[dssp] Missing renumber map for fallback mask: {renum_txt}; using ':1'."
+        )
+        return f"@CA"
+
+    renum_data = pd.read_csv(
+        renum_txt,
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
+    if renum_data.empty:
+        logger.warning(
+            f"[dssp] Empty renumber map for fallback mask: {renum_txt}; using ':1'."
+        )
+        return f"@CA"
+
+    # one-based
+    ranges = renum_data["new_resid"].astype(int) + shift - 1
+    ranges = format_ranges(ranges.tolist())
+    if not ranges:
+        logger.warning(
+            f"[dssp] Failed to build fallback residue ranges from {renum_txt}; using ':1'."
+        )
+        return f"@CA"
+    return f':{ranges}'
+
+
+def _resolve_non_loop_mask(ctx: BuildContext, shift: int) -> str:
+    """
+    Build the `_non_loop_` replacement mask from system_prep DSSP artifacts.
+    """
+    manifest_path = ctx.system_root / "all-ligands" / "manifest.json"
+    if not manifest_path.exists():
+        logger.warning(
+            f"[dssp] Missing system_prep manifest: {manifest_path}; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
+
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except Exception as exc:
+        logger.warning(
+            f"[dssp] Could not parse manifest {manifest_path}: {exc}; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
+
+    dssp_info = manifest.get("dssp") or {}
+    dssp_results = dssp_info.get("results")
+    if dssp_results is None:
+        dssp_json = dssp_info.get("json")
+        if dssp_json:
+            try:
+                dssp_results = json.loads(Path(dssp_json).read_text())
+            except Exception as exc:
+                logger.warning(
+                    f"[dssp] Could not read DSSP JSON {dssp_json}: {exc}; using fallback mask."
+                )
+                return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
+
+    if dssp_results is None:
+        logger.warning(
+            "[dssp] No DSSP results found in manifest; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
+
+    dssp_arr = np.asarray(dssp_results)
+    if dssp_arr.size == 0:
+        logger.warning("[dssp] Empty DSSP results; using fallback mask.")
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
+
+    if dssp_arr.ndim == 1:
+        assignments = dssp_arr.tolist()
+    else:
+        assignments = dssp_arr[0].tolist()
+
+    mask_ranges = _non_loop_mask_from_dssp_assignments(assignments, min_len=4, shift=shift)
+    if not mask_ranges:
+        logger.warning(
+            "[dssp] No non-loop DSSP stretches with len>=4; using fallback mask."
+        )
+        return _fallback_non_loop_mask_from_renum(ctx.build_dir, shift=shift)
+
+    logger.debug(f"[dssp] Non-loop restraint mask ranges: {mask_ranges}")
+    return f':{mask_ranges}'
+
+
 def _patch_restraint_block(
     text: str, new_mask_component: str, force_const: float
 ) -> str:
@@ -75,9 +203,12 @@ def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
     patch_mdin_file(batch_template, prefix, add_numexchg=False)
 
 
-def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], float]:
+def _maybe_extra_mask(
+    ctx: BuildContext, work: Path, *, resid_shift: int = 0
+) -> tuple[Optional[str], float]:
     """
     Build '(:a-b,c-... ) & @CA' + force constant from ctx.extra.
+    Optionally shifts mapped residue ids (Amber numbering offset).
     Returns (mask or None, force_const).
     """
     extra = ctx.extra or {}
@@ -127,6 +258,8 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
         names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
     amber_resids = ren.loc[ren["old_resid"].isin(sel.residues.resids), "new_resid"]
+    if resid_shift:
+        amber_resids = amber_resids.astype(int) + int(resid_shift)
     mask_ranges = format_ranges(amber_resids)
     if not mask_ranges:
         logger.warning("[extra_restraints] No mapped residues after renumber; skip.")
@@ -135,12 +268,16 @@ def _maybe_extra_mask(ctx: BuildContext, work: Path) -> tuple[Optional[str], flo
     mask = f"(:{mask_ranges}) & @CA"
     # save as json
     json.dump(
-        {"mask": mask, "force_const": force_const},
+        {"mask": mask, "force_const": force_const, "resid_shift": int(resid_shift)},
         (work / "extra_restraints.json").open("wt"),
     )
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
+def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 20000, n_lambdas = 11):
+    dynlmb = 1 / (n_lambdas-1)
+    n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
+    return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
 
 # ------------------------- generic equil files ------------------------- #
 
@@ -183,7 +320,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
     )
 
-    # eqnpt0.in (membrane vs water variant)
+    # eqnpt0.in
     eqnpt0_src = amber_dir / (
         "eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in"
     )
@@ -193,7 +330,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
     )
 
-    # eqnpt.in  (no extra restraints here)
+    # eqnpt.in
     eqnpt_src = amber_dir / (
         "eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in"
     )
@@ -201,6 +338,21 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         eqnpt_src,
         work / "eqnpt.in",
         {"_temperature_": f"{temperature}", "_lig_name_": mol},
+    )
+
+    # eqnpt-eq.in (longer equil with restraints on non-loop regions)
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=2)
+    eqnpt_src = amber_dir / (
+        "eqnpt-eq.in" if sim.membrane_simulation else "eqnpt-water-eq.in"
+    )
+    _sub_write(
+        eqnpt_src,
+        work / "eqnpt_eq.in",
+        {
+            "_temperature_": f"{temperature}",
+            "_lig_name_": mol,
+            "_non_loop_": non_loop_mask,
+        },
     )
 
     # Additional equilibration inputs for disappear/appear stages
@@ -212,6 +364,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
             "_lig_name_": mol,
             "_enable_infe_": infe_flag,
             "disang_file": "disang",
+            "_non_loop_": non_loop_mask,
         },
     )
     _sub_write(
@@ -222,6 +375,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
             "_lig_name_": mol,
             "_enable_infe_": infe_flag,
             "disang_file": "disang",
+            "_non_loop_": non_loop_mask,
         },
     )
 
@@ -233,7 +387,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         total_steps = 0
 
     # compute extra mask once for equil (applied to template)
-    extra_mask, extra_fc = _maybe_extra_mask(ctx, work)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, work, resid_shift=1)
 
     text = (
         base_text.replace("_temperature_", f"{temperature}")
@@ -258,7 +412,6 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
 # ------------------------- FE component: z ------------------------- #
 
-
 @register_sim_files("z")
 def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
@@ -273,6 +426,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     win = ctx.win
     windows_dir = ctx.window_dir
     all_atoms = sim.all_atoms
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
+
 
     if not hasattr(sim, "dec_method"):
         raise AttributeError(
@@ -300,49 +455,50 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     else:
         full_pdb = windows_dir / "full.pdb"
         vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
-        vac_pdb = windows_dir / "vac.pdb"  # still needed below to find last_lig
+        vac_pdb = windows_dir / "vac.pdb"
 
-    # find *last* residue index of this ligand in vac.pdb
-    last_lig: Optional[str] = None
-    with vac_pdb.open("rt") as f:
-        for line in f:
-            rec = line[:6].strip()
-            if rec not in ("ATOM", "HETATM"):
-                continue
-            if line[17:20].strip().lower() == mol.lower():
-                last_lig = line[22:26].strip()
-    if last_lig is None:
-        raise ValueError(f"No ligand residue matching '{mol}' found in {vac_pdb.name}")
+    u = mda.Universe(vac_pdb.as_posix())
+    mol_ref_ag = u.select_atoms(f'resname {mol}')
+    ref_resid = mol_ref_ag.resids[0]
 
     amber_dir = ctx.amber_dir
 
     # compute extra mask once for this window root; applied to mdin-XX only
-    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
 
     if dec_method == "sdr":
-        mk2 = int(last_lig)
-        mk1 = mk2 - 1
-        template_eqin = amber_dir / "eqin-unorest"
+        mk1 = ref_resid
+        mk2 = mk1 + 1
         template_mdin = amber_dir / "mdin-unorest"
         template_mini = amber_dir / "mini-unorest"
 
         # first write eq.in
-        n_steps_run = 5000
+        # it will gradually increase lambda value
+        n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
+        
         out_path = windows_dir / "eq.in"
-        with template_eqin.open("rt") as fin, out_path.open("wt") as fout:
+        with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
                 if "ntx = 5" in line:
                     line = "ntx = 1,\n"
+                # save every lambda value
+                elif "ntwx = " in line:
+                    line = f"ntwx = {n_steps_run_per_lambda},\n"
+                # write all atoms
+                elif "ntwprt = " in line:
+                    line = f"\n"
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
-                    line = "dt = 0.001,\n"
+                    line = "dt = 0.002,\n"
+                elif "restraint_wt = " in line:
+                    line = f"restraint_wt = 0.2,\n"
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
                     else:
-                        line = f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -354,12 +510,26 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 fout.write(line)
 
         with out_path.open("a") as mdin:
+            # also save velocity info
+            mdin.write(f" ntwv = -1,\n")
+            # run dynlmb
+            mdin.write(f" dynlmb = {dynlmb},\n")
+            mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
+            # run mcwat
+            mdin.write(f"  mcwat = 1,\n")
+            mdin.write(f"  nmd = 1000,\n")
+            mdin.write(f"  nmc = 1000,\n")
+            mdin.write(f"  mcwatmask = \":{mol}\",\n")
+            mdin.write(f"  mcligshift = 40,\n")
+            mdin.write(f"  mcwatretry = 3000,\n")
+            mdin.write(f"  mcresstr = \"WAT\",\n")
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
                 mdin.write(f" {lam:6.5f},")
             mdin.write("\n")
-            mdin.write("  infe = 1,\n")
+            # no need to run infe as everything is restrainted
+            mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
             mdin.write(" &pmd \n")
             mdin.write("  output_file = 'cmass.txt'\n")
@@ -441,21 +611,23 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 "BuildContext.extra missing 'infe'. Ensure BaseBuilder sets this flag."
             )
         infe_flag = 1 if extra_ctx["infe"] else 0
-        mk1 = int(last_lig)
-        template_eqin = amber_dir / "eqin-unorest-dd"
+        mk1 = ref_resid
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
         # optional short equilibration input
+        n_steps_run = 20000
         eq_path = windows_dir / "eq.in"
-        with template_eqin.open("rt") as fin, eq_path.open("wt") as fout:
+        with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
             for line in fin:
                 if "ntx = 5" in line:
                     line = "ntx = 1,\n"
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
-                    line = "dt = 0.001,\n"
+                    line = "dt = 0.002,\n"
+                elif "restraint_wt = " in line:
+                    line = f"restraint_wt = 0.2,\n"
                 elif "restraintmask" in line:
                     rm = (
                         line.split("=", 1)[1]
@@ -464,15 +636,15 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         .replace("'", "")
                     )
                     if rm == "":
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
                     else:
                         line = (
-                            f"restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                            f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
                         )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
-                    .replace("_num-steps_", "5000")
+                    .replace("_num-steps_", n_steps_run)
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("mk1", str(mk1))
                 )
@@ -611,6 +783,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mol_ref = ctx.residue_name
     extra = ctx.extra or {}
     mol_alt = extra.get("residue_alt")
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
+
 
     if not mol_alt:
         raise ValueError(
@@ -639,53 +813,61 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         vac_atoms = mda.Universe(full_pdb.as_posix()).atoms.n_atoms
         vac_pdb = windows_dir / "vac.pdb"
 
-    # Find residue indices for the reference and alternate ligands in vac.pdb
-    if not vac_pdb.exists():
-        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
-    ref_resid = None
-    with vac_pdb.open("rt") as f:
-        for line in f:
-            rec = line[:6].strip()
-            if rec not in ("ATOM", "HETATM"):
-                continue
-            resname = line[17:20].strip()
-            resid = line[22:26].strip()
-            if resname.lower() == mol_ref.lower():
-                ref_resid = resid
-                break
-    if ref_resid is None:
-        raise ValueError(
-            f"Could not resolve ligand residue ids in {vac_pdb.name} "
-            f"(ref={mol_ref} -> {ref_resid})."
-        )
+    u = mda.Universe(vac_pdb.as_posix())
+    mol_ref_ag = u.select_atoms(f'resname {mol_ref}')
+    ref_resid = mol_ref_ag.resids[0]
 
     mk1 = f':{int(ref_resid)},{int(ref_resid)+3}'
     mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
     # load scmask.json for scmk1, scmk2
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
-    scmk1 = scmk_dict['scmk1']
-    scmk2 = scmk_dict['scmk2']
+    scmk1_all_indice = scmk_dict['scmk1_all_indices']
+    scmk1_exclude_indice = scmk_dict['scmk1_cc_indices']
+    scmk2_all_indice = scmk_dict['scmk2_all_indices']
+    scmk2_exclude_indice = scmk_dict['scmk2_cc_indices']
+
+    scmk1 = f'{scmk1_all_indice} & (!{scmk1_exclude_indice} | @H=)'
+    scmk2 = f'{scmk2_all_indice} & (!{scmk2_exclude_indice} | @H=)'
+
     noshakemk = f':{int(ref_resid)},{int(ref_resid)+1},{int(ref_resid)+2},{int(ref_resid)+3}'
 
     amber_dir = ctx.amber_dir
 
     # optional extra restraints (only applied to mdin-template)
-    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir)
+    extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
 
     template_mdin = amber_dir / "mdin-ex"
     if not template_mdin.exists():
         raise FileNotFoundError(f"Missing RBFE mdin template: {template_mdin}")
 
     eq_path = windows_dir / "eq.in"
-    n_steps_run = 5000
+    n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
+
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
             if "ntx = 5" in line:
                 line = "  ntx = 1,\n"
             elif "irest" in line:
                 line = "  irest = 0,\n"
+            # save every lambda value
+            elif "ntwx = " in line:
+                line = f"ntwx = {n_steps_run_per_lambda},\n"
+            # write all atoms
+            elif "ntwprt = " in line:
+                line = f"\n"
             elif "dt = " in line:
-                line = "  dt = 0.001,\n"
+                line = "  dt = 0.002,\n"
+            elif "restraint_wt = " in line:
+                line = f"  restraint_wt = 1,\n"
+            elif "restraintmask" in line:
+                rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                if rm == "":
+                    # restraining 1) non loop C-alpha 2) common core of ligands
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
+                else:
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                if len(line) > 256:
+                    logger.warning(f"restraintmask line too long for AMBER: {len(line)} but proceeding")
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
@@ -699,12 +881,26 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             )
             fout.write(line)
     with eq_path.open("a") as mdin:
+        # also write velocity info
+        mdin.write(f" ntwv = -1,\n")
+        # run dynlmb
+        mdin.write(f" dynlmb = {dynlmb},\n")
+        mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
+        # run mcwat
+        mdin.write(f"  mcwat = 1,\n")
+        mdin.write(f"  nmd = 1000,\n")
+        mdin.write(f"  nmc = 1000,\n")
+        mdin.write(f"  mcwatmask = \"(:{mol_ref} | :{mol_alt})\",\n")
+        mdin.write(f"  mcligshift = 40,\n")
+        mdin.write(f"  mcwatretry = 3000,\n")
+        mdin.write(f"  mcresstr = \"WAT\",\n")
         mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
         for lam in lambdas:
             mdin.write(f" {lam:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        # no need to run infe as everything is restrainted
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         mdin.write(" &pmd \n")
         mdin.write("  output_file = 'cmass.txt'\n")

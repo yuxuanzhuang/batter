@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
+_RESERVED_LIGAND_NAMES = frozenset({"TRANSFORMATIONS"})
 
 
 def coerce_yes_no(value: Any) -> str | None:
@@ -65,6 +66,22 @@ def sanitize_ligand_name(name: str) -> str:
     cleaned = name.replace("~", "_").strip()
     cleaned = _SANITIZE_RE.sub("_", cleaned)
     return cleaned.strip("_").upper()
+
+
+def sanitize_user_ligand_name(name: str) -> str:
+    """
+    Sanitize and validate a user-provided ligand identifier.
+
+    Reserved names that conflict with BATTER directory layout are rejected.
+    """
+    sanitized = sanitize_ligand_name(name)
+    if not sanitized:
+        raise ValueError(f"Ligand name {name!r} is invalid after sanitization.")
+    if sanitized in _RESERVED_LIGAND_NAMES:
+        raise ValueError(
+            f"Ligand name {name!r} is reserved. Please choose a different ligand name."
+        )
+    return sanitized
 
 
 def normalize_optional_path(value: Any) -> Path | None:

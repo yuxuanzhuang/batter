@@ -20,7 +20,7 @@ check_sim_failure() {
     # If log doesn't exist yet, don't treat as failure here
     [[ -f "$log_file" ]] || return 0
 
-    if grep -Eqi "Terminated Abnormally|command not found|illegal memory|segmentation fault|MPI_ABORT|FATAL" "$log_file"; then
+    if grep -Eqi "Terminated Abnormally|command not found|illegal memory|segmentation fault|MPI_ABORT|FATAL|cudaGetDeviceCount" "$log_file"; then
         echo "[ERROR] $stage simulation failed. Detected error in $log_file:"
         tail -n 200 "$log_file" || true
         rm -f "$log_file"
@@ -417,15 +417,9 @@ write_mdin_current() {
     local text
     text=$(<"$tmpl")
 
-    if [[ $first_run -eq 1 ]]; then
-        text=$(echo "$text" \
-            | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 0,/' \
-            | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 1,/')
-    else
-        text=$(echo "$text" \
-            | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' \
-            | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
-    fi
+    text=$(echo "$text" \
+        | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' \
+        | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
 
     text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
     echo "$text"

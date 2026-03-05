@@ -116,6 +116,13 @@ def test_create_args_requires_ligand_spec():
         CreateArgs()
 
 
+def test_create_args_rejects_reserved_ligand_name(tmp_path: Path) -> None:
+    lig = tmp_path / "lig.sdf"
+    lig.write_text("dummy\n")
+    with pytest.raises(ValidationError, match="reserved"):
+        CreateArgs(system_name="sys", ligand_paths={"transformations": lig})
+
+
 def test_fesim_args_invalid_remd_type():
     with pytest.raises(ValidationError, match="fe_sim\\.remd"):
         FESimArgs(remd="maybe")
@@ -182,8 +189,8 @@ def test_args_negative_force():
         ),
         ({"fe_type": "uno_rest", "lambdas": []}, "No lambdas defined"),
         (
-            {"buffer_x": 4.0, "buffer_y": 15.0, "buffer_z": 15.0},
-            "buffer_x must be >= 15.0",
+            {"buffer_x": 4.0, "buffer_y": 15.0, "buffer_z": 10.0},
+            "buffer_x must be >= 10.0",
         ),
         ({"neutralize_only": "maybe"}, "Invalid yes/no"),
     ],
@@ -248,7 +255,7 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     assert cfg.infe is True
     assert cfg.barostat == 2
     assert cfg.release_eq == [0.0]
-    assert cfg.eq_steps == 100
+    assert cfg.eq_steps == 2500
 
     create2 = create.model_copy(
         update={"extra_conformation_restraints": None, "extra_restraints": "mask"}
@@ -316,6 +323,24 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
     assert cfg.component_lambdas["z"] == [0.0, 0.2, 0.4, 1.0]
 
 
+def test_sim_config_from_sections_preserves_slurm_header_dir(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    header_dir = tmp_path / "slurm_headers"
+    cfg = SimulationConfig.from_sections(
+        create,
+        fe_args,
+        protocol="abfe",
+        slurm_header_dir=header_dir,
+    )
+    assert cfg.slurm_header_dir == header_dir
+    assert cfg.model_dump()["slurm_header_dir"] == header_dir
+
+
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
     if protocol == "abfe":
@@ -363,6 +388,16 @@ def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:
     assert sim_cfg_yes.remd == "yes"
 
 
+def test_resolved_sim_config_propagates_run_slurm_header_dir(tmp_path: Path) -> None:
+    cfg = _minimal_run_config(tmp_path, "abfe")
+    header_dir = tmp_path / "custom_headers"
+    cfg = cfg.model_copy(
+        update={"run": cfg.run.model_copy(update={"slurm_header_dir": header_dir})}
+    )
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.slurm_header_dir == header_dir
+
+
 def test_analysis_start_step_default(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
@@ -386,20 +421,27 @@ def test_analysis_start_step_respects_user_override(tmp_path: Path) -> None:
     assert cfg.analysis_start_step == 5000
 
 
+def test_n_bootstraps_default(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
-    payload = {
-        "protocol": "abfe",
-        "backend": "local",
-        "run": {"output_folder": str(tmp_path / "out")},
-        "create": create.model_dump(),
-        "fe_sim": {
-            "lambdas": [0.0, 1.0],
-            "eq_steps": 1000,
-            "n_steps": {"z": 300_000},
-        },
-    }
-    cfg = RunConfig.model_validate(payload)
-    sim_cfg = cfg.resolved_sim_config()
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.n_bootstraps == 0
+
+
+def test_n_bootstraps_respects_user_override(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+        n_bootstraps=64,
+    )
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+    assert cfg.n_bootstraps == 64
 
 
 def test_enable_mcwat_propagates_from_fesim_args(tmp_path: Path) -> None:
@@ -445,7 +487,7 @@ def test_resolved_sim_config_handles_md(tmp_path: Path) -> None:
     cfg = RunConfig.model_validate(payload)
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.fe_type == "md"
-    assert sim_cfg.eq_steps == 1000
+    assert sim_cfg.eq_steps == 2500
     assert sim_cfg.temperature == 300.0
 
 

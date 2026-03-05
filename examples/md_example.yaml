@@ -9,9 +9,9 @@ create:
   system_coordinate: reference/adrb2_A_membrane.rst7
   protein_align: name CA and resid 50 to 200
   ligand_input: reference/ligands_dict.json
-  ligand_ff: openff-2.2.1
+  ligand_ff: openff-2.3.0
   retain_lig_prot: true
-  param_charge: am1bcc
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
 
   anchor_atoms:
     - "name CA and resid 113"

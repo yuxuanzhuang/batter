@@ -13,6 +13,7 @@ CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 PRMTOP="full.hmr.prmtop"
 N_WINDOWS=NWINDOWS
 PFOLDER="."
+PFOLDER_ABS=$(cd "${PFOLDER}" 2>/dev/null && pwd -P)
 REMD=1
 overwrite=${OVERWRITE:-0}
 COMP=${COMP:-$(basename "$PWD")}
@@ -150,7 +151,11 @@ if (( remaining_steps > 0 )); then
     run_exchg=$(( (run_steps + chunk_steps - 1) / chunk_steps ))
     (( run_exchg > 0 )) || { echo "[ERROR] Computed run_exchg=0"; exit 1; }
 
-    seg_idx=$((last_idx + 1))
+    if (( last_idx < 0 )); then
+        seg_idx=1
+    else
+        seg_idx=$((last_idx + 1))
+    fi
     first_run=$([[ $last_idx -lt 0 ]] && echo 1 || echo 0)
 
     # Build per-window mdin and groupfile for this segment
@@ -190,9 +195,9 @@ if (( remaining_steps > 0 )); then
     REMD_FLAG="-rem 3 -remlog ${PFOLDER}/rem_${seg_idx}.log"
     print_and_run "$MPI_LAUNCH ${PMEMD_MPI_EXEC} -ng ${N_WINDOWS} ${REMD_FLAG} -groupfile ${groupfile} >> \"$log_file\" 2>&1"
     rc=$?
-    echo "[INFO] pmemd step rc=$rc dir=${PFOLDER} at $(date)" | tee -a "$log_file"
+    echo "[INFO] pmemd step rc=$rc dir=${PFOLDER_ABS} at $(date)" | tee -a "$log_file"
     if (( rc != 0 )); then
-        echo "[ERROR] pmemd failed in ${PFOLDER}; skipping post-step" | tee -a "$log_file"
+        echo "[ERROR] pmemd failed in ${PFOLDER_ABS}; skipping post-step" | tee -a "$log_file"
         cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
         exit $rc
     fi

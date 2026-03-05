@@ -93,7 +93,7 @@ class PrepareEquilBuilder(BaseBuilder):
     def _create_box(self) -> None:
         """Render AMBER templates and build solvated/ionized system."""
 
-        box.create_box_z(self.ctx)
+        box.create_box(self.ctx)
         logger.debug(f"[prepare_equil] Created box for {self.ctx.ligand}")
 
     def _restraints(self) -> None:

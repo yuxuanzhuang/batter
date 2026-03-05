@@ -30,6 +30,7 @@ dependencies:
   - openff-toolkit-base >=0.16.2
   - kartograf
   - konnektor
+  - lomap2
   # Tests
   - pytest
   - pytest-xdist

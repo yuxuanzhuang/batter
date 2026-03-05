@@ -9,6 +9,89 @@ from typing import Callable, Iterable, Sequence, Tuple, List, Any, Mapping
 from loguru import logger
 
 from batter.config.utils import sanitize_ligand_name
+from rdkit import Chem
+from rdkit.Geometry import Point3D
+from rdkit.Chem import rdMolAlign, AllChem
+
+
+def _normalize_atom_mapper(atom_mapper: str | None) -> str:
+    mapper = str(atom_mapper or "kartograf").strip().lower()
+    if mapper not in {"kartograf", "lomap"}:
+        raise ValueError(
+            f"Unknown atom mapper '{atom_mapper}'. Available: kartograf, lomap"
+        )
+    return mapper
+
+
+def _build_konnektor_atom_mapper(atom_mapper: str, *, hmr: bool = True):
+    mapper_name = _normalize_atom_mapper(atom_mapper)
+    if mapper_name == "lomap":
+        from lomap import LomapAtomMapper
+
+        return LomapAtomMapper(
+            time=20,
+            threed=True,
+            max3d=1.5,
+            element_change=False,
+            shift=True,
+        )
+
+    return _build_current_kartograf_atom_mapper_for_network()
+
+
+def _build_current_kartograf_atom_mapper_for_network():
+    """Return the Kartograf mapper currently used for RBFE network generation."""
+    from kartograf.atom_mapper import KartografAtomMapper
+
+    additional_mapping_filter_functions = [filter_element_changes]
+    return KartografAtomMapper(
+        atom_max_distance=0.95,
+        map_hydrogens_on_hydrogens_only=True,
+        atom_map_hydrogens=False,
+        map_exact_ring_matches_only=True,
+        allow_partial_fused_rings=True,
+        allow_bond_breaks=False,
+        additional_mapping_filter_functions=additional_mapping_filter_functions,
+    )
+
+
+def filter_element_changes(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Forces a mapping to exclude any alchemical element changes in the core"""
+    filtered_mapping = {}
+
+    for i, j in mapping.items():
+        if (
+            molA.GetAtomWithIdx(i).GetAtomicNum()
+            != molB.GetAtomWithIdx(j).GetAtomicNum()
+        ):
+            continue
+        filtered_mapping[i] = j
+
+    return filtered_mapping
+
+
+def filter_mismatched_attached_h_count(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """
+    Exclude mapped heavy-atom pairs where the number of directly attached H differs.
+    This helps avoid HMR mass mismatches for 'common/core' atoms.
+    """
+    filtered = {}
+    for i, j in mapping.items():
+        a = molA.GetAtomWithIdx(i)
+        b = molB.GetAtomWithIdx(j)
+
+        hA = a.GetTotalNumHs(includeNeighbors=True)
+        hB = b.GetTotalNumHs(includeNeighbors=True)
+
+        if hA != hB:
+            continue
+
+        filtered[i] = j
+    return filtered
 
 RBFEPair = Tuple[str, str]
 RBFEMapFn = Callable[[Sequence[str]], Iterable[RBFEPair]]
@@ -199,32 +282,31 @@ def konnektor_pairs(
     ligand_files: Mapping[str, Path],
     layout: str | None = None,
     plot_path: Path | None = None,
+    hmr: bool = True,
+    atom_mapper: str = "kartograf",
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
     """
     try:
         from gufe import SmallMoleculeComponent
-        from kartograf.atom_mapper import KartografAtomMapper
+        from lomap.gufe_bindings.scorers import default_lomap_score
+
     except ImportError as exc:
         raise RuntimeError(
-            "Konnektor mapping requires 'gufe' and 'kartograf' dependencies."
+            "Konnektor mapping requires 'gufe' and 'lomap' dependencies."
         ) from exc
+
 
     generator_cls = _resolve_konnektor_generator(layout)
     if generator_cls.__name__.lower().startswith("explicit"):
         raise ValueError(
             "Konnektor 'explicit' layout requires explicit edges; use rbfe.mapping_file."
         )
-    mapper = KartografAtomMapper()
+    
+    mapper = _build_konnektor_atom_mapper(atom_mapper, hmr=hmr)
 
-    def _null_scorer(_mapping):
-        return 0.0
-
-    try:
-        generator = generator_cls(mappers=mapper, scorer=_null_scorer)
-    except TypeError:
-        generator = generator_cls(mappers=mapper)
+    generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
 
     components: List[SmallMoleculeComponent] = []
     for lig in ligands:
@@ -248,6 +330,8 @@ def konnektor_pairs(
             fig = draw_ligand_network(network=network, title=getattr(network, "name", None))
             plot_path.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(plot_path, dpi=200)
+            with open(f"{plot_path.parent}/network.graphml", "w") as writer:
+                writer.write(network.to_graphml())
         except Exception:
             pass
 
@@ -261,22 +345,28 @@ def draw_explicit_konnektor_network(
     pairs: Sequence[Sequence[str] | tuple[str, str]],
     ligand_files: Mapping[str, Path],
     plot_path: Path,
+    hmr: bool = True,
+    atom_mapper: str = "kartograf",
 ) -> None:
     """Build an explicit Konnektor network from pairs and draw it."""
+    mapper_name = _normalize_atom_mapper(atom_mapper)
     try:
         from konnektor.network_planners import ExplicitNetworkGenerator
         from konnektor.visualization import draw_ligand_network
         from gufe import SmallMoleculeComponent
-        from kartograf.atom_mapper import KartografAtomMapper
-        from kartograf.atom_aligner import align_mol_shape
-        from kartograf.atom_mapping_scorer import MappingRMSDScorer
-        from rdkit import Chem
-        from rdkit.Chem import rdDistGeom
+        from lomap.gufe_bindings.scorers import default_lomap_score
+        align_mol_shape = None
+        if mapper_name == "kartograf":
+            from kartograf.atom_aligner import align_mol_shape as _align_mol_shape
+
+            align_mol_shape = _align_mol_shape
     except Exception:
         return
 
-    mapper = KartografAtomMapper()
-    rmsd_scorer = MappingRMSDScorer()
+    try:
+        mapper = _build_konnektor_atom_mapper(mapper_name, hmr=hmr)
+    except Exception:
+        return
 
     comp_by_name: dict[str, SmallMoleculeComponent] = {}
     edges = []
@@ -288,27 +378,18 @@ def draw_explicit_konnektor_network(
             continue
         if name_a not in comp_by_name:
             mol_a = _load_rdkit_mol(Path(ligand_files[name_a]))
-            try:
-                mol_a = Chem.AddHs(mol_a, addCoords=True)
-                rdDistGeom.EmbedMolecule(mol_a, useRandomCoords=False, randomSeed=0)
-            except Exception:
-                pass
             comp_by_name[name_a] = SmallMoleculeComponent(mol_a, name=name_a)
         if name_b not in comp_by_name:
             mol_b = _load_rdkit_mol(Path(ligand_files[name_b]))
-            try:
-                mol_b = Chem.AddHs(mol_b, addCoords=True)
-                rdDistGeom.EmbedMolecule(mol_b, useRandomCoords=False, randomSeed=0)
-            except Exception:
-                pass
             comp_by_name[name_b] = SmallMoleculeComponent(mol_b, name=name_b)
 
         comp_a = comp_by_name[name_a]
         comp_b = comp_by_name[name_b]
-        try:
-            comp_b = align_mol_shape(comp_b, ref_mol=comp_a)
-        except Exception:
-            pass
+        if align_mol_shape is not None:
+            try:
+                comp_b = align_mol_shape(comp_b, ref_mol=comp_a)
+            except Exception:
+                pass
         edges.append((comp_a, comp_b))
         nodes_by_name.setdefault(name_a, comp_a)
         nodes_by_name.setdefault(name_b, comp_b)
@@ -317,16 +398,15 @@ def draw_explicit_konnektor_network(
         return
 
     nodes = list(nodes_by_name.values())
-    try:
-        generator = ExplicitNetworkGenerator(mappers=mapper, scorer=rmsd_scorer)
-    except TypeError:
-        generator = ExplicitNetworkGenerator(mappers=mapper)
+    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=default_lomap_score)
 
     try:
         network = generator.generate_ligand_network(edges=edges, nodes=nodes)
         fig = draw_ligand_network(network=network, title=getattr(network, "name", None))
         plot_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(plot_path, dpi=200)
+        with open(f"{plot_path.parent}/network.graphml", "w") as writer:
+            writer.write(network.to_graphml())
     except Exception:
         return
 

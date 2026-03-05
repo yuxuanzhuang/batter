@@ -114,6 +114,61 @@ def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
     assert out.exists()
 
 
+def test_save_fe_records_copies_rbfe_mapping_artifacts(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run1"
+    config_dir = run_dir / "artifacts" / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "rbfe_network.png").write_text("png")
+
+    child_root = run_dir / "simulations" / "pair1"
+    results_dir = child_root / "fe" / "Results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "Results.dat").write_text("Total\t-1.0\t0.1\n")
+
+    mapping_dir = child_root / "fe" / "x" / "x-1"
+    mapping_dir.mkdir(parents=True, exist_ok=True)
+    (mapping_dir / "mapping.json").write_text('{"0": 0}')
+    (mapping_dir / "mapping.png").write_text("png")
+
+    sim_cfg = _make_sim_cfg()
+    child = SimSystem(
+        name="sys:pair1:run1",
+        root=child_root,
+        meta=SystemMeta(
+            ligand="pair1",
+            residue_name="lig1",
+            mode="RBFE",
+            extras={
+                "ligand_ref": "A",
+                "ligand_alt": "B",
+                "residue_ref": "A",
+                "residue_alt": "B",
+            },
+        ),
+    )
+
+    store = ArtifactStore(run_dir)
+    repo = FEResultsRepository(store)
+
+    failures = save_fe_records(
+        run_dir=run_dir,
+        run_id="run1",
+        children_all=[child],
+        sim_cfg_updated=sim_cfg,
+        repo=repo,
+        protocol="rbfe",
+    )
+
+    assert not failures
+    out_results = run_dir / "results" / "run1" / "pair1" / "Results"
+    assert (out_results / "mapping.json").exists()
+    assert (out_results / "mapping.png").exists()
+    assert not (out_results / "kartograf.json").exists()
+    assert not (out_results / "kartograf_mapping.png").exists()
+
+
 def test_compute_run_signature_excludes_run_section(tmp_path: Path) -> None:
     yaml_path = tmp_path / "run.yaml"
     yaml_path.write_text(
@@ -131,6 +186,78 @@ protocol: abfe
     assert "run" not in payload["config"]
     assert set(payload["config"].keys()) <= {"create", "fe_sim", "fe"}
     assert payload["run_overrides"] == {}
+
+
+def test_maybe_regenerate_rbfe_network_after_pruning_triggers_rebuild(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {
+        "ligands": ["A", "B", "C"],
+        "pairs": [["A", "B"], ["A", "C"]],
+        "mapping": "default",
+    }
+    called: dict[str, object] = {}
+
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir):
+        called["ligands"] = list(ligands)
+        called["lig_map"] = dict(lig_map)
+        called["config_dir"] = config_dir
+        return {"ligands": ["B", "C"], "pairs": [["B", "C"]], "mapping": "default"}
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _fake_build)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["B", "C"],
+        lig_map={"A": "a.sdf", "B": "b.sdf", "C": "c.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+
+    assert called["ligands"] == ["B", "C"]
+    assert set(called["lig_map"]) == {"B", "C"}
+    assert called["config_dir"] == tmp_path
+    assert out["pairs"] == [["B", "C"]]
+
+
+def test_maybe_regenerate_rbfe_network_after_pruning_noop_when_no_prune(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {"ligands": ["A", "B"], "pairs": [["A", "B"]], "mapping": "default"}
+
+    def _unexpected(*args, **kwargs):
+        raise AssertionError("regeneration should not be called")
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _unexpected)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["A", "B"],
+        lig_map={"A": "a.sdf", "B": "b.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+    assert out is payload
+
+
+def test_maybe_regenerate_rbfe_network_after_pruning_falls_back_on_error(
+    monkeypatch, tmp_path: Path
+) -> None:
+    payload = {"ligands": ["A", "B", "C"], "pairs": [["A", "B"], ["A", "C"]]}
+
+    def _raises(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _raises)
+
+    out = run_mod._maybe_regenerate_rbfe_network_after_pruning(
+        available_ligands=["B", "C"],
+        lig_map={"A": "a.sdf", "B": "b.sdf", "C": "c.sdf"},
+        payload=payload,
+        rbfe_cfg=SimpleNamespace(mapping="default"),
+        config_dir=tmp_path,
+    )
+    assert out is payload
 
 
 def test_stored_payload_roundtrip(tmp_path: Path) -> None:

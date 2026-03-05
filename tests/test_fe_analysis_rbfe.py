@@ -18,6 +18,7 @@ def _sim_cfg() -> SimulationConfig:
             "component_lambdas": {"x": [0.0, 1.0]},
             "lambdas": [0.0, 1.0],
             "eq_steps": 1000,
+            "n_bootstraps": 16,
             "buffer_x": 15.0,
             "buffer_y": 15.0,
             "buffer_z": 15.0,
@@ -69,6 +70,7 @@ def test_analyze_handler_rbfe_pair_forces_x_and_writes_summary(
     )
 
     assert called["components"] == ["x"]
+    assert called["n_bootstraps"] == 16
     summary = pair_root / "fe" / "Results" / "rbfe_pair_summary.json"
     assert summary.exists()
     payload = json.loads(summary.read_text())

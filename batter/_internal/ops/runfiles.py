@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import os
 from typing import Sequence
+import numpy as np
 
 from pathlib import Path
 from loguru import logger
@@ -90,6 +91,9 @@ def write_fe_run_file(
     win_idx = ctx.win if ctx.win != -1 else 0
     hmr = str(ctx.sim.hmr).lower() == "yes"
     n_windows = len(lambdas)
+    lambda_string = ' '.join([f"{l:.4f}" for l in lambdas])
+    eq_sim_lambdas = np.linspace(0.0, 1.0, num=11)
+    lambda_sim_string = ' '.join([f"{l:.4f}" for l in eq_sim_lambdas])
 
     # templates (fail clearly if missing)
     tpl_check = src_dir / "check_run.bash"
@@ -119,6 +123,8 @@ def write_fe_run_file(
     txt = (
         txt.replace("NWINDOWS", str(n_windows))
            .replace("COMPONENT", comp)
+           .replace("LAMBDA_SET_LIST", lambda_string)
+           .replace("LAMBDA_EQ_LIST", lambda_sim_string)
     )
     txt = rewrite_prmtop_reference(txt, hmr=hmr)
 

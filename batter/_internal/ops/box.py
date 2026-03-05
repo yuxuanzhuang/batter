@@ -60,55 +60,18 @@ def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
 
 
 def indices_to_selection(
-    include: Iterable[int],
-    exclude: Iterable[int] = (),
-    *,
-    prefix: str = "@",
-    negate_op: str = "!",
-    and_op: str = "&",
+    indices: Iterable[int],
 ) -> str:
-    """Build a selection string from include/exclude indices with merged ranges.
-
-    Parameters
-    ----------
-    include : Iterable[int]
-        Indices to include.
-    exclude : Iterable[int], optional
-        Indices to exclude. Indices not present in `include` are ignored.
-    prefix : str, optional
-        Prefix for the include expression (default '@', e.g., AMBER-style atom selection).
-    negate_op : str, optional
-        Negation operator (default '!').
-    and_op : str, optional
-        Conjunction operator (default '&').
-
-    Returns
-    -------
-    str
-        Selection string, e.g. '@1-10 & ! (@3-4,7)'.
-
-    Raises
-    ------
-    ValueError
-        If `include` is empty.
+    """Build a selection string from include or exclude indices
     """
-    inc = sorted(set(include))
-    exc = sorted(set(exclude))
+    inc = sorted(set(indices))
     if not inc:
-        raise ValueError("include must be non-empty")
+        raise ValueError("indices must be non-empty")
 
     inc_ranges = _merge_consecutive(inc)
     inc_str = _ranges_to_str(inc_ranges)
 
-    # Only exclude indices that are actually in include
-    inc_set = set(inc)
-    exc_in_inc = [i for i in set(exc) if i in inc_set]
-    if not exc_in_inc:
-        return f"{prefix}{inc_str}"
-
-    exc_ranges = _merge_consecutive(exc_in_inc)
-    exc_str = _ranges_to_str(exc_ranges)
-    return f"{prefix}{inc_str} {and_op} {negate_op} ({prefix}{exc_str})"
+    return f"@{inc_str}"
 
 
 def _cp(src: Path, dst: Path) -> None:
@@ -151,8 +114,8 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         logger.debug(f"Failed to read ligand charge from {meta_path}: {exc}")
         return None
 
-
-def create_box_z(ctx: BuildContext) -> None:
+@register_create_box("z")
+def create_box(ctx: BuildContext) -> None:
     """
     Create the solvated box for the given component and window.
     """
@@ -172,8 +135,6 @@ def create_box_z(ctx: BuildContext) -> None:
     ligand = ctx.ligand
     mol = ctx.residue_name
 
-    molr = mol
-
     for attr in ("buffer_x", "buffer_y", "buffer_z"):
         if not hasattr(sim, attr):
             raise AttributeError(
@@ -187,9 +148,6 @@ def create_box_z(ctx: BuildContext) -> None:
 
     if membrane_builder:
         targeted_buffer_z = max([float(sim.buffer_z), 25.0])
-        buffer_z = get_buffer_z(
-            window_dir / "build.pdb", targeted_buf=targeted_buffer_z
-        )
         buffer_x = 0.0
         buffer_y = 0.0
     else:
@@ -200,6 +158,12 @@ def create_box_z(ctx: BuildContext) -> None:
             buffer_x = max(0.0, buffer_x - solv_shell)
             buffer_y = max(0.0, buffer_y - solv_shell)
             buffer_z = max(0.0, buffer_z - solv_shell)
+
+
+    if comp != "q":
+        sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
+    else:
+        buffer_z_left = buffer_z
 
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
@@ -258,17 +222,13 @@ def create_box_z(ctx: BuildContext) -> None:
         f.write(f"loadamberparams {mol}.frcmod\n")
         f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
-
-        if comp == "x":
-            f.write(f"loadamberparams {molr}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
         if water_model != "TIP3PF":
             f.write(f"source leaprc.water.{water_model.lower()}\n\n")
         else:
             f.write("source leaprc.water.fb3\n\n")
         f.write("model = loadpdb build.pdb\n\n")
         f.write(
-            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z} }} 1\n\n"
+            f"solvatebox model {water_box} {{ {buffer_x} {buffer_y} {buffer_z_left} }} 1\n\n"
         )
         f.write("desc model\n")
         f.write("savepdb model full_pre.pdb\n")
@@ -337,15 +297,15 @@ def create_box_z(ctx: BuildContext) -> None:
         )
         final_system = final_system - outside_wat
 
-        if comp in ["e", "v", "o", "z"]:
-            prot_z_max = u.select_atoms("protein").positions[:, 2].max()
-            prot_z_min = u.select_atoms("protein").positions[:, 2].min()
-            outside_wat_z = final_system.select_atoms(
-                "byres (resname WAT and "
-                f"(prop z > {prot_z_max + targeted_buffer_z} or prop z < {prot_z_min - targeted_buffer_z}))"
-            )
-            final_system = final_system - outside_wat_z
-            system_dimensions[2] = prot_z_max - prot_z_min + 2 * targeted_buffer_z
+    if comp in ["e", "v", "o", "z"]:
+        min_pos = final_system.positions[:, 2].min()
+        system_dimensions[2] = abs_z
+
+        outside_wat_z = final_system.select_atoms(
+            "byres (resname WAT and "
+            f"(prop z > {abs_z + min_pos}))"
+        )
+        final_system = final_system - outside_wat_z
 
     # renumber residues
     revised_resids = np.array(revised_resids)
@@ -360,9 +320,12 @@ def create_box_z(ctx: BuildContext) -> None:
 
     # partitions
     final_system_dum = final_system.select_atoms("resname DUM")
+    final_system_dum[0].position = final_system.select_atoms("protein and name CA N C O").center_of_mass()
+    if comp == 'z':
+        final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
     final_system_prot = final_system.select_atoms("protein")
     final_system_others = final_system - final_system_prot - final_system_dum
-    final_system_ligs = final_system.select_atoms(f"resname {mol} or resname {molr}")
+    final_system_ligs = final_system.select_atoms(f"resname {mol}")
     final_system_other_mol = (
         final_system_others.select_atoms("not resname WAT") - final_system_ligs
     )
@@ -449,8 +412,8 @@ def create_box_z(ctx: BuildContext) -> None:
         f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write(f'set {{{mol}.1}} name "{mol}"\n')
         if comp == "x":
-            f.write(f"loadamberparams {molr}.frcmod\n")
-            f.write(f"{molr} = loadmol2 {molr}.mol2\n\n")
+            f.write(f"loadamberparams {mol}.frcmod\n")
+            f.write(f"{mol} = loadmol2 {mol}.mol2\n\n")
         f.write("ligands = loadpdb solvate_pre_ligands.pdb\n\n")
         f.write(
             f"set ligands box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
@@ -688,11 +651,6 @@ def create_box_z(ctx: BuildContext) -> None:
     return
 
 
-@register_create_box("z")
-def create_box_z_default(ctx: BuildContext) -> None:
-    create_box_z(ctx)
-
-
 @register_create_box("x")
 def create_box_x(ctx: BuildContext) -> None:
     """
@@ -838,20 +796,23 @@ def create_box_x(ctx: BuildContext) -> None:
 
     # get mapping file
 
-    kartograf_mapping = json.load(open(window_dir / "kartograf.json"))
+    mapping = json.load(open(window_dir / "mapping.json"))
     ref_site = u_full.select_atoms(f"resname {res_ref}").residues[0]
     ref_solvent = u_full.select_atoms(f"resname {res_ref}").residues[1]
     alt_site = u_full.select_atoms(f"resname {res_alt}").residues[0]
     alt_solvent = u_full.select_atoms(f"resname {res_alt}").residues[1]
 
     # select cc parts
-    ref_index_list = [int(i) for i in kartograf_mapping.keys()]
-    alt_index_list = [int(i) for i in kartograf_mapping.values()]
+    alt_index_list = [int(i) for i in mapping.keys()]
+    ref_index_list = [int(i) for i in mapping.values()]
+    # include H here and exclude in the string to avoid the string being too long
     cc_indices_t0 = (
         np.concatenate(
             (
                 ref_site.atoms[ref_index_list].indices,
+                ref_site.atoms.select_atoms('type H').indices,
                 alt_solvent.atoms[alt_index_list].indices,
+                alt_solvent.atoms.select_atoms('type H').indices,
             )
         )
         + 1
@@ -860,7 +821,9 @@ def create_box_x(ctx: BuildContext) -> None:
         np.concatenate(
             (
                 ref_solvent.atoms[ref_index_list].indices,
+                ref_solvent.atoms.select_atoms('type H').indices,
                 alt_site.atoms[alt_index_list].indices,
+                alt_site.atoms.select_atoms('type H').indices,
             )
         )
         + 1
@@ -873,11 +836,11 @@ def create_box_x(ctx: BuildContext) -> None:
     )
 
     dict_sc_mask = {
-        "scmk1": indices_to_selection(all_indices_t0, cc_indices_t0),
-        "scmk2": indices_to_selection(all_indices_t1, cc_indices_t1),
+        "scmk1_all_indices": indices_to_selection(all_indices_t0),
+        "scmk1_cc_indices": indices_to_selection(cc_indices_t0),
+        "scmk2_all_indices": indices_to_selection(all_indices_t1),
+        "scmk2_cc_indices": indices_to_selection(cc_indices_t1),
     }
-    logger.debug(f"scmk1: {dict_sc_mask['scmk1']}")
-    logger.debug(f"scmk2: {dict_sc_mask['scmk2']}")
 
     with open(window_dir / "scmask.json", "w") as f:
         json.dump(dict_sc_mask, f)
@@ -902,8 +865,10 @@ def create_box_y(ctx: BuildContext) -> None:
     buffer_x = float(sim.buffer_x)
     buffer_y = float(sim.buffer_y)
     buffer_z = float(sim.buffer_z)
-    if buffer_x < 15 or buffer_y < 15 or buffer_z < 15:
-        raise ValueError(f"For water systems, buffer_x/y/z must be ≥ 15 Å; got {buffer_x}/{buffer_y}/{buffer_z}.")
+    if buffer_x < 10 or buffer_y < 10 or buffer_z < 10:
+        raise ValueError(
+            f"For water systems, buffer_x/y/z must be ≥ 10 Å; got {buffer_x}/{buffer_y}/{buffer_z}."
+        )
     if not hasattr(sim, "water_model"):
         raise AttributeError("SimulationConfig missing 'water_model'.")
     water_model = str(sim.water_model).upper()

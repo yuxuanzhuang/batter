@@ -207,3 +207,21 @@ def test_prepare_fe_progress_path(tmp_path):
     )
     assert progress.exists()
     assert "foo/FINISHED" in progress.read_text()
+
+
+def test_equil_progress_invalidated_when_finished_marker_missing(tmp_path):
+    run_root = tmp_path / "run"
+    root = run_root / "simulations" / "LIG1"
+    (run_root / "artifacts" / "progress" / "equil").mkdir(parents=True, exist_ok=True)
+    (run_root / "simulations").mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
+
+    # stale cache from a prior failed run (marker was removed manually later)
+    progress = run_root / "artifacts" / "progress" / "equil" / "simulations__LIG1.csv"
+    progress.write_text("equil/FAILED,1\n")
+
+    systems = [_make_system(root)]
+    remaining = markers.filter_needing_phase(systems, "equil")
+
+    assert [s.name for s in remaining] == ["LIG1"]
+    assert progress.exists() is False

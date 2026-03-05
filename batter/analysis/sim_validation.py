@@ -49,7 +49,13 @@ class SimValidator:
     plot_rmsf()
         Plot the RMSF of the protein
     """
-    def __init__(self, universe, ligand=None, directory: str | Path = "."):
+    def __init__(
+        self,
+        universe,
+        ligand=None,
+        directory: str | Path = ".",
+        protein_anchor_masks: list[str] | tuple[str, str, str] | None = None,
+    ):
         """
         Parameters
         ----------
@@ -61,6 +67,11 @@ class SimValidator:
         """
         self.universe = universe
         self.workdir = Path(directory).resolve()
+        self.protein_anchor_masks = (
+            [m.strip() for m in protein_anchor_masks if isinstance(m, str) and m.strip()]
+            if protein_anchor_masks is not None
+            else []
+        )
         if ligand is not None:
             self.ligand = ligand
         else:
@@ -135,20 +146,62 @@ class SimValidator:
         logger.debug('Calculating ligand binding site')
         # Get the ligand atom group
         ligand_ag = self.universe.select_atoms(f'resname {self.ligand}')
-        # Get the protein atom group
-        bs_ag = self.universe.select_atoms(f"protein and byres around 5 resname {self.ligand}")
-        
-        # Calculate the distance between the ligand and the protein
+        if ligand_ag.n_atoms == 0:
+            raise ValueError(f'No ligand atoms found for resname {self.ligand!r}.')
+
+        anchor_ag = self._get_protein_anchor_atoms()
+        if anchor_ag is None or anchor_ag.n_atoms != 3:
+            raise ValueError(
+                f'Could not resolve three protein anchor atoms for ligand_bs in {self.workdir}.'
+            )
+
+        # Distance metric: minimum distance from any ligand atom to the three protein anchors.
         distances = []
-        for ts in self.universe.trajectory:
-            dist = distance_array(
-                ligand_ag.center_of_mass(),
-                bs_ag.center_of_mass(),
-                box=self.universe.dimensions)[0]
-            distances.append(dist)
-        
-        distances = np.array(distances)
-        self.results['ligand_bs'] = distances
+        for _ in self.universe.trajectory:
+            dist_mat = distance_array(
+                ligand_ag.positions,
+                anchor_ag.positions,
+                box=self.universe.dimensions,
+            )
+            distances.append(float(np.min(dist_mat)))
+
+        self.results['ligand_bs'] = np.asarray(distances)
+
+    @staticmethod
+    def _anchor_mask_to_selection(mask: str) -> str:
+        token = mask.strip()
+        if not token.startswith(':') or '@' not in token:
+            raise ValueError(f'Invalid anchor mask: {mask!r}')
+        resid, atom = token[1:].split('@', 1)
+        resid = resid.strip()
+        atom = atom.strip()
+        if not resid or not atom:
+            raise ValueError(f'Invalid anchor mask: {mask!r}')
+        return f'protein and resid {resid} and name {atom}'
+
+    def _get_protein_anchor_atoms(self):
+        if len(self.protein_anchor_masks) != 3:
+            logger.warning(
+                f'Expected 3 protein anchors from YAML/sim config, got {len(self.protein_anchor_masks)}.'
+            )
+            return None
+
+        atoms = []
+        for mask in self.protein_anchor_masks:
+            try:
+                sel = self._anchor_mask_to_selection(mask)
+            except ValueError as exc:
+                logger.warning(f'Invalid anchor entry {mask!r}: {exc}')
+                return None
+            ag = self.universe.select_atoms(sel)
+            if ag.n_atoms != 1:
+                logger.warning(
+                    f'Anchor selection {sel!r} matched {ag.n_atoms} atoms (expected 1).'
+                )
+                return None
+            atoms.append(ag[0])
+
+        return mda.AtomGroup(atoms)
     
     def _ligand_dihedral(self):
         logger.debug('Calculating ligand dihedral')

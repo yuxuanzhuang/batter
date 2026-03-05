@@ -51,6 +51,8 @@ RBFE mappings can be created in a few ways:
 * **Default** – maps the first ligand to all others (star topology).
 * **Konnektor** – uses the ``konnektor`` library to build a network; configure with
   ``rbfe.mapping: konnektor`` and optionally ``rbfe.konnektor_layout``.
+  Choose atom mapping backend via ``rbfe.atom_mapper`` (``kartograf`` or ``lomap``).
+  The exact Kartograf/Lomap mapper parameters are documented in :doc:`../rbfe`.
   The available layouts are listed in the `Konnektor documentation <https://konnektor.openfree.energy/en/latest/api/konnektor.planners.html>`_.
   provide inputs can be either `MinimalSpanningTreeNetworkGenerator` or `minimalspanningtree`.
   See detailed tutorial in `Konnektor tutorial <https://konnektor.openfree.energy/en/latest/tutorials/basic_network_generation.html>`_.
@@ -162,6 +164,7 @@ Generating Simulation Inputs
    - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
    - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
    - ``rbfe.mapping`` / ``rbfe.mapping_file`` – choose your network planning scheme.
+   - ``rbfe.atom_mapper`` – choose RBFE atom mapper backend: ``kartograf`` (default) or ``lomap``.
 
       The available schemes are described in :ref:`Network planning schemes <rbfe_tutorial>`.
 

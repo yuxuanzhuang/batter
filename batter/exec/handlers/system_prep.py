@@ -14,6 +14,7 @@ import MDAnalysis as mda
 import numpy as np
 import pandas as pd
 from MDAnalysis.analysis import align
+from MDAnalysis.analysis.dssp import DSSP
 from loguru import logger
 
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
@@ -169,6 +170,37 @@ class _SystemPrepRunner:
         lipid_mol.extend(amber_lipid_mol)
         self.lipid_mol = lipid_mol
         logger.debug(f"New lipid_mol list: {self.lipid_mol}")
+
+    def _run_input_protein_dssp(self) -> Dict[str, Any]:
+        """
+        Run DSSP on the input protein structure and persist the assignments.
+        """
+        dssp_npy = self.ligands_folder / "protein_input_dssp.npy"
+        dssp_json = self.ligands_folder / "protein_input_dssp.json"
+        try:
+            u_prot = mda.Universe(self._protein_input)
+            dssp_ana = DSSP(u_prot.select_atoms('protein and not resname NMA ACE')).run()
+            dssp_array = np.asarray(dssp_ana.results["dssp"])
+        except Exception as exc:
+            try:
+                logger.warning(f"Failed to run DSSP on full protein input {self._protein_input}, trying with last residue removed")
+                dssp_ana = DSSP(u_prot.select_atoms('protein and not resname NMA ACE').residues[:-1].atoms).run()
+                dssp_array = np.asarray(dssp_ana.results["dssp"])
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to run DSSP on protein input {self._protein_input}: {exc}. No secondary-structure conditioned restraints. "
+                    "If you want to debug, please run `DSSP` in MDAnalysis on the input protein file."
+                )
+                dssp_array = np.array([])
+
+        np.save(dssp_npy, dssp_array)
+        dssp_json.write_text(json.dumps(dssp_array.tolist()))
+        return {
+            "npy": str(dssp_npy),
+            "json": str(dssp_json),
+            "shape": list(dssp_array.shape),
+            "results": dssp_array.tolist(),
+        }
 
     def _get_alignment(self):
         """
@@ -382,14 +414,42 @@ class _SystemPrepRunner:
         u_merged.dimensions = box_dim
 
         charmm_2_std_resname_map = {
-            "HIS": "HIE",   # generic HIS → HID (or change to HIE if that’s your default)
+            "HIS": "HIE",   # generic HIS → HIE
             "HSD": "HID",   # δ-protonated
             "HSE": "HIE",   # ε-protonated
             "HIP": "HIP",   # doubly protonated
         }
+        def infer_histidine_resname(res) -> str:
+            """
+            Infer HID/HIE/HIP from explicit hydrogens, if present.
+            Falls back to HIE when ambiguous or hydrogens absent.
+            """
+            # Atom names are the most informative for histidine protonation
+            atom_names = {a.name.upper() for a in res.atoms}
+
+            # Common naming across force fields: HD1 on ND1, HE2 on NE2
+            has_hd1 = "HD1" in atom_names
+            has_he2 = "HE2" in atom_names
+
+            if has_hd1 and has_he2:
+                logger.warning(f"Found both HD1 and HE2 in residue {res.resname} {res.resid}; setting to HIP")
+                return "HIP"
+            if has_hd1:
+                return "HID"
+            if has_he2:
+                return "HIE"
+
+            # If hydrogens exist but aren't named HD1/HE2, we can't reliably infer
+            # (or hydrogens are absent entirely). Default to HIE.
+            return "HIE"
+
         # replace CHARMM specific resname
         for res in u_merged.residues:
-            new_name = charmm_2_std_resname_map.get(res.resname, res.resname)
+            # if the protein contains hydrogen and use a generic HIS name, get the correct resname based on protonation
+            if res.resname == "HIS":
+                new_name = infer_histidine_resname(res)
+            else:
+                new_name = charmm_2_std_resname_map.get(res.resname, res.resname)
             res.resname = new_name
 
         charmm_2_std_resname_map = {
@@ -467,6 +527,7 @@ class _SystemPrepRunner:
         ligand_ph: float = 7.4,
         lipid_mol: List[str] = [],
         lipid_ff: str = "lipid21",
+        unbound_threshold: float | None = None,
         overwrite: bool = False,
         verbose: bool = False,
     ) -> Dict[str, Any]:
@@ -509,6 +570,7 @@ class _SystemPrepRunner:
 
         # Directories
         self.ligands_folder.mkdir(parents=True, exist_ok=True)
+        dssp_result = self._run_input_protein_dssp()
 
         # Box dimensions
         if self.membrane_simulation or self._system_topology is not None:
@@ -583,7 +645,12 @@ class _SystemPrepRunner:
         lig_sdf = str(Path(ligand_paths[self.unique_mol_names[0]]))
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
-            u_prot, u_lig, lig_sdf, anchor_atoms, ligand_anchor_atom
+            u_prot,
+            u_lig,
+            lig_sdf,
+            anchor_atoms,
+            ligand_anchor_atom,
+            unbound_threshold=unbound_threshold,
         )
         self.anchor_atoms = anchor_atoms
         self.ligand_anchor_atom = ligand_anchor_atom
@@ -597,6 +664,7 @@ class _SystemPrepRunner:
             "reference": str(self.ligands_folder / "reference.pdb"),
             "docked": str(self.ligands_folder / f"{self._system_name}.pdb"),
             "ligands": dict(self.ligand_dict),
+            "dssp": dssp_result,
             "anchors": {"p1": self.p1, "p2": self.p2, "p3": self.p3},
             "l1": {
                 "x": self.l1_x,
@@ -642,12 +710,19 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     payload = StepPayload.model_validate(params)
     sys_params = payload.sys_params or SystemParams()
     yaml_dir = Path(sys_params["yaml_dir"]).resolve()
+    threshold_val = sys_params.get(
+        "unbound_threshold",
+        getattr(payload.sim, "unbound_threshold", 8.0),
+    )
+    unbound_threshold = (
+        float(threshold_val) if threshold_val is not None else None
+    )
 
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
         system_name=sys_params["system_name"],
         protein_input=sys_params["protein_input"],
-        system_topology= sys_params.get("system_input", None),
+        system_topology=sys_params.get("system_input", None),
         ligand_paths=sys_params["ligand_paths"],
         anchor_atoms=list(sys_params.get("anchor_atoms", [])),
         ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),
@@ -659,6 +734,7 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
         ligand_ph=float(sys_params.get("ligand_ph", 7.4)),
         lipid_mol=list(sys_params.get("lipid_mol", [])),
         lipid_ff=sys_params.get("lipid_ff", "lipid21"),
+        unbound_threshold=unbound_threshold,
         overwrite=bool(sys_params.get("overwrite", False)),
         verbose=bool(sys_params.get("verbose", False)),
     )
