@@ -323,6 +323,24 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
     assert cfg.component_lambdas["z"] == [0.0, 0.2, 0.4, 1.0]
 
 
+def test_sim_config_from_sections_preserves_slurm_header_dir(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        n_steps={"z": 300_000},
+    )
+    header_dir = tmp_path / "slurm_headers"
+    cfg = SimulationConfig.from_sections(
+        create,
+        fe_args,
+        protocol="abfe",
+        slurm_header_dir=header_dir,
+    )
+    assert cfg.slurm_header_dir == header_dir
+    assert cfg.model_dump()["slurm_header_dir"] == header_dir
+
+
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
     if protocol == "abfe":
@@ -368,6 +386,16 @@ def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:
     )
     sim_cfg_yes = cfg_yes.resolved_sim_config()
     assert sim_cfg_yes.remd == "yes"
+
+
+def test_resolved_sim_config_propagates_run_slurm_header_dir(tmp_path: Path) -> None:
+    cfg = _minimal_run_config(tmp_path, "abfe")
+    header_dir = tmp_path / "custom_headers"
+    cfg = cfg.model_copy(
+        update={"run": cfg.run.model_copy(update={"slurm_header_dir": header_dir})}
+    )
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.slurm_header_dir == header_dir
 
 
 def test_analysis_start_step_default(tmp_path: Path) -> None:

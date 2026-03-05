@@ -267,7 +267,7 @@ class SimulationConfig(BaseModel):
             "unbound_threshold": float(_fe_attr("unbound_threshold", lambda: 8.0)),
             "analysis_start_step": analysis_start_step_val,
             "n_bootstraps": n_bootstraps_val,
-            "slurm_header_dir": str(slurm_header_dir or (Path.home() / ".batter")),
+            "slurm_header_dir": Path(slurm_header_dir or (Path.home() / ".batter")),
         }
 
         infe_flag = bool(extra_conf_rest)
@@ -321,6 +321,10 @@ class SimulationConfig(BaseModel):
     )
     remd_nstlim: int = Field(
         100, description="Steps per REMD segment (applied to mdin-*-remd copies)."
+    )
+    slurm_header_dir: Path = Field(
+        default_factory=lambda: Path.home() / ".batter",
+        description="Directory containing user Slurm header templates.",
     )
     infe: bool = Field(
         False, description="Enable NFE (infinite) equilibration when true."
