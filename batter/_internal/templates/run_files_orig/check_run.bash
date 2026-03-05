@@ -20,7 +20,7 @@ check_sim_failure() {
     # If log doesn't exist yet, don't treat as failure here
     [[ -f "$log_file" ]] || return 0
 
-    if grep -Eqi "Terminated Abnormally|command not found|illegal memory|segmentation fault|MPI_ABORT|FATAL" "$log_file"; then
+    if grep -Eqi "Terminated Abnormally|command not found|illegal memory|segmentation fault|MPI_ABORT|FATAL|cudaGetDeviceCount" "$log_file"; then
         echo "[ERROR] $stage simulation failed. Detected error in $log_file:"
         tail -n 200 "$log_file" || true
         rm -f "$log_file"
