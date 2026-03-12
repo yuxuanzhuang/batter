@@ -19,7 +19,7 @@ from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
-from batter._internal.ops.helpers import run_parmed_hmr_if_enabled
+from batter._internal.ops.helpers import run_parmed_hmr_if_enabled, merge_first_n_molecules_in_prmtop
 
 
 def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
@@ -648,6 +648,9 @@ def create_box(ctx: BuildContext) -> None:
     u_vac.atoms.write(str(window_dir / "vac_orig.pdb"))
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
+    full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
+    # merge DUM + DUM + PROT + LIG1 + LIG2 
+    merge_first_n_molecules_in_prmtop(full_prmtop, 5, str(window_dir / "full_merged.prmtop"))
     return
 
 
@@ -793,6 +796,8 @@ def create_box_x(ctx: BuildContext) -> None:
     u_full.atoms.write(str(window_dir / "full.pdb"))
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
+    full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
+    merge_first_n_molecules_in_prmtop(full_prmtop, 5, str(window_dir / "full_merged.prmtop"))
 
     # get mapping file
 
@@ -1100,6 +1105,8 @@ def create_box_y(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
+    full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
+    merge_first_n_molecules_in_prmtop(full_prmtop, 2, str(window_dir / "full_merged.prmtop"))
     return
 
 
@@ -1176,4 +1183,6 @@ def create_box_m(ctx: BuildContext) -> None:
     _cp(window_dir / "vac.inpcrd", window_dir / "full.inpcrd")
     
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
+    full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
+    merge_first_n_molecules_in_prmtop(full_prmtop, 2, str(window_dir / "full_merged.prmtop"))
     return

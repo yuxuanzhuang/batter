@@ -12,6 +12,7 @@ CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Constants
 PRMTOP="full.hmr.prmtop"
+PRMTOP_MERGED="full_merged.prmtop"
 INPCRD="full.inpcrd"
 log_file="run.log"
 overwrite=${OVERWRITE:-0}
@@ -98,7 +99,7 @@ else
     if [[ -f RING_PENETRATION ]]; then
         echo "Ligand ring penetration detected previously; using longer equilibration."
 
-        print_and_run "$PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP -c mini2.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         check_sim_failure "NVT" "$log_file" eqnvt.rst7
 
         python check_penetration.py eqnvt.rst7
@@ -112,32 +113,32 @@ else
 
     # Equilibration with protein and ligand restrained (CPU for stability)
     if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
-        print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> \"$log_file\" 2>&1"
     else
-        print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> \"$log_file\" 2>&1"
     fi
     check_sim_failure "Pre equilibration" "$log_file" eqnpt_pre.rst7
 
     # Equilibration with C-alpha restrained
-    print_and_run "$PMEMD_DPFP_EXEC -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_DPFP_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
 
     for step in {1..4}; do
         prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
         curr=$(printf "eqnpt%02d" $step)
-        print_and_run "$PMEMD_DPFP_EXEC -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration stage $step" "$log_file" "${curr}.rst7" "$prev"
     done
 
-    # longer equilibration (mostly for membrane systems)
-    print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+    # longer equilibration
+    print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
 
     # Additional disappear/appear equilibration steps
-    print_and_run "$PMEMD_EXEC -O -i eqnpt_disappear.in -p $PRMTOP -c eqnpt_eq.rst7 -o eqnpt_disappear.out -r eqnpt_disappear.rst7 -x eqnpt_disappear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i eqnpt_disappear.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o eqnpt_disappear.out -r eqnpt_disappear.rst7 -x eqnpt_disappear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration disappear" "$log_file" eqnpt_disappear.rst7
 
-    print_and_run "$PMEMD_EXEC -O -i eqnpt_appear.in -p $PRMTOP -c eqnpt_disappear.rst7 -o eqnpt_appear.out -r eqnpt_appear.rst7 -x eqnpt_appear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i eqnpt_appear.in -p $PRMTOP_MERGED -c eqnpt_disappear.rst7 -o eqnpt_appear.out -r eqnpt_appear.rst7 -x eqnpt_appear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration appear" "$log_file" eqnpt_appear.rst7 0 "eqnpt_appear.rst7" "eqnpt_appear.nc"
 fi
 

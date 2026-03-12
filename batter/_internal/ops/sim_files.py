@@ -279,8 +279,13 @@ def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 20000, n_lambdas = 
     n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
     return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
 
-# ------------------------- generic equil files ------------------------- #
+def _sub_write(src: Path, dst: Path, repl: dict[str, str]) -> None:
+    text = Path(src).read_text()
+    for k, v in repl.items():
+        text = text.replace(k, v)
+    dst.write_text(text)
 
+# ------------------------- generic equil files ------------------------- #
 
 def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     """
@@ -304,11 +309,7 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
         L2 = parts[7].strip()
         L3 = parts[8].strip()
 
-    def _sub_write(src: Path, dst: Path, repl: dict[str, str]) -> None:
-        text = Path(src).read_text()
-        for k, v in repl.items():
-            text = text.replace(k, v)
-        dst.write_text(text)
+
 
     # mini.in
     _sub_write(amber_dir / "mini.in", work / "mini.in", {"_lig_name_": mol})
@@ -615,7 +616,6 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
 
-        # optional short equilibration input
         n_steps_run = 20000
         eq_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
@@ -757,6 +757,20 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         "_lig_name_", mol
                     )
                 )
+    # eqnpt-eq.in (longer equil with restraints on non-loop regions)
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=2)
+    eqnpt_src = amber_dir / (
+        "eqnpt-uno-eq.in"
+    )
+    _sub_write(
+        amber_dir / ("eqnpt-uno-eq.in"),
+        windows_dir / "eqnpt_eq.in",
+        {
+            "_temperature_": str(temperature),
+            "_lig_name_": mol,
+            "_non_loop_": non_loop_mask,
+        },
+    )
 
     (windows_dir / "lambda.sch").write_text(
         "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"

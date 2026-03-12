@@ -1124,6 +1124,7 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
     needed = [
         "full.prmtop",
         "full.inpcrd",
+        "full_merged.prmtop",
         "full.pdb",
         "vac.pdb",
         "vac_ligand.pdb",
