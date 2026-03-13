@@ -12,6 +12,7 @@ CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
+PRMTOP_MERGED="full_merged.prmtop"
 log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
@@ -70,7 +71,7 @@ if [[ $only_eq -eq 1 ]]; then
         fi
     fi
     # run one long equilbration with dynamically changed lambda value
-    print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
 
     # lambda values for EACH EQ frame

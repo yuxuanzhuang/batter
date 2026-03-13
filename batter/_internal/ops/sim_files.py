@@ -274,7 +274,7 @@ def _maybe_extra_mask(
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
     return mask, force_const
 
-def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 20000, n_lambdas = 11):
+def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 100000, n_lambdas = 5):
     dynlmb = 1 / (n_lambdas-1)
     n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
     return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
