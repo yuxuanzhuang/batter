@@ -27,8 +27,8 @@ Equilibrate, NPT.
   nmropt = 0,
   pencut = -1,
   ntr = 1,
-  restraint_wt = 0.5,
-  restraintmask = '((@CA & _non_loop_) | :_lig_name_ | :1 | :2) & !@H=',
+  restraint_wt = 10,
+  restraintmask = '(@CA | :_lig_name_ | :1 | :2) & !@H=',
   infe = 0,
  /
  &pmd

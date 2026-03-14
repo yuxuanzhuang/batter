@@ -497,9 +497,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
-                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
                     else:
-                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '(@CA | :{mol} | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -636,11 +637,11 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         .replace("'", "")
                     )
                     if rm == "":
-                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
                     else:
-                        line = (
-                            f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
-                        )
+                        #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '(@CA | :{mol}) | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -877,9 +878,11 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
                     # restraining 1) non loop C-alpha 2) common core of ligands
-                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
+                    #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
+                    line = f"restraintmask = '(@CA | ({scmk1_exclude_indice}) ) & !@H='\n"
                 else:
-                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                    #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                    line = f"restraintmask = '(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
                 if len(line) > 256:
                     logger.warning(f"restraintmask line too long for AMBER: {len(line)} but proceeding")
             line = (
