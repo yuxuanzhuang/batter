@@ -405,6 +405,84 @@ def force_mapped_coords_and_minimize(
 
     return lig2_ffmol
 
+def rigid_align_lig2_to_lig1(
+    lig1: Chem.Mol,
+    lig2: Chem.Mol,
+    atom_map_1to2: list[tuple[int, int]],
+    conf_id1: int = -1,
+    conf_id2: int = -1,
+    copy: bool = True,
+) -> Chem.Mol:
+    """Rigidly align ``lig2`` onto ``lig1`` using a mapped atom correspondence.
+
+    This function applies a rigid-body transformation (rotation + translation)
+    to the conformer of ``lig2`` so that the mapped atoms in ``lig2`` align as
+    closely as possible to the corresponding mapped atoms in ``lig1``.
+    Internal geometry of ``lig2`` is preserved.
+
+    Parameters
+    ----------
+    lig1
+        Reference molecule. Must contain at least one conformer.
+    lig2
+        Mobile molecule to be aligned. Must contain at least one conformer.
+    atom_map_1to2
+        List of atom-index pairs ``(idx_in_lig1, idx_in_lig2)`` using 0-based
+        indices.
+    conf_id1
+        Conformer ID of ``lig1``. Default is ``-1``, meaning the default
+        conformer.
+    conf_id2
+        Conformer ID of ``lig2``. Default is ``-1``, meaning the default
+        conformer.
+    copy
+        If ``True``, return a copied molecule and leave the input ``lig2``
+        unchanged. If ``False``, modify ``lig2`` in place and return it.
+
+    Returns
+    -------
+    Chem.Mol
+        The aligned molecule.
+
+    Raises
+    ------
+    ValueError
+        If either molecule has no conformer, the atom map is empty, or any
+        mapped atom index is invalid.
+    """
+    if lig1.GetNumConformers() == 0:
+        raise ValueError("lig1 must contain at least one conformer.")
+    if lig2.GetNumConformers() == 0:
+        raise ValueError("lig2 must contain at least one conformer.")
+    if not atom_map_1to2:
+        raise ValueError("atom_map_1to2 must not be empty.")
+
+    n_atoms_1 = lig1.GetNumAtoms()
+    n_atoms_2 = lig2.GetNumAtoms()
+
+    for idx1, idx2 in atom_map_1to2:
+        if not 0 <= idx1 < n_atoms_1:
+            raise ValueError(f"lig1 atom index out of range: {idx1}")
+        if not 0 <= idx2 < n_atoms_2:
+            raise ValueError(f"lig2 atom index out of range: {idx2}")
+
+    out = Chem.Mol(lig2) if copy else lig2
+
+    # RDKit expects (probe_atom_idx, ref_atom_idx), i.e. (lig2_idx, lig1_idx)
+    atom_map_probe_to_ref: list[tuple[int, int]] = [
+        (idx2, idx1) for idx1, idx2 in atom_map_1to2
+    ]
+
+    rdMolAlign.AlignMol(
+        prbMol=out,
+        refMol=lig1,
+        prbCid=conf_id2,
+        refCid=conf_id1,
+        atomMap=atom_map_probe_to_ref,
+    )
+
+    return out
+
 # ---------------------- unified writer ----------------------
 
 
@@ -1018,7 +1096,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
     rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
 
-    rdmol_alt_site = force_mapped_coords_and_minimize(
+    rdmol_alt_site = rigid_align_lig2_to_lig1(
         rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
     )
     # save mol_alt_aligned as PDB
@@ -1038,7 +1116,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         _mol_alt_solvent, ref_mol=_mol_ref_solvent
     )._rdkit
 
-    rdmol_alt_solvent = force_mapped_coords_and_minimize(
+    rdmol_alt_solvent = rigid_align_lig2_to_lig1(
         rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
     )
 
