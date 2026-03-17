@@ -285,6 +285,60 @@ def _sub_write(src: Path, dst: Path, repl: dict[str, str]) -> None:
         text = text.replace(k, v)
     dst.write_text(text)
 
+
+def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
+    """Merge sorted indices into inclusive consecutive ranges.
+
+    Parameters
+    ----------
+    indices : Sequence[int]
+        Integer indices. Duplicates are allowed but will be removed.
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        List of (start, end) inclusive ranges. If start == end, it's a singleton.
+    """
+    uniq = sorted(set(indices))
+    if not uniq:
+        return []
+
+    ranges: List[Tuple[int, int]] = []
+    start = prev = uniq[0]
+    for x in uniq[1:]:
+        if x == prev + 1:
+            prev = x
+            continue
+        ranges.append((start, prev))
+        start = prev = x
+    ranges.append((start, prev))
+    return ranges
+
+
+def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
+    """Convert ranges to selection segments like '5-8,10,12-14'."""
+    parts: List[str] = []
+    for a, b in ranges:
+        parts.append(f"{a}" if a == b else f"{a}-{b}")
+    return ",".join(parts)
+
+
+def indices_to_selection(
+    indices: Iterable[int],
+) -> str:
+    """Build a selection string from include or exclude indices
+    """
+    inc = sorted(set(indices))
+    if not inc:
+        raise ValueError("indices must be non-empty")
+
+    inc_ranges = _merge_consecutive(inc)
+    inc_str = _ranges_to_str(inc_ranges)
+
+    return f"@{inc_str}"
+
+
+
 # ------------------------- generic equil files ------------------------- #
 
 def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
@@ -461,6 +515,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol}')
     ref_resid = mol_ref_ag.resids[0]
+    ref_lig_in_site_mask = f':{int(ref_resid)}'
 
     amber_dir = ctx.amber_dir
 
@@ -521,7 +576,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  mcwat = 1,\n")
             mdin.write(f"  nmd = 1000,\n")
             mdin.write(f"  nmc = 1000,\n")
-            mdin.write(f"  mcwatmask = \":{mol}\",\n")
+            mdin.write(f"  mcwatmask = \"{ref_lig_in_site_mask}\",\n")
             mdin.write(f"  mcligshift = 40,\n")
             mdin.write(f"  mcwatretry = 3000,\n")
             mdin.write(f"  mcresstr = \"WAT\",\n")
@@ -832,17 +887,30 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mol_ref_ag = u.select_atoms(f'resname {mol_ref}')
     ref_resid = mol_ref_ag.resids[0]
 
+    lig_in_site_mask = f':{int(ref_resid)},{int(ref_resid)+2}'
     mk1 = f':{int(ref_resid)},{int(ref_resid)+3}'
     mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
     # load scmask.json for scmk1, scmk2
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
     scmk1_all_indice = scmk_dict['scmk1_all_indices']
-    scmk1_exclude_indice = scmk_dict['scmk1_cc_indices']
+    scmk1_exclude_indice = np.concatenate([
+                    scmk_dict['scmk1_cc_solvent_indices'],
+                    scmk_dict['scmk1_cc_site_indices']
+    ])
     scmk2_all_indice = scmk_dict['scmk2_all_indices']
-    scmk2_exclude_indice = scmk_dict['scmk2_cc_indices']
+    scmk2_exclude_indice = np.concatenate([
+        scmk_dict['scmk2_cc_solvent_indices'],
+        scmk_dict['scmk2_cc_site_indices']
+    ])
+    scmk1_all_indice = indices_to_selection(scmk1_all_indice)
+    scmk1_exclude_indice = indices_to_selection(scmk1_exclude_indice)
+    scmk2_all_indice = indices_to_selection(scmk2_all_indice)
+    scmk2_exclude_indice = indices_to_selection(scmk2_exclude_indice)
 
-    scmk1 = f'{scmk1_all_indice} & (!{scmk1_exclude_indice} | @H=)'
-    scmk2 = f'{scmk2_all_indice} & (!{scmk2_exclude_indice} | @H=)'
+    #scmk1 = f'{scmk1_all_indice} & (!{scmk1_exclude_indice} | @H=)'
+    #scmk2 = f'{scmk2_all_indice} & (!{scmk2_exclude_indice} | @H=)'
+    scmk1 = f'{scmk1_all_indice} & !{scmk1_exclude_indice}'
+    scmk2 = f'{scmk2_all_indice} & !{scmk2_exclude_indice}'
 
     noshakemk = f':{int(ref_resid)},{int(ref_resid)+1},{int(ref_resid)+2},{int(ref_resid)+3}'
 
@@ -873,7 +941,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "dt = " in line:
                 line = "  dt = 0.002,\n"
             elif "restraint_wt = " in line:
-                line = f"  restraint_wt = 1,\n"
+                line = f"  restraint_wt = 5,\n"
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
@@ -907,7 +975,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write(f"  mcwat = 1,\n")
         mdin.write(f"  nmd = 1000,\n")
         mdin.write(f"  nmc = 1000,\n")
-        mdin.write(f"  mcwatmask = \"(:{mol_ref} | :{mol_alt})\",\n")
+        mdin.write(f"  mcwatmask = \"{lig_in_site_mask}\",\n")
         mdin.write(f"  mcligshift = 40,\n")
         mdin.write(f"  mcwatretry = 3000,\n")
         mdin.write(f"  mcresstr = \"WAT\",\n")

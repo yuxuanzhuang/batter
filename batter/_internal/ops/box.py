@@ -22,56 +22,6 @@ from batter._internal.builders.fe_registry import register_create_box
 from batter._internal.ops.helpers import run_parmed_hmr_if_enabled, merge_first_n_molecules_in_prmtop
 
 
-def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
-    """Merge sorted indices into inclusive consecutive ranges.
-
-    Parameters
-    ----------
-    indices : Sequence[int]
-        Integer indices. Duplicates are allowed but will be removed.
-
-    Returns
-    -------
-    list[tuple[int, int]]
-        List of (start, end) inclusive ranges. If start == end, it's a singleton.
-    """
-    uniq = sorted(set(indices))
-    if not uniq:
-        return []
-
-    ranges: List[Tuple[int, int]] = []
-    start = prev = uniq[0]
-    for x in uniq[1:]:
-        if x == prev + 1:
-            prev = x
-            continue
-        ranges.append((start, prev))
-        start = prev = x
-    ranges.append((start, prev))
-    return ranges
-
-
-def _ranges_to_str(ranges: Sequence[Tuple[int, int]]) -> str:
-    """Convert ranges to selection segments like '5-8,10,12-14'."""
-    parts: List[str] = []
-    for a, b in ranges:
-        parts.append(f"{a}" if a == b else f"{a}-{b}")
-    return ",".join(parts)
-
-
-def indices_to_selection(
-    indices: Iterable[int],
-) -> str:
-    """Build a selection string from include or exclude indices
-    """
-    inc = sorted(set(indices))
-    if not inc:
-        raise ValueError("indices must be non-empty")
-
-    inc_ranges = _merge_consecutive(inc)
-    inc_str = _ranges_to_str(inc_ranges)
-
-    return f"@{inc_str}"
 
 
 def _cp(src: Path, dst: Path) -> None:
@@ -810,29 +760,10 @@ def create_box_x(ctx: BuildContext) -> None:
     # select cc parts
     alt_index_list = [int(i) for i in mapping.keys()]
     ref_index_list = [int(i) for i in mapping.values()]
-    # include H here and exclude in the string to avoid the string being too long
-    cc_indices_t0 = (
-        np.concatenate(
-            (
-                ref_site.atoms[ref_index_list].indices,
-                ref_site.atoms.select_atoms('type H').indices,
-                alt_solvent.atoms[alt_index_list].indices,
-                alt_solvent.atoms.select_atoms('type H').indices,
-            )
-        )
-        + 1
-    )
-    cc_indices_t1 = (
-        np.concatenate(
-            (
-                ref_solvent.atoms[ref_index_list].indices,
-                ref_solvent.atoms.select_atoms('type H').indices,
-                alt_site.atoms[alt_index_list].indices,
-                alt_site.atoms.select_atoms('type H').indices,
-            )
-        )
-        + 1
-    )
+    cc_indices_site_t0 = ref_site.atoms[ref_index_list].indices + 1
+    cc_indices_solvent_t0 = alt_solvent.atoms[alt_index_list].indices + 1
+    cc_indices_solvent_t1 = ref_solvent.atoms[ref_index_list].indices + 1
+    cc_indices_site_t1 = alt_site.atoms[alt_index_list].indices + 1
     all_indices_t0 = (
         np.concatenate((ref_site.atoms.indices, alt_solvent.atoms.indices)) + 1
     )
@@ -841,10 +772,12 @@ def create_box_x(ctx: BuildContext) -> None:
     )
 
     dict_sc_mask = {
-        "scmk1_all_indices": indices_to_selection(all_indices_t0),
-        "scmk1_cc_indices": indices_to_selection(cc_indices_t0),
-        "scmk2_all_indices": indices_to_selection(all_indices_t1),
-        "scmk2_cc_indices": indices_to_selection(cc_indices_t1),
+        "scmk1_all_indices": all_indices_t0.astype(int).tolist(),
+        "scmk1_cc_site_indices": cc_indices_site_t0.astype(int).tolist(),
+        "scmk1_cc_solvent_indices": cc_indices_solvent_t0.astype(int).tolist(),
+        "scmk2_all_indices": all_indices_t1.astype(int).tolist(),
+        "scmk2_cc_site_indices": cc_indices_site_t1.astype(int).tolist(),
+        "scmk2_cc_solvent_indices": cc_indices_solvent_t1.astype(int).tolist(),
     }
 
     with open(window_dir / "scmask.json", "w") as f:

@@ -1009,7 +1009,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         )
         map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
     # need to exclude hydrogens from the atom mapping
-    map_b_to_a = filter_exclude_hydroge_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
+    # map_b_to_a = filter_exclude_hydroge_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
 
     logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
     atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
@@ -1096,7 +1096,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
     rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
 
-    rdmol_alt_site = rigid_align_lig2_to_lig1(
+    rdmol_alt_site = force_mapped_coords_and_minimize(
         rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
     )
     # save mol_alt_aligned as PDB
@@ -1116,7 +1116,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         _mol_alt_solvent, ref_mol=_mol_ref_solvent
     )._rdkit
 
-    rdmol_alt_solvent = rigid_align_lig2_to_lig1(
+    rdmol_alt_solvent = force_mapped_coords_and_minimize(
         rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
     )
 

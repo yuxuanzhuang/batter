@@ -44,15 +44,11 @@ def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]
         logger.warning(f"[restraints:x] Unexpected mapping format in {mapping_path}: {type(data)}")
         return [], []
 
-    ref_indices = set()
-    alt_indices = set()
-    for ref_idx, alt_idx in data.items():
-        try:
-            ref_indices.add(int(ref_idx))
-            alt_indices.add(int(alt_idx))
-        except Exception:
-            continue
-    return sorted(ref_indices), sorted(alt_indices)
+    # scmk1_cc_indices as ref_indices
+    ref_indices = sorted(data.get("scmk1_cc_solvent_indices", []))
+    # scmk2_cc_indices as alt_indices
+    alt_indices = sorted(data.get("scmk2_cc_solvent_indices", []))
+    return ref_indices, alt_indices
 
 
 def _collect_common_core_heavy_ligand(
@@ -804,26 +800,12 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     _, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
 
     # Use common-core atoms for ligand COM restraints when RBFE mapping is present.
-    mapping_path = ctx.equil_dir / "mapping.json"
-    ref_cc_indices, alt_cc_indices = _load_common_core_indices(mapping_path)
-    if ref_cc_indices:
-        cc_lig_1 = _collect_common_core_heavy_ligand(vac_pdb, lig_res, 1, ref_cc_indices)
-        if cc_lig_1:
-            hvy_lig_1 = cc_lig_1
-        else:
-            logger.warning(
-                f"[restraints:{comp}] Could not build common-core heavy set for reference ligand from {mapping_path}; "
-                "falling back to all heavy atoms."
-            )
-    if alt_cc_indices:
-        cc_lig_2 = _collect_common_core_heavy_ligand(vac_pdb, lig_res, 3, alt_cc_indices)
-        if cc_lig_2:
-            hvy_lig_2 = cc_lig_2
-        else:
-            logger.warning(
-                f"[restraints:{comp}] Could not build common-core heavy set for alternate ligand from {mapping_path}; "
-                "falling back to all heavy atoms."
-            )
+    mapping_path = ctx.equil_dir / "scmask.json"
+    scmk_dict = json.load(open(mapping_path, "r"))
+
+    hvy_lig_1 = scmk_dict['scmk1_cc_solvent_indices']
+    hvy_lig_2 = scmk_dict['scmk2_cc_solvent_indices']
+
     # cv.in
     cv_in = windows_dir / "cv.in"
     with cv_in.open("w") as cvf:
@@ -854,7 +836,7 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
                 cvf.write(" cv_type = 'COM_DISTANCE'\n")
                 cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
                 for a in hvy_lig:
-                    cvf.write(a + ",")
+                    cvf.write(str(a) + ",")
             cvf.write("\n")
             cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
             cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
