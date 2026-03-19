@@ -11,6 +11,7 @@ from .step import Step
 __all__ = [
     "make_abfe_pipeline",
     "make_asfe_pipeline",
+    "make_rsfe_pipeline",
     "make_rbfe_pipeline",
     "make_md_pipeline",
 ]
@@ -400,6 +401,28 @@ def make_asfe_pipeline(
         }
         steps = [s for s in steps if s.name in keep]
     return Pipeline(steps)
+
+
+def make_rsfe_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """
+    RSFE scaffold pipeline.
+
+    This currently reuses the MASFE parent steps and the FE phase layout from ASFE.
+    The orchestrator swaps the per-ligand children for pair-transformation systems
+    before FE preparation begins.
+    """
+    return make_asfe_pipeline(
+        sim,
+        sys_params=sys_params,
+        only_fe_preparation=only_fe_preparation,
+        extra=extra,
+    )
 
 
 def make_md_pipeline(

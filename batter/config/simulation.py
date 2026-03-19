@@ -28,6 +28,7 @@ MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 PROTOCOL_TO_FE_TYPE = {
     "abfe": "uno_rest",
     "rbfe": "relative",
+    "rsfe": "relative",
     "asfe": "asfe",
     "md": "md",
 }
@@ -144,7 +145,7 @@ class SimulationConfig(BaseModel):
             "n_steps",
             dict(_fe_attr("n_steps", lambda: {"x": 300_000, "y": 300_000}) or {}),
         )
-        if proto_key == "rbfe" and "x" not in n_steps:
+        if proto_key in {"rbfe", "rsfe"} and "x" not in n_steps:
             n_steps["x"] = 300_000
 
         base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
@@ -164,6 +165,7 @@ class SimulationConfig(BaseModel):
             "abfe": ["z"],
             "asfe": ["y", "m"],
             "rbfe": ["x"],
+            "rsfe": ["x"],
         }.get(proto_key, [])
         for comp in required_components:
             if comp not in n_steps:
@@ -232,6 +234,13 @@ class SimulationConfig(BaseModel):
 
         fe_data: dict[str, Any] = {
             "fe_type": resolved_fe_type,
+            "relative_scope": (
+                "binding"
+                if proto_key == "rbfe"
+                else "solvation"
+                if proto_key == "rsfe"
+                else _fe_attr("relative_scope", lambda: None)
+            ),
             "dec_int": _fe_attr("dec_int", lambda: "mbar"),
             "remd": remd_flag,
             "remd_nstlim": remd_nstlim,
@@ -328,6 +337,13 @@ class SimulationConfig(BaseModel):
     )
     infe: bool = Field(
         False, description="Enable NFE (infinite) equilibration when true."
+    )
+    relative_scope: Literal["binding", "solvation"] | None = Field(
+        None,
+        description=(
+            "Scope used for relative transformations: bound-complex ('binding') "
+            "or solvent-only ('solvation')."
+        ),
     )
 
     # --- Anchors / molecular definitions ---
@@ -485,6 +501,11 @@ class SimulationConfig(BaseModel):
     def _lower_enums(cls, v: Any) -> Any:
         return v if v is None else str(v).lower()
 
+    @field_validator("relative_scope", mode="before")
+    @classmethod
+    def _lower_relative_scope(cls, v: Any) -> Any:
+        return v if v is None else str(v).lower()
+
     @field_validator(
         "neutralize_only",
         "hmr",
@@ -554,6 +575,11 @@ class SimulationConfig(BaseModel):
         # TI not implemented
         if self.dec_int == "ti":
             raise NotImplementedError("TI integration not implemented; use 'mbar'.")
+
+        if self.relative_scope is not None and self.fe_type != "relative":
+            raise ValueError("relative_scope is only valid when fe_type='relative'.")
+        if self.fe_type == "relative" and self.relative_scope is None:
+            self.relative_scope = "binding"
 
         # derived fields
         self.rng = len(self.release_eq) - 1

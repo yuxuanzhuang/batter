@@ -680,12 +680,13 @@ class MDSimArgs(BaseModel):
         return coerce_yes_no(v) or "no"
 
 
-class RBFENetworkArgs(BaseModel):
+class RelativeNetworkArgs(BaseModel):
     """
-    RBFE network mapping controls.
+    Relative-transformation network mapping controls.
 
     Users can specify a mapping strategy by name (``mapping``) or provide
-    an explicit mapping file (``mapping_file``).
+    an explicit mapping file (``mapping_file``). The same mapping model is used
+    for both RBFE and RSFE scaffolding.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -711,7 +712,7 @@ class RBFENetworkArgs(BaseModel):
         description="Optional path to a mapping file (JSON/YAML/text).",
     )
 
-    def resolve_paths(self, base: Path) -> "RBFENetworkArgs":
+    def resolve_paths(self, base: Path) -> "RelativeNetworkArgs":
         mf = self.mapping_file
         if mf is not None and not mf.is_absolute():
             mf = (base / mf).resolve()
@@ -733,12 +734,16 @@ class RBFENetworkArgs(BaseModel):
         return str(v).strip().lower()
 
     @model_validator(mode="after")
-    def _validate_mapping(self) -> "RBFENetworkArgs":
+    def _validate_mapping(self) -> "RelativeNetworkArgs":
         if self.mapping_file is None and not self.mapping:
             raise ValueError(
-                "rbfe.mapping or rbfe.mapping_file must be provided."
+                "A relative-network mapping requires `mapping` or `mapping_file`."
             )
         return self
+
+
+# Backwards-compatible alias kept for existing imports.
+RBFENetworkArgs = RelativeNetworkArgs
 
 
 class RunSection(BaseModel):
@@ -877,7 +882,7 @@ class RunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(1, description="Schema version of the run configuration.")
-    protocol: Literal["abfe", "rbfe", "asfe", "md"] = Field(
+    protocol: Literal["abfe", "rbfe", "rsfe", "asfe", "md"] = Field(
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(
@@ -891,8 +896,11 @@ class RunConfig(BaseModel):
     run: RunSection = Field(
         ..., description="Execution controls and artifact destination."
     )
-    rbfe: RBFENetworkArgs | None = Field(
+    rbfe: RelativeNetworkArgs | None = Field(
         default=None, description="RBFE network mapping configuration."
+    )
+    rsfe: RelativeNetworkArgs | None = Field(
+        default=None, description="RSFE network mapping configuration."
     )
 
     @model_validator(mode="after")
@@ -913,9 +921,13 @@ class RunConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _validate_rbfe_section(self) -> "RunConfig":
+    def _validate_relative_sections(self) -> "RunConfig":
+        if self.rbfe is not None and self.rsfe is not None:
+            raise ValueError("Specify only one of 'rbfe' or 'rsfe' network sections.")
         if self.rbfe is not None and self.protocol != "rbfe":
             raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
+        if self.rsfe is not None and self.protocol != "rsfe":
+            raise ValueError("The 'rsfe' section is only valid when protocol='rsfe'.")
         return self
 
     @field_validator("protocol", mode="before")
@@ -1011,13 +1023,24 @@ class RunConfig(BaseModel):
         resolved_create = self.create.resolve_paths(base_dir)
         resolved_run = self.run.resolve_paths(base_dir)
         resolved_rbfe = self.rbfe.resolve_paths(base_dir) if self.rbfe else None
+        resolved_rsfe = self.rsfe.resolve_paths(base_dir) if self.rsfe else None
         return self.model_copy(
             update={
                 "create": resolved_create,
                 "run": resolved_run,
                 "rbfe": resolved_rbfe,
+                "rsfe": resolved_rsfe,
             }
         )
+
+    @property
+    def relative_network_config(self) -> RelativeNetworkArgs | None:
+        """Return the active relative-network section for the configured protocol."""
+        if self.protocol == "rbfe":
+            return self.rbfe
+        if self.protocol == "rsfe":
+            return self.rsfe
+        return None
 
 
 RunConfig.model_rebuild()

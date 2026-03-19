@@ -68,8 +68,29 @@ class RBFE(FEProtocol):
         return ["fe/index", "fe/<run_id>/record", "fe/<run_id>/windows"]
 
 
+class RSFE(FEProtocol):
+    name = "rsfe"
+
+    def validate(self, ctx: ProtocolContext) -> None:
+        if ctx.sim.fe_type != "relative":
+            raise ValueError("RSFE expects fe_type='relative'.")
+        if getattr(ctx.sim, "relative_scope", None) != "solvation":
+            raise ValueError("RSFE expects relative_scope='solvation'.")
+
+    def plan(self, ctx: ProtocolContext) -> Pipeline:
+        sim = ctx.sim
+        steps = [step_prepare_fe(sim)]
+        if not ctx.only_fe_preparation:
+            steps += [step_solvation(sim), step_analysis(sim, "asfe")]
+        return Pipeline(steps=steps)
+
+    def outputs(self) -> List[str]:
+        return ["fe/index", "fe/<run_id>/record", "fe/<run_id>/windows"]
+
+
 # One-time registration
 from .protocols import register_protocol
 register_protocol(ABFE())
 register_protocol(ASFE())
 register_protocol(RBFE())
+register_protocol(RSFE())

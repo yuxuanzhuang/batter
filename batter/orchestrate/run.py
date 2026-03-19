@@ -149,7 +149,7 @@ def _build_rbfe_network_plan(
 
     available = [sanitize_ligand_name(x) for x in ligands if x]
     if len(available) < 2:
-        raise RuntimeError("RBFE requires at least two ligands.")
+        raise RuntimeError("Relative FE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
     atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf")
@@ -186,7 +186,7 @@ def _build_rbfe_network_plan(
                 mapping_source["konnektor_layout"] = "star"
             except Exception as exc:
                 logger.warning(
-                    f"RBFE default mapping requested StarNetworkGenerator but failed "
+                    f"Relative FE default mapping requested StarNetworkGenerator but failed "
                     f"({exc}); falling back to internal default mapping."
                 )
                 mapping_fn = resolve_mapping_fn(mapping_name)
@@ -216,7 +216,7 @@ def _build_rbfe_network_plan(
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
     logger.info(
-        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs with both directions={mapping_source.get('both_directions', False)}"
+        f"Relative FE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs with both directions={mapping_source.get('both_directions', False)}"
     )
     return payload
 
@@ -229,7 +229,7 @@ def _maybe_regenerate_rbfe_network_after_pruning(
     rbfe_cfg,
     config_dir: Path,
 ) -> Dict[str, Any]:
-    """Rebuild RBFE network if some planned ligands were pruned before transformations."""
+    """Rebuild the pairwise FE network if some planned ligands were pruned before transformations."""
     from batter.config.utils import sanitize_ligand_name
 
     available = [sanitize_ligand_name(x) for x in available_ligands if x]
@@ -251,13 +251,13 @@ def _maybe_regenerate_rbfe_network_after_pruning(
     missing_paths = [name for name in available if name not in lig_map_sanitized]
     if missing_paths:
         logger.warning(
-            f"RBFE network regeneration skipped: missing ligand input path(s) for {', '.join(missing_paths)}."
+            f"Relative FE network regeneration skipped: missing ligand input path(s) for {', '.join(missing_paths)}."
         )
         return payload
 
     logger.warning(
-        f"Detected {len(pruned)} pruned ligand(s) before RBFE transformations ({', '.join(pruned)}). "
-        "Regenerating RBFE network on remaining ligands."
+        f"Detected {len(pruned)} pruned ligand(s) before pairwise transformations ({', '.join(pruned)}). "
+        "Regenerating the relative FE network on remaining ligands."
     )
     try:
         regenerated = _build_rbfe_network_plan(
@@ -268,15 +268,159 @@ def _maybe_regenerate_rbfe_network_after_pruning(
         )
     except Exception as exc:
         logger.warning(
-            f"RBFE network regeneration failed ({exc}); continuing with existing network payload."
+            f"Relative FE network regeneration failed ({exc}); continuing with existing network payload."
         )
         return payload
 
     logger.info(
-        f"RBFE network regenerated after pruning: {len(regenerated.get('ligands') or [])} ligands, "
+        f"Relative FE network regenerated after pruning: {len(regenerated.get('ligands') or [])} ligands, "
         f"{len(regenerated.get('pairs') or [])} pairs."
     )
     return regenerated
+
+
+def _build_relative_transformation_children(
+    *,
+    protocol: str,
+    run_dir: Path,
+    sys_exec: SimSystem,
+    lig_map: Dict[str, str],
+    lig_resname_map: Dict[str, str],
+    param_dir_dict: Dict[str, str],
+    available_ligands: List[str],
+    relative_cfg,
+    on_failure: str,
+    config_dir: Path,
+) -> List[SimSystem]:
+    from batter.rbfe import RBFENetwork
+    from batter.config.utils import sanitize_ligand_name
+    from batter.config.run import RBFENetworkArgs
+
+    available = [sanitize_ligand_name(x) for x in available_ligands if x]
+    if len(available) < 2:
+        raise RuntimeError(
+            f"{protocol.upper()} requires at least two ligands available for pair construction."
+        )
+    available_set = set(available)
+
+    rbfe_network_path = config_dir / "rbfe_network.json"
+    if rbfe_network_path.exists():
+        payload = json.loads(rbfe_network_path.read_text())
+    else:
+        rbfe_cfg = relative_cfg or RBFENetworkArgs()
+        payload = _build_rbfe_network_plan(
+            list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+        )
+
+    if (on_failure or "").lower() in {"prune", "retry"}:
+        rbfe_cfg = relative_cfg or RBFENetworkArgs()
+        payload = _maybe_regenerate_rbfe_network_after_pruning(
+            available_ligands=available,
+            lig_map=lig_map,
+            payload=payload,
+            rbfe_cfg=rbfe_cfg,
+            config_dir=config_dir,
+        )
+
+    pairs = payload.get("pairs") or []
+    if not pairs:
+        raise RuntimeError(f"{protocol.upper()} mapping produced no ligand pairs.")
+
+    cleaned_pairs = []
+    for pair in pairs:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise RuntimeError(
+                f"{protocol.upper()} mapping entries must be 2-tuples; got {pair!r}."
+            )
+        cleaned_pairs.append(
+            (
+                sanitize_ligand_name(str(pair[0])),
+                sanitize_ligand_name(str(pair[1])),
+            )
+        )
+
+    if (on_failure or "").lower() in {"prune", "retry"}:
+        pruned = [p for p in cleaned_pairs if p[0] in available_set and p[1] in available_set]
+        if not pruned:
+            raise RuntimeError(
+                f"{protocol.upper()} mapping does not include any available ligands after pruning."
+            )
+        if len(pruned) != len(cleaned_pairs):
+            logger.warning(
+                "Pruned %d %s pair(s) due to on_failure=%s.",
+                len(cleaned_pairs) - len(pruned),
+                protocol.upper(),
+                on_failure,
+            )
+        cleaned_pairs = pruned
+
+    network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
+    atom_mapper = str(
+        payload.get("atom_mapper")
+        or getattr(relative_cfg, "atom_mapper", "kartograf")
+        or "kartograf"
+    ).lower()
+
+    trans_root = run_dir / "simulations" / "transformations"
+    trans_root.mkdir(parents=True, exist_ok=True)
+    relative_children: List[SimSystem] = []
+    mode_label = protocol.upper()
+    relative_scope = "solvation" if protocol == "rsfe" else "binding"
+
+    for ref, alt in network.pairs:
+        pair_id = f"{ref}~{alt}"
+        pair_dir = trans_root / pair_id
+        inputs_dir = pair_dir / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+
+        ref_src = Path(lig_map[ref])
+        alt_src = Path(lig_map[alt])
+        ref_dst = inputs_dir / f"{ref}{ref_src.suffix}"
+        alt_dst = inputs_dir / f"{alt}{alt_src.suffix}"
+        if not ref_dst.exists():
+            shutil.copy2(ref_src, ref_dst)
+        if not alt_dst.exists():
+            shutil.copy2(alt_src, alt_dst)
+
+        resn_ref = lig_resname_map.get(ref)
+        resn_alt = lig_resname_map.get(alt)
+        if not resn_ref or not resn_alt:
+            raise RuntimeError(
+                f"Missing residue names for {protocol.upper()} pair {pair_id}: {ref}={resn_ref}, {alt}={resn_alt}."
+            )
+
+        pair_meta = sys_exec.meta.merge(
+            ligand=pair_id,
+            residue_name=resn_ref,
+            mode=mode_label,
+            param_dir_dict=param_dir_dict,
+            pair_id=pair_id,
+            ligand_ref=ref,
+            ligand_alt=alt,
+            residue_ref=resn_ref,
+            residue_alt=resn_alt,
+            input_ref=str(ref_dst),
+            input_alt=str(alt_dst),
+            atom_mapper=atom_mapper,
+            relative_scope=relative_scope,
+        )
+
+        relative_children.append(
+            SimSystem(
+                name=f"{sys_exec.name}:{pair_id}",
+                root=pair_dir,
+                protein=sys_exec.protein,
+                topology=sys_exec.topology,
+                coordinates=sys_exec.coordinates,
+                ligands=tuple([ref_dst, alt_dst]),
+                lipid_mol=sys_exec.lipid_mol,
+                other_mol=sys_exec.other_mol,
+                anchors=sys_exec.anchors,
+                meta=pair_meta,
+            )
+        )
+
+    return relative_children
 
 
 
@@ -454,8 +598,8 @@ def run_from_yaml(
     }
 
     base_meta = {}
-    if rc.protocol == "rbfe":
-        base_meta["mode"] = "RBFE"
+    if rc.protocol in {"rbfe", "rsfe"}:
+        base_meta["mode"] = rc.protocol.upper()
     sys_exec = SimSystem(name=rc.create.system_name, root=run_dir, meta=base_meta)
     sys_exec = builder.build(sys_exec, rc.create)
     sig_path.parent.mkdir(parents=True, exist_ok=True)
@@ -564,12 +708,12 @@ def run_from_yaml(
     overrides_path = config_dir / "sim_overrides.json"
     sim_cfg_updated = sim_cfg
 
-    if rc.protocol == "rbfe":
+    if rc.protocol in {"rbfe", "rsfe"}:
         rbfe_network_path = config_dir / "rbfe_network.json"
         if not rbfe_network_path.exists():
             from batter.config.run import RBFENetworkArgs
 
-            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+            rbfe_cfg = rc.relative_network_config or RBFENetworkArgs()
             _build_rbfe_network_plan(
                 list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
             )
@@ -704,6 +848,24 @@ def run_from_yaml(
     fe_children_all: List[SimSystem] = children_all
     if getattr(rc.run, "clean_failures", False):
         _clear_failure_markers(run_dir)
+
+    if rc.protocol == "rsfe":
+        relative_children = _build_relative_transformation_children(
+            protocol=rc.protocol,
+            run_dir=run_dir,
+            sys_exec=sys_exec,
+            lig_map=lig_map,
+            lig_resname_map=lig_resname_map,
+            param_dir_dict=param_dir_dict,
+            available_ligands=[
+                c.meta.get("ligand") for c in children if c.meta.get("ligand")
+            ],
+            relative_cfg=rc.relative_network_config,
+            on_failure=rc.run.on_failure,
+            config_dir=config_dir,
+        )
+        children = relative_children
+        fe_children_all = relative_children
 
     # --------------------
     # PHASE 1: prepare_equil (parallel)
@@ -858,137 +1020,22 @@ def run_from_yaml(
     # RBFE: build transformation systems (pairs) after pre_fe_equil
     # --------------------
     if rc.protocol == "rbfe":
-        from batter.rbfe import RBFENetwork
-        from batter.config.utils import sanitize_ligand_name
-        from batter.config.run import RBFENetworkArgs
-
-        available = [c.meta.get("ligand") for c in children if c.meta.get("ligand")]
-        if len(available) < 2:
-            raise RuntimeError(
-                "RBFE requires at least two ligands that completed equilibration."
-            )
-        available = [sanitize_ligand_name(x) for x in available]
-        available_set = set(available)
-
-        rbfe_network_path = config_dir / "rbfe_network.json"
-        if rbfe_network_path.exists():
-            payload = json.loads(rbfe_network_path.read_text())
-        else:
-            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
-            payload = _build_rbfe_network_plan(
-                list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
-            )
-
-        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
-            payload = _maybe_regenerate_rbfe_network_after_pruning(
-                available_ligands=available,
-                lig_map=lig_map,
-                payload=payload,
-                rbfe_cfg=rbfe_cfg,
-                config_dir=config_dir,
-            )
-
-        pairs = payload.get("pairs") or []
-        if not pairs:
-            raise RuntimeError("RBFE mapping produced no ligand pairs.")
-
-        cleaned_pairs = []
-        for pair in pairs:
-            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
-                raise RuntimeError(f"RBFE mapping entries must be 2-tuples; got {pair!r}.")
-            cleaned_pairs.append(
-                (
-                    sanitize_ligand_name(str(pair[0])),
-                    sanitize_ligand_name(str(pair[1])),
-                )
-            )
-
-        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
-            pruned = [
-                p
-                for p in cleaned_pairs
-                if p[0] in available_set and p[1] in available_set
-            ]
-            if not pruned:
-                raise RuntimeError(
-                    "RBFE mapping does not include any available ligands after pruning."
-                )
-            if len(pruned) != len(cleaned_pairs):
-                logger.warning(
-                    "Pruned %d RBFE pair(s) due to on_failure=%s.",
-                    len(cleaned_pairs) - len(pruned),
-                    rc.run.on_failure,
-                )
-            cleaned_pairs = pruned
-
-        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
-        atom_mapper = str(
-            payload.get("atom_mapper")
-            or getattr(rc.rbfe, "atom_mapper", "kartograf")
-            or "kartograf"
-        ).lower()
-
-        # Build transformation systems under simulations/transformations/
-        trans_root = run_dir / "simulations" / "transformations"
-        trans_root.mkdir(parents=True, exist_ok=True)
-        rbfe_children: List[SimSystem] = []
-
-        for ref, alt in network.pairs:
-            pair_id = f"{ref}~{alt}"
-            pair_dir = trans_root / pair_id
-            inputs_dir = pair_dir / "inputs"
-            inputs_dir.mkdir(parents=True, exist_ok=True)
-
-            ref_src = Path(lig_map[ref])
-            alt_src = Path(lig_map[alt])
-            ref_dst = inputs_dir / f"{ref}{ref_src.suffix}"
-            alt_dst = inputs_dir / f"{alt}{alt_src.suffix}"
-            if not ref_dst.exists():
-                shutil.copy2(ref_src, ref_dst)
-            if not alt_dst.exists():
-                shutil.copy2(alt_src, alt_dst)
-
-            resn_ref = lig_resname_map.get(ref)
-            resn_alt = lig_resname_map.get(alt)
-            if not resn_ref or not resn_alt:
-                raise RuntimeError(
-                    f"Missing residue names for RBFE pair {pair_id}: {ref}={resn_ref}, {alt}={resn_alt}."
-                )
-
-            pair_meta = sys_exec.meta.merge(
-                ligand=pair_id,
-                residue_name=resn_ref,
-                mode="RBFE",
-                param_dir_dict=param_dir_dict,
-                pair_id=pair_id,
-                ligand_ref=ref,
-                ligand_alt=alt,
-                residue_ref=resn_ref,
-                residue_alt=resn_alt,
-                input_ref=str(ref_dst),
-                input_alt=str(alt_dst),
-                atom_mapper=atom_mapper,
-            )
-
-            rbfe_children.append(
-                SimSystem(
-                    name=f"{sys_exec.name}:{pair_id}:{run_id}",
-                    root=pair_dir,
-                    protein=sys_exec.protein,
-                    topology=sys_exec.topology,
-                    coordinates=sys_exec.coordinates,
-                    ligands=tuple([ref_dst, alt_dst]),
-                    lipid_mol=sys_exec.lipid_mol,
-                    other_mol=sys_exec.other_mol,
-                    anchors=sys_exec.anchors,
-                    meta=pair_meta,
-                )
-            )
-
-        # Switch to transformation systems for FE stages/results
-        children = rbfe_children
-        fe_children_all = rbfe_children
+        relative_children = _build_relative_transformation_children(
+            protocol=rc.protocol,
+            run_dir=run_dir,
+            sys_exec=sys_exec,
+            lig_map=lig_map,
+            lig_resname_map=lig_resname_map,
+            param_dir_dict=param_dir_dict,
+            available_ligands=[
+                c.meta.get("ligand") for c in children if c.meta.get("ligand")
+            ],
+            relative_cfg=rc.relative_network_config,
+            on_failure=rc.run.on_failure,
+            config_dir=config_dir,
+        )
+        children = relative_children
+        fe_children_all = relative_children
     
     # --------------------
     # PHASE 3: prepare_fe (parallel)
@@ -1096,7 +1143,7 @@ def run_from_yaml(
     if analysis_start_step is not None:
         analysis_start_step = int(analysis_start_step)
     failures: list[tuple[str, str, str]] = []
-    if rc.protocol != "rbfe":
+    if rc.protocol not in {"rbfe", "rsfe"}:
         for child in unbound_children:
             ligand = child.meta["ligand"]
             reason = "UNBOUND detected during equilibration"

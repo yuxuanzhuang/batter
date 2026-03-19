@@ -21,6 +21,29 @@ from batter.systems.core import SimSystem
 # -----------------------------
 # helpers
 # -----------------------------
+def _relative_scope_for(sim: SimulationConfig, system: SimSystem) -> str | None:
+    scope = getattr(sim, "relative_scope", None)
+    if scope:
+        return str(scope)
+    mode = str(system.meta.get("mode") or "").upper()
+    if mode == "RSFE":
+        return "solvation"
+    if mode == "RBFE":
+        return "binding"
+    return None
+
+
+def _raise_if_rsfe_prepare_is_unimplemented(
+    sim: SimulationConfig, system: SimSystem, components: list[str]
+) -> None:
+    scope = _relative_scope_for(sim, system)
+    if scope == "solvation" and any(comp == "x" for comp in components):
+        raise NotImplementedError(
+            "RSFE preparation scaffolding is registered, but ligand-only "
+            "relative x-component builders are not implemented yet."
+        )
+
+
 def _system_root_for(child_root: Path) -> Path:
     """work/<sys>/simulations/<lig> → work/<sys>"""
     # Prefer the parent of the "simulations" directory so this works for
@@ -116,6 +139,9 @@ def prepare_fe_handler(
         )
         if system.meta.get(key) is not None
     }
+    relative_scope = _relative_scope_for(sim, system)
+    if relative_scope:
+        pair_meta["relative_scope"] = relative_scope
 
     infe = bool(sim.infe)
 
@@ -123,6 +149,7 @@ def prepare_fe_handler(
     logger.debug(
         f"[{phase_name}] start ligand={ligand} residue={residue_name} components={components}"
     )
+    _raise_if_rsfe_prepare_is_unimplemented(sim, system, components)
 
     # Patch sim for pre-prepare cases (e.g., RBFE pre_prepare_fe uses z)
     if any(comp == "z" for comp in components):
@@ -242,6 +269,9 @@ def prepare_fe_windows_handler(
         )
         if system.meta.get(key) is not None
     }
+    relative_scope = _relative_scope_for(sim, system)
+    if relative_scope:
+        pair_meta["relative_scope"] = relative_scope
 
     infe = False
     if extra_restraints is not None:
@@ -256,6 +286,7 @@ def prepare_fe_windows_handler(
     logger.debug(
         f"[prepare_fe_windows] start ligand={ligand} residue={residue_name} components={components}"
     )
+    _raise_if_rsfe_prepare_is_unimplemented(sim, system, components)
 
     for comp in components:
         workdir = child_root / "fe" / comp

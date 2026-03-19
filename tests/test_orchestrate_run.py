@@ -329,6 +329,8 @@ def test_resolve_signature_conflict_raises_on_mismatch(tmp_path: Path) -> None:
 def test_select_system_builder_validates_system_type() -> None:
     builder = rs.select_system_builder("abfe", system_type=None)
     assert builder is not None
+    rsfe_builder = rs.select_system_builder("rsfe", system_type=None)
+    assert rsfe_builder is not None
     with pytest.raises(ValueError):
         rs.select_system_builder("abfe", system_type="MASFE")
 

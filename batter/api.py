@@ -46,7 +46,7 @@ from ._version import __version__  # semantic version string
 
 # --- Schemas / configs ---
 from .config.simulation import SimulationConfig
-from .config.run import RunConfig
+from .config.run import RunConfig, RelativeNetworkArgs
 from .config import (
     load_run_config,
     dump_run_config,
@@ -77,6 +77,7 @@ __all__ = [
     # configs
     "SimulationConfig",
     "RunConfig",
+    "RelativeNetworkArgs",
     "load_run_config",
     "dump_run_config",
     "load_sim_config",
@@ -268,11 +269,11 @@ def run_analysis_from_execution(
     protocol_lower = str(protocol).lower()
     children: list[SimSystem] = []
 
-    if protocol_lower == "rbfe":
+    if protocol_lower in {"rbfe", "rsfe"}:
         trans_root = run_dir / "simulations" / "transformations"
         if not trans_root.is_dir():
             raise FileNotFoundError(
-                f"RBFE transformations directory not found for run '{run_id}': {trans_root}"
+                f"Relative-FE transformations directory not found for run '{run_id}': {trans_root}"
             )
 
         lig_resname_map = {
@@ -299,7 +300,7 @@ def run_analysis_from_execution(
             fe_root = pair_dir / "fe"
             if not fe_root.is_dir():
                 raise FileNotFoundError(
-                    f"Simulation directory for RBFE pair '{pair_id}' is missing FE data at {fe_root}."
+                    f"Simulation directory for pair '{pair_id}' is missing FE data at {fe_root}."
                 )
 
             residue_ref = lig_resname_map.get(ref) if ref else None
@@ -327,11 +328,13 @@ def run_analysis_from_execution(
 
         if requested and not children:
             raise KeyError(
-                f"RBFE target '{ligand}' not present in run '{run_id}' "
+                f"Pairwise target '{ligand}' not present in run '{run_id}' "
                 "(expected a pair id like 'LIG1~LIG2' or an endpoint ligand name)."
             )
         if not children:
-            raise RuntimeError(f"No RBFE transformation pairs found in run '{run_id}'.")
+            raise RuntimeError(
+                f"No relative transformation pairs found in run '{run_id}'."
+            )
         target_label = "transformations"
     else:
         requested_set: Sequence[str] | None = [requested] if requested else None

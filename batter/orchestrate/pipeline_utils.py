@@ -11,6 +11,7 @@ from batter.pipeline.factory import (
     make_asfe_pipeline,
     make_md_pipeline,
     make_rbfe_pipeline,
+    make_rsfe_pipeline,
 )
 from batter.pipeline.payloads import SystemParams
 
@@ -28,7 +29,7 @@ def select_pipeline(
     Parameters
     ----------
     protocol : str
-        Name of the requested protocol (``"abfe"``, ``"rbfe"``, ``"asfe"``, or ``"md"``).
+        Name of the requested protocol (``"abfe"``, ``"rbfe"``, ``"rsfe"``, ``"asfe"``, or ``"md"``).
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
@@ -77,6 +78,13 @@ def select_pipeline(
         )
     if name == "rbfe":
         return make_rbfe_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+            extra=extra,
+        )
+    if name == "rsfe":
+        return make_rsfe_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,

@@ -345,6 +345,8 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
     if protocol == "abfe":
         n_steps = {"z": 300_000}
+    elif protocol in {"rbfe", "rsfe"}:
+        n_steps = {"x": 300_000}
     else:
         n_steps = {"y": 300_000, "m": 300_000}
     payload = {
@@ -366,6 +368,7 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     [
         ("asfe", "asfe"),
         ("abfe", "uno_rest"),
+        ("rsfe", "relative"),
     ],
 )
 def test_resolved_sim_config_sets_fe_type(
@@ -374,6 +377,31 @@ def test_resolved_sim_config_sets_fe_type(
     cfg = _minimal_run_config(tmp_path, protocol)
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.fe_type == expected
+
+
+def test_resolved_sim_config_sets_rsfe_relative_scope(tmp_path: Path) -> None:
+    cfg = _minimal_run_config(tmp_path, "rsfe")
+    sim_cfg = cfg.resolved_sim_config()
+    assert sim_cfg.fe_type == "relative"
+    assert sim_cfg.relative_scope == "solvation"
+
+
+def test_run_config_rejects_rsfe_section_for_other_protocols(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    payload = {
+        "protocol": "abfe",
+        "backend": "local",
+        "run": {"output_folder": str(tmp_path / "out")},
+        "create": create.model_dump(),
+        "fe_sim": {
+            "lambdas": [0.0, 1.0],
+            "eq_steps": 1000,
+            "n_steps": {"z": 300_000},
+        },
+        "rsfe": {"mapping": "default"},
+    }
+    with pytest.raises(ValidationError, match="protocol='rsfe'"):
+        RunConfig.model_validate(payload)
 
 
 def test_run_remd_toggle_overrides_fe_sim(tmp_path: Path) -> None:

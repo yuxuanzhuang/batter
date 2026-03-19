@@ -146,7 +146,9 @@ def save_fe_records(
         mol_name = child.meta["residue_name"]
         results_dir = child.root / "fe" / "Results"
         total_dG, total_se = None, None
-        is_rbfe = str(child.meta.get("mode", "")).upper() == "RBFE"
+        pair_mode = str(child.meta.get("mode", "")).upper()
+        is_pairwise = pair_mode in {"RBFE", "RSFE"}
+        is_binding_pair = pair_mode == "RBFE"
 
         dat = results_dir / "Results.dat"
         if dat.exists():
@@ -181,32 +183,33 @@ def save_fe_records(
                 analysis_start_step=analysis_start_step_val,
                 n_bootstraps=n_bootstraps_val,
             )
-            if is_rbfe:
+            if is_pairwise:
                 _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
-                ref = child.meta.get("ligand_ref")
-                alt = child.meta.get("ligand_alt")
-                res_ref = child.meta.get("residue_ref") or mol_name
-                res_alt = child.meta.get("residue_alt")
-                if ref:
-                    _copy_equil_artifacts(
-                        repo,
-                        run_id,
-                        lig_name,
-                        res_ref,
-                        run_dir / "simulations" / ref / "equil",
-                        protein_align,
-                        dest_subdir="Equil_ref",
-                    )
-                if alt:
-                    _copy_equil_artifacts(
-                        repo,
-                        run_id,
-                        lig_name,
-                        res_alt or mol_name,
-                        run_dir / "simulations" / alt / "equil",
-                        protein_align,
-                        dest_subdir="Equil_alt",
-                    )
+                if is_binding_pair:
+                    ref = child.meta.get("ligand_ref")
+                    alt = child.meta.get("ligand_alt")
+                    res_ref = child.meta.get("residue_ref") or mol_name
+                    res_alt = child.meta.get("residue_alt")
+                    if ref:
+                        _copy_equil_artifacts(
+                            repo,
+                            run_id,
+                            lig_name,
+                            res_ref,
+                            run_dir / "simulations" / ref / "equil",
+                            protein_align,
+                            dest_subdir="Equil_ref",
+                        )
+                    if alt:
+                        _copy_equil_artifacts(
+                            repo,
+                            run_id,
+                            lig_name,
+                            res_alt or mol_name,
+                            run_dir / "simulations" / alt / "equil",
+                            protein_align,
+                            dest_subdir="Equil_alt",
+                        )
             else:
                 _copy_equil_artifacts(
                     repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
@@ -239,36 +242,37 @@ def save_fe_records(
                 n_bootstraps=n_bootstraps_val,
             )
             repo.save(rec, copy_from=results_dir)
-            if is_rbfe:
+            if is_pairwise:
                 _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
                 _copy_mapping_artifacts(
                     child.root / "fe" / "x" / "x-1",
                     repo.ligand_dir(run_id, lig_name),
                 )
-                ref = child.meta.get("ligand_ref")
-                alt = child.meta.get("ligand_alt")
-                res_ref = child.meta.get("residue_ref") or mol_name
-                res_alt = child.meta.get("residue_alt")
-                if ref:
-                    _copy_equil_artifacts(
-                        repo,
-                        run_id,
-                        lig_name,
-                        res_ref,
-                        run_dir / "simulations" / ref / "equil",
-                        protein_align,
-                        dest_subdir="Equil_ref",
-                    )
-                if alt:
-                    _copy_equil_artifacts(
-                        repo,
-                        run_id,
-                        lig_name,
-                        res_alt or mol_name,
-                        run_dir / "simulations" / alt / "equil",
-                        protein_align,
-                        dest_subdir="Equil_alt",
-                    )
+                if is_binding_pair:
+                    ref = child.meta.get("ligand_ref")
+                    alt = child.meta.get("ligand_alt")
+                    res_ref = child.meta.get("residue_ref") or mol_name
+                    res_alt = child.meta.get("residue_alt")
+                    if ref:
+                        _copy_equil_artifacts(
+                            repo,
+                            run_id,
+                            lig_name,
+                            res_ref,
+                            run_dir / "simulations" / ref / "equil",
+                            protein_align,
+                            dest_subdir="Equil_ref",
+                        )
+                    if alt:
+                        _copy_equil_artifacts(
+                            repo,
+                            run_id,
+                            lig_name,
+                            res_alt or mol_name,
+                            run_dir / "simulations" / alt / "equil",
+                            protein_align,
+                            dest_subdir="Equil_alt",
+                        )
             else:
                 _copy_equil_artifacts(
                     repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
@@ -295,32 +299,33 @@ def save_fe_records(
                 analysis_start_step=analysis_start_step_val,
                 n_bootstraps=n_bootstraps_val,
             )
-            if is_rbfe:
+            if is_pairwise:
                 _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
-                ref = child.meta.get("ligand_ref")
-                alt = child.meta.get("ligand_alt")
-                res_ref = child.meta.get("residue_ref") or mol_name
-                res_alt = child.meta.get("residue_alt")
-                if ref:
-                    _copy_equil_artifacts(
-                        repo,
-                        run_id,
-                        lig_name,
-                        res_ref,
-                        run_dir / "simulations" / ref / "equil",
-                        protein_align,
-                        dest_subdir="Equil_ref",
-                    )
-                if alt:
-                    _copy_equil_artifacts(
-                        repo,
-                        run_id,
-                        lig_name,
-                        res_alt or mol_name,
-                        run_dir / "simulations" / alt / "equil",
-                        protein_align,
-                        dest_subdir="Equil_alt",
-                    )
+                if is_binding_pair:
+                    ref = child.meta.get("ligand_ref")
+                    alt = child.meta.get("ligand_alt")
+                    res_ref = child.meta.get("residue_ref") or mol_name
+                    res_alt = child.meta.get("residue_alt")
+                    if ref:
+                        _copy_equil_artifacts(
+                            repo,
+                            run_id,
+                            lig_name,
+                            res_ref,
+                            run_dir / "simulations" / ref / "equil",
+                            protein_align,
+                            dest_subdir="Equil_ref",
+                        )
+                    if alt:
+                        _copy_equil_artifacts(
+                            repo,
+                            run_id,
+                            lig_name,
+                            res_alt or mol_name,
+                            run_dir / "simulations" / alt / "equil",
+                            protein_align,
+                            dest_subdir="Equil_alt",
+                        )
             else:
                 _copy_equil_artifacts(
                     repo, run_id, lig_name, mol_name, child.root / "equil", protein_align
