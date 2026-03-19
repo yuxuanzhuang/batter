@@ -1039,7 +1039,6 @@ def create_box_y(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
-    merge_first_n_molecules_in_prmtop(full_prmtop, 2, str(window_dir / "full_merged.prmtop"))
     return
 
 
@@ -1117,5 +1116,4 @@ def create_box_m(ctx: BuildContext) -> None:
     
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
-    merge_first_n_molecules_in_prmtop(full_prmtop, 2, str(window_dir / "full_merged.prmtop"))
     return

@@ -23,7 +23,7 @@ Equilibrate, NPT.
   csurften = _c_surften_,
   mcbarint = 10,
   barostat = 1,
-  nstlim = 2000,
+  nstlim = 8000,
   dt = 0.002,
   nmropt = 0,
   pencut = -1,
