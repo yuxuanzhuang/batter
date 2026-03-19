@@ -531,7 +531,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         # first write eq.in
         # it will gradually increase lambda value
         n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
-        
+        if win != -1:
+            n_steps_run = 10000
+            n_steps_run_per_lambda = 10000
         out_path = windows_dir / "eq.in"
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             for line in fin:
@@ -570,8 +572,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             # also save velocity info
             mdin.write(f" ntwv = -1,\n")
             # run dynlmb
-            mdin.write(f" dynlmb = {dynlmb},\n")
-            mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
+            # if window is -1
+            if win == -1:
+                mdin.write(f" dynlmb = {dynlmb},\n")
+                mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
             # run mcwat
             mdin.write(f"  mcwat = 1,\n")
             mdin.write(f"  nmd = 1000,\n")
@@ -862,6 +866,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         )
 
     windows_dir = ctx.window_dir
+    win = ctx.win
     
     temperature = sim.temperature
     steps2 = sim.dic_n_steps[comp]
@@ -925,6 +930,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     eq_path = windows_dir / "eq.in"
     n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run = build_dyna_steps_run_per_lambda()
+    if win != -1:
+        n_steps_run = 10000
+        n_steps_run_per_lambda = 10000
 
     with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
         for line in fin:
@@ -969,8 +977,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         # also write velocity info
         mdin.write(f" ntwv = -1,\n")
         # run dynlmb
-        mdin.write(f" dynlmb = {dynlmb},\n")
-        mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
+        if win == -1:
+            mdin.write(f" dynlmb = {dynlmb},\n")
+            mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
         # run mcwat
         mdin.write(f"  mcwat = 1,\n")
         mdin.write(f"  nmd = 1000,\n")

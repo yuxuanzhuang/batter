@@ -4,8 +4,8 @@
 Production runs elec-LJ sdr
  &cntrl
   imin = 0,
-  ntx = 1,
-  irest = 0,
+  ntx = 5,
+  irest = 1,
   ntpr = _ntpr_,
   bar_intervall = _ntpr_,
   ntwr = _ntwr_,

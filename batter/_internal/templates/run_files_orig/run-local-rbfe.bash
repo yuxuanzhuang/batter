@@ -20,6 +20,11 @@ only_eq=${ONLY_EQ:-0}
 skip_window_eq=${SKIP_WINDOW_EQ:-0}
 retry=${RETRY_COUNT:-0}
 
+# if retry > 3, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
+if [[ $retry -gt 3 ]]; then
+    PMEMD_EXEC=${PMEMD_DPFP_EXEC}
+fi
+
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"
@@ -113,10 +118,10 @@ EOF
         # cpptraj "multi" numbering starts at 1 => frame file index = best_i + 1
         frame=$((best_i + 1))
         src="eq.rst7.${frame}"
-        dst="${win_folder}/eq.rst7"
+        dst="${win_folder}/eq_init.rst7"
 
         if [[ ! -f "$src" ]]; then
-            echo "ERROR: missing source restart $src (check eq.rst7.* generation)" >&2
+            echo "ERROR: missing source restart $src (check eq_init.rst7.* generation)" >&2
             exit 1
         fi
         mkdir -p "$win_folder"
@@ -124,6 +129,11 @@ EOF
 
         printf "window %02d lambda=%s -> closest_eq_lambda=%s (diff=%s) : %s -> %s\n" \
             "$i" "$lambda_win" "$best_l" "$best_d" "$src" "$dst"
+        
+        cd "$win_folder"
+        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c eq_init.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref eq_init.rst7 >> \"$log_file\" 2>&1"
+        check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
+        cd ../COMPONENT-1
     done
 
     print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y eq.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
