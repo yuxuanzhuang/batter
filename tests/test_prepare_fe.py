@@ -2,21 +2,21 @@ from pathlib import Path
 import sys
 import types
 
-import pytest
-
 from batter.config.run import CreateArgs, FESimArgs
 from batter.config.simulation import SimulationConfig
 
 
 fake_builder_mod = types.ModuleType("batter._internal.builders.fe_alchemical")
+BUILDER_CALLS: list[dict] = []
 
 
 class _DummyBuilder:
     def __init__(self, *args, **kwargs):
-        pass
+        BUILDER_CALLS.append(kwargs)
+        self.working_dir = Path(kwargs["working_dir"])
 
     def build(self):
-        raise AssertionError("RSFE guard should trigger before the FE builder runs.")
+        self.working_dir.mkdir(parents=True, exist_ok=True)
 
 
 fake_builder_mod.AlchemicalFEBuilder = _DummyBuilder
@@ -25,6 +25,8 @@ sys.modules.setdefault("batter._internal.builders.fe_alchemical", fake_builder_m
 fake_ops_pkg = types.ModuleType("batter._internal.ops")
 fake_remd_mod = types.ModuleType("batter._internal.ops.remd")
 fake_batch_mod = types.ModuleType("batter._internal.ops.batch")
+fake_remd_mod.prepare_remd_component = lambda *args, **kwargs: None
+fake_batch_mod.prepare_batch_component = lambda *args, **kwargs: None
 fake_ops_pkg.remd = fake_remd_mod
 fake_ops_pkg.batch = fake_batch_mod
 sys.modules.setdefault("batter._internal.ops", fake_ops_pkg)
@@ -37,7 +39,8 @@ from batter.pipeline.step import Step
 from batter.systems.core import SimSystem
 
 
-def test_prepare_fe_rejects_unimplemented_rsfe_x_component(tmp_path: Path) -> None:
+def test_prepare_fe_routes_rsfe_components_and_scope(tmp_path: Path) -> None:
+    BUILDER_CALLS.clear()
     run_root = tmp_path / "run"
     pair_root = run_root / "simulations" / "transformations" / "LIGA~LIGB"
     params_dir = run_root / "artifacts" / "ligand_params"
@@ -55,8 +58,13 @@ def test_prepare_fe_rejects_unimplemented_rsfe_x_component(tmp_path: Path) -> No
     lig_b.write_text("dummy\n")
 
     create = CreateArgs(system_name="sys", ligand_paths={"LIGA": lig_a, "LIGB": lig_b})
-    fe_args = FESimArgs(lambdas=[0.0, 1.0], eq_steps=100, n_steps={"x": 1000})
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        n_steps={"s": 1000, "h": 1000},
+    )
     sim_cfg = SimulationConfig.from_sections(create, fe_args, protocol="rsfe")
+    assert sim_cfg.components == ["s", "h"]
 
     payload = StepPayload(sim=sim_cfg)
     system = SimSystem(
@@ -74,5 +82,8 @@ def test_prepare_fe_rejects_unimplemented_rsfe_x_component(tmp_path: Path) -> No
         },
     )
 
-    with pytest.raises(NotImplementedError, match="ligand-only relative x-component"):
-        prepare_fe_handler(Step(name="prepare_fe"), system, payload)
+    result = prepare_fe_handler(Step(name="prepare_fe"), system, payload)
+
+    assert result.artifacts["prepare_fe_ok"].exists()
+    assert [call["component"] for call in BUILDER_CALLS] == ["s", "h"]
+    assert all(call["extra"]["relative_scope"] == "solvation" for call in BUILDER_CALLS)

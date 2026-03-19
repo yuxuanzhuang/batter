@@ -244,10 +244,12 @@ def save_fe_records(
             repo.save(rec, copy_from=results_dir)
             if is_pairwise:
                 _copy_rbfe_network_plot(run_dir, repo, run_id, lig_name)
-                _copy_mapping_artifacts(
-                    child.root / "fe" / "x" / "x-1",
-                    repo.ligand_dir(run_id, lig_name),
-                )
+                mapping_src = _pair_mapping_source_dir(child.root / "fe")
+                if mapping_src is not None:
+                    _copy_mapping_artifacts(
+                        mapping_src,
+                        repo.ligand_dir(run_id, lig_name),
+                    )
                 if is_binding_pair:
                     ref = child.meta.get("ligand_ref")
                     alt = child.meta.get("ligand_alt")
@@ -332,6 +334,15 @@ def save_fe_records(
                 )
 
     return failures
+
+
+def _pair_mapping_source_dir(fe_root: Path) -> Path | None:
+    """Return the first pair-mapping source directory that exists."""
+    for comp in ("x", "s", "h"):
+        candidate = fe_root / comp / f"{comp}-1"
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def _copy_equil_artifacts(

@@ -789,3 +789,20 @@ def build_complex_lig(ctx) -> bool:
         shutil.copy2(src, build_dir / src.name)
 
     return True
+
+
+@register_build_complex("s")
+@register_build_complex("h")
+def build_complex_rsfe(ctx) -> bool:
+    """
+    RSFE pair-component boilerplate.
+
+    Solvent (``s``) and vacuum (``h``) relative-solvation components need
+    ligand-pair staging rather than the single-ligand ``y/m`` flow. The
+    structural registration lives here so config/orchestration can route to the
+    right component names, but the pairwise ligand-only setup is still a TODO.
+    """
+    raise NotImplementedError(
+        f"RSFE component '{ctx.comp}' build_complex is not implemented yet. "
+        "Add ligand-pair staging for solvent/vacuum relative transforms here."
+    )

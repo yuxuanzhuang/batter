@@ -345,8 +345,10 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
     if protocol == "abfe":
         n_steps = {"z": 300_000}
-    elif protocol in {"rbfe", "rsfe"}:
+    elif protocol == "rbfe":
         n_steps = {"x": 300_000}
+    elif protocol == "rsfe":
+        n_steps = {"s": 300_000, "h": 300_000}
     else:
         n_steps = {"y": 300_000, "m": 300_000}
     payload = {
@@ -384,6 +386,7 @@ def test_resolved_sim_config_sets_rsfe_relative_scope(tmp_path: Path) -> None:
     sim_cfg = cfg.resolved_sim_config()
     assert sim_cfg.fe_type == "relative"
     assert sim_cfg.relative_scope == "solvation"
+    assert sim_cfg.components == ["s", "h"]
 
 
 def test_run_config_rejects_rsfe_section_for_other_protocols(tmp_path: Path) -> None:

@@ -33,15 +33,19 @@ def _relative_scope_for(sim: SimulationConfig, system: SimSystem) -> str | None:
     return None
 
 
-def _raise_if_rsfe_prepare_is_unimplemented(
+def _validate_rsfe_prepare_components(
     sim: SimulationConfig, system: SimSystem, components: list[str]
 ) -> None:
     scope = _relative_scope_for(sim, system)
-    if scope == "solvation" and any(comp == "x" for comp in components):
-        raise NotImplementedError(
-            "RSFE preparation scaffolding is registered, but ligand-only "
-            "relative x-component builders are not implemented yet."
-        )
+    if scope == "solvation":
+        invalid = [comp for comp in components if comp not in {"s", "h"}]
+        if invalid:
+            joined = ", ".join(sorted(set(invalid)))
+            raise ValueError(
+                f"RSFE uses components 's' (solvent) and 'h' (vacuum); got {joined}."
+            )
+    if scope == "solvation" and not components:
+        raise ValueError("RSFE requires at least one of the components 's' or 'h'.")
 
 
 def _system_root_for(child_root: Path) -> Path:
@@ -149,7 +153,7 @@ def prepare_fe_handler(
     logger.debug(
         f"[{phase_name}] start ligand={ligand} residue={residue_name} components={components}"
     )
-    _raise_if_rsfe_prepare_is_unimplemented(sim, system, components)
+    _validate_rsfe_prepare_components(sim, system, components)
 
     # Patch sim for pre-prepare cases (e.g., RBFE pre_prepare_fe uses z)
     if any(comp == "z" for comp in components):
@@ -286,7 +290,7 @@ def prepare_fe_windows_handler(
     logger.debug(
         f"[prepare_fe_windows] start ligand={ligand} residue={residue_name} components={components}"
     )
-    _raise_if_rsfe_prepare_is_unimplemented(sim, system, components)
+    _validate_rsfe_prepare_components(sim, system, components)
 
     for comp in components:
         workdir = child_root / "fe" / comp

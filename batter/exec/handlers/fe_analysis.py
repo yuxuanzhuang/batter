@@ -81,7 +81,8 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
     fe_root = system.root / "fe"
     if not fe_root.exists():
         raise FileNotFoundError(f"[analyze:{lig}] Missing FE folder: {fe_root}")
-    is_pairwise_relative = str(system.meta.get("mode", "")).upper() in {"RBFE", "RSFE"}
+    pair_mode = str(system.meta.get("mode", "")).upper()
+    is_pairwise_relative = pair_mode in {"RBFE", "RSFE"}
 
     default_components = components_under(fe_root)
     components: List[str] = list(default_components)
@@ -116,8 +117,12 @@ def analyze_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> Ex
 
     # RBFE pair analysis is currently x-component only.
     if is_pairwise_relative:
-        if (fe_root / "x").exists():
+        if pair_mode == "RBFE" and (fe_root / "x").exists():
             components = ["x"]
+        elif pair_mode == "RSFE":
+            rsfe_components = [comp for comp in ("s", "h") if (fe_root / comp).exists()]
+            if rsfe_components:
+                components = rsfe_components
         rocklin_correction = False
 
     # Optional: analysis start step override; else use config default

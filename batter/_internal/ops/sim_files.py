@@ -1085,6 +1085,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
 
 @register_sim_files("y")
+@register_sim_files("s")
 def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
     Generate MD input files for ligand-only component 'y'.
@@ -1095,7 +1096,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
 
     temperature = sim.temperature
-    n_steps = sim.dic_n_steps["y"]
+    n_steps = sim.dic_n_steps[ctx.comp]
     ntwx = sim.ntwx
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
@@ -1230,11 +1231,12 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("LISTOUT=POUT\n")
 
     logger.debug(
-        f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
+        f"[sim_files_{ctx.comp}] wrote mdin/mini/eq inputs in {windows_dir} for comp='{ctx.comp}', weight={weight:0.5f}"
     )
 
 
 @register_sim_files("m")
+@register_sim_files("h")
 def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
     Generate MD input files for vaccum ligand-only component 'm'.
@@ -1244,7 +1246,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
 
     temperature = sim.temperature
-    n_steps = sim.dic_n_steps["m"]
+    n_steps = sim.dic_n_steps[ctx.comp]
     ntwx = sim.ntwx
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
@@ -1349,5 +1351,5 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("LISTOUT=POUT\n")
 
     logger.debug(
-        f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"
+        f"[sim_files_{ctx.comp}] wrote mdin/mini/eq inputs in {windows_dir} for comp='{ctx.comp}', weight={weight:0.5f}"
     )

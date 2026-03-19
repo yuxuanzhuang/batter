@@ -56,7 +56,7 @@ def test_run_analysis_from_execution_uses_transformations_for_rsfe(
             "fe_type": "relative",
             "relative_scope": "solvation",
             "lambdas": [0.0, 1.0],
-            "n_steps_dict": {"x_n_steps": 100},
+            "n_steps_dict": {"s_n_steps": 100, "h_n_steps": 100},
             "eq_steps": 1000,
             "buffer_x": 20.0,
             "buffer_y": 20.0,

@@ -633,6 +633,7 @@ def _build_restraints_v_o_z(builder, ctx: BuildContext) -> None:
 
 
 @register_restraints("y")
+@register_restraints("s")
 def _build_restraints_y(builder, ctx: BuildContext) -> None:
     """
     Ligand-only (solvation FE) restraints:
@@ -698,9 +699,12 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
         for k in range(2, 11):
             fh.write(f"trajin md{k:02d}.nc\n")
 
-    logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
+    logger.debug(
+        f"[restraints:{ctx.comp}] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}"
+    )
 
 @register_restraints("m")
+@register_restraints("h")
 def _build_restraints_m(builder, ctx: BuildContext) -> None:
     """
     Ligand-only (vacuum FE) restraints:
@@ -713,7 +717,9 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
 
     vac_pdb = windows_dir / "vac.pdb"
     if not vac_pdb.exists():
-        raise FileNotFoundError(f"[restraints:y] Missing ligand-only vac.pdb: {vac_pdb}")
+        raise FileNotFoundError(
+            f"[restraints:{ctx.comp}] Missing ligand-only vac.pdb: {vac_pdb}"
+        )
 
     # read ligand-only coords and collect heavy atom serials (1-based) for AMBER
     u_lig = mda.Universe(vac_pdb.as_posix())
@@ -726,7 +732,9 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
         lig_atoms = u_lig.select_atoms("not name H*")
 
     if lig_atoms.n_atoms == 0:
-        raise RuntimeError("[restraints:y] Found zero ligand heavy atoms in vac.pdb")
+        raise RuntimeError(
+            f"[restraints:{ctx.comp}] Found zero ligand heavy atoms in vac.pdb"
+        )
 
     hvy_serials = [str(a.ix + 1) for a in lig_atoms]  # 1-based serials for AMBER masks
 
@@ -735,7 +743,9 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
     try:
         lcom = float(rest[6])
     except Exception:
-        raise ValueError(f"[restraints:y] Invalid sim.rest; expected length ≥ 7, got: {rest}")
+        raise ValueError(
+            f"[restraints:{ctx.comp}] Invalid sim.rest; expected length ≥ 7, got: {rest}"
+        )
 
     # ---- disang.rest: empty (legacy behavior) ----
     (windows_dir / "disang.rest").write_text("\n")
@@ -746,7 +756,9 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
         for k in range(2, 11):
             fh.write(f"trajin md{k:02d}.nc\n")
 
-    logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
+    logger.debug(
+        f"[restraints:{ctx.comp}] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}"
+    )
 
 @register_restraints("x")
 def _build_restraints_x(builder, ctx: BuildContext) -> None:

@@ -787,6 +787,7 @@ def create_box_x(ctx: BuildContext) -> None:
 
 
 @register_create_box("y")
+@register_create_box("s")
 def create_box_y(ctx: BuildContext) -> None:
     """
     Create the box for ligand-only (solvation FE) systems.
@@ -1044,6 +1045,7 @@ def create_box_y(ctx: BuildContext) -> None:
 
 
 @register_create_box("m")
+@register_create_box("h")
 def create_box_m(ctx: BuildContext) -> None:
     """
     Create the box for ligand-only (vacuum) systems.

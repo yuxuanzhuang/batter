@@ -1196,6 +1196,22 @@ def create_simulation_dir_lig(ctx: BuildContext) -> None:
         W.write(u_lig)
 
 
+@register_create_simulation("s")
+@register_create_simulation("h")
+def create_simulation_dir_rsfe(ctx: BuildContext) -> None:
+    """
+    RSFE pair-component boilerplate.
+
+    The solvent (``s``) and vacuum (``h``) components need a pairwise ligand-only
+    simulation directory layout, including mapping/alignment artifacts for the
+    two ligands. That layout is intentionally left as a TODO for now.
+    """
+    raise NotImplementedError(
+        f"RSFE component '{ctx.comp}' simulation-dir setup is not implemented yet. "
+        "Add pairwise solvent/vacuum ligand staging here."
+    )
+
+
 # ---------------------- window copier ----------------------
 def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None:
     """Symlink (using relative links) or copy only the needed files from the source simulation dir."""

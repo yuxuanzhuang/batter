@@ -97,7 +97,7 @@ def write_fe_run_file(
 
     # templates (fail clearly if missing)
     tpl_check = src_dir / "check_run.bash"
-    if comp == "m":
+    if comp in {"m", "h"}:
         tpl_local = src_dir / "run-local-vacuum.bash"
     elif comp == "x":
         tpl_local = src_dir / "run-local-rbfe.bash"

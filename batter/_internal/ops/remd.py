@@ -286,7 +286,7 @@ def write_remd_groupfiles(
     prmtop = "full.hmr.prmtop" if str(sim.hmr).lower() == "yes" else "full.prmtop"
     prmtop_path = f"{comp}-1/{prmtop}"
     eq_restart = f"{comp}-1/eqnpt04.rst7"
-    allow_small_box = " -AllowSmallBox" if comp == "m" else ""
+    allow_small_box = " -AllowSmallBox" if comp in {"m", "h"} else ""
 
     def _window_name(idx: int) -> str:
         return f"{comp}{idx:02d}"

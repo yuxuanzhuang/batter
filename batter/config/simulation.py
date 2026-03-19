@@ -145,8 +145,13 @@ class SimulationConfig(BaseModel):
             "n_steps",
             dict(_fe_attr("n_steps", lambda: {"x": 300_000, "y": 300_000}) or {}),
         )
-        if proto_key in {"rbfe", "rsfe"} and "x" not in n_steps:
+        if proto_key == "rbfe" and "x" not in n_steps:
             n_steps["x"] = 300_000
+        if proto_key == "rsfe":
+            if "s" not in n_steps:
+                n_steps["s"] = int(n_steps.get("x", 300_000))
+            if "h" not in n_steps:
+                n_steps["h"] = int(n_steps.get("x", 300_000))
 
         base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
         component_lambda_map: dict[str, List[float]] = {}
@@ -165,7 +170,7 @@ class SimulationConfig(BaseModel):
             "abfe": ["z"],
             "asfe": ["y", "m"],
             "rbfe": ["x"],
-            "rsfe": ["x"],
+            "rsfe": ["s", "h"],
         }.get(proto_key, [])
         for comp in required_components:
             if comp not in n_steps:
@@ -648,7 +653,10 @@ class SimulationConfig(BaseModel):
                     "w",
                 ], "dd"
             case "relative":
-                self.components, self.dec_method = ["x"], "exchange"
+                if self.relative_scope == "solvation":
+                    self.components, self.dec_method = ["s", "h"], "exchange"
+                else:
+                    self.components, self.dec_method = ["x"], "exchange"
             case "uno":
                 self.components, self.dec_method = ["m", "n", "o"], "sdr"
             case "uno_rest":
@@ -683,11 +691,18 @@ class SimulationConfig(BaseModel):
             if not lambdas:
                 lambdas = self.lambdas
                 if not lambdas:
-                    if self.fe_type == "relative" and comp == "x":
-                        raise ValueError(
-                            "RBFE requires a lambda schedule for component 'x'. "
-                            "Set fe_sim.lambdas (or fe_sim.component_lambdas.x / x_lambdas)."
-                        )
+                    if self.fe_type == "relative":
+                        if self.relative_scope == "solvation":
+                            raise ValueError(
+                                "RSFE requires a lambda schedule for components 's'/'h'. "
+                                "Set fe_sim.lambdas (or fe_sim.component_lambdas.s / s_lambdas and "
+                                "fe_sim.component_lambdas.h / h_lambdas)."
+                            )
+                        if comp == "x":
+                            raise ValueError(
+                                "RBFE requires a lambda schedule for component 'x'. "
+                                "Set fe_sim.lambdas (or fe_sim.component_lambdas.x / x_lambdas)."
+                            )
                     raise ValueError(f"No lambdas defined for component '{comp}'.")
                 logger.debug(
                     f"No per-component lambdas for '{comp}'; using default lambdas."
