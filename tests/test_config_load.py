@@ -341,7 +341,7 @@ def test_sim_config_from_sections_preserves_slurm_header_dir(tmp_path: Path) -> 
     assert cfg.model_dump()["slurm_header_dir"] == header_dir
 
 
-def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
+def _minimal_run_payload(tmp_path: Path, protocol: str) -> dict:
     create = _minimal_create(tmp_path)
     if protocol == "abfe":
         n_steps = {"z": 300_000}
@@ -362,7 +362,11 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
             "n_steps": n_steps,
         },
     }
-    return RunConfig.model_validate(payload)
+    return payload
+
+
+def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
+    return RunConfig.model_validate(_minimal_run_payload(tmp_path, protocol))
 
 
 @pytest.mark.parametrize(
@@ -389,21 +393,47 @@ def test_resolved_sim_config_sets_rsfe_relative_scope(tmp_path: Path) -> None:
     assert sim_cfg.components == ["s", "h"]
 
 
-def test_run_config_rejects_rsfe_section_for_other_protocols(tmp_path: Path) -> None:
-    create = _minimal_create(tmp_path)
-    payload = {
-        "protocol": "abfe",
-        "backend": "local",
-        "run": {"output_folder": str(tmp_path / "out")},
-        "create": create.model_dump(),
-        "fe_sim": {
-            "lambdas": [0.0, 1.0],
-            "eq_steps": 1000,
-            "n_steps": {"z": 300_000},
-        },
-        "rsfe": {"mapping": "default"},
-    }
-    with pytest.raises(ValidationError, match="protocol='rsfe'"):
+@pytest.mark.parametrize("protocol", ["rbfe", "rsfe"])
+@pytest.mark.parametrize("section_name", ["relative_config", "rbfe", "rsfe"])
+def test_run_config_accepts_relative_network_aliases(
+    tmp_path: Path, protocol: str, section_name: str
+) -> None:
+    payload = _minimal_run_payload(tmp_path, protocol)
+    payload[section_name] = {"mapping": "default"}
+
+    cfg = RunConfig.model_validate(payload)
+
+    assert cfg.relative_config is not None
+    assert cfg.relative_network_config is cfg.relative_config
+    assert cfg.rbfe is cfg.relative_config
+    assert cfg.rsfe is cfg.relative_config
+    assert cfg.relative_config.mapping == "default"
+
+
+@pytest.mark.parametrize("section_name", ["relative_config", "rbfe", "rsfe"])
+def test_run_config_rejects_relative_network_section_for_non_relative_protocol(
+    tmp_path: Path, section_name: str
+) -> None:
+    payload = _minimal_run_payload(tmp_path, "abfe")
+    payload[section_name] = {"mapping": "default"}
+
+    with pytest.raises(
+        ValidationError, match="protocol='rbfe' or protocol='rsfe'"
+    ):
+        RunConfig.model_validate(payload)
+
+
+def test_run_config_rejects_multiple_relative_network_aliases(
+    tmp_path: Path,
+) -> None:
+    payload = _minimal_run_payload(tmp_path, "rsfe")
+    payload["relative_config"] = {"mapping": "default"}
+    payload["rbfe"] = {"mapping": "default"}
+
+    with pytest.raises(
+        ValidationError,
+        match="Specify only one of 'relative_config', 'rbfe', or 'rsfe'",
+    ):
         RunConfig.model_validate(payload)
 
 

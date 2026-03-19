@@ -896,12 +896,30 @@ class RunConfig(BaseModel):
     run: RunSection = Field(
         ..., description="Execution controls and artifact destination."
     )
-    rbfe: RelativeNetworkArgs | None = Field(
-        default=None, description="RBFE network mapping configuration."
+    relative_config: RelativeNetworkArgs | None = Field(
+        default=None, description="Relative FE network mapping configuration."
     )
-    rsfe: RelativeNetworkArgs | None = Field(
-        default=None, description="RSFE network mapping configuration."
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_relative_sections(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        payload = dict(data)
+        section_values = {
+            name: payload.pop(name)
+            for name in ("relative_config", "rbfe", "rsfe")
+            if name in payload
+        }
+        provided = [name for name, value in section_values.items() if value is not None]
+        if len(provided) > 1:
+            raise ValueError(
+                "Specify only one of 'relative_config', 'rbfe', or 'rsfe' network sections."
+            )
+        if provided:
+            payload["relative_config"] = section_values[provided[0]]
+        return payload
 
     @model_validator(mode="after")
     def _coerce_fe_sim_model(self) -> "RunConfig":
@@ -922,12 +940,14 @@ class RunConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_relative_sections(self) -> "RunConfig":
-        if self.rbfe is not None and self.rsfe is not None:
-            raise ValueError("Specify only one of 'rbfe' or 'rsfe' network sections.")
-        if self.rbfe is not None and self.protocol != "rbfe":
-            raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
-        if self.rsfe is not None and self.protocol != "rsfe":
-            raise ValueError("The 'rsfe' section is only valid when protocol='rsfe'.")
+        if (
+            self.relative_config is not None
+            and self.protocol not in {"rbfe", "rsfe"}
+        ):
+            raise ValueError(
+                "Relative network sections ('relative_config', 'rbfe', or 'rsfe') "
+                "are only valid when protocol='rbfe' or protocol='rsfe'."
+            )
         return self
 
     @field_validator("protocol", mode="before")
@@ -1022,25 +1042,33 @@ class RunConfig(BaseModel):
         """
         resolved_create = self.create.resolve_paths(base_dir)
         resolved_run = self.run.resolve_paths(base_dir)
-        resolved_rbfe = self.rbfe.resolve_paths(base_dir) if self.rbfe else None
-        resolved_rsfe = self.rsfe.resolve_paths(base_dir) if self.rsfe else None
+        resolved_relative = (
+            self.relative_config.resolve_paths(base_dir)
+            if self.relative_config
+            else None
+        )
         return self.model_copy(
             update={
                 "create": resolved_create,
                 "run": resolved_run,
-                "rbfe": resolved_rbfe,
-                "rsfe": resolved_rsfe,
+                "relative_config": resolved_relative,
             }
         )
 
     @property
+    def rbfe(self) -> RelativeNetworkArgs | None:
+        """Backward-compatible alias for ``relative_config``."""
+        return self.relative_config
+
+    @property
+    def rsfe(self) -> RelativeNetworkArgs | None:
+        """Backward-compatible alias for ``relative_config``."""
+        return self.relative_config
+
+    @property
     def relative_network_config(self) -> RelativeNetworkArgs | None:
         """Return the active relative-network section for the configured protocol."""
-        if self.protocol == "rbfe":
-            return self.rbfe
-        if self.protocol == "rsfe":
-            return self.rsfe
-        return None
+        return self.relative_config if self.protocol in {"rbfe", "rsfe"} else None
 
 
 RunConfig.model_rebuild()
