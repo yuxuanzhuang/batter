@@ -16,6 +16,7 @@ from loguru import logger
 import numpy as np
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
+import parmed as pmd
 
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
@@ -935,7 +936,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         (ref_pre_fe / "eq_output.pdb", dest_dir / "ref_eq_output.pdb"),
         (ref_pre_fe / "build_amber_renum.txt", dest_dir / "build_amber_renum.txt"),
         (alt_equil_dir / "representative.pdb", dest_dir / "alter_representative.pdb"),
-        (alt_pre_fe / "solvate_ligands.prmtop", dest_dir / "alter_ligand.prmtop"),
     ]:
         _copy_if_exists(s, d)
 
@@ -1035,6 +1035,10 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alter_lig_merged = mda.Merge(u_alter_lig_pocket.atoms, u_alter_lig)
     u_alter_lig_merged.atoms.write(dest_dir / "alter_ligand.pdb")
 
+    # write alter_ligand.prmtop as a combined res_alt.prmtop + res_alt.prmtop
+    res_alt_prmtop = pmd.load_file((dest_dir / f"{res_alt}.prmtop").as_posix())
+    alt_ligand = res_alt_prmtop + res_alt_prmtop
+    alt_ligand.save((dest_dir / "alter_ligand.prmtop").as_posix(), overwrite=True)
     u_lig_alter = mda.Universe(dest_dir / "alter_ligand.prmtop", dest_dir / "alter_ligand.pdb")
     # only one present in the system
     q = u_lig_alter.atoms.charges.sum() / 2.0
@@ -1128,7 +1132,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alt_site = mda.Universe(alter_site_pdb.as_posix())
     u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
-    u_alt.atoms.write(alter_merged_pdb.as_posix())
 
     with open(dest_dir / "mapping.json", "w") as f:
         json.dump(map_b_to_a, f)

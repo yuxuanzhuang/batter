@@ -679,12 +679,18 @@ def create_box_x(ctx: BuildContext) -> None:
         str(window_dir / "other_parts.prmtop"),
         str(window_dir / "other_parts.pdb"),
     )
-    alter_ligands_p = pmd.load_file(
-        str(window_dir / "alter_ligand.prmtop"),
-        str(window_dir / "alter_ligand_aligned.pdb"),
+    ligand_alt = pmd.load_file(str(window_dir / f"{res_alt}.prmtop"))
+    ligand_alt.residues[0].name = res_alt
+    ligand_alt.save(str(window_dir / f"{res_alt}.prmtop"), overwrite=True)
+    alter_ligands_p_site = pmd.load_file(
+        str(window_dir / f"{res_alt}.prmtop"),
+        str(window_dir / "alter_ligand_aligned_site.pdb"),
     )
-
-    combined = vac_p + alter_ligands_p + other_part_p
+    alter_ligands_p_solvent = pmd.load_file(
+        str(window_dir / f"{res_alt}.prmtop"),
+        str(window_dir / "alter_ligand_aligned_solvent.pdb"),
+    )
+    combined = vac_p + alter_ligands_p_site + alter_ligands_p_solvent + other_part_p
 
     # build the ion prmtop if exists
     if os.path.exists(window_dir / "ions.pdb"):
@@ -706,7 +712,7 @@ def create_box_x(ctx: BuildContext) -> None:
         )
         combined += ion_p
 
-    vac = vac_p + alter_ligands_p
+    vac = vac_p + alter_ligands_p_site + alter_ligands_p_solvent
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)

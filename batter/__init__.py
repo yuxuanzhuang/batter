@@ -64,6 +64,8 @@ _mbar_log = logging.getLogger("pymbar.mbar_solvers")
 _mbar_log.addFilter(_mute_jax)
 _mbar_log.addFilter(_mute_jax_2)
 _mbar_log.addFilter(_mute_jax_3)
+# set logging level to warning
+logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
 
 logger.remove()
 logger_format = ('{level} | <level>{message}</level> ')
