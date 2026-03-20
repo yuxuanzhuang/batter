@@ -316,6 +316,42 @@ def run_from_yaml(
     on_failure: Literal["prune", "raise", "retry"] = None,
     run_overrides: Dict[str, Any] | None = None,
 ) -> None:
+    """Execute a BATTER workflow described by a YAML file."""
+    path = Path(path)
+    logger.info(f"Starting BATTER run from {path}")
+
+    # Config must load successfully before email settings are available.
+    rc = RunConfig.load(path)
+    run_state: dict[str, Any] = {
+        "run_id": None,
+        "run_dir": Path(getattr(rc.run, "output_folder", path.parent)),
+    }
+
+    try:
+        _run_from_yaml_impl(
+            path,
+            rc,
+            on_failure=on_failure,
+            run_overrides=run_overrides,
+            run_state=run_state,
+        )
+    except Exception as exc:
+        _notify_run_failure(
+            rc,
+            run_state.get("run_id"),
+            run_state.get("run_dir"),
+            exc,
+        )
+        raise
+
+
+def _run_from_yaml_impl(
+    path: Path | str,
+    rc: RunConfig,
+    on_failure: Literal["prune", "raise", "retry"] = None,
+    run_overrides: Dict[str, Any] | None = None,
+    run_state: dict[str, Any] | None = None,
+) -> None:
     """Execute a BATTER workflow described by a YAML file.
 
     Parameters
@@ -328,10 +364,6 @@ def run_from_yaml(
         Overrides applied to the ``run`` section (e.g., only FE preparation).
     """
     path = Path(path)
-    logger.info(f"Starting BATTER run from {path}")
-
-    # Configs
-    rc = RunConfig.load(path)
 
     if run_overrides:
         logger.info(f"Applying run overrides: {run_overrides}")
@@ -376,6 +408,9 @@ def run_from_yaml(
             rc.create.system_name,
             requested_run_id,
         )
+        if run_state is not None:
+            run_state["run_id"] = run_id
+            run_state["run_dir"] = run_dir
         stored_sig, sig_path = _stored_signature(run_dir)
         stored_payload = _stored_payload(run_dir)
         if _resolve_signature_conflict(
@@ -1147,32 +1182,88 @@ def _notify_run_completion(
     run_dir: Path,
     failures: list[tuple[str, str, str]],
 ) -> None:
+    _notify_run_status(
+        rc,
+        status="completed",
+        run_id=run_id,
+        run_dir=run_dir,
+        failures=failures,
+    )
+
+
+def _notify_run_failure(
+    rc: RunConfig,
+    run_id: str | None,
+    run_dir: Path | None,
+    error: Exception,
+) -> None:
+    _notify_run_status(
+        rc,
+        status="failed",
+        run_id=run_id,
+        run_dir=run_dir,
+        error=error,
+    )
+
+
+def _notify_run_status(
+    rc: RunConfig,
+    status: Literal["completed", "failed"],
+    run_id: str | None,
+    run_dir: Path | None,
+    failures: list[tuple[str, str, str]] | None = None,
+    error: Exception | None = None,
+) -> None:
     recipient = rc.run.email_on_completion
     if not recipient:
         return
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    subject = f"BATTER run '{run_id}' of {rc.create.system_name} completed"
+    display_run_id = run_id or "unknown"
+    if status == "failed":
+        subject = f"BATTER run '{display_run_id}' of {rc.create.system_name} failed"
+    else:
+        subject = f"BATTER run '{display_run_id}' of {rc.create.system_name} completed"
     results_path = Path(rc.run.output_folder) / "results"
 
-    body_lines = [
-        "Hi there!",
-        "",
-        f"Your BATTER run '{rc.create.system_name}' (run_id='{run_id}') completed at {timestamp} UTC.",
-        f"Protocol: {rc.protocol}",
-        f"Output folder: {run_dir}",
-        f"FE records stored under: {results_path}",
-        "",
-    ]
+    body_lines = ["Hi there!", ""]
 
-    if failures:
-        body_lines.append(
-            "The following ligand(s) had post-run issues (see logs for additional context):"
+    if status == "failed":
+        body_lines.extend(
+            [
+                f"Your BATTER run '{rc.create.system_name}' (run_id='{display_run_id}') failed at {timestamp} UTC.",
+                f"Protocol: {rc.protocol}",
+                f"Last known run path: {run_dir or rc.run.output_folder}",
+                "",
+            ]
         )
-        for ligand, status, reason in failures:
-            body_lines.append(f"- {ligand} ({status}): {reason}")
+        if error is not None:
+            body_lines.extend(
+                [
+                    "Error:",
+                    str(error),
+                    "",
+                ]
+            )
+        body_lines.append("FE records may be incomplete because the run exited early.")
     else:
-        body_lines.append("No ligand failures were detected.")
+        body_lines.extend(
+            [
+                f"Your BATTER run '{rc.create.system_name}' (run_id='{display_run_id}') completed at {timestamp} UTC.",
+                f"Protocol: {rc.protocol}",
+                f"Output folder: {run_dir}",
+                f"FE records stored under: {results_path}",
+                "",
+            ]
+        )
+        if failures:
+            body_lines.append(
+                "The following ligand(s) had post-run issues (see logs for additional context):"
+            )
+            for ligand, failure_status, reason in failures:
+                body_lines.append(f"- {ligand} ({failure_status}): {reason}")
+        else:
+            body_lines.append("No ligand failures were detected.")
 
     body_lines.extend(
         [

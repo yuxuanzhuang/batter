@@ -423,3 +423,25 @@ def test_notify_run_completion_logs_when_sender_missing(
 
     assert sent == {}
     assert any("no sender email configured" in w.lower() for w in warnings)
+
+
+def test_notify_run_failure_includes_error_details(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+
+    run_mod._notify_run_failure(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        RuntimeError("boom"),
+    )
+
+    assert sent["sender"] == "config@example.com"
+    assert sent["recipients"] == ["dest@example.com"]
+    assert "Subject: BATTER run 'run1' of sys failed" in sent["message"]
+    assert "Error:\nboom" in sent["message"]

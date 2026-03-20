@@ -272,6 +272,57 @@ fe_sim:
     assert seen["max_active_jobs"] == 7
 
 
+def test_run_from_yaml_notifies_on_failure(monkeypatch, tmp_path: Path) -> None:
+    run_dir = tmp_path / "out" / "executions" / "rep1"
+    path = tmp_path / "run.yaml"
+    path.write_text("protocol: abfe\n")
+
+    rc = type(
+        "DummyRC",
+        (),
+        {
+            "run": type(
+                "DummyRun",
+                (),
+                {
+                    "output_folder": tmp_path / "out",
+                    "email_on_completion": "dest@example.com",
+                    "email_sender": "sender@example.com",
+                },
+            )(),
+            "create": type("DummyCreate", (), {"system_name": "sys"})(),
+            "protocol": "abfe",
+        },
+    )()
+
+    seen: dict[str, object] = {}
+
+    def fake_impl(path_arg, rc_arg, on_failure=None, run_overrides=None, run_state=None):
+        assert path_arg == path
+        assert rc_arg is rc
+        run_state["run_id"] = "rep1"
+        run_state["run_dir"] = run_dir
+        raise RuntimeError("boom")
+
+    def fake_notify(rc_arg, run_id, run_dir_arg, error):
+        seen["rc"] = rc_arg
+        seen["run_id"] = run_id
+        seen["run_dir"] = run_dir_arg
+        seen["error"] = error
+
+    monkeypatch.setattr(run_mod.RunConfig, "load", lambda _: rc)
+    monkeypatch.setattr(run_mod, "_run_from_yaml_impl", fake_impl)
+    monkeypatch.setattr(run_mod, "_notify_run_failure", fake_notify)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run_from_yaml(path)
+
+    assert seen["rc"] is rc
+    assert seen["run_id"] == "rep1"
+    assert seen["run_dir"] == run_dir
+    assert str(seen["error"]) == "boom"
+
+
 @pytest.mark.heavy
 def test_cli_rbfe_lomap_dry_run(tmp_path: Path) -> None:
     """
