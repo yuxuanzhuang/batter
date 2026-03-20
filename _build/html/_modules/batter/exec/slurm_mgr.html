@@ -1,0 +1,1478 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>batter.exec.slurm_mgr &#8212; batter  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/batter/exec/slurm_mgr';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">batter  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">batter.exec.slurm_mgr</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for batter.exec.slurm_mgr</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">fcntl</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">cast</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">loguru</span><span class="w"> </span><span class="kn">import</span> <span class="n">logger</span>
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;SlurmJobSpec&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;SlurmJobManager&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+
+<span class="c1"># ---- SLURM state sets ----</span>
+<span class="n">SLURM_OK_STATES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;PENDING&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;CONFIGURING&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;RUNNING&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;COMPLETING&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;STAGE_OUT&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;SUSPENDED&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">SLURM_FINAL_BAD</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;CANCELLED&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;FAILED&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;TIMEOUT&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;NODE_FAIL&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;PREEMPTED&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;OUT_OF_MEMORY&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">JOBID_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;Submitted batch job\s+(\d+)&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+
+
+<span class="c1"># ---------- atomic registry append ----------</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_atomic_append_jsonl_unique</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">rec</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">unique_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;workdir&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Append ``rec`` to a JSONL file if ``unique_key`` is not already present.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    path : pathlib.Path</span>
+<span class="sd">        Target JSONL file (created if missing).</span>
+<span class="sd">    rec : dict</span>
+<span class="sd">        Record to append.</span>
+<span class="sd">    unique_key : str, optional</span>
+<span class="sd">        Key whose value must be unique across existing rows.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">path</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">key_val</span> <span class="o">=</span> <span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">unique_key</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">key_val</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Record missing unique key &#39;</span><span class="si">{</span><span class="n">unique_key</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="n">rec</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">&quot;a+&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">fcntl</span><span class="o">.</span><span class="n">flock</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">fcntl</span><span class="o">.</span><span class="n">LOCK_EX</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">seek</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">prev</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="k">if</span> <span class="n">prev</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">unique_key</span><span class="p">)</span> <span class="o">==</span> <span class="n">key_val</span><span class="p">:</span>
+                    <span class="k">return</span>
+
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">rec</span><span class="p">,</span> <span class="n">separators</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;:&quot;</span><span class="p">))</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">fsync</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">fileno</span><span class="p">())</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">fcntl</span><span class="o">.</span><span class="n">flock</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">fcntl</span><span class="o">.</span><span class="n">LOCK_UN</span><span class="p">)</span>
+
+
+<span class="c1"># ---- Helpers ----</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_read_text</span><span class="p">(</span><span class="n">p</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return stripped file contents or ``None`` if the file is unreadable.&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">p</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_write_text</span><span class="p">(</span><span class="n">p</span><span class="p">:</span> <span class="n">Path</span><span class="p">,</span> <span class="n">txt</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Write ``txt`` to ``p`` creating parent directories as required.&quot;&quot;&quot;</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">parents</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">p</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">txt</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_states_from_squeue</span><span class="p">(</span><span class="n">jobids</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``{jobid: state}`` for jobids currently visible in squeue.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    jobids : Sequence[str]</span>
+<span class="sd">        Job IDs to query.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    dict</span>
+<span class="sd">        Mapping from jobid to state (e.g. RUNNING, PENDING).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">j</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">jobids</span> <span class="k">if</span> <span class="n">j</span> <span class="ow">and</span> <span class="n">j</span><span class="o">.</span><span class="n">isdigit</span><span class="p">()]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">ids</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{}</span>
+
+    <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;squeue&quot;</span><span class="p">,</span> <span class="s2">&quot;-h&quot;</span><span class="p">,</span> <span class="s2">&quot;-j&quot;</span><span class="p">,</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">ids</span><span class="p">),</span> <span class="s2">&quot;-o&quot;</span><span class="p">,</span> <span class="s2">&quot;</span><span class="si">%i</span><span class="s2"> %T&quot;</span><span class="p">]</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">check_output</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{}</span>
+
+    <span class="n">states</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">ln</span> <span class="ow">in</span> <span class="n">out</span><span class="o">.</span><span class="n">splitlines</span><span class="p">():</span>
+        <span class="n">ln</span> <span class="o">=</span> <span class="n">ln</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">ln</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="n">ln</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="n">jid</span><span class="p">,</span> <span class="n">st</span> <span class="o">=</span> <span class="n">parts</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">parts</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">states</span><span class="p">[</span><span class="n">jid</span><span class="p">]</span> <span class="o">=</span> <span class="n">st</span>
+    <span class="k">return</span> <span class="n">states</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_states_from_sacct</span><span class="p">(</span><span class="n">jobids</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return ``{jobid: state}`` using sacct for completed/missing jobs.</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    We request JobIDRaw so we can match child steps back to the root job.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    jobids : Sequence[str]</span>
+<span class="sd">        Job IDs to query.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    dict</span>
+<span class="sd">        Mapping from jobid to state.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">j</span> <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">jobids</span> <span class="k">if</span> <span class="n">j</span> <span class="ow">and</span> <span class="n">j</span><span class="o">.</span><span class="n">isdigit</span><span class="p">()]</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">ids</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{}</span>
+
+    <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;sacct&quot;</span><span class="p">,</span> <span class="s2">&quot;-j&quot;</span><span class="p">,</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">ids</span><span class="p">),</span> <span class="s2">&quot;-X&quot;</span><span class="p">,</span> <span class="s2">&quot;-n&quot;</span><span class="p">,</span> <span class="s2">&quot;-o&quot;</span><span class="p">,</span> <span class="s2">&quot;JobIDRaw,State&quot;</span><span class="p">]</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">check_output</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">DEVNULL</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{}</span>
+
+    <span class="n">states</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">ln</span> <span class="ow">in</span> <span class="n">out</span><span class="o">.</span><span class="n">splitlines</span><span class="p">():</span>
+        <span class="n">ln</span> <span class="o">=</span> <span class="n">ln</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">ln</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="n">ln</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="n">jid</span> <span class="o">=</span> <span class="n">parts</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">st</span> <span class="o">=</span> <span class="n">parts</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="c1"># keep root state if already set</span>
+            <span class="n">states</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">jid</span><span class="p">,</span> <span class="n">st</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">states</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_num_active_job</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">partition</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the number of active Slurm jobs for ``user`` (optionally in a partition).</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    user : str, optional</span>
+<span class="sd">        Unix username (defaults to ``$USER``).</span>
+<span class="sd">    partition : str, optional</span>
+<span class="sd">        Partition/queue name to filter with ``squeue -p``.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    int</span>
+<span class="sd">        Number of job IDs currently reported by ``squeue``.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">user</span> <span class="ow">or</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;USER&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">user</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">0</span>
+
+    <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;squeue&quot;</span><span class="p">,</span> <span class="s2">&quot;-h&quot;</span><span class="p">,</span> <span class="s2">&quot;-u&quot;</span><span class="p">,</span> <span class="n">user</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">partition</span><span class="p">:</span>
+        <span class="n">cmd</span> <span class="o">+=</span> <span class="p">[</span><span class="s2">&quot;-p&quot;</span><span class="p">,</span> <span class="n">partition</span><span class="p">]</span>
+    <span class="n">cmd</span> <span class="o">+=</span> <span class="p">[</span><span class="s2">&quot;-o&quot;</span><span class="p">,</span> <span class="s2">&quot;</span><span class="si">%i</span><span class="s2">&quot;</span><span class="p">]</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">check_output</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">0</span>
+
+    <span class="n">n_ids</span> <span class="o">=</span> <span class="p">[</span><span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">out</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span> <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;[SQUEUE] active jobs for user &#39;</span><span class="si">{</span><span class="n">user</span><span class="si">}</span><span class="s2">&#39;</span><span class="si">{</span><span class="sa">f</span><span class="s1">&#39; partition=</span><span class="si">{</span><span class="n">partition</span><span class="si">}</span><span class="s1">&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">partition</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">n_ids</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">n_ids</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_infer_stage_from_workdir</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Heuristically infer a stage name from ``path`` for legacy entries.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    path : pathlib.Path or None</span>
+<span class="sd">        Work directory.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    str or None</span>
+<span class="sd">        Stage name such as ``equil``, ``fe_equil``, ``fe`` or ``None`` if unknown.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">path</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">parts</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">path</span><span class="o">.</span><span class="n">parts</span><span class="p">]</span>
+    <span class="k">if</span> <span class="s2">&quot;equil&quot;</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;equil&quot;</span>
+    <span class="k">if</span> <span class="s2">&quot;fe&quot;</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">path</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;-1&quot;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="s2">&quot;fe_equil&quot;</span>
+        <span class="k">return</span> <span class="s2">&quot;fe&quot;</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+
+<div class="viewcode-block" id="SlurmJobSpec">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobSpec">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">SlurmJobSpec</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Descriptor for a Slurm job managed by :class:`SlurmJobManager`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    workdir : pathlib.Path</span>
+<span class="sd">        Working directory containing submission scripts and sentinel files.</span>
+<span class="sd">    script_rel : str, optional</span>
+<span class="sd">        Preferred relative submission script path.</span>
+<span class="sd">    finished_name : str, optional</span>
+<span class="sd">        Sentinel file name indicating success.</span>
+<span class="sd">    failed_name : str, optional</span>
+<span class="sd">        Sentinel file name indicating failure.</span>
+<span class="sd">    name : str, optional</span>
+<span class="sd">        Friendly display name.</span>
+<span class="sd">    stage : str, optional</span>
+<span class="sd">        Logical stage used for registry filtering.</span>
+<span class="sd">    extra_sbatch : Sequence[str], optional</span>
+<span class="sd">        Extra ``sbatch`` flags (job-specific).</span>
+<span class="sd">    extra_env : dict, optional</span>
+<span class="sd">        Extra environment variables to export (job-specific).</span>
+<span class="sd">    submit_dir : pathlib.Path, optional</span>
+<span class="sd">        Directory to submit from (defaults to ``workdir``).</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    The remaining fields are legacy compatibility fields used by older BATTER</span>
+<span class="sd">    versions and/or existing registry entries. The manager may ignore them.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">workdir</span><span class="p">:</span> <span class="n">Path</span>
+    <span class="n">script_rel</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;SLURMM-run&quot;</span>
+    <span class="n">finished_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;FINISHED&quot;</span>
+    <span class="n">failed_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;FAILED&quot;</span>
+    <span class="n">name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">stage</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># legacy / compatibility fields</span>
+    <span class="n">body_rel</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">header_name</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">header_template</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">header_root</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">batch_script</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="n">extra_sbatch</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">extra_env</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="n">submit_dir</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="n">alt_script_names</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;SLURMM-run&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;SLURMM-Run&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;slurmm-run&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;run.sh&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+
+<div class="viewcode-block" id="SlurmJobSpec.finished_path">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobSpec.finished_path">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">finished_path</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Sentinel path signalling successful completion.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">finished_name</span></div>
+
+
+<div class="viewcode-block" id="SlurmJobSpec.failed_path">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobSpec.failed_path">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">failed_path</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Sentinel path signalling failure.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">failed_name</span></div>
+
+
+<div class="viewcode-block" id="SlurmJobSpec.jobid_path">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobSpec.jobid_path">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">jobid_path</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Path containing the most recent Slurm job identifier.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span> <span class="o">/</span> <span class="s2">&quot;JOBID&quot;</span></div>
+
+
+<div class="viewcode-block" id="SlurmJobSpec.resolve_script_abs">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobSpec.resolve_script_abs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">resolve_script_abs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the absolute path to the submission script.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        pathlib.Path</span>
+<span class="sd">            Existing script path if found, otherwise the preferred path.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">preferred</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">script_rel</span>
+        <span class="n">candidates</span> <span class="o">=</span> <span class="p">[</span><span class="n">preferred</span><span class="p">]</span> <span class="o">+</span> <span class="p">[</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span> <span class="o">/</span> <span class="n">n</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">alt_script_names</span> <span class="k">if</span> <span class="n">n</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">script_rel</span>
+        <span class="p">]</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">candidates</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+                <span class="k">return</span> <span class="n">p</span>
+        <span class="k">return</span> <span class="n">preferred</span></div>
+
+
+<div class="viewcode-block" id="SlurmJobSpec.script_arg">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobSpec.script_arg">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">script_arg</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the submission-script path argument for ``sbatch``.</span>
+
+<span class="sd">        Returns</span>
+<span class="sd">        -------</span>
+<span class="sd">        str</span>
+<span class="sd">            Script path relative to ``submit_dir`` when possible.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">base</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">submit_dir</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">workdir</span>
+        <span class="n">candidate</span> <span class="o">=</span> <span class="n">base</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">script_rel</span>
+        <span class="n">abs_script</span> <span class="o">=</span> <span class="n">candidate</span> <span class="k">if</span> <span class="n">candidate</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">resolve_script_abs</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">abs_script</span><span class="o">.</span><span class="n">relative_to</span><span class="p">(</span><span class="n">base</span><span class="p">))</span>
+        <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">abs_script</span><span class="o">.</span><span class="n">name</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="SlurmJobManager">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">SlurmJobManager</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Submit, monitor, and resubmit Slurm jobs for BATTER executions.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    poll_s : float, optional</span>
+<span class="sd">        Poll interval (seconds) between status checks.</span>
+<span class="sd">    max_retries : int, optional</span>
+<span class="sd">        Maximum automatic resubmissions per workdir (excluding TIMEOUT and COMPLETED-without-sentinel).</span>
+<span class="sd">    resubmit_backoff_s : float, optional</span>
+<span class="sd">        Sleep before resubmitting a job after detecting termination/missing state.</span>
+<span class="sd">    registry_file : pathlib.Path, optional</span>
+<span class="sd">        JSONL queue file for cross-process coordination.</span>
+<span class="sd">    dry_run : bool, optional</span>
+<span class="sd">        When True, do not submit; record that submission would occur.</span>
+<span class="sd">    sbatch_flags : Sequence[str], optional</span>
+<span class="sd">        Global sbatch flags appended to every submission.</span>
+<span class="sd">    submit_retry_limit : int, optional</span>
+<span class="sd">        Number of retries for the *submission command* itself.</span>
+<span class="sd">    submit_retry_delay_s : float, optional</span>
+<span class="sd">        Delay between submission retries.</span>
+<span class="sd">    max_active_jobs : int, optional</span>
+<span class="sd">        Cap on concurrent jobs for the user (checked via one `squeue -u` call).</span>
+<span class="sd">    partition : str, optional</span>
+<span class="sd">        Partition filter used by max_active_jobs checks.</span>
+
+<span class="sd">    Other Parameters</span>
+<span class="sd">    ----------------</span>
+<span class="sd">    batch_mode, batch_gpus, gpus_per_task, srun_extra, stage, header_root</span>
+<span class="sd">        Accepted for compatibility with older code paths. This manager does not</span>
+<span class="sd">        implement batch execution; values are stored/ignored.</span>
+<span class="sd">    **_ignored</span>
+<span class="sd">        Extra kwargs are accepted and ignored for compatibility.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">poll_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span>
+        <span class="n">max_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+        <span class="n">resubmit_backoff_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">30.0</span><span class="p">,</span>
+        <span class="n">registry_file</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">dry_run</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">sbatch_flags</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">submit_retry_limit</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+        <span class="n">submit_retry_delay_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">60.0</span><span class="p">,</span>
+        <span class="n">max_active_jobs</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">partition</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="c1"># --- compatibility kwargs ---</span>
+        <span class="n">batch_mode</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">batch_gpus</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">gpus_per_task</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="n">srun_extra</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">stage</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">header_root</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">_ignored</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">poll_s</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">poll_s</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_retries</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">max_retries</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resubmit_backoff_s</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">resubmit_backoff_s</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span> <span class="o">=</span> <span class="n">registry_file</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dry_run</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">dry_run</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">triggered</span> <span class="o">=</span> <span class="kc">False</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">sbatch_flags</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">sbatch_flags</span> <span class="ow">or</span> <span class="p">[])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">submit_retry_limit</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">submit_retry_limit</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">submit_retry_delay_s</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">submit_retry_delay_s</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_active_jobs</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">max_active_jobs</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">int</span><span class="p">(</span><span class="n">max_active_jobs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_active_jobs</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_active_jobs</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;max_active_jobs must be positive or None&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">partition</span> <span class="o">=</span> <span class="n">partition</span>
+
+        <span class="c1"># compatibility settings (stored; not implemented)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">batch_mode</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="n">batch_mode</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">batch_gpus</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">batch_gpus</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">int</span><span class="p">(</span><span class="n">batch_gpus</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gpus_per_task</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">gpus_per_task</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">srun_extra</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">srun_extra</span> <span class="ow">or</span> <span class="p">[])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_header_root</span> <span class="o">=</span> <span class="n">header_root</span>
+
+        <span class="c1"># stage filtering</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">stage</span>
+
+        <span class="c1"># in-memory queue</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inmem_specs</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="n">SlurmJobSpec</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_retries</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_submitted_job_ids</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_active</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="c1"># ---------- stage API ----------</span>
+<div class="viewcode-block" id="SlurmJobManager.set_stage">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.set_stage">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_stage</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Set the active stage filter for registry loading/submission.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        stage : str or None</span>
+<span class="sd">            Stage key such as ``equil``, ``fe_equil``, ``fe``, etc.</span>
+<span class="sd">            If None, stage filtering is disabled.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span> <span class="o">=</span> <span class="n">stage</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_stage_matches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">workdir</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return True if a spec with ``stage`` should be managed under current stage.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">if</span> <span class="n">stage</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">stage</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span>
+        <span class="n">inferred</span> <span class="o">=</span> <span class="n">_infer_stage_from_workdir</span><span class="p">(</span><span class="n">workdir</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">inferred</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span>
+
+    <span class="c1"># ---------- registry API ----------</span>
+<div class="viewcode-block" id="SlurmJobManager.add">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.add">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">SlurmJobSpec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Queue ``spec`` for later submission and optionally persist to registry.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        spec : SlurmJobSpec</span>
+<span class="sd">            Job specification.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dry_run</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">triggered</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">stage</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">spec</span><span class="o">.</span><span class="n">stage</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inmem_specs</span><span class="p">[</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="p">]</span> <span class="o">=</span> <span class="n">spec</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">rec</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s2">&quot;workdir&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="p">),</span>
+                <span class="s2">&quot;script_rel&quot;</span><span class="p">:</span> <span class="n">spec</span><span class="o">.</span><span class="n">script_rel</span><span class="p">,</span>
+                <span class="s2">&quot;finished_name&quot;</span><span class="p">:</span> <span class="n">spec</span><span class="o">.</span><span class="n">finished_name</span><span class="p">,</span>
+                <span class="s2">&quot;failed_name&quot;</span><span class="p">:</span> <span class="n">spec</span><span class="o">.</span><span class="n">failed_name</span><span class="p">,</span>
+                <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                <span class="s2">&quot;stage&quot;</span><span class="p">:</span> <span class="n">spec</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span>
+                <span class="c1"># legacy fields preserved</span>
+                <span class="s2">&quot;body_rel&quot;</span><span class="p">:</span> <span class="n">spec</span><span class="o">.</span><span class="n">body_rel</span><span class="p">,</span>
+                <span class="s2">&quot;header_name&quot;</span><span class="p">:</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_name</span><span class="p">,</span>
+                <span class="s2">&quot;header_template&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">header_template</span><span class="p">)</span> <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_template</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="s2">&quot;header_root&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">header_root</span><span class="p">)</span> <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_root</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="s2">&quot;extra_sbatch&quot;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">extra_sbatch</span> <span class="ow">or</span> <span class="p">[]),</span>
+                <span class="s2">&quot;extra_env&quot;</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">extra_env</span> <span class="ow">or</span> <span class="p">{}),</span>
+                <span class="s2">&quot;batch_script&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">batch_script</span><span class="p">)</span> <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">batch_script</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="s2">&quot;submit_dir&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">submit_dir</span><span class="p">)</span> <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">submit_dir</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="p">}</span>
+            <span class="n">_atomic_append_jsonl_unique</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span><span class="p">,</span> <span class="n">rec</span><span class="p">,</span> <span class="n">unique_key</span><span class="o">=</span><span class="s2">&quot;workdir&quot;</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_load_registry_specs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="n">SlurmJobSpec</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Load job specs from the persistent JSONL registry (best-effort).&quot;&quot;&quot;</span>
+        <span class="n">out</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="n">SlurmJobSpec</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span> <span class="ow">or</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">out</span>
+
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">f</span><span class="p">:</span>
+                <span class="n">line</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">line</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">rec</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="n">wd</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;workdir&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">))</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">wd</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="n">stage</span> <span class="o">=</span> <span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;stage&quot;</span><span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage_matches</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="n">wd</span><span class="p">):</span>
+                    <span class="k">continue</span>
+
+                <span class="n">out</span><span class="p">[</span><span class="n">wd</span><span class="p">]</span> <span class="o">=</span> <span class="n">SlurmJobSpec</span><span class="p">(</span>
+                    <span class="n">workdir</span><span class="o">=</span><span class="n">wd</span><span class="p">,</span>
+                    <span class="n">script_rel</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;script_rel&quot;</span><span class="p">,</span> <span class="s2">&quot;SLURMM-run&quot;</span><span class="p">),</span>
+                    <span class="n">finished_name</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;finished_name&quot;</span><span class="p">,</span> <span class="s2">&quot;FINISHED&quot;</span><span class="p">),</span>
+                    <span class="n">failed_name</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;failed_name&quot;</span><span class="p">,</span> <span class="s2">&quot;FAILED&quot;</span><span class="p">),</span>
+                    <span class="n">name</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;name&quot;</span><span class="p">),</span>
+                    <span class="n">stage</span><span class="o">=</span><span class="n">stage</span><span class="p">,</span>
+                    <span class="n">body_rel</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;body_rel&quot;</span><span class="p">),</span>
+                    <span class="n">header_name</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;header_name&quot;</span><span class="p">),</span>
+                    <span class="n">header_template</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="n">rec</span><span class="p">[</span><span class="s2">&quot;header_template&quot;</span><span class="p">])</span> <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;header_template&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="n">header_root</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="n">rec</span><span class="p">[</span><span class="s2">&quot;header_root&quot;</span><span class="p">])</span> <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;header_root&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="n">extra_sbatch</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;extra_sbatch&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[],</span>
+                    <span class="n">extra_env</span><span class="o">=</span><span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;extra_env&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{},</span>
+                    <span class="n">batch_script</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="n">rec</span><span class="p">[</span><span class="s2">&quot;batch_script&quot;</span><span class="p">])</span> <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;batch_script&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="n">submit_dir</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="n">rec</span><span class="p">[</span><span class="s2">&quot;submit_dir&quot;</span><span class="p">])</span> <span class="k">if</span> <span class="n">rec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;submit_dir&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="p">)</span>
+        <span class="k">return</span> <span class="n">out</span>
+
+<div class="viewcode-block" id="SlurmJobManager.jobs">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.jobs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">jobs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">SlurmJobSpec</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return merged in-memory + registry specs (dedup by workdir).&quot;&quot;&quot;</span>
+        <span class="n">merged</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_load_registry_specs</span><span class="p">()</span>
+        <span class="n">merged</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_inmem_specs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span><span class="p">:</span>
+            <span class="n">merged</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="n">wd</span><span class="p">:</span> <span class="n">sp</span> <span class="k">for</span> <span class="n">wd</span><span class="p">,</span> <span class="n">sp</span> <span class="ow">in</span> <span class="n">merged</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage_matches</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">wd</span><span class="p">)</span>
+            <span class="p">}</span>
+        <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">merged</span><span class="o">.</span><span class="n">values</span><span class="p">())</span></div>
+
+
+<div class="viewcode-block" id="SlurmJobManager.clear">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.clear">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">clear</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Clear in-memory queue/retry book and remove on-disk registry if present.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inmem_specs</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_retries</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_registry_file</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="k">pass</span></div>
+
+
+    <span class="c1"># ---------- throttling ----------</span>
+<div class="viewcode-block" id="SlurmJobManager.wait_for_slot">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.wait_for_slot">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">wait_for_slot</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">poll_s</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">user</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">partition</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Block until active jobs drop below ``max_active_jobs``.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        poll_s : float, optional</span>
+<span class="sd">            Polling interval in seconds (defaults to :attr:`poll_s`).</span>
+<span class="sd">        user : str, optional</span>
+<span class="sd">            Unix username (defaults to ``$USER``).</span>
+<span class="sd">        partition : str, optional</span>
+<span class="sd">            Partition to filter on (defaults to manager partition).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_active_jobs</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="n">max_active</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_active_jobs</span>
+        <span class="n">interval</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">poll_s</span> <span class="k">if</span> <span class="n">poll_s</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">float</span><span class="p">(</span><span class="n">poll_s</span><span class="p">)</span>
+        <span class="n">target_partition</span> <span class="o">=</span> <span class="n">partition</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">partition</span>
+
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="n">n_active</span> <span class="o">=</span> <span class="n">_num_active_job</span><span class="p">(</span><span class="n">user</span><span class="o">=</span><span class="n">user</span><span class="p">,</span> <span class="n">partition</span><span class="o">=</span><span class="n">target_partition</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">n_active</span> <span class="o">=</span> <span class="n">n_active</span>
+            <span class="k">if</span> <span class="n">n_active</span> <span class="o">&lt;</span> <span class="n">max_active</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">n_active</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;[SLURM_mgr] outstanding=</span><span class="si">{</span><span class="n">n_active</span><span class="si">}</span><span class="s2"> &lt; cap=</span><span class="si">{</span><span class="n">max_active</span><span class="si">}</span><span class="s2">, submitting&quot;</span>
+                    <span class="p">)</span>
+                <span class="k">return</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;[SLURM_mgr] outstanding=</span><span class="si">{</span><span class="n">n_active</span><span class="si">}</span><span class="s2"> ≥ cap=</span><span class="si">{</span><span class="n">max_active</span><span class="si">}</span><span class="s2"> — waiting </span><span class="si">{</span><span class="n">interval</span><span class="si">}</span><span class="s2">s&quot;</span>
+            <span class="p">)</span>
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">interval</span><span class="p">)</span></div>
+
+
+    <span class="c1"># ---------- submission ----------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_submit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">SlurmJobSpec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Submit a job via ``sbatch`` with retry-on-submission-failure.&quot;&quot;&quot;</span>
+        <span class="n">attempts</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_submit_once</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">submit_retry_limit</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">attempts</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">submit_retry_limit</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;SLURM submission failed for </span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="si">}</span><span class="s2"> after </span><span class="si">{</span><span class="n">attempts</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2"> attempt(s) &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;due to: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span>
+                    <span class="p">)</span>
+                <span class="n">attempts</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">delay</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">submit_retry_delay_s</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s2">&quot;[SLURM] submission attempt </span><span class="si">{</span><span class="n">attempts</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">submit_retry_limit</span><span class="si">}</span><span class="s2"> &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;failed for </span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">; retrying in </span><span class="si">{</span><span class="n">delay</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">s&quot;</span>
+                <span class="p">)</span>
+                <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">delay</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_submit_once</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">SlurmJobSpec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Single-attempt sbatch submit; persist JOBID.&quot;&quot;&quot;</span>
+        <span class="c1"># resolve script path (allow separate submission dir)</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">submit_dir</span><span class="p">:</span>
+            <span class="n">candidate</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">submit_dir</span><span class="p">)</span> <span class="o">/</span> <span class="n">spec</span><span class="o">.</span><span class="n">script_rel</span>
+            <span class="n">script_abs</span> <span class="o">=</span> <span class="n">candidate</span> <span class="k">if</span> <span class="n">candidate</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span> <span class="k">else</span> <span class="n">spec</span><span class="o">.</span><span class="n">resolve_script_abs</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">script_abs</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">resolve_script_abs</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_rebuild_script_with_header</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">script_abs</span><span class="p">)</span>
+        
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">script_abs</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="n">listing</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="o">.</span><span class="n">iterdir</span><span class="p">()))</span>
+                <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
+                <span class="k">else</span> <span class="s2">&quot;(missing workdir)&quot;</span>
+            <span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">FileNotFoundError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;SLURM script not found: </span><span class="si">{</span><span class="n">script_abs</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;in workdir: </span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;contents: </span><span class="si">{</span><span class="n">listing</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">script_abs</span><span class="o">.</span><span class="n">chmod</span><span class="p">(</span><span class="n">script_abs</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_mode</span> <span class="o">|</span> <span class="mo">0o111</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">pass</span>
+
+        <span class="n">cmd</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;sbatch&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">sbatch_flags</span><span class="p">:</span>
+            <span class="n">cmd</span> <span class="o">+=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sbatch_flags</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">:</span>
+            <span class="n">cmd</span> <span class="o">+=</span> <span class="p">[</span><span class="s2">&quot;--job-name&quot;</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">extra_sbatch</span><span class="p">:</span>
+            <span class="n">cmd</span> <span class="o">+=</span> <span class="nb">list</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">extra_sbatch</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">extra_env</span><span class="p">:</span>
+            <span class="n">kv</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s2">=</span><span class="si">{</span><span class="n">v</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">spec</span><span class="o">.</span><span class="n">extra_env</span><span class="o">.</span><span class="n">items</span><span class="p">()]</span>
+            <span class="n">cmd</span> <span class="o">+=</span> <span class="p">[</span><span class="s2">&quot;--export&quot;</span><span class="p">,</span> <span class="s2">&quot;ALL,&quot;</span> <span class="o">+</span> <span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">kv</span><span class="p">)]</span>
+
+        <span class="n">cmd</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">script_arg</span><span class="p">())</span>
+        <span class="n">submit_cwd</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">submit_dir</span> <span class="ow">or</span> <span class="n">spec</span><span class="o">.</span><span class="n">workdir</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dry_run</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[DRY-RUN] sbatch (cwd=</span><span class="si">{</span><span class="n">submit_cwd</span><span class="si">}</span><span class="s2">): </span><span class="si">{</span><span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">triggered</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="n">_write_text</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">jobid_path</span><span class="p">(),</span> <span class="s2">&quot;0</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="s2">&quot;0&quot;</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] sbatch: </span><span class="si">{</span><span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span><span class="si">}</span><span class="s2"> (cwd=</span><span class="si">{</span><span class="n">submit_cwd</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+        <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">cwd</span><span class="o">=</span><span class="n">submit_cwd</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">capture_output</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">proc</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;sbatch returned </span><span class="si">{</span><span class="n">proc</span><span class="o">.</span><span class="n">returncode</span><span class="si">}</span><span class="s2">; stdout=</span><span class="si">{</span><span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="si">!r}</span><span class="s2"> &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;stderr=</span><span class="si">{</span><span class="n">proc</span><span class="o">.</span><span class="n">stderr</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="si">!r}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="n">out</span> <span class="o">=</span> <span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">JOBID_RE</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">m</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Could not parse sbatch output: </span><span class="si">{</span><span class="n">out</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">jobid</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">_write_text</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">jobid_path</span><span class="p">(),</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">jobid</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_submitted_job_ids</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">jobid</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n_active</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] submitted </span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> → job </span><span class="si">{</span><span class="n">jobid</span><span class="si">}</span><span class="s2"> (active≈</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">n_active</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">jobid</span>
+
+    <span class="c1"># ---------- status ----------</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_sentinel_done</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">SlurmJobSpec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check FINISHED/FAILED sentinels only (no Slurm calls).&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">finished_path</span><span class="p">()</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">return</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;FINISHED&quot;</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">failed_path</span><span class="p">()</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="k">return</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;FAILED&quot;</span>
+        <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="kc">None</span>
+
+<div class="viewcode-block" id="SlurmJobManager.ensure_running">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.ensure_running">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ensure_running</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">SlurmJobSpec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Ensure the spec is submitted or already done/active.</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        spec : SlurmJobSpec</span>
+<span class="sd">            Job spec.</span>
+
+<span class="sd">        Notes</span>
+<span class="sd">        -----</span>
+<span class="sd">        This method does not register specs; it&#39;s a one-off submit-if-needed.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">done</span><span class="p">,</span> <span class="n">status</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sentinel_done</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">done</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] </span><span class="si">{</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: already </span><span class="si">{</span><span class="n">status</span><span class="si">}</span><span class="s2">; not submitting&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dry_run</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">triggered</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">return</span>
+        <span class="c1"># Submit unconditionally if no sentinel; wait_loop handles dedup &amp; resub logic.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_submit</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span></div>
+
+
+    <span class="c1"># ---------- global wait ----------</span>
+<div class="viewcode-block" id="SlurmJobManager.wait_all">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.wait_all">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">wait_all</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Submit/monitor all registered jobs and block until completion.&quot;&quot;&quot;</span>
+        <span class="n">specs_map</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_load_registry_specs</span><span class="p">()</span>
+        <span class="n">specs_map</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_inmem_specs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage</span><span class="p">:</span>
+            <span class="n">specs_map</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="n">wd</span><span class="p">:</span> <span class="n">sp</span> <span class="k">for</span> <span class="n">wd</span><span class="p">,</span> <span class="n">sp</span> <span class="ow">in</span> <span class="n">specs_map</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stage_matches</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">wd</span><span class="p">)</span>
+            <span class="p">}</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">specs_map</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dry_run</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">triggered</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;[SLURM] wait_all: nothing to monitor.&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dry_run</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">triggered</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">return</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_wait_loop</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">specs_map</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="SlurmJobManager.wait_until_done">
+<a class="viewcode-back" href="../../../api.html#batter.exec.slurm_mgr.SlurmJobManager.wait_until_done">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">wait_until_done</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">specs</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">SlurmJobSpec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Legacy interface: monitor a given set until complete.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">dry_run</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">triggered</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">return</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_wait_loop</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">specs</span><span class="p">))</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_wait_loop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">specs</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">SlurmJobSpec</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Internal polling loop with batched scheduler queries.&quot;&quot;&quot;</span>
+        <span class="c1"># optional progress bar</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>  <span class="c1"># type: ignore</span>
+
+            <span class="n">use_tqdm</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">tqdm</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># type: ignore</span>
+            <span class="n">use_tqdm</span> <span class="o">=</span> <span class="kc">False</span>
+
+        <span class="c1"># initial submission pass</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">wait_for_slot</span><span class="p">()</span>
+        <span class="n">submit_iter</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">tqdm</span><span class="p">(</span><span class="n">specs</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;SLURM submissions&quot;</span><span class="p">,</span> <span class="n">leave</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_ncols</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">use_tqdm</span>
+            <span class="k">else</span> <span class="n">specs</span>
+        <span class="p">)</span>
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">submit_iter</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="c1"># do not resubmit here; just ensure it has a JOBID if needed</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">_read_text</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">jobid_path</span><span class="p">()):</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">ensure_running</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] submit failed for </span><span class="si">{</span><span class="n">s</span><span class="o">.</span><span class="n">workdir</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">raise</span>
+
+        <span class="n">pending</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="n">SlurmJobSpec</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">s</span><span class="o">.</span><span class="n">workdir</span><span class="p">:</span> <span class="n">s</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">specs</span><span class="p">}</span>
+        <span class="n">retries</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">s</span><span class="o">.</span><span class="n">workdir</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retries</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">workdir</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">specs</span><span class="p">}</span>
+
+        <span class="n">total</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">specs</span><span class="p">)</span>
+        <span class="n">completed</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="n">last_log</span> <span class="o">=</span> <span class="mf">0.0</span>
+        <span class="n">pbar</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="n">tqdm</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="n">total</span><span class="p">,</span> <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;SLURM jobs&quot;</span><span class="p">,</span> <span class="n">leave</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dynamic_ncols</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">use_tqdm</span>
+            <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span>
+
+        <span class="k">while</span> <span class="n">pending</span><span class="p">:</span>
+            <span class="c1"># build current jobid list</span>
+            <span class="n">wd_jobid</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+            <span class="n">jobids</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">wd</span><span class="p">,</span> <span class="n">sp</span> <span class="ow">in</span> <span class="n">pending</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">jid</span> <span class="o">=</span> <span class="n">_read_text</span><span class="p">(</span><span class="n">sp</span><span class="o">.</span><span class="n">jobid_path</span><span class="p">())</span>
+                <span class="k">if</span> <span class="n">jid</span><span class="p">:</span>
+                    <span class="n">wd_jobid</span><span class="p">[</span><span class="n">wd</span><span class="p">]</span> <span class="o">=</span> <span class="n">jid</span>
+                    <span class="n">jobids</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">jid</span><span class="p">)</span>
+
+            <span class="c1"># batched state lookup</span>
+            <span class="n">squeue_states</span> <span class="o">=</span> <span class="n">_states_from_squeue</span><span class="p">(</span><span class="n">jobids</span><span class="p">)</span>
+            <span class="n">missing</span> <span class="o">=</span> <span class="p">[</span><span class="n">jid</span> <span class="k">for</span> <span class="n">jid</span> <span class="ow">in</span> <span class="n">jobids</span> <span class="k">if</span> <span class="n">jid</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">squeue_states</span><span class="p">]</span>
+            <span class="n">sacct_states</span> <span class="o">=</span> <span class="n">_states_from_sacct</span><span class="p">(</span><span class="n">missing</span><span class="p">)</span> <span class="k">if</span> <span class="n">missing</span> <span class="k">else</span> <span class="p">{}</span>
+
+            <span class="k">def</span><span class="w"> </span><span class="nf">state_for</span><span class="p">(</span><span class="n">wd</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+                <span class="n">jid</span> <span class="o">=</span> <span class="n">wd_jobid</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">wd</span><span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">jid</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="kc">None</span>
+                <span class="k">return</span> <span class="n">squeue_states</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">jid</span><span class="p">)</span> <span class="ow">or</span> <span class="n">sacct_states</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">jid</span><span class="p">)</span>
+
+            <span class="n">done_now</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Path</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">running_cnt</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="n">resub_cnt</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="n">failed_cnt</span> <span class="o">=</span> <span class="mi">0</span>
+
+            <span class="k">for</span> <span class="n">wd</span><span class="p">,</span> <span class="n">sp</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">pending</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+                <span class="c1"># sentinel checks first (no slurm calls)</span>
+                <span class="n">done</span><span class="p">,</span> <span class="n">st</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sentinel_done</span><span class="p">(</span><span class="n">sp</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">done</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">st</span> <span class="o">==</span> <span class="s2">&quot;FAILED&quot;</span><span class="p">:</span>
+                        <span class="n">failed_cnt</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">done_now</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">wd</span><span class="p">)</span>
+                    <span class="k">continue</span>
+
+                <span class="n">jid</span> <span class="o">=</span> <span class="n">wd_jobid</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">wd</span><span class="p">)</span>
+                <span class="n">state</span> <span class="o">=</span> <span class="n">state_for</span><span class="p">(</span><span class="n">wd</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">state</span> <span class="ow">in</span> <span class="n">SLURM_OK_STATES</span><span class="p">:</span>
+                    <span class="n">running_cnt</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="k">continue</span>
+
+                <span class="c1"># ended or missing =&gt; resubmit / fail-out</span>
+                <span class="n">timeout_state</span> <span class="o">=</span> <span class="n">state</span> <span class="o">==</span> <span class="s2">&quot;TIMEOUT&quot;</span>
+                <span class="n">completed_state</span> <span class="o">=</span> <span class="n">state</span> <span class="o">==</span> <span class="s2">&quot;COMPLETED&quot;</span>
+                <span class="n">resub_reason</span> <span class="o">=</span> <span class="n">state</span> <span class="ow">or</span> <span class="s2">&quot;MISSING&quot;</span>
+
+                <span class="c1"># retry budget: TIMEOUT and COMPLETED-without-sentinel are unlimited (per prior behavior)</span>
+                <span class="n">r</span> <span class="o">=</span> <span class="n">retries</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">wd</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+                <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">timeout_state</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">completed_state</span><span class="p">)</span> <span class="ow">and</span> <span class="n">r</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_retries</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;[SLURM] </span><span class="si">{</span><span class="n">wd</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: exceeded max_retries=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">max_retries</span><span class="si">}</span><span class="s2"> &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;(state=</span><span class="si">{</span><span class="n">resub_reason</span><span class="si">}</span><span class="s2">); marking FAILED&quot;</span>
+                    <span class="p">)</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="n">sp</span><span class="o">.</span><span class="n">failed_path</span><span class="p">()</span><span class="o">.</span><span class="n">touch</span><span class="p">()</span>
+                    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                        <span class="k">pass</span>
+                    <span class="n">failed_cnt</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">done_now</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">wd</span><span class="p">)</span>
+                    <span class="k">continue</span>
+
+                <span class="c1"># resubmit</span>
+                <span class="n">resub_cnt</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="n">timeout_state</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;[SLURM] </span><span class="si">{</span><span class="n">wd</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: job</span><span class="si">{</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">jid</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">jid</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="si">}</span><span class="s2"> state=TIMEOUT; resubmitting&quot;</span>
+                    <span class="p">)</span>
+                <span class="k">elif</span> <span class="n">completed_state</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;[SLURM] </span><span class="si">{</span><span class="n">wd</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: job</span><span class="si">{</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">jid</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">jid</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="si">}</span><span class="s2"> COMPLETED without FINISHED; resubmitting&quot;</span>
+                    <span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;[SLURM] </span><span class="si">{</span><span class="n">wd</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: job</span><span class="si">{</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">jid</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">jid</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="si">}</span><span class="s2"> state=</span><span class="si">{</span><span class="n">resub_reason</span><span class="si">}</span><span class="s2">; &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;resubmitting (</span><span class="si">{</span><span class="n">r</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">max_retries</span><span class="si">}</span><span class="s2">)&quot;</span>
+                    <span class="p">)</span>
+
+                <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">resubmit_backoff_s</span><span class="p">)</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_submit</span><span class="p">(</span><span class="n">sp</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">timeout_state</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">completed_state</span><span class="p">:</span>
+                        <span class="n">retries</span><span class="p">[</span><span class="n">wd</span><span class="p">]</span> <span class="o">=</span> <span class="n">r</span> <span class="o">+</span> <span class="mi">1</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_retries</span><span class="p">[</span><span class="n">wd</span><span class="p">]</span> <span class="o">=</span> <span class="n">retries</span><span class="p">[</span><span class="n">wd</span><span class="p">]</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] </span><span class="si">{</span><span class="n">wd</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: resubmit failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                    <span class="k">raise</span>
+
+            <span class="c1"># finalize done items</span>
+            <span class="k">for</span> <span class="n">wd</span> <span class="ow">in</span> <span class="n">done_now</span><span class="p">:</span>
+                <span class="n">pending</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">wd</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">wd</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">completed</span><span class="p">:</span>
+                    <span class="n">completed</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">wd</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">pbar</span><span class="p">:</span>
+                        <span class="n">pbar</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">pbar</span><span class="p">:</span>
+                <span class="n">pbar</span><span class="o">.</span><span class="n">set_postfix</span><span class="p">({</span><span class="s2">&quot;running&quot;</span><span class="p">:</span> <span class="n">running_cnt</span><span class="p">,</span> <span class="s2">&quot;failed&quot;</span><span class="p">:</span> <span class="n">failed_cnt</span><span class="p">})</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">now</span> <span class="o">-</span> <span class="n">last_log</span> <span class="o">&gt;</span> <span class="mi">30</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">pending</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;[SLURM] progress </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">completed</span><span class="p">)</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">total</span><span class="si">}</span><span class="s2"> &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;(running=</span><span class="si">{</span><span class="n">running_cnt</span><span class="si">}</span><span class="s2">, resub=</span><span class="si">{</span><span class="n">resub_cnt</span><span class="si">}</span><span class="s2">, &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;failed=</span><span class="si">{</span><span class="n">failed_cnt</span><span class="si">}</span><span class="s2">, pending=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">pending</span><span class="p">)</span><span class="si">}</span><span class="s2">)&quot;</span>
+                    <span class="p">)</span>
+                    <span class="n">last_log</span> <span class="o">=</span> <span class="n">now</span>
+
+            <span class="k">if</span> <span class="n">pending</span><span class="p">:</span>
+                <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">poll_s</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">pbar</span><span class="p">:</span>
+            <span class="n">pbar</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;[SLURM] All jobs complete.&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_resolve_header_root</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">SlurmJobSpec</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Resolve where header files live.&quot;&quot;&quot;</span>
+        <span class="n">root</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_root</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_header_root</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">root</span><span class="p">:</span>
+            <span class="n">env_root</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;BATTER_SLURM_HEADER_DIR&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">env_root</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">env_root</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">root</span><span class="p">)</span> <span class="k">if</span> <span class="n">root</span> <span class="k">else</span> <span class="n">Path</span><span class="o">.</span><span class="n">home</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;.batter&quot;</span>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_rebuild_script_with_header</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="n">SlurmJobSpec</span><span class="p">,</span> <span class="n">script_abs</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Rebuild the sbatch script by prepending header to stored body (if configured).</span>
+
+<span class="sd">        This supports your old workflow:</span>
+<span class="sd">        - old generator writes a body-only script (or separate *.body file)</span>
+<span class="sd">        - manager prepends the appropriate header at submit time</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># If no header requested, do nothing</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_name</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_template</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Locate body source</span>
+        <span class="n">body_path</span> <span class="o">=</span> <span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">workdir</span> <span class="o">/</span> <span class="n">spec</span><span class="o">.</span><span class="n">body_rel</span><span class="p">)</span> <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">body_rel</span> <span class="k">else</span> <span class="n">script_abs</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">body_path</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+            <span class="n">candidate</span> <span class="o">=</span> <span class="n">script_abs</span><span class="o">.</span><span class="n">with_suffix</span><span class="p">(</span><span class="n">script_abs</span><span class="o">.</span><span class="n">suffix</span> <span class="o">+</span> <span class="s2">&quot;.body&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">candidate</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+                <span class="n">body_path</span> <span class="o">=</span> <span class="n">candidate</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># no body to rebuild from</span>
+                <span class="k">return</span>
+
+        <span class="c1"># Read body, drop baked-in SBATCH lines so header owns SBATCH</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">body_text</span> <span class="o">=</span> <span class="n">body_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] Failed to read body </span><span class="si">{</span><span class="n">body_path</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span>
+
+        <span class="n">body_lines</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">ln</span> <span class="k">for</span> <span class="n">ln</span> <span class="ow">in</span> <span class="n">body_text</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">ln</span><span class="o">.</span><span class="n">lstrip</span><span class="p">()</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;#SBATCH&quot;</span><span class="p">)</span>
+        <span class="p">]</span>
+        <span class="n">body_text</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">body_lines</span><span class="p">)</span>
+
+        <span class="c1"># Read header</span>
+        <span class="n">header_text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+        <span class="n">header_root</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resolve_header_root</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_name</span><span class="p">:</span>
+            <span class="n">user_header</span> <span class="o">=</span> <span class="n">header_root</span> <span class="o">/</span> <span class="n">cast</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_name</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">user_header</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">header_text</span> <span class="o">=</span> <span class="n">user_header</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] Failed to read header </span><span class="si">{</span><span class="n">user_header</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                    <span class="n">header_text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">elif</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_template</span> <span class="ow">and</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_template</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">header_text</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">header_template</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="n">header_text</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+        <span class="c1"># Combine and overwrite the submit script</span>
+        <span class="n">combined</span> <span class="o">=</span> <span class="n">header_text</span>
+        <span class="k">if</span> <span class="n">combined</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">combined</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">):</span>
+            <span class="n">combined</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="n">combined</span> <span class="o">+=</span> <span class="n">body_text</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">combined</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">):</span>
+            <span class="n">combined</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">script_abs</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">combined</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[SLURM] Could not write rebuilt script </span><span class="si">{</span><span class="n">script_abs</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2024, Yuxuan Zhuang. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.10.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

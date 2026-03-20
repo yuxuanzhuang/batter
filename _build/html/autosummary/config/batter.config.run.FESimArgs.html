@@ -1,0 +1,1165 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>batter.config.run.FESimArgs &#8212; batter  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'autosummary/config/batter.config.run.FESimArgs';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="batter.config.run.MDSimArgs" href="batter.config.run.MDSimArgs.html" />
+    <link rel="prev" title="batter.config.run.CreateArgs" href="batter.config.run.CreateArgs.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">batter  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.RunConfig.html">batter.config.run.RunConfig</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.CreateArgs.html">batter.config.run.CreateArgs</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">batter.config.run.FESimArgs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.MDSimArgs.html">batter.config.run.MDSimArgs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.RunSection.html">batter.config.run.RunSection</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.simulation.SimulationConfig.html">batter.config.simulation.SimulationConfig</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.load_run_config.html">batter.config.load_run_config</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.dump_run_config.html">batter.config.dump_run_config</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.load_simulation_config.html">batter.config.load_simulation_config</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.dump_simulation_config.html">batter.config.dump_simulation_config</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../configuration.html" class="nav-link">Configuration Overview</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">batter.config.run.FESimArgs</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="batter-config-run-fesimargs">
+<h1>batter.config.run.FESimArgs<a class="headerlink" href="#batter-config-run-fesimargs" title="Link to this heading">#</a></h1>
+<dl class="py class pydantic_model">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs">
+<em class="property"><span class="pre">pydantic</span> <span class="pre">model</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">batter.config.run.</span></span><span class="sig-name descname"><span class="pre">FESimArgs</span></span><a class="reference internal" href="../../_modules/batter/config/run.html#FESimArgs"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.config.run.FESimArgs" title="Link to this definition">#</a></dt>
+<dd><p>Free-energy simulation knobs loaded from the <code class="docutils literal notranslate"><span class="pre">fe_sim</span></code> section.</p>
+<p>The fields feed directly into <a class="reference internal" href="batter.config.simulation.SimulationConfig.html#batter.config.simulation.SimulationConfig" title="batter.config.simulation.SimulationConfig"><code class="xref py py-class docutils literal notranslate"><span class="pre">batter.config.simulation.SimulationConfig</span></code></a>
+overrides. <code class="docutils literal notranslate"><span class="pre">fe_type</span></code> is resolved internally from <code class="docutils literal notranslate"><span class="pre">protocol</span></code> rather than
+being set by users.</p>
+<p>Create a new model by parsing and validating input data from keyword arguments.</p>
+<p>Raises [<cite>ValidationError</cite>][pydantic_core.ValidationError] if the input data cannot be
+validated to form a valid model.</p>
+<p><cite>self</cite> is explicitly positional-only to allow <cite>self</cite> as a field name.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Config<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>extra</strong>: <em>str = forbid</em></p></li>
+</ul>
+</dd>
+<dt class="field-even">Fields<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.analysis_start_step" title="batter.config.run.FESimArgs.analysis_start_step"><code class="xref py py-obj docutils literal notranslate"><span class="pre">analysis_start_step</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.barostat" title="batter.config.run.FESimArgs.barostat"><code class="xref py py-obj docutils literal notranslate"><span class="pre">barostat</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.blocks" title="batter.config.run.FESimArgs.blocks"><code class="xref py py-obj docutils literal notranslate"><span class="pre">blocks</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.buffer_x" title="batter.config.run.FESimArgs.buffer_x"><code class="xref py py-obj docutils literal notranslate"><span class="pre">buffer_x</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.buffer_y" title="batter.config.run.FESimArgs.buffer_y"><code class="xref py py-obj docutils literal notranslate"><span class="pre">buffer_y</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.buffer_z" title="batter.config.run.FESimArgs.buffer_z"><code class="xref py py-obj docutils literal notranslate"><span class="pre">buffer_z</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.component_lambdas" title="batter.config.run.FESimArgs.component_lambdas"><code class="xref py py-obj docutils literal notranslate"><span class="pre">component_lambdas</span> <span class="pre">(Dict[str,</span> <span class="pre">List[float]])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.cut" title="batter.config.run.FESimArgs.cut"><code class="xref py py-obj docutils literal notranslate"><span class="pre">cut</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.dec_int" title="batter.config.run.FESimArgs.dec_int"><code class="xref py py-obj docutils literal notranslate"><span class="pre">dec_int</span> <span class="pre">(str)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.dt" title="batter.config.run.FESimArgs.dt"><code class="xref py py-obj docutils literal notranslate"><span class="pre">dt</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.enable_mcwat" title="batter.config.run.FESimArgs.enable_mcwat"><code class="xref py py-obj docutils literal notranslate"><span class="pre">enable_mcwat</span> <span class="pre">(Literal['yes',</span> <span class="pre">'no'])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.eq_steps" title="batter.config.run.FESimArgs.eq_steps"><code class="xref py py-obj docutils literal notranslate"><span class="pre">eq_steps</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.gamma_ln" title="batter.config.run.FESimArgs.gamma_ln"><code class="xref py py-obj docutils literal notranslate"><span class="pre">gamma_ln</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.hmr" title="batter.config.run.FESimArgs.hmr"><code class="xref py py-obj docutils literal notranslate"><span class="pre">hmr</span> <span class="pre">(Literal['yes',</span> <span class="pre">'no'])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.lambdas" title="batter.config.run.FESimArgs.lambdas"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lambdas</span> <span class="pre">(List[float])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.lig_angle_force" title="batter.config.run.FESimArgs.lig_angle_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_angle_force</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.lig_buffer" title="batter.config.run.FESimArgs.lig_buffer"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_buffer</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.lig_com_force" title="batter.config.run.FESimArgs.lig_com_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_com_force</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.lig_dihcf_force" title="batter.config.run.FESimArgs.lig_dihcf_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_dihcf_force</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.lig_distance_force" title="batter.config.run.FESimArgs.lig_distance_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_distance_force</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.n_bootstraps" title="batter.config.run.FESimArgs.n_bootstraps"><code class="xref py py-obj docutils literal notranslate"><span class="pre">n_bootstraps</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.n_steps" title="batter.config.run.FESimArgs.n_steps"><code class="xref py py-obj docutils literal notranslate"><span class="pre">n_steps</span> <span class="pre">(Dict[str,</span> <span class="pre">int])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.ntpr" title="batter.config.run.FESimArgs.ntpr"><code class="xref py py-obj docutils literal notranslate"><span class="pre">ntpr</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.ntwe" title="batter.config.run.FESimArgs.ntwe"><code class="xref py py-obj docutils literal notranslate"><span class="pre">ntwe</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.ntwr" title="batter.config.run.FESimArgs.ntwr"><code class="xref py py-obj docutils literal notranslate"><span class="pre">ntwr</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.ntwx" title="batter.config.run.FESimArgs.ntwx"><code class="xref py py-obj docutils literal notranslate"><span class="pre">ntwx</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.num_equil_extends" title="batter.config.run.FESimArgs.num_equil_extends"><code class="xref py py-obj docutils literal notranslate"><span class="pre">num_equil_extends</span> <span class="pre">(int)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.rec_com_force" title="batter.config.run.FESimArgs.rec_com_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">rec_com_force</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.remd" title="batter.config.run.FESimArgs.remd"><code class="xref py py-obj docutils literal notranslate"><span class="pre">remd</span> <span class="pre">(RemdArgs)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.rocklin_correction" title="batter.config.run.FESimArgs.rocklin_correction"><code class="xref py py-obj docutils literal notranslate"><span class="pre">rocklin_correction</span> <span class="pre">(Literal['yes',</span> <span class="pre">'no'])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.temperature" title="batter.config.run.FESimArgs.temperature"><code class="xref py py-obj docutils literal notranslate"><span class="pre">temperature</span> <span class="pre">(float)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.FESimArgs.unbound_threshold" title="batter.config.run.FESimArgs.unbound_threshold"><code class="xref py py-obj docutils literal notranslate"><span class="pre">unbound_threshold</span> <span class="pre">(float)</span></code></a></p></li>
+</ul>
+</dd>
+<dt class="field-odd">Validators<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_yes_no</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.enable_mcwat" title="batter.config.run.FESimArgs.enable_mcwat"><code class="xref py py-obj docutils literal notranslate"><span class="pre">enable_mcwat</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_yes_no</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.hmr" title="batter.config.run.FESimArgs.hmr"><code class="xref py py-obj docutils literal notranslate"><span class="pre">hmr</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_yes_no</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.rocklin_correction" title="batter.config.run.FESimArgs.rocklin_correction"><code class="xref py py-obj docutils literal notranslate"><span class="pre">rocklin_correction</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_remd</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.remd" title="batter.config.run.FESimArgs.remd"><code class="xref py py-obj docutils literal notranslate"><span class="pre">remd</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code> » <code class="xref py py-obj docutils literal notranslate"><span class="pre">all</span> <span class="pre">fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code> » <code class="xref py py-obj docutils literal notranslate"><span class="pre">all</span> <span class="pre">fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code> » <code class="xref py py-obj docutils literal notranslate"><span class="pre">all</span> <span class="pre">fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.lig_angle_force" title="batter.config.run.FESimArgs.lig_angle_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_angle_force</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.lig_com_force" title="batter.config.run.FESimArgs.lig_com_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_com_force</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.lig_distance_force" title="batter.config.run.FESimArgs.lig_distance_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lig_distance_force</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.rec_com_force" title="batter.config.run.FESimArgs.rec_com_force"><code class="xref py py-obj docutils literal notranslate"><span class="pre">rec_com_force</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_lambdas</span></code> » <a class="reference internal" href="#batter.config.run.FESimArgs.lambdas" title="batter.config.run.FESimArgs.lambdas"><code class="xref py py-obj docutils literal notranslate"><span class="pre">lambdas</span></code></a></p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.analysis_start_step">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">analysis_start_step</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.analysis_start_step" title="Link to this definition">#</a></dt>
+<dd><p>Only analyze FE production steps after this step (per window).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Constraints<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ge</strong> = 0</p></li>
+</ul>
+</dd>
+<dt class="field-even">Validated by<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.barostat">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">barostat</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">2</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.barostat" title="Link to this definition">#</a></dt>
+<dd><p>Barostat selection (1=Berendsen, 2=MC).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.blocks">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">blocks</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.blocks" title="Link to this definition">#</a></dt>
+<dd><p>Number of MBAR blocks to use during analysis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.buffer_x">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">buffer_x</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">20.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.buffer_x" title="Link to this definition">#</a></dt>
+<dd><p>Box padding along X (Å).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.buffer_y">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">buffer_y</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">20.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.buffer_y" title="Link to this definition">#</a></dt>
+<dd><p>Box padding along Y (Å).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.buffer_z">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">buffer_z</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">20.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.buffer_z" title="Link to this definition">#</a></dt>
+<dd><p>Box padding along Z (Å).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.component_lambdas">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">component_lambdas</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">float</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"> <span class="pre">[Optional]</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.component_lambdas" title="Link to this definition">#</a></dt>
+<dd><p>Per-component lambda overrides (key = letter).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.cut">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">cut</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">9.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.cut" title="Link to this definition">#</a></dt>
+<dd><p>Nonbonded cutoff (Å).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.dec_int">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">dec_int</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'mbar'</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.dec_int" title="Link to this definition">#</a></dt>
+<dd><p>Free-energy integration scheme (<code class="docutils literal notranslate"><span class="pre">mbar</span></code> or <code class="docutils literal notranslate"><span class="pre">ti</span></code>).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.dt">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">dt</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0.004</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.dt" title="Link to this definition">#</a></dt>
+<dd><p>MD timestep (ps).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.enable_mcwat">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">enable_mcwat</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'yes'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'no'</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'yes'</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.enable_mcwat" title="Link to this definition">#</a></dt>
+<dd><p>Enable MC water exchange moves during equilibration (1 = on).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_yes_no</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.eq_steps">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">eq_steps</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">1000000</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.eq_steps" title="Link to this definition">#</a></dt>
+<dd><p>Total equilibration steps (entire equilibration run).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Constraints<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ge</strong> = 0</p></li>
+</ul>
+</dd>
+<dt class="field-even">Validated by<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.gamma_ln">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">gamma_ln</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">1.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.gamma_ln" title="Link to this definition">#</a></dt>
+<dd><p>Langevin gamma value (ps^-1).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.hmr">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">hmr</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'yes'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'no'</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'no'</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.hmr" title="Link to this definition">#</a></dt>
+<dd><p>Hydrogen mass repartitioning toggle.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_yes_no</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.lambdas">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">lambdas</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">float</span><span class="p"><span class="pre">]</span></span></em><em class="property"> <span class="pre">[Optional]</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.lambdas" title="Link to this definition">#</a></dt>
+<dd><p>Default lambda schedule when component-specific overrides are not provided.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_lambdas</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.lig_angle_force">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">lig_angle_force</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">250.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.lig_angle_force" title="Link to this definition">#</a></dt>
+<dd><p>Ligand angle restraint spring constant (kcal/mol/rad^2).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.lig_buffer">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">lig_buffer</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">15.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.lig_buffer" title="Link to this definition">#</a></dt>
+<dd><p>Ligand-specific box buffer (Å) for solvation boxes.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.lig_com_force">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">lig_com_force</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">10.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.lig_com_force" title="Link to this definition">#</a></dt>
+<dd><p>Ligand COM restraint spring constant (kcal/mol/Å^2).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.lig_dihcf_force">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">lig_dihcf_force</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.lig_dihcf_force" title="Link to this definition">#</a></dt>
+<dd><p>Ligand dihedral restraint spring constant (kcal/mol/rad^2).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.lig_distance_force">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">lig_distance_force</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">5.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.lig_distance_force" title="Link to this definition">#</a></dt>
+<dd><p>Ligand COM distance restraint spring constant (kcal/mol/Å^2).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.n_bootstraps">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">n_bootstraps</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.n_bootstraps" title="Link to this definition">#</a></dt>
+<dd><p>Number of MBAR bootstrap resamples used during FE analysis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Constraints<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ge</strong> = 0</p></li>
+</ul>
+</dd>
+<dt class="field-even">Validated by<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.n_steps">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">n_steps</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">int</span><span class="p"><span class="pre">]</span></span></em><em class="property"> <span class="pre">[Optional]</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.n_steps" title="Link to this definition">#</a></dt>
+<dd><p>Total production steps per component (key = letter).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.ntpr">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ntpr</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">100</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.ntpr" title="Link to this definition">#</a></dt>
+<dd><p>Energy print frequency.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.ntwe">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ntwe</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.ntwe" title="Link to this definition">#</a></dt>
+<dd><p>Energy write frequency (0 disables).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.ntwr">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ntwr</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">2500</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.ntwr" title="Link to this definition">#</a></dt>
+<dd><p>Restart write frequency.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.ntwx">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ntwx</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">25000</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.ntwx" title="Link to this definition">#</a></dt>
+<dd><p>Trajectory write frequency.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.num_equil_extends">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">num_equil_extends</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.num_equil_extends" title="Link to this definition">#</a></dt>
+<dd><p>Deprecated: equilibration extensions are ignored; keep 0.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Constraints<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ge</strong> = 0</p></li>
+</ul>
+</dd>
+<dt class="field-even">Validated by<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.rec_com_force">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">rec_com_force</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">10.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.rec_com_force" title="Link to this definition">#</a></dt>
+<dd><p>Protein COM restraint spring constant (kcal/mol/Å^2).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_force_const</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.remd">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">remd</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">RemdArgs</span></em><em class="property"> <span class="pre">[Optional]</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.remd" title="Link to this definition">#</a></dt>
+<dd><p>Replica-exchange MD controls (nstlim).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_remd</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.rocklin_correction">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">rocklin_correction</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'yes'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'no'</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'no'</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.rocklin_correction" title="Link to this definition">#</a></dt>
+<dd><p>Apply Rocklin correction during analysis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_yes_no</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.temperature">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">temperature</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">298.15</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.temperature" title="Link to this definition">#</a></dt>
+<dd><p>Simulation temperature (K).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.FESimArgs.unbound_threshold">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">unbound_threshold</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">float</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">8.0</span></em><a class="headerlink" href="#batter.config.run.FESimArgs.unbound_threshold" title="Link to this definition">#</a></dt>
+<dd><p>Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Constraints<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ge</strong> = 0.0</p></li>
+</ul>
+</dd>
+<dt class="field-even">Validated by<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_component_lambda_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_ingest_legacy_step_fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_reject_legacy_knobs</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="batter.config.run.CreateArgs.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">batter.config.run.CreateArgs</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="batter.config.run.MDSimArgs.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">batter.config.run.MDSimArgs</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs"><code class="docutils literal notranslate"><span class="pre">FESimArgs</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.analysis_start_step"><code class="docutils literal notranslate"><span class="pre">FESimArgs.analysis_start_step</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.barostat"><code class="docutils literal notranslate"><span class="pre">FESimArgs.barostat</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.blocks"><code class="docutils literal notranslate"><span class="pre">FESimArgs.blocks</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.buffer_x"><code class="docutils literal notranslate"><span class="pre">FESimArgs.buffer_x</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.buffer_y"><code class="docutils literal notranslate"><span class="pre">FESimArgs.buffer_y</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.buffer_z"><code class="docutils literal notranslate"><span class="pre">FESimArgs.buffer_z</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.component_lambdas"><code class="docutils literal notranslate"><span class="pre">FESimArgs.component_lambdas</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.cut"><code class="docutils literal notranslate"><span class="pre">FESimArgs.cut</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.dec_int"><code class="docutils literal notranslate"><span class="pre">FESimArgs.dec_int</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.dt"><code class="docutils literal notranslate"><span class="pre">FESimArgs.dt</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.enable_mcwat"><code class="docutils literal notranslate"><span class="pre">FESimArgs.enable_mcwat</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.eq_steps"><code class="docutils literal notranslate"><span class="pre">FESimArgs.eq_steps</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.gamma_ln"><code class="docutils literal notranslate"><span class="pre">FESimArgs.gamma_ln</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.hmr"><code class="docutils literal notranslate"><span class="pre">FESimArgs.hmr</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.lambdas"><code class="docutils literal notranslate"><span class="pre">FESimArgs.lambdas</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.lig_angle_force"><code class="docutils literal notranslate"><span class="pre">FESimArgs.lig_angle_force</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.lig_buffer"><code class="docutils literal notranslate"><span class="pre">FESimArgs.lig_buffer</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.lig_com_force"><code class="docutils literal notranslate"><span class="pre">FESimArgs.lig_com_force</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.lig_dihcf_force"><code class="docutils literal notranslate"><span class="pre">FESimArgs.lig_dihcf_force</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.lig_distance_force"><code class="docutils literal notranslate"><span class="pre">FESimArgs.lig_distance_force</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.n_bootstraps"><code class="docutils literal notranslate"><span class="pre">FESimArgs.n_bootstraps</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.n_steps"><code class="docutils literal notranslate"><span class="pre">FESimArgs.n_steps</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.ntpr"><code class="docutils literal notranslate"><span class="pre">FESimArgs.ntpr</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.ntwe"><code class="docutils literal notranslate"><span class="pre">FESimArgs.ntwe</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.ntwr"><code class="docutils literal notranslate"><span class="pre">FESimArgs.ntwr</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.ntwx"><code class="docutils literal notranslate"><span class="pre">FESimArgs.ntwx</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.num_equil_extends"><code class="docutils literal notranslate"><span class="pre">FESimArgs.num_equil_extends</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.rec_com_force"><code class="docutils literal notranslate"><span class="pre">FESimArgs.rec_com_force</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.remd"><code class="docutils literal notranslate"><span class="pre">FESimArgs.remd</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.rocklin_correction"><code class="docutils literal notranslate"><span class="pre">FESimArgs.rocklin_correction</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.temperature"><code class="docutils literal notranslate"><span class="pre">FESimArgs.temperature</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.FESimArgs.unbound_threshold"><code class="docutils literal notranslate"><span class="pre">FESimArgs.unbound_threshold</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../../_sources/autosummary/config/batter.config.run.FESimArgs.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2024, Yuxuan Zhuang. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.10.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

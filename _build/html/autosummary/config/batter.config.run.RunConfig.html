@@ -1,0 +1,748 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>batter.config.run.RunConfig &#8212; batter  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'autosummary/config/batter.config.run.RunConfig';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="batter.config.run.CreateArgs" href="batter.config.run.CreateArgs.html" />
+    <link rel="prev" title="Configuration Overview" href="../../configuration.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">batter  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">batter.config.run.RunConfig</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.CreateArgs.html">batter.config.run.CreateArgs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.FESimArgs.html">batter.config.run.FESimArgs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.MDSimArgs.html">batter.config.run.MDSimArgs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.run.RunSection.html">batter.config.run.RunSection</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.simulation.SimulationConfig.html">batter.config.simulation.SimulationConfig</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.load_run_config.html">batter.config.load_run_config</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.dump_run_config.html">batter.config.dump_run_config</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.load_simulation_config.html">batter.config.load_simulation_config</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batter.config.dump_simulation_config.html">batter.config.dump_simulation_config</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../configuration.html" class="nav-link">Configuration Overview</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">batter.config.run.RunConfig</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="batter-config-run-runconfig">
+<h1>batter.config.run.RunConfig<a class="headerlink" href="#batter-config-run-runconfig" title="Link to this heading">#</a></h1>
+<dl class="py class pydantic_model">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig">
+<em class="property"><span class="pre">pydantic</span> <span class="pre">model</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">batter.config.run.</span></span><span class="sig-name descname"><span class="pre">RunConfig</span></span><a class="reference internal" href="../../_modules/batter/config/run.html#RunConfig"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.config.run.RunConfig" title="Link to this definition">#</a></dt>
+<dd><p>Top-level YAML config.</p>
+<p>Create a new model by parsing and validating input data from keyword arguments.</p>
+<p>Raises [<cite>ValidationError</cite>][pydantic_core.ValidationError] if the input data cannot be
+validated to form a valid model.</p>
+<p><cite>self</cite> is explicitly positional-only to allow <cite>self</cite> as a field name.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Config<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>extra</strong>: <em>str = forbid</em></p></li>
+</ul>
+</dd>
+<dt class="field-even">Fields<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><a class="reference internal" href="#batter.config.run.RunConfig.backend" title="batter.config.run.RunConfig.backend"><code class="xref py py-obj docutils literal notranslate"><span class="pre">backend</span> <span class="pre">(Literal['local',</span> <span class="pre">'slurm'])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.RunConfig.create" title="batter.config.run.RunConfig.create"><code class="xref py py-obj docutils literal notranslate"><span class="pre">create</span> <span class="pre">(CreateArgs)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.RunConfig.fe_sim" title="batter.config.run.RunConfig.fe_sim"><code class="xref py py-obj docutils literal notranslate"><span class="pre">fe_sim</span> <span class="pre">(Dict[str,</span> <span class="pre">Any]</span> <span class="pre">|</span> <span class="pre">FESimArgs</span> <span class="pre">|</span> <span class="pre">MDSimArgs)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.RunConfig.protocol" title="batter.config.run.RunConfig.protocol"><code class="xref py py-obj docutils literal notranslate"><span class="pre">protocol</span> <span class="pre">(Literal['abfe',</span> <span class="pre">'rbfe',</span> <span class="pre">'asfe',</span> <span class="pre">'md'])</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.RunConfig.rbfe" title="batter.config.run.RunConfig.rbfe"><code class="xref py py-obj docutils literal notranslate"><span class="pre">rbfe</span> <span class="pre">(RBFENetworkArgs</span> <span class="pre">|</span> <span class="pre">None)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.RunConfig.run" title="batter.config.run.RunConfig.run"><code class="xref py py-obj docutils literal notranslate"><span class="pre">run</span> <span class="pre">(RunSection)</span></code></a></p></li>
+<li><p><a class="reference internal" href="#batter.config.run.RunConfig.version" title="batter.config.run.RunConfig.version"><code class="xref py py-obj docutils literal notranslate"><span class="pre">version</span> <span class="pre">(int)</span></code></a></p></li>
+</ul>
+</dd>
+<dt class="field-odd">Validators<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code> » <code class="xref py py-obj docutils literal notranslate"><span class="pre">all</span> <span class="pre">fields</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_lower_backend</span></code> » <a class="reference internal" href="#batter.config.run.RunConfig.backend" title="batter.config.run.RunConfig.backend"><code class="xref py py-obj docutils literal notranslate"><span class="pre">backend</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_lower_protocol</span></code> » <a class="reference internal" href="#batter.config.run.RunConfig.protocol" title="batter.config.run.RunConfig.protocol"><code class="xref py py-obj docutils literal notranslate"><span class="pre">protocol</span></code></a></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code> » <code class="xref py py-obj docutils literal notranslate"><span class="pre">all</span> <span class="pre">fields</span></code></p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.backend">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">backend</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'local'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'slurm'</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'local'</span></em><a class="headerlink" href="#batter.config.run.RunConfig.backend" title="Link to this definition">#</a></dt>
+<dd><p>Execution backend.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_lower_backend</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.create">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">create</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="batter.config.run.CreateArgs.html#batter.config.run.CreateArgs" title="batter.config.run.CreateArgs"><span class="pre">CreateArgs</span></a></em><em class="property"> <span class="pre">[Required]</span></em><a class="headerlink" href="#batter.config.run.RunConfig.create" title="Link to this definition">#</a></dt>
+<dd><p>Settings for system creation/staging.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.fe_sim">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">fe_sim</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="batter.config.run.FESimArgs.html#batter.config.run.FESimArgs" title="batter.config.run.FESimArgs"><span class="pre">FESimArgs</span></a><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><a class="reference internal" href="batter.config.run.MDSimArgs.html#batter.config.run.MDSimArgs" title="batter.config.run.MDSimArgs"><span class="pre">MDSimArgs</span></a></em><em class="property"> <span class="pre">[Optional]</span></em><a class="headerlink" href="#batter.config.run.RunConfig.fe_sim" title="Link to this definition">#</a></dt>
+<dd><p>Simulation parameter overrides.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.protocol">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">protocol</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'abfe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'rbfe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'asfe'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'md'</span></span><span class="p"><span class="pre">]</span></span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'abfe'</span></em><a class="headerlink" href="#batter.config.run.RunConfig.protocol" title="Link to this definition">#</a></dt>
+<dd><p>High-level protocol to execute.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_lower_protocol</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.rbfe">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">rbfe</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">RBFENetworkArgs</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></em><a class="headerlink" href="#batter.config.run.RunConfig.rbfe" title="Link to this definition">#</a></dt>
+<dd><p>RBFE network mapping configuration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.run">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">run</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><a class="reference internal" href="batter.config.run.RunSection.html#batter.config.run.RunSection" title="batter.config.run.RunSection"><span class="pre">RunSection</span></a></em><em class="property"> <span class="pre">[Required]</span></em><a class="headerlink" href="#batter.config.run.RunConfig.run" title="Link to this definition">#</a></dt>
+<dd><p>Execution controls and artifact destination.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute pydantic_field">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.version">
+<em class="property"><span class="pre">field</span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">version</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></em><em class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">1</span></em><a class="headerlink" href="#batter.config.run.RunConfig.version" title="Link to this definition">#</a></dt>
+<dd><p>Schema version of the run configuration.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Validated by<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_coerce_fe_sim_model</span></code></p></li>
+<li><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">_validate_rbfe_section</span></code></p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.load">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">load</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#batter.config.run.RunConfig" title="batter.config.run.RunConfig"><span class="pre">RunConfig</span></a></span></span><a class="reference internal" href="../../_modules/batter/config/run.html#RunConfig.load"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.config.run.RunConfig.load" title="Link to this definition">#</a></dt>
+<dd><p>Load and validate a run configuration from disk.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>path</strong> (<em>str or pathlib.Path</em>) – Location of the YAML file to parse.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Fully validated configuration object.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#batter.config.run.RunConfig" title="batter.config.run.RunConfig">RunConfig</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.model_validate_yaml">
+<em class="property"><span class="k"><span class="pre">classmethod</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">model_validate_yaml</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">yaml_text</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#batter.config.run.RunConfig" title="batter.config.run.RunConfig"><span class="pre">RunConfig</span></a></span></span><a class="reference internal" href="../../_modules/batter/config/run.html#RunConfig.model_validate_yaml"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.config.run.RunConfig.model_validate_yaml" title="Link to this definition">#</a></dt>
+<dd><p>Validate a run configuration from an in-memory YAML string.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>yaml_text</strong> (<em>str</em>) – Raw YAML content describing the run configuration.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Validated configuration model.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#batter.config.run.RunConfig" title="batter.config.run.RunConfig">RunConfig</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.resolved_sim_config">
+<span class="sig-name descname"><span class="pre">resolved_sim_config</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="batter.config.simulation.SimulationConfig.html#batter.config.simulation.SimulationConfig" title="batter.config.simulation.SimulationConfig"><span class="pre">SimulationConfig</span></a></span></span><a class="reference internal" href="../../_modules/batter/config/run.html#RunConfig.resolved_sim_config"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.config.run.RunConfig.resolved_sim_config" title="Link to this definition">#</a></dt>
+<dd><p>Build the effective simulation configuration for this run.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Simulation parameters derived from <code class="docutils literal notranslate"><span class="pre">create</span></code> and <code class="docutils literal notranslate"><span class="pre">fe_sim</span></code> sections.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="batter.config.simulation.SimulationConfig.html#batter.config.simulation.SimulationConfig" title="batter.config.simulation.SimulationConfig">SimulationConfig</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.config.run.RunConfig.with_base_dir">
+<span class="sig-name descname"><span class="pre">with_base_dir</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">base_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Path</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#batter.config.run.RunConfig" title="batter.config.run.RunConfig"><span class="pre">RunConfig</span></a></span></span><a class="reference internal" href="../../_modules/batter/config/run.html#RunConfig.with_base_dir"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.config.run.RunConfig.with_base_dir" title="Link to this definition">#</a></dt>
+<dd><p>Return a copy with relative paths resolved against <code class="docutils literal notranslate"><span class="pre">base_dir</span></code>.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../../configuration.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Configuration Overview</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="batter.config.run.CreateArgs.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">batter.config.run.CreateArgs</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig"><code class="docutils literal notranslate"><span class="pre">RunConfig</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.backend"><code class="docutils literal notranslate"><span class="pre">RunConfig.backend</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.create"><code class="docutils literal notranslate"><span class="pre">RunConfig.create</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.fe_sim"><code class="docutils literal notranslate"><span class="pre">RunConfig.fe_sim</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.protocol"><code class="docutils literal notranslate"><span class="pre">RunConfig.protocol</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.rbfe"><code class="docutils literal notranslate"><span class="pre">RunConfig.rbfe</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.run"><code class="docutils literal notranslate"><span class="pre">RunConfig.run</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.version"><code class="docutils literal notranslate"><span class="pre">RunConfig.version</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.load"><code class="docutils literal notranslate"><span class="pre">RunConfig.load()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.model_validate_yaml"><code class="docutils literal notranslate"><span class="pre">RunConfig.model_validate_yaml()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.resolved_sim_config"><code class="docutils literal notranslate"><span class="pre">RunConfig.resolved_sim_config()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.config.run.RunConfig.with_base_dir"><code class="docutils literal notranslate"><span class="pre">RunConfig.with_base_dir()</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../../_sources/autosummary/config/batter.config.run.RunConfig.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2024, Yuxuan Zhuang. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.10.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

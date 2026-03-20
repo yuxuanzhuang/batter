@@ -20,8 +20,6 @@ from batter.exec.handlers.batch import render_batch_slurm_script, _tpl_path
 from textwrap import dedent
 from batter._internal.templates import RUN_FILES_DIR as RUN_FILES_ORIG
 
-# ---------------- discovery helpers ----------------
-
 
 def _equil_window_dir(root: Path, comp: str) -> Path:
     """Return the equilibration window directory for ``comp``."""
@@ -77,10 +75,6 @@ def _spec_from_dir(
         batch_script=batch_script,
         submit_dir=submit_dir,
     )
-
-
-# ---------------- handlers ----------------
-
 
 def fe_equil_handler(
     step: Step, system: SimSystem, params: Dict[str, Any]

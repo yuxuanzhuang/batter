@@ -43,8 +43,6 @@ from loguru import logger
 from tqdm import tqdm
 
 from ._version import __version__  # semantic version string
-
-# --- Schemas / configs ---
 from .config.simulation import SimulationConfig
 from .config.run import RunConfig
 from .config import (
@@ -53,16 +51,10 @@ from .config import (
     load_simulation_config as load_sim_config,
     dump_simulation_config as save_sim_config,
 )
-
-# --- Orchestration entrypoint ---
 from .orchestrate.run import run_from_yaml, save_fe_records
-
-# --- Portable runtime + FE results ---
 from .runtime.portable import ArtifactStore
 from .runtime.fe_repo import FEResultsRepository, FERecord, WindowResult
 from .utils.exec_clone import clone_execution
-
-# --- System descriptor (read-only for users) ---
 from .systems.core import SimSystem, SystemMeta
 
 from batter.pipeline.payloads import StepPayload
@@ -88,13 +80,10 @@ __all__ = [
     "FEResultsRepository",
     "FERecord",
     "WindowResult",
-    # system descriptor
     "SimSystem",
-    # convenience helpers
     "list_fe_runs",
     "load_fe_run",
     "run_analysis_from_execution",
-    # execution cloning
     "clone_execution",
 ]
 

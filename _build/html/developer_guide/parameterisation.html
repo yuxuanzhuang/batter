@@ -1,0 +1,815 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Ligand Parameterisation &#8212; batter  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer_guide/parameterisation';</script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="REMD submission flow" href="../remd_submission.html" />
+    <link rel="prev" title="Analysis Toolkit" href="analysis.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">batter  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class=" current active">
+  <a class="nav-link dropdown-item nav-internal" href="../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Focus Topics</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="pipeline_payloads_and_metadata.html">Typed Pipeline Payloads and System Metadata</a></li>
+<li class="toctree-l1"><a class="reference internal" href="authoring_pipelines.html">Authoring Custom Pipelines</a></li>
+<li class="toctree-l1"><a class="reference internal" href="internal_builders.html">Implementing Internal Builders</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="execution_model.html">Execution Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="analysis.html">Analysis Toolkit</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Ligand Parameterisation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../remd_submission.html">REMD submission flow</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../developer_guide.html" class="nav-link">BATTER Developer Guide</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Ligand Parameterisation</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="ligand-parameterisation">
+<h1>Ligand Parameterisation<a class="headerlink" href="#ligand-parameterisation" title="Link to this heading">#</a></h1>
+<p>BATTER ships a lightweight parameterisation toolkit that converts staged ligand
+inputs into a content-addressed store of AMBER or OpenFF artefacts.  The main
+entry point is <a class="reference internal" href="#batter.param.ligand.batch_ligand_process" title="batter.param.ligand.batch_ligand_process"><code class="xref py py-func docutils literal notranslate"><span class="pre">batter.param.ligand.batch_ligand_process()</span></code></a>, which produces
+GAFF/GAFF2 <code class="docutils literal notranslate"><span class="pre">mol2</span></code>/<code class="docutils literal notranslate"><span class="pre">frcmod</span></code>/<code class="docutils literal notranslate"><span class="pre">lib</span></code> bundles or OpenFF <code class="docutils literal notranslate"><span class="pre">prmtop</span></code> files that
+can be reused across simulations.</p>
+<section id="typical-usage">
+<h2>Typical usage<a class="headerlink" href="#typical-usage" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">batter.param.ligand</span><span class="w"> </span><span class="kn">import</span> <span class="n">batch_ligand_process</span>
+
+<span class="n">hashes</span><span class="p">,</span> <span class="n">metadata</span> <span class="o">=</span> <span class="n">batch_ligand_process</span><span class="p">(</span>
+    <span class="n">ligand_paths</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">&quot;ligA&quot;</span><span class="p">:</span> <span class="s2">&quot;ligands/adp.sdf&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;ligB&quot;</span><span class="p">:</span> <span class="s2">&quot;ligands/amp.mol2&quot;</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="n">output_path</span><span class="o">=</span><span class="s2">&quot;cache/ligands&quot;</span><span class="p">,</span>
+    <span class="n">ligand_ff</span><span class="o">=</span><span class="s2">&quot;gaff2&quot;</span><span class="p">,</span>
+    <span class="n">charge_method</span><span class="o">=</span><span class="s2">&quot;am1bcc&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Prepared hashes:&quot;</span><span class="p">,</span> <span class="n">hashes</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Canonical SMILES:&quot;</span><span class="p">,</span> <span class="n">metadata</span><span class="p">[</span><span class="s2">&quot;ligands/adp.sdf&quot;</span><span class="p">][</span><span class="mi">1</span><span class="p">])</span>
+</pre></div>
+</div>
+</section>
+<section id="module-batter.param.ligand">
+<span id="api-reference"></span><h2>API Reference<a class="headerlink" href="#module-batter.param.ligand" title="Link to this heading">#</a></h2>
+<p>Ligand parameterisation helpers for GAFF/GAFF2 and OpenFF workflows.</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandFactory">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">batter.param.ligand.</span></span><span class="sig-name descname"><span class="pre">LigandFactory</span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandFactory"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandFactory" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<p>Factory that chooses the appropriate loader/processor by file extension.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandFactory.create_ligand">
+<span class="sig-name descname"><span class="pre">create_ligand</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ligand_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'am1bcc'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retain_lig_prot</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_ff</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gaff2'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">unique_mol_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><a class="reference internal" href="#batter.param.ligand.LigandProcessing" title="batter.param.ligand.LigandProcessing"><span class="pre">LigandProcessing</span></a></span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandFactory.create_ligand"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandFactory.create_ligand" title="Link to this definition">#</a></dt>
+<dd><p>Instantiate a concrete <a class="reference internal" href="#batter.param.ligand.LigandProcessing" title="batter.param.ligand.LigandProcessing"><code class="xref py py-class docutils literal notranslate"><span class="pre">LigandProcessing</span></code></a> subclass.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ligand_file, index, output_dir, ligand_name, charge, retain_lig_prot,</strong></p></li>
+<li><p><strong>ligand_ff, unique_mol_names</strong> – Forwarded to the underlying processor.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>Processor configured for the detected file type.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#batter.param.ligand.LigandProcessing" title="batter.param.ligand.LigandProcessing">LigandProcessing</a></p>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>ValueError</strong> – If the file extension is unsupported.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">batter.param.ligand.</span></span><span class="sig-name descname"><span class="pre">LigandProcessing</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ligand_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'am1bcc'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retain_lig_prot</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_ff</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gaff2'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">unique_mol_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandProcessing"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandProcessing" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">ABC</span></code></p>
+<p>Base class for ligand processing and parameterization.</p>
+<p>It loads a ligand, determines a unique residue/name, estimates the charge,
+and generates AMBER/OpenFF parameters.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ligand_file</strong> – Input ligand path (SDF/MOL2/PDB depending on subclass).</p></li>
+<li><p><strong>index</strong> – 1-based index used for stable name generation.</p></li>
+<li><p><strong>output_dir</strong> – Output folder for generated files.</p></li>
+<li><p><strong>ligand_name</strong> – Optional preferred name; will be uniquified to 3 chars.</p></li>
+<li><p><strong>charge</strong> – Charge method for OpenFF pre-charge or quick estimate (e.g., <code class="docutils literal notranslate"><span class="pre">&quot;am1bcc&quot;</span></code>).</p></li>
+<li><p><strong>retain_lig_prot</strong> – If <code class="docutils literal notranslate"><span class="pre">True</span></code>, keep hydrogen atoms from input.</p></li>
+<li><p><strong>ligand_ff</strong> – One of <code class="docutils literal notranslate"><span class="pre">&quot;gaff&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;gaff2&quot;</span></code> or an OpenFF release like <code class="docutils literal notranslate"><span class="pre">&quot;openff-2.2.0&quot;</span></code>.</p></li>
+<li><p><strong>unique_mol_names</strong> – Existing names to avoid collisions.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Variables<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><strong>ligand_object</strong> (<em>SmallMoleculeComponent</em>)</p></li>
+<li><p><strong>openff_molecule</strong> (<em>Molecule</em>)</p></li>
+<li><p><strong>ligand_charge</strong> (<em>float</em>) – Estimated total charge (integer).</p></li>
+<li><p><strong>atomnames</strong> (<em>list</em><em>[</em><em>str</em><em>]</em>) – Atom names extracted from generated PDB (AMBER path).</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.fetch_from_existing_db">
+<span class="sig-name descname"><span class="pre">fetch_from_existing_db</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">database</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">bool</span></span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandProcessing.fetch_from_existing_db"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandProcessing.fetch_from_existing_db" title="Link to this definition">#</a></dt>
+<dd><p>Search and copy ligand artifacts from a local database.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>database</strong> – Directory containing <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.(frcmod|lib|prmtop|inpcrd|mol2|pdb|json|sdf)</span></code>.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><code class="docutils literal notranslate"><span class="pre">True</span></code> if a full, matching entry was found and copied.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.ligand_sdf_path">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">ligand_sdf_path</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#batter.param.ligand.LigandProcessing.ligand_sdf_path" title="Link to this definition">#</a></dt>
+<dd><p>Path to the canonicalised SDF stored on disk.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.name">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">name</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#batter.param.ligand.LigandProcessing.name" title="Link to this definition">#</a></dt>
+<dd><p>Three-character residue name used for generated artifacts.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.prepare_ligand_parameters">
+<span class="sig-name descname"><span class="pre">prepare_ligand_parameters</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandProcessing.prepare_ligand_parameters"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandProcessing.prepare_ligand_parameters" title="Link to this definition">#</a></dt>
+<dd><p>Generate parameters using either AMBER (GAFF/GAFF2) or OpenFF path.</p>
+<p class="rubric">Notes</p>
+<ul class="simple">
+<li><p>OpenFF path first creates AMBER artifacts for tleap-based system build.</p></li>
+<li><p>Writes a <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;.json</span></code> metadata file to the output folder.</p></li>
+</ul>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.prepare_ligand_parameters_amberff">
+<span class="sig-name descname"><span class="pre">prepare_ligand_parameters_amberff</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">charge_method</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'bcc'</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandProcessing.prepare_ligand_parameters_amberff"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandProcessing.prepare_ligand_parameters_amberff" title="Link to this definition">#</a></dt>
+<dd><p>Prepare ligand parameters using AMBER (GAFF/GAFF2): mol2/frcmod/lib/prmtop.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>charge_method</strong> – Antechamber charge method (e.g., <code class="docutils literal notranslate"><span class="pre">&quot;bcc&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;gas&quot;</span></code>).</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.prepare_ligand_parameters_openff">
+<span class="sig-name descname"><span class="pre">prepare_ligand_parameters_openff</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">None</span></span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandProcessing.prepare_ligand_parameters_openff"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandProcessing.prepare_ligand_parameters_openff" title="Link to this definition">#</a></dt>
+<dd><p>Prepare ligand parameters using OpenFF toolkit (and AMBER bootstrap).</p>
+<section id="behavior">
+<h3>Behavior<a class="headerlink" href="#behavior" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Runs a <strong>fast</strong> AMBER bootstrap (GAFF2 + gas charges) so tleap artifacts exist.</p></li>
+<li><p>Generates an OpenFF <cite>prmtop</cite> for downstream if you prefer OpenMM/OpenFF.</p></li>
+</ul>
+</section>
+</dd></dl>
+
+<dl class="py property">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.smiles">
+<em class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></em><span class="sig-name descname"><span class="pre">smiles</span></span><em class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></em><a class="headerlink" href="#batter.param.ligand.LigandProcessing.smiles" title="Link to this definition">#</a></dt>
+<dd><p>Canonical SMILES with explicit hydrogens.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>str</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="batter.param.ligand.LigandProcessing.to_dict">
+<span class="sig-name descname"><span class="pre">to_dict</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#LigandProcessing.to_dict"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.LigandProcessing.to_dict" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="batter.param.ligand.MOL2_LigandProcessing">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">batter.param.ligand.</span></span><span class="sig-name descname"><span class="pre">MOL2_LigandProcessing</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ligand_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'am1bcc'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retain_lig_prot</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_ff</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gaff2'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">unique_mol_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/batter/param/ligand.html#MOL2_LigandProcessing"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.MOL2_LigandProcessing" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#batter.param.ligand.LigandProcessing" title="batter.param.ligand.LigandProcessing"><code class="xref py py-class docutils literal notranslate"><span class="pre">LigandProcessing</span></code></a></p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="batter.param.ligand.PDB_LigandProcessing">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">batter.param.ligand.</span></span><span class="sig-name descname"><span class="pre">PDB_LigandProcessing</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ligand_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'am1bcc'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retain_lig_prot</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_ff</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gaff2'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">unique_mol_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/batter/param/ligand.html#PDB_LigandProcessing"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.PDB_LigandProcessing" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#batter.param.ligand.LigandProcessing" title="batter.param.ligand.LigandProcessing"><code class="xref py py-class docutils literal notranslate"><span class="pre">LigandProcessing</span></code></a></p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="batter.param.ligand.SDF_LigandProcessing">
+<em class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">batter.param.ligand.</span></span><span class="sig-name descname"><span class="pre">SDF_LigandProcessing</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ligand_file</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">index</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_dir</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_name</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'am1bcc'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retain_lig_prot</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_ff</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gaff2'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">unique_mol_names</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/batter/param/ligand.html#SDF_LigandProcessing"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.SDF_LigandProcessing" title="Link to this definition">#</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#batter.param.ligand.LigandProcessing" title="batter.param.ligand.LigandProcessing"><code class="xref py py-class docutils literal notranslate"><span class="pre">LigandProcessing</span></code></a></p>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="batter.param.ligand.batch_ligand_process">
+<span class="sig-prename descclassname"><span class="pre">batter.param.ligand.</span></span><span class="sig-name descname"><span class="pre">batch_ligand_process</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ligand_paths</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Sequence</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Mapping</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span><span class="p"><span class="pre">]</span></span></span></em>, <em class="sig-param"><span class="n"><span class="pre">output_path</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">Path</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">retain_lig_prot</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">True</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_ph</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">float</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">7.0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ligand_ff</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'gaff2'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">charge_method</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">str</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">'am1bcc'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">overwrite</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">run_with_slurm</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">bool</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">max_slurm_jobs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">int</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">50</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">run_with_slurm_kwargs</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Any</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">job_extra_directives</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">on_failure</span></span><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="n"><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'prune'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'retry'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'raise'</span></span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="w"> </span><span class="o"><span class="pre">=</span></span><span class="w"> </span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span> <span class="sig-return"><span class="sig-return-icon">&#x2192;</span> <span class="sig-return-typehint"><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">List</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Dict</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">Tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="pre">str</span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">]</span></span></span></span><a class="reference internal" href="../_modules/batter/param/ligand.html#batch_ligand_process"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#batter.param.ligand.batch_ligand_process" title="Link to this definition">#</a></dt>
+<dd><p>Parameterise ligands into a content-addressed store.</p>
+<p>Artifacts for each ligand are written under:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">&lt;</span><span class="n">output_path</span><span class="o">&gt;/&lt;</span><span class="n">hash_id</span><span class="o">&gt;/*</span>
+</pre></div>
+</div>
+<p>where <code class="docutils literal notranslate"><span class="pre">hash_id</span> <span class="pre">=</span> <span class="pre">sha256(canonical_smiles</span> <span class="pre">+</span> <span class="pre">ligand_ff</span> <span class="pre">+</span> <span class="pre">retain).hexdigest()[:12]</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ligand_paths</strong> – List of file paths or mapping {alias: path}. Only the file path affects hashing.</p></li>
+<li><p><strong>output_path</strong> – Output directory for the content-addressed store.</p></li>
+<li><p><strong>retain_lig_prot</strong> – Whether to retain hydrogens from inputs.</p></li>
+<li><p><strong>ligand_ph</strong> – Target protonation pH (reserved for future use).</p></li>
+<li><p><strong>ligand_ff</strong> – Force field (‘gaff’/’gaff2’ or a valid OpenFF release name).</p></li>
+<li><p><strong>charge_method</strong> – Charge method for ligand.</p></li>
+<li><p><strong>overwrite</strong> – If True, re-parameterize even if &lt;hash_id&gt; already exists.</p></li>
+<li><p><strong>run_with_slurm</strong> – If True, distribute parametrization with Dask+SLURM (same behavior as before).</p></li>
+<li><p><strong>max_slurm_jobs, run_with_slurm_kwargs, job_extra_directives</strong> – SLURM/Dask configuration.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><em>list of str</em> – Hash identifiers in processing order (duplicates preserved).</p></li>
+<li><p><em>dict</em> – Mapping from the provided input path to <code class="docutils literal notranslate"><span class="pre">(hash_id,</span> <span class="pre">canonical_smiles)</span></code>.</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+<section id="caching-and-validation">
+<h2>Caching and validation<a class="headerlink" href="#caching-and-validation" title="Link to this heading">#</a></h2>
+<p>Ligand artifacts are content-addressed: input coordinates plus force-field/charge
+settings are hashed, so rerunning <code class="docutils literal notranslate"><span class="pre">batch_ligand_process</span></code> with the same inputs reuses
+cached <code class="docutils literal notranslate"><span class="pre">mol2</span></code>/<code class="docutils literal notranslate"><span class="pre">frcmod</span></code>/<code class="docutils literal notranslate"><span class="pre">lib</span></code> bundles instead of recomputing. Charge assignment
+errors and missing protonation states surface as exceptions; callers should surface
+those errors up the pipeline rather than silently skipping ligands. Validation also
+canonicalises SMILES so cache keys stay stable across input formats.</p>
+</section>
+<section id="output-layout">
+<h2>Output layout<a class="headerlink" href="#output-layout" title="Link to this heading">#</a></h2>
+<p>By default, outputs land under the provided <code class="docutils literal notranslate"><span class="pre">output_path</span></code> in per-ligand folders
+that include the hash. Metadata (canonical SMILES, charge method, parameter files)
+is returned to the caller so builders can record it in <code class="docutils literal notranslate"><span class="pre">SystemMeta</span></code> and reuse the
+same parameter set across runs.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="analysis.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Analysis Toolkit</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../remd_submission.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">REMD submission flow</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#typical-usage">Typical usage</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#module-batter.param.ligand">API Reference</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandFactory"><code class="docutils literal notranslate"><span class="pre">LigandFactory</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandFactory.create_ligand"><code class="docutils literal notranslate"><span class="pre">LigandFactory.create_ligand()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing"><code class="docutils literal notranslate"><span class="pre">LigandProcessing</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.fetch_from_existing_db"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.fetch_from_existing_db()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.ligand_sdf_path"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.ligand_sdf_path</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.name"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.name</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.prepare_ligand_parameters"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.prepare_ligand_parameters()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.prepare_ligand_parameters_amberff"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.prepare_ligand_parameters_amberff()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.prepare_ligand_parameters_openff"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.prepare_ligand_parameters_openff()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.smiles"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.smiles</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.LigandProcessing.to_dict"><code class="docutils literal notranslate"><span class="pre">LigandProcessing.to_dict()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.MOL2_LigandProcessing"><code class="docutils literal notranslate"><span class="pre">MOL2_LigandProcessing</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.PDB_LigandProcessing"><code class="docutils literal notranslate"><span class="pre">PDB_LigandProcessing</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.SDF_LigandProcessing"><code class="docutils literal notranslate"><span class="pre">SDF_LigandProcessing</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batter.param.ligand.batch_ligand_process"><code class="docutils literal notranslate"><span class="pre">batch_ligand_process()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#caching-and-validation">Caching and validation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#output-layout">Output layout</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/developer_guide/parameterisation.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2024, Yuxuan Zhuang. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.10.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

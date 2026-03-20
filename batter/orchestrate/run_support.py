@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """
 Helper utilities shared by orchestrator entrypoints.
 
 This module centralises signature hashing, run_id resolution, and small bookkeeping
 helpers to keep ``run.py`` focused on orchestration flow.
 """
+
+from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
@@ -21,7 +21,6 @@ from batter.systems.mabfe import MABFEBuilder
 from batter.systems.masfe import MASFEBuilder
 
 
-# -------------------- hashing / signatures -------------------- #
 def normalize_for_hash(obj: Any) -> Any:
     """Recursively normalize a payload for stable hashing.
 
@@ -81,7 +80,6 @@ def stored_payload(run_dir: Path) -> Dict[str, Any] | None:
         return None
 
 
-# -------------------- ligand bookkeeping -------------------- #
 def ligand_names_path(run_dir: Path) -> Path:
     return run_dir / "artifacts" / "ligand_names.json"
 
@@ -102,7 +100,6 @@ def store_ligand_names(run_dir: Path, mapping: Dict[str, str]) -> None:
     path.write_text(json.dumps(mapping, sort_keys=True))
 
 
-# -------------------- run_id selection -------------------- #
 def _diff_dicts(left: Any, right: Any, prefix: str = "") -> list[tuple[str, Any, Any]]:
     if type(left) != type(right):
         return [(prefix or ".", left, right)]

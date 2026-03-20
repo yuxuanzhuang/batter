@@ -13,16 +13,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import os
 import smtplib
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal
 from smtplib import SMTPException
 import yaml
 
 from loguru import logger
-from pprint import pprint
 
 from batter.config.run import RunConfig
 from batter.systems.core import SimSystem
@@ -34,7 +32,7 @@ from batter.pipeline.step import Step
 from batter.pipeline.payloads import StepPayload
 
 from batter.runtime.portable import ArtifactStore
-from batter.runtime.fe_repo import FEResultsRepository, FERecord
+from batter.runtime.fe_repo import FEResultsRepository
 
 from batter.exec.slurm_mgr import SlurmJobManager
 
@@ -51,8 +49,6 @@ from batter.orchestrate.markers import (
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.orchestrate.results_io import (
     extract_ligand_metadata,
-    fallback_totals_from_json,
-    parse_results_dat,
     save_fe_records,
 )
 from batter.orchestrate.run_support import (
@@ -68,6 +64,19 @@ from batter.orchestrate.run_support import (
     stored_signature as _stored_signature,
     store_ligand_names as _store_ligand_names,
 )
+
+_PARENT_ONLY_STEP_NAMES = frozenset({"system_prep", "system_prep_asfe", "param_ligands"})
+_PHASE_STEP_NAMES: dict[str, frozenset[str]] = {
+    "prepare_equil": frozenset({"prepare_equil"}),
+    "equil": frozenset({"equil"}),
+    "equil_analysis": frozenset({"equil_analysis"}),
+    "pre_prepare_fe": frozenset({"pre_prepare_fe"}),
+    "pre_fe_equil": frozenset({"pre_fe_equil"}),
+    "prepare_fe": frozenset({"prepare_fe", "prepare_fe_windows"}),
+    "fe_equil": frozenset({"fe_equil"}),
+    "fe": frozenset({"fe"}),
+    "analyze": frozenset({"analyze"}),
+}
 
 
 def _slurm_registry_path(run_dir: Path) -> Path:
@@ -127,6 +136,41 @@ def _clear_failure_markers(run_dir: Path) -> None:
             logger.info(f"[cleanup] Removed progress cache folder: {progress_root}")
         except Exception:
             logger.warning(f"[cleanup] Failed to remove progress cache folder: {progress_root}")
+
+
+def _build_per_ligand_pipeline(tpl: Pipeline, sim_cfg_updated: Any) -> Pipeline:
+    """Clone ``tpl`` for per-ligand execution and refresh embedded sim configs."""
+    steps: list[Step] = []
+    for step in tpl.ordered_steps():
+        if step.name in _PARENT_ONLY_STEP_NAMES:
+            continue
+        payload = step.payload.copy_with() if step.payload is not None else None
+        if payload is not None and payload.sim is not None:
+            payload = payload.copy_with(sim=sim_cfg_updated)
+        steps.append(
+            Step(
+                name=step.name,
+                requires=[req for req in step.requires if req not in _PARENT_ONLY_STEP_NAMES],
+                payload=payload,
+            )
+        )
+    return Pipeline(steps)
+
+
+def _select_phase_pipeline(pipeline: Pipeline, step_names: frozenset[str]) -> Pipeline:
+    """Return the sub-pipeline containing only ``step_names`` and their local edges."""
+    selected = [step for step in pipeline.ordered_steps() if step.name in step_names]
+    selected_names = {step.name for step in selected}
+    return Pipeline(
+        [
+            Step(
+                name=step.name,
+                requires=[req for req in step.requires if req in selected_names],
+                payload=step.payload,
+            )
+            for step in selected
+        ]
+    )
 
 
 def _build_rbfe_network_plan(
@@ -561,11 +605,7 @@ def _run_from_yaml_impl(
 
     parent_failure = False
     parent_only = Pipeline(
-        [
-            s
-            for s in tpl.ordered_steps()
-            if s.name in {"system_prep", "system_prep_asfe", "param_ligands"}
-        ]
+        [step for step in tpl.ordered_steps() if step.name in _PARENT_ONLY_STEP_NAMES]
     )
     if parent_only.ordered_steps():
         names = [s.name for s in parent_only.ordered_steps()]
@@ -593,7 +633,6 @@ def _run_from_yaml_impl(
                     break
                 raise
 
-    # Locate sim_overrides from system_prep (under run_dir)
     config_dir = run_dir / "artifacts" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     overrides_path = config_dir / "sim_overrides.json"
@@ -631,66 +670,17 @@ def _run_from_yaml_impl(
         )
     )
 
-    # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
-    removed = {"system_prep", "system_prep_asfe", "param_ligands"}
-    per_lig_steps: List[Step] = []
-    for s in tpl.ordered_steps():
-        if s.name in removed:
-            continue
-        payload = s.payload.copy_with() if s.payload is not None else None
-        per_lig_steps.append(
-            Step(
-                name=s.name,
-                requires=[r for r in s.requires if r not in removed],
-                payload=payload,
-            )
-        )
-    per_lig = Pipeline(per_lig_steps)
+    per_lig = _build_per_ligand_pipeline(tpl, sim_cfg_updated)
+    phase_prepare_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["prepare_equil"])
+    phase_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["equil"])
+    phase_equil_analysis = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["equil_analysis"])
+    phase_pre_prepare_fe = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["pre_prepare_fe"])
+    phase_pre_fe_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["pre_fe_equil"])
+    phase_prepare_fe = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["prepare_fe"])
+    phase_fe_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["fe_equil"])
+    phase_fe = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["fe"])
+    phase_analyze = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["analyze"])
 
-    # IMPORTANT: also update the `sim` param on each remaining step
-    patched = []
-    for s in per_lig.ordered_steps():
-        payload = s.payload
-        if payload is not None and payload.sim is not None:
-            payload = payload.copy_with(sim=sim_cfg_updated)
-        patched.append(Step(name=s.name, requires=s.requires, payload=payload))
-    per_lig = Pipeline(patched)
-
-    # --- define phases explicitly ---
-    PH_PREPARE_EQUIL = {"prepare_equil"}
-    PH_EQUIL = {"equil"}
-    PH_EQUIL_ANALYSIS = {"equil_analysis"}
-    PH_PRE_PREPARE_FE = {"pre_prepare_fe"}
-    PH_PRE_FE_EQUIL = {"pre_fe_equil"}
-    PH_PREPARE_FE = {"prepare_fe", "prepare_fe_windows"}
-    PH_FE_EQUIL = {"fe_equil"}
-    PH_FE = {"fe"}
-    PH_ANALYZE = {"analyze"}
-
-    def _phase(names: set[str]) -> Pipeline:
-        selected = [s for s in per_lig.ordered_steps() if s.name in names]
-        selected_names = {s.name for s in selected}
-        pruned = [
-            Step(
-                name=s.name,
-                requires=[r for r in s.requires if r in selected_names],
-                payload=s.payload,
-            )
-            for s in selected
-        ]
-        return Pipeline(pruned)
-
-    phase_prepare_equil = _phase(PH_PREPARE_EQUIL)
-    phase_equil = _phase(PH_EQUIL)
-    phase_equil_analysis = _phase(PH_EQUIL_ANALYSIS)
-    phase_pre_prepare_fe = _phase(PH_PRE_PREPARE_FE)
-    phase_pre_fe_equil = _phase(PH_PRE_FE_EQUIL)
-    phase_prepare_fe = _phase(PH_PREPARE_FE)
-    phase_fe_equil = _phase(PH_FE_EQUIL)
-    phase_fe = _phase(PH_FE)
-    phase_analyze = _phase(PH_ANALYZE)
-
-    # --- build SimSystem children ---
     param_idx_path = run_dir / "artifacts" / "ligand_params" / "index.json"
     if not param_idx_path.exists():
         if parent_failure and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
@@ -711,7 +701,6 @@ def _run_from_yaml_impl(
         resn = entry.get("residue_name")
         lig_resname_map[lig] = resn
 
-    # keep all children for now
     children_all: List[SimSystem] = []
     for lig_name, resn in lig_resname_map.items():
         d = run_dir / "simulations" / lig_name
@@ -734,7 +723,6 @@ def _run_from_yaml_impl(
                 meta=child_meta,
             )
         )
-    # start with all children
     children = children_all
     fe_children_all: List[SimSystem] = children_all
     if getattr(rc.run, "clean_failures", False):

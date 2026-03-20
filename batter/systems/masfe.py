@@ -135,8 +135,6 @@ class MASFEBuilder(SystemBuilder):
         logger.debug("Staged {} MASFE ligand subsystems under {}", len(children), lig_dir)
         return children
 
-    # ------------------ convenience helpers ------------------
-
     @staticmethod
     def make_child_for_ligand(parent: SimSystem, lig_name: str, lig_src: Path) -> SimSystem:
         """
@@ -161,8 +159,6 @@ class MASFEBuilder(SystemBuilder):
             anchors=tuple(),
             meta=parent.meta.merge(ligand=lig_name, mode="MASFE"),
         )
-
-    # ------------------ internal utilities ------------------
 
     @staticmethod
     def _assert_names_match(system: SimSystem, args: CreateSystemLike) -> None:
@@ -225,11 +221,6 @@ class MASFEBuilder(SystemBuilder):
             anchors=tuple(),
             meta={"ligand_ff": getattr(args, "ligand_ff", "gaff2"), "mode": "MASFE"},
         )
-
-
-# --------------------------------------------------------------------------
-# Free helpers (functional style)
-# --------------------------------------------------------------------------
 
 def make_ligand_subsystem_masfe(parent: SimSystem, lig_name: str, lig_src: Path) -> SimSystem:
     builder = MASFEBuilder()

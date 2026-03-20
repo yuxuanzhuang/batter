@@ -819,13 +819,13 @@ class RunSection(BaseModel):
 
     email_sender: str = Field(
         "nobody@stanford.edu",
-        description=("Sender address used for completion email notifications."),
+        description=("Sender address used for BATTER run-status email notifications."),
     )
     email_on_completion: str | None = Field(
         None,
         description=(
             "Email address that should receive a notification once the run "
-            "finishes (successfully or with warnings)."
+            "finishes or aborts with an uncaught failure."
         ),
     )
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)

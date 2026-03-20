@@ -153,13 +153,13 @@ used whenever BATTER renders SLURM scripts.
 Results Interpretation
 ----------------------
 
-Runs store FE outputs under ``<run.output_folder>/executions/<run_id>/results``.
+Portable FE outputs are stored under ``<run.output_folder>/results``.
 Use the CLI helpers to inspect and export them:
 
 - ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).
 - ``batter fe show <system_root> <run_id>`` – prints per-window data and metadata for a specific execution.
 
-A CSV file for all the FE results is stored under ``<system_root>/results``. See detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
+A CSV file for all FE results is stored under ``<system_root>/results``. Per-ligand copied analysis artifacts and convergence outputs live under ``<system_root>/results/<run_id>/<ligand_name>/Results``.
 
 Copyright
 -------------------------------

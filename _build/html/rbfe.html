@@ -1,0 +1,703 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>RBFE Guide &#8212; batter  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=f281be69"></script>
+    <script src="_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'rbfe';</script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Command-Line Usage" href="cli.html" />
+    <link rel="prev" title="batter.config.dump_simulation_config" href="autosummary/config/batter.config.dump_simulation_config.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">batter  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="#">
+    RBFE Guide
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="#">
+    RBFE Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"></div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">RBFE Guide</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="rbfe-guide">
+<h1>RBFE Guide<a class="headerlink" href="#rbfe-guide" title="Link to this heading">#</a></h1>
+<p>This page documents the current RBFE workflow in BATTER and the network-mapping
+options in the <code class="docutils literal notranslate"><span class="pre">rbfe</span></code> section of <code class="docutils literal notranslate"><span class="pre">run.yaml</span></code>.</p>
+<section id="minimal-rbfe-configuration">
+<h2>Minimal RBFE configuration<a class="headerlink" href="#minimal-rbfe-configuration" title="Link to this heading">#</a></h2>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">protocol</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">rbfe</span>
+
+<span class="nt">run</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">output_folder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/output</span>
+<span class="w">  </span><span class="nt">run_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span>
+
+<span class="nt">create</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">system_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_system</span>
+<span class="w">  </span><span class="nt">protein_input</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/protein.pdb</span>
+<span class="w">  </span><span class="nt">ligand_paths</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">LIG1</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/lig1.sdf</span>
+<span class="w">    </span><span class="nt">LIG2</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/lig2.sdf</span>
+<span class="w">    </span><span class="nt">LIG3</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/lig3.sdf</span>
+
+<span class="nt">rbfe</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">mapping</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<span class="w">  </span><span class="nt">atom_mapper</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kartograf</span>
+</pre></div>
+</div>
+<p>If you omit <code class="docutils literal notranslate"><span class="pre">rbfe.mapping</span></code> (and do not provide files), BATTER uses
+<code class="docutils literal notranslate"><span class="pre">default</span></code>.</p>
+</section>
+<section id="default-mapping-algorithm">
+<h2>Default mapping algorithm<a class="headerlink" href="#default-mapping-algorithm" title="Link to this heading">#</a></h2>
+<p>The default mapping is a star network:</p>
+<ul class="simple">
+<li><p>Ligands are taken in input order.</p></li>
+<li><p>The first ligand is used as reference.</p></li>
+<li><p>Pairs are built as <code class="docutils literal notranslate"><span class="pre">(lig1,</span> <span class="pre">lig2)</span></code>, <code class="docutils literal notranslate"><span class="pre">(lig1,</span> <span class="pre">lig3)</span></code>, …</p></li>
+</ul>
+<p>This corresponds to <code class="docutils literal notranslate"><span class="pre">RBFENetwork.default_mapping</span></code>.</p>
+</section>
+<section id="mapping-options-and-precedence">
+<h2>Mapping options and precedence<a class="headerlink" href="#mapping-options-and-precedence" title="Link to this heading">#</a></h2>
+<p>RBFE mapping is controlled by <code class="docutils literal notranslate"><span class="pre">rbfe</span></code> in <code class="docutils literal notranslate"><span class="pre">run.yaml</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">rbfe.mapping_file</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">rbfe.mapping</span></code> (default <code class="docutils literal notranslate"><span class="pre">default</span></code>)</p></li>
+</ul>
+<p>If both are provided, BATTER uses <code class="docutils literal notranslate"><span class="pre">mapping_file</span></code>.</p>
+</section>
+<section id="supported-rbfe-mapping-values">
+<h2>Supported <code class="docutils literal notranslate"><span class="pre">rbfe.mapping</span></code> values<a class="headerlink" href="#supported-rbfe-mapping-values" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">default</span></code> (also <code class="docutils literal notranslate"><span class="pre">star</span></code> / <code class="docutils literal notranslate"><span class="pre">first</span></code> aliases)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">konnektor</span></code></p></li>
+</ul>
+<p>When using <code class="docutils literal notranslate"><span class="pre">konnektor</span></code>, you can optionally set <code class="docutils literal notranslate"><span class="pre">rbfe.konnektor_layout</span></code>.</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">rbfe</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">mapping</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konnektor</span>
+<span class="w">  </span><span class="nt">atom_mapper</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kartograf</span>
+<span class="w">  </span><span class="nt">konnektor_layout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">star</span>
+<span class="w">  </span><span class="nt">both_directions</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+</section>
+<section id="atom-mapper-backends">
+<h2>Atom mapper backends<a class="headerlink" href="#atom-mapper-backends" title="Link to this heading">#</a></h2>
+<p>RBFE atom mapping backend is controlled by <code class="docutils literal notranslate"><span class="pre">rbfe.atom_mapper</span></code>:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">kartograf</span></code> (default) – current BATTER Kartograf-based mapping behavior:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># network planning mapper (rbfe.py)</span>
+<span class="n">KartografAtomMapper</span><span class="p">(</span>
+    <span class="n">atom_max_distance</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+    <span class="n">map_hydrogens_on_hydrogens_only</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">atom_map_hydrogens</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">map_exact_ring_matches_only</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allow_partial_fused_rings</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allow_bond_breaks</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">additional_mapping_filter_functions</span><span class="o">=</span><span class="p">[</span><span class="n">filter_element_changes</span><span class="p">],</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>During RBFE transformation setup (<code class="docutils literal notranslate"><span class="pre">_internal/ops/simprep.py</span></code>), BATTER uses
+the same Kartograf settings except <code class="docutils literal notranslate"><span class="pre">atom_map_hydrogens=True</span></code> and then removes
+hydrogen pairs from the final core mapping.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">lomap</span></code> – uses:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">LomapAtomMapper</span><span class="p">(</span>
+    <span class="n">time</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+    <span class="n">threed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">max3d</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span>
+    <span class="n">element_change</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">shift</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</li>
+</ul>
+<p>Example:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">rbfe</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">mapping</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konnektor</span>
+<span class="w">  </span><span class="nt">atom_mapper</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lomap</span>
+</pre></div>
+</div>
+</section>
+<section id="bidirectional-rbfe-edges">
+<h2>Bidirectional RBFE edges<a class="headerlink" href="#bidirectional-rbfe-edges" title="Link to this heading">#</a></h2>
+<p>Set <code class="docutils literal notranslate"><span class="pre">rbfe.both_directions:</span> <span class="pre">true</span></code> to run both directions for each mapped edge.
+For example, a mapped pair <code class="docutils literal notranslate"><span class="pre">LIG1~LIG2</span></code> will generate both:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">LIG1~LIG2</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">LIG2~LIG1</span></code></p></li>
+</ul>
+</section>
+<section id="mapping-file-formats">
+<h2><code class="docutils literal notranslate"><span class="pre">mapping_file</span></code> formats<a class="headerlink" href="#mapping-file-formats" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">rbfe.mapping_file</span></code> supports:</p>
+<ul class="simple">
+<li><p>JSON/YAML list of pairs, e.g. <code class="docutils literal notranslate"><span class="pre">[[&quot;LIG1&quot;,&quot;LIG2&quot;],</span> <span class="pre">[&quot;LIG2&quot;,&quot;LIG3&quot;]]</span></code></p></li>
+<li><p>JSON/YAML dict with <code class="docutils literal notranslate"><span class="pre">pairs</span></code> or <code class="docutils literal notranslate"><span class="pre">edges</span></code> keys</p></li>
+<li><p>JSON/YAML adjacency dict, e.g. <code class="docutils literal notranslate"><span class="pre">{&quot;LIG1&quot;:</span> <span class="pre">[&quot;LIG2&quot;,&quot;LIG3&quot;]}</span></code></p></li>
+<li><p>text file with one pair per line (<code class="docutils literal notranslate"><span class="pre">A~B</span></code>, <code class="docutils literal notranslate"><span class="pre">A,B</span></code>, or <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">B</span></code>)</p></li>
+</ul>
+</section>
+<section id="konnektor-layouts-how-to-list-all-available-options">
+<h2>Konnektor layouts: how to list all available options<a class="headerlink" href="#konnektor-layouts-how-to-list-all-available-options" title="Link to this heading">#</a></h2>
+<p>BATTER resolves Konnektor layouts dynamically from
+<code class="docutils literal notranslate"><span class="pre">konnektor.network_planners</span></code> by collecting class names ending with
+<code class="docutils literal notranslate"><span class="pre">NetworkGenerator</span></code>.</p>
+<p>To list available layout names in your environment:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">from konnektor import network_planners as np</span>
+<span class="s">names = []</span>
+<span class="s">for name in dir(np):</span>
+<span class="s">    if name.endswith(&quot;NetworkGenerator&quot;):</span>
+<span class="s">        names.append(name)</span>
+<span class="s">        names.append(name[:-len(&quot;NetworkGenerator&quot;)].lower())</span>
+<span class="s">print(sorted(set(names)))</span>
+<span class="s">PY</span>
+</pre></div>
+</div>
+<p>Note: Konnektor <code class="docutils literal notranslate"><span class="pre">explicit</span></code> layouts require explicit edges; in BATTER use
+<code class="docutils literal notranslate"><span class="pre">rbfe.mapping_file</span></code> for that case.</p>
+</section>
+<section id="where-rbfe-mapping-is-stored">
+<h2>Where RBFE mapping is stored<a class="headerlink" href="#where-rbfe-mapping-is-stored" title="Link to this heading">#</a></h2>
+<p>BATTER writes the resolved network to:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">executions/&lt;run_id&gt;/artifacts/config/rbfe_network.json</span></code></p></li>
+</ul>
+<p>Transformation systems are created under:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">executions/&lt;run_id&gt;/simulations/transformations/&lt;LIG1~LIG2&gt;/</span></code></p></li>
+</ul>
+<p>For each transformation pair, BATTER stores atom-mapping artifacts in:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">executions/&lt;run_id&gt;/simulations/transformations/&lt;LIG1~LIG2&gt;/fe/x/x-1/mapping.json</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">executions/&lt;run_id&gt;/simulations/transformations/&lt;LIG1~LIG2&gt;/fe/x/x-1/mapping.pkl</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">executions/&lt;run_id&gt;/simulations/transformations/&lt;LIG1~LIG2&gt;/fe/x/x-1/mapping.png</span></code></p></li>
+</ul>
+<p>These generic <code class="docutils literal notranslate"><span class="pre">mapping.*</span></code> filenames are used for both <code class="docutils literal notranslate"><span class="pre">kartograf</span></code> and
+<code class="docutils literal notranslate"><span class="pre">lomap</span></code> atom-mapper backends.</p>
+</section>
+<section id="pipeline-notes">
+<h2>Pipeline notes<a class="headerlink" href="#pipeline-notes" title="Link to this heading">#</a></h2>
+<p>In RBFE, BATTER runs ligand-level prep/equilibration first, then builds
+transformation pairs from the resolved network and runs component <code class="docutils literal notranslate"><span class="pre">x</span></code> FE on
+those pairs.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="autosummary/config/batter.config.dump_simulation_config.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">batter.config.dump_simulation_config</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="cli.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Command-Line Usage</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#minimal-rbfe-configuration">Minimal RBFE configuration</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#default-mapping-algorithm">Default mapping algorithm</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#mapping-options-and-precedence">Mapping options and precedence</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#supported-rbfe-mapping-values">Supported <code class="docutils literal notranslate"><span class="pre">rbfe.mapping</span></code> values</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#atom-mapper-backends">Atom mapper backends</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bidirectional-rbfe-edges">Bidirectional RBFE edges</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#mapping-file-formats"><code class="docutils literal notranslate"><span class="pre">mapping_file</span></code> formats</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#konnektor-layouts-how-to-list-all-available-options">Konnektor layouts: how to list all available options</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#where-rbfe-mapping-is-stored">Where RBFE mapping is stored</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline-notes">Pipeline notes</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/rbfe.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2024, Yuxuan Zhuang. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.10.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

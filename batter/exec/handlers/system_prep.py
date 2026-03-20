@@ -24,10 +24,6 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils.builder_utils import find_anchor_atoms
 
-
-# -----------------------
-# Small helpers
-# -----------------------
 def _as_abs(p: str | Path | None, base: Path) -> Path | None:
     if p is None:
         return None
@@ -123,13 +119,11 @@ class _SystemPrepRunner:
         self.l1_range = None
         self.p1 = self.p2 = self.p3 = None
 
-    # properties used by your pasted functions
     @property
     def system_name(self) -> str:
         return self._system_name
 
-    # legacy helper (resolve relative paths against YAML dir)
-    def _convert_2_relative_path(self, p: str) -> str:
+    def _resolve_input_path(self, p: str) -> str:
         ap = _as_abs(p, self.yaml_dir)
         if ap is None:
             raise ValueError("unexpected None path")
@@ -144,9 +138,6 @@ class _SystemPrepRunner:
         finally:
             os.chdir(cwd)
 
-    # -----------------------
-    # Core steps
-    # -----------------------
     def _prepare_membrane(self):
         """
         Convert input lipid names to lipid21 set (PC/PA/OL for POPC) via lookup CSV.
@@ -532,17 +523,15 @@ class _SystemPrepRunner:
         verbose: bool = False,
     ) -> Dict[str, Any]:
         self._system_name = system_name
-        self._protein_input = self._convert_2_relative_path(protein_input)
-        self._system_topology = self._convert_2_relative_path(system_topology) if system_topology else None
+        self._protein_input = self._resolve_input_path(protein_input)
+        self._system_topology = self._resolve_input_path(system_topology) if system_topology else None
         self._system_coordinate = (
-            self._convert_2_relative_path(system_coordinate)
+            self._resolve_input_path(system_coordinate)
             if system_coordinate
             else None
         )
 
-        self.ligand_dict = {
-            k: self._convert_2_relative_path(v) for k, v in ligand_paths.items()
-        }
+        self.ligand_dict = {k: self._resolve_input_path(v) for k, v in ligand_paths.items()}
         # prefer the provided keys for naming
         self.unique_mol_names = [k.upper() for k in ligand_paths.keys()]
 
@@ -685,9 +674,6 @@ class _SystemPrepRunner:
         return manifest
 
 
-# -----------------------
-# Handler entry point
-# -----------------------
 def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """Prepare a system by aligning components and generating reference structures.
 

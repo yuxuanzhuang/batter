@@ -1,0 +1,842 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>BATTER Developer Guide &#8212; batter  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=f281be69"></script>
+    <script src="_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer_guide';</script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Typed Pipeline Payloads and System Metadata" href="developer_guide/pipeline_payloads_and_metadata.html" />
+    <link rel="prev" title="API Documentation" href="api.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">batter  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class=" current active">
+  <a class="nav-link dropdown-item nav-internal" href="#">
+    BATTER Developer Guide
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="#">
+    BATTER Developer Guide
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Focus Topics</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/pipeline_payloads_and_metadata.html">Typed Pipeline Payloads and System Metadata</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/authoring_pipelines.html">Authoring Custom Pipelines</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/internal_builders.html">Implementing Internal Builders</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/execution_model.html">Execution Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/analysis.html">Analysis Toolkit</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/parameterisation.html">Ligand Parameterisation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="remd_submission.html">REMD submission flow</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">BATTER Developer Guide</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="batter-developer-guide">
+<h1>BATTER Developer Guide<a class="headerlink" href="#batter-developer-guide" title="Link to this heading">#</a></h1>
+<p>This guide provides an up-to-date overview of the internal architecture of <strong>BATTER</strong>.
+It targets contributors who need to understand or extend the codebase.</p>
+<p>The project powers absolute binding (ABFE) and solvation (ASFE) free-energy workflows,
+supports both local execution and SLURM clusters, and packages results in a portable
+artifact store.</p>
+<div class="toctree-wrapper compound">
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Focus Topics</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/pipeline_payloads_and_metadata.html">Typed Pipeline Payloads and System Metadata</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/authoring_pipelines.html">Authoring Custom Pipelines</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/internal_builders.html">Implementing Internal Builders</a></li>
+</ul>
+</div>
+<nav class="contents local" id="contents">
+<ul class="simple">
+<li><p><a class="reference internal" href="#code-layout" id="id1">Code Layout</a></p>
+<ul>
+<li><p><a class="reference internal" href="#further-reading" id="id2">Further Reading</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#high-level-execution-flow" id="id3">High-Level Execution Flow</a></p></li>
+<li><p><a class="reference internal" href="#configuration-layer" id="id4">Configuration Layer</a></p></li>
+<li><p><a class="reference internal" href="#systems-and-builders" id="id5">Systems and Builders</a></p>
+<ul>
+<li><p><a class="reference internal" href="#binding-abfe-components" id="id6">Binding (ABFE) components</a></p></li>
+<li><p><a class="reference internal" href="#solvation-asfe-components" id="id7">Solvation (ASFE) components</a></p></li>
+<li><p><a class="reference internal" href="#practical-constraints" id="id8">Practical constraints</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#parameterisation" id="id9">Parameterisation</a></p></li>
+<li><p><a class="reference internal" href="#pipelines-and-payloads" id="id10">Pipelines and Payloads</a></p></li>
+<li><p><a class="reference internal" href="#execution-backends" id="id11">Execution Backends</a></p></li>
+<li><p><a class="reference internal" href="#orchestration" id="id12">Orchestration</a></p>
+<ul>
+<li><p><a class="reference internal" href="#run-identifiers-and-config-signatures" id="id13">Run identifiers and config signatures</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#runtime-portability" id="id14">Runtime &amp; Portability</a></p></li>
+<li><p><a class="reference internal" href="#directory-layout-example" id="id15">Directory Layout Example</a></p></li>
+</ul>
+</nav>
+<section id="code-layout">
+<h2><a class="toc-backref" href="#id1" role="doc-backlink">Code Layout</a><a class="headerlink" href="#code-layout" title="Link to this heading">#</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>batter/                     # Modern package (public API, pipelines, builders)
+batter_v1/                  # Legacy BAT.py compatibility layer (frozen)
+docs/                       # Sphinx sources (user + developer guides)
+examples/                   # Reference YAML workflows and restraint templates
+tests/                      # Pytest suite covering configs, pipelines, exec, etc.
+extern/                     # Vendored dependencies (editable installs)
+devtools/                   # Helper scripts + conda envs for development
+scripts/                    # Misc automation helpers
+README.rst                  # Project overview
+TODO                        # Open engineering tasks / ideas
+pyproject.toml / setup.cfg  # Build and packaging metadata
+environment*.yml            # Conda environments for the main stack
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">batter/</span></code> package itself is organised as:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>batter/
+├── api.py                 # Public entry points (run_from_yaml, FE repos, etc.)
+├── cli/                   # click-based CLI commands (run, fe, fek-schedule, ...)
+├── config/                # Pydantic models for run/simulation YAML + helpers
+├── systems/               # System descriptors and builders (MABFE / MASFE)
+├── _internal/             # Low-level build ops (create_box, restraints, sim files)
+├── param/                 # Ligand parameterisation helpers
+├── pipeline/              # Steps, payloads, pipeline factories
+├── exec/                  # Local/SLURM backends and step handlers
+├── orchestrate/           # High-level orchestration + pipeline wiring
+├── runtime/               # Portable artifact store and FE repository
+├── analysis/              # Post-processing &amp; convergence utilities
+└── utils/                 # Shared helpers (Amber wrappers, file ops, etc.)
+</pre></div>
+</div>
+<section id="further-reading">
+<h3><a class="toc-backref" href="#id2" role="doc-backlink">Further Reading</a><a class="headerlink" href="#further-reading" title="Link to this heading">#</a></h3>
+<p>The following reference chapters live elsewhere in the docs but are useful when
+working on internal builders or pipelines:</p>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/execution_model.html">Execution Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/analysis.html">Analysis Toolkit</a></li>
+<li class="toctree-l1"><a class="reference internal" href="developer_guide/parameterisation.html">Ligand Parameterisation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="remd_submission.html">REMD submission flow</a></li>
+</ul>
+</div>
+<p>For Slurm header customisation, see <a class="reference internal" href="slurm_headers.html"><span class="doc">SLURM header templates</span></a>.</p>
+</section>
+</section>
+<section id="high-level-execution-flow">
+<h2><a class="toc-backref" href="#id3" role="doc-backlink">High-Level Execution Flow</a><a class="headerlink" href="#high-level-execution-flow" title="Link to this heading">#</a></h2>
+<p>A run triggered via <code class="xref py py-func docutils literal notranslate"><span class="pre">batter.orchestrate.run.run_from_yaml()</span></code> progresses through
+the stages below:</p>
+<ol class="arabic simple">
+<li><p><strong>Configuration</strong> – Parse the top-level YAML into a
+<a class="reference internal" href="autosummary/config/batter.config.run.RunConfig.html#batter.config.run.RunConfig" title="batter.config.run.RunConfig"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunConfig</span></code></a> and resolve the composed
+<a class="reference internal" href="autosummary/config/batter.config.simulation.SimulationConfig.html#batter.config.simulation.SimulationConfig" title="batter.config.simulation.SimulationConfig"><code class="xref py py-class docutils literal notranslate"><span class="pre">SimulationConfig</span></code></a>.</p></li>
+<li><p><strong>System build</strong> – Use a <code class="xref py py-class docutils literal notranslate"><span class="pre">SystemBuilder</span></code>
+(<code class="docutils literal notranslate"><span class="pre">MABFEBuilder</span></code> or <code class="docutils literal notranslate"><span class="pre">MASFEBuilder</span></code>) to stage shared inputs under
+<code class="docutils literal notranslate"><span class="pre">&lt;output_folder&gt;/executions/&lt;run_id&gt;/</span></code>.</p></li>
+<li><p><strong>Ligand staging</strong> – Copy ligand files under <code class="docutils literal notranslate"><span class="pre">executions/&lt;run_id&gt;/simulations/&lt;LIG&gt;/inputs</span></code>.</p></li>
+<li><p><strong>Parameterisation</strong> – Run the <code class="docutils literal notranslate"><span class="pre">param_ligands</span></code> step once to populate
+<code class="docutils literal notranslate"><span class="pre">executions/&lt;run_id&gt;/artifacts/ligand_params</span></code>.</p></li>
+<li><p><strong>Pipeline construction</strong> – Select an ABFE/ASFE pipeline using
+<code class="xref py py-func docutils literal notranslate"><span class="pre">select_pipeline()</span></code>.</p></li>
+<li><p><strong>Execution</strong> – Drive each pipeline phase on the chosen backend
+(<code class="xref py py-class docutils literal notranslate"><span class="pre">LocalBackend</span></code> or <code class="xref py py-class docutils literal notranslate"><span class="pre">SlurmBackend</span></code>).
+Step handlers consume typed <code class="xref py py-class docutils literal notranslate"><span class="pre">StepPayload</span></code> objects.</p></li>
+<li><p><strong>Result packaging</strong> – Persist window outputs and summary statistics using
+<code class="xref py py-class docutils literal notranslate"><span class="pre">FEResultsRepository</span></code>, enabling portable analysis.</p></li>
+</ol>
+</section>
+<section id="configuration-layer">
+<h2><a class="toc-backref" href="#id4" role="doc-backlink">Configuration Layer</a><a class="headerlink" href="#configuration-layer" title="Link to this heading">#</a></h2>
+<p><em>Module:</em> <code class="docutils literal notranslate"><span class="pre">batter.config</span></code></p>
+<ul class="simple">
+<li><p><a class="reference internal" href="autosummary/config/batter.config.run.RunSection.html#batter.config.run.RunSection" title="batter.config.run.RunSection"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunSection</span></code></a> – Execution controls that include the
+artifact destination (<code class="docutils literal notranslate"><span class="pre">run.output_folder</span></code>) and optional builder override
+(<code class="docutils literal notranslate"><span class="pre">run.system_type</span></code>), along with backend/dry-run/failure policy knobs and
+notification settings (<code class="docutils literal notranslate"><span class="pre">run.email_on_completion</span></code> / <code class="docutils literal notranslate"><span class="pre">run.email_sender</span></code>).</p></li>
+<li><p><a class="reference internal" href="autosummary/config/batter.config.run.CreateArgs.html#batter.config.run.CreateArgs" title="batter.config.run.CreateArgs"><code class="xref py py-class docutils literal notranslate"><span class="pre">CreateArgs</span></code></a> – Inputs required to stage the system
+(protein, topology, ligands, restraints).</p></li>
+<li><p><a class="reference internal" href="autosummary/config/batter.config.run.RunConfig.html#batter.config.run.RunConfig" title="batter.config.run.RunConfig"><code class="xref py py-class docutils literal notranslate"><span class="pre">RunConfig</span></code></a> – Aggregates the sections, exposes helpers such as
+<code class="xref py py-meth docutils literal notranslate"><span class="pre">load()</span></code>, <code class="xref py py-meth docutils literal notranslate"><span class="pre">model_validate_yaml()</span></code>, and <code class="xref py py-meth docutils literal notranslate"><span class="pre">resolved_sim_config()</span></code>, and resolves
+relative paths when a YAML is loaded.</p></li>
+<li><p><a class="reference internal" href="autosummary/config/batter.config.simulation.SimulationConfig.html#batter.config.simulation.SimulationConfig" title="batter.config.simulation.SimulationConfig"><code class="xref py py-class docutils literal notranslate"><span class="pre">SimulationConfig</span></code></a> – Fully merged simulation
+specification produced by <code class="xref py py-meth docutils literal notranslate"><span class="pre">RunConfig.resolved_sim_config()</span></code>. The
+developer-facing configuration never includes this model directly, but the
+developer guide documents available fields and the protocol-specific
+validations (e.g., ABFE requires <code class="docutils literal notranslate"><span class="pre">z_steps*</span></code>; ASFE requires <code class="docutils literal notranslate"><span class="pre">y_steps*</span></code>).</p></li>
+</ul>
+</section>
+<section id="systems-and-builders">
+<h2><a class="toc-backref" href="#id5" role="doc-backlink">Systems and Builders</a><a class="headerlink" href="#systems-and-builders" title="Link to this heading">#</a></h2>
+<p><em>Modules:</em> <code class="docutils literal notranslate"><span class="pre">batter.systems.core</span></code>, <code class="docutils literal notranslate"><span class="pre">batter.systems.mabfe</span></code>, <code class="docutils literal notranslate"><span class="pre">batter.systems.masfe</span></code></p>
+<ul class="simple">
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">SimSystem</span></code> – Immutable descriptor of a system on disk.
+Metadata is stored in <code class="xref py py-class docutils literal notranslate"><span class="pre">SystemMeta</span></code> which offers
+structured accessors and <code class="docutils literal notranslate"><span class="pre">merge</span></code> semantics for propagating ligand-specific data.</p></li>
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">MABFEBuilder</span></code> – Prepares shared ABFE systems and creates
+per-ligand children under <code class="docutils literal notranslate"><span class="pre">simulations/&lt;LIG&gt;/</span></code>.</p></li>
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">MASFEBuilder</span></code> – MASFE counterpart that stages ligands
+without a protein topology.</p></li>
+</ul>
+<section id="binding-abfe-components">
+<h3><a class="toc-backref" href="#id6" role="doc-backlink">Binding (ABFE) components</a><a class="headerlink" href="#binding-abfe-components" title="Link to this heading">#</a></h3>
+<p>ABFE simulations decouple the ligand from the bound complex using the <code class="docutils literal notranslate"><span class="pre">z</span></code> component
+(restraints + decoupling in complex). Provide total production steps via
+<code class="docutils literal notranslate"><span class="pre">fe_sim.n_steps</span></code> (or <code class="docutils literal notranslate"><span class="pre">z_n_steps</span></code>). Ensure the restraints and lambdas in the run YAML
+align with your chosen decoupling scheme.</p>
+</section>
+<section id="solvation-asfe-components">
+<h3><a class="toc-backref" href="#id7" role="doc-backlink">Solvation (ASFE) components</a><a class="headerlink" href="#solvation-asfe-components" title="Link to this heading">#</a></h3>
+<p>ASFE simulations run two FE components:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">y</span></code> – ligand-in-solvent decoupling.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">m</span></code> – ligand-in-vacuum decoupling.</p></li>
+</ul>
+<p>Both components require step counts in <code class="docutils literal notranslate"><span class="pre">fe_sim.n_steps</span></code> (<code class="docutils literal notranslate"><span class="pre">y_n_steps</span></code>/<code class="docutils literal notranslate"><span class="pre">m_n_steps</span></code>).
+The orchestrator enforces that both are positive before pipeline execution.</p>
+</section>
+<section id="practical-constraints">
+<h3><a class="toc-backref" href="#id8" role="doc-backlink">Practical constraints</a><a class="headerlink" href="#practical-constraints" title="Link to this heading">#</a></h3>
+<ul class="simple">
+<li><p>Water boxes require <code class="docutils literal notranslate"><span class="pre">buffer_x/y/z</span> <span class="pre">&gt;=</span> <span class="pre">10</span> <span class="pre">Å</span></code>; the validator will reject smaller
+padding to avoid vacuum artifacts. For membranes, automatic Z padding is applied if
+needed.</p></li>
+<li><p>Resume semantics rely on <code class="docutils literal notranslate"><span class="pre">run_id</span></code> plus the stored configuration signature (only
+<code class="docutils literal notranslate"><span class="pre">create</span></code> and <code class="docutils literal notranslate"><span class="pre">fe_sim</span></code> fields). Changing execution knobs under <code class="docutils literal notranslate"><span class="pre">run</span></code> will not
+trigger a new run_id, so bump the run_id yourself when you want a clean workspace.</p></li>
+<li><p>Lambda overrides: provide a default <code class="docutils literal notranslate"><span class="pre">lambdas</span></code> list and override per component via
+<code class="docutils literal notranslate"><span class="pre">component_lambdas</span></code> when needed. Missing components inherit the default schedule.</p></li>
+</ul>
+</section>
+</section>
+<section id="parameterisation">
+<h2><a class="toc-backref" href="#id9" role="doc-backlink">Parameterisation</a><a class="headerlink" href="#parameterisation" title="Link to this heading">#</a></h2>
+<p><em>Module:</em> <code class="docutils literal notranslate"><span class="pre">batter.param.ligand</span></code></p>
+<ul class="simple">
+<li><p><a class="reference internal" href="developer_guide/parameterisation.html#batter.param.ligand.batch_ligand_process" title="batter.param.ligand.batch_ligand_process"><code class="xref py py-func docutils literal notranslate"><span class="pre">batch_ligand_process()</span></code></a> – Performs ligand force-field
+assignment, producing a content-addressed store under <code class="docutils literal notranslate"><span class="pre">artifacts/ligand_params</span></code>.
+Used by the <code class="docutils literal notranslate"><span class="pre">param_ligands</span></code> handler to distribute parameter files.</p></li>
+</ul>
+</section>
+<section id="pipelines-and-payloads">
+<h2><a class="toc-backref" href="#id10" role="doc-backlink">Pipelines and Payloads</a><a class="headerlink" href="#pipelines-and-payloads" title="Link to this heading">#</a></h2>
+<p><em>Modules:</em> <code class="docutils literal notranslate"><span class="pre">batter.pipeline.step</span></code>, <code class="docutils literal notranslate"><span class="pre">batter.pipeline.pipeline</span></code>,
+<code class="docutils literal notranslate"><span class="pre">batter.pipeline.factory</span></code>, <code class="docutils literal notranslate"><span class="pre">batter.pipeline.payloads</span></code></p>
+<ul class="simple">
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">Step</span></code> – Encapsulates a DAG node with <code class="docutils literal notranslate"><span class="pre">name</span></code>,
+<code class="docutils literal notranslate"><span class="pre">requires</span></code> and a <code class="xref py py-class docutils literal notranslate"><span class="pre">StepPayload</span></code>.
+<code class="docutils literal notranslate"><span class="pre">step.params</span></code> remains as a compatibility alias.</p></li>
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">Pipeline</span></code> – Topologically orders steps and invokes
+the backend through <code class="xref py py-meth docutils literal notranslate"><span class="pre">run()</span></code>.</p></li>
+<li><p><code class="xref py py-mod docutils literal notranslate"><span class="pre">batter.pipeline.factory</span></code> – Builds canonical ABFE/ASFE pipelines. Pipelines are
+expressed in terms of <code class="xref py py-class docutils literal notranslate"><span class="pre">StepPayload</span></code> and
+<code class="xref py py-class docutils literal notranslate"><span class="pre">SystemParams</span></code>.</p></li>
+<li><p><code class="xref py py-mod docutils literal notranslate"><span class="pre">batter.pipeline.payloads</span></code> – Defines the typed payload and system-parameter models.
+See <a class="reference internal" href="developer_guide/pipeline_payloads_and_metadata.html"><span class="doc">Typed Pipeline Payloads and System Metadata</span></a> for details.</p></li>
+</ul>
+</section>
+<section id="execution-backends">
+<h2><a class="toc-backref" href="#id11" role="doc-backlink">Execution Backends</a><a class="headerlink" href="#execution-backends" title="Link to this heading">#</a></h2>
+<p><em>Modules:</em> <code class="docutils literal notranslate"><span class="pre">batter.exec.base</span></code>, <code class="docutils literal notranslate"><span class="pre">batter.exec.local</span></code>, <code class="docutils literal notranslate"><span class="pre">batter.exec.slurm</span></code>,
+<code class="docutils literal notranslate"><span class="pre">batter.exec.handlers</span></code>.</p>
+<ul class="simple">
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">ExecBackend</span></code> – Shared protocol implemented by backends.</p></li>
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">LocalBackend</span></code> – Runs Python handlers directly (serial or joblib).</p></li>
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">SlurmBackend</span></code> – Submits SLURM jobs via
+<code class="xref py py-class docutils literal notranslate"><span class="pre">SlurmJobManager</span></code>.</p></li>
+<li><p>Handler modules under <code class="docutils literal notranslate"><span class="pre">batter/exec/handlers</span></code> implement step-specific logic
+(system prep, parameterisation, equilibration, FE production, analysis). Each handler
+receives a <code class="xref py py-class docutils literal notranslate"><span class="pre">StepPayload</span></code> and a
+<code class="xref py py-class docutils literal notranslate"><span class="pre">SimSystem</span></code>.</p></li>
+</ul>
+</section>
+<section id="orchestration">
+<h2><a class="toc-backref" href="#id12" role="doc-backlink">Orchestration</a><a class="headerlink" href="#orchestration" title="Link to this heading">#</a></h2>
+<p><em>Module:</em> <code class="docutils literal notranslate"><span class="pre">batter.orchestrate.run</span></code></p>
+<p><code class="xref py py-func docutils literal notranslate"><span class="pre">run_from_yaml()</span></code> wires every layer together:</p>
+<ol class="arabic simple">
+<li><p>Load the run YAML and apply optional overrides.</p></li>
+<li><p>Instantiate a system builder inferred from the selected protocol (abfe/md → MABFE, asfe → MASFE; overrides via <code class="docutils literal notranslate"><span class="pre">run.system_type</span></code> remain for backward compatibility).</p></li>
+<li><p>Resolve staged ligands (supporting resume) and regenerate the system if required.</p></li>
+<li><p>Construct the ABFE/ASFE pipeline using <code class="xref py py-func docutils literal notranslate"><span class="pre">select_pipeline</span></code>.</p></li>
+<li><p>Execute parent-only steps (<code class="docutils literal notranslate"><span class="pre">system_prep</span></code>, <code class="docutils literal notranslate"><span class="pre">param_ligands</span></code>).</p></li>
+<li><p>Clone the pipeline for per-ligand execution, injecting the SLURM job manager when needed.</p></li>
+<li><p>Run phases sequentially, enforcing skip/resume semantics via
+<code class="xref py py-mod docutils literal notranslate"><span class="pre">batter.orchestrate.markers</span></code>.</p></li>
+<li><p>Persist FE results using <code class="xref py py-class docutils literal notranslate"><span class="pre">FEResultsRepository</span></code>.</p></li>
+</ol>
+<section id="run-identifiers-and-config-signatures">
+<h3><a class="toc-backref" href="#id13" role="doc-backlink">Run identifiers and config signatures</a><a class="headerlink" href="#run-identifiers-and-config-signatures" title="Link to this heading">#</a></h3>
+<p>Each execution lives under <code class="docutils literal notranslate"><span class="pre">&lt;output_folder&gt;/executions/&lt;run_id&gt;/</span></code>. When a run_id
+already exists, <code class="xref py py-func docutils literal notranslate"><span class="pre">batter.orchestrate.run._compute_run_signature()</span></code> compares the
+current YAML against the stored signature under <code class="docutils literal notranslate"><span class="pre">artifacts/config/run_config.hash</span></code>.
+Only the simulation inputs are hashed (<code class="docutils literal notranslate"><span class="pre">create</span></code> and <code class="docutils literal notranslate"><span class="pre">fe_sim</span></code>/<code class="docutils literal notranslate"><span class="pre">fe</span></code>); <code class="docutils literal notranslate"><span class="pre">run</span></code> and
+override flags do not affect the signature. A normalized JSON snapshot of the hashed
+payload is also written to <code class="docutils literal notranslate"><span class="pre">artifacts/config/run_config.normalized.json</span></code> to aid
+debugging. If the signatures differ and <code class="docutils literal notranslate"><span class="pre">run_id</span></code> was requested explicitly, the
+orchestrator raises unless <code class="docutils literal notranslate"><span class="pre">--allow-run-id-mismatch</span></code> is set; in <code class="docutils literal notranslate"><span class="pre">auto</span></code> mode it
+will automatically pick a fresh run_id and log a brief diff of the mismatched fields.</p>
+</section>
+</section>
+<section id="runtime-portability">
+<h2><a class="toc-backref" href="#id14" role="doc-backlink">Runtime &amp; Portability</a><a class="headerlink" href="#runtime-portability" title="Link to this heading">#</a></h2>
+<p><em>Modules:</em> <code class="docutils literal notranslate"><span class="pre">batter.runtime.portable</span></code>, <code class="docutils literal notranslate"><span class="pre">batter.runtime.fe_repo</span></code>.</p>
+<ul class="simple">
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">ArtifactStore</span></code> – Manages a relocatable manifest of
+files/directories produced during the run.</p></li>
+<li><p><code class="xref py py-class docutils literal notranslate"><span class="pre">FEResultsRepository</span></code> – Indexes and stores
+<code class="xref py py-class docutils literal notranslate"><span class="pre">FERecord</span></code> objects, capturing total ΔG, per-window data,
+and copies of analysis outputs.</p></li>
+</ul>
+</section>
+<section id="directory-layout-example">
+<h2><a class="toc-backref" href="#id15" role="doc-backlink">Directory Layout Example</a><a class="headerlink" href="#directory-layout-example" title="Link to this heading">#</a></h2>
+<p>The structure below illustrates an ABFE execution root (<code class="docutils literal notranslate"><span class="pre">&lt;output_folder&gt;/executions/&lt;run_id&gt;/</span></code>):</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>executions/&lt;run_id&gt;/
+├── artifacts/
+│   ├── config/
+│   │   ├── sim_overrides.json
+│   │   └── sim.resolved.yaml
+│   └── ligand_params/
+│       ├── index.json
+│       └── LIG1/
+│           ├── lig.mol2
+│           └── metadata.json
+├── simulations/
+│   ├── LIG1/
+│   │   ├── inputs/ligand.sdf
+│   │   └── fe/...
+│   └── LIG2/
+│       └── ...
+├── batter.run.log
+└── fe/Results/Results.dat     (per-ligand directories once analysis finishes)
+</pre></div>
+</div>
+<p>Refer to <code class="xref py py-mod docutils literal notranslate"><span class="pre">batter.orchestrate.markers</span></code> for the sentinel files used to detect
+completion or failure of each phase.</p>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="api.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">API Documentation</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="developer_guide/pipeline_payloads_and_metadata.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Typed Pipeline Payloads and System Metadata</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#code-layout">Code Layout</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#further-reading">Further Reading</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#high-level-execution-flow">High-Level Execution Flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#configuration-layer">Configuration Layer</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#systems-and-builders">Systems and Builders</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#binding-abfe-components">Binding (ABFE) components</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#solvation-asfe-components">Solvation (ASFE) components</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#practical-constraints">Practical constraints</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#parameterisation">Parameterisation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelines-and-payloads">Pipelines and Payloads</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#execution-backends">Execution Backends</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#orchestration">Orchestration</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#run-identifiers-and-config-signatures">Run identifiers and config signatures</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#runtime-portability">Runtime &amp; Portability</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#directory-layout-example">Directory Layout Example</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/developer_guide.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2024, Yuxuan Zhuang. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.10.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

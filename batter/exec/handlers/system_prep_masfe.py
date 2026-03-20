@@ -14,9 +14,7 @@ from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 
-# -----------------------
-# Small helpers
-# -----------------------
+
 def _ensure_pdb(lig_path: Path, out_dir: Path) -> Path:
     """
     Ensure a PDB exists for a ligand file; if not PDB, convert via RDKit.
@@ -57,10 +55,6 @@ def _copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
 
-
-# -----------------------
-# Runner (MASFE)
-# -----------------------
 class _MASFESystemPrepRunner:
     """
     Minimal system_prep for MASFE (solvation FE):
@@ -79,19 +73,16 @@ class _MASFESystemPrepRunner:
         logger.info(f"[MASFE system_prep] system={system_name}, ligands={len(ligand_paths)}")
         staged_map: Dict[str, str] = {}
 
-        # Convert all ligands to PDB (if needed) and stage to all-ligands/
         for name, src in sorted(ligand_paths.items()):
             src_p = Path(src)
             if not src_p.exists():
                 raise FileNotFoundError(f"Ligand file not found: {src_p}")
             pdb = _ensure_pdb(src_p, self.ligand_stage_dir)
-            # stage as <NAME>.pdb (uppercase key for consistency)
             dst = self.ligand_stage_dir / f"{name.upper()}.pdb"
             if pdb.resolve() != dst.resolve():
                 _copy(pdb, dst)
             staged_map[name.upper()] = str(dst)
 
-        # Minimal manifest
         manifest = {
             "system_name": system_name,
             "mode": "MASFE",
@@ -101,9 +92,6 @@ class _MASFESystemPrepRunner:
         return manifest
 
 
-# -----------------------
-# Handler entry point
-# -----------------------
 def system_prep_masfe(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecResult:
     """Prepare a MASFE solvation system by staging ligands and overrides.
 
@@ -123,22 +111,19 @@ def system_prep_masfe(step: Step, system: SimSystem, params: Dict[str, Any]) -> 
     """
     logger.info(f"[system_prep_masfe] Preparing solvation FE system in {system.root}")
 
-    # Expect the same sys_params envelope your orchestrator already passes
     payload = StepPayload.model_validate(params)
     sys_params = payload.sys_params or SystemParams()
-    lig_map = sys_params["ligand_paths"]  # should already be {NAME: abs_path}
+    lig_map = sys_params["ligand_paths"]
 
     runner = _MASFESystemPrepRunner(system)
     manifest = runner.run(system_name=sys_params["system_name"], ligand_paths=lig_map)
 
-    # Minimal overrides that tell downstream we are in MASFE/solvation mode.
     overrides = {
         "is_solvation": True,
         "water_model": sys_params.get("water_model", "TIP3P"),
         "ion_conc": sys_params.get("ion_conc", 0.0),
         "cation": sys_params.get("cation", "Na+"),
         "anion": sys_params.get("anion", "Cl-"),
-        # No anchors, no membrane here
     }
     (system.root / "artifacts" / "config").mkdir(parents=True, exist_ok=True)
     overrides_path = system.root / "artifacts" / "config" / "sim_overrides.json"

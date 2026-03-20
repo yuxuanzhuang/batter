@@ -9,7 +9,6 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from batter._internal.builders.fe_alchemical import AlchemicalFEBuilder
-from batter.config.simulation import SimulationConfig
 from batter.orchestrate.state_registry import register_phase_state
 from batter._internal.ops import remd as remd_ops
 from batter._internal.ops import batch as batch_ops
@@ -18,9 +17,6 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 
 
-# -----------------------------
-# helpers
-# -----------------------------
 def _system_root_for(child_root: Path) -> Path:
     """work/<sys>/simulations/<lig> → work/<sys>"""
     # Prefer the parent of the "simulations" directory so this works for
@@ -52,10 +48,6 @@ def _load_param_dir_dict(system_root: Path) -> Dict[str, str]:
         raise RuntimeError(f"No ligand param entries found in {index_json}")
     return out
 
-
-# -----------------------------
-# prepare_fe (scaffolding / amber templates)
-# -----------------------------
 def prepare_fe_handler(
     step: Step, system: SimSystem, params: Dict[str, Any]
 ) -> ExecResult:
@@ -75,7 +67,6 @@ def prepare_fe_handler(
     ExecResult
         Metadata describing the generated directories.
     """
-    # 1) Parse sim config + components
     payload = StepPayload.model_validate(params)
     if payload.sim is None:
         raise ValueError("[prepare_fe] Missing simulation configuration in payload.")

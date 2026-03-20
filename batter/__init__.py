@@ -1,73 +1,82 @@
-"""A python package that set up FEP simulations with bat.py"""
+"""BATTER package initialization."""
 
-# Seed default SLURM headers on import as a convenience so users find editable
-# copies under ~/.batter (or configured header root) even outside the CLI.
-try:
-    from .utils.slurm_templates import seed_default_headers
+from __future__ import annotations
 
-    seed_default_headers()
-except Exception:
-    # non-fatal; seeding will also occur when running the CLI
-    pass
+import logging
+import sys
+import warnings
+
+from loguru import logger
 
 from ._version import __version__
 
-__author__ = """Yuxuan Zhuang"""
-__email__ = 'yuxuan.zhuang@stanford.edu'
+__author__ = "Yuxuan Zhuang"
+__email__ = "yuxuan.zhuang@stanford.edu"
 __version__ = __version__
 
 
-import warnings
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    module="MDAnalysis.coordinates.PDB"
-)
+def _seed_default_slurm_headers() -> None:
+    try:
+        from .utils.slurm_templates import seed_default_headers
 
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    module="MDAnalysis.topology.PDBParser"
-)
+        seed_default_headers()
+    except Exception:
+        pass
 
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    module="MDAnalysis.topology.MOL2Parser"
-)
 
-try:
-    from Bio.Application import BiopythonDeprecationWarning
-except ImportError:
-    BiopythonDeprecationWarning = None
+def _configure_warning_filters() -> None:
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        module="MDAnalysis.coordinates.PDB",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        module="MDAnalysis.topology.PDBParser",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        module="MDAnalysis.topology.MOL2Parser",
+    )
 
-if BiopythonDeprecationWarning is not None:
-    warnings.filterwarnings("ignore", category=BiopythonDeprecationWarning)
-    
-from loguru import logger
-import sys
+    try:
+        from Bio.Application import BiopythonDeprecationWarning
+    except ImportError:
+        BiopythonDeprecationWarning = None
 
-# silence pymbar logging warnings
-# copy from openfe
-import logging
-def _mute_timeseries(record):
-    return not "Warning on use of the timeseries module:" in record.msg
-def _mute_jax(record):
-    return not "****** PyMBAR will use 64-bit JAX! *******" in record.msg
-def _mute_jax_2(record):
-    return not "******* JAX 64-bit mode is now on! *******" in record.msg
-def _mute_jax_3(record):
-    return not "PyMBAR can run faster with JAX" in record.msg
-_mbar_log = logging.getLogger("pymbar.timeseries")
-_mbar_log.addFilter(_mute_timeseries)
-_mbar_log = logging.getLogger("pymbar.mbar_solvers")
-_mbar_log.addFilter(_mute_jax)
-_mbar_log.addFilter(_mute_jax_2)
-_mbar_log.addFilter(_mute_jax_3)
-# set logging level to warning
-logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
+    if BiopythonDeprecationWarning is not None:
+        warnings.filterwarnings("ignore", category=BiopythonDeprecationWarning)
 
-logger.remove()
-logger_format = ('{level} | <level>{message}</level> ')
-# format time to be human readable
-logger.add(sys.stderr, format=logger_format, level="INFO")
+
+def _configure_pymbar_logging() -> None:
+    def _mute_timeseries(record):
+        return "Warning on use of the timeseries module:" not in record.msg
+
+    def _mute_jax(record):
+        return "****** PyMBAR will use 64-bit JAX! *******" not in record.msg
+
+    def _mute_jax_2(record):
+        return "******* JAX 64-bit mode is now on! *******" not in record.msg
+
+    def _mute_jax_3(record):
+        return "PyMBAR can run faster with JAX" not in record.msg
+
+    logging.getLogger("pymbar.timeseries").addFilter(_mute_timeseries)
+    mbar_solvers_log = logging.getLogger("pymbar.mbar_solvers")
+    mbar_solvers_log.addFilter(_mute_jax)
+    mbar_solvers_log.addFilter(_mute_jax_2)
+    mbar_solvers_log.addFilter(_mute_jax_3)
+    logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
+
+
+def _configure_logger() -> None:
+    logger.remove()
+    logger.add(sys.stderr, format="{level} | <level>{message}</level> ", level="INFO")
+
+
+_seed_default_slurm_headers()
+_configure_warning_filters()
+_configure_pymbar_logging()
+_configure_logger()

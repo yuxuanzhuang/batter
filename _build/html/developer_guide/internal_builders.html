@@ -1,0 +1,650 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Implementing Internal Builders &#8212; batter  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/autodoc_pydantic.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'developer_guide/internal_builders';</script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Execution Model" href="execution_model.html" />
+    <link rel="prev" title="Authoring Custom Pipelines" href="authoring_pipelines.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">batter  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+            <li class="nav-item dropdown">
+                <button class="btn dropdown-toggle nav-item" type="button"
+                data-bs-toggle="dropdown" aria-expanded="false"
+                aria-controls="pst-nav-more-links">
+                    More
+                </button>
+                <ul id="pst-nav-more-links" class="dropdown-menu">
+                    
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class=" ">
+  <a class="nav-link dropdown-item nav-internal" href="../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class=" current active">
+  <a class="nav-link dropdown-item nav-internal" href="../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+                </ul>
+            </li>
+            
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../getting_started.html">
+    Getting Started
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../tutorial/index.html">
+    Tutorials
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../slurm_headers.html">
+    SLURM header templates
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../configuration.html">
+    Configuration Overview
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../rbfe.html">
+    RBFE Guide
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../cli.html">
+    Command-Line Usage
+  </a>
+</li>
+
+
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../api.html">
+    API Documentation
+  </a>
+</li>
+
+
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../developer_guide.html">
+    BATTER Developer Guide
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><p aria-level="2" class="caption" role="heading"><span class="caption-text">Focus Topics</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="pipeline_payloads_and_metadata.html">Typed Pipeline Payloads and System Metadata</a></li>
+<li class="toctree-l1"><a class="reference internal" href="authoring_pipelines.html">Authoring Custom Pipelines</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Implementing Internal Builders</a></li>
+</ul>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="execution_model.html">Execution Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="analysis.html">Analysis Toolkit</a></li>
+<li class="toctree-l1"><a class="reference internal" href="parameterisation.html">Ligand Parameterisation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../remd_submission.html">REMD submission flow</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../developer_guide.html" class="nav-link">BATTER Developer Guide</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Implementing Internal Builders</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="implementing-internal-builders">
+<h1>Implementing Internal Builders<a class="headerlink" href="#implementing-internal-builders" title="Link to this heading">#</a></h1>
+<p>Per-step work inside BATTER (<code class="docutils literal notranslate"><span class="pre">prepare_equil</span></code>, <code class="docutils literal notranslate"><span class="pre">prepare_fe</span></code>, etc.) is handled by
+classes under <code class="docutils literal notranslate"><span class="pre">batter/_internal</span></code>. This section outlines the directory conventions,
+registries, and shared ops so you can extend builders without reverse-engineering the
+codebase.</p>
+<section id="directory-conventions">
+<h2>Directory Conventions<a class="headerlink" href="#directory-conventions" title="Link to this heading">#</a></h2>
+<p>Every builder receives a <code class="xref py py-class docutils literal notranslate"><span class="pre">BuildContext</span></code>
+that points at a per-ligand working directory:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>simulations/&lt;LIGAND&gt;/
+├── q_build_files/         # Shared build artifacts (build.pdb, anchors, dum.*)
+├── q_amber_files/         # Amber templates for equilibration
+├── q_run_files/           # Job scripts, logs
+├── e_build_files/         # Per-component equivalents (e, v, o, z, y, ...)
+└── ...
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">ctx.build_dir</span></code> / <code class="docutils literal notranslate"><span class="pre">ctx.amber_dir</span></code> helpers abstract these paths so ops like
+<code class="docutils literal notranslate"><span class="pre">create_box</span></code> can stage files without duplicating directory logic. Always write
+intermediate artifacts into the component’s build directory and keep final AMBER
+inputs under <code class="docutils literal notranslate"><span class="pre">ctx.window_dir</span></code>.</p>
+</section>
+<section id="registry-hooks">
+<h2>Registry Hooks<a class="headerlink" href="#registry-hooks" title="Link to this heading">#</a></h2>
+<p>Registries live in <code class="xref py py-mod docutils literal notranslate"><span class="pre">batter._internal.builders.fe_registry</span></code> and map component codes
+to functions:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&#64;register_build_complex('e')</span></code> – adds a factory for the component’s
+<code class="docutils literal notranslate"><span class="pre">_build_complex</span></code> hook.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&#64;register_create_box('z')</span></code> – selects the correct <code class="docutils literal notranslate"><span class="pre">create_box</span></code> helper.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&#64;register_restraints(...)</span></code>, <code class="docutils literal notranslate"><span class="pre">&#64;register_sim_files(...)</span></code>, etc. – route the remaining
+hooks.</p></li>
+</ul>
+<p>When introducing a new component or overriding an existing hook, register it here so
+the orchestrator picks it up automatically.</p>
+</section>
+<section id="reusable-ops">
+<h2>Reusable Ops<a class="headerlink" href="#reusable-ops" title="Link to this heading">#</a></h2>
+<p>Common tasks are centralised under <code class="docutils literal notranslate"><span class="pre">batter/_internal/ops</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">box.py</span></code> – <code class="docutils literal notranslate"><span class="pre">create_box</span></code> helpers (AMBER tleap scripts, solvation, ion placement).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">restraints.py</span></code> – Writers for disang/cv inputs.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sim_files.py</span></code> – Template renderers for MD input decks (equilibration emits the
+standard <code class="docutils literal notranslate"><span class="pre">eqnpt.in</span></code>/<code class="docutils literal notranslate"><span class="pre">eqnpt0.in</span></code> plus the appear/disappear variants used by the
+run scripts).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">simprep.py</span></code> – Build directory initialisation and window copying.</p></li>
+</ul>
+<p>Prefer importing and extending these modules instead of duplicating tleap/parmed code.
+Many helpers already expect <code class="docutils literal notranslate"><span class="pre">BuildContext</span></code> objects and honour the directory layout
+described above.</p>
+</section>
+<section id="sim-file-templates-and-total-steps">
+<h2>Sim file templates and <code class="docutils literal notranslate"><span class="pre">total_steps</span></code><a class="headerlink" href="#sim-file-templates-and-total-steps" title="Link to this heading">#</a></h2>
+<p>Equilibration and production templates written by <code class="docutils literal notranslate"><span class="pre">sim_files.py</span></code> begin with a
+<code class="docutils literal notranslate"><span class="pre">!</span> <span class="pre">total_steps=&lt;int&gt;</span></code> comment (<code class="docutils literal notranslate"><span class="pre">#</span></code> also works). <code class="docutils literal notranslate"><span class="pre">write_sim_files</span></code> uses
+<code class="docutils literal notranslate"><span class="pre">eq_steps</span></code> for equilibration; per-component <code class="docutils literal notranslate"><span class="pre">n_steps</span></code> are used for production
+mdin templates. The runtime scripts (<code class="docutils literal notranslate"><span class="pre">run-local.bash</span></code>, <code class="docutils literal notranslate"><span class="pre">run-local-vacuum.bash</span></code>,
+<code class="docutils literal notranslate"><span class="pre">run-equil.bash</span></code>) call <code class="docutils literal notranslate"><span class="pre">parse_total_steps</span></code> in <code class="docutils literal notranslate"><span class="pre">check_run.bash</span></code> to read that
+marker and <code class="docutils literal notranslate"><span class="pre">parse_nstlim</span></code> to pick the first <code class="docutils literal notranslate"><span class="pre">nstlim</span></code> as the chunk length. Each
+invocation runs one segment, rolls <code class="docutils literal notranslate"><span class="pre">md-current.rst7</span></code>/<code class="docutils literal notranslate"><span class="pre">md-previous.rst7</span></code>, and
+returns; rerun the script to continue until <code class="docutils literal notranslate"><span class="pre">total_steps</span></code> is reached. Avoid
+deleting or renaming the comment when hand editing templates.</p>
+</section>
+<section id="config-field-consumers">
+<h2>Config field consumers<a class="headerlink" href="#config-field-consumers" title="Link to this heading">#</a></h2>
+<p>Key <a class="reference internal" href="../autosummary/config/batter.config.simulation.SimulationConfig.html#batter.config.simulation.SimulationConfig" title="batter.config.simulation.SimulationConfig"><code class="xref py py-class docutils literal notranslate"><span class="pre">SimulationConfig</span></code></a> fields and where they land:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">eq_steps</span></code> → <code class="docutils literal notranslate"><span class="pre">write_sim_files</span></code> (equil mdin-template <code class="docutils literal notranslate"><span class="pre">total_steps</span></code> marker).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&lt;comp&gt;_n_steps</span></code> → component writers in <code class="docutils literal notranslate"><span class="pre">sim_files.py</span></code> (per-window mdin-template markers).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">analysis_start_step</span></code> → stored in FE records and passed to analysis writers to skip early frames.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ntpr</span></code>/<code class="docutils literal notranslate"><span class="pre">ntwr</span></code>/<code class="docutils literal notranslate"><span class="pre">ntwx</span></code> → substituted into mdin templates in <code class="docutils literal notranslate"><span class="pre">sim_files.py</span></code> (restart/trajectory cadence).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">hmr</span></code>/<code class="docutils literal notranslate"><span class="pre">enable_mcwat</span></code> → toggles template selection and template flags in <code class="docutils literal notranslate"><span class="pre">write_amber_templates</span></code>.</p></li>
+</ul>
+</section>
+<section id="builder-lifecycle">
+<h2>Builder Lifecycle<a class="headerlink" href="#builder-lifecycle" title="Link to this heading">#</a></h2>
+<p>Each <code class="xref py py-class docutils literal notranslate"><span class="pre">batter._internal.builders.base.BaseBuilder</span></code> subclass implements the hook
+methods executed by <code class="xref py py-meth docutils literal notranslate"><span class="pre">BaseBuilder.build()</span></code>:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">_build_complex</span></code> – Align systems, detect anchors, and populate <code class="docutils literal notranslate"><span class="pre">build_dir</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_create_box</span></code> – Write solvated/vacuum topologies using the registered <code class="docutils literal notranslate"><span class="pre">create_box</span></code> op.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_restraints</span></code> – Generate component-specific restraints.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_pre_sim_files</span></code> (optional) – Any additional preprocessing before rendering inputs.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_sim_files</span></code> – Produce AMBER mdin/mini/eq decks.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">_run_files</span></code> – Emit SLURM/local job scripts.</p></li>
+</ol>
+</section>
+<section id="builder-testing">
+<h2>Builder Testing<a class="headerlink" href="#builder-testing" title="Link to this heading">#</a></h2>
+<p>Builders operate strictly inside the per-ligand working directory, which keeps them
+easy to reason about. To test a new builder in isolation:</p>
+<ol class="arabic simple">
+<li><p>Construct a <code class="xref py py-class docutils literal notranslate"><span class="pre">BuildContext</span></code> with temporary directories for <code class="docutils literal notranslate"><span class="pre">working_dir</span></code>,
+<code class="docutils literal notranslate"><span class="pre">system_root</span></code>, and <code class="docutils literal notranslate"><span class="pre">param_dir_dict</span></code>.</p></li>
+<li><p>Call the individual hook (or <code class="docutils literal notranslate"><span class="pre">build()</span></code>) and assert that the expected files appear
+under <code class="docutils literal notranslate"><span class="pre">ctx.working_dir</span></code>.</p></li>
+<li><p>Re-run <code class="docutils literal notranslate"><span class="pre">create_box</span></code> and <code class="docutils literal notranslate"><span class="pre">sim_files</span></code> to ensure idempotency—many ops reuse cached
+artifacts when files already exist.</p></li>
+</ol>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="authoring_pipelines.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Authoring Custom Pipelines</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="execution_model.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Execution Model</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#directory-conventions">Directory Conventions</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#registry-hooks">Registry Hooks</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reusable-ops">Reusable Ops</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sim-file-templates-and-total-steps">Sim file templates and <code class="docutils literal notranslate"><span class="pre">total_steps</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#config-field-consumers">Config field consumers</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#builder-lifecycle">Builder Lifecycle</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#builder-testing">Builder Testing</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/developer_guide/internal_builders.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2024, Yuxuan Zhuang. Project structure based on the Computational Molecular Science Python Cookiecutter version 1.10.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
