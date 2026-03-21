@@ -105,14 +105,23 @@ Required Files
 ~~~~~~~~~~~~~~
 
 1. **Protein structure** – ``protein_input.pdb``
-   It can be prepared from e.g. Maestro or an equivalent software. Protonation states are
-   inferred from the residue name (AMBER conventions, e.g., ASH denotes protonated ASP).
-   Water or ligand coordinates may remain in the file—they are stripped during staging.
+   It can be prepared in Maestro or equivalent software. Protonation states are
+   inferred from residue names using AMBER conventions (for example, ASH denotes
+   protonated ASP). When explicit hydrogens are present, BATTER also uses them to
+   distinguish protonation states.
+   Water or non-protein small-molecule coordinates may remain in the file; they are
+   stripped during staging. BATTER currently does not support cofactors or other
+   non-protein residues in ``protein_input.pdb``.
 
 2. **Ligand structures** – one ligand per ``.sdf`` file with 3D coordinates.
    Docked poses, aligned experimental structures, or co-folding models all work as
    long as the coordinates align with the provided ``protein_input.pdb``. Ensure hydrogens/protonation states
    are correct (Open Babel, `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_, or a similar tool can help).
+   If you use ``rbfe.atom_mapper: kartograf`` (the BATTER default), the ligands should
+   preferably already be pre-aligned in a consistent binding pose, since well-aligned
+   molecules are one of Kartograf's core assumptions for finding a good mapping. See
+   the `Kartograf mapping tutorial <https://kartograf.openfree.energy/en/latest/tutorial/mapping_tutorial.html>`_
+   for the upstream guidance.
 
 3. **System topology and coordinates (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``
    Needed for membrane protein system.
@@ -167,6 +176,13 @@ Generating Simulation Inputs
    - ``rbfe.atom_mapper`` – choose RBFE atom mapper backend: ``kartograf`` (default) or ``lomap``.
 
       The available schemes are described in :ref:`Network planning schemes <rbfe_tutorial>`.
+      For mapper-specific behavior and examples, see the `Kartograf documentation <https://kartograf.openfree.energy/en/latest/>`_
+      and the `LoMap documentation <https://lomap.openfree.energy/en/stable/>`_.
+      As a practical default, start with ``kartograf`` unless you have a reason to prefer
+      ``lomap`` for a particular ligand series. This recommendation is consistent with
+      OpenFE switching its CLI default atom mapper from LoMap to Kartograf in line with
+      benchmark-backed recommended defaults. LoMap remains available and can still be a
+      better fit for some chemotypes or mapping preferences.
 
 2. **Validate the configuration before heavy computation (Optional)**::
 
@@ -193,13 +209,26 @@ Generating Simulation Inputs
 Submitting the manager job via SLURM (RECOMMENDED)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+Before submitting, make sure the SLURM header files have been seeded and edited for
+your cluster. BATTER stores them in ``~/.batter/`` by default (or under
+``run.slurm_header_dir`` if you configured a custom location). In particular,
+update ``job_manager.header`` and ``SLURMM-Am.header`` so they load Amber/AmberTools
+successfully and match your site environment (modules, conda activation, partitions,
+MPI launcher, executable paths, account settings, etc.). If you plan to run REMD,
+also review ``SLURMM-BATCH-remd.header``.
+
+Seed the default headers if needed::
+
+    batter seed-headers
+
 To submit the same run through SLURM::
 
     batter run examples/rbfe.yaml --slurm-submit
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.). Copy and modify the default template from
-``batter/data/job_manager.header`` + ``job_manager.body``.
+``batter/data/job_manager.header`` + ``job_manager.body``. See :doc:`../slurm_headers`
+for the full header layout and override rules.
 
 The job manager stages the system locally,
 writes an ``sbatch`` script based on the YAML hash, and streams updates as windows
