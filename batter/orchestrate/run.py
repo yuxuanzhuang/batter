@@ -106,17 +106,18 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
 
 
 def _clear_failure_markers(run_dir: Path) -> None:
-    """Remove FAILED markers and progress caches under a run directory."""
+    """Remove failure markers, retry counters, and progress caches under a run directory."""
     sim_root = run_dir / "simulations"
     if not sim_root.exists():
         return
     removed = 0
-    for path in sim_root.rglob("FAILED"):
-        try:
-            path.unlink()
-            removed += 1
-        except Exception:
-            continue
+    for marker_name in ("FAILED", "job_attempt.txt"):
+        for path in sim_root.rglob(marker_name):
+            try:
+                path.unlink()
+                removed += 1
+            except Exception:
+                continue
     for path in sim_root.rglob("progress"):
         if not path.is_dir():
             continue

@@ -20,7 +20,9 @@ The run YAML file is divided into three sections grouped inside
     required and becomes the base path for ``<run.output_folder>/executions/<run_id>/``.
     ``run.system_type`` optionally overrides the builder selection inferred from the
     protocol (``MABFE`` for ABFE/MD, ``MASFE`` for ASFE). This section is validated
-    by :class:`batter.config.run.RunSection`.
+    by :class:`batter.config.run.RunSection`. Set ``run.clean_failures: true`` to
+    remove ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress
+    caches before rerunning an existing execution.
 ``create``
     Inputs required for system staging (protein/topology paths, ligands, force fields,
     optional restraints). The structure maps directly to

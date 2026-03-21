@@ -796,7 +796,7 @@ class RunSection(BaseModel):
     )
     clean_failures: bool = Field(
         False,
-        description="Clear FAILED markers and progress caches before rerunning.",
+        description="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
     )
     remd: Literal["yes", "no"] = Field(
         "no",

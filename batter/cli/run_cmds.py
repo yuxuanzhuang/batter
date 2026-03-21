@@ -120,7 +120,7 @@ def _resolve_run_dir_for_submission(
 @click.option(
     "--clean-failures/--no-clean-failures",
     default=None,
-    help="Clear FAILED markers and progress caches before rerunning.",
+    help="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
 )
 @click.option(
     "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
@@ -304,7 +304,7 @@ def cmd_run(
 @click.option(
     "--clean-failures/--no-clean-failures",
     default=None,
-    help="Clear FAILED markers and progress caches before rerunning.",
+    help="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
 )
 @click.option(
     "--only-equil/--full", default=None, help="Run only equil steps; override YAML."

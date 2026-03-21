@@ -25,6 +25,8 @@ Options:
    Allow reuse of a run id even when the stored configuration hash differs.
 ``--dry-run / --no-dry-run``
    Toggle ``run.dry_run`` from the YAML.
+``--clean-failures / --no-clean-failures``
+   Clear ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress caches before rerunning an execution.
 ``--only-equil / --full``
    Run only equilibration preparation steps. FE preparation is still performed (up to
    ``prepare_fe_windows``), but the FE equilibration/production/analyse phases are skipped.

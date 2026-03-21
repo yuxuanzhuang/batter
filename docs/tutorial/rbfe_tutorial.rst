@@ -212,6 +212,8 @@ Handy CLI Flags
 
 ``--on-failure {prune,raise,retry}``
     Decide how to handle per-ligand failures. ``retry`` clears ``FAILED`` sentinels and reruns that phase once.
+``--clean-failures / --no-clean-failures``
+    Remove ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress caches before rerunning a previous execution.
 ``--only-equil / --full``
     Stop after shared prep/equilibration—useful for debugging system setup before FE windows.
 ``--dry-run``

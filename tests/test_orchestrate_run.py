@@ -347,6 +347,38 @@ def test_select_run_id_reuses_latest(tmp_path: Path) -> None:
     assert run_dir == new
 
 
+def test_clear_failure_markers_removes_retry_counters_and_progress(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "executions" / "rep1"
+    win_dir = run_dir / "simulations" / "LIG" / "fe" / "z" / "z00"
+    progress_dir = run_dir / "simulations" / "LIG" / "progress"
+    artifact_progress = run_dir / "artifacts" / "progress"
+
+    win_dir.mkdir(parents=True, exist_ok=True)
+    progress_dir.mkdir(parents=True, exist_ok=True)
+    artifact_progress.mkdir(parents=True, exist_ok=True)
+
+    failed_marker = win_dir / "FAILED"
+    attempt_file = win_dir / "job_attempt.txt"
+    progress_csv = progress_dir / "state.csv"
+    keep_file = win_dir / "keep.txt"
+
+    failed_marker.write_text("FAILED\n")
+    attempt_file.write_text("3\n")
+    progress_csv.write_text("phase,status\n")
+    (artifact_progress / "phase_state.json").write_text("{}")
+    keep_file.write_text("keep\n")
+
+    run_mod._clear_failure_markers(run_dir)
+
+    assert not failed_marker.exists()
+    assert not attempt_file.exists()
+    assert not progress_csv.exists()
+    assert not artifact_progress.exists()
+    assert keep_file.exists()
+
+
 def _dummy_smtp(sent: dict[str, str | list[str]]):
     class DummySMTP:
         def __init__(self, host: str) -> None:
