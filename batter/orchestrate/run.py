@@ -18,6 +18,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 from smtplib import SMTPException
+import pandas as pd
 import yaml
 
 from loguru import logger
@@ -156,6 +157,50 @@ def _build_per_ligand_pipeline(tpl: Pipeline, sim_cfg_updated: Any) -> Pipeline:
             )
         )
     return Pipeline(steps)
+
+
+def _format_summary_float(value: Any) -> str:
+    """Render FE summary floats consistently for terminal/email tables."""
+    try:
+        if pd.isna(value):
+            return ""
+        return f"{float(value):.3f}"
+    except Exception:
+        return str(value)
+
+
+def _build_run_summary_table(
+    repo: FEResultsRepository, run_id: str
+) -> str | None:
+    """Build a plain-text summary table for a completed run."""
+    try:
+        df = repo.index()
+    except Exception as exc:
+        logger.warning(f"Could not load FE summary for run '{run_id}': {exc}")
+        return None
+
+    if df.empty or "run_id" not in df.columns:
+        return None
+
+    summary = df[df["run_id"] == run_id].copy()
+    if summary.empty:
+        return None
+
+    cols = ["ligand", "mol_name", "total_dG", "total_se", "status", "failure_reason"]
+    for col in cols:
+        if col not in summary.columns:
+            summary[col] = pd.NA
+
+    summary = summary[cols].sort_values(
+        ["status", "ligand"], na_position="last", kind="stable"
+    )
+    for col in ("ligand", "mol_name", "status", "failure_reason"):
+        summary[col] = summary[col].fillna("")
+    for col in ("total_dG", "total_se"):
+        summary[col] = summary[col].map(_format_summary_float)
+
+    with pd.option_context("display.max_columns", None, "display.width", 160):
+        return summary.to_string(index=False)
 
 
 def _select_phase_pipeline(pipeline: Pipeline, step_names: frozenset[str]) -> Pipeline:
@@ -1158,11 +1203,18 @@ def _run_from_yaml_impl(
             [f"{n} ({status}: {reason})" for n, status, reason in failures]
         )
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
+    summary_table = _build_run_summary_table(repo, run_id)
+    if summary_table:
+        logger.info(f"Final FE summary for run '{run_id}':\n{summary_table}")
+    else:
+        logger.warning(
+            f"No FE summary rows found for run '{run_id}' after FE record export."
+        )
     logger.success(
         f"All phases completed {run_dir}. FE records saved to repository {rc.run.output_folder}/results/."
     )
 
-    _notify_run_completion(rc, run_id, run_dir, failures)
+    _notify_run_completion(rc, run_id, run_dir, failures, summary_table=summary_table)
 
 
 def _notify_run_completion(
@@ -1170,6 +1222,7 @@ def _notify_run_completion(
     run_id: str,
     run_dir: Path,
     failures: list[tuple[str, str, str]],
+    summary_table: str | None = None,
 ) -> None:
     _notify_run_status(
         rc,
@@ -1177,6 +1230,7 @@ def _notify_run_completion(
         run_id=run_id,
         run_dir=run_dir,
         failures=failures,
+        summary_table=summary_table,
     )
 
 
@@ -1202,6 +1256,7 @@ def _notify_run_status(
     run_dir: Path | None,
     failures: list[tuple[str, str, str]] | None = None,
     error: Exception | None = None,
+    summary_table: str | None = None,
 ) -> None:
     recipient = rc.run.email_on_completion
     if not recipient:
@@ -1253,6 +1308,15 @@ def _notify_run_status(
                 body_lines.append(f"- {ligand} ({failure_status}): {reason}")
         else:
             body_lines.append("No ligand failures were detected.")
+        if summary_table:
+            body_lines.extend(
+                [
+                    "",
+                    "Final FE summary:",
+                    "",
+                    summary_table,
+                ]
+            )
 
     body_lines.extend(
         [

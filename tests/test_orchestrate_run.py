@@ -10,7 +10,7 @@ import pytest
 
 from batter.config.simulation import SimulationConfig
 from batter.orchestrate.run import save_fe_records
-from batter.runtime.fe_repo import FEResultsRepository
+from batter.runtime.fe_repo import FERecord, FEResultsRepository
 from batter.runtime.portable import ArtifactStore
 from batter.systems.core import SimSystem, SystemMeta
 from batter.orchestrate import run as run_mod
@@ -379,6 +379,45 @@ def test_clear_failure_markers_removes_retry_counters_and_progress(
     assert keep_file.exists()
 
 
+def test_build_run_summary_table_includes_success_and_failure_rows(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+    repo.save(
+        FERecord(
+            run_id="run1",
+            ligand="ligA",
+            mol_name="LIGA",
+            system_name="sys",
+            fe_type="rest",
+            temperature=300.0,
+            total_dG=-7.125,
+            total_se=0.222,
+            protocol="abfe",
+        )
+    )
+    repo.record_failure(
+        run_id="run1",
+        ligand="ligB",
+        system_name="sys",
+        temperature=300.0,
+        status="failed",
+        reason="no_totals_found",
+        protocol="abfe",
+    )
+
+    table = run_mod._build_run_summary_table(repo, "run1")
+
+    assert table is not None
+    assert "ligA" in table
+    assert "ligB" in table
+    assert "-7.125" in table
+    assert "0.222" in table
+    assert "failed" in table
+    assert "no_totals_found" in table
+
+
 def _dummy_smtp(sent: dict[str, str | list[str]]):
     class DummySMTP:
         def __init__(self, host: str) -> None:
@@ -424,6 +463,31 @@ def test_notify_run_completion_prefers_config_sender(
     assert sent["sender"] == "config@example.com"
     assert sent["recipients"] == ["dest@example.com"]
     assert "From: batter <config@example.com>" in sent["message"]
+
+
+def test_notify_run_completion_includes_summary_table(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    summary_table = (
+        "ligand mol_name total_dG total_se  status failure_reason\n"
+        "  ligA     LIGA   -7.125    0.222 success"
+    )
+
+    run_mod._notify_run_completion(
+        rc,
+        "run1",
+        tmp_path,
+        [],
+        summary_table=summary_table,
+    )
+
+    assert "Final FE summary:" in sent["message"]
+    assert summary_table in sent["message"]
 
 
 def test_notify_run_completion_skips_when_sender_missing(
