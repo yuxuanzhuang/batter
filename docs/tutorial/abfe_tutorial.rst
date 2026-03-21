@@ -17,29 +17,30 @@ Quick walkthrough
 -----------------
 
 ``batter`` orchestrates an end-to-end AMBER ABFE workflow that starts from protein +
-embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
+embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlaid to the
 protein binding site. The main steps are:
 
-#. **system staging and loading** – A executon folder will be created under ``<run.output_folder>/executions/``
+#. **system staging and loading** – An execution folder will be created under ``<run.output_folder>/executions/``
    to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
    resumed from the last successful step.
 #. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
    options to choose charges (AM1-BCC by default)
-#. **Equilbration system preparation** – builds solvated/membrane-embedded
+#. **Equilibration system preparation** – builds solvated/membrane-embedded
    systems with the ligand in the binding site.
 #. **Equilibration** – Steps to run before FE production run. During this phase,
    the ligand and protein are not restrained (unless explicitly configured).
-   If the ligand unbound from the binding site during equilibration, the run
+   If the ligand unbinds from the binding site during equilibration, the run
    is marked as unbound and skipped during FE production.
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
-#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
+#. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window is submitted as an independent SLURM job.
    The main process monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
-   to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
-#. **Analysis** – Once all windows complete, MBAR analysis is performed and
+   to cap how many SLURM jobs BATTER keeps active at once and avoid overloading the scheduler.
+#. **Analysis** – Once all windows complete, MBAR analysis is performed and the final
+   results are written to the portable ``results/`` repository.
 
 Installation
 ------------
@@ -79,7 +80,7 @@ Preparing the System
 --------------------
 
 Use ``examples/mabfe_example.yaml`` as the starting configuration. Each field is documented in
-:doc:`../configuration`, but review the inputs below before running anything:
+:doc:`../cookbook/configuration`, but review the inputs below before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
@@ -147,13 +148,17 @@ Generating Simulation Inputs
    - ``run.email_sender`` – sender address for those notifications. Defaults to ``nobody@stanford.edu``.
    - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
    - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
-   
+
+   Use :doc:`../cookbook/configuration` for the full YAML field reference. If you plan
+   to submit through Slurm, also review :doc:`../cookbook/slurm_headers` before the
+   first production run.
 
 2. **Validate the configuration before heavy computation (Optional)**::
 
        batter run examples/mabfe_example.yaml --dry-run
 
-   This command runs ligand parameterisation (WARNING: heavy load), and equilibration system preparation.
+   This command runs ligand parameterisation (a heavy step) and prepares the
+   equilibration systems.
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
 
 3. **Inspect the staged system (Optional)**  
@@ -180,7 +185,9 @@ your cluster. BATTER stores them in ``~/.batter/`` by default (or under
 update ``job_manager.header`` and ``SLURMM-Am.header`` so they load Amber/AmberTools
 successfully and match your site environment (modules, conda activation, partitions,
 MPI launcher, executable paths, account settings, etc.). If you plan to run REMD,
-also review ``SLURMM-BATCH-remd.header``.
+also review ``SLURMM-BATCH-remd.header``. The dedicated
+:doc:`../cookbook/slurm_headers` page summarizes what each header controls and how
+the seeded files relate to the packaged script bodies.
 
 Seed the default headers if needed::
 
@@ -192,7 +199,7 @@ To submit the same run through SLURM::
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.). Copy and modify the default template from
-``batter/data/job_manager.header`` + ``job_manager.body``. See :doc:`../slurm_headers`
+``batter/data/job_manager.header`` + ``job_manager.body``. See :doc:`../cookbook/slurm_headers`
 for the full header layout and override rules.
 
 The job manager stages the system locally,
@@ -217,6 +224,12 @@ Handy CLI Flags
 ``--slurm-submit`` / ``--slurm-manager-path``
     Switch between local execution and SLURM submission (with an optional custom header).
 
+Some failures are transient cluster issues rather than setup problems, for example a
+job landing on a bad node or hitting a temporary GPU/filesystem problem. In that
+case, rerun the same command with ``--clean-failures`` to clear stale failure
+markers before resuming. If you want BATTER to clear phase sentinels and retry once
+within the run manager, use ``--on-failure retry``.
+
 Run ``batter run --help`` anytime you need the full list of switches and defaults.
 
 Monitoring Jobs
@@ -235,7 +248,7 @@ Optional: Additional Conformational Restraints
 ----------------------------------------------
 
 #. Use the restraint-generation notebook from
-   `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
+   `bat_mem restraint notebook <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
    or an equivalent script to build a ``restraints.json`` describing the distance
    constraints you need.
 
@@ -245,10 +258,11 @@ Optional: Additional Conformational Restraints
 
 See ``examples/conformational_restraints`` for a full example.
 
-Optional: Additional Positioinal Restraints
+Optional: Additional Positional Restraints
 ----------------------------------------------
 
-#. Add selection string for the atoms to be positionally restraint to  ``create.extra_restraints`` at the resulting JSON file::
+#. Add a selection string for the atoms to be positionally restrained in
+   ``create.extra_restraints``::
 
        extra_restraints: "selection_string"
 
@@ -268,7 +282,8 @@ Use the CLI helpers to inspect them::
 records. CSV/JSON exports live alongside the results on disk, and convergence plots
 appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`../developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
-parsing).
+parsing). For a file-by-file description of the portable repository written under
+``<run.output_folder>/results/``, see :doc:`../cookbook/results_folder`.
 
 Additional Resources
 --------------------
@@ -277,3 +292,29 @@ Additional Resources
   binding free energy: `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/>`_
 
 - Unsure about the protonation state of the ligand: `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_.
+
+Lambda-Schedule Tuning
+----------------------
+
+If you already have a good estimate for how many lambda windows your system needs,
+you can keep that window count fixed and use ``batter fek-schedule`` to optimize
+the spacing. The current recipe is documented in :doc:`../cookbook/fek_schedule`.
+
+The cookbook example is written for an RBFE transformation path, but the same idea
+applies to ABFE components once you point ``batter fek-schedule`` at the relevant
+analysis-ready FE directory. In practice, this is most useful after an initial pilot
+run has shown that you want to keep the same total number of windows but redistribute
+them more efficiently.
+
+48 windows has worked well in testing:
+
+.. code-block:: yaml
+
+   lambdas: [0.00000000, 0.12542000, 0.16637000, 0.19653000, 0.22148000, 0.24326000,
+             0.26289000, 0.28094000, 0.29779000, 0.31370000, 0.32884000, 0.34336000,
+             0.35737000, 0.37095000, 0.38416000, 0.39707000, 0.40971000, 0.42215000,
+             0.43441000, 0.44652000, 0.45852000, 0.47043000, 0.48228000, 0.49410000,
+             0.50590000, 0.51772000, 0.52958000, 0.54150000, 0.55351000, 0.56563000,
+             0.57790000, 0.59036000, 0.60303000, 0.61596000, 0.62920000, 0.64280000,
+             0.65684000, 0.67140000, 0.68659000, 0.70254000, 0.71944000, 0.73754000,
+             0.75722000, 0.77906000, 0.80408000, 0.83431000, 0.87533000, 1.00000000]

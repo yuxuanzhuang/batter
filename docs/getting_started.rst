@@ -5,6 +5,20 @@ Getting Started
 Welcome to **BATTER**. This short guide provides the key resources new users and
 developers should consult in order to become productive quickly.
 
+.. important::
+
+   Before submitting jobs through Slurm, make sure the seeded files under
+   ``~/.batter/`` are edited for your cluster so Amber/AmberTools loads
+   successfully. In practice this usually means updating
+   ``job_manager.header`` and ``SLURMM-Am.header`` (and
+   ``SLURMM-BATCH-remd.header`` if you plan to use REMD) so the right modules,
+   environment activation, and executable paths are set for your site.
+
+   If the folder has not been created yet, run ``batter seed-headers`` first.
+   If you use a custom header directory, the same requirement applies to the
+   location pointed to by ``run.slurm_header_dir``. See
+   :doc:`cookbook/slurm_headers` for the full layout and examples.
+
 Follow the Tutorial
 ===================
 
@@ -17,7 +31,7 @@ Configuration Reference
 =======================
 
 For a complete description of the YAML schemas, default values, and validation rules,
-refer to :doc:`configuration`. It details every field in
+refer to :doc:`cookbook/configuration`. It details every field in
 :class:`~batter.config.run.RunConfig` and :class:`~batter.config.simulation.SimulationConfig`,
 including advanced options such as restraint overrides, REMD setup, or SLURM-specific
 controls.

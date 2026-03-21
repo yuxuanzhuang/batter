@@ -68,8 +68,11 @@ def test_handle_phase_failures_prune_and_raise(tmp_path):
     pruned = markers.handle_phase_failures(list(systems), phase, mode="prune")
     assert [s.name for s in pruned] == ["ok"]
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as exc:
         markers.handle_phase_failures(list(systems), phase, mode="raise")
+    msg = str(exc.value)
+    assert "batter run <run.yaml> --on-failure retry" in msg
+    assert "batter run <run.yaml> --clean-failures" in msg
 
 
 def test_filter_needing_phase_and_is_done(tmp_path):

@@ -70,9 +70,9 @@ working on internal builders or pipelines:
    developer_guide/execution_model
    developer_guide/analysis
    developer_guide/parameterisation
-   remd_submission
 
-For Slurm header customisation, see :doc:`slurm_headers`.
+For Slurm header customisation, see :doc:`cookbook/slurm_headers`.
+For REMD operational details, see :doc:`cookbook/remd_submission`.
 
 High-Level Execution Flow
 =========================

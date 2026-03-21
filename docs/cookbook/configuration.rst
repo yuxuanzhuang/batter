@@ -82,7 +82,7 @@ Component-Specific Inputs
 
 Although the ``create`` block is shared by ABFE, MASFE, and MD pipelines, some fields
 are consumed only by particular builders. The table below highlights the ones that
-feed into the low-level ops documented in :doc:`developer_guide/internal_builders`:
+feed into the low-level ops documented in :doc:`../developer_guide/internal_builders`:
 
 .. list-table::
    :header-rows: 1
