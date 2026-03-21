@@ -273,7 +273,13 @@ Use the CLI helpers to inspect them::
 records. CSV/JSON exports live alongside the results on disk, and convergence plots
 appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`../developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
-parsing).
+parsing). For a file-by-file description of the portable repository written under
+``<run.output_folder>/results/``, see :doc:`../cookbook/results_folder`.
+
+Portable results are written under ``<run.output_folder>/results/``. For a file-by-file
+description of that repository, including the RBFE-only ``mapping.*``,
+``rbfe_network.png``, and ``Equil_ref`` / ``Equil_alt`` exports, see
+:doc:`../cookbook/results_folder`.
 
 Additional Resources
 --------------------
@@ -282,3 +288,29 @@ Additional Resources
   binding free energy: `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/>`_
 
 - Unsure about the protonation state of the ligand: `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_.
+
+Lambda-Schedule Tuning
+----------------------
+
+If you already have a good estimate for how many lambda windows your system needs,
+you can keep that window count fixed and use ``batter fek-schedule`` to optimize
+the spacing. The current recipe is documented in :doc:`../cookbook/fek_schedule`.
+
+The cookbook example is written for an RBFE transformation path, but the same idea
+applies to ABFE components once you point ``batter fek-schedule`` at the relevant
+analysis-ready FE directory. In practice, this is most useful after an initial pilot
+run has shown that you want to keep the same total number of windows but redistribute
+them more efficiently.
+
+48 windows has worked well in testing:
+
+.. code-block:: yaml
+
+   lambdas: [0.00000000, 0.12542000, 0.16637000, 0.19653000, 0.22148000, 0.24326000,
+             0.26289000, 0.28094000, 0.29779000, 0.31370000, 0.32884000, 0.34336000,
+             0.35737000, 0.37095000, 0.38416000, 0.39707000, 0.40971000, 0.42215000,
+             0.43441000, 0.44652000, 0.45852000, 0.47043000, 0.48228000, 0.49410000,
+             0.50590000, 0.51772000, 0.52958000, 0.54150000, 0.55351000, 0.56563000,
+             0.57790000, 0.59036000, 0.60303000, 0.61596000, 0.62920000, 0.64280000,
+             0.65684000, 0.67140000, 0.68659000, 0.70254000, 0.71944000, 0.73754000,
+             0.75722000, 0.77906000, 0.80408000, 0.83431000, 0.87533000, 1.00000000]

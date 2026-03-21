@@ -257,3 +257,46 @@ Handy CLI Flags
     Override execution paths without touching ``system.*`` fields.
 ``--slurm-submit`` / ``--slurm-manager-path``
     Switch between local execution and SLURM submission (with an optional custom header).
+
+Results and Analysis
+--------------------
+
+Once all windows complete, the manager performs MBAR analysis and saves results in
+``executions/<run_id>/analysis/``. The main output is ``results.csv``, which contains
+the ΔΔG values for each pair and direction, along with error estimates and other metadata.
+
+Portable results are written under ``<run.output_folder>/results/``. For a file-by-file
+description of that repository, including the RBFE-only ``mapping.*``,
+``rbfe_network.png``, and ``Equil_ref`` / ``Equil_alt`` exports, see
+:doc:`../cookbook/results_folder`.
+
+Lambda-Schedule Tuning
+----------------------
+
+If you already know the approximate number of windows your ligand series needs, you
+can keep that count fixed and use ``batter fek-schedule`` to optimize the spacing.
+The current recipe is documented in :doc:`../cookbook/fek_schedule`.
+
+For the small-molecule RBFE cases documented so far, 24 windows often seem to be
+enough, using a simple evenly spaced schedule:
+
+.. code-block:: yaml
+
+   lambdas: [0.0, 0.04347826, 0.08695652, 0.13043478, 0.17391304,
+             0.2173913, 0.26086957, 0.30434783, 0.34782609, 0.39130435,
+             0.43478261, 0.47826087, 0.52173913, 0.56521739, 0.60869565,
+             0.65217391, 0.69565217, 0.73913043, 0.7826087, 0.82608696,
+             0.86956522, 0.91304348, 0.95652174, 1.0]
+
+For more complex transformations, 48 windows has worked well in testing:
+
+.. code-block:: yaml
+
+   lambdas: [0.00000000, 0.12542000, 0.16637000, 0.19653000, 0.22148000, 0.24326000,
+             0.26289000, 0.28094000, 0.29779000, 0.31370000, 0.32884000, 0.34336000,
+             0.35737000, 0.37095000, 0.38416000, 0.39707000, 0.40971000, 0.42215000,
+             0.43441000, 0.44652000, 0.45852000, 0.47043000, 0.48228000, 0.49410000,
+             0.50590000, 0.51772000, 0.52958000, 0.54150000, 0.55351000, 0.56563000,
+             0.57790000, 0.59036000, 0.60303000, 0.61596000, 0.62920000, 0.64280000,
+             0.65684000, 0.67140000, 0.68659000, 0.70254000, 0.71944000, 0.73754000,
+             0.75722000, 0.77906000, 0.80408000, 0.83431000, 0.87533000, 1.00000000]

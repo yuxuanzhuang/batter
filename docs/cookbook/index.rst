@@ -10,5 +10,7 @@ need a full tutorial.
 
    configuration
    slurm_headers
+   remd_submission
+   results_folder
    rbfe
    fek_schedule

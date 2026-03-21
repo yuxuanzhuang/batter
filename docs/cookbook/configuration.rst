@@ -151,7 +151,7 @@ runtime is controlled by ``n_steps``. Control execution with ``run.remd`` (``yes
 ``no``); when ``run.remd: no`` the files are still generated but no REMD jobs are
 scheduled. REMD jobs submit one Slurm job per component via ``SLURMM-BATCH-remd`` and
 monitor ``FINISHED``/``FAILED`` sentinels in the component folder. See
-:doc:`../remd_submission` for operational details.
+:doc:`remd_submission` for operational details.
 
 SLURM header templates
 ----------------------
