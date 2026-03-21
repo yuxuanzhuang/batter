@@ -50,7 +50,7 @@ def _configure_warning_filters() -> None:
         warnings.filterwarnings("ignore", category=BiopythonDeprecationWarning)
 
 
-def _configure_pymbar_logging() -> None:
+def _configure_logging() -> None:
     def _mute_timeseries(record):
         return "Warning on use of the timeseries module:" not in record.msg
 
@@ -63,12 +63,15 @@ def _configure_pymbar_logging() -> None:
     def _mute_jax_3(record):
         return "PyMBAR can run faster with JAX" not in record.msg
 
+    logging.basicConfig(level=logging.WARNING, force=True)
     logging.getLogger("pymbar.timeseries").addFilter(_mute_timeseries)
     mbar_solvers_log = logging.getLogger("pymbar.mbar_solvers")
     mbar_solvers_log.addFilter(_mute_jax)
     mbar_solvers_log.addFilter(_mute_jax_2)
     mbar_solvers_log.addFilter(_mute_jax_3)
+    logging.getLogger("kartograf").setLevel(logging.WARNING)
     logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
+    logging.getLogger("pymbar").setLevel(logging.WARNING)
 
 
 def _configure_logger() -> None:
@@ -78,5 +81,5 @@ def _configure_logger() -> None:
 
 _seed_default_slurm_headers()
 _configure_warning_filters()
-_configure_pymbar_logging()
+_configure_logging()
 _configure_logger()
