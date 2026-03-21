@@ -72,7 +72,7 @@ working on internal builders or pipelines:
    developer_guide/parameterisation
    remd_submission
 
-For Slurm header customisation, see :doc:`slurm_headers`.
+For Slurm header customisation, see :doc:`cookbook/slurm_headers`.
 
 High-Level Execution Flow
 =========================

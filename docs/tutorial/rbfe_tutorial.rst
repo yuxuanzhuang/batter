@@ -52,7 +52,7 @@ RBFE mappings can be created in a few ways:
 * **Konnektor** – uses the ``konnektor`` library to build a network; configure with
   ``rbfe.mapping: konnektor`` and optionally ``rbfe.konnektor_layout``.
   Choose atom mapping backend via ``rbfe.atom_mapper`` (``kartograf`` or ``lomap``).
-  The exact Kartograf/Lomap mapper parameters are documented in :doc:`../rbfe`.
+  The exact Kartograf/Lomap mapper parameters are documented in :doc:`../cookbook/rbfe`.
   The available layouts are listed in the `Konnektor documentation <https://konnektor.openfree.energy/en/latest/api/konnektor.planners.html>`_.
   provide inputs can be either `MinimalSpanningTreeNetworkGenerator` or `minimalspanningtree`.
   See detailed tutorial in `Konnektor tutorial <https://konnektor.openfree.energy/en/latest/tutorials/basic_network_generation.html>`_.
@@ -99,7 +99,7 @@ Preparing the System
 --------------------
 
 Use ``examples/rbfe.yaml`` as the starting configuration. Each field is documented in
-:doc:`../configuration`, but review the inputs below before running anything:
+:doc:`../cookbook/configuration`, but review the inputs below before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
@@ -184,6 +184,10 @@ Generating Simulation Inputs
       benchmark-backed recommended defaults. LoMap remains available and can still be a
       better fit for some chemotypes or mapping preferences.
 
+   Use :doc:`../cookbook/configuration` for the full YAML field reference and
+   :doc:`../cookbook/rbfe` for the RBFE-specific mapping examples and defaults. If you
+   plan to submit through Slurm, also review :doc:`../cookbook/slurm_headers`.
+
 2. **Validate the configuration before heavy computation (Optional)**::
 
        batter run examples/rbfe.yaml --dry-run
@@ -215,7 +219,9 @@ your cluster. BATTER stores them in ``~/.batter/`` by default (or under
 update ``job_manager.header`` and ``SLURMM-Am.header`` so they load Amber/AmberTools
 successfully and match your site environment (modules, conda activation, partitions,
 MPI launcher, executable paths, account settings, etc.). If you plan to run REMD,
-also review ``SLURMM-BATCH-remd.header``.
+also review ``SLURMM-BATCH-remd.header``. The dedicated
+:doc:`../cookbook/slurm_headers` page summarizes what each header controls and how
+the seeded files relate to the packaged script bodies.
 
 Seed the default headers if needed::
 
@@ -227,7 +233,7 @@ To submit the same run through SLURM::
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.). Copy and modify the default template from
-``batter/data/job_manager.header`` + ``job_manager.body``. See :doc:`../slurm_headers`
+``batter/data/job_manager.header`` + ``job_manager.body``. See :doc:`../cookbook/slurm_headers`
 for the full header layout and override rules.
 
 The job manager stages the system locally,

@@ -17,7 +17,7 @@ Configuration Reference
 =======================
 
 For a complete description of the YAML schemas, default values, and validation rules,
-refer to :doc:`configuration`. It details every field in
+refer to :doc:`cookbook/configuration`. It details every field in
 :class:`~batter.config.run.RunConfig` and :class:`~batter.config.simulation.SimulationConfig`,
 including advanced options such as restraint overrides, REMD setup, or SLURM-specific
 controls.

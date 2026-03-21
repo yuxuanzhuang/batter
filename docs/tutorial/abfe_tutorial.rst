@@ -79,7 +79,7 @@ Preparing the System
 --------------------
 
 Use ``examples/mabfe_example.yaml`` as the starting configuration. Each field is documented in
-:doc:`../configuration`, but review the inputs below before running anything:
+:doc:`../cookbook/configuration`, but review the inputs below before running anything:
 
 Required Files
 ~~~~~~~~~~~~~~
@@ -147,7 +147,10 @@ Generating Simulation Inputs
    - ``run.email_sender`` – sender address for those notifications. Defaults to ``nobody@stanford.edu``.
    - ``run.slurm.partition`` – SLURM partition/queue to submit jobs to.
    - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
-   
+
+   Use :doc:`../cookbook/configuration` for the full YAML field reference. If you plan
+   to submit through Slurm, also review :doc:`../cookbook/slurm_headers` before the
+   first production run.
 
 2. **Validate the configuration before heavy computation (Optional)**::
 
@@ -180,7 +183,9 @@ your cluster. BATTER stores them in ``~/.batter/`` by default (or under
 update ``job_manager.header`` and ``SLURMM-Am.header`` so they load Amber/AmberTools
 successfully and match your site environment (modules, conda activation, partitions,
 MPI launcher, executable paths, account settings, etc.). If you plan to run REMD,
-also review ``SLURMM-BATCH-remd.header``.
+also review ``SLURMM-BATCH-remd.header``. The dedicated
+:doc:`../cookbook/slurm_headers` page summarizes what each header controls and how
+the seeded files relate to the packaged script bodies.
 
 Seed the default headers if needed::
 
@@ -192,7 +197,7 @@ To submit the same run through SLURM::
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.). Copy and modify the default template from
-``batter/data/job_manager.header`` + ``job_manager.body``. See :doc:`../slurm_headers`
+``batter/data/job_manager.header`` + ``job_manager.body``. See :doc:`../cookbook/slurm_headers`
 for the full header layout and override rules.
 
 The job manager stages the system locally,

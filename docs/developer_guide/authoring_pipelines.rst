@@ -18,7 +18,7 @@ down to composing steps and teaching :mod:`batter.orchestrate` how to select the
 4. **Update :class:`batter.config.run.RunConfig`** so the new protocol string is
    accepted and ``fe_sim`` is coerced into the appropriate Pydantic model.
 5. **Test and document** – add a lightweight unit test that asserts the ordered step
-   names and capture any new YAML options in :doc:`../configuration`.
+   names and capture any new YAML options in :doc:`../cookbook/configuration`.
 
 Once these pieces are in place, :func:`batter.orchestrate.run.run_from_yaml` will
 automatically schedule the new pipeline when the user selects your protocol.
