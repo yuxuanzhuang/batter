@@ -17,29 +17,30 @@ Quick walkthrough
 -----------------
 
 ``batter`` orchestrates an end-to-end AMBER ABFE workflow that starts from protein +
-embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
+embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlaid to the
 protein binding site. The main steps are:
 
-#. **system staging and loading** – A executon folder will be created under ``<run.output_folder>/executions/``
+#. **system staging and loading** – An execution folder will be created under ``<run.output_folder>/executions/``
    to hold all intermediate files, logs, and results. If a run ID is not provided, a timestamp-based unique ID is generated. If the same run ID already exists, the execution is
    resumed from the last successful step.
 #. **Ligand parameterisation** – supports both GAFF/GAFF2 and OpenFF force fields with
    options to choose charges (AM1-BCC by default)
-#. **Equilbration system preparation** – builds solvated/membrane-embedded
+#. **Equilibration system preparation** – builds solvated/membrane-embedded
    systems with the ligand in the binding site.
 #. **Equilibration** – Steps to run before FE production run. During this phase,
    the ligand and protein are not restrained (unless explicitly configured).
-   If the ligand unbound from the binding site during equilibration, the run
+   If the ligand unbinds from the binding site during equilibration, the run
    is marked as unbound and skipped during FE production.
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
-#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
+#. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window is submitted as an independent SLURM job.
    The main process monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
-   to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
-#. **Analysis** – Once all windows complete, MBAR analysis is performed and
+   to cap how many SLURM jobs BATTER keeps active at once and avoid overloading the scheduler.
+#. **Analysis** – Once all windows complete, MBAR analysis is performed and the final
+   results are written to the portable ``results/`` repository.
 
 Installation
 ------------
@@ -156,7 +157,8 @@ Generating Simulation Inputs
 
        batter run examples/mabfe_example.yaml --dry-run
 
-   This command runs ligand parameterisation (WARNING: heavy load), and equilibration system preparation.
+   This command runs ligand parameterisation (a heavy step) and prepares the
+   equilibration systems.
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
 
 3. **Inspect the staged system (Optional)**  
@@ -222,6 +224,12 @@ Handy CLI Flags
 ``--slurm-submit`` / ``--slurm-manager-path``
     Switch between local execution and SLURM submission (with an optional custom header).
 
+Some failures are transient cluster issues rather than setup problems, for example a
+job landing on a bad node or hitting a temporary GPU/filesystem problem. In that
+case, rerun the same command with ``--clean-failures`` to clear stale failure
+markers before resuming. If you want BATTER to clear phase sentinels and retry once
+within the run manager, use ``--on-failure retry``.
+
 Run ``batter run --help`` anytime you need the full list of switches and defaults.
 
 Monitoring Jobs
@@ -240,7 +248,7 @@ Optional: Additional Conformational Restraints
 ----------------------------------------------
 
 #. Use the restraint-generation notebook from
-   `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
+   `bat_mem restraint notebook <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
    or an equivalent script to build a ``restraints.json`` describing the distance
    constraints you need.
 
@@ -250,10 +258,11 @@ Optional: Additional Conformational Restraints
 
 See ``examples/conformational_restraints`` for a full example.
 
-Optional: Additional Positioinal Restraints
+Optional: Additional Positional Restraints
 ----------------------------------------------
 
-#. Add selection string for the atoms to be positionally restraint to  ``create.extra_restraints`` at the resulting JSON file::
+#. Add a selection string for the atoms to be positionally restrained in
+   ``create.extra_restraints``::
 
        extra_restraints: "selection_string"
 
@@ -275,11 +284,6 @@ appear under ``results/<run_id>/<ligand>/Results``. See
 :doc:`../developer_guide/analysis` for deeper post-processing (MBAR diagnostics and REMD
 parsing). For a file-by-file description of the portable repository written under
 ``<run.output_folder>/results/``, see :doc:`../cookbook/results_folder`.
-
-Portable results are written under ``<run.output_folder>/results/``. For a file-by-file
-description of that repository, including the RBFE-only ``mapping.*``,
-``rbfe_network.png``, and ``Equil_ref`` / ``Equil_alt`` exports, see
-:doc:`../cookbook/results_folder`.
 
 Additional Resources
 --------------------

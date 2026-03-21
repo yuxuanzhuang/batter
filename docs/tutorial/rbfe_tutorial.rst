@@ -18,7 +18,7 @@ Quick walkthrough
 -----------------
 
 ``batter`` orchestrates an end-to-end AMBER RBFE workflow that starts from protein +
-embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlayed to the
+embedded protein-membrane system (if applicable) + ligand(s) (3D coordinates) overlaid to the
 protein binding site. The main steps are:
 
 #. **system staging and loading** – An execution folder will be created under ``<run.output_folder>/executions/``
@@ -30,18 +30,19 @@ protein binding site. The main steps are:
    systems with the ligand in the binding site.
 #. **Equilibration** – Steps to run before FE production run. During this phase,
    the ligand and protein are not restrained (unless explicitly configured).
-   If the ligand unbound from the binding site during equilibration, the run
+   If the ligand unbinds from the binding site during equilibration, the run
    is marked as unbound and skipped during FE production.
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **Network planning** – Build the RBFE transformation map (pair list) based on the selected scheme.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
-#. **FE equilbration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
+#. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window is submitted as an independent SLURM job.
    The main process monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
-   to cap how many SLURM jobs Batter keeps active at once and avoid overloading the scheduler.
-#. **Analysis** – Once all windows complete, MBAR analysis is performed and
+   to cap how many SLURM jobs BATTER keeps active at once and avoid overloading the scheduler.
+#. **Analysis** – Once all windows complete, MBAR analysis is performed and the final
+   results are written to the portable ``results/`` repository.
 
 Network planning schemes
 ------------------------
@@ -54,7 +55,9 @@ RBFE mappings can be created in a few ways:
   Choose atom mapping backend via ``rbfe.atom_mapper`` (``kartograf`` or ``lomap``).
   The exact Kartograf/Lomap mapper parameters are documented in :doc:`../cookbook/rbfe`.
   The available layouts are listed in the `Konnektor documentation <https://konnektor.openfree.energy/en/latest/api/konnektor.planners.html>`_.
-  provide inputs can be either `MinimalSpanningTreeNetworkGenerator` or `minimalspanningtree`.
+  In BATTER, ``rbfe.konnektor_layout`` can be written either as the full class name
+  such as ``MinimalSpanningTreeNetworkGenerator`` or as the lowercase shorthand
+  ``minimalspanningtree``.
   See detailed tutorial in `Konnektor tutorial <https://konnektor.openfree.energy/en/latest/tutorials/basic_network_generation.html>`_.
 * **Mapping file** – provide explicit pairs via ``rbfe.mapping_file`` (JSON/YAML list or
   text file with one pair per line).
@@ -118,7 +121,7 @@ Required Files
    long as the coordinates align with the provided ``protein_input.pdb``. Ensure hydrogens/protonation states
    are correct (Open Babel, `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_, or a similar tool can help).
    If you use ``rbfe.atom_mapper: kartograf`` (the BATTER default), the ligands should
-   preferably already be pre-aligned in a consistent binding pose, since well-aligned
+   preferably be pre-aligned in a consistent binding pose, since well-aligned
    molecules are one of Kartograf's core assumptions for finding a good mapping. See
    the `Kartograf mapping tutorial <https://kartograf.openfree.energy/en/latest/tutorial/mapping_tutorial.html>`_
    for the upstream guidance.
@@ -155,7 +158,7 @@ Generating Simulation Inputs
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
-   - ``create.anchor_atoms`` – it is strictly not needed but saved for consistency. Choose stable backbone atoms (CA/C/N) with the guidelines below.
+   - ``create.anchor_atoms`` – not strictly required, but kept for consistency. Choose stable backbone atoms (CA/C/N) with the guidelines below.
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
@@ -192,7 +195,8 @@ Generating Simulation Inputs
 
        batter run examples/rbfe.yaml --dry-run
 
-   This command runs ligand parameterisation (WARNING: heavy load), and equilibration system preparation.
+   This command runs ligand parameterisation (a heavy step) and prepares the
+   equilibration systems.
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
 
 3. **Inspect the staged system (Optional)**
@@ -258,15 +262,24 @@ Handy CLI Flags
 ``--slurm-submit`` / ``--slurm-manager-path``
     Switch between local execution and SLURM submission (with an optional custom header).
 
+Some failures are transient cluster issues rather than setup problems, for example a
+job landing on a bad node or hitting a temporary GPU/filesystem problem. In that
+case, rerun the same command with ``--clean-failures`` to clear stale failure
+markers before resuming. If you want BATTER to clear phase sentinels and retry once
+within the run manager, use ``--on-failure retry``.
+
 Results and Analysis
 --------------------
 
-Once all windows complete, the manager performs MBAR analysis and saves results in
-``executions/<run_id>/analysis/``. The main output is ``results.csv``, which contains
-the ΔΔG values for each pair and direction, along with error estimates and other metadata.
+Completed runs automatically write MBAR summaries under ``results/<run_id>``.
+Use the CLI helpers to inspect them::
 
-Portable results are written under ``<run.output_folder>/results/``. For a file-by-file
-description of that repository, including the RBFE-only ``mapping.*``,
+    batter fe list <run.output_folder>
+    batter fe show <run.output_folder> <run_id> --ligand <ligand_pair>
+
+``fe list`` prints a high-level table for every stored run, while ``fe show`` opens
+the saved record for one transformation pair such as ``LIG1~LIG2``. For a file-by-file
+description of the portable repository, including the RBFE-only ``mapping.*``,
 ``rbfe_network.png``, and ``Equil_ref`` / ``Equil_alt`` exports, see
 :doc:`../cookbook/results_folder`.
 

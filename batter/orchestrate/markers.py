@@ -114,7 +114,11 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
                 names = ", ".join(c.meta.get("ligand", c.name) for c in retried)
                 logger.warning(f"[{phase_name}] Resetting failure state for {len(retried)} ligand(s): {names}")
             return ok + retried
-        raise RuntimeError(f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}")
+        raise RuntimeError(
+            f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}. "
+            "Retry by rerunning `batter run <run.yaml> --on-failure retry` "
+            "or `batter run <run.yaml> --clean-failures`."
+        )
     if not ok:
         if mode_lower in {"prune", "retry"}:
             logger.warning(f"[{phase_name}] No ligands completed successfully (mode={mode_lower}); continuing with empty set.")
