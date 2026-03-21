@@ -285,6 +285,12 @@ appear under ``results/<run_id>/<ligand>/Results``. See
 parsing). For a file-by-file description of the portable repository written under
 ``<run.output_folder>/results/``, see :doc:`../cookbook/results_folder`.
 
+For final error estimation, it is usually better to run three independent repeats
+of the full simulation and estimate the uncertainty across those replicate runs,
+rather than relying only on the per-run bootstrap uncertainty from a single run.
+The per-run bootstrapping remains useful as a within-run diagnostic, but it should
+not be treated as a substitute for repeat-run error estimation.
+
 Additional Resources
 --------------------
 
