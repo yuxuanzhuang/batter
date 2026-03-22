@@ -1,43 +1,73 @@
 version: 1
+# workflow family: abfe, asfe, rbfe, or md
 protocol: rbfe
+# execution backend; these examples use the local orchestrator
 backend: local
 
 create:
+  # label used in output paths and generated job names
   system_name: adrb2_A
+  # input protein structure used for receptor staging
   protein_input: reference/adrb2_A.pdb
+  # membrane+solvent reference structure used to seed the simulation box
   system_input: reference/adrb2_A_membrane.pdb
+  # optional restart/coordinate file carrying the correct box vectors
   system_coordinate: reference/adrb2_A_membrane.rst7
+  # alignment selection used when orienting the receptor
   protein_align: name CA and resid 50 to 200
+  # JSON dictionary mapping ligand names to input files
   ligand_input: reference/ligands_dict.json
+  # ligand force field / parameter set
   ligand_ff: openff-2.3.0
+  # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
+  # partial-charge model used during ligand parameterization
   param_charge: "openff-gnn-am1bcc-1.0.0.pt"
 
+  # three receptor anchor atoms used to define BATTER restraints
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
     - "name CA and resid 316"
+  # membrane lipid residue names present in the input structure
   lipid_mol: ["POPC"]
+  # rebuild staged files even if they already exist
   overwrite: false
+  # AMBER force field for the receptor
   receptor_ff: protein.ff14SB
+  # AMBER lipid force field for membrane systems
   lipid_ff: lipid21
+  # solvent padding used when BATTER needs to add solvent around a ligand-only system
   solv_shell: 15.0
+  # explicit water model passed to tleap
   water_model: TIP3P
 
 run:
+  # top-level work directory for executions/ and results/
   output_folder: RBFE_simulations
+  # stop after shared prep/equilibration and FE window setup when true
   only_fe_preparation: false
+  # prepare inputs without launching MD
   dry_run: false
+  # execution directory name; use distinct ids for replicates
   run_id: rep1
+  # local parallelism during staging and analysis
   max_workers: 8
+  # how failed transformations should be handled during orchestration
   on_failure: prune
   slurm:
+    # cluster partition/queue for generated sbatch scripts
     partition: rondror
 
 rbfe:
+  # network builder used to connect ligands into transformations
   mapping: konnektor
+  # atom mapper used when generating pairwise transformations
+  # can be kartograf or lomap
   atom_mapper: kartograf
+  # Konnektor network layout heuristic
   konnektor_layout: minimalspanningtree
+  # whether to generate both directions for each edge
   both_directions: false
 
 fe_sim:
@@ -47,14 +77,23 @@ fe_sim:
       0.43478261, 0.47826087, 0.52173913, 0.56521739, 0.60869565,
       0.65217391, 0.69565217, 0.73913043, 0.7826087 , 0.82608696,
       0.86956522, 0.91304348, 0.95652174, 1.        ]
+  # production steps for the x component
   x_n_steps: 1000000
   # short equil
   eq_steps: 10000
+  # non-bonded cutoff in Angstrom
   cut: 9.0
+  # Monte Carlo barostat
   barostat: 2
+  # use hydrogen mass repartitioning
   hmr: yes
+  # 4 fs time step with HMR
   dt: 0.004
+  # solvent padding along Z for soluble or membrane-transformation boxes
   buffer_z: 15.0
+  # solvent padding along X for soluble RBFE systems
   buffer_x: 10.0
+  # solvent padding along Y for soluble RBFE systems
   buffer_y: 10.0
+  # simulation temperature in Kelvin
   temperature: 298.15

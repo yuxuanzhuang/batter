@@ -1,9 +1,13 @@
 version: 1
+# workflow family: abfe, asfe, rbfe, or md
 protocol: abfe
+# execution backend; these examples use the local orchestrator
 backend: local
 
 create:
+  # label used in output paths and generated job names
   system_name: adrb2_A
+  # input protein structure used for receptor staging
   protein_input: reference/adrb2_A.pdb
   # not needed for soluble proteins
   # system_input is needed for membrane proteins to set up the membrane and solvation box
@@ -11,33 +15,54 @@ create:
   # system_coordinate is needed for membrane proteins if the system_input does not have
   # the correct box information. It can be a .rst7 file with the correct box information.
   system_coordinate: reference/adrb2_A_membrane.rst7
+  # alignment selection used when orienting the receptor
   protein_align: name CA and resid 50 to 200
+  # JSON dictionary mapping ligand names to input files
   ligand_input: reference/ligands_dict.json
+  # ligand force field / parameter set
   ligand_ff: openff-2.3.0
+  # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
+  # partial-charge model used during ligand parameterization
   param_charge: "openff-gnn-am1bcc-1.0.0.pt"
+  # three receptor anchor atoms used to define BATTER restraints
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
     - "name CA and resid 316"
+  # membrane lipid residue names present in the input structure
   lipid_mol: ["POPC"]
+  # rebuild staged files even if they already exist
   overwrite: false
+  # AMBER force field for the receptor
   receptor_ff: protein.ff14SB
+  # AMBER lipid force field for membrane systems
   lipid_ff: lipid21
+  # solvent padding used when BATTER needs to add solvent around a ligand-only system
   solv_shell: 15.0
+  # explicit water model passed to tleap
   water_model: TIP3P
 
 run:
+  # top-level work directory for executions/ and results/
   output_folder: ABFE_simulations
+  # stop after shared prep/equilibration and FE window setup when true
   only_fe_preparation: false
+  # prepare inputs without launching MD
   dry_run: false
+  # execution directory name; use distinct ids for replicates
   run_id: rep1
+  # local parallelism during staging and analysis
   max_workers: 8
+  # how failed ligands should be handled during orchestration
   on_failure: prune
 
+  # send completion or failure email to this address
   email_on_completion: yuzhuang@stanford.edu
   slurm:
+    # cluster partition/queue for generated sbatch scripts
     partition: rondror
+    # requested wall-clock time for the manager submission
     time: "12:00:00"
 
 fe_sim:
@@ -61,12 +86,13 @@ fe_sim:
   # Monte Carlo barostat
   barostat: 2
   # use hydrogen mass repartitioning
-  hmr: yes 
+  hmr: yes
   # 4 fs time step with HMR
   dt: 0.004
   # buffer_z for solvation layer above and below membrane
   buffer_z: 10.0
-  temperature: 298.15 
+  # simulation temperature in Kelvin
+  temperature: 298.15
   # analysis only start from 100000 steps
   analysis_start_step: 100000
   # MBAR analysis blocks
