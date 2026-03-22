@@ -1,20 +1,70 @@
+move_failed_file_if_present() {
+    local src=$1
+    local archive_dir=$2
+
+    [[ -n $src && -e $src ]] || return 1
+    mv -f "$src" "$archive_dir/"
+}
+
+archive_failed_job_files() {
+    local retry_count=${1:-${RETRY_COUNT:-${RETRY:-0}}}
+    shift || true
+
+    local timestamp archive_dir moved_any=0 f stem
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    archive_dir="WRONG_FAIL/${timestamp}_job_attempt_${retry_count}"
+    mkdir -p "$archive_dir"
+
+    for f in "$@"; do
+        if move_failed_file_if_present "$f" "$archive_dir"; then
+            moved_any=1
+        fi
+
+        if [[ -n $f && $f == *.rst7 ]]; then
+            stem=${f%.rst7}
+            if move_failed_file_if_present "${stem}.out" "$archive_dir"; then
+                moved_any=1
+            fi
+            if move_failed_file_if_present "${stem}.nc" "$archive_dir"; then
+                moved_any=1
+            fi
+            if move_failed_file_if_present "${stem}.log" "$archive_dir"; then
+                moved_any=1
+            fi
+            if move_failed_file_if_present "${stem}.mden" "$archive_dir"; then
+                moved_any=1
+            fi
+            if move_failed_file_if_present "${stem}.mdinfo" "$archive_dir"; then
+                moved_any=1
+            fi
+        fi
+    done
+
+    if move_failed_file_if_present "mdinfo" "$archive_dir"; then
+        moved_any=1
+    fi
+
+    if (( moved_any )); then
+        echo "[INFO] Archived failed job files to ${archive_dir}"
+    else
+        rmdir "$archive_dir" 2>/dev/null || true
+        rmdir WRONG_FAIL 2>/dev/null || true
+    fi
+}
+
 check_sim_failure() {
     local stage=$1
     local log_file=$2
     local rst_file=$3
     local rst_file_prev=${4:-}
-    local retry_count=${5:-0}
+    local retry_count=${5:-${RETRY_COUNT:-${RETRY:-0}}}
     local extra_files=()
     if (( $# > 5 )); then
         extra_files=("${@:6}")
     fi
 
     cleanup_outputs() {
-        local f
-        for f in "${extra_files[@]}"; do
-            [[ -n "$f" ]] || continue
-            rm -f "$f"
-        done
+        archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
     }
 
     # If log doesn't exist yet, don't treat as failure here
@@ -23,8 +73,6 @@ check_sim_failure() {
     if grep -Eqi "Terminated Abnormally|command not found|illegal memory|segmentation fault|MPI_ABORT|FATAL|cudaGetDeviceCount|Calculation halted" "$log_file"; then
         echo "[ERROR] $stage simulation failed. Detected error in $log_file:"
         tail -n 200 "$log_file" || true
-        rm -f "$log_file"
-        rm -f "$rst_file"
         cleanup_outputs
         if [[ $retry_count -ge 3 ]]; then
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
@@ -40,8 +88,6 @@ check_sim_failure() {
 
     if [[ -n "$rst_file" && (! -f "$rst_file" || ! -s "$rst_file") ]]; then
         echo "[ERROR] $stage simulation failed. Restart file missing or empty: $rst_file"
-        rm -f "$log_file"
-        rm -f "$rst_file"
         cleanup_outputs
         if [[ $retry_count -ge 2 ]]; then
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
