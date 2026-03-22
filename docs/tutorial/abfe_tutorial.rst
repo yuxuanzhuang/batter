@@ -131,7 +131,7 @@ Generating Simulation Inputs
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
-   - ``create.anchor_atoms`` – choose stable backbone atoms (CA/C/N) with the guidelines below.
+   - ``create.anchor_atoms`` – The three atoms that defines the binding site and for generating the restraint files. Choose stable backbone atoms (CA/C/N) with the guidelines below.
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
