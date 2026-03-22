@@ -175,12 +175,6 @@ class SimulationConfig(BaseModel):
                     f"{proto_key.upper()} protocol requires positive steps for component '{comp}'."
                 )
 
-        num_equil_extends = max(0, int(_fe_attr("num_equil_extends", lambda: 0)))
-        if num_equil_extends:
-            logger.warning(
-                "fe_sim.num_equil_extends is deprecated and ignored; "
-                "set fe_sim.eq_steps to the total equilibration steps instead."
-            )
         eq_steps_raw = int(_fe_attr("eq_steps", lambda: 1_000_000))
         if eq_steps_raw <= 2500 and eq_steps_raw != 0:
             logger.warning(
@@ -255,7 +249,6 @@ class SimulationConfig(BaseModel):
             "dt": float(_fe_attr("dt", lambda: 0.004)),
             "hmr": coerce_yes_no(_fe_attr("hmr", lambda: "yes")),
             "release_eq": fe_release_eq,
-            "num_equil_extends": num_equil_extends,
             "eq_steps": eq_steps_value,
             "ntpr": int(_fe_attr("ntpr", lambda: 100)),
             "ntwr": int(_fe_attr("ntwr", lambda: 10_000)),
@@ -349,9 +342,6 @@ class SimulationConfig(BaseModel):
     release_eq: List[float] = Field(
         default_factory=lambda: [0.0],
         description="Equilibration release weights (derived; fixed to [0.0]).",
-    )
-    num_equil_extends: int = Field(
-        0, description="Deprecated equilibration extends (retained for compatibility)."
     )
     ti_points: Optional[int] = Field(0, description="(#) TI points (not implemented)")
     lambdas: List[float] = Field(

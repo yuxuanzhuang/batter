@@ -385,10 +385,6 @@ class FESimArgs(BaseModel):
         if not isinstance(data, Mapping):
             return data
 
-        if "num_equil_extends" in data:
-            raise ValueError(
-                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
-            )
         if "num_fe_extends" in data:
             raise ValueError(
                 "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
@@ -456,12 +452,6 @@ class FESimArgs(BaseModel):
     buffer_y: float = Field(20.0, description="Box padding along Y (Å).")
     buffer_z: float = Field(20.0, description="Box padding along Z (Å).")
 
-    # Equilibration schedule
-    num_equil_extends: int = Field(
-        0,
-        ge=0,
-        description="Deprecated: equilibration extensions are ignored; keep 0.",
-    )
     eq_steps: int = Field(
         1_000_000,
         ge=0,
@@ -633,10 +623,6 @@ class MDSimArgs(BaseModel):
         if not isinstance(data, Mapping):
             return data
 
-        if "num_equil_extends" in data:
-            raise ValueError(
-                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
-            )
         if "num_fe_extends" in data:
             raise ValueError(
                 "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
@@ -649,11 +635,6 @@ class MDSimArgs(BaseModel):
 
     dt: float = Field(0.004, description="MD timestep (ps).")
     temperature: float = Field(298.15, description="Simulation temperature (K).")
-    num_equil_extends: int = Field(
-        0,
-        ge=0,
-        description="Deprecated: equilibration extensions are ignored; keep 0.",
-    )
     eq_steps: int = Field(
         100_000,
         ge=0,

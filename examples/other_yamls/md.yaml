@@ -64,8 +64,6 @@ run:
 fe_sim:
   # 4 ns equilibration blocks repeated 50 times in this example
   eq_steps: 1000000
-  # number of additional equilibration extensions
-  num_equil_extends: 50
   # 200 ns
   # non-bonded cutoff in Angstrom
   cut: 9.0

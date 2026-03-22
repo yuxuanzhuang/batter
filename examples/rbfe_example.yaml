@@ -79,8 +79,8 @@ fe_sim:
       0.86956522, 0.91304348, 0.95652174, 1.        ]
   # production steps for the x component
   x_n_steps: 1000000
-  # short equil
-  eq_steps: 10000
+  # no equilibration
+  eq_steps: 0
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
@@ -90,7 +90,7 @@ fe_sim:
   # 4 fs time step with HMR
   dt: 0.004
   # solvent padding along Z for soluble or membrane-transformation boxes
-  buffer_z: 15.0
+  buffer_z: 10.0
   # solvent padding along X for soluble RBFE systems
   buffer_x: 10.0
   # solvent padding along Y for soluble RBFE systems

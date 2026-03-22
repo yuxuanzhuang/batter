@@ -69,8 +69,6 @@ fe_sim:
   blocks: 5
   # short equilibration for this development example
   eq_steps: 10000
-  # additional equilibration extensions requested after the first pass
-  num_equil_extends: 6
   # production steps for the z component
   z_n_steps: 30000
   # non-bonded cutoff in Angstrom

@@ -1,6 +1,6 @@
 version: 1
 # workflow family: abfe, asfe, rbfe, or md
-protocol: abfe
+protocol: rbfe
 # execution backend; these examples use the local orchestrator
 backend: local
 
@@ -18,13 +18,12 @@ create:
   # JSON dictionary mapping ligand names to input files
   ligand_input: reference/ligands_dict.json
   # ligand force field / parameter set
-  ligand_ff: openff-2.2.1
+  ligand_ff: openff-2.3.0
   # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
   # partial-charge model used during ligand parameterization
-  param_charge: am1bcc
-  # optional folder for cached ligand parameterization outputs
-  param_outdir: ligand_params
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
+
   # three receptor anchor atoms used to define BATTER restraints
   anchor_atoms:
     - "name CA and resid 113"
@@ -45,32 +44,39 @@ create:
 
 run:
   # top-level work directory for executions/ and results/
-  output_folder: adrb2_A_mabfe
+  output_folder: RBFE_simulations
   # stop after shared prep/equilibration and FE window setup when true
   only_fe_preparation: false
   # prepare inputs without launching MD
   dry_run: false
-  # execution directory name; auto reuses or creates a run id as needed
-  run_id: auto
+  # execution directory name; use distinct ids for replicates
+  run_id: rep1
   # local parallelism during staging and analysis
   max_workers: 8
-  # how failed ligands should be handled during orchestration
+  # how failed transformations should be handled during orchestration
   on_failure: prune
   slurm:
     # cluster partition/queue for generated sbatch scripts
     partition: rondror
-    # requested wall-clock time for the manager submission
-    time: "4:00:00"
+
+rbfe:
+  # network builder used to connect ligands into transformations
+  mapping: konnektor
+  # atom mapper used when generating pairwise transformations
+  # can be kartograf or lomap
+  atom_mapper: kartograf
+  # Konnektor network layout heuristic
+  konnektor_layout: minimalspanningtree
+  # whether to generate both directions for each edge
+  both_directions: false
 
 fe_sim:
-  # 24 lambda windows for this ABFE example
-  lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
-  # MBAR analysis blocks
-  blocks: 5
-  # short equilibration for this development example
-  eq_steps: 10000
-  # production steps for the z component
-  z_n_steps: 30000
+  # 48 windows for Lambda schedule required for RBFE.
+  lambdas: [0.00000000, 0.12542000, 0.16637000, 0.19653000, 0.22148000, 0.24326000, 0.26289000, 0.28094000, 0.29779000, 0.31370000, 0.32884000, 0.34336000, 0.35737000, 0.37095000, 0.38416000, 0.39707000, 0.40971000, 0.42215000, 0.43441000, 0.44652000, 0.45852000, 0.47043000, 0.48228000, 0.49410000, 0.50590000, 0.51772000, 0.52958000, 0.54150000, 0.55351000, 0.56563000, 0.57790000, 0.59036000, 0.60303000, 0.61596000, 0.62920000, 0.64280000, 0.65684000, 0.67140000, 0.68659000, 0.70254000, 0.71944000, 0.73754000, 0.75722000, 0.77906000, 0.80408000, 0.83431000, 0.87533000, 1.00000000]
+  # production steps for the x component
+  x_n_steps: 1000000
+  # no equilibration
+  eq_steps: 0
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
@@ -79,9 +85,11 @@ fe_sim:
   hmr: yes
   # 4 fs time step with HMR
   dt: 0.004
+  # solvent padding along Z for soluble or membrane-transformation boxes
+  buffer_z: 10.0
+  # solvent padding along X for soluble RBFE systems
+  buffer_x: 10.0
+  # solvent padding along Y for soluble RBFE systems
+  buffer_y: 10.0
   # simulation temperature in Kelvin
   temperature: 298.15
-  # ligand COM distance used to classify a run as unbound
-  unbound_threshold: 8.0
-  # buffer_z for solvation layer above and below membrane
-  buffer_z: 25.0

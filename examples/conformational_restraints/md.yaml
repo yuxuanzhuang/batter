@@ -66,8 +66,6 @@ run:
 fe_sim:
   # short equilibration for this development example
   eq_steps: 10000
-  # additional equilibration extensions requested after the first pass
-  num_equil_extends: 6
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # barostat choice in the AMBER templates

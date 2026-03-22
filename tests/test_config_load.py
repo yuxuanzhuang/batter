@@ -145,13 +145,6 @@ def test_fesim_args_ingests_legacy_component_lambdas():
     assert args.component_lambdas["z"] == [0.0, 0.5, 1.0]
 
 
-def test_fesim_args_rejects_legacy_extends() -> None:
-    with pytest.raises(
-        ValidationError, match="num_equil_extends is no longer supported"
-    ):
-        FESimArgs.model_validate({"num_equil_extends": 2})
-
-
 def test_fesim_args_rejects_num_fe_extends() -> None:
     with pytest.raises(ValidationError, match="num_fe_extends is no longer supported"):
         FESimArgs.model_validate({"num_fe_extends": 2})

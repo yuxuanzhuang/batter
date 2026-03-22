@@ -35,8 +35,8 @@ The run YAML file is divided into three sections grouped inside
     are expressed via ``eq_steps`` which now represents the **total** equilibration
     steps. The value is written into ``mdin-template`` as ``! total_steps=<total>``,
     letting runtime scripts determine the target length without regenerating inputs.
-    Legacy extend knobs (``num_equil_extends``, ``num_fe_extends``) are rejected; set
-    ``eq_steps``/``n_steps`` to total steps instead. ``analysis_range`` is likewise
+    Legacy production extend knobs (``num_fe_extends``) are rejected; set
+    ``n_steps`` to total steps instead. ``analysis_range`` is likewise
     disallowed—use ``analysis_start_step`` to skip early production frames. FE
     production no longer chunks into extends; set ``n_steps`` to the total per-window
     production steps. Those mdin templates also include ``! total_steps=<total>``;
