@@ -10,6 +10,7 @@ from typing import Dict, Tuple, List
 from loguru import logger
 
 from batter.config.simulation import SimulationConfig
+from batter.orchestrate.run_support import load_stored_ligand_names
 from batter.runtime.fe_repo import FEResultsRepository, FERecord
 from batter.systems.core import SimSystem
 
@@ -127,9 +128,13 @@ def save_fe_records(
     For each ligand, totals are pulled from ``Results.dat`` (or JSON fallbacks) and
     written to the portable FE repository alongside the raw ``Results/`` artifacts.
     Missing totals or save errors are captured as failures and returned as
-    ``(ligand, status, reason)`` tuples.
+    ``(ligand, status, reason)`` tuples. When ``original_map`` is omitted, BATTER
+    falls back to ``artifacts/ligand_names.json`` under ``run_dir`` so FE records
+    still preserve the user-provided ligand names.
     """
     failures: list[tuple[str, str, str]] = []
+    if original_map is None:
+        original_map = load_stored_ligand_names(run_dir)
     analysis_start_step_val = analysis_start_step
     if analysis_start_step_val is None:
         analysis_start_step_val = getattr(sim_cfg_updated, "analysis_start_step", None)

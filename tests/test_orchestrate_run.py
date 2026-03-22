@@ -40,6 +40,9 @@ def test_save_fe_records_failure(tmp_path: Path, has_results: bool) -> None:
     run_dir = tmp_path / "run1"
     child_root = run_dir / "simulations" / "lig1"
     (child_root / "fe" / "Results").mkdir(parents=True, exist_ok=True)
+    ligand_names_path = run_dir / "artifacts" / "ligand_names.json"
+    ligand_names_path.parent.mkdir(parents=True, exist_ok=True)
+    ligand_names_path.write_text(json.dumps({"lig1": "Ligand One Original"}))
 
     sim_cfg = _make_sim_cfg()
     child = SimSystem(
@@ -65,8 +68,48 @@ def test_save_fe_records_failure(tmp_path: Path, has_results: bool) -> None:
     row = df[(df["run_id"] == "run1") & (df["ligand"] == "lig1")].iloc[0]
     assert row["status"] == "failed"
     assert row["failure_reason"] == "no_totals_found"
+    assert row["original_name"] == "Ligand One Original"
     failure_json = run_dir / "results" / "run1" / "lig1" / "failure.json"
     assert failure_json.exists()
+
+
+def test_save_fe_records_uses_stored_original_name_for_success(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run1"
+    child_root = run_dir / "simulations" / "lig1"
+    results_dir = child_root / "fe" / "Results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    (results_dir / "Results.dat").write_text("Total\t-1.0\t0.1\n")
+    ligand_names_path = run_dir / "artifacts" / "ligand_names.json"
+    ligand_names_path.parent.mkdir(parents=True, exist_ok=True)
+    ligand_names_path.write_text(json.dumps({"lig1": "Ligand One Original"}))
+
+    sim_cfg = _make_sim_cfg()
+    child = SimSystem(
+        name="sys:lig1:run1",
+        root=child_root,
+        meta=SystemMeta(ligand="lig1", residue_name="lig1"),
+    )
+
+    store = ArtifactStore(run_dir)
+    repo = FEResultsRepository(store)
+
+    failures = save_fe_records(
+        run_dir=run_dir,
+        run_id="run1",
+        children_all=[child],
+        sim_cfg_updated=sim_cfg,
+        repo=repo,
+        protocol="abfe",
+    )
+
+    assert not failures
+    record = repo.load("run1", "lig1")
+    assert record.original_name == "Ligand One Original"
+    df = pd.read_csv(run_dir / "results" / "index.csv")
+    row = df[(df["run_id"] == "run1") & (df["ligand"] == "lig1")].iloc[0]
+    assert row["original_name"] == "Ligand One Original"
 
 
 def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
@@ -394,6 +437,7 @@ def test_build_run_summary_table_includes_success_and_failure_rows(
             temperature=300.0,
             total_dG=-7.125,
             total_se=0.222,
+            original_name="Ligand A Original",
             protocol="abfe",
         )
     )
@@ -404,12 +448,15 @@ def test_build_run_summary_table_includes_success_and_failure_rows(
         temperature=300.0,
         status="failed",
         reason="no_totals_found",
+        original_name="Ligand B Original",
         protocol="abfe",
     )
 
     table = run_mod._build_run_summary_table(repo, "run1")
 
     assert table is not None
+    assert "Ligand A Original" in table
+    assert "Ligand B Original" in table
     assert "ligA" in table
     assert "ligB" in table
     assert "-7.125" in table

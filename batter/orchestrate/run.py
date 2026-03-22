@@ -186,15 +186,28 @@ def _build_run_summary_table(
     if summary.empty:
         return None
 
-    cols = ["ligand", "mol_name", "total_dG", "total_se", "status", "failure_reason"]
+    cols = [
+        "original_name",
+        "ligand",
+        "mol_name",
+        "total_dG",
+        "total_se",
+        "status",
+        "failure_reason",
+    ]
     for col in cols:
         if col not in summary.columns:
             summary[col] = pd.NA
 
-    summary = summary[cols].sort_values(
-        ["status", "ligand"], na_position="last", kind="stable"
+    summary["ligand"] = summary["ligand"].fillna("")
+    summary["original_name"] = summary["original_name"].fillna("")
+    summary["original_name"] = summary["original_name"].mask(
+        summary["original_name"] == "", summary["ligand"]
     )
-    for col in ("ligand", "mol_name", "status", "failure_reason"):
+    summary = summary[cols].sort_values(
+        ["status", "original_name", "ligand"], na_position="last", kind="stable"
+    )
+    for col in ("original_name", "ligand", "mol_name", "status", "failure_reason"):
         summary[col] = summary[col].fillna("")
     for col in ("total_dG", "total_se"):
         summary[col] = summary[col].map(_format_summary_float)
