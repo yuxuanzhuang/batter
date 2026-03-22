@@ -192,3 +192,34 @@ markers.
 ``results/`` is the compact, portable summary layer derived from those executions.
 If you only need final FE values plus the most important analysis artifacts, this is
 usually the tree to archive or inspect first.
+
+Visualizing Trajectories
+------------------------
+
+The portable ``results/`` repository does not duplicate the production trajectories.
+For molecular visualization, go back to the matching directory under
+``executions/<run_id>/`` and open the staged coordinate and trajectory files there.
+
+For equilibration trajectories, a common workflow is:
+
+.. code-block:: bash
+
+   vmd full.pdb md-*.nc
+
+Then load ``full.prmtop`` inside VMD to recover bonded information.
+
+For FE production trajectories, inspect one window at a time from the corresponding
+component directory. BATTER stores these trajectories without water, so a common
+workflow is:
+
+.. code-block:: bash
+
+   vmd vac.pdb md-*.nc
+
+Then load ``vac.prmtop`` inside VMD to recover bonded information. ``vac.pdb`` also
+uses 1-based residue numbering, which is often convenient when comparing against the
+analysis outputs and restraint setup.
+
+It is often useful to visualize the first and last lambda windows explicitly. This
+can help identify cases where an additional symmetry correction may be needed for the
+transformation or restraint interpretation.

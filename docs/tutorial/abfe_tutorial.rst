@@ -291,6 +291,11 @@ rather than relying only on the per-run bootstrap uncertainty from a single run.
 The per-run bootstrapping remains useful as a within-run diagnostic, but it should
 not be treated as a substitute for repeat-run error estimation.
 
+BATTER does not apply any automatic symmetry correction to the reported free
+energies. If your ligand or restraint setup requires a symmetry correction, inspect
+the relevant states and add that correction separately when interpreting the final
+result.
+
 Additional Resources
 --------------------
 
