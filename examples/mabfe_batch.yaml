@@ -59,7 +59,8 @@ fe_sim:
   # 4 fs time step with HMR
   dt: 0.004
   # buffer_z for solvation layer above and below membrane
-  buffer_z: 20.0
+  # most times 10.0 is sufficient.
+  buffer_z: 10.0
   temperature: 298.15 
   # analysis only start from 100000 steps
   analysis_start_step: 100000

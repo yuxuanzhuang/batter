@@ -5,7 +5,11 @@ backend: local
 create:
   system_name: adrb2_A
   protein_input: reference/adrb2_A.pdb
+  # not needed for soluble proteins
+  # system_input is needed for membrane proteins to set up the membrane and solvation box
   system_input: reference/adrb2_A_membrane.pdb
+  # system_coordinate is needed for membrane proteins if the system_input does not have
+  # the correct box information. It can be a .rst7 file with the correct box information.
   system_coordinate: reference/adrb2_A_membrane.rst7
   protein_align: name CA and resid 50 to 200
   ligand_input: reference/ligands_dict.json
@@ -45,7 +49,12 @@ fe_sim:
     0.59453, 0.60923, 0.62468, 0.63991, 0.65631, 0.67222, 0.68487, 0.69656, 0.70897, 0.72458,
     0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
   ]
+  # running 4 ns for equilibration
+  # in the equilibration phase, the system is not restrained and thus
+  # the ligand can drift away from the binding site.
+  # if it unbounds when it exceeds UNBOUND_DIST
   eq_steps: 1000000
+  # running 4 ns for production in each window
   z_n_steps: 1000000
   # non-bonded cutoff in Angstrom
   cut: 9.0
@@ -56,7 +65,7 @@ fe_sim:
   # 4 fs time step with HMR
   dt: 0.004
   # buffer_z for solvation layer above and below membrane
-  buffer_z: 20.0
+  buffer_z: 10.0
   temperature: 298.15 
   # analysis only start from 100000 steps
   analysis_start_step: 100000
