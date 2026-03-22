@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import glob
 import json
 import math
@@ -357,8 +356,6 @@ class MBARAnalysis(FEAnalysisBase):
         pandas.DataFrame
             Reduced potentials referenced to ``win_i`` in units of ``kT``.
         """
-        logger.remove()
-        logger.add(sys.stderr, level=log_level)
         logger.debug(f"[MBARAnalysis] Extracting window {component}{win_i:02d}")
         win_dir = f"{comp_folder}/{component}{win_i:02d}"
         patterns = [f"{win_dir}/mdin-*.out", f"{win_dir}/md-*.out"]
@@ -696,7 +693,6 @@ class RESTMBARAnalysis(MBARAnalysis):
         ntwx: int,
     ) -> pd.DataFrame:
         """Compute reduced potentials for REST components from restraint traces."""
-        logger.remove()
         kT = 0.0019872041 * temperature
         win_dir = Path(f"{comp_folder}/{component}{win_i:02d}")
         cwd0 = Path.cwd()
