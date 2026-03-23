@@ -270,3 +270,86 @@ fe_sim:
         run_from_yaml(run_yaml)
 
     assert seen["max_active_jobs"] == 7
+
+
+def test_run_from_yaml_notifies_on_failure(monkeypatch, tmp_path: Path) -> None:
+    run_dir = tmp_path / "out" / "executions" / "rep1"
+    path = tmp_path / "run.yaml"
+    path.write_text("protocol: abfe\n")
+
+    rc = type(
+        "DummyRC",
+        (),
+        {
+            "run": type(
+                "DummyRun",
+                (),
+                {
+                    "output_folder": tmp_path / "out",
+                    "email_on_completion": "dest@example.com",
+                    "email_sender": "sender@example.com",
+                },
+            )(),
+            "create": type("DummyCreate", (), {"system_name": "sys"})(),
+            "protocol": "abfe",
+        },
+    )()
+
+    seen: dict[str, object] = {}
+
+    def fake_impl(path_arg, rc_arg, on_failure=None, run_overrides=None, run_state=None):
+        assert path_arg == path
+        assert rc_arg is rc
+        run_state["run_id"] = "rep1"
+        run_state["run_dir"] = run_dir
+        raise RuntimeError("boom")
+
+    def fake_notify(rc_arg, run_id, run_dir_arg, error):
+        seen["rc"] = rc_arg
+        seen["run_id"] = run_id
+        seen["run_dir"] = run_dir_arg
+        seen["error"] = error
+
+    monkeypatch.setattr(run_mod.RunConfig, "load", lambda _: rc)
+    monkeypatch.setattr(run_mod, "_run_from_yaml_impl", fake_impl)
+    monkeypatch.setattr(run_mod, "_notify_run_failure", fake_notify)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        run_from_yaml(path)
+
+    assert seen["rc"] is rc
+    assert seen["run_id"] == "rep1"
+    assert seen["run_dir"] == run_dir
+    assert str(seen["error"]) == "boom"
+
+
+@pytest.mark.heavy
+def test_cli_rbfe_lomap_dry_run(tmp_path: Path) -> None:
+    """
+    End-to-end RBFE dry-run smoke test for the LoMap atom mapper configuration.
+
+    This test is skipped by default. Enable with:
+        BATTER_TEST_RUN_CLI=1
+    """
+    run_yaml = DATA_DIR / "rbfe_lomap.yaml"
+    out_dir = tmp_path / "rbfe_lomap_out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    proc = subprocess.run(
+        [
+            "batter",
+            "run",
+            "--dry-run",
+            str(run_yaml),
+            "--output-folder",
+            str(out_dir),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    if proc.returncode != 0:
+        sys.stderr.write(f"\n--- STDERR (rbfe_lomap.yaml) ---\n{proc.stderr}\n")
+        sys.stderr.write(f"\n--- STDOUT (rbfe_lomap.yaml) ---\n{proc.stdout}\n")
+
+    assert proc.returncode == 0

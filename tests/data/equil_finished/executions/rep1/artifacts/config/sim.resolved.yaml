@@ -116,7 +116,6 @@ protein_align: name CA and resid 50 to 200
 rec_com_force: 10.0
 receptor_ff: protein.ff14SB
 receptor_segment: null
-num_equil_extends: 6
 release_eq:
 - 0.0
 - 0.0

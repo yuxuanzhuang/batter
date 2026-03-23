@@ -27,6 +27,7 @@ dependencies:
   - openff-toolkit-base >=0.16.2
   - kartograf
   - konnektor
+  - cinnabar
   # Tests
   - pytest
   - pytest-xdist

@@ -16,6 +16,7 @@ from loguru import logger
 import numpy as np
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
+import parmed as pmd
 
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
@@ -33,9 +34,12 @@ from batter.utils import run_with_log
 from batter.config.simulation import SimulationConfig
 from rdkit import Chem
 from rdkit.Geometry import Point3D
-from kartograf.atom_mapper import KartografAtomMapper
+from rdkit.Chem import rdMolAlign, AllChem
+
 from kartograf import SmallMoleculeComponent
 from kartograf.atom_aligner import align_mol_shape
+from kartograf.atom_mapper import KartografAtomMapper
+from lomap import LomapAtomMapper
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
 
@@ -230,6 +234,16 @@ def _write_build_dry_no_water(build_pdb: Path, out_dry: Path) -> None:
                 continue
             fout.write(ln)
 
+def filter_exclude_hydroge_atoms(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Force a mapping to exclde H atoms"""
+    filtered_mapping = {}
+    for i, j in mapping.items():
+        if molA.GetAtomWithIdx(i).GetAtomicNum() == 1 or molB.GetAtomWithIdx(j).GetAtomicNum() == 1:
+            continue
+        filtered_mapping[i] = j
+    return filtered_mapping
 
 def filter_element_changes(
     molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
@@ -246,6 +260,42 @@ def filter_element_changes(
         filtered_mapping[i] = j
 
     return filtered_mapping
+
+
+def filter_mismatched_attached_h_count(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """
+    Exclude mapped heavy-atom pairs where the number of directly attached H differs.
+    This helps avoid HMR mass mismatches for 'common/core' atoms.
+    """
+    filtered = {}
+    for i, j in mapping.items():
+        a = molA.GetAtomWithIdx(i)
+        b = molB.GetAtomWithIdx(j)
+
+        hA = a.GetTotalNumHs(includeNeighbors=True)
+        hB = b.GetTotalNumHs(includeNeighbors=True)
+
+        if hA != hB:
+            continue
+
+        filtered[i] = j
+    return filtered
+
+
+def _build_current_kartograf_atom_mapper_for_simprep_x():
+    """Return the Kartograf mapper currently used by RBFE simprep x-component."""
+    additional_mapping_filter_functions = [filter_element_changes]
+    return KartografAtomMapper(
+        atom_max_distance=0.95,
+        map_hydrogens_on_hydrogens_only=True,
+        atom_map_hydrogens=True,
+        map_exact_ring_matches_only=True,
+        allow_partial_fused_rings=True,
+        allow_bond_breaks=False,
+        additional_mapping_filter_functions=additional_mapping_filter_functions,
+    )
 
 
 def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem.Mol:
@@ -295,6 +345,145 @@ def set_alt_coords_from_ref_mapping(
 
     return alt_out
 
+
+
+def force_mapped_coords_and_minimize(
+    lig1: Chem.Mol,
+    lig2: Chem.Mol,
+    atom_map_1to2: list[tuple[int, int]],
+    ff: str = "MMFF",
+    maxIters: int = 500,
+    restrain_instead_of_freeze: bool = False,
+    k: float = 1e6,
+):
+    """
+    lig1, lig2 must have at least one conformer each.
+    atom_map_1to2: list of (idx_in_lig1, idx_in_lig2), 0-based indices.
+    Returns lig2 (modified) with minimized geometry.
+    """
+    if lig1.GetNumConformers() == 0 or lig2.GetNumConformers() == 0:
+        raise ValueError("Both ligands must already have 3D conformers.")
+
+    conf1 = lig1.GetConformer()
+    conf2 = lig2.GetConformer()
+
+    # 1) Align lig2 -> lig1 based on mapped atoms (moves lig2 conformer)
+    # rdMolAlign uses (probeAtomIdx, refAtomIdx) pairs for atomMap
+    atomMap_probe_to_ref = [(j, i) for (i, j) in atom_map_1to2]
+    rdMolAlign.AlignMol(lig2, lig1, atomMap=atomMap_probe_to_ref)
+
+    # 2) Overwrite mapped atom coordinates in lig2 to EXACTLY match lig1
+    for i1, i2 in atom_map_1to2:
+        p = conf1.GetAtomPosition(i1)
+        conf2.SetAtomPosition(i2, p)
+
+    # 3) Build force field
+    lig2_ffmol = Chem.Mol(lig2)  # keep same object; just being explicit
+    if ff.upper() == "MMFF":
+        props = AllChem.MMFFGetMoleculeProperties(lig2_ffmol, mmffVariant="MMFF94s")
+        if props is None:
+            raise ValueError("MMFF properties failed (missing params?). Try ff='UFF'.")
+        ffobj = AllChem.MMFFGetMoleculeForceField(lig2_ffmol, props)
+    elif ff.upper() == "UFF":
+        ffobj = AllChem.UFFGetMoleculeForceField(lig2_ffmol)
+    else:
+        raise ValueError("ff must be 'MMFF' or 'UFF'")
+
+    # 4) Freeze or strongly restrain mapped atoms, then minimize
+    mapped2 = [i2 for _, i2 in atom_map_1to2]
+    if restrain_instead_of_freeze:
+        # Keep atoms near their exact target coords; still allows tiny relaxation
+        # (maxDispl=0.0 means hard constraint in practice; you can set small >0 if needed)
+        for a in mapped2:
+            ffobj.AddPositionConstraint(a, maxDispl=0.0, forceConstant=k)
+    else:
+        # Truly freeze atoms at their current coordinates
+        for a in mapped2:
+            ffobj.AddFixedPoint(a)
+
+    ffobj.Initialize()
+    ffobj.Minimize(maxIts=maxIters)
+
+    return lig2_ffmol
+
+def rigid_align_lig2_to_lig1(
+    lig1: Chem.Mol,
+    lig2: Chem.Mol,
+    atom_map_1to2: list[tuple[int, int]],
+    conf_id1: int = -1,
+    conf_id2: int = -1,
+    copy: bool = True,
+) -> Chem.Mol:
+    """Rigidly align ``lig2`` onto ``lig1`` using a mapped atom correspondence.
+
+    This function applies a rigid-body transformation (rotation + translation)
+    to the conformer of ``lig2`` so that the mapped atoms in ``lig2`` align as
+    closely as possible to the corresponding mapped atoms in ``lig1``.
+    Internal geometry of ``lig2`` is preserved.
+
+    Parameters
+    ----------
+    lig1
+        Reference molecule. Must contain at least one conformer.
+    lig2
+        Mobile molecule to be aligned. Must contain at least one conformer.
+    atom_map_1to2
+        List of atom-index pairs ``(idx_in_lig1, idx_in_lig2)`` using 0-based
+        indices.
+    conf_id1
+        Conformer ID of ``lig1``. Default is ``-1``, meaning the default
+        conformer.
+    conf_id2
+        Conformer ID of ``lig2``. Default is ``-1``, meaning the default
+        conformer.
+    copy
+        If ``True``, return a copied molecule and leave the input ``lig2``
+        unchanged. If ``False``, modify ``lig2`` in place and return it.
+
+    Returns
+    -------
+    Chem.Mol
+        The aligned molecule.
+
+    Raises
+    ------
+    ValueError
+        If either molecule has no conformer, the atom map is empty, or any
+        mapped atom index is invalid.
+    """
+    if lig1.GetNumConformers() == 0:
+        raise ValueError("lig1 must contain at least one conformer.")
+    if lig2.GetNumConformers() == 0:
+        raise ValueError("lig2 must contain at least one conformer.")
+    if not atom_map_1to2:
+        raise ValueError("atom_map_1to2 must not be empty.")
+
+    n_atoms_1 = lig1.GetNumAtoms()
+    n_atoms_2 = lig2.GetNumAtoms()
+
+    for idx1, idx2 in atom_map_1to2:
+        if not 0 <= idx1 < n_atoms_1:
+            raise ValueError(f"lig1 atom index out of range: {idx1}")
+        if not 0 <= idx2 < n_atoms_2:
+            raise ValueError(f"lig2 atom index out of range: {idx2}")
+
+    out = Chem.Mol(lig2) if copy else lig2
+
+    # RDKit expects (probe_atom_idx, ref_atom_idx), i.e. (lig2_idx, lig1_idx)
+    atom_map_probe_to_ref: list[tuple[int, int]] = [
+        (idx2, idx1) for idx1, idx2 in atom_map_1to2
+    ]
+
+    rdMolAlign.AlignMol(
+        prbMol=out,
+        refMol=lig1,
+        prbCid=conf_id2,
+        refCid=conf_id1,
+        atomMap=atom_map_probe_to_ref,
+    )
+
+    return out
+
 # ---------------------- unified writer ----------------------
 
 
@@ -327,6 +516,8 @@ def write_build_from_aligned(
     # ---- load ALL dumN.pdb. If none, synthesize one at origin.
     coords_dum: List[Tuple[float, float, float]] = []
     atom_dum: List[Tuple[str, str, int, str]] = []  # (name, resname, resid, chain)
+    x_max = float(0.0)
+    y_max = float(0.0)
     for dfile in sorted(build_dir.glob("dum[0-9]*.pdb")):
         dlines = [ln for ln in dfile.read_text().splitlines() if ln.strip()]
         # convention: coordinates on the 2nd line (index 1)
@@ -365,7 +556,6 @@ def write_build_from_aligned(
         x = float(_field(ln, 30, 38) or 0.0)
         y = float(_field(ln, 38, 46) or 0.0)
         z = float(_field(ln, 46, 54) or 0.0)
-
         if (
             resname not in {lig, "DUM", "WAT"}
             and resname not in om
@@ -374,6 +564,8 @@ def write_build_from_aligned(
         ):
             recep_block.append((name, resname, resid - start_off_set, chain, x, y, z))
             recep_last_resid = max(recep_last_resid, resid - start_off_set)
+            x_max = max(x_max, x)
+            y_max = max(y_max, y)
         elif resname == lig:
             lig_block.append((name, resname, resid - start_off_set, chain, x, y, z))
         else:
@@ -429,6 +621,7 @@ def write_build_from_aligned(
         # Optional shifted ligand copy (+sdr_dist along z) for z/v/o with SDR/EXCHANGE
         # extra_ligand_shift is a list of whether to shift the ligand or not
         for i, shift in enumerate(extra_ligand_shift, start=1):
+            
             shift_sdr_dist = sdr_dist if shift else 0.0
             for name, _, __, chain, x, y, z in lig_block:
                 fout.write(
@@ -438,8 +631,8 @@ def write_build_from_aligned(
                         lig,
                         chain,
                         resid + i,
-                        x,
-                        y,
+                        x + x_max,
+                        y + y_max,
                         z + float(shift_sdr_dist),
                     )
                     + "\n"
@@ -628,6 +821,7 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         (build_dir / f"fe-{mol}.pdb", dest_dir / "build-ini.pdb"),
         (build_dir / f"fe-{mol}.pdb", dest_dir / f"fe-{mol}.pdb"),
         (build_dir / f"anchors-{ligand}.txt", dest_dir / f"anchors-{ligand}.txt"),
+        (build_dir / "sdr_info.txt", dest_dir / "sdr_info.txt"),
         (build_dir / "equil-reference.pdb", dest_dir / "equil-reference.pdb"),
         (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
         (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
@@ -659,23 +853,8 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
                 except Exception:
                     pass
 
-    if buffer_z <= 25:
-        buffer_z = 25
-        logger.debug(
-            f"buffer_z too small ({sim.buffer_z}); setting to 25 Å for SDR calculation."
-        )
-    if membrane_builder:
-        equil_dir = sys_root / "simulations" / ligand / "equil"
-        buf_source = equil_dir / f"equil-{mol}.pdb"
-        if not buf_source.exists():
-            raise FileNotFoundError(
-                f"[simprep:z] Missing equil buffer source: {buf_source}"
-            )
-        buffer_z = get_buffer_z(buf_source, targeted_buf=buffer_z)
-
-    sdr_dist = get_sdr_dist(
-        build_dir / "complex.pdb", lig_resname=mol, buffer_z=buffer_z, extra_buffer=5
-    )
+    # open sdr_info to read SDR distance
+    sdr_dist, abs_z, buffer_z_left = map(float, open(dest_dir / "sdr_info.txt").read().split())
 
     # write build files for z
     write_build_from_aligned(
@@ -757,7 +936,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         (ref_pre_fe / "eq_output.pdb", dest_dir / "ref_eq_output.pdb"),
         (ref_pre_fe / "build_amber_renum.txt", dest_dir / "build_amber_renum.txt"),
         (alt_equil_dir / "representative.pdb", dest_dir / "alter_representative.pdb"),
-        (alt_pre_fe / "solvate_ligands.prmtop", dest_dir / "alter_ligand.prmtop"),
     ]:
         _copy_if_exists(s, d)
 
@@ -779,7 +957,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     if ref_pdb.exists() and ref_pdb_coord.exists():
         try:
             u_ref = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
-            u_full = mda.Universe(ref_pdb.as_posix(), ref_pdb_coord.as_posix())
             ion_names = " ".join(sorted(ION_NAMES))
             try:
                 sel = u_ref.select_atoms(f"not resname WAT {ion_names} DUM")
@@ -794,6 +971,50 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         raise FileNotFoundError(
             f"[simprep:x] Missing reference pdb or coordinate: {ref_pdb}, {ref_pdb_coord}"
         )
+    
+    # get alt and ref mapping and create new coordinates for alt
+    sdf_ref = dest_dir / f"{res_ref}.sdf"
+    sdf_alt = dest_dir / f"{res_alt}.sdf"
+
+    rdmol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
+    rdmol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
+    atom_mapper_name = str(extra.get("atom_mapper", "kartograf") or "kartograf").lower()
+    if atom_mapper_name not in {"kartograf", "lomap"}:
+        raise ValueError(
+            f"Unsupported RBFE atom_mapper '{atom_mapper_name}'. Choose 'kartograf' or 'lomap'."
+        )
+
+    mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
+    mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
+    
+    atom_mapping_obj = None
+    if atom_mapper_name == "lomap":
+        mapper = LomapAtomMapper(
+            time=20,
+            threed=True,
+            max3d=1.5,
+            element_change=False,
+            shift=True,
+        )
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
+        )
+        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+    else:
+        mol_alt_aligned = align_mol_shape(mol_alt_component, ref_mol=mol_ref_component)
+
+        mapper = _build_current_kartograf_atom_mapper_for_simprep_x()
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
+        )
+        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+    # need to exclude hydrogens from the atom mapping
+    # map_b_to_a = filter_exclude_hydroge_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
+
+    logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
+    atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
+    if not atomMap:
+        raise ValueError(f"No atom mapping found between {res_ref} and {res_alt}.")
 
     # align representative_complex.pdb to u_ref
     u_alter = mda.Universe(dest_dir / "alter_representative.pdb")
@@ -814,6 +1035,10 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alter_lig_merged = mda.Merge(u_alter_lig_pocket.atoms, u_alter_lig)
     u_alter_lig_merged.atoms.write(dest_dir / "alter_ligand.pdb")
 
+    # write alter_ligand.prmtop as a combined res_alt.prmtop + res_alt.prmtop
+    res_alt_prmtop = pmd.load_file((dest_dir / f"{res_alt}.prmtop").as_posix())
+    alt_ligand = res_alt_prmtop + res_alt_prmtop
+    alt_ligand.save((dest_dir / "alter_ligand.prmtop").as_posix(), overwrite=True)
     u_lig_alter = mda.Universe(dest_dir / "alter_ligand.prmtop", dest_dir / "alter_ligand.pdb")
     # only one present in the system
     q = u_lig_alter.atoms.charges.sum() / 2.0
@@ -849,6 +1074,16 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     # update ref_vac positions
     ref_vac = mda.Universe(dest_dir / "ref_vac.pdb")
     ref_vac.atoms.positions = u_ref.atoms.positions[: ref_vac.atoms.n_atoms]
+    ref_vac.dimensions = u_ref.dimensions
+
+    # update DUM protein position
+    dum_p = ref_vac.select_atoms('resname DUM')[0]
+    dum_p.position = ref_vac.select_atoms('protein and name CA N C O').center_of_mass()
+    dum_l = ref_vac.select_atoms('resname DUM')[1]
+    ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
+    mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})
+    dum_l.position = ref_res_atoms[mapped_ref_indices].center_of_mass()
+
     ref_vac.atoms.write(dest_dir / "ref_vac.pdb")
 
     # update other_parts positions
@@ -856,69 +1091,61 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     ref_other_parts.atoms.positions = u_ref.atoms.positions[ref_vac.atoms.n_atoms :]
     ref_other_parts.atoms.write(dest_dir / "other_parts.pdb")
 
-    # get alt and ref mapping and create new coordinates for alt
-    sdf_ref = dest_dir / f"{res_ref}.sdf"
-    sdf_alt = dest_dir / f"{res_alt}.sdf"
-
-    rdmol_ref = Chem.SDMolSupplier(sdf_ref.as_posix(), removeHs=False)[0]
-    rdmol_alt = Chem.SDMolSupplier(sdf_alt.as_posix(), removeHs=False)[0]
-    mol_ref = SmallMoleculeComponent.from_rdkit(rdmol_ref)
-    mol_alt = SmallMoleculeComponent.from_rdkit(rdmol_alt)
-
+    # use reference ligand, steer alt ligand to the atom mapped position.
+    rdmol_ref_work = Chem.Mol(rdmol_ref)
     ref_pos = u_lig.residues[0].atoms.positions
-    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
+    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
 
-    # align ligands
-    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+    _mol_ref_site = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+    _mol_alt_site = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+    rdmol_alt_site = align_mol_shape(_mol_alt_site, ref_mol=_mol_ref_site)._rdkit
 
-    mapper = KartografAtomMapper(atom_max_distance=2, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=True,
-                                map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False
+    rdmol_alt_site = force_mapped_coords_and_minimize(
+        rdmol_ref_work, rdmol_alt_site, atom_map_1to2=atomMap
     )
-    # mapper = KartografAtomMapper(additional_mapping_filter_functions=[filter_element_changes])
-
-    # Get Mapping
-    kartograf_mapping = next(mapper.suggest_mappings(mol_ref, mol_alt_aligned))
-    logger.debug(f"mapping: {kartograf_mapping.componentA_to_componentB}")
-    kartograf_mapping.draw_to_file(fname=dest_dir / "kartograf_mapping.png")
-
-    # set mol_alt_aligned common core positions to be exactly the same as mol_ref
-    mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
-        mol_ref._rdkit, mol_alt_aligned._rdkit, kartograf_mapping.componentA_to_componentB
-    )
-
     # save mol_alt_aligned as PDB
     alter_site_pdb = dest_dir / "alter_ligand_aligned_site.pdb"
     alter_solvent_pdb = dest_dir / "alter_ligand_aligned_solvent.pdb"
     alter_merged_pdb = dest_dir / "alter_ligand_aligned.pdb"
-    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned._rdkit)
+    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_site)
     with alter_site_pdb.open("w") as f:
         f.write(pdb_block_m)
 
     ref_pos = u_lig.residues[1].atoms.positions
-    mol_ref._rdkit = set_mol_positions(mol_ref._rdkit, ref_pos)
-    mol_alt_aligned = align_mol_shape(mol_alt, ref_mol=mol_ref)
+    rdmol_ref_work = set_mol_positions(rdmol_ref_work, ref_pos)
+    
+    _mol_ref_solvent = SmallMoleculeComponent.from_rdkit(rdmol_ref_work)
+    _mol_alt_solvent = SmallMoleculeComponent.from_rdkit(Chem.Mol(rdmol_alt))
+    rdmol_alt_solvent = align_mol_shape(
+        _mol_alt_solvent, ref_mol=_mol_ref_solvent
+    )._rdkit
 
-    mol_alt_aligned._rdkit = set_alt_coords_from_ref_mapping(
-        mol_ref._rdkit, mol_alt_aligned._rdkit, kartograf_mapping.componentA_to_componentB
+    rdmol_alt_solvent = force_mapped_coords_and_minimize(
+        rdmol_ref_work, rdmol_alt_solvent, atom_map_1to2=atomMap
     )
 
     # save mol_alt_aligned as PDB
-    pdb_block_m = Chem.MolToPDBBlock(mol_alt_aligned._rdkit)
+    pdb_block_m = Chem.MolToPDBBlock(rdmol_alt_solvent)
     with alter_solvent_pdb.open("w") as f:
         f.write(pdb_block_m)
 
     u_alt_site = mda.Universe(alter_site_pdb.as_posix())
     u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
-    u_alt.atoms.write(alter_merged_pdb.as_posix())
 
-    with open(dest_dir / "kartograf.json", "w") as f:
-        json.dump(kartograf_mapping.componentA_to_componentB, f)
-    
-    # serialize kartograf
-    with open(dest_dir / "kartograf.pkl", "wb") as f:
-        pickle.dump(kartograf_mapping, f)
+    with open(dest_dir / "mapping.json", "w") as f:
+        json.dump(map_b_to_a, f)
 
+    try:
+        with open(dest_dir / "mapping.pkl", "wb") as f:
+            pickle.dump(atom_mapping_obj, f)
+    except Exception:
+        pass
+
+    try:
+        atom_mapping_obj.draw_to_file(fname=dest_dir / "mapping.png")
+    except Exception:
+        pass
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 
@@ -978,6 +1205,7 @@ def copy_simulation_dir(source: Path, dest: Path, sim: SimulationConfig) -> None
     needed = [
         "full.prmtop",
         "full.inpcrd",
+        "full_merged.prmtop",
         "full.pdb",
         "vac.pdb",
         "vac_ligand.pdb",

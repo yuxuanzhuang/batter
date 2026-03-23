@@ -151,8 +151,6 @@ class MABFEBuilder(SystemBuilder):
         logger.debug("Staged {} ligand subsystems under {}", len(children), lig_dir)
         return children
 
-    # ------------------ convenience helpers ------------------
-
     @staticmethod
     def make_child_for_ligand(parent: SimSystem, lig_name: str, lig_src: Path) -> SimSystem:
         """
@@ -177,8 +175,6 @@ class MABFEBuilder(SystemBuilder):
             anchors=parent.anchors,
             meta=parent.meta.merge(ligand=lig_name),
         )
-
-    # ------------------ internal utilities ------------------
 
     @staticmethod
     def _assert_names_match(system: SimSystem, args: CreateSystemLike) -> None:
@@ -276,11 +272,6 @@ class MABFEBuilder(SystemBuilder):
             anchors=tuple(args.anchor_atoms),
             meta={"ligand_ff": getattr(args, "ligand_ff", "gaff2")},
         )
-
-
-# --------------------------------------------------------------------------
-# Free helpers (functional style)
-# --------------------------------------------------------------------------
 
 def make_ligand_subsystem(parent: SimSystem, lig_name: str, lig_src: Path) -> SimSystem:
     builder = MABFEBuilder()

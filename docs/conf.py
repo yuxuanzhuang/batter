@@ -70,6 +70,15 @@ autodoc_pydantic_model_show_json = False
 autodoc_pydantic_field_show_default = True
 autodoc_pydantic_field_show_required = True
 autodoc_pydantic_field_doc_policy = "both"
+autodoc_mock_imports = [
+    "gufe",
+    "kartograf",
+    "lomap",
+    "openff",
+    "openmm",
+    "parmed",
+    "seaborn",
+]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]

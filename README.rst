@@ -83,6 +83,7 @@ Quickstart
 -------------------------------
 
 .. warning::
+
    The following command will run compute-heavy jobs.
    
    It will also dispatch multiple MD jobs to your SLURM scheduler.
@@ -125,41 +126,44 @@ YAML files in ``examples/`` illustrate common setups:
 
 Example YAMLs are intended as starting points; adjust to your system.
 
-SLURM header templates
-----------------------
+Binding of the Tiam1 PDZ Domain to Peptides
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-BATTER renders SLURM scripts by combining a header (user-editable) and a packaged body.
-On first use (run `batter`), the headers are copied into ``~/.batter`` (or ``run.slurm_header_dir`` if set).
-Customize queue/partition or executable overrides by editing:
+``examples/tiam`` contains an example workflow that uses the OpenFF 2.3.0
+small-molecule force field to estimate the relative binding free energies of
+peptides bound to the Tiam1 PDZ domain.
 
-- ``~/.batter/SLURMM-Am.header`` (equil/FE runs)
-- ``~/.batter/SLURMM-BATCH-remd.header`` (REMD runs)
-- ``~/.batter/job_manager.header`` (manager script for ``batter --slurm-submit``)
+This benchmark is based on the Tiam1 PDZ peptide system described in the
+following study:
 
-If the files are missing, run any ``batter`` command once to seed them, then edit the
-headers; bodies remain managed by the package.
+`Biophysical Journal article <https://www.cell.com/biophysj/fulltext/S0006-3495(18)30105-X?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS000634951830105X%3Fshowall%3Dtrue#tblfn2>`_.
 
-You can also seed headers explicitly with:
+The results below were obtained using 24 lambda windows with 4 ns per window,
+without H-REMD.
 
-.. code-block:: bash
+.. image:: docs/assets/tiam_rbfe.png
+   :alt: Tiam1 RBFE results
+   :align: center
+   :width: 80%
 
-   batter seed-headers           # seeds into ~/.batter
-   batter seed-headers --dest /path/to/dir
-   batter seed-headers --force   # overwrite existing headers
+Absolute and Relative Binding Free Energy Calculations of TYK2
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-After seeding, edit the header files to match your cluster defaults; they will be
-used whenever BATTER renders SLURM scripts.
+``examples/tyk2`` contains the input files for absolute and relative binding
+free energy calculations on the TYK2 benchmark system.
 
-Results Interpretation
-----------------------
+This benchmark is based on the TYK2 structures provided in the following
+repository:
 
-Runs store FE outputs under ``<run.output_folder>/executions/<run_id>/results``.
-Use the CLI helpers to inspect and export them:
+`Schrödinger public binding free energy benchmark <https://github.com/schrodinger/public_binding_free_energy_benchmark/tree/main/fep_benchmark_inputs/structure_inputs/jacs_set>`_.
 
-- ``batter fe list <system_root>`` – tabulates every stored run (ΔG, SE, components).
-- ``batter fe show <system_root> <run_id>`` – prints per-window data and metadata for a specific execution.
+The RBFE results below were obtained using 24 lambda windows with 4 ns per
+window, with H-REMD.
 
-A CSV file for all the FE results is stored under ``<system_root>/results``. See detailed convergence in ``<system_root>/executions/<run_id>/<ligand_name>/Results``.
+.. image:: docs/assets/tyk2_rbfe.png
+   :alt: TYK2 RBFE results
+   :align: center
+   :width: 80%
 
 Copyright
 -------------------------------

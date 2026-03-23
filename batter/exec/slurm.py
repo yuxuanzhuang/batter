@@ -116,8 +116,6 @@ class SlurmBackend(ExecBackend):
             },
         )
 
-    # --------------------- helpers ---------------------
-
     @staticmethod
     def _format_env(env: Dict[str, str]) -> str:
         """Create export statements for user-provided environment variables."""

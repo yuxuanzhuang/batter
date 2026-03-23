@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import glob
 import json
 import math
@@ -17,7 +16,7 @@ import logging
 from loguru import logger
 from joblib import Parallel, delayed
 
-from pymbar.timeseries import detect_equilibration
+from pymbar.timeseries import detect_equilibration, subsample_correlated_data
 import MDAnalysis as mda
 from MDAnalysis.lib.distances import calc_bonds, calc_angles, calc_dihedrals
 
@@ -216,7 +215,7 @@ class MBARAnalysis(FEAnalysisBase):
 
     def get_mbar_data(self) -> None:
         """
-        Parse and cache the reduced potentials for all lambda windows.
+        Parse and cache the not reduced potentials for all lambda windows.
 
         Notes
         -----
@@ -233,8 +232,10 @@ class MBARAnalysis(FEAnalysisBase):
             df_list = self._get_data_list()
 
         self._data_list = df_list
-        self._u_df = pd.concat(df_list)
-        self.timeseries = [df.index.get_level_values("time").values for df in df_list]
+        # get reduced df_list by substracting the reference U from the lambda simulation
+        self._data_list = [df.subtract(df.iloc[:, i], axis=0) for i, df in enumerate(self._data_list)]
+        self._u_df = pd.concat(self._data_list)
+        self.timeseries = [df.index.get_level_values("time").values for df in self._data_list]
         self._data_initialized = True
 
     def run_analysis(self) -> None:
@@ -263,6 +264,21 @@ class MBARAnalysis(FEAnalysisBase):
         else:  # kT
             self.results["fe"] = float(delta_kT)
             self.results["fe_error"] = float(err_kT)
+
+        # plot mbar.delta_f_.T[0] to see the free energy differences between all windows (debug)
+        # with error bars from mbar.d_delta_f_.T[0]
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.errorbar(
+            range(len(mbar.delta_f_.columns)),
+            mbar.delta_f_.iloc[0, :],
+            yerr=mbar.d_delta_f_.iloc[0, :])
+        ax.set_xlabel("Lambda Window Index")
+        ax.set_ylabel("Free Energy Difference (kT)")
+
+        plt.title(f"MBAR Free Energy Differences for Component {self.component}")
+        plt.tight_layout()
+        plt.savefig(f"{self.result_folder}/{self.component}_mbar_delta_f.png", dpi=200)
+        plt.close(fig)
 
         # Convergence summaries
         with SilenceAlchemlybOnly():
@@ -340,8 +356,6 @@ class MBARAnalysis(FEAnalysisBase):
         pandas.DataFrame
             Reduced potentials referenced to ``win_i`` in units of ``kT``.
         """
-        logger.remove()
-        logger.add(sys.stderr, level=log_level)
         logger.debug(f"[MBARAnalysis] Extracting window {component}{win_i:02d}")
         win_dir = f"{comp_folder}/{component}{win_i:02d}"
         patterns = [f"{win_dir}/mdin-*.out", f"{win_dir}/md-*.out"]
@@ -374,7 +388,6 @@ class MBARAnalysis(FEAnalysisBase):
                 dfs.append(df_part)
 
         df = pd.concat(dfs)
-        # exclude 
 
         # Drop early frames if requested (convert steps -> ps)
         if analysis_start_step > 0:
@@ -399,14 +412,17 @@ class MBARAnalysis(FEAnalysisBase):
         # detect_equilibration on the reference column of this window
         if truncate:
             with SilenceAlchemlybOnly():
-                t0, _, _ = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                t0, g, Neff_max = detect_equilibration(df.iloc[:, win_i], nskip=10)
+                df = df.iloc[t0:, :]
+                indices = subsample_correlated_data(df.iloc[:, win_i], g=g)
+                df = df.iloc[indices, :]
             logger.debug(
                 f"[MBARAnalysis] {component}{win_i:02d} detected equilibration at after row {t0}"
             )
-            df = df.iloc[t0:, :]
         # subtract reference (this window) to yield reduced potentials
-        ref = df.iloc[:, win_i]
-        df = df.subtract(ref, axis=0)
+        # do it later
+        # ref = df.iloc[:, win_i]
+        # df = df.subtract(ref, axis=0)
 
         logger.debug(
             f"[MBARAnalysis] {component}{win_i:02d} final data shape: {df.shape}"
@@ -677,7 +693,6 @@ class RESTMBARAnalysis(MBARAnalysis):
         ntwx: int,
     ) -> pd.DataFrame:
         """Compute reduced potentials for REST components from restraint traces."""
-        logger.remove()
         kT = 0.0019872041 * temperature
         win_dir = Path(f"{comp_folder}/{component}{win_i:02d}")
         cwd0 = Path.cwd()
@@ -971,6 +986,7 @@ def analyze_lig_task(
     raise_on_error: bool = True,
     mol: str = "LIG",
     n_workers: int = 4,
+    n_bootstraps: int = 0,
     dt: float = 0.0,
     ntwx: int = 0,
 ):
@@ -1021,7 +1037,7 @@ def analyze_lig_task(
 
             logger.debug(
                 f"[analyze_lig] {lig} comp={comp} windows={windows} "
-                f"analysis_start_step={analysis_start_step}, dt={dt}, ntwx={ntwx}"
+                f"analysis_start_step={analysis_start_step}, n_bootstraps={n_bootstraps}, dt={dt}, ntwx={ntwx}"
             )
 
             if comp in COMPONENTS_DICT["dd"]:
@@ -1031,6 +1047,7 @@ def analyze_lig_task(
                     windows=windows,
                     temperature=temperature,
                     analysis_start_step=analysis_start_step,
+                    n_bootstraps=n_bootstraps,
                     load=False,
                     n_jobs=n_workers,
                     dt=dt,
@@ -1055,6 +1072,7 @@ def analyze_lig_task(
                     windows=windows,
                     temperature=temperature,
                     analysis_start_step=analysis_start_step,
+                    n_bootstraps=n_bootstraps,
                     load=False,
                     n_jobs=n_workers,
                     dt=dt,

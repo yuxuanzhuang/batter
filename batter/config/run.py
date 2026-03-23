@@ -12,7 +12,7 @@ from batter.config.utils import (
     coerce_yes_no,
     expand_env_vars,
     normalize_optional_path,
-    sanitize_ligand_name,
+    sanitize_user_ligand_name,
 )
 
 # ----------------------------- SLURM ---------------------------------
@@ -271,7 +271,7 @@ class CreateArgs(BaseModel):
                 p = normalize_optional_path(s)
                 if p is None:
                     continue
-                d[sanitize_ligand_name(p.stem)] = p
+                d[sanitize_user_ligand_name(p.stem)] = p
             return d
         # mapping
         if isinstance(v, Mapping):
@@ -280,7 +280,7 @@ class CreateArgs(BaseModel):
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue
-                out[sanitize_ligand_name(str(k))] = path_obj
+                out[sanitize_user_ligand_name(str(k))] = path_obj
             return out
         # iterable of paths
         if isinstance(v, Iterable):
@@ -289,7 +289,7 @@ class CreateArgs(BaseModel):
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue
-                d[sanitize_ligand_name(path_obj.stem)] = path_obj
+                d[sanitize_user_ligand_name(path_obj.stem)] = path_obj
             return d
         raise ValueError(f"Unsupported ligand_paths type: {type(v).__name__}")
 
@@ -385,10 +385,6 @@ class FESimArgs(BaseModel):
         if not isinstance(data, Mapping):
             return data
 
-        if "num_equil_extends" in data:
-            raise ValueError(
-                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
-            )
         if "num_fe_extends" in data:
             raise ValueError(
                 "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
@@ -456,12 +452,6 @@ class FESimArgs(BaseModel):
     buffer_y: float = Field(20.0, description="Box padding along Y (Å).")
     buffer_z: float = Field(20.0, description="Box padding along Z (Å).")
 
-    # Equilibration schedule
-    num_equil_extends: int = Field(
-        0,
-        ge=0,
-        description="Deprecated: equilibration extensions are ignored; keep 0.",
-    )
     eq_steps: int = Field(
         1_000_000,
         ge=0,
@@ -496,6 +486,11 @@ class FESimArgs(BaseModel):
         0,
         ge=0,
         description="Only analyze FE production steps after this step (per window).",
+    )
+    n_bootstraps: int = Field(
+        0,
+        ge=0,
+        description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
 
     @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
@@ -628,10 +623,6 @@ class MDSimArgs(BaseModel):
         if not isinstance(data, Mapping):
             return data
 
-        if "num_equil_extends" in data:
-            raise ValueError(
-                "fe_sim.num_equil_extends is no longer supported; set fe_sim.eq_steps to the total equilibration steps."
-            )
         if "num_fe_extends" in data:
             raise ValueError(
                 "fe_sim.num_fe_extends is no longer supported; set fe_sim.n_steps (or <comp>_n_steps) to the total production steps."
@@ -644,11 +635,6 @@ class MDSimArgs(BaseModel):
 
     dt: float = Field(0.004, description="MD timestep (ps).")
     temperature: float = Field(298.15, description="Simulation temperature (K).")
-    num_equil_extends: int = Field(
-        0,
-        ge=0,
-        description="Deprecated: equilibration extensions are ignored; keep 0.",
-    )
     eq_steps: int = Field(
         100_000,
         ge=0,
@@ -689,6 +675,10 @@ class RBFENetworkArgs(BaseModel):
         "default",
         description="Mapping strategy name (e.g., 'default', 'konnektor').",
     )
+    atom_mapper: Literal["kartograf", "lomap"] = Field(
+        "kartograf",
+        description="Atom mapper backend for RBFE pair mapping ('kartograf' or 'lomap').",
+    )
     konnektor_layout: Optional[str] = Field(
         None,
         description="Optional Konnektor layout name (e.g., 'star', 'radial', 'maximal') used when mapping='konnektor'.",
@@ -715,6 +705,13 @@ class RBFENetworkArgs(BaseModel):
             return None
         text = str(v).strip()
         return text.lower() if text else None
+
+    @field_validator("atom_mapper", mode="before")
+    @classmethod
+    def _lower_atom_mapper(cls, v):
+        if v is None:
+            return "kartograf"
+        return str(v).strip().lower()
 
     @model_validator(mode="after")
     def _validate_mapping(self) -> "RBFENetworkArgs":
@@ -780,7 +777,7 @@ class RunSection(BaseModel):
     )
     clean_failures: bool = Field(
         False,
-        description="Clear FAILED markers and progress caches before rerunning.",
+        description="Clear FAILED markers, job_attempt.txt retry counters, and progress caches before rerunning.",
     )
     remd: Literal["yes", "no"] = Field(
         "no",
@@ -803,13 +800,13 @@ class RunSection(BaseModel):
 
     email_sender: str = Field(
         "nobody@stanford.edu",
-        description=("Sender address used for completion email notifications."),
+        description=("Sender address used for BATTER run-status email notifications."),
     )
     email_on_completion: str | None = Field(
         None,
         description=(
             "Email address that should receive a notification once the run "
-            "finishes (successfully or with warnings)."
+            "finishes or aborts with an uncaught failure."
         ),
     )
     slurm: SlurmConfig = Field(default_factory=SlurmConfig)

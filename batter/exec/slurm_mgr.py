@@ -906,28 +906,19 @@ class SlurmJobManager:
         if not spec.header_name and not spec.header_template:
             return
 
-        # Locate body source
-        body_path = (spec.workdir / spec.body_rel) if spec.body_rel else script_abs
+        # Locate body source. Prefer an explicit sidecar body file when present so
+        # repeated submissions do not keep re-prepending the header onto a script
+        # that was already rebuilt once.
+        candidate = script_abs.with_suffix(script_abs.suffix + ".body")
+        if spec.body_rel:
+            body_path = spec.workdir / spec.body_rel
+        elif candidate.exists():
+            body_path = candidate
+        else:
+            body_path = script_abs
         if not body_path.exists():
-            candidate = script_abs.with_suffix(script_abs.suffix + ".body")
-            if candidate.exists():
-                body_path = candidate
-            else:
-                # no body to rebuild from
-                return
-
-        # Read body, drop baked-in SBATCH lines so header owns SBATCH
-        try:
-            body_text = body_path.read_text()
-        except Exception as exc:
-            logger.warning(f"[SLURM] Failed to read body {body_path}: {exc}")
+            # no body to rebuild from
             return
-
-        body_lines = [
-            ln for ln in body_text.splitlines()
-            if not ln.lstrip().startswith("#SBATCH")
-        ]
-        body_text = "\n".join(body_lines)
 
         # Read header
         header_text = ""
@@ -946,6 +937,33 @@ class SlurmJobManager:
                     header_text = spec.header_template.read_text()
                 except Exception:
                     header_text = ""
+
+        # Read body, drop baked-in SBATCH lines so header owns SBATCH. If we are
+        # rebuilding from the already-rendered submit script, also remove the exact
+        # header text prefix when present.
+        try:
+            body_text = body_path.read_text()
+        except Exception as exc:
+            logger.warning(f"[SLURM] Failed to read body {body_path}: {exc}")
+            return
+
+        if body_path == script_abs and header_text:
+            while body_text.startswith(header_text):
+                body_text = body_text[len(header_text):]
+
+        body_lines = [
+            ln for ln in body_text.splitlines()
+            if not ln.lstrip().startswith("#SBATCH")
+        ]
+        body_text = "\n".join(body_lines)
+
+        # Persist a sidecar body file after the first reconstruction so future
+        # retries/resubmissions always rebuild from body-only content.
+        if body_path == script_abs:
+            try:
+                candidate.write_text(body_text + ("\n" if body_text and not body_text.endswith("\n") else ""))
+            except Exception as exc:
+                logger.debug(f"[SLURM] Could not persist body sidecar {candidate}: {exc}")
 
         # Combine and overwrite the submit script
         combined = header_text

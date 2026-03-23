@@ -568,7 +568,7 @@ class SchedInfo(object):
         msg += "Max Value:  %.4f\n"%(self.maxval)
         msg += "Min Value:  %.4f\n"%(self.minval)
         # string to be copied into input file
-        msg += f"lambdas = [{' '.join(f'{lam:.8f}' for lam in self.lams)}]"
+        msg += f"lambdas = [{', '.join(f'{lam:.8f}' for lam in self.lams)}]"
         return msg
 
             
@@ -1633,9 +1633,9 @@ def ReadDataFiles(dname,T,fstart,fstop):
     kT = T * 1.98720425864083e-3
 
     for win_i, folder in enumerate(folders, start=1):
-        mdin_out_files = sorted(folder.glob("mdin*.out"))
+        mdin_out_files = sorted(folder.glob("md*.out"))
         if not mdin_out_files:
-            msg = f"No mdin*.out files found in {folder}"
+            msg = f"No md*.out files found in {folder}"
             logger.error(msg)
             raise FileNotFoundError(msg)
 

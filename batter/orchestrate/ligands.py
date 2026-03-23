@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Dict, Tuple
 
-from batter.config.utils import sanitize_ligand_name
+from batter.config.utils import sanitize_user_ligand_name
 
 
 def resolve_ligand_map(
@@ -26,7 +26,7 @@ def resolve_ligand_map(
     for name, value in paths.items():
         lig_path = Path(value)
         lig_path = lig_path if lig_path.is_absolute() else (yaml_dir / lig_path)
-        sanitized = sanitize_ligand_name(str(name))
+        sanitized = sanitize_user_ligand_name(str(name))
         lig_map[sanitized] = lig_path.resolve()
         original_names[sanitized] = str(name)
 
@@ -46,7 +46,7 @@ def resolve_ligand_map(
         for name, value in items:
             lig_path = Path(value)
             lig_path = lig_path if lig_path.is_absolute() else (jpath.parent / lig_path)
-            sanitized = sanitize_ligand_name(str(name))
+            sanitized = sanitize_user_ligand_name(str(name))
             lig_map[sanitized] = lig_path.resolve()
             original_names[sanitized] = str(name)
 
@@ -76,10 +76,10 @@ def discover_staged_ligands(run_dir: Path) -> Dict[str, Path]:
         for sub in sim_dir.iterdir():
             if not sub.is_dir():
                 continue
-            name = sub.name.upper()
             inp = sub / "inputs"
             if not inp.exists():
                 continue
+            name = sanitize_user_ligand_name(sub.name)
             for ext in (".sdf", ".mol2", ".pdb"):
                 cand = inp / f"ligand{ext}"
                 if cand.exists():
@@ -91,6 +91,6 @@ def discover_staged_ligands(run_dir: Path) -> Dict[str, Path]:
         if inp_dir.exists():
             for p in inp_dir.iterdir():
                 if p.suffix.lower() in {".sdf", ".mol2", ".pdb"}:
-                    lig_map[p.stem.upper()] = p
+                    lig_map[sanitize_user_ligand_name(p.stem)] = p
 
     return lig_map

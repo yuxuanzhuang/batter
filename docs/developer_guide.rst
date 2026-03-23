@@ -67,12 +67,12 @@ working on internal builders or pipelines:
    :maxdepth: 1
    :titlesonly:
 
-   developer_guide/pipeline_payloads_and_metadata
    developer_guide/execution_model
    developer_guide/analysis
    developer_guide/parameterisation
-   slurm_headers
-   remd_submission
+
+For Slurm header customisation, see :doc:`cookbook/slurm_headers`.
+For REMD operational details, see :doc:`cookbook/remd_submission`.
 
 High-Level Execution Flow
 =========================
@@ -104,7 +104,8 @@ Configuration Layer
 
 - :class:`~batter.config.run.RunSection` – Execution controls that include the
   artifact destination (``run.output_folder``) and optional builder override
-  (``run.system_type``), along with backend/dry-run/failure policy knobs.
+  (``run.system_type``), along with backend/dry-run/failure policy knobs and
+  notification settings (``run.email_on_completion`` / ``run.email_sender``).
 - :class:`~batter.config.run.CreateArgs` – Inputs required to stage the system
   (protein, topology, ligands, restraints).
 - :class:`~batter.config.run.RunConfig` – Aggregates the sections, exposes helpers such as
@@ -151,7 +152,7 @@ The orchestrator enforces that both are positive before pipeline execution.
 Practical constraints
 ---------------------
 
-- Water boxes require ``buffer_x/y/z >= 15 Å``; the validator will reject smaller
+- Water boxes require ``buffer_x/y/z >= 10 Å``; the validator will reject smaller
   padding to avoid vacuum artifacts. For membranes, automatic Z padding is applied if
   needed.
 - Resume semantics rely on ``run_id`` plus the stored configuration signature (only

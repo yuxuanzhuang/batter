@@ -8,7 +8,7 @@ and mask formatting for downstream AMBER tooling.
 from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, List
 import json
 import shutil
 
@@ -180,3 +180,115 @@ def format_ranges(numbers: Iterable[int]) -> str:
             ranges.append(f"{start}-{end}")
     
     return ",".join(ranges)
+
+
+def merge_first_n_molecules_in_prmtop(prmtop_path: str, n: int, output_path: str | None = None) -> str:
+    """
+    Modify an AMBER prmtop file by:
+      1) Merging the first n molecules in %FLAG ATOMS_PER_MOLECULE
+         by replacing the first n entries with their sum.
+      2) Modifying %FLAG SOLVENT_POINTERS by reducing the 2nd and 3rd
+         integers by (n - 1).
+
+    Parameters
+    ----------
+    prmtop_path : str
+        Path to input prmtop file.
+    n : int
+        Number of first molecules to merge.
+    output_path : str | None
+        Path to write the modified prmtop. If None, writes to
+        "<original_stem>_merged.prmtop".
+
+    Returns
+    -------
+    str
+        Path to the written output prmtop.
+
+    Notes
+    -----
+    Assumptions:
+    - %FLAG ATOMS_PER_MOLECULE uses integer format like %FORMAT(10I8)
+    - %FLAG SOLVENT_POINTERS uses %FORMAT(3I8)
+    - The function preserves the original section order and rewrites
+      only these two sections using the same fixed-width formatting.
+    """
+    prmtop_path = Path(prmtop_path)
+
+    lines = prmtop_path.read_text().splitlines()
+
+    def find_flag_index(flag_name: str) -> int:
+        target = f"%FLAG {flag_name}"
+        for i, line in enumerate(lines):
+            if line.strip() == target:
+                return i
+        raise ValueError(f"Could not find section {target}")
+
+    def get_section_data_range(flag_idx: int) -> tuple[int, int]:
+        """
+        Return [start, end) line indices of data lines for a FLAG section,
+        excluding %FLAG and %FORMAT lines.
+        """
+        if flag_idx + 1 >= len(lines) or not lines[flag_idx + 1].startswith("%FORMAT"):
+            raise ValueError(f"Missing %FORMAT line after {lines[flag_idx]}")
+        start = flag_idx + 2
+        end = start
+        while end < len(lines) and not lines[end].startswith("%FLAG"):
+            end += 1
+        return start, end
+
+    def parse_fixed_width_ints(section_lines: List[str], width: int = 8) -> List[int]:
+        values = []
+        for line in section_lines:
+            # Amber prmtop integer sections are fixed-width, not whitespace-delimited.
+            for i in range(0, len(line), width):
+                chunk = line[i:i + width]
+                if chunk.strip():
+                    values.append(int(chunk))
+        return values
+
+    def format_fixed_width_ints(values: List[int], per_line: int, width: int = 8) -> List[str]:
+        out = []
+        for i in range(0, len(values), per_line):
+            chunk = values[i:i + per_line]
+            out.append("".join(f"{v:{width}d}" for v in chunk))
+        return out
+
+    # --- Modify ATOMS_PER_MOLECULE ---
+    apm_flag_idx = find_flag_index("ATOMS_PER_MOLECULE")
+    apm_start, apm_end = get_section_data_range(apm_flag_idx)
+    apm_values = parse_fixed_width_ints(lines[apm_start:apm_end], width=8)
+
+    if n < 1:
+        raise ValueError("n must be >= 1")
+    if n > len(apm_values):
+        raise ValueError(
+            f"n={n} is larger than the number of molecules in ATOMS_PER_MOLECULE "
+            f"({len(apm_values)})"
+        )
+
+    merged_atoms = sum(apm_values[:n])
+    new_apm_values = [merged_atoms] + apm_values[n:]
+    new_apm_lines = format_fixed_width_ints(new_apm_values, per_line=10, width=8)
+
+    # Replace section data lines
+    lines[apm_start:apm_end] = new_apm_lines
+
+    # Because line counts may have changed, refind SOLVENT_POINTERS after replacement
+    sp_flag_idx = find_flag_index("SOLVENT_POINTERS")
+    sp_start, sp_end = get_section_data_range(sp_flag_idx)
+    sp_values = parse_fixed_width_ints(lines[sp_start:sp_end], width=8)
+
+    if len(sp_values) < 3:
+        raise ValueError("SOLVENT_POINTERS section must contain at least 3 integers")
+
+    # Reduce 2nd and 3rd integers by (n - 1)
+    decrement = n - 1
+    sp_values[1] -= decrement
+    sp_values[2] -= decrement
+
+    new_sp_lines = format_fixed_width_ints(sp_values, per_line=3, width=8)
+    lines[sp_start:sp_end] = new_sp_lines
+
+    Path(output_path).write_text("\n".join(lines) + "\n")
+    return output_path

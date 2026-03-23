@@ -1,47 +1,68 @@
 version: 1
+# workflow family: abfe, asfe, rbfe, or md
 protocol: asfe
+# execution backend; these examples use the local orchestrator
 backend: local
 
 create:
+  # label used in output paths and generated job names
   system_name: adrb2_A_solv_fe
+  # JSON dictionary mapping ligand names to input files
   ligand_input: reference/ligands_dict.json
-  ligand_ff: openff-2.2.1
+  # ligand force field / parameter set
+  ligand_ff: openff-2.3.0
+  # keep the staged ligand files after setup
   retain_lig_prot: true
-  param_charge: am1bcc
+  # partial-charge model used during ligand parameterization
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
+  # rebuild staged files even if they already exist
   overwrite: false
+  # solvent padding used to create the ligand-only water box
   solv_shell: 15.0
+  # explicit water model passed to tleap
   water_model: TIP3P
 
 run:
+  # top-level work directory for executions/ and results/
   output_folder: ASFE_simulations
+  # stop after shared prep/equilibration and FE window setup when true
   only_fe_preparation: false
+  # prepare inputs without launching MD
   dry_run: false
+  # execution directory name; use distinct ids for replicates
   run_id: rep1
+  # local parallelism during staging and analysis
   max_workers: 8
+  # how failed ligands should be handled during orchestration
   on_failure: prune
+  # send completion or failure email to this address
   email_on_completion: yuzhuang@stanford.edu
   slurm:
+    # cluster partition/queue for generated sbatch scripts
     partition: rondror
+    # requested wall-clock time for the manager submission
     time: "4:00:00"
 
 fe_sim:
   # 24 lambda windows
   lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
-  # use rocklin correction 
+  # use the Rocklin correction for charging in solvent
   rocklin_correction: yes
-  y_n_steps: 30000
-  m_n_steps: 30000
-  # total 10 * 30000 = 300000 steps -> 1.2 ns per window
+  # production steps for the y component
+  y_n_steps: 300000
+  # production steps for the m component
+  m_n_steps: 300000
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
   barostat: 2
   # use hydrogen mass repartitioning
-  hmr: yes 
+  hmr: yes
   # 4 fs time step with HMR
   dt: 0.004
-  temperature: 298.15 
-  # analysis only start from 4th extension (exclude the first three FE extensions)
-  analysis_start_step: 0
+  # simulation temperature in Kelvin
+  temperature: 298.15
+  # discard the first 50000 steps from MBAR analysis
+  analysis_start_step: 50000
   # MBAR analysis blocks
   blocks: 5

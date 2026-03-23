@@ -12,6 +12,7 @@ CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
+PRMTOP_MERGED="full_merged.prmtop"
 log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
@@ -97,7 +98,7 @@ if [[ $only_eq -eq 1 ]]; then
         fi
     fi
 
-    if [[ $overwrite -eq 0 && -s eqnpt04.rst7 ]]; then
+    if [[ $overwrite -eq 0 && -s eqnpt_eq.rst7 ]]; then
         echo "Skipping equilibration steps."
     else
         # Equilibration with protein and lipid restrained
@@ -105,60 +106,106 @@ if [[ $only_eq -eq 1 ]]; then
         # Note we are not using the GPU version here
         # because for large box size change, an error will be raised.
         if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
+            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
         else
-            print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
+            print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
         fi
         check_sim_failure "Pre equilibration" "$log_file" eqnpt_pre.rst7
 
-        # Equilibration with protein restrained
-        print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
+        print_and_run "$PMEMD_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
+
+        # Equilibration with protein restrained
         for step in {1..4}; do
             prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
             curr=$(printf "eqnpt%02d" $step)
-            print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
+            print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
             check_sim_failure "Equilibration stage $step" "$log_file" ${curr}.rst7 $prev $retry
         done
     fi
+    
+    # longer equilibration
+    print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+    check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
 
-    if [[ $skip_window_eq -eq 1 ]]; then
-        echo "Skipping per-window equilibration (SKIP_WINDOW_EQ=1)."
-    else
-        # run minimization for each windows at this stage
-        for i in $(seq 0 $((NWINDOWS - 1))); do
-            win_folder=$(printf "../COMPONENT%02d" $i)
-            if [[ -s $win_folder/eq.rst7 ]]; then
-                echo "Skipping equilibration for window $i, already exists."
+    # only do it if N_WINDOWS is not 1
+    if [[ NWINDOWS -gt 1 ]]; then
+        print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+        check_sim_failure "Minimization for FEP" "$log_file" mini.in.rst7
+        if ! check_min_energy "mini.in.out" -1000; then
+            echo "Minimization not passed with cuda; try CPU"
+            rm -f "$log_file"
+            rm -f mini.in.rst7 mini.in.nc mini.in.out
+            if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
             else
-                echo "Running equilibration for window $i"
-                cd $win_folder
-                print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
-                check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
-                if ! check_min_energy "mini.in.out" -1000; then
-                    echo "Minimization not passed with cuda; try CPU"
-                    rm -f "$log_file"
-                    rm -f mini.in.rst7 mini.in.nc mini.in.out
-                    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-                        print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
-                    else
-                        print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c ../COMPONENT-1/eqnpt04.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref ../COMPONENT-1/eqnpt04.rst7 >> \"$log_file\" 2>&1"
-                    fi
-                    check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
-                    if ! check_min_energy "mini.in.out" -1000; then
-                        echo "Minimization with CPU also failed for window $i, exiting."
-                        rm -f mini.in.rst7 mini.in.nc mini.in.out
-                        exit 1
-                    fi
-                fi
-                print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
-                check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
-                cd ../COMPONENT-1
+                print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
             fi
+            check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
+            if ! check_min_energy "mini.in.out" -1000; then
+                echo "Minimization with CPU also failed for window $i, exiting."
+                rm -f mini.in.rst7 mini.in.nc mini.in.out
+                exit 1
+            fi
+        fi
+        
+        # run one long equilbration with dynamically changed lambda value
+        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
+        check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
+
+        # lambda values for EACH EQ frame
+        lambda_eq_list=(LAMBDA_EQ_LIST)
+
+        # lambda values for EACH window folder index i
+        lambda_set_list=(LAMBDA_SET_LIST)
+
+        # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
+        cpptraj -p full.prmtop -i /dev/stdin <<'EOF'
+trajin eq.nc
+trajout eq.rst7 multi restart
+run
+EOF
+        # Find closest index in lambda_eq_list to a target lambda
+        closest_index() {
+        local target="$1"
+        # Print "best_index best_lambda best_absdiff"
+        awk -v target="$target" '
+            BEGIN { best_i=0; best_d=1e99; best_l=0; }
+            {
+            l=$1
+            d = l - target
+            if (d < 0) d = -d
+            if (d < best_d) { best_d=d; best_i=NR-1; best_l=l }
+            }
+            END { printf "%d %.10g %.10g\n", best_i, best_l, best_d }
+        ' < <(printf "%s\n" "${lambda_eq_list[@]}")
+        }
+
+        # 2) For each window, pick closest EQ lambda frame and copy restart
+        for ((i=0; i<NWINDOWS; i++)); do
+            win_folder=$(printf "../COMPONENT%02d" "$i")
+            lambda_win="${lambda_set_list[$i]}"
+
+            read -r best_i best_l best_d < <(closest_index "$lambda_win")
+
+            # cpptraj "multi" numbering starts at 1 => frame file index = best_i + 1
+            frame=$((best_i + 1))
+            src="eq.rst7.${frame}"
+            dst="${win_folder}/eq.rst7"
+
+            if [[ ! -f "$src" ]]; then
+                echo "ERROR: missing source restart $src (check eq.rst7.* generation)" >&2
+                exit 1
+            fi
+            mkdir -p "$win_folder"
+            cp -f "$src" "$dst"
+
+            printf "window %02d lambda=%s -> closest_eq_lambda=%s (diff=%s) : %s -> %s\n" \
+                "$i" "$lambda_win" "$best_l" "$best_d" "$src" "$dst"
         done
     fi
 
-    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y eqnpt04.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y eqnpt_eq.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then

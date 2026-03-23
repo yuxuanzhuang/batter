@@ -13,16 +13,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-import os
 import smtplib
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal
 from smtplib import SMTPException
+import pandas as pd
 import yaml
 
 from loguru import logger
-from pprint import pprint
 
 from batter.config.run import RunConfig
 from batter.systems.core import SimSystem
@@ -34,7 +33,7 @@ from batter.pipeline.step import Step
 from batter.pipeline.payloads import StepPayload
 
 from batter.runtime.portable import ArtifactStore
-from batter.runtime.fe_repo import FEResultsRepository, FERecord
+from batter.runtime.fe_repo import FEResultsRepository
 
 from batter.exec.slurm_mgr import SlurmJobManager
 
@@ -51,8 +50,6 @@ from batter.orchestrate.markers import (
 from batter.orchestrate.pipeline_utils import select_pipeline
 from batter.orchestrate.results_io import (
     extract_ligand_metadata,
-    fallback_totals_from_json,
-    parse_results_dat,
     save_fe_records,
 )
 from batter.orchestrate.run_support import (
@@ -68,6 +65,19 @@ from batter.orchestrate.run_support import (
     stored_signature as _stored_signature,
     store_ligand_names as _store_ligand_names,
 )
+
+_PARENT_ONLY_STEP_NAMES = frozenset({"system_prep", "system_prep_asfe", "param_ligands"})
+_PHASE_STEP_NAMES: dict[str, frozenset[str]] = {
+    "prepare_equil": frozenset({"prepare_equil"}),
+    "equil": frozenset({"equil"}),
+    "equil_analysis": frozenset({"equil_analysis"}),
+    "pre_prepare_fe": frozenset({"pre_prepare_fe"}),
+    "pre_fe_equil": frozenset({"pre_fe_equil"}),
+    "prepare_fe": frozenset({"prepare_fe", "prepare_fe_windows"}),
+    "fe_equil": frozenset({"fe_equil"}),
+    "fe": frozenset({"fe"}),
+    "analyze": frozenset({"analyze"}),
+}
 
 
 def _slurm_registry_path(run_dir: Path) -> Path:
@@ -97,17 +107,18 @@ def _store_run_yaml_copy(run_dir: Path, yaml_path: Path) -> None:
 
 
 def _clear_failure_markers(run_dir: Path) -> None:
-    """Remove FAILED markers and progress caches under a run directory."""
+    """Remove failure markers, retry counters, and progress caches under a run directory."""
     sim_root = run_dir / "simulations"
     if not sim_root.exists():
         return
     removed = 0
-    for path in sim_root.rglob("FAILED"):
-        try:
-            path.unlink()
-            removed += 1
-        except Exception:
-            continue
+    for marker_name in ("FAILED", "job_attempt.txt"):
+        for path in sim_root.rglob(marker_name):
+            try:
+                path.unlink()
+                removed += 1
+            except Exception:
+                continue
     for path in sim_root.rglob("progress"):
         if not path.is_dir():
             continue
@@ -127,6 +138,98 @@ def _clear_failure_markers(run_dir: Path) -> None:
             logger.info(f"[cleanup] Removed progress cache folder: {progress_root}")
         except Exception:
             logger.warning(f"[cleanup] Failed to remove progress cache folder: {progress_root}")
+
+
+def _build_per_ligand_pipeline(tpl: Pipeline, sim_cfg_updated: Any) -> Pipeline:
+    """Clone ``tpl`` for per-ligand execution and refresh embedded sim configs."""
+    steps: list[Step] = []
+    for step in tpl.ordered_steps():
+        if step.name in _PARENT_ONLY_STEP_NAMES:
+            continue
+        payload = step.payload.copy_with() if step.payload is not None else None
+        if payload is not None and payload.sim is not None:
+            payload = payload.copy_with(sim=sim_cfg_updated)
+        steps.append(
+            Step(
+                name=step.name,
+                requires=[req for req in step.requires if req not in _PARENT_ONLY_STEP_NAMES],
+                payload=payload,
+            )
+        )
+    return Pipeline(steps)
+
+
+def _format_summary_float(value: Any) -> str:
+    """Render FE summary floats consistently for terminal/email tables."""
+    try:
+        if pd.isna(value):
+            return ""
+        return f"{float(value):.3f}"
+    except Exception:
+        return str(value)
+
+
+def _build_run_summary_table(
+    repo: FEResultsRepository, run_id: str
+) -> str | None:
+    """Build a plain-text summary table for a completed run."""
+    try:
+        df = repo.index()
+    except Exception as exc:
+        logger.warning(f"Could not load FE summary for run '{run_id}': {exc}")
+        return None
+
+    if df.empty or "run_id" not in df.columns:
+        return None
+
+    summary = df[df["run_id"] == run_id].copy()
+    if summary.empty:
+        return None
+
+    cols = [
+        "original_name",
+        "ligand",
+        "mol_name",
+        "total_dG",
+        "total_se",
+        "status",
+        "failure_reason",
+    ]
+    for col in cols:
+        if col not in summary.columns:
+            summary[col] = pd.NA
+
+    summary["ligand"] = summary["ligand"].fillna("")
+    summary["original_name"] = summary["original_name"].fillna("")
+    summary["original_name"] = summary["original_name"].mask(
+        summary["original_name"] == "", summary["ligand"]
+    )
+    summary = summary[cols].sort_values(
+        ["status", "original_name", "ligand"], na_position="last", kind="stable"
+    )
+    for col in ("original_name", "ligand", "mol_name", "status", "failure_reason"):
+        summary[col] = summary[col].fillna("")
+    for col in ("total_dG", "total_se"):
+        summary[col] = summary[col].map(_format_summary_float)
+
+    with pd.option_context("display.max_columns", None, "display.width", 160):
+        return summary.to_string(index=False)
+
+
+def _select_phase_pipeline(pipeline: Pipeline, step_names: frozenset[str]) -> Pipeline:
+    """Return the sub-pipeline containing only ``step_names`` and their local edges."""
+    selected = [step for step in pipeline.ordered_steps() if step.name in step_names]
+    selected_names = {step.name for step in selected}
+    return Pipeline(
+        [
+            Step(
+                name=step.name,
+                requires=[req for req in step.requires if req in selected_names],
+                payload=step.payload,
+            )
+            for step in selected
+        ]
+    )
 
 
 def _build_rbfe_network_plan(
@@ -152,6 +255,7 @@ def _build_rbfe_network_plan(
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
+    atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf")
     pairs: List[tuple[str, str]] = []
     if rbfe_cfg.mapping_file:
         pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
@@ -165,6 +269,7 @@ def _build_rbfe_network_plan(
                 {name: Path(lig_map[name]) for name in available},
                 layout=rbfe_cfg.konnektor_layout,
                 plot_path=config_dir / "rbfe_network.png",
+                atom_mapper=atom_mapper,
             )
             network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
             mapping_source["mapping"] = "konnektor"
@@ -177,6 +282,7 @@ def _build_rbfe_network_plan(
                     {name: Path(lig_map[name]) for name in available},
                     layout="star",
                     plot_path=config_dir / "rbfe_network.png",
+                    atom_mapper=atom_mapper,
                 )
                 network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
                 mapping_source["mapping"] = mapping_name
@@ -195,6 +301,7 @@ def _build_rbfe_network_plan(
             network = RBFENetwork.from_ligands(available, mapping_fn=mapping_fn)
             pairs = list(network.pairs)
             mapping_source["mapping"] = mapping_name
+    mapping_source["atom_mapper"] = atom_mapper
 
     payload = network.to_mapping()
     if bool(getattr(rbfe_cfg, "both_directions", False)):
@@ -212,9 +319,67 @@ def _build_rbfe_network_plan(
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
     logger.info(
-        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs."
+        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs with both directions={mapping_source.get('both_directions', False)}"
     )
     return payload
+
+
+def _maybe_regenerate_rbfe_network_after_pruning(
+    *,
+    available_ligands: List[str],
+    lig_map: Dict[str, str],
+    payload: Dict[str, Any],
+    rbfe_cfg,
+    config_dir: Path,
+) -> Dict[str, Any]:
+    """Rebuild RBFE network if some planned ligands were pruned before transformations."""
+    from batter.config.utils import sanitize_ligand_name
+
+    available = [sanitize_ligand_name(x) for x in available_ligands if x]
+    available_set = set(available)
+    planned = [
+        sanitize_ligand_name(str(x))
+        for x in (payload.get("ligands") or [])
+        if x
+    ]
+    pruned = [name for name in planned if name not in available_set]
+    if not pruned:
+        return payload
+    if len(available) < 2:
+        return payload
+
+    lig_map_sanitized = {
+        sanitize_ligand_name(str(name)): path for name, path in lig_map.items()
+    }
+    missing_paths = [name for name in available if name not in lig_map_sanitized]
+    if missing_paths:
+        logger.warning(
+            f"RBFE network regeneration skipped: missing ligand input path(s) for {', '.join(missing_paths)}."
+        )
+        return payload
+
+    logger.warning(
+        f"Detected {len(pruned)} pruned ligand(s) before RBFE transformations ({', '.join(pruned)}). "
+        "Regenerating RBFE network on remaining ligands."
+    )
+    try:
+        regenerated = _build_rbfe_network_plan(
+            available,
+            {name: lig_map_sanitized[name] for name in available},
+            rbfe_cfg,
+            config_dir,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"RBFE network regeneration failed ({exc}); continuing with existing network payload."
+        )
+        return payload
+
+    logger.info(
+        f"RBFE network regenerated after pruning: {len(regenerated.get('ligands') or [])} ligands, "
+        f"{len(regenerated.get('pairs') or [])} pairs."
+    )
+    return regenerated
 
 
 
@@ -254,6 +419,42 @@ def run_from_yaml(
     on_failure: Literal["prune", "raise", "retry"] = None,
     run_overrides: Dict[str, Any] | None = None,
 ) -> None:
+    """Execute a BATTER workflow described by a YAML file."""
+    path = Path(path)
+    logger.info(f"Starting BATTER run from {path}")
+
+    # Config must load successfully before email settings are available.
+    rc = RunConfig.load(path)
+    run_state: dict[str, Any] = {
+        "run_id": None,
+        "run_dir": Path(getattr(rc.run, "output_folder", path.parent)),
+    }
+
+    try:
+        _run_from_yaml_impl(
+            path,
+            rc,
+            on_failure=on_failure,
+            run_overrides=run_overrides,
+            run_state=run_state,
+        )
+    except Exception as exc:
+        _notify_run_failure(
+            rc,
+            run_state.get("run_id"),
+            run_state.get("run_dir"),
+            exc,
+        )
+        raise
+
+
+def _run_from_yaml_impl(
+    path: Path | str,
+    rc: RunConfig,
+    on_failure: Literal["prune", "raise", "retry"] = None,
+    run_overrides: Dict[str, Any] | None = None,
+    run_state: dict[str, Any] | None = None,
+) -> None:
     """Execute a BATTER workflow described by a YAML file.
 
     Parameters
@@ -266,10 +467,6 @@ def run_from_yaml(
         Overrides applied to the ``run`` section (e.g., only FE preparation).
     """
     path = Path(path)
-    logger.info(f"Starting BATTER run from {path}")
-
-    # Configs
-    rc = RunConfig.load(path)
 
     if run_overrides:
         logger.info(f"Applying run overrides: {run_overrides}")
@@ -314,6 +511,9 @@ def run_from_yaml(
             rc.create.system_name,
             requested_run_id,
         )
+        if run_state is not None:
+            run_state["run_id"] = run_id
+            run_state["run_dir"] = run_dir
         stored_sig, sig_path = _stored_signature(run_dir)
         stored_payload = _stored_payload(run_dir)
         if _resolve_signature_conflict(
@@ -464,11 +664,7 @@ def run_from_yaml(
 
     parent_failure = False
     parent_only = Pipeline(
-        [
-            s
-            for s in tpl.ordered_steps()
-            if s.name in {"system_prep", "system_prep_asfe", "param_ligands"}
-        ]
+        [step for step in tpl.ordered_steps() if step.name in _PARENT_ONLY_STEP_NAMES]
     )
     if parent_only.ordered_steps():
         names = [s.name for s in parent_only.ordered_steps()]
@@ -496,7 +692,6 @@ def run_from_yaml(
                     break
                 raise
 
-    # Locate sim_overrides from system_prep (under run_dir)
     config_dir = run_dir / "artifacts" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     overrides_path = config_dir / "sim_overrides.json"
@@ -534,66 +729,17 @@ def run_from_yaml(
         )
     )
 
-    # Now build a fresh pipeline for per-ligand steps using the UPDATED sim
-    removed = {"system_prep", "system_prep_asfe", "param_ligands"}
-    per_lig_steps: List[Step] = []
-    for s in tpl.ordered_steps():
-        if s.name in removed:
-            continue
-        payload = s.payload.copy_with() if s.payload is not None else None
-        per_lig_steps.append(
-            Step(
-                name=s.name,
-                requires=[r for r in s.requires if r not in removed],
-                payload=payload,
-            )
-        )
-    per_lig = Pipeline(per_lig_steps)
+    per_lig = _build_per_ligand_pipeline(tpl, sim_cfg_updated)
+    phase_prepare_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["prepare_equil"])
+    phase_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["equil"])
+    phase_equil_analysis = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["equil_analysis"])
+    phase_pre_prepare_fe = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["pre_prepare_fe"])
+    phase_pre_fe_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["pre_fe_equil"])
+    phase_prepare_fe = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["prepare_fe"])
+    phase_fe_equil = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["fe_equil"])
+    phase_fe = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["fe"])
+    phase_analyze = _select_phase_pipeline(per_lig, _PHASE_STEP_NAMES["analyze"])
 
-    # IMPORTANT: also update the `sim` param on each remaining step
-    patched = []
-    for s in per_lig.ordered_steps():
-        payload = s.payload
-        if payload is not None and payload.sim is not None:
-            payload = payload.copy_with(sim=sim_cfg_updated)
-        patched.append(Step(name=s.name, requires=s.requires, payload=payload))
-    per_lig = Pipeline(patched)
-
-    # --- define phases explicitly ---
-    PH_PREPARE_EQUIL = {"prepare_equil"}
-    PH_EQUIL = {"equil"}
-    PH_EQUIL_ANALYSIS = {"equil_analysis"}
-    PH_PRE_PREPARE_FE = {"pre_prepare_fe"}
-    PH_PRE_FE_EQUIL = {"pre_fe_equil"}
-    PH_PREPARE_FE = {"prepare_fe", "prepare_fe_windows"}
-    PH_FE_EQUIL = {"fe_equil"}
-    PH_FE = {"fe"}
-    PH_ANALYZE = {"analyze"}
-
-    def _phase(names: set[str]) -> Pipeline:
-        selected = [s for s in per_lig.ordered_steps() if s.name in names]
-        selected_names = {s.name for s in selected}
-        pruned = [
-            Step(
-                name=s.name,
-                requires=[r for r in s.requires if r in selected_names],
-                payload=s.payload,
-            )
-            for s in selected
-        ]
-        return Pipeline(pruned)
-
-    phase_prepare_equil = _phase(PH_PREPARE_EQUIL)
-    phase_equil = _phase(PH_EQUIL)
-    phase_equil_analysis = _phase(PH_EQUIL_ANALYSIS)
-    phase_pre_prepare_fe = _phase(PH_PRE_PREPARE_FE)
-    phase_pre_fe_equil = _phase(PH_PRE_FE_EQUIL)
-    phase_prepare_fe = _phase(PH_PREPARE_FE)
-    phase_fe_equil = _phase(PH_FE_EQUIL)
-    phase_fe = _phase(PH_FE)
-    phase_analyze = _phase(PH_ANALYZE)
-
-    # --- build SimSystem children ---
     param_idx_path = run_dir / "artifacts" / "ligand_params" / "index.json"
     if not param_idx_path.exists():
         if parent_failure and (rc.run.on_failure or "").lower() in {"prune", "retry"}:
@@ -614,7 +760,6 @@ def run_from_yaml(
         resn = entry.get("residue_name")
         lig_resname_map[lig] = resn
 
-    # keep all children for now
     children_all: List[SimSystem] = []
     for lig_name, resn in lig_resname_map.items():
         d = run_dir / "simulations" / lig_name
@@ -637,7 +782,6 @@ def run_from_yaml(
                 meta=child_meta,
             )
         )
-    # start with all children
     children = children_all
     fe_children_all: List[SimSystem] = children_all
     if getattr(rc.run, "clean_failures", False):
@@ -798,6 +942,7 @@ def run_from_yaml(
     if rc.protocol == "rbfe":
         from batter.rbfe import RBFENetwork
         from batter.config.utils import sanitize_ligand_name
+        from batter.config.run import RBFENetworkArgs
 
         available = [c.meta.get("ligand") for c in children if c.meta.get("ligand")]
         if len(available) < 2:
@@ -811,11 +956,19 @@ def run_from_yaml(
         if rbfe_network_path.exists():
             payload = json.loads(rbfe_network_path.read_text())
         else:
-            from batter.config.run import RBFENetworkArgs
-
             rbfe_cfg = rc.rbfe or RBFENetworkArgs()
             payload = _build_rbfe_network_plan(
                 list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+            )
+
+        if (rc.run.on_failure or "").lower() in {"prune", "retry"}:
+            rbfe_cfg = rc.rbfe or RBFENetworkArgs()
+            payload = _maybe_regenerate_rbfe_network_after_pruning(
+                available_ligands=available,
+                lig_map=lig_map,
+                payload=payload,
+                rbfe_cfg=rbfe_cfg,
+                config_dir=config_dir,
             )
 
         pairs = payload.get("pairs") or []
@@ -852,6 +1005,11 @@ def run_from_yaml(
             cleaned_pairs = pruned
 
         network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: cleaned_pairs)
+        atom_mapper = str(
+            payload.get("atom_mapper")
+            or getattr(rc.rbfe, "atom_mapper", "kartograf")
+            or "kartograf"
+        ).lower()
 
         # Build transformation systems under simulations/transformations/
         trans_root = run_dir / "simulations" / "transformations"
@@ -892,6 +1050,7 @@ def run_from_yaml(
                 residue_alt=resn_alt,
                 input_ref=str(ref_dst),
                 input_alt=str(alt_dst),
+                atom_mapper=atom_mapper,
             )
 
             rbfe_children.append(
@@ -1057,11 +1216,18 @@ def run_from_yaml(
             [f"{n} ({status}: {reason})" for n, status, reason in failures]
         )
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
+    summary_table = _build_run_summary_table(repo, run_id)
+    if summary_table:
+        logger.info(f"Final FE summary for run '{run_id}':\n{summary_table}")
+    else:
+        logger.warning(
+            f"No FE summary rows found for run '{run_id}' after FE record export."
+        )
     logger.success(
         f"All phases completed {run_dir}. FE records saved to repository {rc.run.output_folder}/results/."
     )
 
-    _notify_run_completion(rc, run_id, run_dir, failures)
+    _notify_run_completion(rc, run_id, run_dir, failures, summary_table=summary_table)
 
 
 def _notify_run_completion(
@@ -1069,33 +1235,101 @@ def _notify_run_completion(
     run_id: str,
     run_dir: Path,
     failures: list[tuple[str, str, str]],
+    summary_table: str | None = None,
+) -> None:
+    _notify_run_status(
+        rc,
+        status="completed",
+        run_id=run_id,
+        run_dir=run_dir,
+        failures=failures,
+        summary_table=summary_table,
+    )
+
+
+def _notify_run_failure(
+    rc: RunConfig,
+    run_id: str | None,
+    run_dir: Path | None,
+    error: Exception,
+) -> None:
+    _notify_run_status(
+        rc,
+        status="failed",
+        run_id=run_id,
+        run_dir=run_dir,
+        error=error,
+    )
+
+
+def _notify_run_status(
+    rc: RunConfig,
+    status: Literal["completed", "failed"],
+    run_id: str | None,
+    run_dir: Path | None,
+    failures: list[tuple[str, str, str]] | None = None,
+    error: Exception | None = None,
+    summary_table: str | None = None,
 ) -> None:
     recipient = rc.run.email_on_completion
     if not recipient:
         return
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    subject = f"BATTER run '{run_id}' of {rc.create.system_name} completed"
+    display_run_id = run_id or "unknown"
+    if status == "failed":
+        subject = f"BATTER run '{display_run_id}' of {rc.create.system_name} failed"
+    else:
+        subject = f"BATTER run '{display_run_id}' of {rc.create.system_name} completed"
     results_path = Path(rc.run.output_folder) / "results"
 
-    body_lines = [
-        "Hi there!",
-        "",
-        f"Your BATTER run '{rc.create.system_name}' (run_id='{run_id}') completed at {timestamp} UTC.",
-        f"Protocol: {rc.protocol}",
-        f"Output folder: {run_dir}",
-        f"FE records stored under: {results_path}",
-        "",
-    ]
+    body_lines = ["Hi there!", ""]
 
-    if failures:
-        body_lines.append(
-            "The following ligand(s) had post-run issues (see logs for additional context):"
+    if status == "failed":
+        body_lines.extend(
+            [
+                f"Your BATTER run '{rc.create.system_name}' (run_id='{display_run_id}') failed at {timestamp} UTC.",
+                f"Protocol: {rc.protocol}",
+                f"Last known run path: {run_dir or rc.run.output_folder}",
+                "",
+            ]
         )
-        for ligand, status, reason in failures:
-            body_lines.append(f"- {ligand} ({status}): {reason}")
+        if error is not None:
+            body_lines.extend(
+                [
+                    "Error:",
+                    str(error),
+                    "",
+                ]
+            )
+        body_lines.append("FE records may be incomplete because the run exited early.")
     else:
-        body_lines.append("No ligand failures were detected.")
+        body_lines.extend(
+            [
+                f"Your BATTER run '{rc.create.system_name}' (run_id='{display_run_id}') completed at {timestamp} UTC.",
+                f"Protocol: {rc.protocol}",
+                f"Output folder: {run_dir}",
+                f"FE records stored under: {results_path}",
+                "",
+            ]
+        )
+        if failures:
+            body_lines.append(
+                "The following ligand(s) had post-run issues (see logs for additional context):"
+            )
+            for ligand, failure_status, reason in failures:
+                body_lines.append(f"- {ligand} ({failure_status}): {reason}")
+        else:
+            body_lines.append("No ligand failures were detected.")
+        if summary_table:
+            body_lines.extend(
+                [
+                    "",
+                    "Final FE summary:",
+                    "",
+                    summary_table,
+                ]
+            )
 
     body_lines.extend(
         [

@@ -1,6 +1,5 @@
 import numpy as np
 import os
-import sys
 import pandas as pd
 from loguru import logger
 
@@ -25,8 +24,6 @@ class MBARValidator:
                 energy_unit: str = 'kcal/mol',
                 log_level: str = 'WARNING'
                 ):
-        logger.remove()
-        logger.add(sys.stderr, level=log_level)
         self._data_list = df_list
         self.temperature = temperature
         self.energy_unit = energy_unit
@@ -144,8 +141,6 @@ class ConvergenceValidator(MBARValidator):
                 energy_unit: str = 'kcal/mol',
                 log_level: str = 'WARNING'
                 ):
-        logger.remove()
-        logger.add(sys.stderr, level=log_level)
         self.Upot = Upot
         self.lambdas = lambdas
         self.temperature = temperature

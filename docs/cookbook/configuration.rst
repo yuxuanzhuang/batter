@@ -20,7 +20,9 @@ The run YAML file is divided into three sections grouped inside
     required and becomes the base path for ``<run.output_folder>/executions/<run_id>/``.
     ``run.system_type`` optionally overrides the builder selection inferred from the
     protocol (``MABFE`` for ABFE/MD, ``MASFE`` for ASFE). This section is validated
-    by :class:`batter.config.run.RunSection`.
+    by :class:`batter.config.run.RunSection`. Set ``run.clean_failures: true`` to
+    remove ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress
+    caches before rerunning an existing execution.
 ``create``
     Inputs required for system staging (protein/topology paths, ligands, force fields,
     optional restraints). The structure maps directly to
@@ -33,8 +35,8 @@ The run YAML file is divided into three sections grouped inside
     are expressed via ``eq_steps`` which now represents the **total** equilibration
     steps. The value is written into ``mdin-template`` as ``! total_steps=<total>``,
     letting runtime scripts determine the target length without regenerating inputs.
-    Legacy extend knobs (``num_equil_extends``, ``num_fe_extends``) are rejected; set
-    ``eq_steps``/``n_steps`` to total steps instead. ``analysis_range`` is likewise
+    Legacy production extend knobs (``num_fe_extends``) are rejected; set
+    ``n_steps`` to total steps instead. ``analysis_range`` is likewise
     disallowed—use ``analysis_start_step`` to skip early production frames. FE
     production no longer chunks into extends; set ``n_steps`` to the total per-window
     production steps. Those mdin templates also include ``! total_steps=<total>``;
@@ -59,12 +61,28 @@ Lambda schedules can be customized per component using ``fe_sim.component_lambda
 inherits the top-level ``fe_sim.lambdas`` list. Values can be written as YAML lists
 or comma/space separated strings; validation ensures ascending order.
 
+RBFE mapping options
+--------------------
+
+For ``protocol: rbfe``, the ``rbfe`` block controls network planning and atom mapping.
+
+* ``rbfe.mapping`` – mapping strategy (for example ``default`` or ``konnektor``).
+* ``rbfe.mapping_file`` – explicit pair list file; takes precedence over ``mapping``.
+* ``rbfe.konnektor_layout`` – optional Konnektor layout when ``mapping: konnektor``.
+* ``rbfe.both_directions`` – when true, run both directions for each mapped edge.
+* ``rbfe.atom_mapper`` – atom mapper backend used for RBFE mapping:
+
+  - ``kartograf`` (default), configured as ``KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False, map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False, additional_mapping_filter_functions=[filter_element_changes])`` during network planning.
+  - ``lomap``, using ``LomapAtomMapper(time=20, threed=True, max3d=1.5, element_change=False, shift=True)``.
+
+See :doc:`rbfe` for RBFE-specific examples.
+
 Component-Specific Inputs
 -------------------------
 
 Although the ``create`` block is shared by ABFE, MASFE, and MD pipelines, some fields
 are consumed only by particular builders. The table below highlights the ones that
-feed into the low-level ops documented in :doc:`developer_guide/internal_builders`:
+feed into the low-level ops documented in :doc:`../developer_guide/internal_builders`:
 
 .. list-table::
    :header-rows: 1
@@ -215,6 +233,14 @@ Supported keys in ``run.slurm``:
 * ``constraint`` – Constraint string (``--constraint``).
 * ``extra_sbatch`` – Additional ``sbatch`` flags appended verbatim.
 
+Run notifications
+-----------------
+
+Set ``run.email_on_completion`` to receive a best-effort email when the BATTER
+manager finishes normally or exits with an uncaught failure. BATTER sends that
+message through ``localhost`` SMTP and uses ``run.email_sender`` as the sender
+address (default: ``nobody@stanford.edu``).
+
 Batch mode (single allocation)
 ------------------------------
 
@@ -266,5 +292,8 @@ Quick Reference
    batter.config.run.FESimArgs
    batter.config.run.MDSimArgs
    batter.config.run.RunSection
+    batter.config.simulation.SimulationConfig
    batter.config.load_run_config
    batter.config.dump_run_config
+    batter.config.load_simulation_config
+    batter.config.dump_simulation_config

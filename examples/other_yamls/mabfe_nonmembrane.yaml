@@ -1,37 +1,61 @@
 version: 1
+# workflow family: abfe, asfe, rbfe, or md
 protocol: abfe
+# execution backend; these examples use the local orchestrator
 backend: local
 
 create:
+  # label used in output paths and generated job names
   system_name: BRD4
+  # input protein structure used for receptor staging
   protein_input: reference/nonmembrane/protein.pdb
+  # full solvated reference structure used to seed the simulation box
   system_input: reference/nonmembrane/system.pdb
+  # alignment selection used when orienting the receptor
   protein_align: name CA
+  # JSON dictionary mapping ligand names to input files
   ligand_input: reference/nonmembrane/ligands_dict.json
+  # ligand force field / parameter set
   ligand_ff: openff-2.2.1
+  # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
+  # partial-charge model used during ligand parameterization
   param_charge: am1bcc
+  # three receptor anchor atoms used to define BATTER restraints
   anchor_atoms:
     - "name CA and resid 425"
     - "name CA and resid 447"
     - "name CA and resid 363"
+  # rebuild staged files even if they already exist
   overwrite: false
+  # AMBER force field for the receptor
   receptor_ff: protein.ff14SB
+  # solvent padding used when BATTER needs to add solvent around a ligand-only system
   solv_shell: 15.0
+  # explicit water model passed to tleap
   water_model: TIP3P
 
 run:
+  # top-level work directory for executions/ and results/
   output_folder: brd4_mabfe
+  # stop after shared prep/equilibration and FE window setup when true
   only_fe_preparation: false
+  # prepare inputs without launching MD
   dry_run: false
+  # execution directory name; auto reuses or creates a run id as needed
   run_id: auto
+  # local parallelism during staging and analysis
   max_workers: 8
+  # how failed ligands should be handled during orchestration
   on_failure: prune
   slurm:
+    # cluster partition/queue for generated sbatch scripts
     partition: owners
+    # requested wall-clock time for the manager submission
     time: "10:00:00"
 
 fe_sim:
+  # 48 lambda windows for this soluble-protein example
   lambdas: [
     0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,
     0.31188, 0.32772, 0.34359, 0.35892, 0.37497, 0.39086, 0.40584, 0.42001, 0.43453, 0.45056,
@@ -39,15 +63,25 @@ fe_sim:
     0.59453, 0.60923, 0.62468, 0.63991, 0.65631, 0.67222, 0.68487, 0.69656, 0.70897, 0.72458,
     0.74158, 0.75893, 0.779, 0.79905, 0.82704, 0.85882, 0.9069, 1.0
   ]
+  # MBAR analysis blocks
   blocks: 5
+  # solvent padding along X for soluble systems
   buffer_x: 12.0
+  # solvent padding along Y for soluble systems
   buffer_y: 12.0
+  # solvent padding along Z for soluble systems
   buffer_z: 15.0
+  # short equilibration for this development example
   eq_steps: 10000
-  num_equil_extends: 6
+  # production steps for the z component
   z_n_steps: 100000
+  # non-bonded cutoff in Angstrom
   cut: 9.0
+  # barostat choice in the AMBER templates
   barostat: 1
+  # use hydrogen mass repartitioning
   hmr: yes
+  # 4 fs time step with HMR
   dt: 0.004
+  # simulation temperature in Kelvin
   temperature: 298.15

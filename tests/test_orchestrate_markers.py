@@ -68,8 +68,11 @@ def test_handle_phase_failures_prune_and_raise(tmp_path):
     pruned = markers.handle_phase_failures(list(systems), phase, mode="prune")
     assert [s.name for s in pruned] == ["ok"]
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as exc:
         markers.handle_phase_failures(list(systems), phase, mode="raise")
+    msg = str(exc.value)
+    assert "batter run <run.yaml> --on-failure retry" in msg
+    assert "batter run <run.yaml> --clean-failures" in msg
 
 
 def test_filter_needing_phase_and_is_done(tmp_path):
@@ -207,3 +210,21 @@ def test_prepare_fe_progress_path(tmp_path):
     )
     assert progress.exists()
     assert "foo/FINISHED" in progress.read_text()
+
+
+def test_equil_progress_invalidated_when_finished_marker_missing(tmp_path):
+    run_root = tmp_path / "run"
+    root = run_root / "simulations" / "LIG1"
+    (run_root / "artifacts" / "progress" / "equil").mkdir(parents=True, exist_ok=True)
+    (run_root / "simulations").mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, exist_ok=True)
+
+    # stale cache from a prior failed run (marker was removed manually later)
+    progress = run_root / "artifacts" / "progress" / "equil" / "simulations__LIG1.csv"
+    progress.write_text("equil/FAILED,1\n")
+
+    systems = [_make_system(root)]
+    remaining = markers.filter_needing_phase(systems, "equil")
+
+    assert [s.name for s in remaining] == ["LIG1"]
+    assert progress.exists() is False

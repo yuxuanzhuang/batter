@@ -114,7 +114,11 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
                 names = ", ".join(c.meta.get("ligand", c.name) for c in retried)
                 logger.warning(f"[{phase_name}] Resetting failure state for {len(retried)} ligand(s): {names}")
             return ok + retried
-        raise RuntimeError(f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}")
+        raise RuntimeError(
+            f"[{phase_name}] {len(bad)} ligand(s) FAILED: {bad_names}. "
+            "Retry by rerunning `batter run <run.yaml> --on-failure retry` "
+            "or `batter run <run.yaml> --clean-failures`."
+        )
     if not ok:
         if mode_lower in {"prune", "retry"}:
             logger.warning(f"[{phase_name}] No ligands completed successfully (mode={mode_lower}); continuing with empty set.")
@@ -154,6 +158,10 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
 
 
 def _phase_ok_patterns(phase_name: str) -> List[str]:
+    if phase_name == "prepare_equil":
+        return ["equil/full.prmtop", "equil/prepare_equil.ok"]
+    if phase_name == "equil":
+        return ["equil/FINISHED"]
     if phase_name == "prepare_fe":
         return ["fe/prepare_fe.ok", "fe/prepare_fe_windows.ok"]
     if phase_name == "prepare_fe_windows":
@@ -173,6 +181,8 @@ def _maybe_invalidate_progress_for_phase(
     children: List[SimSystem], phase_name: str
 ) -> None:
     if phase_name not in {
+        "prepare_equil",
+        "equil",
         "prepare_fe",
         "prepare_fe_windows",
         "pre_prepare_fe",

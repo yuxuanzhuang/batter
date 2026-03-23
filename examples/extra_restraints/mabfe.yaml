@@ -1,21 +1,34 @@
 version: 1
+# workflow family: abfe, asfe, rbfe, or md
 protocol: abfe
+# execution backend; these examples use the local orchestrator
 backend: local
 
 create:
+  # label used in output paths and generated job names
   system_name: adrb2_A
+  # input protein structure used for receptor staging
   protein_input: ../reference/adrb2_A.pdb
+  # membrane+solvent reference structure used to seed the simulation box
   system_input: ../reference/adrb2_A_membrane.pdb
+  # optional restart/coordinate file carrying the correct box vectors
   system_coordinate: ../reference/adrb2_A_membrane.rst7
+  # alignment selection used when orienting the receptor
   protein_align: name CA and resid 50 to 200
+  # JSON dictionary mapping ligand names to input files
   ligand_input: ../reference/ligands_dict.json
+  # ligand force field / parameter set
   ligand_ff: openff-2.2.1
+  # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
+  # partial-charge model used during ligand parameterization
   param_charge: am1bcc
+  # three receptor anchor atoms used to define BATTER restraints
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
     - "name CA and resid 316"
+  # extra receptor atoms to restrain during equilibration and FE
   extra_restraints: >
     name CA and resid 50 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73
     126 127 128 129 130 131 132 133 134 135 136 137 138 139 140 141
@@ -23,34 +36,58 @@ create:
     217 218 219 220 221 222 223 224 225 226 227
     266 267 268 269 270 271 272 273 274 275 276 277 278
     323 324 325 326 327 328 329 330 331 332 333 334 335 336 337 338 339 340 341 342 343 344
+  # membrane lipid residue names present in the input structure
   lipid_mol: ["POPC"]
+  # rebuild staged files even if they already exist
   overwrite: false
+  # AMBER force field for the receptor
   receptor_ff: protein.ff14SB
+  # AMBER lipid force field for membrane systems
   lipid_ff: lipid21
+  # solvent padding used when BATTER needs to add solvent around a ligand-only system
   solv_shell: 15.0
+  # explicit water model passed to tleap
   water_model: TIP3P
 
 run:
+  # top-level work directory for executions/ and results/
   output_folder: adrb2_A_mabfe
+  # legacy label kept for this older example
   system_type: MABFE
+  # stop after shared prep/equilibration and FE window setup when true
   only_fe_preparation: false
+  # prepare inputs without launching MD
   dry_run: false
+  # execution directory name; auto reuses or creates a run id as needed
   run_id: auto
+  # local parallelism during staging and analysis
   max_workers: 8
+  # how failed ligands should be handled during orchestration
   on_failure: prune
   slurm:
+    # cluster partition/queue for generated sbatch scripts
     partition: owners
+    # requested wall-clock time for the manager submission
     time: "4:00:00"
 
 fe_sim:
+  # 24 lambda windows for this ABFE example
   lambdas: [0.00, 0.04, 0.09, 0.13, 0.17, 0.22, 0.26, 0.30, 0.35, 0.39, 0.43, 0.48, 0.52, 0.57, 0.61, 0.65, 0.70, 0.74, 0.78, 0.83, 0.93, 0.97, 0.99, 1.00]  # MBAR
+  # MBAR analysis blocks
   blocks: 5
+  # short equilibration for this development example
   eq_steps: 10000
-  num_equil_extends: 6
+  # production steps for the z component
   z_n_steps: 300000
+  # non-bonded cutoff in Angstrom
   cut: 9.0
+  # barostat choice in the AMBER templates
   barostat: 1
+  # use hydrogen mass repartitioning
   hmr: yes
+  # 4 fs time step with HMR
   dt: 0.004
+  # buffer_z for solvation layer above and below membrane
   buffer_z: 25.0
+  # simulation temperature in Kelvin
   temperature: 298.15

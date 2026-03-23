@@ -122,6 +122,46 @@ def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
     assert "SBATCH -J old" not in script_txt
 
 
+def test_submit_rebuild_does_not_duplicate_header_on_repeat(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "SLURMM-run").write_text("#!/bin/bash\n#SBATCH -J old\nBODY\n")
+    header_root = tmp_path / "headers"
+    header_root.mkdir()
+    header_text = (
+        "#!/bin/bash\n"
+        "# SYSTEMNAME, STAGE, POSE are placeholders to be replaced when generating the script\n"
+        "source /path/to/amber.sh\n"
+    )
+    (header_root / "SLURMM-Am.header").write_text(header_text)
+
+    spec = SlurmJobSpec(
+        workdir=workdir,
+        script_rel="SLURMM-run",
+        header_name="SLURMM-Am.header",
+        header_root=header_root,
+    )
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0, header_root=header_root)
+
+    def fake_run(cmd, cwd=None, text=None, capture_output=None):
+        class Dummy:
+            returncode = 0
+            stdout = "Submitted batch job 99"
+            stderr = ""
+
+        return Dummy()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    manager._submit_once(spec)
+    manager._submit_once(spec)
+
+    script_txt = (workdir / "SLURMM-run").read_text()
+    assert script_txt.count("source /path/to/amber.sh") == 1
+    assert script_txt.count("SYSTEMNAME, STAGE, POSE") == 1
+    assert "BODY" in script_txt
+
+
 def test_submit_uses_submit_dir(monkeypatch, tmp_path):
     workdir = tmp_path / "wd"
     workdir.mkdir()
