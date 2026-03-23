@@ -31,6 +31,7 @@ dependencies:
   - kartograf
   - konnektor
   - lomap2
+  - cinnabar
   # Tests
   - pytest
   - pytest-xdist

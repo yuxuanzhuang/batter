@@ -1,0 +1,59 @@
+  version: 1
+  protocol: rbfe
+  backend: local
+
+  create:
+    system_name: tiam1
+    protein_input: tiam1.pdb
+    ligand_input: ligands_dict_aligned.json
+    ligand_ff: openff-2.3.0-rc2
+    retain_lig_prot: true
+    param_charge: "openff-gnn-am1bcc-1.0.0.pt"
+    anchor_atoms:
+      - name CA and resid 911
+      - name CA and resid 861
+      - name CA and resid 916
+    overwrite: false
+    receptor_ff: protein.ff14SB
+    solv_shell: 15.0
+    water_model: TIP3P
+
+  run:
+    output_folder: tiam_rbfe_aligned_new
+    run_id: rep1
+    max_workers: 1
+    on_failure: prune
+    email_on_completion: yuzhuang@stanford.edu
+    slurm:
+      partition: owners,rondror
+      time: "2:00:00"
+
+  fe_sim:
+    # 24 lambda windows
+    lambdas: [0.        , 0.04347826, 0.08695652, 0.13043478, 0.17391304,
+       0.2173913 , 0.26086957, 0.30434783, 0.34782609, 0.39130435,
+       0.43478261, 0.47826087, 0.52173913, 0.56521739, 0.60869565,
+       0.65217391, 0.69565217, 0.73913043, 0.7826087 , 0.82608696,
+       0.86956522, 0.91304348, 0.95652174, 1.        ]
+    eq_steps: 0
+    x_n_steps: 1000000
+    # non-bonded cutoff in Angstrom
+    cut: 9.0
+    # Monte Carlo barostat
+    barostat: 2
+    # use hydrogen mass repartitioning
+    hmr: yes 
+    # 2 fs time step for RBFE
+    dt: 0.004
+    # buffer_z for solvation layer above and below membrane
+    buffer_z: 10.0
+    buffer_x: 10.0
+    buffer_y: 10.0
+    temperature: 298.15 
+    analysis_start_step: 100000
+    # MBAR analysis blocks
+    blocks: 5
+  rbfe:
+    mapping: konnektor
+    konnektor_layout: minimalspanningtree
+    both_directions: true
