@@ -129,25 +129,41 @@ Example YAMLs are intended as starting points; adjust to your system.
 Binding of the Tiam1 PDZ Domain to Peptides
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-`examples/tiam` contains an example that uses the OpenFF 2.3.0 small-molecule force field to estimate the relative binding free energies of peptides bound to the Tiam1 PDZ domain.
+``examples/tiam`` contains an example workflow that uses the OpenFF 2.3.0
+small-molecule force field to estimate the relative binding free energies of
+peptides bound to the Tiam1 PDZ domain.
 
-This benchmark is based on the Tiam1 PDZ peptide system described in:
-https://www.cell.com/biophysj/fulltext/S0006-3495(18)30105-X?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS000634951830105X%3Fshowall%3Dtrue#tblfn2
+This benchmark is based on the Tiam1 PDZ peptide system described in the
+following study:
 
-The results below were obtained with 24 lambda windows and 4 ns per window without H-REMD.
+`Biophysical Journal article <https://www.cell.com/biophysj/fulltext/S0006-3495(18)30105-X?_returnURL=https%3A%2F%2Flinkinghub.elsevier.com%2Fretrieve%2Fpii%2FS000634951830105X%3Fshowall%3Dtrue#tblfn2>`_.
 
-![Tiam1 RBFE results](docs/assets/tiam_rbfe.png)
+The results below were obtained using 24 lambda windows with 4 ns per window,
+without H-REMD.
+
+.. image:: docs/assets/tiam_rbfe.png
+   :alt: Tiam1 RBFE results
+   :align: center
+   :width: 80%
 
 Absolute and Relative Binding Free Energy Calculations of TYK2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-`examples/tyk2` contains the binding free energy calculation inputs for benchmark system of TYK2 (https://github.com/schrodinger/public_binding_free_energy_benchmark/tree/main/fep_benchmark_inputs/structure_inputs/jacs_set)
+``examples/tyk2`` contains the input files for absolute and relative binding
+free energy calculations on the TYK2 benchmark system.
 
-The RBFE results below were obtained with 24 lambda windows and 4 ns per window with H-REMD.
+This benchmark is based on the TYK2 structures provided in the following
+repository:
 
-![TYK2 RBFE results](docs/assets/tyk2_rbfe.png)
+`Schrödinger public binding free energy benchmark <https://github.com/schrodinger/public_binding_free_energy_benchmark/tree/main/fep_benchmark_inputs/structure_inputs/jacs_set>`_.
 
+The RBFE results below were obtained using 24 lambda windows with 4 ns per
+window, with H-REMD.
 
+.. image:: docs/assets/tyk2_rbfe.png
+   :alt: TYK2 RBFE results
+   :align: center
+   :width: 80%
 
 Copyright
 -------------------------------
