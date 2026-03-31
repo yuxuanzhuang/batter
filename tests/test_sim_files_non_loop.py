@@ -16,7 +16,7 @@ def _write_minimal_equil_templates(amber_dir: Path) -> None:
     (amber_dir / "eqnpt0-water.in").write_text("_temperature_ _lig_name_\n")
     (amber_dir / "eqnpt-water.in").write_text("_temperature_ _lig_name_\n")
     (amber_dir / "eqnpt-water-eq.in").write_text(
-        "restraintmask = '((@CA & :_non_loop_) | :_lig_name_) & !@H='\n"
+        "restraintmask = '((@CA & _non_loop_) | :_lig_name_) & !@H='\n"
     )
     (amber_dir / "eqnpt-disappear.in").write_text(
         "_temperature_ _lig_name_ _enable_infe_ disang_file\n"
@@ -92,6 +92,7 @@ def test_write_sim_files_replaces_non_loop_from_dssp_manifest(tmp_path: Path) ->
 
     eqnpt_eq = (ctx.working_dir / "eqnpt_eq.in").read_text()
     assert "_non_loop_" not in eqnpt_eq
+    assert "::" not in eqnpt_eq
     assert ":3-6,8-11" in eqnpt_eq
 
 
@@ -102,6 +103,7 @@ def test_write_sim_files_non_loop_falls_back_to_renum_when_missing_dssp(tmp_path
 
     eqnpt_eq = (ctx.working_dir / "eqnpt_eq.in").read_text()
     assert "_non_loop_" not in eqnpt_eq
+    assert "::" not in eqnpt_eq
     assert ":2-7" in eqnpt_eq
 
 
