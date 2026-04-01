@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from batter.cli import batch_cmds
+from batter.cli.root import cli
+from click.testing import CliRunner
 
 
 def _setup_abfe_component(exec_path: Path, ligand: str = "L1", comp: str = "z") -> Path:
@@ -50,3 +52,33 @@ def test_collect_remd_tasks_skips_pre_window_failed(tmp_path, monkeypatch) -> No
 
     tasks = batch_cmds._collect_remd_tasks(exec_path)
     assert tasks == []
+
+
+def test_batch_cli_remd_renders_run_local_remd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    exec_path = tmp_path / "executions" / "rep1"
+    comp_dir = _setup_abfe_component(exec_path, ligand="L1", comp="z")
+    (comp_dir / "run-local-remd.bash").write_text("#!/bin/bash\nN_WINDOWS=1\n")
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    out = tmp_path / "remd.sbatch"
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "batch",
+            "--remd",
+            "-e",
+            str(exec_path),
+            "--output",
+            str(out),
+            "--no-auto-resubmit",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    text = out.read_text()
+    assert "bash ./run-local-remd.bash" in text
+    assert "bash ./run-local-batch.bash" not in text
