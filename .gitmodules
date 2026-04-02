@@ -6,3 +6,6 @@
 [submodule "extern/rocklinc"]
 	path = extern/rocklinc
 	url = https://github.com/yuxuanzhuang/rocklinc.git
+[submodule "extern/ParmEd"]
+	path = extern/ParmEd
+	url = git@github.com:yuxuanzhuang/ParmEd.git
