@@ -9,3 +9,4 @@
 [submodule "extern/ParmEd"]
 	path = extern/ParmEd
 	url = git@github.com:yuxuanzhuang/ParmEd.git
+	branch = fix_iadd_
