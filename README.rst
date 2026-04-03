@@ -52,12 +52,12 @@ Clone the repository, initialize submodules, and create the environment:
    conda env update -f environment.yml -n batter
    conda activate batter
 
-   # Editable installs for bundled deps
-   pip install -e ./extern/alchemlyb
-   pip install -e ./extern/rocklinc
-
    # Install batter (editable)
    pip install -e .
+
+The Conda environment installs the bundled ``extern/*`` dependencies through its
+``pip`` section. Run the environment update from the repository root so the
+relative editable paths resolve correctly.
 
 Installation tips (clusters)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
