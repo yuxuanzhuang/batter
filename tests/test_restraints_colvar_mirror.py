@@ -38,9 +38,10 @@ def test_colvar_block_to_rst_translates_com_distance() -> None:
     got = restraints._colvar_block_to_rst(block)
 
     assert got is not None
-    assert "iat=2,-1," in got
+    assert "iat=-1,-1," in got
     assert "r1=0.0, r2=0.0, r3=3.0, r4=999.0," in got
     assert "rk2=10.0, rk3=10.0," in got
+    assert "igr1=2,0" in got
     assert "igr2=4777,4776,4775,4774,4786,4787,4788,4772,4771,4769,4770,4773," in got
     assert "4793,4795,4796,4797,0" in got
     assert got.rstrip().endswith("&end")

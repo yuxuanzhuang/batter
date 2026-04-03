@@ -322,10 +322,11 @@ def _render_com_distance_rst_block(
 ) -> str:
     return (
         "&rst\n"
-        f" iat={anchor_atom},-1,\n"
+        " iat=-1,-1,\n"
         " r1={r1}, r2={r2}, r3={r3}, r4={r4},\n"
         " rk2={rk2}, rk3={rk3},\n"
-        "{igr}"
+        "{igr1}"
+        "{igr2}"
         "&end\n"
     ).format(
         r1=_format_rst_number(anchors[0]),
@@ -334,7 +335,8 @@ def _render_com_distance_rst_block(
         r4=_format_rst_number(anchors[3]),
         rk2=_format_rst_number(strengths[0]),
         rk3=_format_rst_number(strengths[1]),
-        igr=_format_igr_line("igr2", group_atoms),
+        igr1=_format_igr_line("igr1", [anchor_atom]),
+        igr2=_format_igr_line("igr2", group_atoms),
     )
 
 

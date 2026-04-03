@@ -28,7 +28,7 @@ Equilibrate, NPT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 10,
-  restraintmask = '((@CA & _non_loop_) | :_lig_name_) & !@H=',
+  restraintmask = '((@CA & _non_loop_) | :_lig_name_ | :1) & !@H=',
   infe = 0,
  /
  &wt type='DUMPFREQ', istep1=1000, /
