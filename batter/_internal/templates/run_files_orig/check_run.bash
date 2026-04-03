@@ -79,6 +79,30 @@ archive_failed_job_files() {
     fi
 }
 
+should_skip_completed_step() {
+    local stage=$1
+    local artifact=$2
+    local overwrite=${3:-0}
+    local prior_failed=${4:-0}
+    local rerun_after_failure=${5:-0}
+
+    if [[ $overwrite -ne 0 ]]; then
+        return 1
+    fi
+
+    if [[ -z $artifact || ! -s $artifact ]]; then
+        return 1
+    fi
+
+    if [[ $prior_failed -eq 1 && $rerun_after_failure -eq 1 ]]; then
+        echo "[INFO] Prior FAILED marker found; rerunning ${stage} despite existing artifact ${artifact}."
+        return 1
+    fi
+
+    echo "[INFO] Skipping ${stage}; found existing artifact ${artifact}."
+    return 0
+}
+
 check_sim_failure() {
     local stage=$1
     local log_file=$2
