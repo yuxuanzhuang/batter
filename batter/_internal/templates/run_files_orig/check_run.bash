@@ -6,6 +6,33 @@ move_failed_file_if_present() {
     mv -f "$src" "$archive_dir/"
 }
 
+archive_existing_log_file() {
+    local log_path=${1:-}
+    local log_dir log_name archive_dir timestamp archived_path suffix
+
+    [[ -n $log_path ]] || return 0
+    [[ -e "$log_path" ]] || return 0
+
+    log_dir=$(dirname "$log_path")
+    log_name=$(basename "$log_path")
+    archive_dir="${log_dir}/ARCHIVED_LOGS"
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    archived_path="${archive_dir}/${timestamp}_${log_name}"
+
+    mkdir -p "$archive_dir"
+
+    if [[ -e "$archived_path" ]]; then
+        suffix=1
+        while [[ -e "${archived_path}.${suffix}" ]]; do
+            suffix=$((suffix + 1))
+        done
+        archived_path="${archived_path}.${suffix}"
+    fi
+
+    mv -f "$log_path" "$archived_path"
+    echo "[INFO] Archived existing log file to ${archived_path}"
+}
+
 archive_failed_job_files() {
     local retry_count=${1:-${RETRY_COUNT:-${RETRY:-0}}}
     shift || true
@@ -64,7 +91,11 @@ check_sim_failure() {
     fi
 
     cleanup_outputs() {
-        archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
+        if ((${#extra_files[@]})); then
+            archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
+        else
+            archive_failed_job_files "$retry_count" "$log_file" "$rst_file"
+        fi
     }
 
     # If log doesn't exist yet, don't treat as failure here

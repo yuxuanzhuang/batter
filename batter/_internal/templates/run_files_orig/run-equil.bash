@@ -37,6 +37,8 @@ if [[ -f FAILED ]]; then
     rm -f FAILED
 fi
 
+archive_existing_log_file "$log_file"
+
 tmpl="mdin-template"
 mdin_current="mdin-current"
 

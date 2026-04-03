@@ -83,6 +83,8 @@ if [[ -f ${PFOLDER}/FAILED ]]; then
     rm -f ${PFOLDER}/FAILED
 fi
 
+archive_existing_log_file "$log_file"
+
 # Determine progress from the first window
 WIN0=$(printf "%s%02d" "${COMP}" 0)
 tmpl0="${PFOLDER}/${WIN0}/mdin-batch-template"

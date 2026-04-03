@@ -52,6 +52,7 @@ def _prepare_component(
     if script_name == "run-local-remd.bash":
         (comp_dir / "remd").mkdir(parents=True, exist_ok=True)
 
+    (comp_dir / "run.log").write_text("old log\n")
     tmpl = win0 / template_name
     tmpl.write_text(
         f"! total_steps={total_steps}\n"
@@ -103,6 +104,9 @@ def test_remd_run_templates_zero_step_finish(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    archived_logs = list((comp_dir / "ARCHIVED_LOGS").glob("*_run.log"))
+    assert len(archived_logs) == 1
+    assert archived_logs[0].read_text() == "old log\n"
     assert (comp_dir / "FINISHED").exists()
     assert (win0 / "FINISHED").exists()
 

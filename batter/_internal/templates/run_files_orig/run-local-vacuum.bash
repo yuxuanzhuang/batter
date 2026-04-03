@@ -34,6 +34,8 @@ fi
 
 source check_run.bash
 
+archive_existing_log_file "$log_file"
+
 # ------------------------- only_eq mode -------------------------
 if [[ $only_eq -eq 1 ]]; then
     # no equilibration needed here; just seed a restart

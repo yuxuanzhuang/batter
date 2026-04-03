@@ -24,6 +24,7 @@ def test_run_local_handles_template_segments(tmp_path: Path, monkeypatch) -> Non
     (work / "full.hmr.prmtop").write_text("prmtop")
     (work / "mini.in.rst7").write_text("rst")
     (work / "eq.rst7").write_text("eqrst")
+    (work / "run.log").write_text("old log\n")
     # total_steps=20, nstlim=10 → two segments
     (work / "mdin-template").write_text(
         "! total_steps=20\n"
@@ -130,6 +131,10 @@ exit 0
 
     cmd = ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"]
     subprocess.run(cmd, cwd=work, check=True, env=env)
+    archived_logs = list((work / "ARCHIVED_LOGS").glob("*_run.log"))
+    assert len(archived_logs) == 1
+    assert archived_logs[0].read_text() == "old log\n"
+    assert (work / "run.log").exists()
     assert (work / "md-current.rst7").exists()
     assert not (work / "output.pdb").exists()
 
