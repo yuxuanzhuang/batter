@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
+from math import ceil
 import json
 import re
 import MDAnalysis as mda
@@ -20,14 +21,47 @@ from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
 
-# ────────────────────────── small helpers (working-dir aware) ──────────────────────────
+def _collect_calpha_and_lig(
+    vac_pdb: Path,
+    lig_res: str,
+    offset: int = 0,
+    stride_to_max_number: int = 50,
+) -> Tuple[List[str], List[str]]:
+    """Return (protein_calpha_serials, ligand_heavy_atom_serials).
 
-def _collect_backbone_heavy_and_lig(vac_pdb: Path, lig_res: str, offset: int = 0) -> List[List[str]]:
-    """Return ([protein_backbone_heavy_atom_serials], [ligand_heavy_atom_serials])."""
+    If either list is longer than `stride_to_max_number`, it is strided so the
+    returned list length is <= `stride_to_max_number`. It is to keep better performance in simulations
+    """
+    if stride_to_max_number <= 0:
+        raise ValueError("stride_to_max_number must be a positive integer")
+
+    def _stride_to_max(items: List[str], max_n: int) -> List[str]:
+        if len(items) <= max_n:
+            return items
+        step = ceil(len(items) / max_n)
+        return items[::step]
+
     u = mda.Universe(str(vac_pdb))
-    hvy = list((u.select_atoms('protein and name CA N C O').indices + 1).astype(str))
-    hvy_lig = list((u.select_atoms(f'not type H and resid {int(lig_res) + offset}').indices + 1).astype(str))
-    return hvy, hvy_lig
+
+    protein_calpha_serials = (
+        (u.select_atoms("protein and name CA").indices + 1).astype(str).tolist()
+    )
+    ligand_heavy_atom_serials = (
+        (
+            u.select_atoms(f"not type H and resid {int(lig_res) + offset}").indices + 1
+        )
+        .astype(str)
+        .tolist()
+    )
+
+    protein_calpha_serials = _stride_to_max(
+        protein_calpha_serials, stride_to_max_number
+    )
+    ligand_heavy_atom_serials = _stride_to_max(
+        ligand_heavy_atom_serials, stride_to_max_number
+    )
+
+    return protein_calpha_serials, ligand_heavy_atom_serials
 
 
 def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]:
@@ -56,8 +90,22 @@ def _collect_common_core_heavy_ligand(
     lig_res: str,
     offset: int,
     mapped_indices: Iterable[int],
+    stride_to_max_number: int = 10,
 ) -> List[str]:
-    """Return 1-based atom serials for mapped heavy atoms in one ligand residue."""
+    """Return 1-based atom serials for mapped heavy atoms in one ligand residue.
+
+    If the resulting list is longer than `stride_to_max_number`, it is strided
+    so the returned list length is <= `stride_to_max_number`.
+    """
+    if stride_to_max_number <= 0:
+        raise ValueError("stride_to_max_number must be a positive integer")
+
+    def _stride_to_max(items: List[str], max_n: int) -> List[str]:
+        if len(items) <= max_n:
+            return items
+        step = ceil(len(items) / max_n)
+        return items[::step]
+
     u = mda.Universe(str(vac_pdb))
     lig_atoms = u.select_atoms(f"resid {int(lig_res) + offset}")
     if lig_atoms.n_atoms == 0:
@@ -71,7 +119,8 @@ def _collect_common_core_heavy_ligand(
     if cc_atoms.n_atoms == 0:
         return []
 
-    return list((cc_atoms.indices + 1).astype(str))
+    cc_serials = list((cc_atoms.indices + 1).astype(str))
+    return _stride_to_max(cc_serials, stride_to_max_number)
 
 def _scan_dihedrals_from_prmtop(prmtop_path: Path, ligand_atm_num: List[str]) -> List[str]:
     """Build ligand dihedral masks (non-H) from vac_ligand.prmtop."""
@@ -176,8 +225,6 @@ def _write_assign_and_read_vals(work: Path, rst_exprs: List[str], prmtop: Path, 
     vals = vals[:-1]
     return [float(v) for v in vals]
 
-
-# ───────────────────── extra conformation restraints (helpers) ─────────────────────
 
 def _gen_cv_blocks_from_distance_restraints(work_dir: Path,
                                             restraints: Iterable[Iterable]) -> list[str]:
@@ -464,7 +511,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
         anchors.lig_res,
     )
 
-    hvy_h, _ = _collect_backbone_heavy_and_lig(vac_pdb, lig_res)
+    hvy_h, _ = _collect_calpha_and_lig(vac_pdb, lig_res)
 
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_lig_pdb.as_posix())
@@ -508,8 +555,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                 cvf.write(a + ",")
         cvf.write("\n")
         cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-        # no restraints on COM in equil
-        cvf.write(" anchor_strength = 0,  0\n")
+        cvf.write(" anchor_strength = 5,  5\n")
         cvf.write("/\n")
 
     # ---- integrate extra conformation restraints (equil) ----
@@ -634,7 +680,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
         offset = 3
     else:
         offset = 0
-    hvy_h, hvy_lig = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, offset)
+    hvy_h, hvy_lig = _collect_calpha_and_lig(vac_pdb, lig_res, offset)
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_lig_pdb.as_posix())
 
@@ -935,9 +981,9 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     rdhf, rdsf, ldf, laf, ldhf, rcom, lcom = rest
 
     # orig lig
-    hvy_h, hvy_lig_1 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 1)
+    hvy_h, hvy_lig_1 = _collect_calpha_and_lig(vac_pdb, lig_res, 1)
     # alt lig
-    _, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
+    _, hvy_lig_2 = _collect_calpha_and_lig(vac_pdb, lig_res, 3)
 
     # Use common-core atoms for ligand COM restraints when RBFE mapping is present.
     mapping_path = ctx.equil_dir / "scmask.json"
@@ -1046,7 +1092,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
     lig_res    = anchors.lig_res
 
     offset = 3
-    hvy_h, hvy_lig = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, offset)
+    hvy_h, hvy_lig = _collect_calpha_and_lig(vac_pdb, lig_res, offset)
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_ref_pdb.as_posix())
 
