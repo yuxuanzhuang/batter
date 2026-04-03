@@ -32,12 +32,9 @@ Equilibrate, NPT.
   restraintmask = '(@CA,C,N,P31 | :_lig_name_) & !@H=',
   infe = 0,
  /
- &pmd
- output_file = 'cmass.txt'
- output_freq = 1000
- cv_file = 'cv.in'
- /
- &wt type = 'END', /
+ &wt type='DUMPFREQ', istep1=1000, /
+ &wt type='END', /
 DISANG=disang.rest
+DUMPAVE=cmass.txt
+LISTIN=POUT
 LISTOUT=POUT
-

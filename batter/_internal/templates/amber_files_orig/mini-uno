@@ -21,7 +21,7 @@ Minimizing.
   ntr = 1,
   restraint_wt = 50.0,
   restraintmask = '(@CA,C,N,P31,Na+,Cl- | :_lig_name_ | :2) & !@H=',
-  infe = 1,
+  infe = 0,
   icfe = 1,
   clambda = lbd_val,
   timask1 = ':mk1',
@@ -39,9 +39,9 @@ Minimizing.
   gti_vdw_exp     = 2,
   gti_chg_keep    = 1,
  /
- &pmd
- output_file = 'cmass.txt'
- output_freq = 500
- cv_file = 'cv.in'
- /
- &wt type = 'END', /
+ &wt type='DUMPFREQ', istep1=500, /
+ &wt type='END', /
+DISANG=disang.rest
+DUMPAVE=cmass.txt
+LISTIN=POUT
+LISTOUT=POUT

@@ -338,6 +338,16 @@ def indices_to_selection(
     return f"@{inc_str}"
 
 
+def _write_cmass_dump_block(handle, *, istep1: int | str, disang: str = "disang.rest") -> None:
+    """Write the AMBER wt/DUMPAVE footer used for cv/disang-driven runs."""
+    handle.write(f" &wt type='DUMPFREQ', istep1={istep1}, /\n")
+    handle.write(" &wt type='END', /\n")
+    handle.write(f"DISANG={disang}\n")
+    handle.write("DUMPAVE=cmass.txt\n")
+    handle.write("LISTIN=POUT\n")
+    handle.write("LISTOUT=POUT\n")
+
+
 
 # ------------------------- generic equil files ------------------------- #
 
@@ -354,7 +364,8 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
     temperature = sim.temperature
     mol = ctx.residue_name
-    infe_flag = "1" if infe else "0"
+    # Keep infe disabled while nmropt/disang mirrors the cv restraints.
+    infe_flag = "0"
 
     # disang anchor triplet (L1/L2/L3)
     with open(work / "disang.rest", "r") as f:
@@ -592,14 +603,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             # no need to run infe as everything is restrainted
             mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
         # end eq.in
 
@@ -625,16 +629,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             for lam in lambdas:
                 mdin.write(f" {lam:6.5f},")
             mdin.write("\n")
-            mdin.write("  infe = 1,\n")
+            mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
         # Patch mdin with extra restraints (only mdin-XX)
         if extra_mask:
@@ -671,7 +668,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             raise KeyError(
                 "BuildContext.extra missing 'infe'. Ensure BaseBuilder sets this flag."
             )
-        infe_flag = 1 if extra_ctx["infe"] else 0
+        # Keep infe disabled while nmropt/disang mirrors the cv restraints.
+        infe_flag = 0
         mk1 = ref_resid
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
@@ -717,14 +715,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("\n")
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
         # production template
         n_steps_run = str(steps2)
@@ -749,14 +740,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("\n")
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
         # Patch mdin with extra restraints (only mdin-template)
         if extra_mask:
@@ -996,14 +980,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         # no need to run infe as everything is restrainted
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
     # --- mdin-template (production) ---
     out_path = windows_dir / "mdin-template"
@@ -1028,16 +1005,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for lam in lambdas:
             mdin.write(f" {lam:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
     # Patch mdin with extra restraints (only mdin-template)
     if extra_mask:
@@ -1186,16 +1156,9 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
@@ -1218,16 +1181,9 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
     logger.debug(
         f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
@@ -1307,14 +1263,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("\n")
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
@@ -1339,14 +1288,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("\n")
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
     logger.debug(
         f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"

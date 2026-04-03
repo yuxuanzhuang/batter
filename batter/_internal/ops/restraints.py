@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Iterable
+from typing import Iterable, List, Optional, Sequence
 
 import json
 import re
@@ -256,6 +256,141 @@ def _append_or_replace_tagged_block(file_path: Path, tag: str, blocks: list[str]
 
     file_path.write_text(text)
 
+def _format_rst_number(value: float | int | str) -> str:
+    """Format AMBER restraint scalars with at least one decimal place."""
+    rendered = f"{float(value):.6f}".rstrip("0").rstrip(".")
+    return rendered if "." in rendered else f"{rendered}.0"
+
+
+def _parse_colvar_csv(raw: str) -> list[str]:
+    """Split a comma-delimited cv.in value while tolerating trailing commas."""
+    return [part.strip().strip("'\"") for part in raw.split(",") if part.strip()]
+
+
+def _extract_colvar_value(block: str, key: str) -> str | None:
+    match = re.search(rf"\b{re.escape(key)}\s*=\s*([^\n/]+)", block)
+    return match.group(1).strip() if match else None
+
+
+def _iter_colvar_blocks(text: str) -> Iterable[str]:
+    """Yield raw &colvar blocks from a cv.in file."""
+    for match in re.finditer(r"&colvar\b(.*?)(?:^\s*/\s*$)", text, flags=re.DOTALL | re.MULTILINE):
+        yield match.group(1)
+
+
+def _format_igr_line(label: str, atoms: Sequence[str]) -> str:
+    """Wrap igr atom lists over multiple lines and terminate with a trailing zero."""
+    tokens = [str(atom).strip() for atom in atoms if str(atom).strip()]
+    tokens.append("0")
+
+    lines: list[str] = []
+    for idx in range(0, len(tokens), 12):
+        chunk = tokens[idx : idx + 12]
+        prefix = f" {label}=" if idx == 0 else "      "
+        suffix = "," if idx + 12 < len(tokens) else ""
+        lines.append(f"{prefix}{','.join(chunk)}{suffix}\n")
+    return "".join(lines)
+
+
+def _render_distance_rst_block(
+    atom1: str,
+    atom2: str,
+    anchors: Sequence[float],
+    strengths: Sequence[float],
+) -> str:
+    return (
+        "&rst\n"
+        f" iat={atom1},{atom2},\n"
+        " r1={r1}, r2={r2}, r3={r3}, r4={r4},\n"
+        " rk2={rk2}, rk3={rk3},\n"
+        "&end\n"
+    ).format(
+        r1=_format_rst_number(anchors[0]),
+        r2=_format_rst_number(anchors[1]),
+        r3=_format_rst_number(anchors[2]),
+        r4=_format_rst_number(anchors[3]),
+        rk2=_format_rst_number(strengths[0]),
+        rk3=_format_rst_number(strengths[1]),
+    )
+
+
+def _render_com_distance_rst_block(
+    anchor_atom: str,
+    group_atoms: Sequence[str],
+    anchors: Sequence[float],
+    strengths: Sequence[float],
+) -> str:
+    return (
+        "&rst\n"
+        f" iat={anchor_atom},-1,\n"
+        " r1={r1}, r2={r2}, r3={r3}, r4={r4},\n"
+        " rk2={rk2}, rk3={rk3},\n"
+        "{igr}"
+        "&end\n"
+    ).format(
+        r1=_format_rst_number(anchors[0]),
+        r2=_format_rst_number(anchors[1]),
+        r3=_format_rst_number(anchors[2]),
+        r4=_format_rst_number(anchors[3]),
+        rk2=_format_rst_number(strengths[0]),
+        rk3=_format_rst_number(strengths[1]),
+        igr=_format_igr_line("igr2", group_atoms),
+    )
+
+
+def _colvar_block_to_rst(block: str) -> str | None:
+    """Translate a single AMBER &colvar block into an equivalent &rst block."""
+    cv_type = _extract_colvar_value(block, "cv_type")
+    cv_i = _extract_colvar_value(block, "cv_i")
+    anchor_position = _extract_colvar_value(block, "anchor_position")
+    anchor_strength = _extract_colvar_value(block, "anchor_strength")
+
+    if not all((cv_type, cv_i, anchor_position, anchor_strength)):
+        raise ValueError(f"Malformed &colvar block; missing required fields:\n{block}")
+
+    atoms = _parse_colvar_csv(cv_i)
+    anchors = [float(value) for value in _parse_colvar_csv(anchor_position)]
+    strengths = [float(value) for value in _parse_colvar_csv(anchor_strength)]
+    cv_type = cv_type.strip("'\"")
+
+    if len(anchors) < 4 or len(strengths) < 2:
+        raise ValueError(f"Malformed &colvar block; bad anchors/strengths:\n{block}")
+
+    if cv_type == "DISTANCE":
+        if len(atoms) != 2:
+            raise ValueError(f"DISTANCE cv_i must contain exactly two atoms:\n{block}")
+        return _render_distance_rst_block(atoms[0], atoms[1], anchors, strengths)
+
+    if cv_type == "COM_DISTANCE":
+        if len(atoms) < 3 or atoms[1] != "0":
+            raise ValueError(f"COM_DISTANCE cv_i must be <atom>,0,<group...>:\n{block}")
+        return _render_com_distance_rst_block(atoms[0], atoms[2:], anchors, strengths)
+
+    logger.warning(f"[restraints] Unsupported cv_type={cv_type!r}; skipping disang mirror.")
+    return None
+
+
+def _append_colvar_rst_blocks(cv_file: Path, disang_file: Path) -> None:
+    """Append &rst entries derived from every &colvar block in cv_file."""
+    rst_blocks = []
+    for block in _iter_colvar_blocks(cv_file.read_text()):
+        rst_block = _colvar_block_to_rst(block)
+        if rst_block:
+            rst_blocks.append(rst_block)
+
+    if not rst_blocks:
+        return
+
+    existing = disang_file.read_text() if disang_file.exists() else ""
+    with disang_file.open("a") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        if existing.strip():
+            handle.write("\n")
+        handle.write("# Mirrored from cv.in\n")
+        for rst_block in rst_blocks:
+            handle.write(rst_block)
+
 def _maybe_append_extra_conf_blocks(ctx: BuildContext, work_dir: Path, cv_file: Path, *, comp: Optional[str]=None) -> None:
     """
     If ctx.extra['extra_conformation_restraints'] is set, parse JSON and append
@@ -445,6 +580,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                     except:
                         logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
 
+    _append_colvar_rst_blocks(cv_in, outp)
     logger.debug(f"[equil] restraints written in {work}")
 
 
@@ -610,6 +746,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                     except:
                         logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
+    _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver
     rest_in = windows_dir / "restraints.in"
     with rest_in.open("w") as fh:
@@ -637,7 +774,7 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
     """
     Ligand-only (solvation FE) restraints:
       - cv.in: one COM_DISTANCE block using ligand heavy atoms
-      - disang.rest: empty (no AMBER &rst blocks)
+      - disang.rest: mirrored &rst block for the ligand COM restraint
       - restraints.in: minimal analysis driver (optional)
     """
     windows_dir = ctx.window_dir
@@ -688,8 +825,9 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 
-    # ---- disang.rest: empty (legacy behavior) ----
-    (windows_dir / "disang.rest").write_text("\n")
+    disang = windows_dir / "disang.rest"
+    disang.write_text("")
+    _append_colvar_rst_blocks(cv_in, disang)
 
     # (Optional) very small analysis driver to keep downstream scripts happy
     rest_in = windows_dir / "restraints.in"
@@ -698,7 +836,7 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
         for k in range(2, 11):
             fh.write(f"trajin md{k:02d}.nc\n")
 
-    logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
+    logger.debug(f"[restraints:y] wrote cv.in, mirrored disang.rest, restraints.in in {windows_dir}")
 
 @register_restraints("m")
 def _build_restraints_m(builder, ctx: BuildContext) -> None:
@@ -845,8 +983,9 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
     
-    # write empty disang.rest
-    (windows_dir / "disang.rest").write_text("")
+    disang = windows_dir / "disang.rest"
+    disang.write_text("")
+    _append_colvar_rst_blocks(cv_in, disang)
 
     logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
 
@@ -1019,6 +1158,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
                     except:
                         logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
+    _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver
     rest_in = windows_dir / "restraints.in"
     with rest_in.open("w") as fh:

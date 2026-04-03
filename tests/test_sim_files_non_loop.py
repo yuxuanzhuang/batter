@@ -1,12 +1,34 @@
 from __future__ import annotations
 
+import importlib
+import io
 import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
+import types
 
 import pytest
 
-sim_files = pytest.importorskip("batter._internal.ops.sim_files")
+
+def _load_internal_module(module_name: str):
+    repo_root = Path(__file__).resolve().parents[1]
+    package_roots = {
+        "batter._internal": repo_root / "batter" / "_internal",
+        "batter._internal.builders": repo_root / "batter" / "_internal" / "builders",
+        "batter._internal.ops": repo_root / "batter" / "_internal" / "ops",
+    }
+
+    for pkg_name, pkg_path in package_roots.items():
+        module = types.ModuleType(pkg_name)
+        module.__path__ = [str(pkg_path)]  # type: ignore[attr-defined]
+        sys.modules[pkg_name] = module
+
+    sys.modules.pop(module_name, None)
+    return importlib.import_module(module_name)
+
+
+sim_files = _load_internal_module("batter._internal.ops.sim_files")
 
 
 def _write_minimal_equil_templates(amber_dir: Path) -> None:
@@ -19,10 +41,10 @@ def _write_minimal_equil_templates(amber_dir: Path) -> None:
         "restraintmask = '((@CA & _non_loop_) | :_lig_name_) & !@H='\n"
     )
     (amber_dir / "eqnpt-disappear.in").write_text(
-        "_temperature_ _lig_name_ _enable_infe_ disang_file\n"
+        "_temperature_ _lig_name_\ninfe = _enable_infe_\nDISANG=disang_file.rest\n"
     )
     (amber_dir / "eqnpt-appear.in").write_text(
-        "_temperature_ _lig_name_ _enable_infe_ disang_file\n"
+        "_temperature_ _lig_name_\ninfe = _enable_infe_\nDISANG=disang_file.rest\n"
     )
     (amber_dir / "mdin-equil").write_text(
         "&cntrl\n  temp0=_temperature_,\n  nstlim=_num-steps_,\n/\n"
@@ -105,6 +127,82 @@ def test_write_sim_files_non_loop_falls_back_to_renum_when_missing_dssp(tmp_path
     assert "_non_loop_" not in eqnpt_eq
     assert "::" not in eqnpt_eq
     assert ":2-7" in eqnpt_eq
+
+
+def test_write_sim_files_keeps_infe_disabled(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, with_manifest=False, dssp_results=None)
+
+    sim_files.write_sim_files(ctx, infe=True)
+
+    assert "infe = 0" in (ctx.working_dir / "eqnpt_disappear.in").read_text()
+    assert "infe = 0" in (ctx.working_dir / "eqnpt_appear.in").read_text()
+
+
+def test_write_cmass_dump_block_uses_dumpave_footer() -> None:
+    handle = io.StringIO()
+
+    sim_files._write_cmass_dump_block(handle, istep1=2500)
+
+    assert handle.getvalue() == (
+        " &wt type='DUMPFREQ', istep1=2500, /\n"
+        " &wt type='END', /\n"
+        "DISANG=disang.rest\n"
+        "DUMPAVE=cmass.txt\n"
+        "LISTIN=POUT\n"
+        "LISTOUT=POUT\n"
+    )
+
+
+def test_modern_fe_templates_do_not_enable_infe() -> None:
+    template_dir = Path(sim_files.__file__).resolve().parents[1] / "templates" / "amber_files_orig"
+
+    for name in ("mini-uno", "mini-unorest", "mini-unorest-dd", "mini-unorest-lig", "mini-ex"):
+        content = (template_dir / name).read_text()
+        assert "  infe = 1," not in content
+        assert "  infe = 0," in content
+
+
+def test_modern_templates_use_dumpave_not_pmd() -> None:
+    template_dir = Path(sim_files.__file__).resolve().parents[1] / "templates" / "amber_files_orig"
+    template_names = (
+        "eqnpt-appear.in",
+        "eqnpt-disappear.in",
+        "eqnpt-eq.in",
+        "eqnpt-lig.in",
+        "eqnpt-water-eq.in",
+        "eqnpt-water.in",
+        "eqnpt-uno-eq.in",
+        "eqnpt-uno.in",
+        "eqnpt.in",
+        "eqnpt0-lig.in",
+        "eqnpt0-uno.in",
+        "eqnpt0-water.in",
+        "eqnpt0.in",
+        "eqnvt.in",
+        "mdin-equil",
+        "mini-ex",
+        "mini-uno",
+        "mini-unorest",
+        "mini-unorest-dd",
+        "mini-unorest-lig",
+        "mini.in",
+    )
+
+    for name in template_names:
+        content = (template_dir / name).read_text()
+        assert "&pmd" not in content
+        assert "output_file = 'cmass.txt'" not in content
+        assert "cv_file = 'cv.in'" not in content
+        assert "DUMPAVE=cmass.txt" in content
+        assert "LISTIN=POUT" in content
+        assert "LISTOUT=POUT" in content
+
+
+def test_sim_files_source_has_no_infe_one_writes() -> None:
+    content = Path(sim_files.__file__).read_text()
+    assert 'mdin.write("  infe = 1,\\n")' not in content
+    assert 'mdin.write(" &pmd \\n")' not in content
+    assert "DUMPAVE=cmass.txt" in content
 
 
 @pytest.mark.parametrize(

@@ -54,12 +54,9 @@ Equil re-appear ligand
   dynlmb          = 0.05,
   ntave           = 1000,
  /
- &pmd
- output_file = 'cmass.txt'
- output_freq = _ntwx_
- cv_file = 'cv.in'
- /
- &wt type = 'END', /
+ &wt type='DUMPFREQ', istep1=_ntwx_, /
+ &wt type='END', /
 DISANG=disang_file.rest
+DUMPAVE=cmass.txt
+LISTIN=POUT
 LISTOUT=POUT
-

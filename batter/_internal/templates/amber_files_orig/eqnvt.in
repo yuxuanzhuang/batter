@@ -46,12 +46,9 @@ Equilibrate, NPT.
   dynlmb          = 0.05,
   ntave           = 500,
  /
- &pmd
- output_file = 'cmass.txt'
- output_freq = 1000
- cv_file = 'cv.in'
- /
- &wt type = 'END', /
+ &wt type='DUMPFREQ', istep1=1000, /
+ &wt type='END', /
 DISANG=disang.rest
+DUMPAVE=cmass.txt
+LISTIN=POUT
 LISTOUT=POUT
-
