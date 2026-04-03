@@ -24,6 +24,7 @@ from batter.utils import run_with_log
 
 __all__ = [
     "Anchors",
+    "PROTEIN_COM_ATOM_SELECTION",
     "get_buffer_z",
     "get_sdr_dist",
     "get_ligand_candidates",
@@ -37,6 +38,9 @@ __all__ = [
     "save_anchors",
     "select_ions_away_from_complex",
 ]
+
+
+PROTEIN_COM_ATOM_SELECTION = "protein and name CA"
 
 
 @dataclass(frozen=True)

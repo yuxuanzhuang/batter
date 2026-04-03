@@ -12,6 +12,7 @@ from loguru import logger
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_restraints
 from batter._internal.ops.helpers import (
+    PROTEIN_COM_ATOM_SELECTION,
     num_to_mask,
     load_anchors,
     is_atom_line as _is_atom_line,
@@ -20,6 +21,22 @@ from batter._internal.ops.helpers import (
 from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
+
+def _stride_atom_serials(
+    atoms: Sequence[str | int],
+    max_n: int,
+) -> list[str]:
+    """Return atom serials strided down to at most ``max_n`` entries."""
+    if max_n <= 0:
+        raise ValueError("max_n must be a positive integer")
+
+    tokens = [str(atom).strip() for atom in atoms if str(atom).strip()]
+    if len(tokens) <= max_n:
+        return tokens
+
+    step = ceil(len(tokens) / max_n)
+    return tokens[::step]
+
 
 def _collect_calpha_and_lig(
     vac_pdb: Path,
@@ -32,19 +49,10 @@ def _collect_calpha_and_lig(
     If either list is longer than `stride_to_max_number`, it is strided so the
     returned list length is <= `stride_to_max_number`. It is to keep better performance in simulations
     """
-    if stride_to_max_number <= 0:
-        raise ValueError("stride_to_max_number must be a positive integer")
-
-    def _stride_to_max(items: List[str], max_n: int) -> List[str]:
-        if len(items) <= max_n:
-            return items
-        step = ceil(len(items) / max_n)
-        return items[::step]
-
     u = mda.Universe(str(vac_pdb))
 
     protein_calpha_serials = (
-        (u.select_atoms("protein and name CA").indices + 1).astype(str).tolist()
+        (u.select_atoms(PROTEIN_COM_ATOM_SELECTION).indices + 1).astype(str).tolist()
     )
     ligand_heavy_atom_serials = (
         (
@@ -54,10 +62,10 @@ def _collect_calpha_and_lig(
         .tolist()
     )
 
-    protein_calpha_serials = _stride_to_max(
+    protein_calpha_serials = _stride_atom_serials(
         protein_calpha_serials, stride_to_max_number
     )
-    ligand_heavy_atom_serials = _stride_to_max(
+    ligand_heavy_atom_serials = _stride_atom_serials(
         ligand_heavy_atom_serials, stride_to_max_number
     )
 
@@ -97,15 +105,6 @@ def _collect_common_core_heavy_ligand(
     If the resulting list is longer than `stride_to_max_number`, it is strided
     so the returned list length is <= `stride_to_max_number`.
     """
-    if stride_to_max_number <= 0:
-        raise ValueError("stride_to_max_number must be a positive integer")
-
-    def _stride_to_max(items: List[str], max_n: int) -> List[str]:
-        if len(items) <= max_n:
-            return items
-        step = ceil(len(items) / max_n)
-        return items[::step]
-
     u = mda.Universe(str(vac_pdb))
     lig_atoms = u.select_atoms(f"resid {int(lig_res) + offset}")
     if lig_atoms.n_atoms == 0:
@@ -120,7 +119,7 @@ def _collect_common_core_heavy_ligand(
         return []
 
     cc_serials = list((cc_atoms.indices + 1).astype(str))
-    return _stride_to_max(cc_serials, stride_to_max_number)
+    return _stride_atom_serials(cc_serials, stride_to_max_number)
 
 def _scan_dihedrals_from_prmtop(prmtop_path: Path, ligand_atm_num: List[str]) -> List[str]:
     """Build ligand dihedral masks (non-H) from vac_ligand.prmtop."""
@@ -989,8 +988,8 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     mapping_path = ctx.equil_dir / "scmask.json"
     scmk_dict = json.load(open(mapping_path, "r"))
 
-    hvy_lig_1 = scmk_dict['scmk1_cc_solvent_indices']
-    hvy_lig_2 = scmk_dict['scmk2_cc_solvent_indices']
+    hvy_lig_1 = _stride_atom_serials(scmk_dict["scmk1_cc_solvent_indices"], 10)
+    hvy_lig_2 = _stride_atom_serials(scmk_dict["scmk2_cc_solvent_indices"], 10)
 
     # cv.in
     cv_in = windows_dir / "cv.in"

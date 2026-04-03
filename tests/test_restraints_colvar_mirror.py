@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 import sys
 import types
@@ -97,3 +98,69 @@ def test_append_colvar_rst_blocks_mirrors_tagged_extra_blocks(tmp_path: Path) ->
     assert mirrored.count("&rst") == 2
     assert "iat=11,22," in mirrored
     assert "iat=33,44," in mirrored
+
+
+def test_build_restraints_x_strides_common_core_ligand_com(tmp_path: Path) -> None:
+    work_dir = tmp_path
+    windows_dir = work_dir / "x00"
+    windows_dir.mkdir()
+    equil_dir = work_dir / "x-1"
+    equil_dir.mkdir()
+    build_dir = work_dir / "x_build_files"
+    build_dir.mkdir()
+
+    vac_pdb = windows_dir / "vac.pdb"
+    vac_pdb.write_text(
+        "".join(
+            f"ATOM  {idx:5d}  CA  ALA A{idx:4d}    {float(idx):8.3f}{0.0:8.3f}{0.0:8.3f}  1.00  0.00           C\n"
+            for idx in range(1, 7)
+        )
+        + "END\n"
+    )
+
+    for path in [
+        windows_dir / "REF.prmtop",
+        windows_dir / "ALT.prmtop",
+        windows_dir / "full.prmtop",
+        windows_dir / "full.inpcrd",
+    ]:
+        path.write_text("stub\n")
+
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":4@C1",
+                "L2": ":4@C2",
+                "L3": ":4@C3",
+                "lig_res": "1",
+            }
+        )
+    )
+    (equil_dir / "scmask.json").write_text(
+        json.dumps(
+            {
+                "scmk1_cc_solvent_indices": list(range(101, 126)),
+                "scmk2_cc_solvent_indices": list(range(201, 226)),
+            }
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        working_dir=work_dir,
+        window_dir=windows_dir,
+        equil_dir=equil_dir,
+        ligand="lig",
+        residue_name="REF",
+        comp="x",
+        extra={"residue_ref": "REF", "residue_alt": "ALT"},
+        sim=types.SimpleNamespace(hmr="no", dec_method="dd", rest=[0, 0, 0, 0, 0, 10.0, 20.0]),
+    )
+
+    restraints._build_restraints_x(None, ctx)
+
+    cv_text = (windows_dir / "cv.in").read_text()
+    assert "cv_ni = 11, cv_i = 2,0,101,104,107,110,113,116,119,122,125," in cv_text
+    assert "cv_ni = 11, cv_i = 2,0,201,204,207,210,213,216,219,222,225," in cv_text
