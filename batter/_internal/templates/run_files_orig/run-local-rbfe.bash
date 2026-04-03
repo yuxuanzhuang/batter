@@ -86,7 +86,7 @@ if [[ $only_eq -eq 1 ]]; then
     lambda_set_list=(LAMBDA_SET_LIST)
 
     # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
-    cpptraj -p full.prmtop -i /dev/stdin <<'EOF'
+    $CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin <<'EOF'
 trajin eq.nc
 trajout eq.rst7 multi restart
 run
@@ -136,7 +136,12 @@ EOF
         cd ../COMPONENT-1
     done
 
-    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y eq.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
+parm $PRMTOP
+trajin eq.rst7
+trajout eq_output.pdb pdb include_ep
+run
+EOF"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
@@ -251,7 +256,12 @@ if (( remaining_steps > 0 )); then
 fi
 
 if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
-    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
+parm $PRMTOP
+trajin ${last_rst}
+trajout output.pdb pdb include_ep
+run
+EOF"
 
     if [[ -s output.pdb ]]; then
         echo "FINISHED" > FINISHED

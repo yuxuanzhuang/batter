@@ -88,11 +88,18 @@ exit 0
     _write_stub_exe(
         cpptraj_stub,
         """#!/usr/bin/env bash
-# honor -x output.pdb
+# honor either -x output.pdb or stdin trajout output.pdb ...
+target=""
 while [[ $# -gt 0 ]]; do
-  if [[ "$1" == "-x" ]]; then shift; echo "pdb" > "$1"; exit 0; fi
+  if [[ "$1" == "-x" ]]; then shift; target="$1"; break; fi
   shift
 done
+if [[ -z "$target" ]]; then
+  target=$(awk '/^trajout[[:space:]]+/ { print $2; exit }' < /dev/stdin)
+fi
+if [[ -n "$target" ]]; then
+  echo "pdb" > "$target"
+fi
 """,
     )
     ncdump_stub = work / "ncdump"
