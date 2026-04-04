@@ -31,7 +31,7 @@ def test_colvar_block_to_rst_translates_com_distance() -> None:
     block = """&colvar
  cv_type = 'COM_DISTANCE'
  cv_ni = 30, cv_i = 2,0,4777,4776,4775,4774,4786,4787,4788,4772,4771,4769,4770,4773,4778,4779,4780,4781,4782,4783,4784,4785,4794,4798,4799,4792,4793,4795,4796,4797,
- anchor_position =     0.0000,     0.0000,     3.0000,   999.0000
+ anchor_position =     0.0000,     0.0000,     0.0000,   999.0000
  anchor_strength =    10.0000,    10.0000,
 /
 """
@@ -40,7 +40,7 @@ def test_colvar_block_to_rst_translates_com_distance() -> None:
 
     assert got is not None
     assert "iat=-1,-1," in got
-    assert "r1=0.0, r2=0.0, r3=3.0, r4=999.0," in got
+    assert "r1=0.0, r2=0.0, r3=0.0, r4=999.0," in got
     assert "rk2=10.0, rk3=10.0," in got
     assert "igr1=2,0" in got
     assert "igr2=4777,4776,4775,4774,4786,4787,4788,4772,4771,4769,4770,4773," in got
@@ -162,5 +162,6 @@ def test_build_restraints_x_strides_common_core_ligand_com(tmp_path: Path) -> No
     restraints._build_restraints_x(None, ctx)
 
     cv_text = (windows_dir / "cv.in").read_text()
+    assert "anchor_position =     0.0000,     0.0000,     0.0000,   999.0000" in cv_text
     assert "cv_ni = 11, cv_i = 2,0,101,104,107,110,113,116,119,122,125," in cv_text
     assert "cv_ni = 11, cv_i = 2,0,201,204,207,210,213,216,219,222,225," in cv_text
