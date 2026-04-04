@@ -24,7 +24,7 @@ MAX_ATTEMPTS=5
 
 # Run the simulation
 echo "Attempt $RETRY_COUNT to run simulations..."
-OVERWRITE=$OVERWRITE ONLY_EQ=$ONLY_EQ RETRY_COUNT=$RETRY_COUNT source run-local.bash
+OVERWRITE=$OVERWRITE ONLY_EQ=$ONLY_EQ RETRY_COUNT=$RETRY_COUNT bash run-local.bash
 error_code=$?
 
 if [ $error_code -eq 0 ]; then

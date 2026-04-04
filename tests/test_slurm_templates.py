@@ -229,4 +229,4 @@ def test_slurmm_am_body_runs_without_wrapper_tee():
 
     assert "| tee run.log" not in text
     assert "BATTER_SKIP_STARTUP_LOG_ARCHIVE" not in text
-    assert "source run-local.bash" in text
+    assert "bash run-local.bash" in text
