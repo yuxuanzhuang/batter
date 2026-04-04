@@ -44,6 +44,7 @@ from batter.orchestrate.ligands import (
 )
 from batter.orchestrate.markers import (
     handle_phase_failures,
+    partition_children_by_status,
     run_phase_skipping_done,
     is_done,
 )
@@ -230,6 +231,71 @@ def _select_phase_pipeline(pipeline: Pipeline, step_names: frozenset[str]) -> Pi
             for step in selected
         ]
     )
+
+
+def _run_phase_with_failure_policy(
+    phase: Pipeline,
+    children: List[SimSystem],
+    phase_name: str,
+    backend,
+    *,
+    max_workers: int | None = None,
+    on_failure: str | None = None,
+    job_mgr: SlurmJobManager | None = None,
+    dry_run: bool = False,
+    dry_run_message: str | None = None,
+) -> tuple[List[SimSystem], bool]:
+    """Run ``phase`` and apply prune/retry semantics in the current invocation.
+
+    Returns
+    -------
+    tuple[list[SimSystem], bool]
+        The surviving systems after applying the failure policy and a flag
+        indicating whether the caller should exit early for dry-run mode.
+    """
+    mode = (on_failure or "").lower()
+    current_children = children
+    used_retry = False
+
+    while True:
+        finished = run_phase_skipping_done(
+            phase,
+            current_children,
+            phase_name,
+            backend,
+            max_workers=max_workers,
+            on_failure=on_failure,
+        )
+
+        if job_mgr is not None and not finished:
+            job_mgr.wait_all()
+            if dry_run and job_mgr.triggered:
+                logger.success(
+                    dry_run_message
+                    or f"[DRY-RUN] Reached first SLURM submission point ({phase_name}). Exiting without submitting."
+                )
+                return current_children, True
+
+        _ok, bad = partition_children_by_status(current_children, phase_name)
+        if not bad:
+            return current_children, False
+
+        if mode == "retry" and not used_retry:
+            names = ", ".join(c.meta.get("ligand", c.name) for c in bad)
+            logger.warning(
+                f"[{phase_name}] Retrying {len(bad)} ligand(s) once in this run: {names}"
+            )
+            current_children = handle_phase_failures(
+                current_children, phase_name, "retry"
+            )
+            used_retry = True
+            continue
+
+        final_mode = "prune" if mode == "retry" else on_failure
+        current_children = handle_phase_failures(
+            current_children, phase_name, final_mode
+        )
+        return current_children, False
 
 
 def _build_rbfe_network_plan(
@@ -791,7 +857,7 @@ def _run_from_yaml_impl(
     # PHASE 1: prepare_equil (parallel)
     # --------------------
     if phase_prepare_equil.ordered_steps():
-        run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_prepare_equil,
             children,
             "prepare_equil",
@@ -799,7 +865,8 @@ def _run_from_yaml_impl(
             max_workers=rc.run.max_workers,
             on_failure=rc.run.on_failure,
         )
-        children = handle_phase_failures(children, "prepare_equil", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] prepare_equil: no steps in this protocol.")
 
@@ -836,22 +903,19 @@ def _run_from_yaml_impl(
 
     phase_equil = _inject_mgr(phase_equil, "equil")
     if phase_equil.ordered_steps():
-        finished = run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_equil,
             children,
             "equil",
             backend,
             max_workers=1,
             on_failure=rc.run.on_failure,
+            job_mgr=job_mgr,
+            dry_run=dry_run,
+            dry_run_message="[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting.",
         )
-        if not finished:
-            job_mgr.wait_all()
-            if dry_run and job_mgr.triggered:
-                logger.success(
-                    "[DRY-RUN] Reached first SLURM submission point (equil). Exiting without submitting."
-                )
-                return
-        children = handle_phase_failures(children, "equil", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] equil: no steps in this protocol.")
 
@@ -873,7 +937,7 @@ def _run_from_yaml_impl(
         return keep
 
     if phase_equil_analysis.ordered_steps():
-        run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_equil_analysis,
             children,
             "equil_analysis",
@@ -881,7 +945,8 @@ def _run_from_yaml_impl(
             max_workers=rc.run.max_workers,
             on_failure=rc.run.on_failure,
         )
-        children = handle_phase_failures(children, "equil_analysis", rc.run.on_failure)
+        if should_exit:
+            return
         children = _filter_bound(children)
     else:
         logger.info("[skip] equil_analysis: no steps in this protocol.")
@@ -896,7 +961,7 @@ def _run_from_yaml_impl(
             component_lambdas={"z": [0.0]},
             phase_name="pre_prepare_fe",
         )
-        run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_pre_prepare_fe,
             children,
             "pre_prepare_fe",
@@ -904,7 +969,8 @@ def _run_from_yaml_impl(
             max_workers=rc.run.max_workers,
             on_failure=rc.run.on_failure,
         )
-        children = handle_phase_failures(children, "pre_prepare_fe", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] pre_prepare_fe: no steps in this protocol.")
 
@@ -917,22 +983,19 @@ def _run_from_yaml_impl(
         extra_payload={"phase_name": "pre_fe_equil", "extra_env": {"SKIP_WINDOW_EQ": "1"}},
     )
     if phase_pre_fe_equil.ordered_steps():
-        finished = run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_pre_fe_equil,
             children,
             "pre_fe_equil",
             backend,
             max_workers=1,
             on_failure=rc.run.on_failure,
+            job_mgr=job_mgr,
+            dry_run=dry_run,
+            dry_run_message="[DRY-RUN] Reached first SLURM submission point (pre_fe_equil). Exiting without submitting.",
         )
-        if not finished:
-            job_mgr.wait_all()
-            if dry_run and job_mgr.triggered:
-                logger.success(
-                    "[DRY-RUN] Reached first SLURM submission point (pre_fe_equil). Exiting without submitting."
-                )
-                return
-        children = handle_phase_failures(children, "pre_fe_equil", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] pre_fe_equil: no steps in this protocol.")
 
@@ -1076,7 +1139,7 @@ def _run_from_yaml_impl(
     # PHASE 3: prepare_fe (parallel)
     # --------------------
     if phase_prepare_fe.ordered_steps():
-        run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_prepare_fe,
             children,
             "prepare_fe",
@@ -1084,7 +1147,8 @@ def _run_from_yaml_impl(
             max_workers=rc.run.max_workers,
             on_failure=rc.run.on_failure,
         )
-        children = handle_phase_failures(children, "prepare_fe", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] prepare_fe: no steps in this protocol.")
 
@@ -1093,22 +1157,19 @@ def _run_from_yaml_impl(
     # --------------------
     phase_fe_equil = _inject_mgr(phase_fe_equil, "fe_equil")
     if phase_fe_equil.ordered_steps():
-        finished = run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_fe_equil,
             children,
             "fe_equil",
             backend,
             max_workers=1,
             on_failure=rc.run.on_failure,
+            job_mgr=job_mgr,
+            dry_run=dry_run,
+            dry_run_message="[DRY-RUN] Reached first SLURM submission point (fe_equil). Exiting without submitting.",
         )
-        if not finished:
-            job_mgr.wait_all()
-            if dry_run and job_mgr.triggered:
-                logger.success(
-                    "[DRY-RUN] Reached first SLURM submission point (fe_equil). Exiting without submitting."
-                )
-                return
-        children = handle_phase_failures(children, "fe_equil", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] fe_equil: no steps in this protocol.")
 
@@ -1118,22 +1179,19 @@ def _run_from_yaml_impl(
     phase_fe = _inject_mgr(phase_fe, "fe")
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
-        finished = run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_fe,
             children,
             "fe",
             backend,
             max_workers=1,
             on_failure=rc.run.on_failure,
+            job_mgr=job_mgr,
+            dry_run=dry_run,
+            dry_run_message="[DRY-RUN] Reached first SLURM submission point (fe). Exiting without submitting.",
         )
-        if not finished:
-            job_mgr.wait_all()
-            if dry_run and job_mgr.triggered:
-                logger.success(
-                    "[DRY-RUN] Reached first SLURM submission point (fe). Exiting without submitting."
-                )
-                return
-        children = handle_phase_failures(children, "fe", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] fe: no steps in this protocol.")
 
@@ -1151,7 +1209,7 @@ def _run_from_yaml_impl(
 
     phase_analyze = _inject_analysis_workers(phase_analyze)
     if phase_analyze.ordered_steps():
-        run_phase_skipping_done(
+        children, should_exit = _run_phase_with_failure_policy(
             phase_analyze,
             children,
             "analyze",
@@ -1159,7 +1217,8 @@ def _run_from_yaml_impl(
             max_workers=rc.run.max_workers,
             on_failure=rc.run.on_failure,
         )
-        children = handle_phase_failures(children, "analyze", rc.run.on_failure)
+        if should_exit:
+            return
     else:
         logger.info("[skip] analyze: no steps in this protocol.")
 

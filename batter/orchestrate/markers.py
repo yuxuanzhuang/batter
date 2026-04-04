@@ -65,6 +65,31 @@ def _remove_patterns(root: Path, spec: List[List[str]]) -> bool:
     return removed
 
 
+def _remove_phase_jobids(root: Path, phase_name: str, spec: PhaseState) -> bool:
+    """Remove stale ``JOBID`` files for workdirs associated with ``phase_name``."""
+    removed = False
+    comp_cache = components_under(root)
+    win_cache: dict[str, List[int]] = {}
+    candidate_dirs: set[Path] = set()
+
+    for pattern_group in list(spec.success or []) + list(spec.failure or []):
+        for pattern in pattern_group:
+            for expanded in _expand_pattern(root, pattern, comp_cache, win_cache):
+                candidate_dirs.add(expanded.parent)
+
+    for workdir in candidate_dirs:
+        jobid_path = workdir / "JOBID"
+        if not jobid_path.exists():
+            continue
+        try:
+            jobid_path.unlink()
+            removed = True
+        except Exception:
+            logger.warning(f"[{phase_name}] Could not remove stale JOBID file {jobid_path}")
+
+    return removed
+
+
 def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str) -> List[SimSystem]:
     """Post-process phase results, pruning/retrying/raising on failure.
 
@@ -102,7 +127,8 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
                 spec = _phase_spec(c.root, phase_name)
                 removed_failure = _remove_patterns(c.root, spec.failure)
                 removed_success = _remove_patterns(c.root, spec.success)
-                if removed_failure or removed_success:
+                removed_jobid = _remove_phase_jobids(c.root, phase_name, spec)
+                if removed_failure or removed_success or removed_jobid:
                     retried.append(c)
                 else:
                     logger.warning(
