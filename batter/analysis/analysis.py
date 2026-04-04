@@ -61,16 +61,22 @@ class SilenceAlchemlybOnly:
         logger.disable("alchemlyb")
         logger.disable("alchemlyb.parsing")
         logger.disable("alchemlyb.parsing.amber")
-        self._py_logger = logging.getLogger("alchemlyb.parsing.amber")
-        self._prev_level = self._py_logger.level
-        self._py_logger.setLevel(logging.ERROR)
+        self._py_loggers = [
+            logging.getLogger("alchemlyb"),
+            logging.getLogger("alchemlyb.parsing"),
+            logging.getLogger("alchemlyb.parsing.amber"),
+        ]
+        self._prev_levels = [py_logger.level for py_logger in self._py_loggers]
+        for py_logger in self._py_loggers:
+            py_logger.setLevel(logging.WARNING)
 
     def __exit__(self, *args):
         logger.enable("alchemlyb")
         logger.enable("alchemlyb.parsing")
         logger.enable("alchemlyb.parsing.amber")
-        if hasattr(self, "_py_logger"):
-            self._py_logger.setLevel(self._prev_level)
+        if hasattr(self, "_py_loggers"):
+            for py_logger, prev_level in zip(self._py_loggers, self._prev_levels):
+                py_logger.setLevel(prev_level)
 
 
 class FEAnalysisBase(ABC):
