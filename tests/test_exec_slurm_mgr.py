@@ -88,6 +88,56 @@ def test_submission_failure_raises(monkeypatch, tmp_path):
     assert attempts["count"] == 4
 
 
+def test_submit_waits_for_slot_before_each_submission(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "SLURMM-run").write_text("#!/bin/bash\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(registry_file=None, poll_s=0.0, max_active_jobs=1)
+
+    wait_calls = {"count": 0}
+
+    def fake_wait_for_slot(*args, **kwargs):
+        wait_calls["count"] += 1
+
+    monkeypatch.setattr(manager, "wait_for_slot", fake_wait_for_slot)
+    monkeypatch.setattr(manager, "_submit_once", lambda spec: "42")
+
+    assert manager._submit(spec) == "42"
+    assert manager._submit(spec) == "42"
+    assert wait_calls["count"] == 2
+
+
+def test_submission_rate_limit_uses_longer_backoff(monkeypatch, tmp_path):
+    workdir = tmp_path / "wd"
+    workdir.mkdir()
+    (workdir / "SLURMM-run").write_text("#!/bin/bash\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        submit_retry_limit=2,
+        submit_retry_delay_s=60.0,
+    )
+
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(manager, "wait_for_slot", lambda *args, **kwargs: None)
+    monkeypatch.setattr("time.sleep", lambda delay: sleeps.append(delay))
+
+    def fail_submit_once(spec: SlurmJobSpec) -> str:
+        raise RuntimeError("sbatch: error: Reached jobs per hour limit")
+
+    monkeypatch.setattr(manager, "_submit_once", fail_submit_once)
+
+    with pytest.raises(RuntimeError, match="after 3 attempt"):
+        manager._submit(spec)
+
+    assert sleeps == [900.0, 1800.0]
+
+
 def test_submit_rebuilds_script_with_header(monkeypatch, tmp_path):
     workdir = tmp_path / "wd"
     workdir.mkdir()
