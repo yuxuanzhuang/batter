@@ -6,6 +6,7 @@ import contextlib
 import json
 import os
 import shutil
+import string
 from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
@@ -24,6 +25,10 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils.builder_utils import find_anchor_atoms
 
+_PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
+_CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
+
+
 def _as_abs(p: str | Path | None, base: Path) -> Path | None:
     if p is None:
         return None
@@ -34,6 +39,115 @@ def _as_abs(p: str | Path | None, base: Path) -> Path | None:
 def _copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+def _chain_id_from_index(index: int) -> str:
+    if index >= len(_CHAIN_ID_ALPHABET):
+        raise ValueError(
+            "Too many protein fragments to encode in single-character PDB chain IDs. "
+            f"Found fragment index {index + 1}, but only {len(_CHAIN_ID_ALPHABET)} IDs are available."
+        )
+    return _CHAIN_ID_ALPHABET[index]
+
+
+def _get_single_ca_position(residue) -> np.ndarray | None:
+    ca_atoms = residue.atoms.select_atoms("name CA")
+    if ca_atoms.n_atoms != 1:
+        return None
+    return np.asarray(ca_atoms.positions[0], dtype=float)
+
+
+def _split_residues_on_breaks(
+    residues,
+    *,
+    segid: str,
+    chain_id: str,
+    ca_distance_cutoff: float = _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A,
+) -> tuple[list[list[Any]], list[str]]:
+    residue_list = list(residues)
+    if not residue_list:
+        return [], []
+
+    fragments: list[list[Any]] = [[residue_list[0]]]
+    warnings: list[str] = []
+
+    for prev_residue, curr_residue in zip(residue_list, residue_list[1:]):
+        reasons: list[str] = []
+        prev_resid = int(prev_residue.resid)
+        curr_resid = int(curr_residue.resid)
+
+        if curr_resid != prev_resid + 1:
+            reasons.append(f"resid discontinuity ({prev_resid} -> {curr_resid})")
+
+        prev_ca = _get_single_ca_position(prev_residue)
+        curr_ca = _get_single_ca_position(curr_residue)
+        if prev_ca is not None and curr_ca is not None:
+            ca_distance = float(np.linalg.norm(curr_ca - prev_ca))
+            if ca_distance > ca_distance_cutoff:
+                reasons.append(
+                    f"C-alpha distance {ca_distance:.1f} A > {ca_distance_cutoff:.1f} A"
+                )
+
+        if reasons:
+            warnings.append(
+                "Detected a protein break in system_prep "
+                f"(segid={segid or '?'}, chain={chain_id or '?'}) "
+                f"between residues {prev_resid} and {curr_resid}: "
+                + "; ".join(reasons)
+                + ". BATTER will split these residues into separate segments/chains."
+            )
+            fragments.append([])
+
+        fragments[-1].append(curr_residue)
+
+    return fragments, warnings
+
+
+def _group_residues_by_source_identity(residues) -> list[list[Any]]:
+    residue_list = list(residues)
+    if not residue_list:
+        return []
+
+    groups: list[list[Any]] = [[residue_list[0]]]
+    prev_chain_id = str(residue_list[0].atoms.chainIDs[0]).strip() if len(residue_list[0].atoms) else ""
+    prev_segid = str(residue_list[0].segid).strip()
+
+    for residue in residue_list[1:]:
+        chain_id = str(residue.atoms.chainIDs[0]).strip() if len(residue.atoms) else ""
+        segid = str(residue.segid).strip()
+        if chain_id != prev_chain_id or segid != prev_segid:
+            groups.append([])
+        groups[-1].append(residue)
+        prev_chain_id = chain_id
+        prev_segid = segid
+
+    return groups
+
+
+def _select_fragment_atoms(
+    universe: mda.Universe,
+    residues: list[Any],
+    *,
+    chain_id: str,
+    segid: str,
+):
+    resid_seq = " ".join(str(int(residue.resid)) for residue in residues)
+    selectors: list[str] = []
+    if chain_id:
+        selectors.append(f"protein and chainID {chain_id} and resid {resid_seq}")
+    if segid:
+        selectors.append(f"protein and segid {segid} and resid {resid_seq}")
+    selectors.append(f"protein and resid {resid_seq}")
+
+    for selector in selectors:
+        selection = universe.select_atoms(selector)
+        if selection.n_residues == len(residues):
+            return selection
+
+    raise ValueError(
+        "Could not match a protein fragment back to the aligned protein using "
+        f"segid={segid!r}, chainID={chain_id!r}, residues={[int(r.resid) for r in residues]}."
+    )
 
 
 def _ensure_pdb(lig_path: Path, out_dir: Path) -> Path:
@@ -272,37 +386,46 @@ class _SystemPrepRunner:
             u_sys.atoms.chainIDs
         except AttributeError:
             u_sys.add_TopologyAttr("chainIDs")
+        try:
+            u_prot.atoms.chainIDs
+        except AttributeError:
+            u_prot.add_TopologyAttr("chainIDs")
 
         memb_seg = u_sys.add_Segment(segid="MEMB")
         water_seg = u_sys.add_Segment(segid="WATR")
 
-        # modify the chaininfo to be unique for each segment
-        current_chain = 65
-        u_prot.atoms.tempfactors = 0
+        protein_fragment_groups: list[tuple[Any, str]] = []
+        fragment_chain_index = 0
+        protein_source_groups = _group_residues_by_source_identity(
+            u_prot.select_atoms("protein").residues
+        )
 
-        # read and validate the correct segments
-        n_segments = len(u_sys.select_atoms("protein").segments)
-        n_segment_name = np.unique(u_sys.select_atoms("protein").segids)
-        if len(n_segment_name) != n_segments:
-            logger.warning(
-                f"Number of segments in the system is {n_segments} but the segment names are {n_segment_name}. "
-                f"Setting all segments to 'A' for the protein. If you want to use different segments, "
-                "modify the segments column in the system_topology file manually."
+        for source_group in protein_source_groups:
+            chain_id = (
+                str(source_group[0].atoms.chainIDs[0]).strip() if len(source_group[0].atoms) else ""
             )
-            protein_seg = u_sys.add_Segment(segid="A")
-            u_sys.select_atoms("protein").residues.segments = protein_seg
+            segid = str(source_group[0].segid).strip()
+            residue_groups, split_warnings = _split_residues_on_breaks(
+                source_group,
+                segid=segid,
+                chain_id=chain_id,
+            )
+            for warning_message in split_warnings:
+                logger.warning(warning_message)
 
-        for segment in u_sys.select_atoms("protein").segments:
-            resid_seg = segment.residues.resids
-            resid_seq = " ".join([str(resid) for resid in resid_seg])
-            chain_id = segment.atoms.chainIDs[0]
-            u_prot.select_atoms(
-                f"resid {resid_seq} and chainID {chain_id} and protein"
-            ).atoms.tempfactors = current_chain
-            current_chain += 1
-        u_prot.atoms.chainIDs = [
-            chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors
-        ]
+            for residues in residue_groups:
+                new_chain_id = _chain_id_from_index(fragment_chain_index)
+                fragment_chain_index += 1
+
+                prot_selection = _select_fragment_atoms(
+                    u_prot,
+                    residues,
+                    chain_id=chain_id,
+                    segid=segid,
+                )
+
+                prot_selection.atoms.chainIDs = new_chain_id
+                protein_fragment_groups.append((prot_selection, new_chain_id))
 
         comp_2_combined = []
 
@@ -310,8 +433,6 @@ class _SystemPrepRunner:
             protein_anchor = u_prot.select_atoms(
                 f"segid {self.receptor_segment} and protein"
             )
-            protein_anchor.atoms.chainIDs = "A"
-            protein_anchor.atoms.tempfactors = 65
             other_protein = u_prot.select_atoms(
                 f"not segid {self.receptor_segment} and protein"
             )
@@ -319,6 +440,9 @@ class _SystemPrepRunner:
             comp_2_combined.append(other_protein)
         else:
             comp_2_combined.append(u_prot.select_atoms("protein"))
+
+        for prot_selection, new_chain_id in protein_fragment_groups:
+            prot_selection.residues.segments = u_prot.add_Segment(segid=new_chain_id)
 
         if self.membrane_simulation:
             membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')

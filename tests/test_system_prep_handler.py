@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import MDAnalysis as mda
 import numpy as np
 
 from batter.exec.handlers import system_prep as system_prep_mod
@@ -43,6 +44,27 @@ def _make_protein_pdb(path: Path) -> None:
             _atom_line(6, "CA", "ALA", "A", 2, 3.5, 1.0, 0.0, "C"),
             _atom_line(7, "C", "ALA", "A", 2, 4.5, 0.0, 0.0, "C"),
             _atom_line(8, "O", "ALA", "A", 2, 5.5, 0.5, 0.0, "O"),
+        ],
+    )
+
+
+def _make_fragmented_protein_pdb(
+    path: Path,
+    *,
+    second_resid: int,
+    second_ca_x: float,
+) -> None:
+    _write_pdb(
+        path,
+        [
+            _atom_line(1, "N", "ALA", "A", 1, 0.0, 0.0, 0.0, "N"),
+            _atom_line(2, "CA", "ALA", "A", 1, 1.0, 0.0, 0.0, "C"),
+            _atom_line(3, "C", "ALA", "A", 1, 1.5, 1.0, 0.0, "C"),
+            _atom_line(4, "O", "ALA", "A", 1, 1.5, 2.0, 0.0, "O"),
+            _atom_line(5, "N", "ALA", "A", second_resid, second_ca_x - 1.0, 0.0, 0.0, "N"),
+            _atom_line(6, "CA", "ALA", "A", second_resid, second_ca_x, 0.0, 0.0, "C"),
+            _atom_line(7, "C", "ALA", "A", second_resid, second_ca_x + 1.0, 0.0, 0.0, "C"),
+            _atom_line(8, "O", "ALA", "A", second_resid, second_ca_x + 2.0, 0.0, 0.0, "O"),
         ],
     )
 
@@ -144,3 +166,103 @@ def test_run_includes_dssp_in_manifest(monkeypatch, tmp_path: Path) -> None:
     assert manifest_path.exists()
     saved_manifest = json.loads(manifest_path.read_text())
     assert saved_manifest["dssp"] == fake_dssp
+
+
+def _run_process_system_with_fragmented_protein(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    second_resid: int,
+    second_ca_x: float,
+) -> tuple[_SystemPrepRunner, list[str]]:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    runner._system_name = "SYS"
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    protein = runner.ligands_folder / "protein_aligned.pdb"
+    system_pdb = runner.ligands_folder / "system_aligned.pdb"
+    _make_fragmented_protein_pdb(
+        protein,
+        second_resid=second_resid,
+        second_ca_x=second_ca_x,
+    )
+    _make_fragmented_protein_pdb(
+        system_pdb,
+        second_resid=second_resid,
+        second_ca_x=second_ca_x,
+    )
+
+    runner._protein_aligned_pdb = str(protein)
+    runner._system_aligned_pdb = str(system_pdb)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(system_prep_mod.logger, "warning", lambda message: warnings.append(str(message)))
+
+    runner._process_system()
+    return runner, warnings
+
+
+def test_process_system_splits_protein_on_resid_gap(monkeypatch, tmp_path: Path) -> None:
+    runner, warnings = _run_process_system_with_fragmented_protein(
+        tmp_path,
+        monkeypatch,
+        second_resid=3,
+        second_ca_x=3.5,
+    )
+
+    reference = mda.Universe(str(runner.ligands_folder / "reference.pdb"))
+    residues = reference.select_atoms("protein").residues
+
+    assert [int(residue.resid) for residue in residues] == [1, 3]
+    assert [residue.atoms.chainIDs[0] for residue in residues] == ["A", "B"]
+    assert any("resid discontinuity (1 -> 3)" in warning for warning in warnings)
+
+
+def test_process_system_splits_protein_on_long_ca_distance(
+    monkeypatch, tmp_path: Path
+) -> None:
+    runner, warnings = _run_process_system_with_fragmented_protein(
+        tmp_path,
+        monkeypatch,
+        second_resid=2,
+        second_ca_x=15.5,
+    )
+
+    reference = mda.Universe(str(runner.ligands_folder / "reference.pdb"))
+    residues = reference.select_atoms("protein").residues
+
+    assert [int(residue.resid) for residue in residues] == [1, 2]
+    assert [residue.atoms.chainIDs[0] for residue in residues] == ["A", "B"]
+    assert any("C-alpha distance 14.5 A > 10.0 A" in warning for warning in warnings)
+
+
+def test_process_system_splits_6hty_into_three_segments(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    runner._system_name = "SYS"
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    sixhty = Path(__file__).resolve().parent / "data" / "6hty.pdb"
+    protein = runner.ligands_folder / "protein_aligned.pdb"
+    system_pdb = runner.ligands_folder / "system_aligned.pdb"
+    protein.write_text(sixhty.read_text())
+    system_pdb.write_text(sixhty.read_text())
+
+    runner._protein_aligned_pdb = str(protein)
+    runner._system_aligned_pdb = str(system_pdb)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(system_prep_mod.logger, "warning", lambda message: warnings.append(str(message)))
+
+    runner._process_system()
+
+    reference = mda.Universe(str(runner.ligands_folder / "reference.pdb"))
+    prot = reference.select_atoms("protein")
+
+    assert len(prot.segments) == 3
+    assert sorted(set(prot.chainIDs)) == ["A", "B", "C"]
+    assert any("resid discontinuity (177 -> 190)" in warning for warning in warnings)
+    assert any("resid discontinuity (432 -> 441)" in warning for warning in warnings)
