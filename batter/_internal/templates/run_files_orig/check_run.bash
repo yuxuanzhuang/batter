@@ -79,6 +79,37 @@ archive_failed_job_files() {
     fi
 }
 
+ATTEMPT_FAILED_MARKER=${ATTEMPT_FAILED_MARKER:-ATTEMPT_FAILED}
+
+write_attempt_failed_marker() {
+    printf "FAILED\n" > "$ATTEMPT_FAILED_MARKER"
+}
+
+consume_prior_failure_marker() {
+    local prior_failed=0
+
+    if [[ -f "$ATTEMPT_FAILED_MARKER" ]]; then
+        prior_failed=1
+        rm -f "$ATTEMPT_FAILED_MARKER"
+    fi
+
+    if [[ -f FAILED ]]; then
+        prior_failed=1
+        rm -f FAILED
+    fi
+
+    echo "$prior_failed"
+}
+
+mark_failed_and_exit() {
+    local message=${1:-}
+    if [[ -n $message ]]; then
+        echo "$message"
+    fi
+    write_attempt_failed_marker
+    exit 1
+}
+
 should_skip_completed_step() {
     local stage=$1
     local artifact=$2
@@ -95,7 +126,7 @@ should_skip_completed_step() {
     fi
 
     if [[ $prior_failed -eq 1 && $rerun_after_failure -eq 1 ]]; then
-        echo "[INFO] Prior FAILED marker found; rerunning ${stage} despite existing artifact ${artifact}."
+        echo "[INFO] Prior failure marker found; rerunning ${stage} despite existing artifact ${artifact}."
         return 1
     fi
 
@@ -138,6 +169,7 @@ check_sim_failure() {
             echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
             rm -f "$rst_file_prev"
         fi
+        write_attempt_failed_marker
         exit 1
     fi
 
@@ -151,6 +183,7 @@ check_sim_failure() {
             echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
             rm -f "$rst_file_prev"
         fi
+        write_attempt_failed_marker
         exit 1
     fi
 

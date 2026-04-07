@@ -52,11 +52,7 @@ if [[ -f FINISHED ]]; then
     exit 0
 fi
 
-prior_failed=0
-if [[ -f FAILED ]]; then
-    prior_failed=1
-    rm -f FAILED
-fi
+prior_failed=$(consume_prior_failure_marker)
 
 should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
@@ -108,7 +104,7 @@ if [[ $only_eq -eq 1 ]]; then
                 echo "Minimization with CPU also failed, exiting."
                 rm -f mini.rst7 mini.nc mini.out
                 rm -f mini2.rst7 mini2.nc mini2.out
-                exit 1
+                mark_failed_and_exit
             fi
         fi
     fi
@@ -170,7 +166,7 @@ if [[ $only_eq -eq 1 ]]; then
                 if ! check_min_energy "mini.in.out" -1000; then
                     echo "Minimization with CPU also failed for window $i, exiting."
                     rm -f mini.in.rst7 mini.in.nc mini.in.out
-                    exit 1
+                    mark_failed_and_exit
                 fi
             fi
         fi
@@ -373,8 +369,7 @@ EOF"
         exit 0
     fi
 
-    echo "[ERROR] output.pdb not created or empty; marking FAILED."
-    exit 1
+    mark_failed_and_exit "[ERROR] output.pdb not created or empty; marking ATTEMPT_FAILED."
 fi
 echo "[INFO] Not finished yet; rerun to continue."
 exit 0

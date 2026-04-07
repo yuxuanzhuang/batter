@@ -33,12 +33,7 @@ if [[ -f FINISHED ]]; then
     exit 0
 fi
 
-# remove FAILED file if it exists
-prior_failed=0
-if [[ -f FAILED ]]; then
-    prior_failed=1
-    rm -f FAILED
-fi
+prior_failed=$(consume_prior_failure_marker)
 
 should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
@@ -95,7 +90,7 @@ if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
         if ! check_min_energy "mini2.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
             rm -f mini.rst7 mini.nc mini.out mini2.rst7 mini2.nc mini2.out
-            exit 1
+            mark_failed_and_exit
         fi
     fi
 fi
@@ -113,8 +108,7 @@ if ! should_skip_eq_step "NVT preparation" "eqnvt.rst7"; then
 
         python check_penetration.py eqnvt.rst7
         if [[ -f RING_PENETRATION ]]; then
-            echo "Ligand ring penetration still detected after NVT; exiting."
-            exit 1
+            mark_failed_and_exit "Ligand ring penetration still detected after NVT; exiting."
         fi
     else
         cp mini2.rst7 eqnvt.rst7
@@ -274,9 +268,7 @@ EOF"
         exit 0
     fi
 
-    echo "[ERROR] output.pdb not created or empty; marking FAILED."
-    echo "FAILED" > FAILED
-    exit 1
+    mark_failed_and_exit "[ERROR] output.pdb not created or empty; marking ATTEMPT_FAILED."
 fi
 echo "[INFO] Not finished yet; rerun to continue."
 exit 0
