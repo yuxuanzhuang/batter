@@ -213,6 +213,7 @@ fi
 }
 
 last_rst="md-current.rst7"
+win_00=../COMPONENT00
 
 current_steps=$(awk -v t="$current_ps" -v dt="$dt_ps" 'BEGIN{if (dt<=0) {print 0; exit} printf "%d\n", (t/dt)+0.5}')
 remaining_steps=$(( total_steps - current_steps ))
@@ -261,7 +262,7 @@ if (( remaining_steps > 0 )); then
     fi
 
     # Run MD: always write restart to md-current.rst7
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eq.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc"
 
     # Update progress from restart. completed_steps will:

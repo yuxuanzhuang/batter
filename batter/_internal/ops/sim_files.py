@@ -560,8 +560,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
+                elif "nmropt = " in line:
+                    line = "nmropt = 0,\n"
                 elif "restraint_wt = " in line:
-                    line = f"restraint_wt = 0.2,\n"
+                    line = f"restraint_wt = 10,\n"
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
