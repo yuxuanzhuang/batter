@@ -7,9 +7,6 @@ from typing import Any, Mapping, Sequence
 
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
-_SCIENTIFIC_NOTATION_RE = re.compile(
-    r"^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))[eE][+-]?\d+$"
-)
 _RESERVED_LIGAND_NAMES = frozenset({"TRANSFORMATIONS"})
 
 
@@ -77,11 +74,6 @@ def sanitize_user_ligand_name(name: str) -> str:
 
     Reserved names that conflict with BATTER directory layout are rejected.
     """
-    if _SCIENTIFIC_NOTATION_RE.fullmatch(name.strip()):
-        raise ValueError(
-            f"Ligand name {name!r} looks like scientific notation. "
-            "Please choose a non-numeric ligand identifier."
-        )
     sanitized = sanitize_ligand_name(name)
     if not sanitized:
         raise ValueError(f"Ligand name {name!r} is invalid after sanitization.")

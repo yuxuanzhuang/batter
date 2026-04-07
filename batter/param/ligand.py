@@ -63,6 +63,7 @@ __all__ = [
 
 # forbidden molecule names in MDA selection language and AMBER residue names
 FORBIDDEN_MOL_NAMES = {"add", "all", "and", "any", "not", "set"}
+_SCIENTIFIC_NOTATION_RESNAME_RE = re.compile(r"^\d+e\d+$", re.IGNORECASE)
 
 
 def _base26_triplet(n: int) -> str:
@@ -78,6 +79,11 @@ def _stable_hash_int(s: str) -> int:
     """Deterministic int from string (md5, not Python's salted hash)."""
     h = hashlib.md5(s.encode("utf-8")).hexdigest()
     return int(h, 16)
+
+
+def _looks_like_scientific_notation_resname(name: str) -> bool:
+    """Return True for residue-name candidates like ``8e3``."""
+    return bool(_SCIENTIFIC_NOTATION_RESNAME_RE.fullmatch(name))
 
 
 def _convert_mol_name_to_unique(
@@ -113,11 +119,13 @@ def _convert_mol_name_to_unique(
         base = _base26_triplet(ind)
     if len(base) == 3 and base.isdigit():
         base = "l" + base[:2]
+    if _looks_like_scientific_notation_resname(base):
+        base = ""
 
-    if base not in exist_mol_names and base not in FORBIDDEN_MOL_NAMES:
+    if base and base not in exist_mol_names and base not in FORBIDDEN_MOL_NAMES:
         return base
 
-    seed = _stable_hash_int(smiles or base)
+    seed = _stable_hash_int(smiles or mol_name or "lig")
     for attempt in range(200):
         candidate = _base26_triplet(seed + attempt)
         if candidate not in exist_mol_names and candidate not in FORBIDDEN_MOL_NAMES:
