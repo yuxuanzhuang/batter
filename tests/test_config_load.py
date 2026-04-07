@@ -123,6 +123,20 @@ def test_create_args_rejects_reserved_ligand_name(tmp_path: Path) -> None:
         CreateArgs(system_name="sys", ligand_paths={"transformations": lig})
 
 
+def test_create_args_rejects_scientific_notation_ligand_name_key(tmp_path: Path) -> None:
+    lig = tmp_path / "lig.sdf"
+    lig.write_text("dummy\n")
+    with pytest.raises(ValidationError, match="scientific notation"):
+        CreateArgs(system_name="sys", ligand_paths={"8e3": lig})
+
+
+def test_create_args_rejects_scientific_notation_ligand_name_stem(tmp_path: Path) -> None:
+    lig = tmp_path / "8e3.sdf"
+    lig.write_text("dummy\n")
+    with pytest.raises(ValidationError, match="scientific notation"):
+        CreateArgs(system_name="sys", ligand_paths=[lig])
+
+
 def test_fesim_args_invalid_remd_type():
     with pytest.raises(ValidationError, match="fe_sim\\.remd"):
         FESimArgs(remd="maybe")
