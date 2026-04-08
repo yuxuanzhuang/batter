@@ -94,6 +94,63 @@ def test_cli_run_invokes_run_from_yaml(
     assert called["kwargs"]["run_overrides"]["dry_run"] is True
 
 
+def test_cli_run_preserves_yaml_on_failure_when_flag_omitted(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    yaml_path = tmp_path / "run.yaml"
+    yaml_path.write_text("dummy: true\n")
+
+    class DummySection:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+        def model_copy(self, update: dict | None = None):
+            data = dict(self.__dict__)
+            if update:
+                data.update(update)
+            return DummySection(**data)
+
+    class DummyRunConfig:
+        def __init__(self, run=None):
+            default_run = {"output_folder": "out", "run_id": "auto", "dry_run": False}
+            run_data = dict(default_run)
+            if run:
+                run_data.update(run)
+            self.run = DummySection(**run_data)
+
+        def model_copy(self, update: dict | None = None):
+            data = {"run": self.run}
+            if update:
+                data.update(update)
+            run_payload = data["run"]
+            if isinstance(run_payload, DummySection):
+                run_values = dict(run_payload.__dict__)
+            else:
+                run_values = dict(run_payload)
+            return DummyRunConfig(run=run_values)
+
+        def resolved_sim_config(self):
+            return object()
+
+    monkeypatch.setattr(
+        "batter.cli.run_cmds.RunConfig.load",
+        staticmethod(lambda path: DummyRunConfig()),
+    )
+
+    called = {}
+
+    def fake_run_from_yaml(path, **kwargs):
+        called["path"] = path
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr("batter.cli.run_cmds.run_from_yaml", fake_run_from_yaml)
+
+    result = runner.invoke(cli, ["run", str(yaml_path)])
+    assert result.exit_code == 0
+    assert called["path"] == yaml_path
+    assert called["kwargs"]["on_failure"] is None
+
+
 def test_cli_fe_list_table(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
     work_dir = tmp_path / "work"
     work_dir.mkdir()
@@ -234,6 +291,7 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     assert "#SBATCH --job-name=fep_" in script_text
     assert "/simulations/manager" in script_text
     assert "__JOB_NAME__" not in script_text
+    assert "--on-failure" not in script_text
     # sbatch invoked on the generated script
     assert scripts[0].name in calls["cmd"]
 
