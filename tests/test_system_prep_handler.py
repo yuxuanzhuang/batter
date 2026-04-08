@@ -5,9 +5,13 @@ from pathlib import Path
 
 import MDAnalysis as mda
 import numpy as np
+import pytest
 
 from batter.exec.handlers import system_prep as system_prep_mod
-from batter.exec.handlers.system_prep import _SystemPrepRunner
+from batter.exec.handlers.system_prep import (
+    _SystemPrepRunner,
+    _find_min_xy_box_rotation,
+)
 from batter.systems.core import SimSystem
 
 
@@ -79,6 +83,40 @@ def _make_ligand_pdb(path: Path) -> None:
     )
 
 
+def _make_diagonal_protein_pdb(path: Path) -> None:
+    lines: list[str] = []
+    serial = 1
+    for resid, center in enumerate((0.0, 4.0, 8.0), start=1):
+        x = center
+        y = center
+        z = 0.0
+        lines.extend(
+            [
+                _atom_line(serial, "N", "ALA", "A", resid, x - 1.0, y - 0.5, z, "N"),
+                _atom_line(serial + 1, "CA", "ALA", "A", resid, x, y, z, "C"),
+                _atom_line(serial + 2, "C", "ALA", "A", resid, x + 1.0, y + 0.5, z, "C"),
+                _atom_line(serial + 3, "O", "ALA", "A", resid, x + 1.6, y + 1.2, z, "O"),
+            ]
+        )
+        serial += 4
+    _write_pdb(path, lines)
+
+
+def _make_offset_ligand_pdb(path: Path) -> None:
+    _write_pdb(
+        path,
+        [
+            _atom_line(1, "C1", "LIG", "L", 1, 2.5, 1.0, 0.0, "C"),
+            _atom_line(2, "C2", "LIG", "L", 1, 3.5, 1.2, 0.0, "C"),
+        ],
+    )
+
+
+def _xy_area(atomgroup) -> float:
+    spans = np.ptp(atomgroup.positions, axis=0)
+    return float(spans[0] * spans[1])
+
+
 def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) -> None:
     system = SimSystem(name="SYS", root=tmp_path / "run")
     runner = _SystemPrepRunner(system, tmp_path)
@@ -111,6 +149,24 @@ def test_run_input_protein_dssp_persists_results(monkeypatch, tmp_path: Path) ->
 
     np.testing.assert_array_equal(np.load(dssp_npy, allow_pickle=False), expected)
     assert json.loads(dssp_json.read_text()) == [["H", "E", "-"]]
+
+
+def test_find_min_xy_box_rotation_reduces_diagonal_xy_area() -> None:
+    coords = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [2.0, 2.0, 0.0],
+            [4.0, 4.0, 0.0],
+            [6.0, 6.0, 0.0],
+            [8.0, 8.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    rotation, before_score, after_score = _find_min_xy_box_rotation(coords)
+
+    np.testing.assert_allclose(rotation @ rotation.T, np.eye(3), atol=1e-6)
+    assert after_score[0] < before_score[0] * 0.2
 
 
 def test_run_includes_dssp_in_manifest(monkeypatch, tmp_path: Path) -> None:
@@ -166,6 +222,76 @@ def test_run_includes_dssp_in_manifest(monkeypatch, tmp_path: Path) -> None:
     assert manifest_path.exists()
     saved_manifest = json.loads(manifest_path.read_text())
     assert saved_manifest["dssp"] == fake_dssp
+
+
+def test_get_alignment_reduces_xy_area_and_rotates_ligand_without_system_input(
+    tmp_path: Path,
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    runner._system_name = "SYS"
+    runner.protein_align = "resid 1 to 3"
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    protein = tmp_path / "protein_diagonal.pdb"
+    ligand = tmp_path / "ligand_offset.pdb"
+    _make_diagonal_protein_pdb(protein)
+    _make_offset_ligand_pdb(ligand)
+
+    runner._protein_input = str(protein)
+    runner._system_topology = None
+    runner._system_input_pdb = str(protein)
+    runner.ligand_dict = {"LIG1": str(ligand)}
+
+    runner._get_alignment()
+    runner._process_system()
+    runner._prepare_all_ligands()
+
+    u_prot_in = mda.Universe(str(protein))
+    u_prot_out = mda.Universe(str(runner.ligands_folder / "reference.pdb"))
+    u_lig_in = mda.Universe(str(ligand))
+    u_lig_out = mda.Universe(str(runner.ligands_folder / "LIG1.pdb"))
+
+    assert _xy_area(u_prot_out.select_atoms("protein")) < _xy_area(
+        u_prot_in.select_atoms("protein")
+    ) * 0.2
+
+    ca_in = u_prot_in.select_atoms("resid 1 and name CA").positions[0]
+    ca_out = u_prot_out.select_atoms("resid 1 and name CA").positions[0]
+    lig_c1_in = u_lig_in.atoms.positions[0]
+    lig_c1_out = u_lig_out.atoms.positions[0]
+    lig_c2_in = u_lig_in.atoms.positions[1]
+    lig_c2_out = u_lig_out.atoms.positions[1]
+
+    assert np.linalg.norm(ca_out - lig_c1_out) == pytest.approx(
+        np.linalg.norm(ca_in - lig_c1_in), abs=1e-3
+    )
+    assert np.linalg.norm(ca_out - lig_c2_out) == pytest.approx(
+        np.linalg.norm(ca_in - lig_c2_in), abs=1e-3
+    )
+
+
+def test_get_alignment_skips_xy_optimization_when_system_input_is_present(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    runner.protein_align = "resid 1 to 3"
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    protein = tmp_path / "protein_diagonal.pdb"
+    _make_diagonal_protein_pdb(protein)
+
+    runner._protein_input = str(protein)
+    runner._system_topology = str(protein)
+    runner._system_input_pdb = str(protein)
+
+    def _fail(*_args, **_kwargs):
+        raise AssertionError("XY box optimization should be skipped when system_input is provided.")
+
+    monkeypatch.setattr(system_prep_mod, "_find_min_xy_box_rotation", _fail)
+
+    runner._get_alignment()
 
 
 def _run_process_system_with_fragmented_protein(
