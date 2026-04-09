@@ -77,7 +77,7 @@ if [[ $only_eq -eq 1 ]]; then
     fi
 
     if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
-        [[ -s mini.rst7 ]] || { echo "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."; exit 1; }
+        require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
         if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
             print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         else
@@ -110,7 +110,7 @@ if [[ $only_eq -eq 1 ]]; then
     fi
 
     if ! should_skip_eq_step "Pre equilibration" "eqnpt_pre.rst7"; then
-        [[ -s mini2.rst7 ]] || { echo "[ERROR] Missing mini2.rst7; cannot continue to Pre equilibration."; exit 1; }
+        require_nonempty_file_or_attempt_fail "mini2.rst7" "[ERROR] Missing mini2.rst7; cannot continue to Pre equilibration."
         # Equilibration with protein and lipid restrained
         # this is to equilibrate the density of water
         # Note we are not using the GPU version here
@@ -124,7 +124,7 @@ if [[ $only_eq -eq 1 ]]; then
     fi
 
     if ! should_skip_eq_step "Equilibration stage 0" "eqnpt00.rst7"; then
-        [[ -s eqnpt_pre.rst7 ]] || { echo "[ERROR] Missing eqnpt_pre.rst7; cannot continue to Equilibration stage 0."; exit 1; }
+        require_nonempty_file_or_attempt_fail "eqnpt_pre.rst7" "[ERROR] Missing eqnpt_pre.rst7; cannot continue to Equilibration stage 0."
         print_and_run "$PMEMD_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
     fi
@@ -136,13 +136,13 @@ if [[ $only_eq -eq 1 ]]; then
         if should_skip_eq_step "Equilibration stage $step" "${curr}.rst7"; then
             continue
         fi
-        [[ -s "$prev" ]] || { echo "[ERROR] Missing ${prev}; cannot continue to Equilibration stage $step."; exit 1; }
+        require_nonempty_file_or_attempt_fail "$prev" "[ERROR] Missing ${prev}; cannot continue to Equilibration stage $step."
         print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration stage $step" "$log_file" "${curr}.rst7" "$prev" "$retry"
     done
 
     if ! should_skip_eq_step "Long equilibration" "eqnpt_eq.rst7"; then
-        [[ -s eqnpt04.rst7 ]] || { echo "[ERROR] Missing eqnpt04.rst7; cannot continue to Long equilibration."; exit 1; }
+        require_nonempty_file_or_attempt_fail "eqnpt04.rst7" "[ERROR] Missing eqnpt04.rst7; cannot continue to Long equilibration."
         print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
     fi
@@ -150,7 +150,7 @@ if [[ $only_eq -eq 1 ]]; then
     # only do it if N_WINDOWS is not 1
     if [[ NWINDOWS -gt 1 ]]; then
         if ! should_skip_eq_step "Minimization for FEP" "mini.in.rst7"; then
-            [[ -s eqnpt_eq.rst7 ]] || { echo "[ERROR] Missing eqnpt_eq.rst7; cannot continue to FEP minimization."; exit 1; }
+            require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot continue to FEP minimization."
             print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
             check_sim_failure "Minimization for FEP" "$log_file" mini.in.rst7
             if ! check_min_energy "mini.in.out" -1000; then
@@ -172,7 +172,7 @@ if [[ $only_eq -eq 1 ]]; then
         fi
 
         if ! should_skip_eq_step "Equilibration for window seeds" "eq.rst7"; then
-            [[ -s mini.in.rst7 ]] || { echo "[ERROR] Missing mini.in.rst7; cannot continue to window-seed equilibration."; exit 1; }
+            require_nonempty_file_or_attempt_fail "mini.in.rst7" "[ERROR] Missing mini.in.rst7; cannot continue to window-seed equilibration."
             # run one long equilbration with dynamically changed lambda value
             print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
             check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
@@ -287,10 +287,7 @@ elif [[ -s md-previous.rst7 ]]; then
     rst_in="md-previous.rst7"
 fi
 
-[[ -s "$rst_in" ]] || {
-    echo "[ERROR] Missing restart file $rst_in; cannot continue."
-    exit 1
-}
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="md-current.rst7"
 win_00=../COMPONENT00
@@ -334,7 +331,7 @@ if (( remaining_steps > 0 )); then
 
     # Rotate md-current restart (avoid Fortran OPEN issues / keep backup)
     if [[ -f md-current.rst7 ]]; then
-        [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
+        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] md-current.rst7 exists but empty; aborting."
         mv -f md-current.rst7 md-previous.rst7
         if [[ "$rst_in" == "md-current.rst7" ]]; then
             rst_in="md-previous.rst7"

@@ -84,7 +84,7 @@ if [[ $only_eq -eq 1 ]]; then
     fi
     # run one long equilbration with dynamically changed lambda value
     if ! should_skip_eq_step "RBFE equilibration seed" "eq.rst7"; then
-        [[ -s mini.in.rst7 ]] || { echo "[ERROR] Missing mini.in.rst7; cannot continue to RBFE equilibration seed."; exit 1; }
+        require_nonempty_file_or_attempt_fail "mini.in.rst7" "[ERROR] Missing mini.in.rst7; cannot continue to RBFE equilibration seed."
         print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
     fi
@@ -203,10 +203,7 @@ elif [[ -s md-previous.rst7 ]]; then
     rst_in="md-previous.rst7"
 fi
 
-[[ -s "$rst_in" ]] || {
-    echo "[ERROR] Missing restart file $rst_in; cannot continue."
-    exit 1
-}
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="md-current.rst7"
 win_00=../COMPONENT00
@@ -250,7 +247,7 @@ if (( remaining_steps > 0 )); then
 
     # Rotate md-current restart (avoid Fortran OPEN issues / keep backup)
     if [[ -f md-current.rst7 ]]; then
-        [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
+        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] md-current.rst7 exists but empty; aborting."
         mv -f md-current.rst7 md-previous.rst7
         if [[ "$rst_in" == "md-current.rst7" ]]; then
             rst_in="md-previous.rst7"

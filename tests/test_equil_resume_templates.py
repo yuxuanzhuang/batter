@@ -278,3 +278,76 @@ def test_run_equil_reruns_nvt_after_direct_failure_when_enabled(
     assert "Skipping NVT preparation" not in rerun.stdout
     assert "rerunning NVT preparation despite existing artifact eqnvt.rst7" in rerun.stdout
     assert "eqnpt_pre.out" in calls
+
+
+def test_consume_prior_failure_marker_preserves_terminal_failed(tmp_path: Path) -> None:
+    repo_root = _repo_root()
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_file(tmp_path / "check_run.bash", check_run.read_text())
+    _write_file(tmp_path / "ATTEMPT_FAILED", "FAILED\n")
+    _write_file(tmp_path / "FAILED", "FAILED\n")
+
+    script = """#!/usr/bin/env bash
+set -euo pipefail
+source check_run.bash
+prior_failed=$(consume_prior_failure_marker)
+printf '%s\n' "$prior_failed"
+[[ -f ATTEMPT_FAILED ]] && echo "attempt_exists"
+[[ -f FAILED ]] && echo "failed_exists"
+"""
+    _write_file(tmp_path / "probe.sh", script, executable=True)
+
+    result = subprocess.run(
+        ["bash", "probe.sh"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout_lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert stdout_lines == ["1", "failed_exists"]
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
+    assert (tmp_path / "FAILED").exists()
+
+
+def test_require_nonempty_file_or_attempt_fail_writes_attempt_marker(tmp_path: Path) -> None:
+    repo_root = _repo_root()
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_file(tmp_path / "check_run.bash", check_run.read_text())
+
+    script = """#!/usr/bin/env bash
+set -euo pipefail
+source check_run.bash
+require_nonempty_file_or_attempt_fail "missing.rst7" "[ERROR] missing restart"
+"""
+    _write_file(tmp_path / "probe.sh", script, executable=True)
+
+    result = subprocess.run(
+        ["bash", "probe.sh"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "[ERROR] missing restart" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").exists()
+
+
+def test_run_equil_does_not_consume_terminal_failed_marker_for_rerun_logic(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    env["RERUN_EQ_STEPS_AFTER_FAILURE"] = "1"
+    for name in ["mini.rst7", "mini2.rst7", "eqnvt.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+    _write_file(tmp_path / "FAILED", "FAILED\n")
+
+    subprocess.run(cmd, cwd=tmp_path, env=env, check=True)
+
+    calls = _read_calls(tmp_path)
+    assert "mini.out" not in calls
+    assert "mini2.out" not in calls
+    assert (tmp_path / "FAILED").exists()

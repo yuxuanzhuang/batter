@@ -93,11 +93,6 @@ consume_prior_failure_marker() {
         rm -f "$ATTEMPT_FAILED_MARKER"
     fi
 
-    if [[ -f FAILED ]]; then
-        prior_failed=1
-        rm -f FAILED
-    fi
-
     echo "$prior_failed"
 }
 
@@ -108,6 +103,17 @@ mark_failed_and_exit() {
     fi
     write_attempt_failed_marker
     exit 1
+}
+
+require_nonempty_file_or_attempt_fail() {
+    local required_path=$1
+    local message=${2:-"[ERROR] Missing required file ${required_path}; aborting."}
+
+    if [[ -n $required_path && -s $required_path ]]; then
+        return 0
+    fi
+
+    mark_failed_and_exit "$message"
 }
 
 should_skip_completed_step() {

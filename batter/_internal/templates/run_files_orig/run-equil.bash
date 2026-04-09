@@ -64,7 +64,7 @@ if ! should_skip_eq_step "Minimization" "mini.rst7"; then
 fi
 
 if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
-    [[ -s mini.rst7 ]] || { echo "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."; exit 1; }
+    require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
     if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
         print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
     else
@@ -97,7 +97,7 @@ fi
 
 # ---------------- Equilibration ----------------
 if ! should_skip_eq_step "NVT preparation" "eqnvt.rst7"; then
-    [[ -s mini2.rst7 ]] || { echo "[ERROR] Missing mini2.rst7; cannot continue to NVT preparation."; exit 1; }
+    require_nonempty_file_or_attempt_fail "mini2.rst7" "[ERROR] Missing mini2.rst7; cannot continue to NVT preparation."
     python check_penetration.py mini2.rst7
 
     if [[ -f RING_PENETRATION ]]; then
@@ -116,7 +116,7 @@ if ! should_skip_eq_step "NVT preparation" "eqnvt.rst7"; then
 fi
 
 if ! should_skip_eq_step "Pre equilibration" "eqnpt_pre.rst7"; then
-    [[ -s eqnvt.rst7 ]] || { echo "[ERROR] Missing eqnvt.rst7; cannot continue to Pre equilibration."; exit 1; }
+    require_nonempty_file_or_attempt_fail "eqnvt.rst7" "[ERROR] Missing eqnvt.rst7; cannot continue to Pre equilibration."
     # Equilibration with protein and ligand restrained (CPU for stability)
     if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
         print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> \"$log_file\" 2>&1"
@@ -127,7 +127,7 @@ if ! should_skip_eq_step "Pre equilibration" "eqnpt_pre.rst7"; then
 fi
 
 if ! should_skip_eq_step "Equilibration stage 0" "eqnpt00.rst7"; then
-    [[ -s eqnpt_pre.rst7 ]] || { echo "[ERROR] Missing eqnpt_pre.rst7; cannot continue to Equilibration stage 0."; exit 1; }
+    require_nonempty_file_or_attempt_fail "eqnpt_pre.rst7" "[ERROR] Missing eqnpt_pre.rst7; cannot continue to Equilibration stage 0."
     # Equilibration with C-alpha restrained
     print_and_run "$PMEMD_DPFP_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
@@ -139,25 +139,25 @@ for step in {1..4}; do
     if should_skip_eq_step "Equilibration stage $step" "${curr}.rst7"; then
         continue
     fi
-    [[ -s "$prev" ]] || { echo "[ERROR] Missing ${prev}; cannot continue to Equilibration stage $step."; exit 1; }
+    require_nonempty_file_or_attempt_fail "$prev" "[ERROR] Missing ${prev}; cannot continue to Equilibration stage $step."
     print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration stage $step" "$log_file" "${curr}.rst7" "$prev"
 done
 
 if ! should_skip_eq_step "Long equilibration" "eqnpt_eq.rst7"; then
-    [[ -s eqnpt04.rst7 ]] || { echo "[ERROR] Missing eqnpt04.rst7; cannot continue to Long equilibration."; exit 1; }
+    require_nonempty_file_or_attempt_fail "eqnpt04.rst7" "[ERROR] Missing eqnpt04.rst7; cannot continue to Long equilibration."
     print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
 fi
 
 if ! should_skip_eq_step "Equilibration disappear" "eqnpt_disappear.rst7"; then
-    [[ -s eqnpt_eq.rst7 ]] || { echo "[ERROR] Missing eqnpt_eq.rst7; cannot continue to Equilibration disappear."; exit 1; }
+    require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot continue to Equilibration disappear."
     print_and_run "$PMEMD_EXEC -O -i eqnpt_disappear.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o eqnpt_disappear.out -r eqnpt_disappear.rst7 -x eqnpt_disappear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration disappear" "$log_file" eqnpt_disappear.rst7
 fi
 
 if ! should_skip_eq_step "Equilibration appear" "eqnpt_appear.rst7"; then
-    [[ -s eqnpt_disappear.rst7 ]] || { echo "[ERROR] Missing eqnpt_disappear.rst7; cannot continue to Equilibration appear."; exit 1; }
+    require_nonempty_file_or_attempt_fail "eqnpt_disappear.rst7" "[ERROR] Missing eqnpt_disappear.rst7; cannot continue to Equilibration appear."
     print_and_run "$PMEMD_EXEC -O -i eqnpt_appear.in -p $PRMTOP_MERGED -c eqnpt_disappear.rst7 -o eqnpt_appear.out -r eqnpt_appear.rst7 -x eqnpt_appear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration appear" "$log_file" eqnpt_appear.rst7 0 "eqnpt_appear.rst7" "eqnpt_appear.nc"
 fi
@@ -183,10 +183,7 @@ elif [[ -s md-previous.rst7 ]]; then
     rst_in="md-previous.rst7"
 fi
 
-[[ -s "$rst_in" ]] || {
-    echo "[ERROR] Missing restart file $rst_in; cannot continue."
-    exit 1
-}
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="$rst_in"
 
@@ -235,7 +232,7 @@ if (( remaining_steps > 0 )); then
 
     # archive prior restart if present
     if [[ -f md-current.rst7 ]]; then
-        [[ -s md-current.rst7 ]] || { echo "[ERROR] Found md-current.rst7 but empty; aborting."; exit 1; }
+        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] Found md-current.rst7 but empty; aborting."
         mv -f md-current.rst7 md-previous.rst7
         if [[ "$rst_in" == "md-current.rst7" ]]; then
             rst_in="md-previous.rst7"

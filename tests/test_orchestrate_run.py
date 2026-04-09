@@ -403,11 +403,13 @@ def test_clear_failure_markers_removes_retry_counters_and_progress(
     artifact_progress.mkdir(parents=True, exist_ok=True)
 
     failed_marker = win_dir / "FAILED"
+    attempt_failed_marker = win_dir / "ATTEMPT_FAILED"
     attempt_file = win_dir / "job_attempt.txt"
     progress_csv = progress_dir / "state.csv"
     keep_file = win_dir / "keep.txt"
 
     failed_marker.write_text("FAILED\n")
+    attempt_failed_marker.write_text("FAILED\n")
     attempt_file.write_text("3\n")
     progress_csv.write_text("phase,status\n")
     (artifact_progress / "phase_state.json").write_text("{}")
@@ -416,6 +418,7 @@ def test_clear_failure_markers_removes_retry_counters_and_progress(
     run_mod._clear_failure_markers(run_dir)
 
     assert not failed_marker.exists()
+    assert not attempt_failed_marker.exists()
     assert not attempt_file.exists()
     assert not progress_csv.exists()
     assert not artifact_progress.exists()

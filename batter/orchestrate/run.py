@@ -113,7 +113,7 @@ def _clear_failure_markers(run_dir: Path) -> None:
     if not sim_root.exists():
         return
     removed = 0
-    for marker_name in ("FAILED", "job_attempt.txt"):
+    for marker_name in ("FAILED", "ATTEMPT_FAILED", "job_attempt.txt"):
         for path in sim_root.rglob(marker_name):
             try:
                 path.unlink()
