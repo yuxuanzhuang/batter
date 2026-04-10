@@ -312,10 +312,10 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     template_text = (windows_dir / "mdin-template").read_text()
 
     assert "nmropt = 0" in mini_text
-    assert ":2@C1" in mini_text
+    assert "@2" in mini_text
     assert "nmropt = 0" in eq_text
-    assert "restraintmask = '(:2@C1 | :1) & !@H='" in eq_text
-    assert "restraintmask = '(:2@C1 | :1) & !@H='" in template_text
+    assert "restraintmask = '(@2 | :1) & !@H='" in eq_text
+    assert "restraintmask = '(@2 | :1) & !@H='" in template_text
     assert ":LIG" not in eq_text
 
 
@@ -411,7 +411,7 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     mini_eq_text = (windows_dir / "mini_eq.in").read_text()
 
     for text in (eq_text, template_text, mini_text, mini_eq_text):
-        assert ":2@C1" in text
-        assert ":4@C3" in text
+        assert "@2" in text
+        assert "@5" in text
         assert ":REF" not in text
         assert ":ALT" not in text

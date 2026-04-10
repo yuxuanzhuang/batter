@@ -199,7 +199,7 @@ def _first_residue_atom_mask(
     resid: int | None = None,
     resname: str | None = None,
 ) -> str:
-    """Return an AMBER mask for the first atom in one residue."""
+    """Return an AMBER atom-index mask for the first atom in one residue."""
     if resid is None and resname is None:
         raise ValueError("Either resid or resname must be provided")
 
@@ -214,7 +214,7 @@ def _first_residue_atom_mask(
         raise ValueError(f"No atoms matched {target!r} in {pdb_path}")
 
     atom = atoms[0]
-    return f":{int(atom.resid)}@{atom.name.strip()}"
+    return f"@{int(atom.index) + 1}"
 
 
 def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
