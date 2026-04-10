@@ -316,8 +316,9 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     assert ":LIG" in mini_text
     assert "@2" not in mini_text
     assert "nmropt = 1" in eq_text
-    assert "restraintmask = ':1'" in eq_text
-    assert "restraintmask = '(@2 | :1) & !@H='" in template_text
+    assert "restraintmask = '(@CA | :LIG | :1) & !@H='" in eq_text
+    assert "@2" not in eq_text
+    assert "restraintmask = '((@CA | :LIG | :1) | @2) & !@H='" in template_text
     assert "nmropt = 0" in template_text
 
 
@@ -385,10 +386,13 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
     template_text = (windows_dir / "mdin-template").read_text()
     mini_text = (windows_dir / "mini.in").read_text()
 
-    assert "restraintmask = ':1-2'" in eq_text
+    assert "restraintmask = '((@CA & :1) | :LIG | :1-2 ) & !@H='" in eq_text
     assert "@1" not in eq_text
 
-    assert "restraintmask = '(@CA | @1 | :1-2 ) & !@H='" in template_text
+    assert (
+        "restraintmask = '(((@CA & :1) | :LIG | :1-2 ) | @1) & !@H='"
+        in template_text
+    )
 
     assert ":LIG" in mini_text
     assert "@1" not in mini_text
@@ -485,10 +489,10 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     mini_text = (windows_dir / "mini.in").read_text()
     mini_eq_text = (windows_dir / "mini_eq.in").read_text()
 
-    assert "(@CA | (@10-11) | :1-2 ) & !@H=" in eq_text
+    assert "((@CA & :1) | (@10-11) | :1-2 ) & !@H=" in eq_text
     assert re.search(r"\|\s*@10\s*\|", eq_text) is None
 
-    assert "(@CA | @10 | (@10-11) | :1-2 ) & !@H=" in template_text
+    assert "(((@CA & :1) | (@10-11) | :1-2 ) | @10) & !@H=" in template_text
     assert re.search(r"(^|[^0-9])@20([^0-9]|$)", template_text) is None
 
     assert ":REF" in mini_text
