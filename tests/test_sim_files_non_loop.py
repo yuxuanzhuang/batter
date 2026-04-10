@@ -4,6 +4,7 @@ import importlib
 import io
 import json
 from pathlib import Path
+import re
 import sys
 from types import SimpleNamespace
 import types
@@ -311,12 +312,86 @@ def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -
     eq_text = (windows_dir / "eq.in").read_text()
     template_text = (windows_dir / "mdin-template").read_text()
 
-    assert "nmropt = 0" in mini_text
-    assert "@2" in mini_text
-    assert "nmropt = 0" in eq_text
-    assert "restraintmask = '(@2 | :1) & !@H='" in eq_text
+    assert "nmropt = 1" in mini_text
+    assert ":LIG" in mini_text
+    assert "@2" not in mini_text
+    assert "nmropt = 1" in eq_text
+    assert "restraintmask = ':1'" in eq_text
     assert "restraintmask = '(@2 | :1) & !@H='" in template_text
-    assert ":LIG" not in eq_text
+    assert "nmropt = 0" in template_text
+
+
+def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template(
+    tmp_path: Path,
+) -> None:
+    windows_dir = tmp_path / "z00"
+    amber_dir = tmp_path / "amber"
+    windows_dir.mkdir(parents=True)
+    amber_dir.mkdir(parents=True)
+
+    (windows_dir / "vac.pdb").write_text(
+        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    (amber_dir / "mdin-unorest").write_text(
+        "&cntrl\n"
+        "  ntx = 5,\n"
+        "  irest = 1,\n"
+        "  ntwx = _ntwx_,\n"
+        "  ntwprt = _num-atoms_,\n"
+        "  dt = _step_,\n"
+        "  restraint_wt = 50.0,\n"
+        "  restraintmask = ':1-2',\n"
+        "/\n"
+    )
+    (amber_dir / "mini-unorest").write_text(
+        "&cntrl\n"
+        "  restraintmask = '(@CA,C,N,P31,Na+,Cl- | :_lig_name_ | :2) & !@H=',\n"
+        "/\n"
+    )
+    (amber_dir / "mini.in").write_text("_lig_name_\n")
+    (amber_dir / "eqnpt0-uno.in").write_text("_temperature_ _lig_name_\n")
+    (amber_dir / "eqnpt-uno.in").write_text("_temperature_ _lig_name_\n")
+    (amber_dir / "eqnpt-uno-eq.in").write_text("_temperature_ _lig_name_ _non_loop_\n")
+
+    ctx = SimpleNamespace(
+        working_dir=tmp_path / "work_unused",
+        window_dir=windows_dir,
+        amber_dir=amber_dir,
+        system_root=tmp_path / "system_unused",
+        build_dir=tmp_path / "build_unused",
+        residue_name="LIG",
+        comp="z",
+        win=0,
+        extra={"infe": 0},
+        sim=SimpleNamespace(
+            temperature=300.0,
+            dic_n_steps={"z": 4000},
+            ntwx=250,
+            all_atoms="no",
+            dec_method="sdr",
+        ),
+    )
+
+    original_resolve = sim_files._resolve_non_loop_mask
+    try:
+        sim_files._resolve_non_loop_mask = lambda *args, **kwargs: ":1"
+        sim_files.sim_files_z(ctx, [0.0])
+    finally:
+        sim_files._resolve_non_loop_mask = original_resolve
+
+    eq_text = (windows_dir / "eq.in").read_text()
+    template_text = (windows_dir / "mdin-template").read_text()
+    mini_text = (windows_dir / "mini.in").read_text()
+
+    assert "restraintmask = ':1-2'" in eq_text
+    assert "@1" not in eq_text
+
+    assert "restraintmask = '(@CA | @1 | :1-2 ) & !@H='" in template_text
+
+    assert ":LIG" in mini_text
+    assert "@1" not in mini_text
 
 
 def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
@@ -410,8 +485,16 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     mini_text = (windows_dir / "mini.in").read_text()
     mini_eq_text = (windows_dir / "mini_eq.in").read_text()
 
-    for text in (eq_text, template_text, mini_text, mini_eq_text):
-        assert "@2" in text
-        assert "@5" in text
-        assert ":REF" not in text
-        assert ":ALT" not in text
+    assert "(@CA | (@10-11) | :1-2 ) & !@H=" in eq_text
+    assert re.search(r"\|\s*@10\s*\|", eq_text) is None
+
+    assert "(@CA | @10 | (@10-11) | :1-2 ) & !@H=" in template_text
+    assert re.search(r"(^|[^0-9])@20([^0-9]|$)", template_text) is None
+
+    assert ":REF" in mini_text
+    assert ":ALT" in mini_text
+    assert re.search(r"\|\s*@10\s*\|", mini_text) is None
+
+    assert ":REF" in mini_eq_text
+    assert ":ALT" in mini_eq_text
+    assert re.search(r"\|\s*@10\s*\|", mini_eq_text) is None
