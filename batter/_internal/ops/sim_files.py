@@ -592,13 +592,24 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = f"ntwx = {n_steps_run_per_lambda},\n"
                 # write all atoms
                 elif "ntwprt = " in line:
-                    line = f"\n"
+                    line = "\n"
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
+                elif "nmropt = " in line:
+                    line = "nmropt = 0,\n"
                 elif "restraint_wt = " in line:
-                    line = f"restraint_wt = 10,\n"
+                    line = "restraint_wt = 10,\n"
+                elif "restraintmask" in line:
+                    rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                    if rm == "":
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        #line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                    else:
+                        #line = f"restraintmask = '(@CA | :{mol} | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -618,13 +629,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 mdin.write(f" dynlmb = {dynlmb},\n")
                 mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
             # run mcwat
-            mdin.write(f"  mcwat = 1,\n")
-            mdin.write(f"  nmd = 1000,\n")
-            mdin.write(f"  nmc = 1000,\n")
+            mdin.write("  mcwat = 1,\n")
+            mdin.write("  nmd = 1000,\n")
+            mdin.write("  nmc = 1000,\n")
             mdin.write(f"  mcwatmask = \"{ref_lig_in_site_mask}\",\n")
-            mdin.write(f"  mcligshift = 40,\n")
-            mdin.write(f"  mcwatretry = 3000,\n")
-            mdin.write(f"  mcresstr = \"WAT\",\n")
+            mdin.write("  mcligshift = 40,\n")
+            mdin.write("  mcwatretry = 3000,\n")
+            mdin.write("  mcresstr = \"WAT\",\n")
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
@@ -646,9 +657,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 if "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
-                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask}) & !@H=',\n"
+                        line = f"restraintmask = '{ligand_first_atom_mask}) & !@H=',\n"
                     else:
-                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask} | {rm} ) & !@H=',\n"
+                        line = f"restraintmask = '{ligand_first_atom_mask} | {rm} ) & !@H=',\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -721,7 +732,20 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
                 elif "restraint_wt = " in line:
-                    line = f"restraint_wt = 0.2,\n"
+                    line = "restraint_wt = 0.2,\n"
+                elif "restraintmask" in line:
+                    rm = (
+                        line.split("=", 1)[1]
+                        .strip()
+                        .rstrip(",")
+                        .replace("'", "")
+                    )
+                    if rm == "":
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        #line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                    else:
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+                        #line = f"restraintmask = '(@CA | :{mol}) | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -973,21 +997,23 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = "  dt = 0.002,\n"
             elif "restraint_wt = " in line:
                 line = f"  restraint_wt = 5,\n"
+            elif "nmropt = " in line:
+                line = "  nmropt = 0,\n"
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
                     # restraining 1) non loop C-alpha 2) common core of ligands
-                    #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
-                    line = (
-                        "restraintmask = "
-                        f"'(@CA | ({scmk1_exclude_indice}) ) & !@H=',\n"
-                    )
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
+                    #line = (
+                    #    "restraintmask = "
+                    #    f"'(@CA | ({scmk1_exclude_indice}) ) & !@H=',\n"
+                    #)
                 else:
-                    #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
-                    line = (
-                        "restraintmask = "
-                        f"'(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
-                    )
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                    #line = (
+                    #    "restraintmask = "
+                    #    f"'(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
+                    #)
                 if len(line) > 256:
                     logger.warning(f"restraintmask line too long for AMBER: {len(line)} but proceeding")
             line = (
@@ -1037,12 +1063,12 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 if rm == "":
                     line = (
                         "restraintmask = "
-                        f"'(@CA | {ligand_cc_first_atom_mask} | ({scmk1_exclude_indice}) ) & !@H=',\n"
+                        f"'{ligand_cc_first_atom_mask} & !@H=',\n"
                     )
                 else:
                     line = (
                         "restraintmask = "
-                        f"'(@CA | {ligand_cc_first_atom_mask} | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
+                        f"'{ligand_cc_first_atom_mask} | {rm} ) & !@H=',\n"
                     )
             line = (
                 line.replace("_temperature_", str(temperature))
@@ -1190,6 +1216,17 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = "  irest = 0,\n"
             elif "dt = " in line:
                 line = "  dt = 0.001,\n"
+            elif "restraintmask" in line:
+                rm = (
+                    line.split("=", 1)[1]
+                    .strip()
+                    .rstrip(",")
+                    .replace("'", "")
+                )
+                if rm == "":
+                    line = f"  restraintmask = '(@CA | :{mol}) & !@H='\n"
+                else:
+                    line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-steps_", "5000")
