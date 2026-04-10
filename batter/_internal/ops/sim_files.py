@@ -239,6 +239,14 @@ def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
     patch_mdin_file(batch_template, prefix, add_numexchg=False)
 
 
+def _mask_with_added_component(base_mask: str, new_mask_component: str) -> str:
+    """Append one atom/group to a template restraintmask."""
+    base = re.sub(r"\s*&\s*!@H=\s*$", "", base_mask.strip()).strip()
+    if not base:
+        return f"({new_mask_component}) & !@H="
+    return f"({base} | {new_mask_component}) & !@H="
+
+
 def _maybe_extra_mask(
     ctx: BuildContext, work: Path, *, resid_shift: int = 0
 ) -> tuple[Optional[str], float]:
@@ -656,16 +664,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             for line in fin:
                 if "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
-                    if rm == "":
-                        line = (
-                            "restraintmask = "
-                            f"'(((@CA & {non_loop_mask}) | :{mol}) | {ligand_first_atom_mask}) & !@H=',\n"
-                        )
-                    else:
-                        line = (
-                            "restraintmask = "
-                            f"'(((@CA & {non_loop_mask}) | :{mol} | {rm} ) | {ligand_first_atom_mask}) & !@H=',\n"
-                        )
+                    line = (
+                        "restraintmask = "
+                        f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -783,16 +785,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         .rstrip(",")
                         .replace("'", "")
                     )
-                    if rm == "":
-                        line = (
-                            "restraintmask = "
-                            f"'(((@CA & {non_loop_mask}) | :{mol}) | {ligand_first_atom_mask}) & !@H=',\n"
-                        )
-                    else:
-                        line = (
-                            "restraintmask = "
-                            f"'(((@CA & {non_loop_mask}) | :{mol} | {rm} ) | {ligand_first_atom_mask}) & !@H=',\n"
-                        )
+                    line = (
+                        "restraintmask = "
+                        f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -1072,16 +1068,10 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for line in fin:
             if "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
-                if rm == "":
-                    line = (
-                        "restraintmask = "
-                        f"'(((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) | {ligand_cc_first_atom_mask}) & !@H=',\n"
-                    )
-                else:
-                    line = (
-                        "restraintmask = "
-                        f"'(((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) | {ligand_cc_first_atom_mask}) & !@H=',\n"
-                    )
+                line = (
+                    "restraintmask = "
+                    f"'{_mask_with_added_component(rm, ligand_cc_first_atom_mask)}',\n"
+                )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
@@ -1273,16 +1263,10 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     .rstrip(",")
                     .replace("'", "")
                 )
-                if rm == "":
-                    line = (
-                        "  restraintmask = "
-                        f"'((@CA | :{mol}) | {ligand_first_atom_mask}) & !@H=',\n"
-                    )
-                else:
-                    line = (
-                        "  restraintmask = "
-                        f"'((@CA | :{mol} | {rm}) | {ligand_first_atom_mask}) & !@H=',\n"
-                    )
+                line = (
+                    "  restraintmask = "
+                    f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-steps_", str(n_steps))
