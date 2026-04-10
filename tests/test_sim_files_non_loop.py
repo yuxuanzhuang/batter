@@ -333,6 +333,8 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
     (windows_dir / "vac.pdb").write_text(
         "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
         "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C1  LIG A   2       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A   2       3.000   0.000   0.000  1.00  0.00           C\n"
         "END\n"
     )
     (amber_dir / "mdin-unorest").write_text(
@@ -387,12 +389,12 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
     mini_text = (windows_dir / "mini.in").read_text()
 
     assert "restraintmask = '((@CA & :1) | :LIG | :1-2 ) & !@H='" in eq_text
-    assert "@1" not in eq_text
+    assert "@3" not in eq_text
 
-    assert "restraintmask = '(:1-2 | @1) & !@H='" in template_text
+    assert "restraintmask = '(:1-2 | @3) & !@H='" in template_text
 
     assert ":LIG" in mini_text
-    assert "@1" not in mini_text
+    assert "@3" not in mini_text
 
 
 def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(

@@ -569,9 +569,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol}')
-    ref_resid = mol_ref_ag.resids[0]
+    ligand_resids = sorted({int(resid) for resid in mol_ref_ag.resids})
+    if not ligand_resids:
+        raise ValueError(f"No residues with resname {mol!r} found in {vac_pdb}")
+    ref_resid = ligand_resids[0]
+    bulk_resid = ligand_resids[1] if len(ligand_resids) > 1 else ref_resid
     ref_lig_in_site_mask = f':{int(ref_resid)}'
-    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(ref_resid))
+    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(bulk_resid))
 
     amber_dir = ctx.amber_dir
 
