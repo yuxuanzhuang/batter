@@ -100,12 +100,28 @@ def test_append_colvar_rst_blocks_mirrors_tagged_extra_blocks(tmp_path: Path) ->
     assert "iat=33,44," in mirrored
 
 
-def test_build_restraints_x_strides_common_core_ligand_com(tmp_path: Path) -> None:
+def test_build_restraints_y_omits_ligand_com_block(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "y00"
+    windows_dir.mkdir()
+    (windows_dir / "vac.pdb").write_text("ATOM      1  C1  LIG A   2       0.000   0.000   0.000  1.00  0.00           C\nEND\n")
+
+    ctx = types.SimpleNamespace(
+        window_dir=windows_dir,
+        ligand="lig",
+        residue_name="LIG",
+    )
+
+    restraints._build_restraints_y(None, ctx)
+
+    assert (windows_dir / "cv.in").read_text() == "cv_file\n"
+    assert "&colvar" not in (windows_dir / "cv.in").read_text()
+    assert not (windows_dir / "disang.rest").read_text().strip()
+
+
+def test_build_restraints_x_keeps_only_protein_com_block(tmp_path: Path) -> None:
     work_dir = tmp_path
     windows_dir = work_dir / "x00"
     windows_dir.mkdir()
-    equil_dir = work_dir / "x-1"
-    equil_dir.mkdir()
     build_dir = work_dir / "x_build_files"
     build_dir.mkdir()
 
@@ -139,19 +155,11 @@ def test_build_restraints_x_strides_common_core_ligand_com(tmp_path: Path) -> No
             }
         )
     )
-    (equil_dir / "scmask.json").write_text(
-        json.dumps(
-            {
-                "scmk1_cc_solvent_indices": list(range(101, 126)),
-                "scmk2_cc_solvent_indices": list(range(201, 226)),
-            }
-        )
-    )
 
     ctx = types.SimpleNamespace(
         working_dir=work_dir,
         window_dir=windows_dir,
-        equil_dir=equil_dir,
+        equil_dir=work_dir / "x-1",
         ligand="lig",
         residue_name="REF",
         comp="x",
@@ -162,6 +170,79 @@ def test_build_restraints_x_strides_common_core_ligand_com(tmp_path: Path) -> No
     restraints._build_restraints_x(None, ctx)
 
     cv_text = (windows_dir / "cv.in").read_text()
-    assert "anchor_position =     0.0000,     0.0000,     0.0000,   999.0000" in cv_text
-    assert "cv_ni = 11, cv_i = 2,0,101,104,107,110,113,116,119,122,125," in cv_text
-    assert "cv_ni = 11, cv_i = 2,0,201,204,207,210,213,216,219,222,225," in cv_text
+    assert cv_text.count("&colvar") == 1
+    assert "cv_ni = 8, cv_i = 1,0,1,2,3,4,5,6," in cv_text
+    assert "cv_i = 2,0," not in cv_text
+
+    disang_text = (windows_dir / "disang.rest").read_text()
+    assert disang_text.count("&rst") == 1
+    assert "igr1=1,0" in disang_text
+    assert "igr1=2,0" not in disang_text
+
+
+def test_build_restraints_v_omits_ligand_com_block(tmp_path: Path) -> None:
+    work_dir = tmp_path
+    windows_dir = work_dir / "v00"
+    windows_dir.mkdir()
+    build_dir = work_dir / "v_build_files"
+    build_dir.mkdir()
+
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       1.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       3.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  C1  LIG A   4       4.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      5  C2  LIG A   4       5.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      6  C3  LIG A   4       6.000   0.000   0.000  1.00  0.00           C\n",
+            ]
+        )
+        + "END\n"
+    )
+    for path in [
+        windows_dir / "lig.pdb",
+        windows_dir / "vac_ligand.prmtop",
+        windows_dir / "full.prmtop",
+        windows_dir / "full.inpcrd",
+    ]:
+        path.write_text("stub\n")
+
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":4@C1",
+                "L2": ":4@C2",
+                "L3": ":4@C3",
+                "lig_res": "1",
+            }
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        working_dir=work_dir,
+        window_dir=windows_dir,
+        comp="v",
+        ligand="lig",
+        residue_name="LIG",
+        sim=types.SimpleNamespace(hmr="no", dec_method="dd", rest=[0, 0, 0, 0, 0, 10.0, 20.0]),
+        extra={},
+    )
+
+    original_assign = restraints._write_assign_and_read_vals
+    try:
+        restraints._write_assign_and_read_vals = lambda *args, **kwargs: [1.0] * 9
+        restraints._build_restraints_v_o_z(None, ctx)
+    finally:
+        restraints._write_assign_and_read_vals = original_assign
+
+    cv_text = (windows_dir / "cv.in").read_text()
+    assert cv_text.count("&colvar") == 1
+    assert "cv_i = 2,0," not in cv_text
+
+    disang_text = (windows_dir / "disang.rest").read_text()
+    assert "igr1=1,0" in disang_text
+    assert "igr1=2,0" not in disang_text

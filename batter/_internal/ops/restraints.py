@@ -387,6 +387,34 @@ def _render_com_distance_rst_block(
     )
 
 
+def _write_group_colvar_block(
+    handle,
+    *,
+    anchor_atom: str,
+    group_atoms: Sequence[str],
+    anchors: Sequence[float],
+    strengths: Sequence[float],
+) -> None:
+    """Write a DISTANCE/COM_DISTANCE &colvar block for one anchor atom."""
+    handle.write("&colvar\n")
+    if len(group_atoms) == 1:
+        handle.write(" cv_type = 'DISTANCE'\n")
+        handle.write(f" cv_ni = 2, cv_i = {anchor_atom},{group_atoms[0]},\n")
+    else:
+        handle.write(" cv_type = 'COM_DISTANCE'\n")
+        handle.write(f" cv_ni = {len(group_atoms)+2}, cv_i = {anchor_atom},0,")
+        for atom in group_atoms:
+            handle.write(f"{atom},")
+        handle.write("\n")
+    handle.write(
+        " anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % tuple(anchors)
+    )
+    handle.write(
+        " anchor_strength = %10.4f, %10.4f,\n" % (strengths[0], strengths[1])
+    )
+    handle.write("/\n")
+
+
 def _colvar_block_to_rst(block: str) -> str | None:
     """Translate a single AMBER &colvar block into an equivalent &rst block."""
     cv_type = _extract_colvar_value(block, "cv_type")
@@ -540,23 +568,17 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     rest = ctx.sim.rest              # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     release_eq = ctx.sim.release_eq  # e.g., [0, 20, 50, 80, 100]
 
-    # cv.in (COM)
+    # cv.in (protein COM only; ligand solvent restraint is now ntr-based)
     cv_in = work / "cv.in"
     with cv_in.open("w") as cvf:
-        cvf.write("cv_file\n&colvar\n")
-        if len(hvy_h) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-            for a in hvy_h:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
-        cvf.write(" anchor_strength = 5,  5\n")
-        cvf.write("/\n")
+        cvf.write("cv_file\n")
+        _write_group_colvar_block(
+            cvf,
+            anchor_atom="1",
+            group_atoms=hvy_h,
+            anchors=COM_RESTRAINT_ANCHORS,
+            strengths=(5.0, 5.0),
+        )
 
     # ---- integrate extra conformation restraints (equil) ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=work, cv_file=cv_in)
@@ -713,37 +735,22 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     # cv.in
     cv_in = windows_dir / "cv.in"
     with cv_in.open("w") as cvf:
-        # protein COM restraint
-        cvf.write("cv_file\n&colvar\n")
-        if len(hvy_h) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-            for a in hvy_h:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
-        cvf.write("/\n")
-
-        # ligand COM restraint
-        cvf.write("&colvar\n")
-        if len(hvy_lig) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
-            for a in hvy_lig:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-        cvf.write("/\n")
+        cvf.write("cv_file\n")
+        _write_group_colvar_block(
+            cvf,
+            anchor_atom="1",
+            group_atoms=hvy_h,
+            anchors=COM_RESTRAINT_ANCHORS,
+            strengths=(rcom, rcom),
+        )
+        if comp not in {"v", "o", "z"}:
+            _write_group_colvar_block(
+                cvf,
+                anchor_atom="2",
+                group_atoms=hvy_lig,
+                anchors=COM_RESTRAINT_ANCHORS,
+                strengths=(lcom, lcom),
+            )
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     if ctx.comp in {"z", "o"}:
@@ -821,61 +828,22 @@ def _build_restraints_v_o_z(builder, ctx: BuildContext) -> None:
 def _build_restraints_y(builder, ctx: BuildContext) -> None:
     """
     Ligand-only (solvation FE) restraints:
-      - cv.in: one COM_DISTANCE block using ligand heavy atoms
-      - disang.rest: mirrored &rst block for the ligand COM restraint
+      - cv.in: placeholder file; ligand solvent restraint now comes from ntr
+      - disang.rest: empty (no mirrored ligand COM block)
       - restraints.in: minimal analysis driver (optional)
     """
     windows_dir = ctx.window_dir
-    lig = ctx.ligand
-    mol = ctx.residue_name
 
     vac_pdb = windows_dir / "vac.pdb"
     if not vac_pdb.exists():
         raise FileNotFoundError(f"[restraints:y] Missing ligand-only vac.pdb: {vac_pdb}")
 
-    # read ligand-only coords and collect heavy atom serials (1-based) for AMBER
-    u_lig = mda.Universe(vac_pdb.as_posix())
-    # prefer selecting by resname if present, otherwise just take all non-H
-    try:
-        lig_atoms = u_lig.select_atoms(f"resname {mol} and not name H*")
-        if lig_atoms.n_atoms == 0:
-            lig_atoms = u_lig.select_atoms("not name H*")
-    except Exception:
-        lig_atoms = u_lig.select_atoms("not name H*")
-
-    if lig_atoms.n_atoms == 0:
-        raise RuntimeError("[restraints:y] Found zero ligand heavy atoms in vac.pdb")
-
-    hvy_serials = [str(a.ix + 1) for a in lig_atoms]  # 1-based serials for AMBER masks
-
-    # strengths from sim.rest: [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
-    rest = ctx.sim.rest
-    try:
-        lcom = float(rest[6])
-    except Exception:
-        raise ValueError(f"[restraints:y] Invalid sim.rest; expected length ≥ 7, got: {rest}")
-
-    # ---- cv.in (single ligand COM restraint) ----
+    # ---- cv.in (placeholder only; solvent ligand restraint is ntr-based) ----
     cv_in = windows_dir / "cv.in"
-    with cv_in.open("w") as cvf:
-        cvf.write("cv_file\n")
-        cvf.write("&colvar\n")
-        if len(hvy_serials) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_serials[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_serials) + 2}, cv_i = 1,0,")
-            cvf.write(",".join(hvy_serials))
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-        cvf.write("/\n")
+    cv_in.write_text("cv_file\n")
 
     disang = windows_dir / "disang.rest"
-    disang.write_text("")
-    _append_colvar_rst_blocks(cv_in, disang)
+    disang.write_text("\n")
 
     # (Optional) very small analysis driver to keep downstream scripts happy
     rest_in = windows_dir / "restraints.in"
@@ -884,7 +852,7 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
         for k in range(2, 11):
             fh.write(f"trajin md{k:02d}.nc\n")
 
-    logger.debug(f"[restraints:y] wrote cv.in, mirrored disang.rest, restraints.in in {windows_dir}")
+    logger.debug(f"[restraints:y] wrote placeholder cv.in, empty disang.rest, restraints.in in {windows_dir}")
 
 @register_restraints("m")
 def _build_restraints_m(builder, ctx: BuildContext) -> None:
@@ -980,53 +948,19 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     rdhf, rdsf, ldf, laf, ldhf, rcom, lcom = rest
 
-    # orig lig
-    hvy_h, hvy_lig_1 = _collect_calpha_and_lig(vac_pdb, lig_res, 1)
-    # alt lig
-    _, hvy_lig_2 = _collect_calpha_and_lig(vac_pdb, lig_res, 3)
-
-    # Use common-core atoms for ligand COM restraints when RBFE mapping is present.
-    mapping_path = ctx.equil_dir / "scmask.json"
-    scmk_dict = json.load(open(mapping_path, "r"))
-
-    hvy_lig_1 = _stride_atom_serials(scmk_dict["scmk1_cc_solvent_indices"], 10)
-    hvy_lig_2 = _stride_atom_serials(scmk_dict["scmk2_cc_solvent_indices"], 10)
+    hvy_h, _ = _collect_calpha_and_lig(vac_pdb, lig_res, 1)
 
     # cv.in
     cv_in = windows_dir / "cv.in"
     with cv_in.open("w") as cvf:
-        # protein COM restraint
-        cvf.write("cv_file\n&colvar\n")
-        if len(hvy_h) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-            for a in hvy_h:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
-        cvf.write("/\n")
-
-        # ligand COM restraint
-        for hvy_lig in [hvy_lig_1, hvy_lig_2]:
-            cvf.write("&colvar\n")
-            if len(hvy_lig) == 1:
-                # if only one atom, use DISTANCE instead of COM_DISTANCE
-                cvf.write(" cv_type = 'DISTANCE'\n")
-                cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
-            else:
-                cvf.write(" cv_type = 'COM_DISTANCE'\n")
-                cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
-                for a in hvy_lig:
-                    cvf.write(str(a) + ",")
-            cvf.write("\n")
-            cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
-            cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-            cvf.write("/\n")
+        cvf.write("cv_file\n")
+        _write_group_colvar_block(
+            cvf,
+            anchor_atom="1",
+            group_atoms=hvy_h,
+            anchors=COM_RESTRAINT_ANCHORS,
+            strengths=(rcom, rcom),
+        )
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)

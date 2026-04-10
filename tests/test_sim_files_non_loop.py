@@ -263,3 +263,155 @@ def test_maybe_extra_mask_reuses_equil_json_for_non_minus_one_windows(tmp_path: 
     )
     assert mask == "(:9) & @CA"
     assert force_const == pytest.approx(9.0)
+
+
+def test_sim_files_y_uses_first_ligand_atom_position_restraint(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "y00"
+    amber_dir = tmp_path / "amber"
+    windows_dir.mkdir(parents=True)
+    amber_dir.mkdir(parents=True)
+
+    (windows_dir / "vac.pdb").write_text(
+        "ATOM      1  Pb  DUM A   1       0.000   0.000   0.000  1.00  0.00          PB\n"
+        "ATOM      2  C1  LIG A   2       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C2  LIG A   2       2.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+
+    (amber_dir / "mini-unorest-lig").write_text(
+        "&cntrl\n"
+        "  nmropt = 1,\n"
+        "  restraintmask = '(:_lig_name_ | @Na+,Cl-) & !@H=',\n"
+        "/\n"
+    )
+    (amber_dir / "mini.in").write_text("_lig_name_\n")
+    (amber_dir / "eqnpt-lig.in").write_text("_temperature_ _lig_name_\n")
+    (amber_dir / "eqnpt0-lig.in").write_text("_temperature_ _lig_name_\n")
+    (amber_dir / "mdin-unorest-lig").write_text(
+        "&cntrl\n"
+        "  ntx = 5,\n"
+        "  irest = 1,\n"
+        "  dt = _step_,\n"
+        "  nmropt = 1,\n"
+        "  restraintmask = ':1',\n"
+        "/\n"
+    )
+
+    ctx = SimpleNamespace(
+        residue_name="LIG",
+        window_dir=windows_dir,
+        amber_dir=amber_dir,
+        win=0,
+        sim=SimpleNamespace(temperature=300.0, dic_n_steps={"y": 5000}, ntwx=250),
+    )
+
+    sim_files.sim_files_y(ctx, [0.0])
+
+    mini_text = (windows_dir / "mini.in").read_text()
+    eq_text = (windows_dir / "eq.in").read_text()
+    template_text = (windows_dir / "mdin-template").read_text()
+
+    assert "nmropt = 0" in mini_text
+    assert ":2@C1" in mini_text
+    assert "nmropt = 0" in eq_text
+    assert "restraintmask = '(:2@C1 | :1) & !@H='" in eq_text
+    assert "restraintmask = '(:2@C1 | :1) & !@H='" in template_text
+    assert ":LIG" not in eq_text
+
+
+def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sim_files, "_resolve_non_loop_mask", lambda *args, **kwargs: ":1")
+
+    work_dir = tmp_path / "work"
+    windows_dir = work_dir / "x00"
+    build_dir = work_dir / "x_build_files"
+    amber_dir = tmp_path / "amber"
+    equil_dir = work_dir / "x-1"
+    windows_dir.mkdir(parents=True)
+    build_dir.mkdir(parents=True)
+    amber_dir.mkdir(parents=True)
+    equil_dir.mkdir(parents=True)
+
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":4@C1",
+                "L2": ":4@C2",
+                "L3": ":4@C3",
+                "lig_res": "1",
+            }
+        )
+    )
+    (equil_dir / "scmask.json").write_text(
+        json.dumps(
+            {
+                "scmk1_all_indices": [10, 11, 12],
+                "scmk1_cc_solvent_indices": [10],
+                "scmk1_cc_site_indices": [11],
+                "scmk2_all_indices": [20, 21, 22],
+                "scmk2_cc_solvent_indices": [20],
+                "scmk2_cc_site_indices": [21],
+            }
+        )
+    )
+    (windows_dir / "vac.pdb").write_text(
+        "ATOM      1  C1  REF A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C1  REF A   2       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C2  REF A   2       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C1  ALT A   3       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C3  ALT A   4       4.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C4  ALT A   4       5.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    (amber_dir / "mdin-ex").write_text(
+        "&cntrl\n"
+        "  ntx = 5,\n"
+        "  irest = 1,\n"
+        "  ntwx = 100,\n"
+        "  ntwprt = 10,\n"
+        "  dt = _step_,\n"
+        "  restraint_wt = 50.0,\n"
+        "  restraintmask = ':1-2',\n"
+        "/\n"
+    )
+    (amber_dir / "mini-ex").write_text(
+        "&cntrl\n"
+        "  restraintmask = '(@CA,C,N,P31,Na+,Cl- | :_lig1_name_ | :_lig2_name_ | :2) & !@H=',\n"
+        "/\n"
+    )
+
+    ctx = SimpleNamespace(
+        comp="x",
+        residue_name="REF",
+        extra={"residue_alt": "ALT"},
+        working_dir=work_dir,
+        window_dir=windows_dir,
+        amber_dir=amber_dir,
+        win=0,
+        build_dir=tmp_path / "build_unused",
+        system_root=tmp_path / "system_unused",
+        sim=SimpleNamespace(
+            temperature=300.0,
+            dic_n_steps={"x": 4000},
+            ntwx=250,
+            all_atoms="no",
+        ),
+    )
+
+    sim_files.sim_files_x(ctx, [0.0])
+
+    eq_text = (windows_dir / "eq.in").read_text()
+    template_text = (windows_dir / "mdin-template").read_text()
+    mini_text = (windows_dir / "mini.in").read_text()
+    mini_eq_text = (windows_dir / "mini_eq.in").read_text()
+
+    for text in (eq_text, template_text, mini_text, mini_eq_text):
+        assert ":2@C1" in text
+        assert ":4@C3" in text
+        assert ":REF" not in text
+        assert ":ALT" not in text

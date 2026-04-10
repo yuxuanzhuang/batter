@@ -16,7 +16,7 @@ import shutil
 
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_sim_files
-from batter._internal.ops.helpers import format_ranges
+from batter._internal.ops.helpers import format_ranges, load_anchors
 from batter._internal.ops.remd import patch_mdin_file
 
 
@@ -191,6 +191,30 @@ def _patch_restraint_block(
         out.append(f"  restraint_wt   = {force_const},\n")
 
     return "".join(out)
+
+
+def _first_residue_atom_mask(
+    pdb_path: Path,
+    *,
+    resid: int | None = None,
+    resname: str | None = None,
+) -> str:
+    """Return an AMBER mask for the first atom in one residue."""
+    if resid is None and resname is None:
+        raise ValueError("Either resid or resname must be provided")
+
+    u = mda.Universe(pdb_path.as_posix())
+    if resid is not None:
+        atoms = u.select_atoms(f"resid {int(resid)}")
+    else:
+        atoms = u.select_atoms(f"resname {resname}")
+
+    if atoms.n_atoms == 0:
+        target = f"resid {resid}" if resid is not None else f"resname {resname}"
+        raise ValueError(f"No atoms matched {target!r} in {pdb_path}")
+
+    atom = atoms[0]
+    return f":{int(atom.resid)}@{atom.name.strip()}"
 
 
 def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
@@ -527,6 +551,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mol_ref_ag = u.select_atoms(f'resname {mol}')
     ref_resid = mol_ref_ag.resids[0]
     ref_lig_in_site_mask = f':{int(ref_resid)}'
+    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(ref_resid))
 
     amber_dir = ctx.amber_dir
 
@@ -560,17 +585,15 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
-                elif "nmropt = " in line:
-                    line = "nmropt = 0,\n"
                 elif "restraint_wt = " in line:
                     line = f"restraint_wt = 10,\n"
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
                         #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask}) & !@H=',\n"
                     else:
-                        line = f"restraintmask = '(@CA | :{mol} | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask} | {rm} ) & !@H=',\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -615,6 +638,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
+                if "restraintmask" in line:
+                    rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                    if rm == "":
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask}) & !@H=',\n"
+                    else:
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask} | {rm} ) & !@H=',\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -654,6 +683,11 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             (windows_dir / "mini.in").open("wt") as fout,
         ):
             for line in fin:
+                if "restraintmask" in line:
+                    line = (
+                        "  restraintmask = "
+                        f"'(@CA,C,N,P31,Na+,Cl- | {ligand_first_atom_mask} | :2) & !@H=',\n"
+                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("lbd_val", f"{float(weight):6.5f}")
@@ -697,10 +731,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     )
                     if rm == "":
                         #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask}) & !@H=',\n"
                     else:
                         #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
-                        line = f"restraintmask = '(@CA | :{mol}) | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask} | {rm} ) & !@H=',\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -725,6 +759,17 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
+                if "restraintmask" in line:
+                    rm = (
+                        line.split("=", 1)[1]
+                        .strip()
+                        .rstrip(",")
+                        .replace("'", "")
+                    )
+                    if rm == "":
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask}) & !@H=',\n"
+                    else:
+                        line = f"restraintmask = '(@CA | {ligand_first_atom_mask} | {rm} ) & !@H=',\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -760,6 +805,11 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             (windows_dir / "mini.in").open("wt") as fout,
         ):
             for line in fin:
+                if "restraintmask" in line:
+                    line = (
+                        "  restraintmask = "
+                        f"'(@CA,C,N,P31,Na+,Cl- | {ligand_first_atom_mask} | :2) & !@H=',\n"
+                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("lbd_val", f"{float(weight):6.5f}")
@@ -881,6 +931,13 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     lig_in_site_mask = f':{int(ref_resid)},{int(ref_resid)+2}'
     mk1 = f':{int(ref_resid)},{int(ref_resid)+3}'
     mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
+    anchors = load_anchors(ctx.working_dir / f"{ctx.comp}_build_files")
+    ligand_ref_first_atom_mask = _first_residue_atom_mask(
+        vac_pdb, resid=int(anchors.lig_res) + 1
+    )
+    ligand_alt_first_atom_mask = _first_residue_atom_mask(
+        vac_pdb, resid=int(anchors.lig_res) + 3
+    )
     # load scmask.json for scmk1, scmk2
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
     scmk1_all_indice = scmk_dict['scmk1_all_indices']
@@ -941,10 +998,16 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 if rm == "":
                     # restraining 1) non loop C-alpha 2) common core of ligands
                     #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
-                    line = f"restraintmask = '(@CA | ({scmk1_exclude_indice}) ) & !@H='\n"
+                    line = (
+                        "restraintmask = "
+                        f"'(@CA | {ligand_ref_first_atom_mask} | {ligand_alt_first_atom_mask} | ({scmk1_exclude_indice}) ) & !@H=',\n"
+                    )
                 else:
                     #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
-                    line = f"restraintmask = '(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                    line = (
+                        "restraintmask = "
+                        f"'(@CA | {ligand_ref_first_atom_mask} | {ligand_alt_first_atom_mask} | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
+                    )
                 if len(line) > 256:
                     logger.warning(f"restraintmask line too long for AMBER: {len(line)} but proceeding")
             line = (
@@ -989,6 +1052,18 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={steps2}\n")
         for line in fin:
+            if "restraintmask" in line:
+                rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                if rm == "":
+                    line = (
+                        "restraintmask = "
+                        f"'(@CA | {ligand_ref_first_atom_mask} | {ligand_alt_first_atom_mask} | ({scmk1_exclude_indice}) ) & !@H=',\n"
+                    )
+                else:
+                    line = (
+                        "restraintmask = "
+                        f"'(@CA | {ligand_ref_first_atom_mask} | {ligand_alt_first_atom_mask} | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
+                    )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
@@ -1027,6 +1102,11 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         "wt"
     ) as fout:
         for line in fin:
+            if "restraintmask" in line:
+                line = (
+                    "  restraintmask = "
+                    f"'(@CA,C,N,P31,Na+,Cl- | {ligand_ref_first_atom_mask} | {ligand_alt_first_atom_mask} | :2) & !@H=',\n"
+                )
             fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_",  mol_alt).replace("timk1", mk1)
                 .replace("timk2", mk2)
                 .replace("scmk1", scmk1)
@@ -1039,6 +1119,11 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         "wt"
     ) as fout:
         for line in fin:
+            if "restraintmask" in line:
+                line = (
+                    "  restraintmask = "
+                    f"'(@CA,C,N,P31,Na+,Cl- | {ligand_ref_first_atom_mask} | {ligand_alt_first_atom_mask} | :2) & !@H=',\n"
+                )
             fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_", mol_alt).replace("timk1", str(mk1))
                 .replace("timk2", str(mk2))
                 .replace("scmk1", scmk1)
@@ -1072,6 +1157,10 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
     mk1 = 2  # ligand-only marker convention
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resname=mol)
 
     amber_dir = ctx.amber_dir
 
@@ -1081,6 +1170,13 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         (windows_dir / "mini.in").open("wt") as fout,
     ):
         for line in fin:
+            if "nmropt = " in line:
+                line = "  nmropt = 0,\n"
+            elif "restraintmask" in line:
+                line = (
+                    "  restraintmask = "
+                    f"'({ligand_first_atom_mask} | @Na+,Cl-) & !@H=',\n"
+                )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("lbd_val", f"{float(weight):6.5f}")
@@ -1131,6 +1227,8 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = "  irest = 0,\n"
             elif "dt = " in line:
                 line = "  dt = 0.001,\n"
+            elif "nmropt = " in line:
+                line = "  nmropt = 0,\n"
             elif "restraintmask" in line:
                 rm = (
                     line.split("=", 1)[1]
@@ -1139,9 +1237,9 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     .replace("'", "")
                 )
                 if rm == "":
-                    line = f"  restraintmask = '(@CA | :{mol}) & !@H='\n"
+                    line = f"  restraintmask = '({ligand_first_atom_mask}) & !@H=',\n"
                 else:
-                    line = f"  restraintmask = '(@CA | :{mol} | {rm}) & !@H='\n"
+                    line = f"  restraintmask = '({ligand_first_atom_mask} | {rm}) & !@H=',\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-steps_", "5000")
@@ -1167,6 +1265,19 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     with template.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={n_steps}\n")
         for line in fin:
+            if "nmropt = " in line:
+                line = "  nmropt = 0,\n"
+            elif "restraintmask" in line:
+                rm = (
+                    line.split("=", 1)[1]
+                    .strip()
+                    .rstrip(",")
+                    .replace("'", "")
+                )
+                if rm == "":
+                    line = f"  restraintmask = '({ligand_first_atom_mask}) & !@H=',\n"
+                else:
+                    line = f"  restraintmask = '({ligand_first_atom_mask} | {rm}) & !@H=',\n"
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-steps_", str(n_steps))
