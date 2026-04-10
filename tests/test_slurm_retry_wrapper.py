@@ -28,3 +28,4 @@ def test_slurmm_am_body_increments_attempt_file_on_failure(tmp_path: Path) -> No
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / "job_attempt.txt").read_text().strip() == "2"
+    assert (tmp_path / "ATTEMPT_FAILED").read_text().strip() == "FAILED"

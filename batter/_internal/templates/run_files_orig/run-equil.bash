@@ -17,7 +17,12 @@ INPCRD="full.inpcrd"
 log_file="run.log"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
-rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE:-0}
+retry_count=${RETRY_COUNT:-0}
+if [[ -n ${RERUN_EQ_STEPS_AFTER_FAILURE+x} ]]; then
+    rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE}
+else
+    rerun_eq_steps_after_failure=auto
+fi
 
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
@@ -34,6 +39,19 @@ if [[ -f FINISHED ]]; then
 fi
 
 prior_failed=$(consume_prior_failure_marker)
+
+if [[ $rerun_eq_steps_after_failure == 1 ]]; then
+    prior_failed=1
+elif [[ $rerun_eq_steps_after_failure == auto ]]; then
+    rerun_eq_steps_after_failure=0
+    if [[ $prior_failed -eq 1 ]]; then
+        rerun_eq_steps_after_failure=1
+    elif [[ $retry_count =~ ^[0-9]+$ && $retry_count -gt 1 ]]; then
+        prior_failed=1
+        rerun_eq_steps_after_failure=1
+        echo "[INFO] Retry attempt ${retry_count} detected; rerunning completed equilibration stages instead of skipping them."
+    fi
+fi
 
 should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"

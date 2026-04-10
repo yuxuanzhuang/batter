@@ -19,7 +19,11 @@ overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
 skip_window_eq=${SKIP_WINDOW_EQ:-0}
 retry=${RETRY_COUNT:-0}
-rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE:-0}
+if [[ -n ${RERUN_EQ_STEPS_AFTER_FAILURE+x} ]]; then
+    rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE}
+else
+    rerun_eq_steps_after_failure=auto
+fi
 
 # if retry > 3, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
 if [[ $retry -gt 3 ]]; then
@@ -53,6 +57,19 @@ if [[ -f FINISHED ]]; then
 fi
 
 prior_failed=$(consume_prior_failure_marker)
+
+if [[ $rerun_eq_steps_after_failure == 1 ]]; then
+    prior_failed=1
+elif [[ $rerun_eq_steps_after_failure == auto ]]; then
+    rerun_eq_steps_after_failure=0
+    if [[ $prior_failed -eq 1 ]]; then
+        rerun_eq_steps_after_failure=1
+    elif [[ $only_eq -eq 1 && $retry =~ ^[0-9]+$ && $retry -gt 1 ]]; then
+        prior_failed=1
+        rerun_eq_steps_after_failure=1
+        echo "[INFO] Retry attempt ${retry} detected during equilibration-only run; rerunning completed equilibration stages instead of skipping them."
+    fi
+fi
 
 should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"

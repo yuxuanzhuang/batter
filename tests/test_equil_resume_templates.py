@@ -194,6 +194,44 @@ def test_run_local_only_eq_reruns_existing_steps_after_failure_when_enabled(tmp_
     assert "eqnpt00.out" in calls
 
 
+def test_run_local_only_eq_explicit_rerun_flag_reruns_without_marker(tmp_path: Path) -> None:
+    env, cmd = _setup_run_local_only_eq(tmp_path)
+    env["RERUN_EQ_STEPS_AFTER_FAILURE"] = "1"
+    for name in ["mini.rst7", "mini2.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+
+    subprocess.run(cmd, cwd=tmp_path, env=env, check=True)
+
+    calls = _read_calls(tmp_path)
+    assert "mini.out" in calls
+    assert "mini2.out" in calls
+    assert "eqnpt_pre.out" in calls
+    assert "eqnpt00.out" in calls
+
+
+def test_run_local_only_eq_auto_reruns_existing_steps_on_wrapper_retry(tmp_path: Path) -> None:
+    env, cmd = _setup_run_local_only_eq(tmp_path)
+    env["RETRY_COUNT"] = "2"
+    for name in ["mini.rst7", "mini2.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "Retry attempt 2 detected during equilibration-only run" in result.stdout
+    assert "mini.out" in calls
+    assert "mini2.out" in calls
+    assert "eqnpt_pre.out" in calls
+    assert "eqnpt00.out" in calls
+
+
 def test_run_equil_skips_existing_steps(tmp_path: Path) -> None:
     env, cmd = _setup_run_equil_only_eq(tmp_path)
     for name in ["mini.rst7", "mini2.rst7", "eqnvt.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
@@ -221,6 +259,44 @@ def test_run_equil_reruns_existing_steps_after_failure_when_enabled(tmp_path: Pa
     subprocess.run(cmd, cwd=tmp_path, env=env, check=True)
 
     calls = _read_calls(tmp_path)
+    assert "mini.out" in calls
+    assert "mini2.out" in calls
+    assert "eqnpt_pre.out" in calls
+    assert "eqnpt00.out" in calls
+
+
+def test_run_equil_explicit_rerun_flag_reruns_without_marker(tmp_path: Path) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    env["RERUN_EQ_STEPS_AFTER_FAILURE"] = "1"
+    for name in ["mini.rst7", "mini2.rst7", "eqnvt.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+
+    subprocess.run(cmd, cwd=tmp_path, env=env, check=True)
+
+    calls = _read_calls(tmp_path)
+    assert "mini.out" in calls
+    assert "mini2.out" in calls
+    assert "eqnpt_pre.out" in calls
+    assert "eqnpt00.out" in calls
+
+
+def test_run_equil_auto_reruns_existing_steps_on_wrapper_retry(tmp_path: Path) -> None:
+    env, cmd = _setup_run_equil_only_eq(tmp_path)
+    env["RETRY_COUNT"] = "2"
+    for name in ["mini.rst7", "mini2.rst7", "eqnvt.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
+        _write_file(tmp_path / name, "rst\n")
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "Retry attempt 2 detected; rerunning completed equilibration stages" in result.stdout
     assert "mini.out" in calls
     assert "mini2.out" in calls
     assert "eqnpt_pre.out" in calls
@@ -336,7 +412,7 @@ require_nonempty_file_or_attempt_fail "missing.rst7" "[ERROR] missing restart"
     assert (tmp_path / "ATTEMPT_FAILED").exists()
 
 
-def test_run_equil_does_not_consume_terminal_failed_marker_for_rerun_logic(
+def test_run_equil_explicit_rerun_flag_preserves_terminal_failed_marker(
     tmp_path: Path,
 ) -> None:
     env, cmd = _setup_run_equil_only_eq(tmp_path)
@@ -348,6 +424,6 @@ def test_run_equil_does_not_consume_terminal_failed_marker_for_rerun_logic(
     subprocess.run(cmd, cwd=tmp_path, env=env, check=True)
 
     calls = _read_calls(tmp_path)
-    assert "mini.out" not in calls
-    assert "mini2.out" not in calls
+    assert "mini.out" in calls
+    assert "mini2.out" in calls
     assert (tmp_path / "FAILED").exists()
