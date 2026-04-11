@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import contextlib
 import itertools
 import json
@@ -268,6 +269,82 @@ def _group_residues_by_source_identity(residues) -> list[list[Any]]:
     return groups
 
 
+def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], int]:
+    """
+    Build per-atom segid overrides to canonicalize segids within each protein residue.
+
+    Some input PDBs carry a segid on heavy atoms but leave hydrogens blank.
+    MDAnalysis then parses those atoms as separate residues/segments on reload.
+    Compute a residue-level canonical segid so aligned intermediates can be
+    rewritten with consistent per-residue segids before they are reloaded.
+    """
+    try:
+        universe.atoms.segids
+    except AttributeError:
+        return {}, 0
+
+    protein_atoms = universe.select_atoms("protein")
+    if protein_atoms.n_atoms == 0:
+        return {}, 0
+
+    residue_atom_indices: dict[tuple[str, int, str], list[int]] = {}
+    for atom in protein_atoms:
+        chain_id = str(getattr(atom, "chainID", "")).strip()
+        residue_key = (chain_id, int(atom.resid), str(atom.resname).strip())
+        residue_atom_indices.setdefault(residue_key, []).append(int(atom.index))
+
+    segid_overrides: dict[int, str] = {}
+    normalized_count = 0
+    for atom_indices in residue_atom_indices.values():
+        atom_group = universe.atoms[atom_indices]
+        segids = [str(segid).strip() for segid in atom_group.segids]
+        unique_segids = set(segids)
+        if len(unique_segids) <= 1:
+            continue
+
+        nonempty_segids = [segid for segid in segids if segid]
+        if nonempty_segids:
+            canonical_segid = Counter(nonempty_segids).most_common(1)[0][0]
+        else:
+            canonical_segid = segids[0]
+
+        for atom_index in atom_indices:
+            segid_overrides[atom_index] = canonical_segid
+        normalized_count += 1
+
+    return segid_overrides, normalized_count
+
+
+def _write_pdb_with_normalized_protein_segids(
+    universe: mda.Universe,
+    output_path: Path,
+) -> int:
+    """
+    Write a PDB while normalizing mixed per-atom protein segids per residue.
+    """
+    segid_overrides, normalized_count = _protein_segid_overrides(universe)
+    universe.atoms.write(output_path.as_posix())
+    if not segid_overrides:
+        return normalized_count
+
+    rewritten_lines: list[str] = []
+    atom_counter = 0
+    for line in output_path.read_text().splitlines(True):
+        if line.startswith(("ATOM", "HETATM")):
+            atom = universe.atoms[atom_counter]
+            atom_counter += 1
+            canonical_segid = segid_overrides.get(int(atom.index))
+            if canonical_segid is not None:
+                stripped = line.rstrip("\n")
+                if len(stripped) < 76:
+                    stripped = stripped.ljust(76)
+                line = f"{stripped[:72]}{canonical_segid:<4}{stripped[76:]}\n"
+        rewritten_lines.append(line)
+
+    output_path.write_text("".join(rewritten_lines))
+    return normalized_count
+
+
 def _select_fragment_atoms(
     universe: mda.Universe,
     residues: list[Any],
@@ -526,10 +603,23 @@ class _SystemPrepRunner:
         final_ref_com = final_ref.center(weights=None)
         final_ref_coord = final_ref.positions - final_ref_com
 
-        u_prot.atoms.write(f"{self.ligands_folder}/protein_aligned.pdb")
-        self._protein_aligned_pdb = f"{self.ligands_folder}/protein_aligned.pdb"
-        u_sys.atoms.write(f"{self.ligands_folder}/system_aligned.pdb")
-        self._system_aligned_pdb = f"{self.ligands_folder}/system_aligned.pdb"
+        protein_aligned_path = self.ligands_folder / "protein_aligned.pdb"
+        system_aligned_path = self.ligands_folder / "system_aligned.pdb"
+        normalized_prot_residues = _write_pdb_with_normalized_protein_segids(
+            u_prot, protein_aligned_path
+        )
+        normalized_sys_residues = _write_pdb_with_normalized_protein_segids(
+            u_sys, system_aligned_path
+        )
+        if normalized_prot_residues or normalized_sys_residues:
+            logger.warning(
+                "Detected mixed per-atom protein segid assignments; normalized segids "
+                f"for {normalized_prot_residues} residue(s) in the aligned protein and "
+                f"{normalized_sys_residues} residue(s) in the aligned system before grouping."
+            )
+
+        self._protein_aligned_pdb = str(protein_aligned_path)
+        self._system_aligned_pdb = str(system_aligned_path)
 
         # store these for ligand alignment
         self.mobile_com = mobile_com

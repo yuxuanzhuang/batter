@@ -112,6 +112,45 @@ def _make_offset_ligand_pdb(path: Path) -> None:
     )
 
 
+def _atom_line_with_segid(
+    serial: int,
+    name: str,
+    resname: str,
+    chain: str,
+    resid: int,
+    x: float,
+    y: float,
+    z: float,
+    element: str,
+    *,
+    segid: str = "",
+) -> str:
+    line = _atom_line(serial, name, resname, chain, resid, x, y, z, element).rstrip("\n")
+    if len(line) < 76:
+        line = line.ljust(76)
+    return f"{line[:72]}{segid:<4}{line[76:]}\n"
+
+
+def _make_mixed_segid_protein_pdb(path: Path) -> None:
+    _write_pdb(
+        path,
+        [
+            _atom_line_with_segid(1, "N", "ALA", "A", 1, 0.0, 0.0, 0.0, "N", segid="P69"),
+            _atom_line_with_segid(2, "CA", "ALA", "A", 1, 1.0, 0.0, 0.0, "C", segid="P69"),
+            _atom_line_with_segid(3, "C", "ALA", "A", 1, 1.5, 1.0, 0.0, "C", segid="P69"),
+            _atom_line_with_segid(4, "O", "ALA", "A", 1, 1.5, 2.0, 0.0, "O", segid="P69"),
+            _atom_line_with_segid(5, "H", "ALA", "A", 1, -0.6, 0.2, 0.0, "H", segid=""),
+            _atom_line_with_segid(6, "HA", "ALA", "A", 1, 1.0, -0.8, 0.0, "H", segid=""),
+            _atom_line_with_segid(7, "N", "ALA", "A", 2, 2.5, 0.5, 0.0, "N", segid="P69"),
+            _atom_line_with_segid(8, "CA", "ALA", "A", 2, 3.5, 1.0, 0.0, "C", segid="P69"),
+            _atom_line_with_segid(9, "C", "ALA", "A", 2, 4.5, 0.0, 0.0, "C", segid="P69"),
+            _atom_line_with_segid(10, "O", "ALA", "A", 2, 5.5, 0.5, 0.0, "O", segid="P69"),
+            _atom_line_with_segid(11, "H", "ALA", "A", 2, 2.0, 0.8, 0.0, "H", segid=""),
+            _atom_line_with_segid(12, "HA", "ALA", "A", 2, 3.5, 1.8, 0.0, "H", segid=""),
+        ],
+    )
+
+
 def _xy_area(atomgroup) -> float:
     spans = np.ptp(atomgroup.positions, axis=0)
     return float(spans[0] * spans[1])
@@ -292,6 +331,35 @@ def test_get_alignment_skips_xy_optimization_when_system_input_is_present(
     monkeypatch.setattr(system_prep_mod, "_find_min_xy_box_rotation", _fail)
 
     runner._get_alignment()
+
+
+def test_get_alignment_normalizes_mixed_protein_segids_before_process_system(
+    tmp_path: Path,
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    runner._system_name = "SYS"
+    runner.protein_align = "resid 1 to 2"
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    protein = tmp_path / "protein_mixed_segid.pdb"
+    _make_mixed_segid_protein_pdb(protein)
+
+    runner._protein_input = str(protein)
+    runner._system_topology = None
+    runner._system_input_pdb = str(protein)
+
+    runner._get_alignment()
+
+    aligned = mda.Universe(str(runner._protein_aligned_pdb))
+    assert len(aligned.select_atoms("protein").residues) == 2
+
+    runner._process_system()
+
+    reference = mda.Universe(str(runner.ligands_folder / "reference.pdb"))
+    prot = reference.select_atoms("protein")
+    assert len(prot.residues) == 2
+    assert len(prot.segments) == 1
 
 
 def _run_process_system_with_fragmented_protein(
