@@ -116,6 +116,56 @@ require_nonempty_file_or_attempt_fail() {
     mark_failed_and_exit "$message"
 }
 
+remove_empty_file_if_present() {
+    local path=$1
+
+    [[ -n $path && -e $path && ! -s $path ]] || return 1
+
+    rm -f "$path"
+    echo "[INFO] Removed stale empty file $path"
+}
+
+cleanup_stale_empty_md_artifacts() {
+    local pattern f
+    local patterns=(
+        "md-*.out"
+        "md*.out"
+        "md-*.nc"
+        "md*.nc"
+        "md-*.log"
+        "md*.log"
+        "md-*.mden"
+        "md*.mden"
+        "md-*.mdinfo"
+        "md*.mdinfo"
+        "md-current.rst7"
+        "md-previous.rst7"
+        "cmass.txt"
+    )
+
+    if [[ -n ${ZSH_VERSION-} ]]; then
+        setopt local_options null_glob
+        for pattern in "${patterns[@]}"; do
+            for f in ${~pattern}; do
+                remove_empty_file_if_present "$f" || true
+            done
+        done
+        return 0
+    fi
+
+    local nullglob_was_on=0
+    shopt -q nullglob && nullglob_was_on=1
+    shopt -s nullglob
+    for pattern in "${patterns[@]}"; do
+        for f in $pattern; do
+            remove_empty_file_if_present "$f" || true
+        done
+    done
+    if [[ $nullglob_was_on -eq 0 ]]; then
+        shopt -u nullglob
+    fi
+}
+
 should_skip_completed_step() {
     local stage=$1
     local artifact=$2
@@ -266,6 +316,7 @@ check_min_energy() {
 
 highest_out_index_for_pattern() {
     local pattern=$1
+    local require_nonempty=${2:-0}
     local max=-1
     local f n
 
@@ -273,6 +324,9 @@ highest_out_index_for_pattern() {
         setopt local_options null_glob
         for f in ${~pattern}; do
             [[ -e "$f" ]] || continue
+            if [[ $require_nonempty -eq 1 && ! -s "$f" ]]; then
+                continue
+            fi
             if [[ $f =~ ([0-9]+)\.out$ ]]; then
                 n=${match[1]}
                 n=$((10#$n))
@@ -282,6 +336,9 @@ highest_out_index_for_pattern() {
     else
         for f in $pattern; do
             [[ -e "$f" ]] || continue
+            if [[ $require_nonempty -eq 1 && ! -s "$f" ]]; then
+                continue
+            fi
             if [[ $f =~ ([0-9]+)\.out$ ]]; then
                 n=${BASH_REMATCH[1]}
                 n=$((10#$n))
@@ -295,7 +352,7 @@ highest_out_index_for_pattern() {
 
 latest_md_index() {
     local pattern=${1:-"md-*.out"}
-    highest_out_index_for_pattern "$pattern"
+    highest_out_index_for_pattern "$pattern" 1
 }
 
 cleanup_failed_md_segment() {
@@ -331,10 +388,10 @@ report_progress() {
     local seg=-1
     local tps=0
 
-    if ls md-*.out >/dev/null 2>&1 || ls md*.out >/dev/null 2>&1; then
+    seg=$(latest_md_index "md-*.out")
+    [[ $seg -lt 0 ]] && seg=$(latest_md_index "md*.out")
+    if [[ $seg -ge 0 ]]; then
         stage="production"
-        seg=$(latest_md_index "md-*.out")
-        [[ $seg -lt 0 ]] && seg=$(latest_md_index "md*.out")
         tps=$(completed_steps "mdin-template" 2>/dev/null || echo 0)
     elif ls eqnpt*.out >/dev/null 2>&1; then
         stage="equilibration"

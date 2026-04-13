@@ -59,6 +59,7 @@ should_skip_eq_step() {
 }
 
 archive_existing_log_file "$log_file"
+cleanup_stale_empty_md_artifacts
 
 report_progress
 
