@@ -295,7 +295,7 @@ def _apply_restraintmask_length_limit(
         new_text += "\n"
     new_text += "\n".join(block) + "\n"
     mdin_path.write_text(new_text)
-    logger.warning(
+    logger.debug(
         f"[restraintmask] Converted long restraintmask in {mdin_path.name} to legacy group block."
     )
 
