@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Sequence, Optional, Tuple
+from typing import Sequence, Optional, Tuple, Iterable, List
 
 import numpy as np
 import pandas as pd
@@ -12,6 +12,8 @@ from loguru import logger
 import os
 import json
 import shutil
+import parmed as pmd
+from parmed.amber.mask import AmberMask
 
 
 from batter._internal.builders.interfaces import BuildContext
@@ -177,7 +179,9 @@ def _patch_restraint_block(
                 else new_mask_component
             )
             if len(mask) > 256:
-                raise ValueError(f"Restraint mask too long (>256 chars): {mask}")
+                logger.warning(
+                    "[restraintmask] Mask exceeds 256 chars; will attempt legacy-group conversion."
+                )
             line = f'  restraintmask = "{mask}",\n'
             seen_mask = True
         elif re.search(r"\brestraint_wt\s*=", line):
@@ -191,6 +195,109 @@ def _patch_restraint_block(
         out.append(f"  restraint_wt   = {force_const},\n")
 
     return "".join(out)
+
+
+def _format_restraint_weight(value: str | float) -> str:
+    try:
+        num = float(value)
+    except Exception:
+        return str(value)
+    text = f"{num:.6f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _convert_restraintmask_to_legacy_group_block(
+    prmtop_path: Path, maskstr: str, restraint_wt: str | float, title: str
+) -> list[str]:
+    parm = pmd.load_file(prmtop_path.as_posix())
+    sel = AmberMask(parm, maskstr).Selection()
+    indices = [i + 1 for i, flag in enumerate(sel) if flag > 0]
+    ranges = _merge_consecutive(indices)
+    selected_count = len(indices)
+    range_count = sum(end - start + 1 for start, end in ranges)
+    if selected_count != range_count:
+        raise ValueError(
+            f"Selection size mismatch: selected={selected_count} vs ranges={range_count}"
+        )
+    out = [title, _format_restraint_weight(restraint_wt)]
+    for i in range(0, len(ranges), 7):
+        chunk = ranges[i : i + 7]
+        parts: List[str] = []
+        for start, end in chunk:
+            parts.append(str(start))
+            parts.append(str(end))
+        out.append("ATOM " + " ".join(parts))
+    out.append("END")
+    out.append("END")
+    return out
+
+
+def _find_prmtop_for_masks(work_dir: Path) -> Optional[Path]:
+    candidates = [
+        "full_merged.prmtop",
+        "full.hmr.prmtop",
+        "full.prmtop",
+    ]
+    for name in candidates:
+        path = work_dir / name
+        if path.exists():
+            return path
+    return None
+
+
+def _apply_restraintmask_length_limit(
+    mdin_path: Path, prmtop_path: Optional[Path], *, title: str = "Converted from restraintmask"
+) -> None:
+    if not mdin_path.exists():
+        return
+    text = mdin_path.read_text()
+    mask = None
+    mask_lines_removed = False
+    lines = text.splitlines(True)
+    out_lines: List[str] = []
+    for line in lines:
+        m = re.search(r'restraintmask\s*=\s*["\']([^"\']*)["\']', line)
+        if m:
+            mask = m.group(1).strip()
+            mask_lines_removed = True
+            continue
+        out_lines.append(line)
+
+    if not mask or len(mask) <= 256:
+        return
+
+    if prmtop_path is None or not prmtop_path.exists():
+        logger.warning(
+            f"[restraintmask] Mask exceeds 256 chars but no prmtop found for {mdin_path.name}; leaving as-is."
+        )
+        return
+
+    wt_match = re.search(
+        r"\brestraint_wt\s*=\s*([0-9.+-eEdD]+)", text, flags=re.IGNORECASE
+    )
+    restraint_wt = wt_match.group(1) if wt_match else "0.0"
+
+    try:
+        block = _convert_restraintmask_to_legacy_group_block(
+            prmtop_path, mask, restraint_wt, title
+        )
+    except Exception as exc:
+        logger.warning(
+            f"[restraintmask] Failed to convert mask for {mdin_path.name}: {exc}"
+        )
+        return
+
+    if not mask_lines_removed:
+        return
+
+    new_text = "".join(out_lines)
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    new_text += "\n".join(block) + "\n"
+    mdin_path.write_text(new_text)
+    logger.warning(
+        f"[restraintmask] Converted long restraintmask in {mdin_path.name} to legacy group block."
+    )
 
 
 def _first_residue_atom_mask(
@@ -405,6 +512,9 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     sim = ctx.sim
     work = ctx.working_dir
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     temperature = sim.temperature
     mol = ctx.residue_name
@@ -516,6 +626,12 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     # Prepend total eq steps marker for runtime scripts (comment starts with '!')
     text = f"! total_steps={total_steps}\n{text}"
     (work / "mdin-template").write_text(text)
+
+    prmtop_for_masks = _find_prmtop_for_masks(work)
+    _apply_restraintmask_length_limit(work / "mdin-template", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt_eq.in", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt_disappear.in", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt_appear.in", prmtop_for_masks)
 
     logger.debug(f"[Equil] Simulation input files written under {work}")
 
@@ -657,6 +773,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
         # end eq.in
 
@@ -702,6 +819,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 logger.warning(
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
+        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
         # end mdin-template
 
@@ -775,6 +893,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
 
         # production template
         n_steps_run = str(steps2)
@@ -811,6 +930,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
         # Patch mdin with extra restraints (only mdin-template)
         if extra_mask:
@@ -822,6 +942,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 logger.warning(
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
+        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
         with (
             template_mini.open("rt") as fin,
@@ -1064,6 +1185,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
+    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
 
     # --- mdin-template (production) ---
     out_path = windows_dir / "mdin-template"
@@ -1097,6 +1220,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
     # Patch mdin with extra restraints (only mdin-template)
     if extra_mask:
@@ -1108,6 +1232,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             logger.warning(
                 f"[extra_restraints] Could not patch {out_path.name}: {e}"
             )
+    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
     # --- mini.in / mini_eq.in ---
     with (amber_dir / "mini-ex").open("rt") as fin, (windows_dir / "mini.in").open(
@@ -1165,6 +1290,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resname=mol)
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     # mini.in from ligand template
     with (
@@ -1252,6 +1378,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
@@ -1290,6 +1417,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
     logger.debug(
         f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"

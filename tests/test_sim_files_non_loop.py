@@ -139,6 +139,29 @@ def test_write_sim_files_keeps_infe_disabled(tmp_path: Path) -> None:
     assert "infe = 0" in (ctx.working_dir / "eqnpt_appear.in").read_text()
 
 
+def test_restraintmask_long_mask_converts_to_legacy_group(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    prmtop = repo_root / "tests" / "data" / "ligand_params" / "b74b7e78c757" / "lig.prmtop"
+    assert prmtop.exists()
+
+    long_mask = "(" + " | ".join(["@1"] * 80) + ")"
+    mdin = tmp_path / "mdin-test.in"
+    mdin.write_text(
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 5.0,\n"
+        f"  restraintmask = '{long_mask}',\n"
+        "/\n"
+    )
+
+    sim_files._apply_restraintmask_length_limit(mdin, prmtop)
+
+    text = mdin.read_text()
+    assert "restraintmask" not in text
+    assert "Converted from restraintmask" in text
+    assert "ATOM 1 1" in text
+
+
 def test_write_cmass_dump_block_uses_dumpave_footer() -> None:
     handle = io.StringIO()
 
