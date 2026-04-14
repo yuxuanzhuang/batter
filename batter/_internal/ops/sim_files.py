@@ -1148,7 +1148,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     #    f"'(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
                     #)
                 if len(line) > 256:
-                    logger.warning(f"restraintmask line too long for AMBER: {len(line)} but proceeding")
+                    logger.debug(
+                        f"[restraintmask] Mask exceeds 256 chars in eq.in; conversion will be applied after write."
+                    )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
