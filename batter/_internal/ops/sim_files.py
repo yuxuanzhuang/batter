@@ -286,21 +286,25 @@ def _apply_restraintmask_length_limit(
         cached = cache_path.read_text().splitlines()
         if cached and cached[0].startswith("# mask_sha1="):
             cached_hash = cached[0].split("=", 1)[1].strip()
-            if cached_hash == mask_hash:
-                block = cached[1:]
-                new_text = "".join(out_lines)
-                if not new_text.endswith("\n"):
-                    new_text += "\n"
-                new_text += "\n".join(block) + "\n"
-                mdin_path.write_text(new_text)
+            if cached_hash != mask_hash:
                 logger.debug(
-                    f"[restraintmask] Reused cached legacy block for {mdin_path.name}."
+                    f"[restraintmask] Cache hash mismatch for {mdin_path.name}; reusing cached block anyway."
                 )
-                return
+            block = cached[1:]
+            new_text = "".join(out_lines)
+            if not new_text.endswith("\n"):
+                new_text += "\n"
+            new_text += "&end\n"
+            new_text += "\n".join(block) + "\n"
+            mdin_path.write_text(new_text)
+            logger.debug(
+                f"[restraintmask] Reused cached legacy block for {mdin_path.name}."
+            )
+            return
 
     if prmtop_path is None or not prmtop_path.exists():
         logger.warning(
-            f"[restraintmask] Mask exceeds 256 chars but no prmtop found for {mdin_path.name}; leaving as-is."
+            f"[restraintmask] No prmtop found for {mdin_path.name}; leaving restraintmask as-is."
         )
         return
 
