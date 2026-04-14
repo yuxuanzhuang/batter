@@ -199,6 +199,8 @@ def _patch_restraint_block(
 
 
 def _format_restraint_weight(value: str | float) -> str:
+    if isinstance(value, str):
+        value = value.strip().rstrip(",")
     try:
         num = float(value)
     except Exception:
@@ -659,6 +661,8 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
     prmtop_for_masks = _find_prmtop_for_masks(work)
     _apply_restraintmask_length_limit(work / "mdin-template", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt0.in", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt.in", prmtop_for_masks)
     _apply_restraintmask_length_limit(work / "eqnpt_eq.in", prmtop_for_masks)
     _apply_restraintmask_length_limit(work / "eqnpt_disappear.in", prmtop_for_masks)
     _apply_restraintmask_length_limit(work / "eqnpt_appear.in", prmtop_for_masks)
