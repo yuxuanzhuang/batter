@@ -57,21 +57,21 @@ should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
 }
 
-can_run_penetration_check() {
-    python - <<'PY' >/dev/null 2>&1
-import importlib
-importlib.import_module("networkx")
-importlib.import_module("batter.analysis.sim_validation")
-PY
-}
-
 run_penetration_check() {
     local rst_path=$1
-    if can_run_penetration_check; then
-        python check_penetration.py "$rst_path"
-    else
-        echo "[WARN] Skipping ring penetration check; missing BATTER Python deps (networkx/batter)."
+    local err_file=".penetration_check.err"
+    python check_penetration.py "$rst_path" 2>"$err_file"
+    if [[ $? -ne 0 ]]; then
+        if grep -Eq "ModuleNotFoundError: No module named '(networkx|batter)'" "$err_file"; then
+            echo "[WARN] Skipping ring penetration check; missing BATTER Python deps (networkx/batter)."
+            rm -f "$err_file"
+            return 0
+        fi
+        cat "$err_file" >&2
+        rm -f "$err_file"
+        return 1
     fi
+    rm -f "$err_file"
 }
 
 archive_existing_log_file "$log_file"

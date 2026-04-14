@@ -687,6 +687,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     windows_dir = ctx.window_dir
     cache_dir = windows_dir.parent / ".restraintmask_cache"
     cache_master = ctx.win == -1
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
     all_atoms = sim.all_atoms
     non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
     cache_dir = windows_dir.parent / ".restraintmask_cache"
@@ -733,6 +737,10 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
     cache_dir = windows_dir.parent / ".restraintmask_cache"
     cache_master = ctx.win == -1
 
@@ -1166,6 +1174,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
 
     # optional extra restraints (only applied to mdin-template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
@@ -1354,6 +1364,8 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     sim = ctx.sim
     mol = ctx.residue_name
     windows_dir = ctx.window_dir
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
 
     temperature = sim.temperature
     n_steps = sim.dic_n_steps["y"]

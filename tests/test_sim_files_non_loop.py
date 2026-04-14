@@ -157,7 +157,7 @@ def test_restraintmask_long_mask_converts_to_legacy_group(tmp_path: Path) -> Non
     sim_files._apply_restraintmask_length_limit(mdin, prmtop)
 
     text = mdin.read_text()
-    assert "restraintmask" not in text
+    assert "restraintmask =" not in text
     assert "Converted from restraintmask" in text
     assert "ATOM 1 1" in text
 
