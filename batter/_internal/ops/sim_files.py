@@ -271,7 +271,7 @@ def _apply_restraintmask_length_limit(
             continue
         out_lines.append(line)
 
-    if not mask or len(mask) <= 256:
+    if not mask:
         return
 
     cache_path = None
