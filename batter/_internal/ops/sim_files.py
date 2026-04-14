@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Sequence, Optional, Tuple, Iterable, List
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -246,7 +247,13 @@ def _find_prmtop_for_masks(work_dir: Path) -> Optional[Path]:
 
 
 def _apply_restraintmask_length_limit(
-    mdin_path: Path, prmtop_path: Optional[Path], *, title: str = "Converted from restraintmask"
+    mdin_path: Path,
+    prmtop_path: Optional[Path],
+    *,
+    title: str = "Converted from restraintmask",
+    cache_dir: Optional[Path] = None,
+    cache_tag: Optional[str] = None,
+    cache_master: bool = False,
 ) -> None:
     if not mdin_path.exists():
         return
@@ -265,6 +272,28 @@ def _apply_restraintmask_length_limit(
 
     if not mask or len(mask) <= 256:
         return
+
+    cache_path = None
+    mask_hash = hashlib.sha1(mask.encode("utf-8")).hexdigest()
+    if cache_dir is not None and cache_tag:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / f"{cache_tag}.legacy_restraint"
+
+    if cache_path is not None and cache_path.exists() and not cache_master:
+        cached = cache_path.read_text().splitlines()
+        if cached and cached[0].startswith("# mask_sha1="):
+            cached_hash = cached[0].split("=", 1)[1].strip()
+            if cached_hash == mask_hash:
+                block = cached[1:]
+                new_text = "".join(out_lines)
+                if not new_text.endswith("\n"):
+                    new_text += "\n"
+                new_text += "\n".join(block) + "\n"
+                mdin_path.write_text(new_text)
+                logger.debug(
+                    f"[restraintmask] Reused cached legacy block for {mdin_path.name}."
+                )
+                return
 
     if prmtop_path is None or not prmtop_path.exists():
         logger.warning(
@@ -295,6 +324,8 @@ def _apply_restraintmask_length_limit(
         new_text += "\n"
     new_text += "\n".join(block) + "\n"
     mdin_path.write_text(new_text)
+    if cache_path is not None and cache_master:
+        cache_path.write_text("# mask_sha1=" + mask_hash + "\n" + "\n".join(block) + "\n")
     logger.debug(
         f"[restraintmask] Converted long restraintmask in {mdin_path.name} to legacy group block."
     )
@@ -648,8 +679,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mol = ctx.residue_name
     win = ctx.win
     windows_dir = ctx.window_dir
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
     all_atoms = sim.all_atoms
     non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = win == -1
 
 
     if not hasattr(sim, "dec_method"):
@@ -692,6 +727,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
 
     # compute extra mask once for this window root; applied to mdin-XX only
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
@@ -771,7 +808,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
-        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
+        _apply_restraintmask_length_limit(
+            out_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-eq.in",
+            cache_master=cache_master,
+        )
 
         # end eq.in
 
@@ -817,7 +860,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 logger.warning(
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
-        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
+        _apply_restraintmask_length_limit(
+            out_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-mdin-template",
+            cache_master=cache_master,
+        )
 
         # end mdin-template
 
@@ -891,7 +940,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
-        _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
+        _apply_restraintmask_length_limit(
+            eq_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-eq.in",
+            cache_master=cache_master,
+        )
 
         # production template
         n_steps_run = str(steps2)
@@ -938,7 +993,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 logger.warning(
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
-        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
+        _apply_restraintmask_length_limit(
+            out_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-mdin-template",
+            cache_master=cache_master,
+        )
 
         with (
             template_mini.open("rt") as fin,
@@ -1038,6 +1099,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     windows_dir = ctx.window_dir
     win = ctx.win
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = win == -1
     
     temperature = sim.temperature
     steps2 = sim.dic_n_steps[comp]
@@ -1184,7 +1247,13 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
-    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
+    _apply_restraintmask_length_limit(
+        eq_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="x-eq.in",
+        cache_master=cache_master,
+    )
 
     # --- mdin-template (production) ---
     out_path = windows_dir / "mdin-template"
@@ -1228,7 +1297,13 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             logger.warning(
                 f"[extra_restraints] Could not patch {out_path.name}: {e}"
             )
-    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
+    _apply_restraintmask_length_limit(
+        out_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="x-mdin-template",
+        cache_master=cache_master,
+    )
 
     # --- mini.in / mini_eq.in ---
     with (amber_dir / "mini-ex").open("rt") as fin, (windows_dir / "mini.in").open(
@@ -1374,7 +1449,13 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
-    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
+    _apply_restraintmask_length_limit(
+        eq_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="y-eq.in",
+        cache_master=cache_master,
+    )
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
@@ -1413,7 +1494,13 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
-    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
+    _apply_restraintmask_length_limit(
+        out_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="y-mdin-template",
+        cache_master=cache_master,
+    )
 
     logger.debug(
         f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
@@ -1495,7 +1582,13 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
-    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
+    _apply_restraintmask_length_limit(
+        eq_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="m-eq.in",
+        cache_master=cache_master,
+    )
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
@@ -1521,7 +1614,13 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
-    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
+    _apply_restraintmask_length_limit(
+        out_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="m-mdin-template",
+        cache_master=cache_master,
+    )
 
     logger.debug(
         f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"
