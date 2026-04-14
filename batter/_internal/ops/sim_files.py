@@ -239,10 +239,11 @@ def _find_prmtop_for_masks(work_dir: Path) -> Optional[Path]:
         "full.hmr.prmtop",
         "full.prmtop",
     ]
-    for name in candidates:
-        path = work_dir / name
-        if path.exists():
-            return path
+    for base in [work_dir, *work_dir.parents]:
+        for name in candidates:
+            path = base / name
+            if path.exists():
+                return path
     return None
 
 
