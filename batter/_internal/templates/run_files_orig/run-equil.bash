@@ -57,6 +57,23 @@ should_skip_eq_step() {
     should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
 }
 
+can_run_penetration_check() {
+    python - <<'PY' >/dev/null 2>&1
+import importlib
+importlib.import_module("networkx")
+importlib.import_module("batter.analysis.sim_validation")
+PY
+}
+
+run_penetration_check() {
+    local rst_path=$1
+    if can_run_penetration_check; then
+        python check_penetration.py "$rst_path"
+    else
+        echo "[WARN] Skipping ring penetration check; missing BATTER Python deps (networkx/batter)."
+    fi
+}
+
 archive_existing_log_file "$log_file"
 cleanup_stale_empty_md_artifacts
 
@@ -117,7 +134,7 @@ fi
 # ---------------- Equilibration ----------------
 if ! should_skip_eq_step "NVT preparation" "eqnvt.rst7"; then
     require_nonempty_file_or_attempt_fail "mini2.rst7" "[ERROR] Missing mini2.rst7; cannot continue to NVT preparation."
-    python check_penetration.py mini2.rst7
+    run_penetration_check "mini2.rst7"
 
     if [[ -f RING_PENETRATION ]]; then
         echo "Ligand ring penetration detected previously; using longer equilibration."
@@ -125,7 +142,7 @@ if ! should_skip_eq_step "NVT preparation" "eqnvt.rst7"; then
         print_and_run "$PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         check_sim_failure "NVT" "$log_file" eqnvt.rst7
 
-        python check_penetration.py eqnvt.rst7
+        run_penetration_check "eqnvt.rst7"
         if [[ -f RING_PENETRATION ]]; then
             mark_failed_and_exit "Ligand ring penetration still detected after NVT; exiting."
         fi
