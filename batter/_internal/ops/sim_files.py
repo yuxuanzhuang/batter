@@ -512,9 +512,6 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     sim = ctx.sim
     work = ctx.working_dir
     amber_dir = ctx.amber_dir
-    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
-    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
-    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     temperature = sim.temperature
     mol = ctx.residue_name
@@ -694,6 +691,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(bulk_resid))
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     # compute extra mask once for this window root; applied to mdin-XX only
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
@@ -930,8 +928,6 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
             _write_cmass_dump_block(mdin, istep1=int(ntwx))
-        _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
-
         # Patch mdin with extra restraints (only mdin-template)
         if extra_mask:
             try:
@@ -1100,6 +1096,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     noshakemk = f':{int(ref_resid)},{int(ref_resid)+1},{int(ref_resid)+2},{int(ref_resid)+3}'
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     # optional extra restraints (only applied to mdin-template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
@@ -1188,7 +1185,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
     _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
-    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
 
     # --- mdin-template (production) ---
     out_path = windows_dir / "mdin-template"
@@ -1222,8 +1218,6 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
-    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
-
     # Patch mdin with extra restraints (only mdin-template)
     if extra_mask:
         try:
@@ -1443,6 +1437,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk1 = 2  # ligand-only marker convention
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     # mini.in from ligand template
     with (
@@ -1500,6 +1495,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(eq_path, prmtop_for_masks)
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
@@ -1525,6 +1521,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
         _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(out_path, prmtop_for_masks)
 
     logger.debug(
         f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"
