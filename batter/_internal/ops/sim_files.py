@@ -322,6 +322,7 @@ def _apply_restraintmask_length_limit(
     new_text = "".join(out_lines)
     if not new_text.endswith("\n"):
         new_text += "\n"
+    new_text += "&end\n"
     new_text += "\n".join(block) + "\n"
     mdin_path.write_text(new_text)
     if cache_path is not None and cache_master:
