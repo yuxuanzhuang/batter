@@ -630,8 +630,12 @@ def _render_network_png(
 
     def _edge_curvature(node_a: str, node_b: str) -> float:
         if graph.has_edge(node_b, node_a) and node_a != node_b:
-            ordered = tuple(sorted((str(node_a), str(node_b))))
-            return 0.18 if (str(node_a), str(node_b)) == ordered else -0.18
+            # Use the same positive curvature magnitude for both directions.
+            # Because the start/end points are reversed for the opposite edge,
+            # reusing the same rad pushes the reciprocal edge onto the opposite
+            # visual side. Using opposite signs here collapses both directions
+            # back onto the same side.
+            return 0.24
         return 0.0
 
     edge_widths = []
@@ -718,7 +722,7 @@ def _render_network_png(
             perp = np.array([-direction[1], direction[0]]) / norm_dir
         else:
             perp = np.array([0.0, 0.0])
-        text_pos = midpoint + perp * curvature * 0.55
+        text_pos = midpoint + perp * curvature * 0.85
         edge_label = (
             f"{float(data.get('calc_DDG', 0.0)):+.2f}\n"
             f"±{float(data.get('calc_dDDG', 0.0)):.2f}"
