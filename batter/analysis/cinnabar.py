@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import html
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
@@ -33,6 +34,7 @@ class CinnabarConversionResult:
     merge_bidirectional: bool = True
     exp_summary: pd.DataFrame | None = None
     absolute_summary: pd.DataFrame | None = None
+    ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def summarize_directionality(edge_summary: pd.DataFrame) -> dict[str, Any]:
@@ -140,6 +142,158 @@ def _pick_edge_label(row: pd.Series, edge_separator: str) -> str:
     if edge_separator in original_name:
         return original_name
     return ligand
+
+
+def _scan_rbfe_input_paths(
+    work_dir: str | Path,
+    run_ids: Sequence[str],
+    ligand_labels: Sequence[str],
+) -> dict[str, str]:
+    """Best-effort map of ligand label -> staged RBFE input path."""
+    labels = {str(label).strip() for label in ligand_labels if str(label).strip()}
+    if not labels:
+        return {}
+
+    mapping: dict[str, str] = {}
+    work_root = Path(work_dir)
+    for run_id in run_ids:
+        trans_root = work_root / "executions" / str(run_id) / "simulations" / "transformations"
+        if not trans_root.is_dir():
+            continue
+        for inputs_dir in trans_root.glob("*~*/inputs"):
+            if not inputs_dir.is_dir():
+                continue
+            for child in sorted(inputs_dir.iterdir()):
+                if not child.is_file():
+                    continue
+                stem = child.stem.strip()
+                if stem in labels and stem not in mapping:
+                    mapping[stem] = str(child)
+    return mapping
+
+
+def _mol_from_any_path(path_str: str):
+    """Load an RDKit molecule from a staged ligand path."""
+    from rdkit import Chem
+
+    path = Path(path_str)
+    suffix = path.suffix.lower()
+    if suffix in {".sdf", ".sd"}:
+        supplier = Chem.SDMolSupplier(str(path), removeHs=False)
+        for mol in supplier:
+            if mol is not None:
+                return mol
+        return None
+    if suffix == ".mol":
+        return Chem.MolFromMolFile(str(path), removeHs=False)
+    if suffix == ".mol2":
+        return Chem.MolFromMol2File(str(path), removeHs=False)
+    if suffix == ".pdb":
+        return Chem.MolFromPDBFile(str(path), removeHs=False)
+    return None
+
+
+def _mol_to_svg_text(mol) -> str:
+    """Render an RDKit molecule as a compact SVG string."""
+    from rdkit import Chem
+    from rdkit.Chem import rdDepictor
+    from rdkit.Chem.Draw import rdMolDraw2D
+
+    draw_mol = Chem.Mol(mol)
+    try:
+        rdDepictor.Compute2DCoords(draw_mol)
+    except Exception:
+        pass
+    drawer = rdMolDraw2D.MolDraw2DSVG(260, 180)
+    drawer.drawOptions().padding = 0.05
+    rdMolDraw2D.PrepareAndDrawMolecule(drawer, draw_mol)
+    drawer.FinishDrawing()
+    return drawer.GetDrawingText().replace("svg:", "")
+
+
+def _build_ligand_assets(
+    rbfe_df: pd.DataFrame,
+    *,
+    work_dir: str | Path | None = None,
+    edge_separator: str = "~",
+) -> dict[str, dict[str, str]]:
+    """Build ligand hover assets for HTML exports."""
+    if rbfe_df is None or rbfe_df.empty:
+        return {}
+
+    labels: set[str] = set()
+    smiles_by_label: dict[str, str] = {}
+    path_by_label: dict[str, str] = {}
+
+    edge_series = rbfe_df.get("edge_label", rbfe_df.get("ligand", pd.Series(dtype=str)))
+    canonical_series = rbfe_df.get("canonical_smiles", pd.Series(index=rbfe_df.index, dtype=str))
+    path_series = rbfe_df.get("original_path", pd.Series(index=rbfe_df.index, dtype=str))
+    run_series = rbfe_df.get("run_id", pd.Series(index=rbfe_df.index, dtype=str))
+
+    for edge_label, canonical_smiles, original_path in zip(
+        edge_series.fillna("").astype(str),
+        canonical_series.fillna("").astype(str),
+        path_series.fillna("").astype(str),
+    ):
+        if edge_separator not in edge_label:
+            continue
+        left, right = (piece.strip() for piece in edge_label.split(edge_separator, 1))
+        if left:
+            labels.add(left)
+        if right:
+            labels.add(right)
+        if left and canonical_smiles and left not in smiles_by_label:
+            smiles_by_label[left] = canonical_smiles.strip()
+        if left and original_path and left not in path_by_label:
+            path_by_label[left] = original_path.strip()
+
+    if work_dir is not None:
+        scanned = _scan_rbfe_input_paths(
+            work_dir,
+            [str(run_id).strip() for run_id in run_series.dropna().astype(str).unique()],
+            sorted(labels),
+        )
+        for label, input_path in scanned.items():
+            path_by_label.setdefault(label, input_path)
+
+    try:
+        from rdkit import Chem
+    except Exception:
+        return {
+            label: {
+                "label": label,
+                "smiles": smiles_by_label.get(label, ""),
+                "input_path": path_by_label.get(label, ""),
+                "svg": "",
+            }
+            for label in sorted(labels)
+        }
+
+    assets: dict[str, dict[str, str]] = {}
+    for label in sorted(labels):
+        smiles = smiles_by_label.get(label, "").strip()
+        input_path = path_by_label.get(label, "").strip()
+        mol = None
+        if smiles:
+            mol = Chem.MolFromSmiles(smiles)
+        if mol is None and input_path:
+            try:
+                mol = _mol_from_any_path(input_path)
+            except Exception:
+                mol = None
+        svg = ""
+        if mol is not None:
+            try:
+                svg = _mol_to_svg_text(mol)
+            except Exception:
+                svg = ""
+        assets[label] = {
+            "label": label,
+            "smiles": smiles,
+            "input_path": input_path,
+            "svg": svg,
+        }
+    return assets
 
 
 def load_batter_rbfe_results(
@@ -473,7 +627,7 @@ def build_batter_rbfe_cinnabar(
         ligands=ligands,
         edge_separator=edge_separator,
     )
-    return dataframe_to_cinnabar(
+    result = dataframe_to_cinnabar(
         work,
         ligand_column="edge_label",
         edge_separator=edge_separator,
@@ -492,6 +646,12 @@ def build_batter_rbfe_cinnabar(
         exp_value_unit=exp_value_unit,
         exp_error_unit=exp_error_unit,
     )
+    result.ligand_assets = _build_ligand_assets(
+        work,
+        work_dir=work_dir,
+        edge_separator=edge_separator,
+    )
+    return result
 
 
 def build_batter_rbfe_cinnabar_by_run(
@@ -523,7 +683,7 @@ def build_batter_rbfe_cinnabar_by_run(
     )
     out: dict[str, CinnabarConversionResult] = {}
     for run_id, group in work.groupby("run_id", sort=True):
-        out[str(run_id)] = dataframe_to_cinnabar(
+        result = dataframe_to_cinnabar(
             group,
             ligand_column="edge_label",
             edge_separator=edge_separator,
@@ -542,7 +702,106 @@ def build_batter_rbfe_cinnabar_by_run(
             exp_value_unit=exp_value_unit,
             exp_error_unit=exp_error_unit,
         )
+        result.ligand_assets = _build_ligand_assets(
+            group,
+            work_dir=work_dir,
+            edge_separator=edge_separator,
+        )
+        out[str(run_id)] = result
     return out
+
+
+def _node_color_mapping(
+    graph: nx.DiGraph,
+    absolute_summary: pd.DataFrame | None,
+):
+    """Return node colors and optional colorbar metadata."""
+    try:
+        from matplotlib import colors as mcolors
+        from matplotlib import colormaps
+    except Exception:
+        mcolors = None
+        colormaps = None
+
+    node_degree = dict(graph.degree())
+    node_order = list(graph.nodes)
+
+    if absolute_summary is not None and not absolute_summary.empty and mcolors is not None:
+        abs_df = absolute_summary.copy()
+        dg_col = next((col for col in abs_df.columns if col.lower().startswith("dg")), None)
+        label_col = "label" if "label" in abs_df.columns else None
+        if dg_col and label_col:
+            dg_map = (
+                abs_df.dropna(subset=[label_col, dg_col])
+                .drop_duplicates(subset=[label_col])
+                .set_index(label_col)[dg_col]
+                .astype(float)
+                .to_dict()
+            )
+            if dg_map:
+                node_values = [float(dg_map.get(node, np.nan)) for node in node_order]
+                finite = [value for value in node_values if np.isfinite(value)]
+                if finite:
+                    limit = max(abs(min(finite)), abs(max(finite)), 1e-8)
+                    norm = mcolors.TwoSlopeNorm(vmin=-limit, vcenter=0.0, vmax=limit)
+                    cmap = colormaps["bwr_r"] if colormaps is not None else None
+                    return {
+                        "values": node_values,
+                        "norm": norm,
+                        "cmap": cmap,
+                        "label": "MLE ΔG (kcal/mol)",
+                        "mode": "absolute",
+                    }
+
+    if mcolors is not None:
+        vmax = max(node_degree.values()) if node_degree else 1
+        return {
+            "values": [float(node_degree[node]) for node in node_order],
+            "norm": mcolors.Normalize(vmin=0, vmax=max(1, vmax)),
+            "cmap": colormaps["Blues"] if colormaps is not None else None,
+            "label": "Node degree",
+            "mode": "degree",
+        }
+    return {
+        "values": [float(node_degree[node]) for node in node_order],
+        "norm": None,
+        "cmap": None,
+        "label": "Node degree",
+        "mode": "degree",
+    }
+
+
+def _rgba_to_hex(color_value: Any) -> str:
+    try:
+        from matplotlib import colors as mcolors
+
+        return mcolors.to_hex(color_value, keep_alpha=False)
+    except Exception:
+        return "#5b8def"
+
+
+def _network_graph_with_layout(edge_summary: pd.DataFrame) -> tuple[nx.DiGraph, dict[str, np.ndarray]]:
+    """Build the directed graph and a stable layout for rendering."""
+    graph = nx.DiGraph()
+    for row in edge_summary.itertuples(index=False):
+        graph.add_edge(
+            str(row.labelA),
+            str(row.labelB),
+            calc_DDG=float(row.calc_DDG),
+            calc_dDDG=float(row.calc_dDDG),
+            n_runs=int(getattr(row, "n_runs", 1)),
+            n_measurements=int(getattr(row, "n_measurements", 1)),
+        )
+
+    if graph.number_of_nodes() == 1:
+        only = next(iter(graph.nodes))
+        pos = {only: np.array([0.0, 0.0])}
+    elif graph.number_of_nodes() == 2:
+        nodes = list(graph.nodes)
+        pos = {nodes[0]: np.array([-1.0, 0.0]), nodes[1]: np.array([1.0, 0.0])}
+    else:
+        pos = nx.kamada_kawai_layout(graph)
+    return graph, pos
 
 
 def _render_network_png(
@@ -565,68 +824,15 @@ def _render_network_png(
     except Exception:
         return False
 
-    graph = nx.DiGraph()
-    for row in edge_summary.itertuples(index=False):
-        graph.add_edge(
-            str(row.labelA),
-            str(row.labelB),
-            calc_DDG=float(row.calc_DDG),
-            calc_dDDG=float(row.calc_dDDG),
-            n_runs=int(getattr(row, "n_runs", 1)),
-            n_measurements=int(getattr(row, "n_measurements", 1)),
-        )
-
-    if graph.number_of_nodes() == 1:
-        only = next(iter(graph.nodes))
-        pos = {only: np.array([0.0, 0.0])}
-    elif graph.number_of_nodes() == 2:
-        nodes = list(graph.nodes)
-        pos = {nodes[0]: np.array([-1.0, 0.0]), nodes[1]: np.array([1.0, 0.0])}
-    else:
-        pos = nx.kamada_kawai_layout(graph)
+    graph, pos = _network_graph_with_layout(edge_summary)
 
     node_degree = dict(graph.degree())
     node_sizes = [1400 + 220 * node_degree[node] for node in graph.nodes]
-
-    node_colors = None
-    colorbar_label = None
-    norm = None
-    cmap = None
-    if absolute_summary is not None and not absolute_summary.empty:
-        abs_df = absolute_summary.copy()
-        dg_col = next(
-            (col for col in abs_df.columns if col.lower().startswith("dg")),
-            None,
-        )
-        label_col = "label" if "label" in abs_df.columns else None
-        if dg_col and label_col:
-            dg_map = (
-                abs_df.dropna(subset=[label_col, dg_col])
-                .drop_duplicates(subset=[label_col])
-                .set_index(label_col)[dg_col]
-                .astype(float)
-                .to_dict()
-            )
-            if dg_map:
-                node_colors = [dg_map.get(node, np.nan) for node in graph.nodes]
-                finite_colors = [value for value in node_colors if np.isfinite(value)]
-                if finite_colors:
-                    vmin = min(finite_colors)
-                    vmax = max(finite_colors)
-                    if np.isclose(vmin, vmax):
-                        vmax = vmin + 1.0
-                    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-                    cmap = colormaps["viridis_r"]
-                    colorbar_label = "MLE ΔG (kcal/mol)"
-                else:
-                    node_colors = None
-
-    if node_colors is None:
-        node_colors = [node_degree[node] for node in graph.nodes]
-        vmax = max(node_colors) if node_colors else 1
-        norm = mcolors.Normalize(vmin=0, vmax=max(1, vmax))
-        cmap = colormaps["Blues"]
-        colorbar_label = "Node degree"
+    color_meta = _node_color_mapping(graph, absolute_summary)
+    node_colors = color_meta["values"]
+    norm = color_meta["norm"]
+    cmap = color_meta["cmap"]
+    colorbar_label = color_meta["label"]
 
     def _edge_curvature(node_a: str, node_b: str) -> float:
         if graph.has_edge(node_b, node_a) and node_a != node_b:
@@ -777,6 +983,214 @@ def _render_network_png(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=220, bbox_inches="tight")
     plt.close(fig)
+    return out_path.exists()
+
+
+def _render_network_html(
+    edge_summary: pd.DataFrame,
+    out_path: Path,
+    *,
+    absolute_summary: pd.DataFrame | None = None,
+    title: str = "",
+    merge_bidirectional: bool = True,
+    ligand_assets: dict[str, dict[str, str]] | None = None,
+) -> bool:
+    """Render an interactive HTML RBFE network with ligand hover cards."""
+    if edge_summary is None or edge_summary.empty:
+        return False
+
+    graph, pos = _network_graph_with_layout(edge_summary)
+    color_meta = _node_color_mapping(graph, absolute_summary)
+    node_values = color_meta["values"]
+    norm = color_meta["norm"]
+    cmap = color_meta["cmap"]
+
+    canvas_w = 1100
+    canvas_h = 760
+    pad_x = 110
+    pad_y = 90
+    note_h = 120
+    plot_h = canvas_h - note_h
+
+    xs = [float(coord[0]) for coord in pos.values()]
+    ys = [float(coord[1]) for coord in pos.values()]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max(max_x - min_x, 1e-8)
+    span_y = max(max_y - min_y, 1e-8)
+
+    def _to_xy(point: np.ndarray) -> tuple[float, float]:
+        x = pad_x + ((float(point[0]) - min_x) / span_x) * (canvas_w - 2 * pad_x)
+        y = pad_y + ((max_y - float(point[1])) / span_y) * (plot_h - 2 * pad_y)
+        return x, y
+
+    def _edge_curvature(node_a: str, node_b: str) -> float:
+        if graph.has_edge(node_b, node_a) and node_a != node_b:
+            return 0.24
+        return 0.0
+
+    edge_magnitudes = [abs(float(data.get("calc_DDG", 0.0))) for _, _, data in graph.edges(data=True)]
+    edge_mag_min = min(edge_magnitudes) if edge_magnitudes else 0.0
+    edge_mag_max = max(edge_magnitudes) if edge_magnitudes else 1.0
+    if np.isclose(edge_mag_min, edge_mag_max):
+        edge_mag_max = edge_mag_min + 1.0
+
+    def _edge_width(abs_ddg: float) -> float:
+        scaled = (abs_ddg - edge_mag_min) / max(edge_mag_max - edge_mag_min, 1e-12)
+        return 2.8 + 4.2 * scaled
+
+    edge_color = "#7c3aed"
+    assets = ligand_assets or {}
+
+    node_degree = dict(graph.degree())
+    node_radius = {node: 26.0 + 2.0 * node_degree[node] for node in graph.nodes}
+    node_fill = {}
+    for node, value in zip(graph.nodes, node_values):
+        if norm is not None and cmap is not None and np.isfinite(value):
+            node_fill[node] = _rgba_to_hex(cmap(norm(float(value))))
+        else:
+            node_fill[node] = "#88c0d0"
+
+    edge_svg: list[str] = []
+    label_svg: list[str] = []
+    for node_a, node_b, data in graph.edges(data=True):
+        curvature = _edge_curvature(str(node_a), str(node_b))
+        start = np.asarray(_to_xy(pos[node_a]), dtype=float)
+        end = np.asarray(_to_xy(pos[node_b]), dtype=float)
+        direction = end - start
+        norm_dir = np.linalg.norm(direction)
+        if norm_dir > 0:
+            unit = direction / norm_dir
+            perp = np.array([-unit[1], unit[0]])
+        else:
+            unit = np.array([0.0, 0.0])
+            perp = np.array([0.0, 0.0])
+        start2 = start + unit * node_radius[node_a] * 0.8
+        end2 = end - unit * node_radius[node_b] * 0.8
+        span = np.linalg.norm(end2 - start2)
+        control = 0.5 * (start2 + end2) + perp * curvature * span * 0.75
+        path_d = (
+            f"M {start2[0]:.2f} {start2[1]:.2f} "
+            f"Q {control[0]:.2f} {control[1]:.2f} {end2[0]:.2f} {end2[1]:.2f}"
+        )
+        edge_svg.append(
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
+            f"stroke-width=\"{_edge_width(abs(float(data.get('calc_DDG', 0.0)))):.2f}\" "
+            f"stroke-linecap=\"round\" stroke-opacity=\"0.96\" marker-end=\"url(#arrow)\" />"
+        )
+
+        text_pos = 0.25 * start2 + 0.5 * control + 0.25 * end2
+        text_pos = text_pos + perp * curvature * span * 0.18
+        edge_label = html.escape(
+            f"{float(data.get('calc_DDG', 0.0)):+.2f}\n±{float(data.get('calc_dDDG', 0.0)):.2f}"
+        )
+        edge_label_lines = edge_label.split("\n")
+        label_svg.append(
+            "<g>"
+            f"<rect x=\"{text_pos[0] - 30:.2f}\" y=\"{text_pos[1] - 22:.2f}\" width=\"60\" height=\"42\" "
+            "rx=\"6\" ry=\"6\" fill=\"white\" fill-opacity=\"0.92\" stroke=\"#cbd2d9\" stroke-width=\"1.0\" />"
+            f"<text x=\"{text_pos[0]:.2f}\" y=\"{text_pos[1] - 4:.2f}\" text-anchor=\"middle\" "
+            "font-size=\"12\" fill=\"#243b53\">"
+            f"{edge_label_lines[0]}</text>"
+            f"<text x=\"{text_pos[0]:.2f}\" y=\"{text_pos[1] + 13:.2f}\" text-anchor=\"middle\" "
+            "font-size=\"12\" fill=\"#243b53\">"
+            f"{edge_label_lines[1]}</text>"
+            "</g>"
+        )
+
+    node_svg: list[str] = []
+    for node in graph.nodes:
+        x, y = _to_xy(pos[node])
+        label = html.escape(str(node))
+        node_svg.append(
+            "<g class=\"node\" "
+            f"data-ligand=\"{label}\" transform=\"translate({x:.2f},{y:.2f})\">"
+            f"<circle r=\"{node_radius[node]:.2f}\" fill=\"{node_fill[node]}\" stroke=\"#243b53\" stroke-width=\"3\" />"
+            f"<text text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"18\" font-weight=\"700\" "
+            "fill=\"#102a43\" paint-order=\"stroke\" stroke=\"white\" stroke-width=\"5\" stroke-linejoin=\"round\">"
+            f"{label}</text>"
+            "</g>"
+        )
+
+    note_lines = [
+        (
+            "Direction mode: merged opposite directions"
+            if merge_bidirectional
+            else "Direction mode: split stored directions"
+        ),
+        "Arrows point from labelA to labelB",
+        "Edge labels show ΔΔG ± s.e. (kcal/mol)",
+        "Edge thickness scales with |ΔΔG|",
+        "Node colors use red → white → blue for negative → zero → positive ΔG",
+    ]
+
+    html_text = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{html.escape(title or "BATTER RBFE network")}</title>
+  <style>
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7fb; color: #102a43; }}
+    .wrap {{ max-width: 1280px; margin: 0 auto; padding: 18px 18px 28px; }}
+    h1 {{ margin: 0 0 12px; font-size: 24px; text-align: center; }}
+    .panel {{ background: white; border: 1px solid #d9e2ec; border-radius: 16px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); overflow: hidden; }}
+    svg {{ width: 100%; height: auto; display: block; background: #f6f7fb; }}
+    .notes {{ margin: 12px 14px 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 10px; background: rgba(255,255,255,0.96); color: #486581; white-space: pre-line; }}
+    .tooltip {{ position: fixed; z-index: 1000; max-width: 320px; pointer-events: none; background: rgba(255,255,255,0.98); border: 1px solid #cbd2d9; border-radius: 12px; box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16); padding: 10px; opacity: 0; transform: translate(12px, 12px); transition: opacity 0.08s ease-out; }}
+    .tooltip.visible {{ opacity: 1; }}
+    .tooltip .title {{ font-weight: 700; margin-bottom: 6px; }}
+    .tooltip .smiles {{ margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #52606d; word-break: break-all; }}
+    .tooltip .empty {{ font-size: 12px; color: #7b8794; }}
+    .node {{ cursor: pointer; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{html.escape(title or "BATTER RBFE network")}</h1>
+    <div class="panel">
+      <svg viewBox="0 0 {canvas_w} {canvas_h}" role="img" aria-label="{html.escape(title or 'BATTER RBFE network')}">
+        <defs>
+          <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M 0 0 L 12 6 L 0 12 z" fill="{edge_color}" />
+          </marker>
+        </defs>
+        {''.join(edge_svg)}
+        {''.join(label_svg)}
+        {''.join(node_svg)}
+      </svg>
+      <div class="notes">{html.escape(chr(10).join(note_lines))}</div>
+    </div>
+  </div>
+  <div id="tooltip" class="tooltip"></div>
+  <script>
+    const ligandAssets = {json.dumps(assets)};
+    const tooltip = document.getElementById('tooltip');
+    function renderTooltip(label) {{
+      const asset = ligandAssets[label] || {{}};
+      const svg = asset.svg || '<div class="empty">No 2D structure available</div>';
+      const smiles = asset.smiles ? `<div class="smiles">${{asset.smiles}}</div>` : '';
+      tooltip.innerHTML = `<div class="title">${{label}}</div>${{svg}}${{smiles}}`;
+    }}
+    document.querySelectorAll('.node').forEach((node) => {{
+      node.addEventListener('mouseenter', (event) => {{
+        const label = node.getAttribute('data-ligand') || '';
+        renderTooltip(label);
+        tooltip.classList.add('visible');
+      }});
+      node.addEventListener('mousemove', (event) => {{
+        tooltip.style.left = `${{event.clientX + 14}}px`;
+        tooltip.style.top = `${{event.clientY + 14}}px`;
+      }});
+      node.addEventListener('mouseleave', () => {{
+        tooltip.classList.remove('visible');
+      }});
+    }});
+  </script>
+</body>
+</html>
+"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html_text, encoding="utf-8")
     return out_path.exists()
 
 
@@ -943,6 +1357,202 @@ def _render_absolute_sorted_png(
     return out_path.exists()
 
 
+def _render_absolute_sorted_html(
+    absolute_summary: pd.DataFrame,
+    out_path: Path,
+    *,
+    exp_summary: pd.DataFrame | None = None,
+    title: str = "",
+    absolute_offset: float = 0.0,
+    merge_bidirectional: bool = True,
+    ligand_assets: dict[str, dict[str, str]] | None = None,
+) -> bool:
+    """Render an interactive HTML absolute-energy ranking plot."""
+    if absolute_summary is None or absolute_summary.empty:
+        return False
+
+    abs_df = absolute_summary.copy()
+    label_col = "label" if "label" in abs_df.columns else None
+    dg_col = next((col for col in abs_df.columns if col.lower().startswith("dg")), None)
+    err_col = next(
+        (
+            col
+            for col in abs_df.columns
+            if "uncertainty" in col.lower() or col.lower().startswith("ddg")
+        ),
+        None,
+    )
+    if label_col is None or dg_col is None:
+        return False
+
+    abs_df = abs_df.dropna(subset=[label_col, dg_col]).copy()
+    if abs_df.empty:
+        return False
+
+    abs_df["DG_shifted"] = pd.to_numeric(abs_df[dg_col], errors="coerce") + float(
+        absolute_offset
+    )
+    abs_df["DG_uncertainty"] = (
+        pd.to_numeric(abs_df[err_col], errors="coerce").fillna(0.0)
+        if err_col is not None
+        else 0.0
+    )
+    abs_df = abs_df.sort_values("DG_shifted", ascending=True, kind="stable").reset_index(drop=True)
+
+    exp_map: dict[str, tuple[float, float]] = {}
+    if exp_summary is not None and not exp_summary.empty:
+        exp_df = exp_summary.copy()
+        if "label" in exp_df.columns and "exp_DG" in exp_df.columns:
+            exp_df = exp_df.dropna(subset=["label", "exp_DG"]).copy()
+            if not exp_df.empty:
+                exp_df["exp_uncertainty"] = pd.to_numeric(
+                    exp_df.get("exp_uncertainty", 0.0), errors="coerce"
+                ).fillna(0.0)
+                exp_map = {
+                    str(row.label): (float(row.exp_DG), float(row.exp_uncertainty))
+                    for row in exp_df.itertuples(index=False)
+                }
+
+    labels = abs_df[label_col].astype(str).tolist()
+    calc_values = abs_df["DG_shifted"].to_numpy(dtype=float)
+    calc_errs = abs_df["DG_uncertainty"].to_numpy(dtype=float)
+    exp_values = np.asarray([exp_map.get(label, (np.nan, np.nan))[0] for label in labels], dtype=float)
+    exp_errs = np.asarray([exp_map.get(label, (np.nan, np.nan))[1] for label in labels], dtype=float)
+
+    xmin = min(np.nanmin(calc_values - calc_errs), np.nanmin(np.where(np.isfinite(exp_values), exp_values - exp_errs, np.nan))) if np.isfinite(exp_values).any() else np.nanmin(calc_values - calc_errs)
+    xmax = max(np.nanmax(calc_values + calc_errs), np.nanmax(np.where(np.isfinite(exp_values), exp_values + exp_errs, np.nan))) if np.isfinite(exp_values).any() else np.nanmax(calc_values + calc_errs)
+    if np.isclose(xmin, xmax):
+        xmax = xmin + 1.0
+
+    canvas_w = 1100
+    row_h = 48
+    top_pad = 70
+    bottom_pad = 42
+    left_pad = 210
+    right_pad = 70
+    canvas_h = top_pad + bottom_pad + row_h * len(labels)
+    plot_w = canvas_w - left_pad - right_pad
+
+    def _x(value: float) -> float:
+        return left_pad + ((float(value) - xmin) / (xmax - xmin)) * plot_w
+
+    zero_x = _x(0.0)
+    assets = ligand_assets or {}
+    rows_svg: list[str] = []
+    for idx, label in enumerate(labels):
+        y = top_pad + idx * row_h + row_h * 0.5
+        value = float(calc_values[idx])
+        err = float(calc_errs[idx])
+        x0 = _x(min(0.0, value))
+        x1 = _x(max(0.0, value))
+        bar_x = min(x0, x1)
+        bar_w = max(abs(x1 - x0), 1.5)
+        err_l = _x(value - err)
+        err_r = _x(value + err)
+        rows_svg.append(
+            f"<g class=\"bar-row\" data-ligand=\"{html.escape(label)}\">"
+            f"<text x=\"{left_pad - 16:.2f}\" y=\"{y + 4:.2f}\" text-anchor=\"end\" font-size=\"14\" fill=\"#102a43\">{html.escape(label)}</text>"
+            f"<rect x=\"{bar_x:.2f}\" y=\"{y - 12:.2f}\" width=\"{bar_w:.2f}\" height=\"24\" rx=\"6\" ry=\"6\" fill=\"#88c0d0\" stroke=\"#0b7285\" stroke-width=\"1.2\" />"
+            f"<line x1=\"{err_l:.2f}\" y1=\"{y:.2f}\" x2=\"{err_r:.2f}\" y2=\"{y:.2f}\" stroke=\"#0b7285\" stroke-width=\"1.4\" />"
+            f"<line x1=\"{err_l:.2f}\" y1=\"{y - 7:.2f}\" x2=\"{err_l:.2f}\" y2=\"{y + 7:.2f}\" stroke=\"#0b7285\" stroke-width=\"1.4\" />"
+            f"<line x1=\"{err_r:.2f}\" y1=\"{y - 7:.2f}\" x2=\"{err_r:.2f}\" y2=\"{y + 7:.2f}\" stroke=\"#0b7285\" stroke-width=\"1.4\" />"
+        )
+        if np.isfinite(exp_values[idx]):
+            exp_x = _x(float(exp_values[idx]))
+            exp_err = float(exp_errs[idx])
+            rows_svg.append(
+                f"<line x1=\"{_x(exp_values[idx] - exp_err):.2f}\" y1=\"{y:.2f}\" x2=\"{_x(exp_values[idx] + exp_err):.2f}\" y2=\"{y:.2f}\" stroke=\"#bc6c25\" stroke-width=\"1.2\" />"
+                f"<rect x=\"{exp_x - 4:.2f}\" y=\"{y - 4:.2f}\" width=\"8\" height=\"8\" fill=\"#bc6c25\" />"
+            )
+        rows_svg.append(
+            f"<text x=\"{right_pad + left_pad + plot_w - 4:.2f}\" y=\"{y + 4:.2f}\" text-anchor=\"end\" font-size=\"12\" fill=\"#486581\">{value:+.2f} ± {err:.2f}</text></g>"
+        )
+
+    x_ticks = np.linspace(xmin, xmax, 6)
+    grid_svg = []
+    for tick in x_ticks:
+        x = _x(float(tick))
+        grid_svg.append(
+            f"<line x1=\"{x:.2f}\" y1=\"{top_pad - 20:.2f}\" x2=\"{x:.2f}\" y2=\"{canvas_h - bottom_pad + 6:.2f}\" stroke=\"#d9e2ec\" stroke-width=\"1\" />"
+            f"<text x=\"{x:.2f}\" y=\"{canvas_h - 10:.2f}\" text-anchor=\"middle\" font-size=\"12\" fill=\"#52606d\">{tick:.1f}</text>"
+        )
+
+    note_lines = [
+        (
+            "Direction mode: merged opposite directions"
+            if merge_bidirectional
+            else "Direction mode: split stored directions"
+        ),
+        "Hover over a ligand row to view its 2D structure",
+    ]
+    if not np.isclose(float(absolute_offset), 0.0):
+        note_lines.append(f"Applied offset: {float(absolute_offset):+.2f} kcal/mol")
+
+    html_text = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{html.escape(title or "BATTER absolute ranking")}</title>
+  <style>
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7fb; color: #102a43; }}
+    .wrap {{ max-width: 1280px; margin: 0 auto; padding: 18px 18px 28px; }}
+    h1 {{ margin: 0 0 12px; font-size: 24px; text-align: center; }}
+    .panel {{ background: white; border: 1px solid #d9e2ec; border-radius: 16px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); overflow: hidden; }}
+    svg {{ width: 100%; height: auto; display: block; background: #f6f7fb; }}
+    .notes {{ margin: 12px 14px 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 10px; background: rgba(255,255,255,0.96); color: #486581; white-space: pre-line; }}
+    .tooltip {{ position: fixed; z-index: 1000; max-width: 320px; pointer-events: none; background: rgba(255,255,255,0.98); border: 1px solid #cbd2d9; border-radius: 12px; box-shadow: 0 14px 36px rgba(15, 23, 42, 0.16); padding: 10px; opacity: 0; transform: translate(12px, 12px); transition: opacity 0.08s ease-out; }}
+    .tooltip.visible {{ opacity: 1; }}
+    .tooltip .title {{ font-weight: 700; margin-bottom: 6px; }}
+    .tooltip .smiles {{ margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #52606d; word-break: break-all; }}
+    .tooltip .empty {{ font-size: 12px; color: #7b8794; }}
+    .bar-row {{ cursor: pointer; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{html.escape(title or "BATTER absolute ranking")}</h1>
+    <div class="panel">
+      <svg viewBox="0 0 {canvas_w} {canvas_h}" role="img" aria-label="{html.escape(title or 'BATTER absolute ranking')}">
+        <line x1="{zero_x:.2f}" y1="{top_pad - 20:.2f}" x2="{zero_x:.2f}" y2="{canvas_h - bottom_pad + 6:.2f}" stroke="#7b8794" stroke-dasharray="4 4" stroke-width="1.2" />
+        {''.join(grid_svg)}
+        {''.join(rows_svg)}
+        <text x="{left_pad + plot_w * 0.5:.2f}" y="{top_pad - 34:.2f}" text-anchor="middle" font-size="14" fill="#102a43">Absolute ΔG (kcal/mol)</text>
+      </svg>
+      <div class="notes">{html.escape(chr(10).join(note_lines))}</div>
+    </div>
+  </div>
+  <div id="tooltip" class="tooltip"></div>
+  <script>
+    const ligandAssets = {json.dumps(assets)};
+    const tooltip = document.getElementById('tooltip');
+    function renderTooltip(label) {{
+      const asset = ligandAssets[label] || {{}};
+      const svg = asset.svg || '<div class="empty">No 2D structure available</div>';
+      const smiles = asset.smiles ? `<div class="smiles">${{asset.smiles}}</div>` : '';
+      tooltip.innerHTML = `<div class="title">${{label}}</div>${{svg}}${{smiles}}`;
+    }}
+    document.querySelectorAll('.bar-row').forEach((row) => {{
+      row.addEventListener('mouseenter', () => {{
+        renderTooltip(row.getAttribute('data-ligand') || '');
+        tooltip.classList.add('visible');
+      }});
+      row.addEventListener('mousemove', (event) => {{
+        tooltip.style.left = `${{event.clientX + 14}}px`;
+        tooltip.style.top = `${{event.clientY + 14}}px`;
+      }});
+      row.addEventListener('mouseleave', () => {{
+        tooltip.classList.remove('visible');
+      }});
+    }});
+  </script>
+</body>
+</html>
+"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html_text, encoding="utf-8")
+    return out_path.exists()
+
+
 def write_cinnabar_outputs(
     result: CinnabarConversionResult,
     out_dir: str | Path,
@@ -994,6 +1604,17 @@ def write_cinnabar_outputs(
             merge_bidirectional=result.merge_bidirectional,
         ):
             outputs["absolute_sorted_png"] = abs_plot_path
+        abs_html_path = out_root / "cinnabar_absolute_sorted.html"
+        if _render_absolute_sorted_html(
+            result.absolute_summary,
+            abs_html_path,
+            exp_summary=result.exp_summary,
+            title=title,
+            absolute_offset=absolute_offset,
+            merge_bidirectional=result.merge_bidirectional,
+            ligand_assets=result.ligand_assets,
+        ):
+            outputs["absolute_sorted_html"] = abs_html_path
 
     graph_path = out_root / "cinnabar_network.png"
     rendered = _render_network_png(
@@ -1011,6 +1632,16 @@ def write_cinnabar_outputs(
             rendered = False
     if rendered:
         outputs["network_png"] = graph_path
+    graph_html_path = out_root / "cinnabar_network.html"
+    if _render_network_html(
+        result.edge_summary,
+        graph_html_path,
+        absolute_summary=result.absolute_summary,
+        title=title,
+        merge_bidirectional=result.merge_bidirectional,
+        ligand_assets=result.ligand_assets,
+    ):
+        outputs["network_html"] = graph_html_path
 
     if write_plots and result.exp_summary is not None:
         try:

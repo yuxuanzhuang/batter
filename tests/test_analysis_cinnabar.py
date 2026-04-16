@@ -288,12 +288,16 @@ def test_write_cinnabar_outputs_writes_expected_files(
         "cinnabar_relative_csv",
         "cinnabar_absolute_csv",
         "absolute_sorted_png",
+        "absolute_sorted_html",
         "network_png",
+        "network_html",
         "manifest_json",
     }
     assert expected.issubset(outputs)
     for key in expected:
         assert outputs[key].exists()
+    assert "html" in outputs["network_html"].read_text().lower()
+    assert "html" in outputs["absolute_sorted_html"].read_text().lower()
 
 
 def test_write_cinnabar_outputs_manifest_records_split_directionality(
