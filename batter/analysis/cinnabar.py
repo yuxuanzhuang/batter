@@ -638,45 +638,41 @@ def _render_network_png(
             return 0.24
         return 0.0
 
-    edge_widths = []
-    edge_colors = []
     edge_metadata: list[tuple[str, str, dict[str, Any], float]] = []
-    edge_uncertainties = []
+    edge_magnitudes = []
     for node_a, node_b, data in graph.edges(data=True):
         curvature = _edge_curvature(str(node_a), str(node_b))
         edge_metadata.append((str(node_a), str(node_b), data, curvature))
-        edge_uncertainties.append(float(data.get("calc_dDDG", 0.0)))
-    if edge_uncertainties:
-        emin = min(edge_uncertainties)
-        emax = max(edge_uncertainties)
-        if np.isclose(emin, emax):
-            emax = emin + 1.0
-        edge_norm = mcolors.Normalize(vmin=emin, vmax=emax)
-        edge_cmap = colormaps["magma_r"]
+        edge_magnitudes.append(abs(float(data.get("calc_DDG", 0.0))))
+    if edge_magnitudes:
+        edge_mag_min = min(edge_magnitudes)
+        edge_mag_max = max(edge_magnitudes)
+        if np.isclose(edge_mag_min, edge_mag_max):
+            edge_mag_max = edge_mag_min + 1.0
     else:
-        edge_norm = mcolors.Normalize(vmin=0, vmax=1)
-        edge_cmap = colormaps["magma_r"]
+        edge_mag_min = 0.0
+        edge_mag_max = 1.0
 
-    for node_a, node_b, data, _curvature in edge_metadata:
-        n_measurements = max(1, int(data.get("n_measurements", 1)))
-        edge_widths.append(2.0 + 0.45 * np.log1p(n_measurements))
-        edge_colors.append(edge_cmap(edge_norm(float(data.get("calc_dDDG", 0.0)))))
+    def _edge_width(abs_ddg: float) -> float:
+        scaled = (abs_ddg - edge_mag_min) / max(edge_mag_max - edge_mag_min, 1e-12)
+        return 2.8 + 4.2 * scaled
+
+    edge_color = "#7c3aed"
 
     fig_w = max(7.0, 1.8 * graph.number_of_nodes())
     fig_h = max(5.5, 1.5 * graph.number_of_nodes())
-    fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig.subplots_adjust(left=0.04, right=0.88, top=0.92, bottom=0.16)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#f6f7fb")
 
-    for (node_a, node_b, data, curvature), edge_width, edge_color in zip(
-        edge_metadata, edge_widths, edge_colors
-    ):
+    for node_a, node_b, data, curvature in edge_metadata:
         nx.draw_networkx_edges(
             graph,
             pos,
             ax=ax,
             edgelist=[(node_a, node_b)],
-            width=edge_width,
+            width=_edge_width(abs(float(data.get("calc_DDG", 0.0)))),
             edge_color=[edge_color],
             alpha=0.95,
             arrows=True,
@@ -751,39 +747,30 @@ def _render_network_png(
     cbar = fig.colorbar(node_scalar, ax=ax, shrink=0.82, pad=0.02)
     cbar.set_label(colorbar_label, rotation=90)
 
-    ax.text(
-        0.01,
-        0.01,
-        "Edge labels show ΔΔG ± s.e. (kcal/mol)",
-        transform=ax.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=9,
-        color="#486581",
-    )
-    ax.text(
-        0.01,
-        0.055,
-        "Arrows point from labelA to labelB",
-        transform=ax.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=9,
-        color="#486581",
-    )
-    ax.text(
-        0.01,
-        0.10,
+    note_lines = [
         (
             "Direction mode: merged opposite directions"
             if merge_bidirectional
             else "Direction mode: split stored directions"
         ),
-        transform=ax.transAxes,
+        "Arrows point from labelA to labelB",
+        "Edge labels show ΔΔG ± s.e. (kcal/mol)",
+        "Edge thickness scales with |ΔΔG|",
+    ]
+    fig.text(
+        0.03,
+        0.035,
+        "\n".join(note_lines),
         ha="left",
         va="bottom",
         fontsize=9,
         color="#486581",
+        bbox={
+            "boxstyle": "round,pad=0.35",
+            "fc": "white",
+            "ec": "#cbd2d9",
+            "alpha": 0.97,
+        },
     )
 
     ax.set_axis_off()
