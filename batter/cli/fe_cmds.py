@@ -382,6 +382,8 @@ def fe_cinnabar(
                 write_plots=write_plots,
                 absolute_offset=absolute_offset,
             )
+            if getattr(result, "absolute_warning", None):
+                click.secho(str(result.absolute_warning), fg="yellow")
             if not merge_bidirectional and hasattr(result, "edge_summary"):
                 directionality = summarize_directionality(result.edge_summary)
                 if directionality["n_reciprocal_pairs"] == 0:
@@ -418,6 +420,8 @@ def fe_cinnabar(
                 write_plots=write_plots,
                 absolute_offset=absolute_offset,
             )
+            if getattr(result, "absolute_warning", None):
+                click.secho(f"[{run_id}] {result.absolute_warning}", fg="yellow")
             if not merge_bidirectional and hasattr(result, "edge_summary"):
                 stats = summarize_directionality(result.edge_summary)
                 stats["run_id"] = run_id

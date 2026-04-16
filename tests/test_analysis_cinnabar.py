@@ -120,6 +120,11 @@ class _FakeFEMap:
         return {"n_edges": len(self.relative_rows)}
 
 
+class _FakeFEMapNoAbsolute(_FakeFEMap):
+    def generate_absolute_values(self) -> None:
+        raise RuntimeError("network is disconnected")
+
+
 class _FakePlotting:
     @staticmethod
     def plot_DGs(graph, **kwargs) -> None:
@@ -209,6 +214,23 @@ def test_build_batter_rbfe_cinnabar_combines_runs(
     assert set(result.absolute_summary["label"]) == {"A", "B"}
 
 
+def test_build_batter_rbfe_cinnabar_warns_when_absolute_solution_missing(
+    monkeypatch, rbfe_index_df: pd.DataFrame, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        cinnabar_mod,
+        "_import_cinnabar_stack",
+        lambda: (_FakeFEMapNoAbsolute, _FakePlotting, _FakeUnitModule),
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: rbfe_index_df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1", "run2"])
+
+    assert result.absolute_summary is None
+    assert result.absolute_warning is not None
+    assert "Could not build a full absolute ΔG solution" in result.absolute_warning
+
+
 def test_build_batter_rbfe_cinnabar_by_run_splits_runs(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
@@ -288,16 +310,16 @@ def test_write_cinnabar_outputs_writes_expected_files(
         "cinnabar_relative_csv",
         "cinnabar_absolute_csv",
         "absolute_sorted_png",
-        "absolute_sorted_html",
         "network_png",
-        "network_html",
+        "dashboard_html",
         "manifest_json",
     }
     assert expected.issubset(outputs)
     for key in expected:
         assert outputs[key].exists()
-    assert "html" in outputs["network_html"].read_text().lower()
-    assert "html" in outputs["absolute_sorted_html"].read_text().lower()
+    dashboard_html = outputs["dashboard_html"].read_text().lower()
+    assert "tabbar" in dashboard_html
+    assert "sticky-note" in dashboard_html
 
 
 def test_write_cinnabar_outputs_manifest_records_split_directionality(
@@ -493,3 +515,30 @@ def test_cli_fe_cinnabar_split_directions_warns_without_reciprocals(
 
     assert result.exit_code == 0
     assert "contain no reciprocal A~B/B~A transformations" in result.output
+
+
+def test_cli_fe_cinnabar_warns_when_absolute_solution_missing(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    result_obj = type(
+        "Result",
+        (),
+        {
+            "edge_summary": pd.DataFrame([{"labelA": "A", "labelB": "B"}]),
+            "absolute_warning": "Could not build a full absolute ΔG solution from the RBFE network.",
+        },
+    )()
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar",
+        lambda **kwargs: result_obj,
+    )
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.write_cinnabar_outputs",
+        lambda result, out_dir, **kwargs: {},
+    )
+
+    result = runner.invoke(cli, ["fe", "cinnabar", str(tmp_path)])
+
+    assert result.exit_code == 0
+    assert "Could not build a full absolute ΔG solution" in result.output

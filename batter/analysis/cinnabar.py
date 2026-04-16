@@ -34,6 +34,7 @@ class CinnabarConversionResult:
     merge_bidirectional: bool = True
     exp_summary: pd.DataFrame | None = None
     absolute_summary: pd.DataFrame | None = None
+    absolute_warning: str | None = None
     ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
@@ -584,11 +585,16 @@ def dataframe_to_cinnabar(
                 )
 
     absolute_summary = None
+    absolute_warning = None
     try:
         femap.generate_absolute_values()
         absolute_summary = femap.get_absolute_dataframe()
-    except Exception:
+    except Exception as exc:
         absolute_summary = None
+        absolute_warning = (
+            "Could not build a full absolute ΔG solution from the RBFE network. "
+            f"Continuing with relative-only outputs. Underlying error: {exc}"
+        )
 
     return CinnabarConversionResult(
         femap=femap,
@@ -597,6 +603,7 @@ def dataframe_to_cinnabar(
         merge_bidirectional=merge_bidirectional,
         exp_summary=exp_summary,
         absolute_summary=absolute_summary,
+        absolute_warning=absolute_warning,
     )
 
 
@@ -1553,6 +1560,460 @@ def _render_absolute_sorted_html(
     return out_path.exists()
 
 
+def _render_dashboard_html(
+    edge_summary: pd.DataFrame,
+    out_path: Path,
+    *,
+    absolute_summary: pd.DataFrame | None = None,
+    exp_summary: pd.DataFrame | None = None,
+    title: str = "",
+    absolute_offset: float = 0.0,
+    merge_bidirectional: bool = True,
+    ligand_assets: dict[str, dict[str, str]] | None = None,
+    absolute_warning: str | None = None,
+) -> bool:
+    """Render a single tabbed HTML dashboard for network and absolute plots."""
+    if edge_summary is None or edge_summary.empty:
+        return False
+
+    graph, pos = _network_graph_with_layout(edge_summary)
+    color_meta = _node_color_mapping(graph, absolute_summary)
+    node_values = color_meta["values"]
+    norm = color_meta["norm"]
+    cmap = color_meta["cmap"]
+    color_mode = color_meta.get("mode", "degree")
+    assets = ligand_assets or {}
+
+    canvas_w = 1100
+    canvas_h = 760
+    pad_x = 110
+    pad_y = 90
+    note_h = 120
+    plot_h = canvas_h - note_h
+
+    xs = [float(coord[0]) for coord in pos.values()]
+    ys = [float(coord[1]) for coord in pos.values()]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max(max_x - min_x, 1e-8)
+    span_y = max(max_y - min_y, 1e-8)
+
+    def _to_xy(point: np.ndarray) -> tuple[float, float]:
+        x = pad_x + ((float(point[0]) - min_x) / span_x) * (canvas_w - 2 * pad_x)
+        y = pad_y + ((max_y - float(point[1])) / span_y) * (plot_h - 2 * pad_y)
+        return x, y
+
+    def _edge_curvature(node_a: str, node_b: str) -> float:
+        if graph.has_edge(node_b, node_a) and node_a != node_b:
+            return 0.24
+        return 0.0
+
+    edge_magnitudes = [abs(float(data.get("calc_DDG", 0.0))) for _, _, data in graph.edges(data=True)]
+    edge_mag_min = min(edge_magnitudes) if edge_magnitudes else 0.0
+    edge_mag_max = max(edge_magnitudes) if edge_magnitudes else 1.0
+    if np.isclose(edge_mag_min, edge_mag_max):
+        edge_mag_max = edge_mag_min + 1.0
+
+    def _edge_width(abs_ddg: float) -> float:
+        scaled = (abs_ddg - edge_mag_min) / max(edge_mag_max - edge_mag_min, 1e-12)
+        return 2.8 + 4.2 * scaled
+
+    edge_color = "#7c3aed"
+    node_degree = dict(graph.degree())
+    node_radius = {node: 26.0 + 2.0 * node_degree[node] for node in graph.nodes}
+    node_fill = {}
+    for node, value in zip(graph.nodes, node_values):
+        if norm is not None and cmap is not None and np.isfinite(value):
+            node_fill[node] = _rgba_to_hex(cmap(norm(float(value))))
+        else:
+            node_fill[node] = "#88c0d0"
+
+    edge_svg: list[str] = []
+    label_svg: list[str] = []
+    for node_a, node_b, data in graph.edges(data=True):
+        curvature = _edge_curvature(str(node_a), str(node_b))
+        start = np.asarray(_to_xy(pos[node_a]), dtype=float)
+        end = np.asarray(_to_xy(pos[node_b]), dtype=float)
+        direction = end - start
+        norm_dir = np.linalg.norm(direction)
+        if norm_dir > 0:
+            unit_dir = direction / norm_dir
+            perp = np.array([-unit_dir[1], unit_dir[0]])
+        else:
+            unit_dir = np.array([0.0, 0.0])
+            perp = np.array([0.0, 0.0])
+        start2 = start + unit_dir * node_radius[node_a] * 0.8
+        end2 = end - unit_dir * node_radius[node_b] * 0.8
+        span = np.linalg.norm(end2 - start2)
+        control = 0.5 * (start2 + end2) + perp * curvature * span * 0.75
+        path_d = (
+            f"M {start2[0]:.2f} {start2[1]:.2f} "
+            f"Q {control[0]:.2f} {control[1]:.2f} {end2[0]:.2f} {end2[1]:.2f}"
+        )
+        edge_svg.append(
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
+            f"stroke-width=\"{_edge_width(abs(float(data.get('calc_DDG', 0.0)))):.2f}\" "
+            f"stroke-linecap=\"round\" stroke-opacity=\"0.96\" marker-end=\"url(#arrow)\" />"
+        )
+
+        text_pos = 0.25 * start2 + 0.5 * control + 0.25 * end2
+        text_pos = text_pos + perp * curvature * span * 0.18
+        edge_label = html.escape(
+            f"{float(data.get('calc_DDG', 0.0)):+.2f}\n±{float(data.get('calc_dDDG', 0.0)):.2f}"
+        )
+        edge_label_lines = edge_label.split("\n")
+        label_svg.append(
+            "<g>"
+            f"<rect x=\"{text_pos[0] - 30:.2f}\" y=\"{text_pos[1] - 22:.2f}\" width=\"60\" height=\"42\" "
+            "rx=\"6\" ry=\"6\" fill=\"white\" fill-opacity=\"0.92\" stroke=\"#cbd2d9\" stroke-width=\"1.0\" />"
+            f"<text x=\"{text_pos[0]:.2f}\" y=\"{text_pos[1] - 4:.2f}\" text-anchor=\"middle\" "
+            "font-size=\"12\" fill=\"#243b53\">"
+            f"{edge_label_lines[0]}</text>"
+            f"<text x=\"{text_pos[0]:.2f}\" y=\"{text_pos[1] + 13:.2f}\" text-anchor=\"middle\" "
+            "font-size=\"12\" fill=\"#243b53\">"
+            f"{edge_label_lines[1]}</text>"
+            "</g>"
+        )
+
+    node_svg: list[str] = []
+    for node in graph.nodes:
+        x, y = _to_xy(pos[node])
+        label = html.escape(str(node))
+        node_svg.append(
+            "<g class=\"node\" "
+            f"data-ligand=\"{label}\" transform=\"translate({x:.2f},{y:.2f})\">"
+            f"<circle r=\"{node_radius[node]:.2f}\" fill=\"{node_fill[node]}\" stroke=\"#243b53\" stroke-width=\"3\" />"
+            f"<text text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"18\" font-weight=\"700\" "
+            "fill=\"#102a43\" paint-order=\"stroke\" stroke=\"white\" stroke-width=\"5\" stroke-linejoin=\"round\">"
+            f"{label}</text>"
+            "</g>"
+        )
+
+    network_notes = [
+        (
+            "Direction mode: merged opposite directions"
+            if merge_bidirectional
+            else "Direction mode: split stored directions"
+        ),
+        "Click a node to pin a ligand structure card",
+        "Arrows point from labelA to labelB",
+        "Edge labels show ΔΔG ± s.e. (kcal/mol)",
+        "Edge thickness scales with |ΔΔG|",
+        (
+            "Node colors use red → white → blue for negative → zero → positive ΔG"
+            if color_mode == "absolute"
+            else "Node colors reflect degree because no absolute ΔG solution was available"
+        ),
+    ]
+
+    network_svg_html = f"""
+      <svg viewBox="0 0 {canvas_w} {canvas_h}" role="img" aria-label="{html.escape(title or 'BATTER RBFE network')}">
+        <defs>
+          <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+            <path d="M 0 0 L 12 6 L 0 12 z" fill="{edge_color}" />
+          </marker>
+        </defs>
+        {''.join(edge_svg)}
+        {''.join(label_svg)}
+        {''.join(node_svg)}
+      </svg>
+    """
+
+    absolute_panel_html = "<div class=\"empty-panel\">Absolute ΔG values are not available for this network.</div>"
+    absolute_notes = [
+        (
+            "Direction mode: merged opposite directions"
+            if merge_bidirectional
+            else "Direction mode: split stored directions"
+        ),
+        "Absolute ΔG values are not available for this network",
+    ]
+    if absolute_warning:
+        absolute_notes.append(absolute_warning)
+
+    if absolute_summary is not None and not absolute_summary.empty:
+        abs_df = absolute_summary.copy()
+        label_col = "label" if "label" in abs_df.columns else None
+        dg_col = next((col for col in abs_df.columns if col.lower().startswith("dg")), None)
+        err_col = next(
+            (
+                col
+                for col in abs_df.columns
+                if "uncertainty" in col.lower() or col.lower().startswith("ddg")
+            ),
+            None,
+        )
+        if label_col is not None and dg_col is not None:
+            abs_df = abs_df.dropna(subset=[label_col, dg_col]).copy()
+            if not abs_df.empty:
+                abs_df["DG_shifted"] = pd.to_numeric(abs_df[dg_col], errors="coerce") + float(
+                    absolute_offset
+                )
+                abs_df["DG_uncertainty"] = (
+                    pd.to_numeric(abs_df[err_col], errors="coerce").fillna(0.0)
+                    if err_col is not None
+                    else 0.0
+                )
+                abs_df = abs_df.sort_values("DG_shifted", ascending=True, kind="stable").reset_index(drop=True)
+
+                exp_map: dict[str, tuple[float, float]] = {}
+                if exp_summary is not None and not exp_summary.empty:
+                    exp_df = exp_summary.copy()
+                    if "label" in exp_df.columns and "exp_DG" in exp_df.columns:
+                        exp_df = exp_df.dropna(subset=["label", "exp_DG"]).copy()
+                        if not exp_df.empty:
+                            exp_df["exp_uncertainty"] = pd.to_numeric(
+                                exp_df.get("exp_uncertainty", 0.0), errors="coerce"
+                            ).fillna(0.0)
+                            exp_map = {
+                                str(row.label): (float(row.exp_DG), float(row.exp_uncertainty))
+                                for row in exp_df.itertuples(index=False)
+                            }
+
+                labels = abs_df[label_col].astype(str).tolist()
+                calc_values = abs_df["DG_shifted"].to_numpy(dtype=float)
+                calc_errs = abs_df["DG_uncertainty"].to_numpy(dtype=float)
+                exp_values = np.asarray(
+                    [exp_map.get(label, (np.nan, np.nan))[0] for label in labels], dtype=float
+                )
+                exp_errs = np.asarray(
+                    [exp_map.get(label, (np.nan, np.nan))[1] for label in labels], dtype=float
+                )
+
+                calc_min = np.nanmin(calc_values - calc_errs)
+                calc_max = np.nanmax(calc_values + calc_errs)
+                if np.isfinite(exp_values).any():
+                    exp_min = np.nanmin(np.where(np.isfinite(exp_values), exp_values - exp_errs, np.nan))
+                    exp_max = np.nanmax(np.where(np.isfinite(exp_values), exp_values + exp_errs, np.nan))
+                    xmin = min(calc_min, exp_min)
+                    xmax = max(calc_max, exp_max)
+                else:
+                    xmin = calc_min
+                    xmax = calc_max
+                if np.isclose(xmin, xmax):
+                    xmax = xmin + 1.0
+
+                abs_canvas_w = 1100
+                row_h = 48
+                top_pad = 70
+                bottom_pad = 42
+                left_pad = 210
+                right_pad = 70
+                abs_canvas_h = top_pad + bottom_pad + row_h * len(labels)
+                plot_w = abs_canvas_w - left_pad - right_pad
+
+                def _x(value: float) -> float:
+                    return left_pad + ((float(value) - xmin) / (xmax - xmin)) * plot_w
+
+                zero_x = _x(0.0)
+
+                limit = max(abs(float(np.nanmin(calc_values))), abs(float(np.nanmax(calc_values))), 1e-8)
+                bar_norm = None
+                bar_cmap = None
+                if cmap is not None and norm is not None and color_mode == "absolute":
+                    bar_norm = norm
+                    bar_cmap = cmap
+
+                rows_svg: list[str] = []
+                for idx, label in enumerate(labels):
+                    y = top_pad + idx * row_h + row_h * 0.5
+                    value = float(calc_values[idx])
+                    err = float(calc_errs[idx])
+                    x0 = _x(min(0.0, value))
+                    x1 = _x(max(0.0, value))
+                    bar_x = min(x0, x1)
+                    bar_w = max(abs(x1 - x0), 1.5)
+                    err_l = _x(value - err)
+                    err_r = _x(value + err)
+                    if bar_cmap is not None and bar_norm is not None:
+                        fill = _rgba_to_hex(bar_cmap(bar_norm(value)))
+                    else:
+                        fill = "#88c0d0"
+                    rows_svg.append(
+                        f"<g class=\"bar-row\" data-ligand=\"{html.escape(label)}\">"
+                        f"<text x=\"{left_pad - 16:.2f}\" y=\"{y + 4:.2f}\" text-anchor=\"end\" font-size=\"14\" fill=\"#102a43\">{html.escape(label)}</text>"
+                        f"<rect x=\"{bar_x:.2f}\" y=\"{y - 12:.2f}\" width=\"{bar_w:.2f}\" height=\"24\" rx=\"6\" ry=\"6\" fill=\"{fill}\" stroke=\"#0b7285\" stroke-width=\"1.2\" />"
+                        f"<line x1=\"{err_l:.2f}\" y1=\"{y:.2f}\" x2=\"{err_r:.2f}\" y2=\"{y:.2f}\" stroke=\"#0b7285\" stroke-width=\"1.4\" />"
+                        f"<line x1=\"{err_l:.2f}\" y1=\"{y - 7:.2f}\" x2=\"{err_l:.2f}\" y2=\"{y + 7:.2f}\" stroke=\"#0b7285\" stroke-width=\"1.4\" />"
+                        f"<line x1=\"{err_r:.2f}\" y1=\"{y - 7:.2f}\" x2=\"{err_r:.2f}\" y2=\"{y + 7:.2f}\" stroke=\"#0b7285\" stroke-width=\"1.4\" />"
+                    )
+                    if np.isfinite(exp_values[idx]):
+                        exp_x = _x(float(exp_values[idx]))
+                        exp_err = float(exp_errs[idx])
+                        rows_svg.append(
+                            f"<line x1=\"{_x(exp_values[idx] - exp_err):.2f}\" y1=\"{y:.2f}\" x2=\"{_x(exp_values[idx] + exp_err):.2f}\" y2=\"{y:.2f}\" stroke=\"#bc6c25\" stroke-width=\"1.2\" />"
+                            f"<rect x=\"{exp_x - 4:.2f}\" y=\"{y - 4:.2f}\" width=\"8\" height=\"8\" fill=\"#bc6c25\" />"
+                        )
+                    rows_svg.append(
+                        f"<text x=\"{right_pad + left_pad + plot_w - 4:.2f}\" y=\"{y + 4:.2f}\" text-anchor=\"end\" font-size=\"12\" fill=\"#486581\">{value:+.2f} ± {err:.2f}</text></g>"
+                    )
+
+                x_ticks = np.linspace(xmin, xmax, 6)
+                grid_svg = []
+                for tick in x_ticks:
+                    x = _x(float(tick))
+                    grid_svg.append(
+                        f"<line x1=\"{x:.2f}\" y1=\"{top_pad - 20:.2f}\" x2=\"{x:.2f}\" y2=\"{abs_canvas_h - bottom_pad + 6:.2f}\" stroke=\"#d9e2ec\" stroke-width=\"1\" />"
+                        f"<text x=\"{x:.2f}\" y=\"{abs_canvas_h - 10:.2f}\" text-anchor=\"middle\" font-size=\"12\" fill=\"#52606d\">{tick:.1f}</text>"
+                    )
+
+                absolute_panel_html = f"""
+                  <svg viewBox=\"0 0 {abs_canvas_w} {abs_canvas_h}\" role=\"img\" aria-label=\"{html.escape(title or 'BATTER absolute ranking')}\">
+                    <line x1=\"{zero_x:.2f}\" y1=\"{top_pad - 20:.2f}\" x2=\"{zero_x:.2f}\" y2=\"{abs_canvas_h - bottom_pad + 6:.2f}\" stroke=\"#7b8794\" stroke-dasharray=\"4 4\" stroke-width=\"1.2\" />
+                    {''.join(grid_svg)}
+                    {''.join(rows_svg)}
+                    <text x=\"{left_pad + plot_w * 0.5:.2f}\" y=\"{top_pad - 34:.2f}\" text-anchor=\"middle\" font-size=\"14\" fill=\"#102a43\">Absolute ΔG (kcal/mol)</text>
+                  </svg>
+                """
+                absolute_notes = [
+                    (
+                        "Direction mode: merged opposite directions"
+                        if merge_bidirectional
+                        else "Direction mode: split stored directions"
+                    ),
+                    "Click a ligand row to pin a ligand structure card",
+                ]
+                if exp_map:
+                    absolute_notes.append("Experiment markers are shown as orange squares")
+                if not np.isclose(float(absolute_offset), 0.0):
+                    absolute_notes.append(f"Applied offset: {float(absolute_offset):+.2f} kcal/mol")
+
+    html_text = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{html.escape(title or "BATTER Cinnabar dashboard")}</title>
+  <style>
+    body {{ margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f6f7fb; color: #102a43; }}
+    .wrap {{ max-width: 1320px; margin: 0 auto; padding: 18px 18px 28px; }}
+    h1 {{ margin: 0 0 14px; font-size: 24px; text-align: center; }}
+    .tabbar {{ display: flex; gap: 10px; margin-bottom: 14px; justify-content: center; }}
+    .tab {{ border: 1px solid #cbd2d9; background: white; color: #334e68; border-radius: 999px; padding: 8px 16px; font-size: 14px; cursor: pointer; }}
+    .tab.active {{ background: #7c3aed; border-color: #7c3aed; color: white; }}
+    .panel {{ display: none; background: white; border: 1px solid #d9e2ec; border-radius: 16px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); overflow: hidden; }}
+    .panel.active {{ display: block; }}
+    .panel svg {{ width: 100%; height: auto; display: block; background: #f6f7fb; }}
+    .notes {{ margin: 12px 14px 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 10px; background: rgba(255,255,255,0.96); color: #486581; white-space: pre-line; }}
+    .empty-panel {{ padding: 36px 24px; font-size: 15px; color: #52606d; text-align: center; }}
+    .node, .bar-row {{ cursor: pointer; }}
+    #stickies {{ position: fixed; inset: 0; pointer-events: none; z-index: 1000; }}
+    .sticky-note {{ position: fixed; width: 280px; min-height: 160px; background: #fff9c4; border: 1px solid #e0c56e; border-radius: 14px; box-shadow: 0 16px 38px rgba(15, 23, 42, 0.18); padding: 12px 12px 10px; pointer-events: auto; }}
+    .sticky-header {{ display: flex; align-items: center; justify-content: space-between; font-weight: 700; margin-bottom: 8px; color: #6b4f00; cursor: move; }}
+    .sticky-close {{ border: 0; background: transparent; color: #6b4f00; font-size: 18px; line-height: 1; cursor: pointer; }}
+    .sticky-body .smiles {{ margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #52606d; word-break: break-all; }}
+    .sticky-body .empty {{ font-size: 12px; color: #7b8794; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{html.escape(title or "BATTER Cinnabar dashboard")}</h1>
+    <div class="tabbar">
+      <button class="tab active" data-panel="network-panel">Network</button>
+      <button class="tab" data-panel="absolute-panel">Absolute</button>
+    </div>
+    <section id="network-panel" class="panel active">
+      {network_svg_html}
+      <div class="notes">{html.escape(chr(10).join(network_notes))}</div>
+    </section>
+    <section id="absolute-panel" class="panel">
+      {absolute_panel_html}
+      <div class="notes">{html.escape(chr(10).join(absolute_notes))}</div>
+    </section>
+  </div>
+  <div id="stickies"></div>
+  <script>
+    const ligandAssets = {json.dumps(assets)};
+    const stickyRoot = document.getElementById('stickies');
+    let zCounter = 1000;
+
+    function stickyBodyHtml(label) {{
+      const asset = ligandAssets[label] || {{}};
+      const svg = asset.svg || '<div class="empty">No 2D structure available</div>';
+      const smiles = asset.smiles ? `<div class="smiles">${{asset.smiles}}</div>` : '';
+      return `<div class="sticky-body">${{svg}}${{smiles}}</div>`;
+    }}
+
+    function bringToFront(note) {{
+      zCounter += 1;
+      note.style.zIndex = String(zCounter);
+    }}
+
+    function makeDraggable(note) {{
+      const header = note.querySelector('.sticky-header');
+      let startX = 0, startY = 0, startLeft = 0, startTop = 0, dragging = false;
+      header.addEventListener('pointerdown', (event) => {{
+        dragging = true;
+        bringToFront(note);
+        startX = event.clientX;
+        startY = event.clientY;
+        startLeft = parseFloat(note.style.left || '0');
+        startTop = parseFloat(note.style.top || '0');
+        header.setPointerCapture(event.pointerId);
+      }});
+      header.addEventListener('pointermove', (event) => {{
+        if (!dragging) return;
+        note.style.left = `${{startLeft + event.clientX - startX}}px`;
+        note.style.top = `${{startTop + event.clientY - startY}}px`;
+      }});
+      function endDrag(event) {{
+        dragging = false;
+        try {{ header.releasePointerCapture(event.pointerId); }} catch (_e) {{}}
+      }}
+      header.addEventListener('pointerup', endDrag);
+      header.addEventListener('pointercancel', endDrag);
+    }}
+
+    function openSticky(label, event) {{
+      const existing = document.querySelector(`.sticky-note[data-ligand="${{CSS.escape(label)}}"]`);
+      if (existing) {{
+        bringToFront(existing);
+        return;
+      }}
+      const note = document.createElement('div');
+      note.className = 'sticky-note';
+      note.dataset.ligand = label;
+      note.style.left = `${{Math.min(window.innerWidth - 320, Math.max(16, event.clientX + 12))}}px`;
+      note.style.top = `${{Math.min(window.innerHeight - 260, Math.max(16, event.clientY + 12))}}px`;
+      note.innerHTML = `
+        <div class="sticky-header">
+          <span>${{label}}</span>
+          <button class="sticky-close" type="button" aria-label="Close">×</button>
+        </div>
+        ${{stickyBodyHtml(label)}}
+      `;
+      stickyRoot.appendChild(note);
+      bringToFront(note);
+      makeDraggable(note);
+      note.addEventListener('pointerdown', () => bringToFront(note));
+      note.querySelector('.sticky-close').addEventListener('click', () => note.remove());
+    }}
+
+    document.querySelectorAll('.node, .bar-row').forEach((element) => {{
+      element.addEventListener('click', (event) => {{
+        const label = element.getAttribute('data-ligand') || '';
+        if (label) {{
+          openSticky(label, event);
+        }}
+      }});
+    }});
+
+    document.querySelectorAll('.tab').forEach((button) => {{
+      button.addEventListener('click', () => {{
+        document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach((panel) => panel.classList.remove('active'));
+        button.classList.add('active');
+        document.getElementById(button.dataset.panel).classList.add('active');
+      }});
+    }});
+  </script>
+</body>
+</html>
+"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html_text, encoding="utf-8")
+    return out_path.exists()
+
+
 def write_cinnabar_outputs(
     result: CinnabarConversionResult,
     out_dir: str | Path,
@@ -1604,17 +2065,6 @@ def write_cinnabar_outputs(
             merge_bidirectional=result.merge_bidirectional,
         ):
             outputs["absolute_sorted_png"] = abs_plot_path
-        abs_html_path = out_root / "cinnabar_absolute_sorted.html"
-        if _render_absolute_sorted_html(
-            result.absolute_summary,
-            abs_html_path,
-            exp_summary=result.exp_summary,
-            title=title,
-            absolute_offset=absolute_offset,
-            merge_bidirectional=result.merge_bidirectional,
-            ligand_assets=result.ligand_assets,
-        ):
-            outputs["absolute_sorted_html"] = abs_html_path
 
     graph_path = out_root / "cinnabar_network.png"
     rendered = _render_network_png(
@@ -1632,16 +2082,19 @@ def write_cinnabar_outputs(
             rendered = False
     if rendered:
         outputs["network_png"] = graph_path
-    graph_html_path = out_root / "cinnabar_network.html"
-    if _render_network_html(
+    dashboard_html_path = out_root / "cinnabar_dashboard.html"
+    if _render_dashboard_html(
         result.edge_summary,
-        graph_html_path,
+        dashboard_html_path,
         absolute_summary=result.absolute_summary,
+        exp_summary=result.exp_summary,
         title=title,
+        absolute_offset=absolute_offset,
         merge_bidirectional=result.merge_bidirectional,
         ligand_assets=result.ligand_assets,
+        absolute_warning=result.absolute_warning,
     ):
-        outputs["network_html"] = graph_html_path
+        outputs["dashboard_html"] = dashboard_html_path
 
     if write_plots and result.exp_summary is not None:
         try:
@@ -1676,6 +2129,7 @@ def write_cinnabar_outputs(
         "n_measurements": int(len(result.raw_signed)),
         "has_experimental": bool(result.exp_summary is not None),
         "has_absolute": bool(result.absolute_summary is not None),
+        "absolute_warning": result.absolute_warning or "",
         "absolute_offset": float(absolute_offset),
         "direction_mode": "merged" if result.merge_bidirectional else "split",
         "n_directional_edges": directionality["n_directional_edges"],
