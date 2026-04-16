@@ -10,6 +10,7 @@ from typing import Any, Literal, Sequence
 
 import numpy as np
 import pandas as pd
+import networkx as nx
 
 from batter.api import list_fe_runs
 
@@ -501,6 +502,198 @@ def build_batter_rbfe_cinnabar_by_run(
     return out
 
 
+def _render_network_png(
+    edge_summary: pd.DataFrame,
+    out_path: Path,
+    *,
+    absolute_summary: pd.DataFrame | None = None,
+    title: str = "",
+) -> bool:
+    """Render a BATTER-styled RBFE network figure from summarized edge data."""
+    if edge_summary.empty:
+        return False
+
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.patheffects as path_effects
+        from matplotlib import colors as mcolors
+        from matplotlib import cm, colormaps
+    except Exception:
+        return False
+
+    graph = nx.Graph()
+    for row in edge_summary.itertuples(index=False):
+        graph.add_edge(
+            str(row.labelA),
+            str(row.labelB),
+            calc_DDG=float(row.calc_DDG),
+            calc_dDDG=float(row.calc_dDDG),
+            n_runs=int(getattr(row, "n_runs", 1)),
+            n_measurements=int(getattr(row, "n_measurements", 1)),
+        )
+
+    if graph.number_of_nodes() == 1:
+        only = next(iter(graph.nodes))
+        pos = {only: np.array([0.0, 0.0])}
+    elif graph.number_of_nodes() == 2:
+        nodes = list(graph.nodes)
+        pos = {nodes[0]: np.array([-1.0, 0.0]), nodes[1]: np.array([1.0, 0.0])}
+    else:
+        pos = nx.kamada_kawai_layout(graph)
+
+    node_degree = dict(graph.degree())
+    node_sizes = [1400 + 220 * node_degree[node] for node in graph.nodes]
+
+    node_colors = None
+    colorbar_label = None
+    norm = None
+    cmap = None
+    if absolute_summary is not None and not absolute_summary.empty:
+        abs_df = absolute_summary.copy()
+        dg_col = next(
+            (col for col in abs_df.columns if col.lower().startswith("dg")),
+            None,
+        )
+        label_col = "label" if "label" in abs_df.columns else None
+        if dg_col and label_col:
+            dg_map = (
+                abs_df.dropna(subset=[label_col, dg_col])
+                .drop_duplicates(subset=[label_col])
+                .set_index(label_col)[dg_col]
+                .astype(float)
+                .to_dict()
+            )
+            if dg_map:
+                node_colors = [dg_map.get(node, np.nan) for node in graph.nodes]
+                finite_colors = [value for value in node_colors if np.isfinite(value)]
+                if finite_colors:
+                    vmin = min(finite_colors)
+                    vmax = max(finite_colors)
+                    if np.isclose(vmin, vmax):
+                        vmax = vmin + 1.0
+                    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+                    cmap = colormaps["viridis_r"]
+                    colorbar_label = "MLE ΔG (kcal/mol)"
+                else:
+                    node_colors = None
+
+    if node_colors is None:
+        node_colors = [node_degree[node] for node in graph.nodes]
+        vmax = max(node_colors) if node_colors else 1
+        norm = mcolors.Normalize(vmin=0, vmax=max(1, vmax))
+        cmap = colormaps["Blues"]
+        colorbar_label = "Node degree"
+
+    edge_widths = []
+    edge_colors = []
+    edge_labels = {}
+    edge_uncertainties = [
+        float(data.get("calc_dDDG", 0.0)) for _, _, data in graph.edges(data=True)
+    ]
+    if edge_uncertainties:
+        emin = min(edge_uncertainties)
+        emax = max(edge_uncertainties)
+        if np.isclose(emin, emax):
+            emax = emin + 1.0
+        edge_norm = mcolors.Normalize(vmin=emin, vmax=emax)
+        edge_cmap = colormaps["magma_r"]
+    else:
+        edge_norm = mcolors.Normalize(vmin=0, vmax=1)
+        edge_cmap = colormaps["magma_r"]
+
+    for node_a, node_b, data in graph.edges(data=True):
+        n_measurements = max(1, int(data.get("n_measurements", 1)))
+        edge_widths.append(2.0 + 0.45 * np.log1p(n_measurements))
+        edge_colors.append(edge_cmap(edge_norm(float(data.get("calc_dDDG", 0.0)))))
+        edge_labels[(node_a, node_b)] = (
+            f"{float(data.get('calc_DDG', 0.0)):+.2f}\n"
+            f"±{float(data.get('calc_dDDG', 0.0)):.2f}"
+        )
+
+    fig_w = max(7.0, 1.8 * graph.number_of_nodes())
+    fig_h = max(5.5, 1.5 * graph.number_of_nodes())
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("#f6f7fb")
+
+    nx.draw_networkx_edges(
+        graph,
+        pos,
+        ax=ax,
+        width=edge_widths,
+        edge_color=edge_colors,
+        alpha=0.95,
+    )
+    node_artist = nx.draw_networkx_nodes(
+        graph,
+        pos,
+        ax=ax,
+        node_size=node_sizes,
+        node_color=node_colors,
+        cmap=cmap,
+        linewidths=1.5,
+        edgecolors="#243b53",
+    )
+    if norm is not None:
+        node_artist.set_norm(norm)
+
+    label_text = nx.draw_networkx_labels(
+        graph,
+        pos,
+        ax=ax,
+        font_size=10,
+        font_weight="bold",
+        font_color="#102a43",
+    )
+    for text in label_text.values():
+        text.set_path_effects(
+            [path_effects.withStroke(linewidth=3, foreground="white", alpha=0.9)]
+        )
+
+    edge_text = nx.draw_networkx_edge_labels(
+        graph,
+        pos,
+        ax=ax,
+        edge_labels=edge_labels,
+        font_size=8,
+        label_pos=0.5,
+        rotate=False,
+        bbox={
+            "boxstyle": "round,pad=0.18",
+            "fc": "white",
+            "ec": "#cbd2d9",
+            "alpha": 0.9,
+        },
+    )
+    for text in edge_text.values():
+        text.set_color("#243b53")
+
+    if title:
+        ax.set_title(title, fontsize=14, fontweight="bold", color="#102a43", pad=14)
+
+    node_scalar = cm.ScalarMappable(norm=norm, cmap=cmap)
+    node_scalar.set_array([])
+    cbar = fig.colorbar(node_scalar, ax=ax, shrink=0.82, pad=0.02)
+    cbar.set_label(colorbar_label, rotation=90)
+
+    ax.text(
+        0.01,
+        0.01,
+        "Edge labels show ΔΔG ± s.e. (kcal/mol)",
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color="#486581",
+    )
+
+    ax.set_axis_off()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out_path.exists()
+
+
 def write_cinnabar_outputs(
     result: CinnabarConversionResult,
     out_dir: str | Path,
@@ -539,13 +732,22 @@ def write_cinnabar_outputs(
         result.absolute_summary.to_csv(abs_path, index=False)
         outputs["cinnabar_absolute_csv"] = abs_path
 
-    try:
-        graph_path = out_root / "cinnabar_network.png"
-        result.femap.draw_graph(filename=str(graph_path))
-        if graph_path.exists():
-            outputs["network_png"] = graph_path
-    except Exception:
-        pass
+    graph_path = out_root / "cinnabar_network.png"
+    title = method_name if not target_name else f"{method_name}: {target_name}"
+    rendered = _render_network_png(
+        result.edge_summary,
+        graph_path,
+        absolute_summary=result.absolute_summary,
+        title=title,
+    )
+    if not rendered:
+        try:
+            result.femap.draw_graph(filename=str(graph_path), title=title)
+            rendered = graph_path.exists()
+        except Exception:
+            rendered = False
+    if rendered:
+        outputs["network_png"] = graph_path
 
     if write_plots and result.exp_summary is not None:
         try:
