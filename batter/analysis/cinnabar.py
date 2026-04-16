@@ -29,6 +29,7 @@ class CinnabarConversionResult:
     femap: Any
     edge_summary: pd.DataFrame
     raw_signed: pd.DataFrame
+    merge_bidirectional: bool = True
     exp_summary: pd.DataFrame | None = None
     absolute_summary: pd.DataFrame | None = None
 
@@ -407,6 +408,7 @@ def dataframe_to_cinnabar(
         femap=femap,
         edge_summary=edge_summary,
         raw_signed=raw_signed,
+        merge_bidirectional=merge_bidirectional,
         exp_summary=exp_summary,
         absolute_summary=absolute_summary,
     )
@@ -517,6 +519,7 @@ def _render_network_png(
     *,
     absolute_summary: pd.DataFrame | None = None,
     title: str = "",
+    merge_bidirectional: bool = True,
 ) -> bool:
     """Render a BATTER-styled RBFE network figure from summarized edge data."""
     if edge_summary.empty:
@@ -732,6 +735,20 @@ def _render_network_png(
         fontsize=9,
         color="#486581",
     )
+    ax.text(
+        0.01,
+        0.10,
+        (
+            "Direction mode: merged opposite directions"
+            if merge_bidirectional
+            else "Direction mode: split stored directions"
+        ),
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color="#486581",
+    )
 
     ax.set_axis_off()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -747,6 +764,7 @@ def _render_absolute_sorted_png(
     exp_summary: pd.DataFrame | None = None,
     title: str = "",
     absolute_offset: float = 0.0,
+    merge_bidirectional: bool = True,
 ) -> bool:
     """Render a sorted absolute free-energy ranking plot."""
     if absolute_summary is None or absolute_summary.empty:
@@ -878,6 +896,20 @@ def _render_absolute_sorted_png(
             fontsize=9,
             color="#486581",
         )
+    ax.text(
+        0.01,
+        0.01,
+        (
+            "Direction mode: merged opposite directions"
+            if merge_bidirectional
+            else "Direction mode: split stored directions"
+        ),
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color="#486581",
+    )
 
     if exp_map:
         ax.legend(frameon=False, loc="lower right")
@@ -935,6 +967,7 @@ def write_cinnabar_outputs(
             exp_summary=result.exp_summary,
             title=title,
             absolute_offset=absolute_offset,
+            merge_bidirectional=result.merge_bidirectional,
         ):
             outputs["absolute_sorted_png"] = abs_plot_path
 
@@ -944,6 +977,7 @@ def write_cinnabar_outputs(
         graph_path,
         absolute_summary=result.absolute_summary,
         title=title,
+        merge_bidirectional=result.merge_bidirectional,
     )
     if not rendered:
         try:
@@ -988,6 +1022,7 @@ def write_cinnabar_outputs(
         "has_experimental": bool(result.exp_summary is not None),
         "has_absolute": bool(result.absolute_summary is not None),
         "absolute_offset": float(absolute_offset),
+        "direction_mode": "merged" if result.merge_bidirectional else "split",
         "outputs": {key: path.name for key, path in outputs.items()},
     }
     manifest_path = out_root / "manifest.json"

@@ -264,6 +264,8 @@ def test_build_batter_rbfe_cinnabar_can_split_bidirectional_edges(
     )
 
     assert len(merged.edge_summary) == 1
+    assert merged.merge_bidirectional is True
+    assert split.merge_bidirectional is False
     assert {(row.labelA, row.labelB) for row in split.edge_summary.itertuples(index=False)} == {
         ("A", "B"),
         ("B", "A"),
