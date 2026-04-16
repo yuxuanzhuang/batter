@@ -812,19 +812,25 @@ def _render_absolute_sorted_png(
     calc_errs = abs_df["DG_uncertainty"].to_numpy(dtype=float)
     labels = abs_df[label_col].astype(str).tolist()
 
-    ax.errorbar(
-        calc_values,
+    ax.barh(
         y,
+        calc_values,
         xerr=calc_errs,
-        fmt="o",
-        color="#0b7285",
-        ecolor="#0b7285",
-        elinewidth=1.4,
-        capsize=3,
-        markersize=6.5,
+        height=0.66,
+        color="#88c0d0",
+        edgecolor="#0b7285",
+        linewidth=1.2,
+        error_kw={
+            "ecolor": "#0b7285",
+            "elinewidth": 1.4,
+            "capsize": 3,
+            "capthick": 1.4,
+        },
         label="BATTER MLE",
-        zorder=3,
+        zorder=2,
     )
+
+    ax.axvline(0.0, color="#7b8794", linewidth=1.0, linestyle="--", alpha=0.9, zorder=1)
 
     if exp_map:
         exp_values = []
