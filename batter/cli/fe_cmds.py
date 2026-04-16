@@ -9,6 +9,11 @@ import click
 import pandas as pd
 from loguru import logger
 
+from batter.analysis.cinnabar import (
+    build_batter_rbfe_cinnabar,
+    build_batter_rbfe_cinnabar_by_run,
+    write_cinnabar_outputs,
+)
 from batter.api import list_fe_runs, load_fe_run, run_analysis_from_execution
 from batter.cli.root import cli
 
@@ -181,6 +186,208 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
             click.echo(df.to_string(index=False))
     else:
         click.secho("\n(no per-window data saved)", fg="yellow")
+
+
+@fe.command("cinnabar")
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--run-id",
+    "run_ids",
+    multiple=True,
+    help="Select one or more stored BATTER run IDs. Defaults to all available RBFE rows.",
+)
+@click.option(
+    "--ligand",
+    "ligands",
+    multiple=True,
+    help="Restrict to specific RBFE edge labels, e.g. 'LIGA~LIGB'.",
+)
+@click.option(
+    "--out-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Output directory for the converted Cinnabar bundle(s). Defaults to <WORK_DIR>/results/cinnabar.",
+)
+@click.option(
+    "--combine-runs/--split-runs",
+    default=True,
+    help="Aggregate selected runs into one FEMap, or emit one bundle per run.",
+)
+@click.option(
+    "--combine-by-run-first/--pool-all-measurements",
+    default=True,
+    help="Collapse repeated measurements within each run before combining across runs.",
+)
+@click.option(
+    "--uncertainty-mode",
+    type=click.Choice(["ivw", "sample", "max"], case_sensitive=False),
+    default="max",
+    show_default=True,
+    help="How to combine repeated uncertainties.",
+)
+@click.option(
+    "--edge-separator",
+    default="~",
+    show_default=True,
+    help="Separator used in BATTER RBFE pair labels.",
+)
+@click.option(
+    "--source",
+    default="BATTER_RBFE",
+    show_default=True,
+    help="Source label stored on computational Cinnabar measurements.",
+)
+@click.option(
+    "--experimental-csv",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional CSV of experimental absolute affinities to merge into the FEMap.",
+)
+@click.option(
+    "--exp-ligand-column",
+    default="ligand",
+    show_default=True,
+    help="Ligand-label column in the experimental CSV.",
+)
+@click.option(
+    "--exp-abfe-column",
+    default="abfe",
+    show_default=True,
+    help="Absolute affinity column in the experimental CSV.",
+)
+@click.option(
+    "--exp-error-column",
+    default=None,
+    help="Optional experimental uncertainty column.",
+)
+@click.option(
+    "--exp-status-column",
+    default=None,
+    help="Optional experimental status column.",
+)
+@click.option(
+    "--exp-success-value",
+    default="success",
+    show_default=True,
+    help="Value in the experimental status column that marks usable rows.",
+)
+@click.option(
+    "--exp-temperature-column",
+    default=None,
+    help="Optional experimental temperature column (Kelvin).",
+)
+@click.option(
+    "--exp-source",
+    default="experiment",
+    show_default=True,
+    help="Source label stored on experimental Cinnabar measurements.",
+)
+@click.option(
+    "--exp-value-unit",
+    default="kcal/mol",
+    show_default=True,
+    help="Unit for experimental absolute values.",
+)
+@click.option(
+    "--exp-error-unit",
+    default=None,
+    help="Unit for experimental uncertainties. Defaults to --exp-value-unit.",
+)
+@click.option(
+    "--write-plots/--no-write-plots",
+    default=True,
+    help="Attempt to write Cinnabar plots when plotting support is available.",
+)
+def fe_cinnabar(
+    work_dir: Path,
+    run_ids: tuple[str, ...],
+    ligands: tuple[str, ...],
+    out_dir: Path | None,
+    combine_runs: bool,
+    combine_by_run_first: bool,
+    uncertainty_mode: str,
+    edge_separator: str,
+    source: str,
+    experimental_csv: Path | None,
+    exp_ligand_column: str,
+    exp_abfe_column: str,
+    exp_error_column: str | None,
+    exp_status_column: str | None,
+    exp_success_value: str,
+    exp_temperature_column: str | None,
+    exp_source: str,
+    exp_value_unit: str,
+    exp_error_unit: str | None,
+    write_plots: bool,
+) -> None:
+    """Convert stored BATTER RBFE results into Cinnabar FEMap-ready outputs."""
+    exp_df = None
+    if experimental_csv is not None:
+        try:
+            exp_df = pd.read_csv(experimental_csv)
+        except Exception as exc:
+            raise click.ClickException(
+                f"Failed to read experimental CSV '{experimental_csv}': {exc}"
+            ) from exc
+
+    output_root = out_dir or (work_dir / "results" / "cinnabar")
+
+    common_kwargs = {
+        "work_dir": work_dir,
+        "run_ids": run_ids or None,
+        "ligands": ligands or None,
+        "edge_separator": edge_separator,
+        "uncertainty_mode": uncertainty_mode.lower(),
+        "combine_by_run_first": combine_by_run_first,
+        "experimental_df": exp_df,
+        "exp_ligand_column": exp_ligand_column,
+        "exp_abfe_column": exp_abfe_column,
+        "exp_error_column": exp_error_column,
+        "exp_status_column": exp_status_column,
+        "exp_success_value": exp_success_value,
+        "exp_temperature_column": exp_temperature_column,
+        "source": source,
+        "exp_source": exp_source,
+        "exp_value_unit": exp_value_unit,
+        "exp_error_unit": exp_error_unit,
+    }
+
+    try:
+        if combine_runs:
+            result = build_batter_rbfe_cinnabar(**common_kwargs)
+            outputs = write_cinnabar_outputs(
+                result,
+                output_root,
+                method_name="BATTER",
+                target_name=work_dir.name,
+                write_plots=write_plots,
+            )
+            click.echo(
+                f"Wrote combined Cinnabar bundle to {output_root} "
+                f"({len(outputs)} files tracked)."
+            )
+            return
+
+        bundles = build_batter_rbfe_cinnabar_by_run(**common_kwargs)
+        if not bundles:
+            raise click.ClickException("No per-run RBFE bundles were generated.")
+
+        for run_id, result in bundles.items():
+            run_out_dir = output_root / run_id
+            write_cinnabar_outputs(
+                result,
+                run_out_dir,
+                method_name="BATTER",
+                target_name=f"{work_dir.name}:{run_id}",
+                write_plots=write_plots,
+            )
+        click.echo(
+            f"Wrote {len(bundles)} per-run Cinnabar bundle(s) under {output_root}."
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @fe.command("analyze")

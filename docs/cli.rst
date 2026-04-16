@@ -119,6 +119,42 @@ Re-run FE analysis for exactly one ligand folder::
 ``ligand-analyze`` also accepts directories outside ``executions/<run_id>`` as long
 as they contain an ``fe/`` folder.
 
+Convert stored RBFE records into `Cinnabar <https://cinnabar.openfree.energy/>`_
+inputs and plots::
+
+   batter fe cinnabar work/adrb2 --run-id rep1 --run-id rep2
+
+By default this aggregates the selected RBFE records into a single FEMap and writes
+the output bundle under ``work/adrb2/results/cinnabar/``. Common files include:
+
+* ``edge_summary.csv`` – combined edge-level DDG estimates and uncertainties
+* ``raw_signed.csv`` – signed per-measurement table after BATTER canonicalizes edge direction
+* ``cinnabar_relative.csv`` – relative measurements exported from the FEMap
+* ``cinnabar_absolute.csv`` – MLE-derived absolute values when the network is connected
+* ``cinnabar_network.png`` – best-effort network visualisation
+* ``cinnabar_dg.png`` / ``cinnabar_ddg.png`` – plots when experimental data is provided
+
+Use ``--split-runs`` to emit one Cinnabar bundle per run instead of combining them::
+
+   batter fe cinnabar work/adrb2 --split-runs --run-id rep1 --run-id rep2
+
+This writes bundles under ``work/adrb2/results/cinnabar/<run_id>/``. Use that mode
+when you want to inspect run-to-run variation directly instead of collapsing repeats.
+
+To compare BATTER RBFE results against experiment, pass a CSV with absolute
+affinities::
+
+   batter fe cinnabar work/adrb2 \
+       --experimental-csv experimental.csv \
+       --exp-ligand-column ligand \
+       --exp-abfe-column abfe \
+       --exp-error-column se
+
+Use ``--combine-by-run-first`` (default) to collapse repeated measurements within
+each run before combining runs. Switch to ``--pool-all-measurements`` if you want to
+weight every stored edge measurement directly. ``--uncertainty-mode`` controls the
+repeat-combination rule (``ivw``, ``sample``, or ``max``).
+
 Clone Executions
 ================
 

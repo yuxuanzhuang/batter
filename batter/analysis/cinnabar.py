@@ -1,0 +1,589 @@
+"""Helpers for converting BATTER RBFE results into Cinnabar ``FEMap`` objects."""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal, Sequence
+
+import numpy as np
+import pandas as pd
+
+from batter.api import list_fe_runs
+
+__all__ = [
+    "CinnabarConversionResult",
+    "build_batter_rbfe_cinnabar",
+    "build_batter_rbfe_cinnabar_by_run",
+    "dataframe_to_cinnabar",
+    "load_batter_rbfe_results",
+    "write_cinnabar_outputs",
+]
+
+
+@dataclass
+class CinnabarConversionResult:
+    femap: Any
+    edge_summary: pd.DataFrame
+    raw_signed: pd.DataFrame
+    exp_summary: pd.DataFrame | None = None
+    absolute_summary: pd.DataFrame | None = None
+
+
+def _import_cinnabar_stack() -> tuple[Any, Any, Any]:
+    try:
+        from cinnabar.femap import FEMap
+        from cinnabar import plotting
+        from openff.units import unit
+    except Exception as exc:  # pragma: no cover - exercised via caller-facing error handling
+        raise RuntimeError(
+            "Cinnabar conversion requires 'cinnabar' and 'openff.units'. "
+            "Install them in the BATTER environment before using this command."
+        ) from exc
+    return FEMap, plotting, unit
+
+
+def _combine_estimates(
+    values: Sequence[float],
+    ses: Sequence[float],
+    uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
+) -> tuple[float, float]:
+    values_arr = np.asarray(values, dtype=float)
+    ses_arr = np.asarray(ses, dtype=float)
+
+    if len(values_arr) == 0:
+        raise ValueError("No values to combine.")
+    if np.any(~np.isfinite(values_arr)):
+        raise ValueError("Non-finite values found.")
+    if np.any(~np.isfinite(ses_arr)) or np.any(ses_arr <= 0):
+        raise ValueError("All uncertainties must be finite and > 0.")
+
+    if len(values_arr) == 1:
+        return float(values_arr[0]), float(ses_arr[0])
+
+    weights = 1.0 / np.square(ses_arr)
+    mean = float(np.sum(weights * values_arr) / np.sum(weights))
+    ivw_se = float(np.sqrt(1.0 / np.sum(weights)))
+    sample_se = float(np.std(values_arr, ddof=1) / np.sqrt(len(values_arr)))
+
+    if uncertainty_mode == "ivw":
+        out_se = ivw_se
+    elif uncertainty_mode == "sample":
+        out_se = sample_se
+    elif uncertainty_mode == "max":
+        out_se = max(ivw_se, sample_se)
+    else:  # pragma: no cover - guarded by Literal/click
+        raise ValueError("uncertainty_mode must be 'ivw', 'sample', or 'max'.")
+
+    return mean, out_se
+
+
+def _normalize_energy_unit(unit_obj: Any, unit_module: Any) -> Any:
+    if unit_obj is None:
+        return unit_module.kilocalorie_per_mole
+    if hasattr(unit_obj, "dimensionality"):
+        return unit_obj
+
+    text = str(unit_obj).strip().lower()
+    mapping = {
+        "kcal/mol": unit_module.kilocalorie_per_mole,
+        "kilocalorie_per_mole": unit_module.kilocalorie_per_mole,
+        "kilocalories_per_mole": unit_module.kilocalorie_per_mole,
+        "kj/mol": unit_module.kilojoule_per_mole,
+        "kilojoule_per_mole": unit_module.kilojoule_per_mole,
+        "kilojoules_per_mole": unit_module.kilojoule_per_mole,
+    }
+    if text not in mapping:
+        raise ValueError(f"Unsupported unit: {unit_obj!r}")
+    return mapping[text]
+
+
+def _pick_edge_label(row: pd.Series, edge_separator: str) -> str:
+    ligand = str(row.get("ligand", "") or "").strip()
+    original_name = str(row.get("original_name", "") or "").strip()
+    if edge_separator in original_name:
+        return original_name
+    return ligand
+
+
+def load_batter_rbfe_results(
+    work_dir: str | Path,
+    *,
+    run_ids: Sequence[str] | None = None,
+    ligands: Sequence[str] | None = None,
+    edge_separator: str = "~",
+) -> pd.DataFrame:
+    """Load stored BATTER FE records and keep only RBFE-like edge rows."""
+    df = list_fe_runs(Path(work_dir)).copy()
+    if df.empty:
+        raise ValueError(f"No FE results found under {work_dir}.")
+
+    edge_pattern = re.escape(edge_separator)
+    ligand_mask = (
+        df.get("ligand", pd.Series("", index=df.index))
+        .fillna("")
+        .astype(str)
+        .str.contains(edge_pattern, regex=True)
+    )
+    original_mask = (
+        df.get("original_name", pd.Series("", index=df.index))
+        .fillna("")
+        .astype(str)
+        .str.contains(edge_pattern, regex=True)
+    )
+    protocol_mask = (
+        df.get("protocol", pd.Series("", index=df.index))
+        .fillna("")
+        .astype(str)
+        .str.lower()
+        .eq("rbfe")
+    )
+
+    work = df.loc[ligand_mask | original_mask | protocol_mask].copy()
+    if work.empty:
+        raise ValueError(f"No RBFE-like FE results found under {work_dir}.")
+
+    if run_ids:
+        requested = {str(v).strip() for v in run_ids if str(v).strip()}
+        work = work.loc[work["run_id"].astype(str).isin(requested)].copy()
+        if work.empty:
+            raise ValueError(
+                f"No RBFE rows remain after filtering for run_id(s): {sorted(requested)}."
+            )
+
+    work["edge_label"] = work.apply(
+        lambda row: _pick_edge_label(row, edge_separator=edge_separator), axis=1
+    )
+
+    if ligands:
+        requested_ligands = {str(v).strip() for v in ligands if str(v).strip()}
+        work = work.loc[work["edge_label"].isin(requested_ligands)].copy()
+        if work.empty:
+            raise ValueError(
+                "No RBFE rows remain after filtering for ligand(s): "
+                + ", ".join(sorted(requested_ligands))
+            )
+
+    return work
+
+
+def dataframe_to_cinnabar(
+    rbfe_df: pd.DataFrame,
+    *,
+    ligand_column: str = "ligand",
+    dg_column: str = "total_dG",
+    se_column: str = "total_se",
+    run_column: str = "run_id",
+    status_column: str = "status",
+    success_value: str = "success",
+    temperature_column: str = "temperature",
+    edge_separator: str = "~",
+    source: str = "BATTER_RBFE",
+    uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
+    combine_by_run_first: bool = True,
+    experimental_df: pd.DataFrame | None = None,
+    exp_ligand_column: str = "ligand",
+    exp_abfe_column: str = "abfe",
+    exp_error_column: str | None = None,
+    exp_status_column: str | None = None,
+    exp_success_value: str = "success",
+    exp_temperature_column: str | None = None,
+    exp_source: str = "experiment",
+    exp_value_unit: Any = "kcal/mol",
+    exp_error_unit: Any = None,
+) -> CinnabarConversionResult:
+    """Convert an RBFE dataframe into a Cinnabar ``FEMap`` and summary tables."""
+    FEMap, _plotting, unit = _import_cinnabar_stack()
+
+    exp_error_unit = exp_value_unit if exp_error_unit is None else exp_error_unit
+    exp_value_unit = _normalize_energy_unit(exp_value_unit, unit)
+    exp_error_unit = _normalize_energy_unit(exp_error_unit, unit)
+
+    required = {ligand_column, dg_column, se_column}
+    missing = required - set(rbfe_df.columns)
+    if missing:
+        raise ValueError(f"Missing RBFE columns: {sorted(missing)}")
+
+    work = rbfe_df.copy()
+    if status_column in work.columns:
+        work = work.loc[work[status_column] == success_value].copy()
+
+    work = work.dropna(subset=[ligand_column, dg_column, se_column]).copy()
+    if work.empty:
+        raise ValueError("No usable RBFE rows remain after filtering.")
+
+    lig_split = work[ligand_column].astype(str).str.split(edge_separator, n=1, expand=True)
+    if lig_split.shape[1] != 2:
+        raise ValueError(
+            f"Could not split '{ligand_column}' using separator '{edge_separator}'."
+        )
+
+    work["ligand_A_raw"] = lig_split[0].str.strip()
+    work["ligand_B_raw"] = lig_split[1].str.strip()
+
+    forward_is_canonical = work["ligand_A_raw"] <= work["ligand_B_raw"]
+    work["labelA"] = np.where(
+        forward_is_canonical, work["ligand_A_raw"], work["ligand_B_raw"]
+    )
+    work["labelB"] = np.where(
+        forward_is_canonical, work["ligand_B_raw"], work["ligand_A_raw"]
+    )
+
+    raw_dg = pd.to_numeric(work[dg_column], errors="raise").astype(float)
+    work["signed_dDG"] = np.where(forward_is_canonical, raw_dg, -raw_dg)
+    work["input_se"] = pd.to_numeric(work[se_column], errors="raise").astype(float)
+
+    if np.any(work["input_se"] <= 0):
+        raise ValueError(f"Column '{se_column}' must contain only positive values.")
+
+    if temperature_column in work.columns:
+        work["temperature_K"] = pd.to_numeric(work[temperature_column], errors="coerce")
+    else:
+        work["temperature_K"] = 298.15
+
+    raw_signed = work.copy()
+
+    def summarize_rbfe_block(group: pd.DataFrame) -> dict[str, Any]:
+        mean, out_se = _combine_estimates(
+            group["signed_dDG"].values,
+            group["input_se"].values,
+            uncertainty_mode=uncertainty_mode,
+        )
+        return {
+            "calc_DDG": mean,
+            "calc_dDDG": out_se,
+            "n_measurements": int(len(group)),
+            "temperature_K": float(group["temperature_K"].dropna().mean())
+            if group["temperature_K"].notna().any()
+            else 298.15,
+        }
+
+    if combine_by_run_first and run_column in raw_signed.columns:
+        per_run_records: list[dict[str, Any]] = []
+        for (labelA, labelB, run_id), group in raw_signed.groupby(
+            ["labelA", "labelB", run_column], sort=True
+        ):
+            rec = {"labelA": labelA, "labelB": labelB, run_column: run_id}
+            rec.update(summarize_rbfe_block(group))
+            per_run_records.append(rec)
+        per_run = pd.DataFrame(per_run_records)
+
+        edge_records: list[dict[str, Any]] = []
+        for (labelA, labelB), group in per_run.groupby(["labelA", "labelB"], sort=True):
+            mean, out_se = _combine_estimates(
+                group["calc_DDG"].values,
+                group["calc_dDDG"].values,
+                uncertainty_mode=uncertainty_mode,
+            )
+            edge_records.append(
+                {
+                    "labelA": labelA,
+                    "labelB": labelB,
+                    "calc_DDG": mean,
+                    "calc_dDDG": out_se,
+                    "n_runs": int(len(group)),
+                    "n_measurements": int(group["n_measurements"].sum()),
+                    "temperature_K": float(group["temperature_K"].mean()),
+                }
+            )
+        edge_summary = pd.DataFrame(edge_records)
+    else:
+        edge_records = []
+        for (labelA, labelB), group in raw_signed.groupby(["labelA", "labelB"], sort=True):
+            rec = {"labelA": labelA, "labelB": labelB}
+            rec.update(summarize_rbfe_block(group))
+            rec["n_runs"] = (
+                int(group[run_column].nunique()) if run_column in group.columns else 1
+            )
+            edge_records.append(rec)
+        edge_summary = pd.DataFrame(edge_records)
+
+    femap = FEMap()
+    for row in edge_summary.itertuples(index=False):
+        femap.add_relative_calculation(
+            labelA=row.labelA,
+            labelB=row.labelB,
+            value=float(row.calc_DDG) * unit.kilocalorie_per_mole,
+            uncertainty=float(row.calc_dDDG) * unit.kilocalorie_per_mole,
+            source=source,
+            temperature=float(row.temperature_K) * unit.kelvin,
+        )
+
+    exp_summary = None
+    if experimental_df is not None:
+        exp_required = {exp_ligand_column, exp_abfe_column}
+        exp_missing = exp_required - set(experimental_df.columns)
+        if exp_missing:
+            raise ValueError(f"Missing experimental columns: {sorted(exp_missing)}")
+
+        exp_work = experimental_df.copy()
+        if exp_status_column is not None and exp_status_column in exp_work.columns:
+            exp_work = exp_work.loc[exp_work[exp_status_column] == exp_success_value].copy()
+
+        drop_cols = [exp_ligand_column, exp_abfe_column]
+        has_exp_error = bool(exp_error_column and exp_error_column in exp_work.columns)
+        if has_exp_error:
+            drop_cols.append(exp_error_column)
+
+        exp_work = exp_work.dropna(subset=drop_cols).copy()
+        if not exp_work.empty:
+            exp_work["label"] = exp_work[exp_ligand_column].astype(str).str.strip()
+            exp_work["exp_DG"] = pd.to_numeric(
+                exp_work[exp_abfe_column], errors="raise"
+            ).astype(float)
+
+            if has_exp_error:
+                exp_work["exp_uncertainty"] = pd.to_numeric(
+                    exp_work[exp_error_column], errors="raise"
+                ).astype(float)
+                if np.any(exp_work["exp_uncertainty"] <= 0):
+                    raise ValueError(
+                        f"Experimental column '{exp_error_column}' must contain only positive values."
+                    )
+            else:
+                exp_work["exp_uncertainty"] = np.nan
+
+            if exp_temperature_column is not None and exp_temperature_column in exp_work.columns:
+                exp_work["temperature_K"] = pd.to_numeric(
+                    exp_work[exp_temperature_column], errors="coerce"
+                )
+            else:
+                exp_work["temperature_K"] = 298.15
+
+            exp_records: list[dict[str, Any]] = []
+            for label, group in exp_work.groupby("label", sort=True):
+                if has_exp_error:
+                    mean, out_se = _combine_estimates(
+                        group["exp_DG"].values,
+                        group["exp_uncertainty"].values,
+                        uncertainty_mode=uncertainty_mode,
+                    )
+                else:
+                    mean = float(group["exp_DG"].mean())
+                    out_se = np.nan
+
+                exp_records.append(
+                    {
+                        "label": label,
+                        "exp_DG": mean,
+                        "exp_uncertainty": out_se,
+                        "n_exp": int(len(group)),
+                        "temperature_K": float(group["temperature_K"].dropna().mean())
+                        if group["temperature_K"].notna().any()
+                        else 298.15,
+                    }
+                )
+
+            exp_summary = pd.DataFrame(exp_records)
+            for row in exp_summary.itertuples(index=False):
+                femap.add_experimental_measurement(
+                    label=row.label,
+                    value=float(row.exp_DG) * exp_value_unit,
+                    uncertainty=(
+                        float(row.exp_uncertainty) * exp_error_unit
+                        if pd.notna(row.exp_uncertainty)
+                        else 0 * exp_error_unit
+                    ),
+                    source=exp_source,
+                    temperature=float(row.temperature_K) * unit.kelvin,
+                )
+
+    absolute_summary = None
+    try:
+        femap.generate_absolute_values()
+        absolute_summary = femap.get_absolute_dataframe()
+    except Exception:
+        absolute_summary = None
+
+    return CinnabarConversionResult(
+        femap=femap,
+        edge_summary=edge_summary,
+        raw_signed=raw_signed,
+        exp_summary=exp_summary,
+        absolute_summary=absolute_summary,
+    )
+
+
+def build_batter_rbfe_cinnabar(
+    work_dir: str | Path,
+    *,
+    run_ids: Sequence[str] | None = None,
+    ligands: Sequence[str] | None = None,
+    edge_separator: str = "~",
+    uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
+    combine_by_run_first: bool = True,
+    experimental_df: pd.DataFrame | None = None,
+    exp_ligand_column: str = "ligand",
+    exp_abfe_column: str = "abfe",
+    exp_error_column: str | None = None,
+    exp_status_column: str | None = None,
+    exp_success_value: str = "success",
+    exp_temperature_column: str | None = None,
+    source: str = "BATTER_RBFE",
+    exp_source: str = "experiment",
+    exp_value_unit: Any = "kcal/mol",
+    exp_error_unit: Any = None,
+) -> CinnabarConversionResult:
+    work = load_batter_rbfe_results(
+        work_dir,
+        run_ids=run_ids,
+        ligands=ligands,
+        edge_separator=edge_separator,
+    )
+    return dataframe_to_cinnabar(
+        work,
+        ligand_column="edge_label",
+        edge_separator=edge_separator,
+        uncertainty_mode=uncertainty_mode,
+        combine_by_run_first=combine_by_run_first,
+        experimental_df=experimental_df,
+        exp_ligand_column=exp_ligand_column,
+        exp_abfe_column=exp_abfe_column,
+        exp_error_column=exp_error_column,
+        exp_status_column=exp_status_column,
+        exp_success_value=exp_success_value,
+        exp_temperature_column=exp_temperature_column,
+        source=source,
+        exp_source=exp_source,
+        exp_value_unit=exp_value_unit,
+        exp_error_unit=exp_error_unit,
+    )
+
+
+def build_batter_rbfe_cinnabar_by_run(
+    work_dir: str | Path,
+    *,
+    run_ids: Sequence[str] | None = None,
+    ligands: Sequence[str] | None = None,
+    edge_separator: str = "~",
+    uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
+    combine_by_run_first: bool = True,
+    experimental_df: pd.DataFrame | None = None,
+    exp_ligand_column: str = "ligand",
+    exp_abfe_column: str = "abfe",
+    exp_error_column: str | None = None,
+    exp_status_column: str | None = None,
+    exp_success_value: str = "success",
+    exp_temperature_column: str | None = None,
+    source: str = "BATTER_RBFE",
+    exp_source: str = "experiment",
+    exp_value_unit: Any = "kcal/mol",
+    exp_error_unit: Any = None,
+) -> dict[str, CinnabarConversionResult]:
+    work = load_batter_rbfe_results(
+        work_dir,
+        run_ids=run_ids,
+        ligands=ligands,
+        edge_separator=edge_separator,
+    )
+    out: dict[str, CinnabarConversionResult] = {}
+    for run_id, group in work.groupby("run_id", sort=True):
+        out[str(run_id)] = dataframe_to_cinnabar(
+            group,
+            ligand_column="edge_label",
+            edge_separator=edge_separator,
+            uncertainty_mode=uncertainty_mode,
+            combine_by_run_first=combine_by_run_first,
+            experimental_df=experimental_df,
+            exp_ligand_column=exp_ligand_column,
+            exp_abfe_column=exp_abfe_column,
+            exp_error_column=exp_error_column,
+            exp_status_column=exp_status_column,
+            exp_success_value=exp_success_value,
+            exp_temperature_column=exp_temperature_column,
+            source=source,
+            exp_source=exp_source,
+            exp_value_unit=exp_value_unit,
+            exp_error_unit=exp_error_unit,
+        )
+    return out
+
+
+def write_cinnabar_outputs(
+    result: CinnabarConversionResult,
+    out_dir: str | Path,
+    *,
+    method_name: str = "BATTER",
+    target_name: str = "",
+    write_plots: bool = True,
+) -> dict[str, Path]:
+    """Write stable on-disk outputs for a converted Cinnabar bundle."""
+    _FEMap, plotting, _unit = _import_cinnabar_stack()
+
+    out_root = Path(out_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    outputs: dict[str, Path] = {}
+
+    raw_path = out_root / "raw_signed.csv"
+    result.raw_signed.to_csv(raw_path, index=False)
+    outputs["raw_signed_csv"] = raw_path
+
+    edge_path = out_root / "edge_summary.csv"
+    result.edge_summary.to_csv(edge_path, index=False)
+    outputs["edge_summary_csv"] = edge_path
+
+    rel_path = out_root / "cinnabar_relative.csv"
+    result.femap.get_relative_dataframe().to_csv(rel_path, index=False)
+    outputs["cinnabar_relative_csv"] = rel_path
+
+    if result.exp_summary is not None:
+        exp_path = out_root / "experimental_summary.csv"
+        result.exp_summary.to_csv(exp_path, index=False)
+        outputs["experimental_summary_csv"] = exp_path
+
+    if result.absolute_summary is not None:
+        abs_path = out_root / "cinnabar_absolute.csv"
+        result.absolute_summary.to_csv(abs_path, index=False)
+        outputs["cinnabar_absolute_csv"] = abs_path
+
+    try:
+        graph_path = out_root / "cinnabar_network.png"
+        result.femap.draw_graph(filename=str(graph_path))
+        if graph_path.exists():
+            outputs["network_png"] = graph_path
+    except Exception:
+        pass
+
+    if write_plots and result.exp_summary is not None:
+        try:
+            graph = result.femap.to_legacy_graph()
+            dg_path = out_root / "cinnabar_dg.png"
+            plotting.plot_DGs(
+                graph,
+                method_name=method_name,
+                target_name=target_name,
+                filename=str(dg_path),
+            )
+            if dg_path.exists():
+                outputs["dg_png"] = dg_path
+        except Exception:
+            pass
+        try:
+            graph = result.femap.to_legacy_graph()
+            ddg_path = out_root / "cinnabar_ddg.png"
+            plotting.plot_DDGs(
+                graph,
+                method_name=method_name,
+                target_name=target_name,
+                filename=str(ddg_path),
+            )
+            if ddg_path.exists():
+                outputs["ddg_png"] = ddg_path
+        except Exception:
+            pass
+
+    manifest = {
+        "n_edges": int(len(result.edge_summary)),
+        "n_measurements": int(len(result.raw_signed)),
+        "has_experimental": bool(result.exp_summary is not None),
+        "has_absolute": bool(result.absolute_summary is not None),
+        "outputs": {key: path.name for key, path in outputs.items()},
+    }
+    manifest_path = out_root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    outputs["manifest_json"] = manifest_path
+
+    return outputs

@@ -275,6 +275,17 @@ Use the CLI helpers to inspect them::
     batter fe list <run.output_folder>
     batter fe show <run.output_folder> <run_id> --ligand <ligand_pair>
 
+For cross-run RBFE benchmarking or Cinnabar plotting, convert the stored BATTER
+records into a Cinnabar bundle::
+
+    batter fe cinnabar <run.output_folder> --run-id rep1 --run-id rep2
+
+That command reads the saved ``results/index.csv`` rows, combines the selected RBFE
+edges, and writes a derived bundle under ``results/cinnabar/``. Use
+``--split-runs`` if you want one bundle per run instead of collapsing repeats.
+If you have experimental absolute affinities, pass them with
+``--experimental-csv`` so Cinnabar can emit DG/DDG comparison plots.
+
 ``fe list`` prints a high-level table for every stored run, while ``fe show`` opens
 the saved record for one transformation pair such as ``LIG1~LIG2``. For a file-by-file
 description of the portable repository, including the RBFE-only ``mapping.*``,

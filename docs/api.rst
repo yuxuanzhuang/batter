@@ -190,6 +190,12 @@ Analysis Modules
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: batter.analysis.cinnabar
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: batter.analysis.remd
    :noindex:
    :members:
