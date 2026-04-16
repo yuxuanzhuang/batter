@@ -898,6 +898,101 @@ def _network_graph_with_layout(edge_summary: pd.DataFrame) -> tuple[nx.DiGraph, 
     return graph, pos
 
 
+def _label_rects_overlap(
+    center_a: np.ndarray,
+    size_a: tuple[float, float],
+    center_b: np.ndarray,
+    size_b: tuple[float, float],
+    *,
+    padding: float = 6.0,
+) -> bool:
+    """Return True when two center-positioned label boxes overlap."""
+    return (
+        abs(float(center_a[0]) - float(center_b[0]))
+        < 0.5 * (float(size_a[0]) + float(size_b[0])) + padding
+        and abs(float(center_a[1]) - float(center_b[1]))
+        < 0.5 * (float(size_a[1]) + float(size_b[1])) + padding
+    )
+
+
+def _resolve_label_positions(
+    label_specs: Sequence[dict[str, np.ndarray]],
+    *,
+    box_size: tuple[float, float],
+) -> list[np.ndarray]:
+    """Shift overlapping label anchors apart using tangent/normal offsets."""
+    if not label_specs:
+        return []
+
+    step_normal = float(box_size[1]) * 0.95
+    step_tangent = float(box_size[0]) * 0.55
+    candidate_steps = [
+        (0, 0),
+        (0, 1),
+        (0, -1),
+        (1, 0),
+        (-1, 0),
+        (1, 1),
+        (-1, 1),
+        (1, -1),
+        (-1, -1),
+        (0, 2),
+        (0, -2),
+        (2, 0),
+        (-2, 0),
+        (1, 2),
+        (-1, 2),
+        (1, -2),
+        (-1, -2),
+        (2, 1),
+        (-2, 1),
+        (2, -1),
+        (-2, -1),
+    ]
+
+    placed: list[np.ndarray] = []
+    resolved: list[np.ndarray] = []
+    for spec in label_specs:
+        base = np.asarray(spec["base"], dtype=float)
+        tangent = np.asarray(spec["tangent"], dtype=float)
+        normal = np.asarray(spec["normal"], dtype=float)
+
+        tangent_norm = np.linalg.norm(tangent)
+        normal_norm = np.linalg.norm(normal)
+        if tangent_norm > 0:
+            tangent = tangent / tangent_norm
+        else:
+            tangent = np.array([1.0, 0.0])
+        if normal_norm > 0:
+            normal = normal / normal_norm
+        else:
+            normal = np.array([0.0, 1.0])
+
+        chosen = base
+        for tangent_step, normal_step in candidate_steps:
+            candidate = (
+                base
+                + tangent * tangent_step * step_tangent
+                + normal * normal_step * step_normal
+            )
+            if all(
+                not _label_rects_overlap(
+                    candidate,
+                    box_size,
+                    other,
+                    box_size,
+                    padding=8.0,
+                )
+                for other in placed
+            ):
+                chosen = candidate
+                break
+        placed.append(chosen)
+        resolved.append(chosen)
+
+    return resolved
+
+
 def _render_network_png(
     edge_summary: pd.DataFrame,
     out_path: Path,
@@ -1008,6 +1103,10 @@ def _render_network_png(
             [path_effects.withStroke(linewidth=3, foreground="white", alpha=0.9)]
         )
 
+    fig.canvas.draw()
+
+    label_specs_display: list[dict[str, np.ndarray]] = []
+    label_payloads: list[str] = []
     for node_a, node_b, data, curvature in edge_metadata:
         start = np.asarray(pos[node_a], dtype=float)
         end = np.asarray(pos[node_b], dtype=float)
@@ -1018,11 +1117,32 @@ def _render_network_png(
             perp = np.array([-direction[1], direction[0]]) / norm_dir
         else:
             perp = np.array([0.0, 0.0])
-        text_pos = midpoint + perp * curvature * 0.85
-        edge_label = (
+        base_data = midpoint + perp * curvature * 0.85
+        base_disp = np.asarray(ax.transData.transform(base_data), dtype=float)
+        start_disp = np.asarray(ax.transData.transform(start), dtype=float)
+        end_disp = np.asarray(ax.transData.transform(end), dtype=float)
+        tangent_disp = end_disp - start_disp
+        tangent_norm = np.linalg.norm(tangent_disp)
+        if tangent_norm > 0:
+            tangent_disp = tangent_disp / tangent_norm
+        else:
+            tangent_disp = np.array([1.0, 0.0])
+        normal_disp = np.array([-tangent_disp[1], tangent_disp[0]])
+        label_specs_display.append(
+            {"base": base_disp, "tangent": tangent_disp, "normal": normal_disp}
+        )
+        label_payloads.append(
             f"{float(data.get('calc_DDG', 0.0)):+.2f}\n"
             f"±{float(data.get('calc_dDDG', 0.0)):.2f}"
         )
+
+    resolved_label_positions = _resolve_label_positions(
+        label_specs_display,
+        box_size=(66.0, 48.0),
+    )
+
+    for text_pos_disp, edge_label in zip(resolved_label_positions, label_payloads):
+        text_pos = np.asarray(ax.transData.inverted().transform(text_pos_disp), dtype=float)
         ax.text(
             text_pos[0],
             text_pos[1],
@@ -1719,6 +1839,8 @@ def _render_dashboard_html(
 
     edge_svg: list[str] = []
     label_svg: list[str] = []
+    label_specs_display: list[dict[str, np.ndarray]] = []
+    label_payloads: list[tuple[str, str]] = []
     for node_a, node_b, data in graph.edges(data=True):
         edge_key = f"{node_a}~{node_b}"
         curvature = _edge_curvature(str(node_a), str(node_b))
@@ -1748,18 +1870,33 @@ def _render_dashboard_html(
 
         text_pos = 0.25 * start2 + 0.5 * control + 0.25 * end2
         text_pos = text_pos + perp * curvature * span * 0.18
-        edge_label = html.escape(
-            f"{float(data.get('calc_DDG', 0.0)):+.2f}\n±{float(data.get('calc_dDDG', 0.0)):.2f}"
+        label_specs_display.append(
+            {"base": text_pos, "tangent": unit_dir, "normal": perp}
         )
+        label_payloads.append(
+            (
+                edge_key,
+                html.escape(
+                    f"{float(data.get('calc_DDG', 0.0)):+.2f}\n±{float(data.get('calc_dDDG', 0.0)):.2f}"
+                ),
+            )
+        )
+
+    resolved_label_positions = _resolve_label_positions(
+        label_specs_display,
+        box_size=(60.0, 42.0),
+    )
+
+    for resolved_pos, (edge_key, edge_label) in zip(resolved_label_positions, label_payloads):
         edge_label_lines = edge_label.split("\n")
         label_svg.append(
             f"<g class=\"edge-label\" data-edge=\"{html.escape(edge_key)}\">"
-            f"<rect x=\"{text_pos[0] - 30:.2f}\" y=\"{text_pos[1] - 22:.2f}\" width=\"60\" height=\"42\" "
+            f"<rect x=\"{resolved_pos[0] - 30:.2f}\" y=\"{resolved_pos[1] - 22:.2f}\" width=\"60\" height=\"42\" "
             "rx=\"6\" ry=\"6\" fill=\"white\" fill-opacity=\"0.92\" stroke=\"#cbd2d9\" stroke-width=\"1.0\" />"
-            f"<text x=\"{text_pos[0]:.2f}\" y=\"{text_pos[1] - 4:.2f}\" text-anchor=\"middle\" "
+            f"<text x=\"{resolved_pos[0]:.2f}\" y=\"{resolved_pos[1] - 4:.2f}\" text-anchor=\"middle\" "
             "font-size=\"12\" fill=\"#243b53\">"
             f"{edge_label_lines[0]}</text>"
-            f"<text x=\"{text_pos[0]:.2f}\" y=\"{text_pos[1] + 13:.2f}\" text-anchor=\"middle\" "
+            f"<text x=\"{resolved_pos[0]:.2f}\" y=\"{resolved_pos[1] + 13:.2f}\" text-anchor=\"middle\" "
             "font-size=\"12\" fill=\"#243b53\">"
             f"{edge_label_lines[1]}</text>"
             "</g>"

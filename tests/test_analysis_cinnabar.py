@@ -231,6 +231,31 @@ def test_build_batter_rbfe_cinnabar_warns_when_absolute_solution_missing(
     assert "Could not build a full absolute ΔG solution" in result.absolute_warning
 
 
+def test_resolve_label_positions_separates_overlapping_boxes() -> None:
+    specs = [
+        {
+            "base": cinnabar_mod.np.array([0.0, 0.0]),
+            "tangent": cinnabar_mod.np.array([1.0, 0.0]),
+            "normal": cinnabar_mod.np.array([0.0, 1.0]),
+        },
+        {
+            "base": cinnabar_mod.np.array([0.0, 0.0]),
+            "tangent": cinnabar_mod.np.array([0.0, 1.0]),
+            "normal": cinnabar_mod.np.array([1.0, 0.0]),
+        },
+    ]
+
+    resolved = cinnabar_mod._resolve_label_positions(specs, box_size=(60.0, 42.0))
+
+    assert len(resolved) == 2
+    assert not cinnabar_mod._label_rects_overlap(
+        resolved[0],
+        (60.0, 42.0),
+        resolved[1],
+        (60.0, 42.0),
+    )
+
+
 def test_build_batter_rbfe_cinnabar_by_run_splits_runs(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
