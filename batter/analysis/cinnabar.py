@@ -1942,6 +1942,9 @@ def _render_dashboard_html(
       const header = note.querySelector('.sticky-header');
       let startX = 0, startY = 0, startLeft = 0, startTop = 0, dragging = false;
       header.addEventListener('pointerdown', (event) => {{
+        if (event.target && event.target.closest('.sticky-close')) {{
+          return;
+        }}
         dragging = true;
         bringToFront(note);
         startX = event.clientX;
@@ -1985,7 +1988,15 @@ def _render_dashboard_html(
       bringToFront(note);
       makeDraggable(note);
       note.addEventListener('pointerdown', () => bringToFront(note));
-      note.querySelector('.sticky-close').addEventListener('click', () => note.remove());
+      const closeButton = note.querySelector('.sticky-close');
+      closeButton.addEventListener('pointerdown', (event) => {{
+        event.stopPropagation();
+      }});
+      closeButton.addEventListener('click', (event) => {{
+        event.preventDefault();
+        event.stopPropagation();
+        note.remove();
+      }});
     }}
 
     document.querySelectorAll('.node, .bar-row').forEach((element) => {{
