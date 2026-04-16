@@ -12,6 +12,7 @@ from loguru import logger
 from batter.analysis.cinnabar import (
     build_batter_rbfe_cinnabar,
     build_batter_rbfe_cinnabar_by_run,
+    summarize_directionality,
     write_cinnabar_outputs,
 )
 from batter.api import list_fe_runs, load_fe_run, run_analysis_from_execution
@@ -381,6 +382,21 @@ def fe_cinnabar(
                 write_plots=write_plots,
                 absolute_offset=absolute_offset,
             )
+            if not merge_bidirectional and hasattr(result, "edge_summary"):
+                directionality = summarize_directionality(result.edge_summary)
+                if directionality["n_reciprocal_pairs"] == 0:
+                    click.secho(
+                        "Split-direction export requested, but the stored RBFE results "
+                        "contain no reciprocal A~B/B~A transformations. "
+                        "The network will still show one arrow per stored transformation.",
+                        fg="yellow",
+                    )
+                else:
+                    click.echo(
+                        "Split-direction export retained "
+                        f"{directionality['n_directional_edges']} directional edges across "
+                        f"{directionality['n_reciprocal_pairs']} reciprocal ligand pair(s)."
+                    )
             click.echo(
                 f"Wrote combined Cinnabar bundle to {output_root} "
                 f"({len(outputs)} files tracked)."
@@ -391,6 +407,7 @@ def fe_cinnabar(
         if not bundles:
             raise click.ClickException("No per-run RBFE bundles were generated.")
 
+        split_direction_stats: list[dict[str, object]] = []
         for run_id, result in bundles.items():
             run_out_dir = output_root / run_id
             write_cinnabar_outputs(
@@ -401,6 +418,25 @@ def fe_cinnabar(
                 write_plots=write_plots,
                 absolute_offset=absolute_offset,
             )
+            if not merge_bidirectional and hasattr(result, "edge_summary"):
+                stats = summarize_directionality(result.edge_summary)
+                stats["run_id"] = run_id
+                split_direction_stats.append(stats)
+        if not merge_bidirectional and split_direction_stats:
+            total_recip = sum(int(item["n_reciprocal_pairs"]) for item in split_direction_stats)
+            total_dir = sum(int(item["n_directional_edges"]) for item in split_direction_stats)
+            if total_recip == 0:
+                click.secho(
+                    "Split-direction export requested, but none of the selected runs contain "
+                    "reciprocal A~B/B~A transformations. The network plots will remain one "
+                    "arrow per stored transformation.",
+                    fg="yellow",
+                )
+            else:
+                click.echo(
+                    "Split-direction export retained "
+                    f"{total_dir} directional edges across {total_recip} reciprocal ligand pair(s)."
+                )
         click.echo(
             f"Wrote {len(bundles)} per-run Cinnabar bundle(s) under {output_root}."
         )

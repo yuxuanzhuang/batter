@@ -20,6 +20,7 @@ __all__ = [
     "build_batter_rbfe_cinnabar_by_run",
     "dataframe_to_cinnabar",
     "load_batter_rbfe_results",
+    "summarize_directionality",
     "write_cinnabar_outputs",
 ]
 
@@ -32,6 +33,37 @@ class CinnabarConversionResult:
     merge_bidirectional: bool = True
     exp_summary: pd.DataFrame | None = None
     absolute_summary: pd.DataFrame | None = None
+
+
+def summarize_directionality(edge_summary: pd.DataFrame) -> dict[str, Any]:
+    """Summarize whether an edge table contains reciprocal directional pairs."""
+    if edge_summary is None or edge_summary.empty:
+        return {
+            "n_directional_edges": 0,
+            "n_reciprocal_pairs": 0,
+            "reciprocal_pairs": [],
+        }
+
+    directed_edges: set[tuple[str, str]] = set()
+    for row in edge_summary.itertuples(index=False):
+        label_a = str(getattr(row, "labelA", "") or "").strip()
+        label_b = str(getattr(row, "labelB", "") or "").strip()
+        if not label_a or not label_b:
+            continue
+        directed_edges.add((label_a, label_b))
+
+    reciprocal_pairs = sorted(
+        {
+            tuple(sorted((label_a, label_b)))
+            for label_a, label_b in directed_edges
+            if label_a != label_b and (label_b, label_a) in directed_edges
+        }
+    )
+    return {
+        "n_directional_edges": int(len(directed_edges)),
+        "n_reciprocal_pairs": int(len(reciprocal_pairs)),
+        "reciprocal_pairs": [f"{label_a}~{label_b}" for label_a, label_b in reciprocal_pairs],
+    }
 
 
 def _import_cinnabar_stack() -> tuple[Any, Any, Any]:
@@ -931,6 +963,7 @@ def write_cinnabar_outputs(
 ) -> dict[str, Path]:
     """Write stable on-disk outputs for a converted Cinnabar bundle."""
     _FEMap, plotting, _unit = _import_cinnabar_stack()
+    directionality = summarize_directionality(result.edge_summary)
 
     out_root = Path(out_dir)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -1023,6 +1056,9 @@ def write_cinnabar_outputs(
         "has_absolute": bool(result.absolute_summary is not None),
         "absolute_offset": float(absolute_offset),
         "direction_mode": "merged" if result.merge_bidirectional else "split",
+        "n_directional_edges": directionality["n_directional_edges"],
+        "n_reciprocal_pairs": directionality["n_reciprocal_pairs"],
+        "reciprocal_pairs": directionality["reciprocal_pairs"],
         "outputs": {key: path.name for key, path in outputs.items()},
     }
     manifest_path = out_root / "manifest.json"

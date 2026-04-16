@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -295,6 +296,49 @@ def test_write_cinnabar_outputs_writes_expected_files(
         assert outputs[key].exists()
 
 
+def test_write_cinnabar_outputs_manifest_records_split_directionality(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "run1",
+                "ligand": "A~B",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run1",
+                "ligand": "B~A",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": -0.9,
+                "total_se": 0.3,
+                "temperature": 300.0,
+                "status": "success",
+            },
+        ]
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(
+        tmp_path,
+        run_ids=["run1"],
+        merge_bidirectional=False,
+    )
+    outputs = cinnabar_mod.write_cinnabar_outputs(result, tmp_path / "out")
+    manifest = json.loads(outputs["manifest_json"].read_text())
+
+    assert manifest["direction_mode"] == "split"
+    assert manifest["n_directional_edges"] == 2
+    assert manifest["n_reciprocal_pairs"] == 1
+    assert manifest["reciprocal_pairs"] == ["A~B"]
+
+
 @pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()
@@ -418,3 +462,30 @@ def test_cli_fe_cinnabar_split_runs_passes_absolute_offset(
             },
         }
     ]
+
+
+def test_cli_fe_cinnabar_split_directions_warns_without_reciprocals(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    result_obj = type(
+        "Result",
+        (),
+        {"edge_summary": pd.DataFrame([{"labelA": "A", "labelB": "B"}])},
+    )()
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar",
+        lambda **kwargs: result_obj,
+    )
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.write_cinnabar_outputs",
+        lambda result, out_dir, **kwargs: {},
+    )
+
+    result = runner.invoke(
+        cli,
+        ["fe", "cinnabar", str(tmp_path), "--split-directions"],
+    )
+
+    assert result.exit_code == 0
+    assert "contain no reciprocal A~B/B~A transformations" in result.output
