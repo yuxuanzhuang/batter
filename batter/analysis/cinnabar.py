@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -36,6 +37,7 @@ class CinnabarConversionResult:
     absolute_summary: pd.DataFrame | None = None
     absolute_warning: str | None = None
     ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
+    edge_assets: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def summarize_directionality(edge_summary: pd.DataFrame) -> dict[str, Any]:
@@ -294,6 +296,79 @@ def _build_ligand_assets(
             "input_path": input_path,
             "svg": svg,
         }
+    return assets
+
+
+def _file_to_data_uri(path: Path) -> str:
+    """Encode a local file as a data URI."""
+    suffix = path.suffix.lower()
+    mime = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml",
+    }.get(suffix, "application/octet-stream")
+    data = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{data}"
+
+
+def _build_edge_assets(
+    rbfe_df: pd.DataFrame,
+    *,
+    work_dir: str | Path,
+    merge_bidirectional: bool,
+    edge_separator: str = "~",
+) -> dict[str, dict[str, str]]:
+    """Build edge-click assets from stored RBFE mapping images."""
+    if rbfe_df is None or rbfe_df.empty:
+        return {}
+
+    assets: dict[str, dict[str, str]] = {}
+    work_root = Path(work_dir)
+
+    for row in rbfe_df.itertuples(index=False):
+        edge_label = str(getattr(row, "edge_label", "") or getattr(row, "ligand", "") or "").strip()
+        if edge_separator not in edge_label:
+            continue
+        left, right = (part.strip() for part in edge_label.split(edge_separator, 1))
+        if not left or not right:
+            continue
+        if merge_bidirectional:
+            label_a, label_b = sorted((left, right))
+        else:
+            label_a, label_b = left, right
+        edge_key = f"{label_a}~{label_b}"
+        if edge_key in assets:
+            continue
+
+        run_id = str(getattr(row, "run_id", "") or "").strip()
+        stored_pair_id = str(getattr(row, "ligand", "") or "").strip()
+        if not run_id or not stored_pair_id:
+            continue
+
+        results_dir = work_root / "results" / run_id / stored_pair_id / "Results"
+        image_path = None
+        for candidate in ("mapping.png", "mapping.svg"):
+            candidate_path = results_dir / candidate
+            if candidate_path.is_file():
+                image_path = candidate_path
+                break
+        if image_path is None:
+            continue
+        try:
+            image_data_uri = _file_to_data_uri(image_path)
+        except Exception:
+            continue
+
+        assets[edge_key] = {
+            "edge_key": edge_key,
+            "display_title": f"{label_a} → {label_b}",
+            "run_id": run_id,
+            "pair_id": stored_pair_id,
+            "image_name": image_path.name,
+            "image_data_uri": image_data_uri,
+        }
+
     return assets
 
 
@@ -658,6 +733,12 @@ def build_batter_rbfe_cinnabar(
         work_dir=work_dir,
         edge_separator=edge_separator,
     )
+    result.edge_assets = _build_edge_assets(
+        work,
+        work_dir=work_dir,
+        merge_bidirectional=merge_bidirectional,
+        edge_separator=edge_separator,
+    )
     return result
 
 
@@ -712,6 +793,12 @@ def build_batter_rbfe_cinnabar_by_run(
         result.ligand_assets = _build_ligand_assets(
             group,
             work_dir=work_dir,
+            edge_separator=edge_separator,
+        )
+        result.edge_assets = _build_edge_assets(
+            group,
+            work_dir=work_dir,
+            merge_bidirectional=merge_bidirectional,
             edge_separator=edge_separator,
         )
         out[str(run_id)] = result
@@ -1570,6 +1657,7 @@ def _render_dashboard_html(
     absolute_offset: float = 0.0,
     merge_bidirectional: bool = True,
     ligand_assets: dict[str, dict[str, str]] | None = None,
+    edge_assets: dict[str, dict[str, str]] | None = None,
     absolute_warning: str | None = None,
 ) -> bool:
     """Render a single tabbed HTML dashboard for network and absolute plots."""
@@ -1583,6 +1671,7 @@ def _render_dashboard_html(
     cmap = color_meta["cmap"]
     color_mode = color_meta.get("mode", "degree")
     assets = ligand_assets or {}
+    mapping_assets = edge_assets or {}
 
     canvas_w = 1100
     canvas_h = 760
@@ -1631,6 +1720,7 @@ def _render_dashboard_html(
     edge_svg: list[str] = []
     label_svg: list[str] = []
     for node_a, node_b, data in graph.edges(data=True):
+        edge_key = f"{node_a}~{node_b}"
         curvature = _edge_curvature(str(node_a), str(node_b))
         start = np.asarray(_to_xy(pos[node_a]), dtype=float)
         end = np.asarray(_to_xy(pos[node_b]), dtype=float)
@@ -1651,7 +1741,7 @@ def _render_dashboard_html(
             f"Q {control[0]:.2f} {control[1]:.2f} {end2[0]:.2f} {end2[1]:.2f}"
         )
         edge_svg.append(
-            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
+            f"<path class=\"edge-path\" data-edge=\"{html.escape(edge_key)}\" d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
             f"stroke-width=\"{_edge_width(abs(float(data.get('calc_DDG', 0.0)))):.2f}\" "
             f"stroke-linecap=\"round\" stroke-opacity=\"0.96\" marker-end=\"url(#arrow)\" />"
         )
@@ -1663,7 +1753,7 @@ def _render_dashboard_html(
         )
         edge_label_lines = edge_label.split("\n")
         label_svg.append(
-            "<g>"
+            f"<g class=\"edge-label\" data-edge=\"{html.escape(edge_key)}\">"
             f"<rect x=\"{text_pos[0] - 30:.2f}\" y=\"{text_pos[1] - 22:.2f}\" width=\"60\" height=\"42\" "
             "rx=\"6\" ry=\"6\" fill=\"white\" fill-opacity=\"0.92\" stroke=\"#cbd2d9\" stroke-width=\"1.0\" />"
             f"<text x=\"{text_pos[0]:.2f}\" y=\"{text_pos[1] - 4:.2f}\" text-anchor=\"middle\" "
@@ -1895,13 +1985,18 @@ def _render_dashboard_html(
     .panel svg {{ width: 100%; height: auto; display: block; background: #f6f7fb; }}
     .notes {{ margin: 12px 14px 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 10px; background: rgba(255,255,255,0.96); color: #486581; white-space: pre-line; }}
     .empty-panel {{ padding: 36px 24px; font-size: 15px; color: #52606d; text-align: center; }}
-    .node, .bar-row {{ cursor: pointer; }}
+    .node, .bar-row, .edge-path, .edge-label {{ cursor: pointer; }}
     #stickies {{ position: fixed; inset: 0; pointer-events: none; z-index: 1000; }}
     .sticky-note {{ position: fixed; width: 280px; min-height: 160px; background: #fff9c4; border: 1px solid #e0c56e; border-radius: 14px; box-shadow: 0 16px 38px rgba(15, 23, 42, 0.18); padding: 12px 12px 10px; pointer-events: auto; }}
+    .sticky-note.edge-note {{ width: 360px; background: #eef2ff; border-color: #c7d2fe; }}
     .sticky-header {{ display: flex; align-items: center; justify-content: space-between; font-weight: 700; margin-bottom: 8px; color: #6b4f00; cursor: move; }}
+    .sticky-note.edge-note .sticky-header {{ color: #3730a3; }}
     .sticky-close {{ border: 0; background: transparent; color: #6b4f00; font-size: 18px; line-height: 1; cursor: pointer; }}
+    .sticky-note.edge-note .sticky-close {{ color: #3730a3; }}
     .sticky-body .smiles {{ margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #52606d; word-break: break-all; }}
     .sticky-body .empty {{ font-size: 12px; color: #7b8794; }}
+    .sticky-body img {{ width: 100%; height: auto; border-radius: 8px; border: 1px solid #cbd2d9; background: white; }}
+    .sticky-meta {{ margin-top: 8px; font-size: 11px; color: #52606d; }}
   </style>
 </head>
 <body>
@@ -1923,6 +2018,7 @@ def _render_dashboard_html(
   <div id="stickies"></div>
   <script>
     const ligandAssets = {json.dumps(assets)};
+    const edgeAssets = {json.dumps(mapping_assets)};
     const stickyRoot = document.getElementById('stickies');
     let zCounter = 1000;
 
@@ -1931,6 +2027,17 @@ def _render_dashboard_html(
       const svg = asset.svg || '<div class="empty">No 2D structure available</div>';
       const smiles = asset.smiles ? `<div class="smiles">${{asset.smiles}}</div>` : '';
       return `<div class="sticky-body">${{svg}}${{smiles}}</div>`;
+    }}
+
+    function edgeBodyHtml(edgeKey) {{
+      const asset = edgeAssets[edgeKey] || {{}};
+      const image = asset.image_data_uri
+        ? `<img src="${{asset.image_data_uri}}" alt="${{asset.display_title || edgeKey}} mapping graph" />`
+        : '<div class="empty">No transformation mapping image available</div>';
+      const meta = asset.run_id
+        ? `<div class="sticky-meta">run_id: ${{asset.run_id}}<br />pair: ${{asset.pair_id || edgeKey}}</div>`
+        : '';
+      return `<div class="sticky-body">${{image}}${{meta}}</div>`;
     }}
 
     function bringToFront(note) {{
@@ -1999,11 +2106,55 @@ def _render_dashboard_html(
       }});
     }}
 
+    function openEdgeSticky(edgeKey, event) {{
+      const existing = document.querySelector(`.sticky-note[data-edge="${{CSS.escape(edgeKey)}}"]`);
+      if (existing) {{
+        bringToFront(existing);
+        return;
+      }}
+      const asset = edgeAssets[edgeKey] || {{}};
+      const title = asset.display_title || edgeKey.replace('~', ' → ');
+      const note = document.createElement('div');
+      note.className = 'sticky-note edge-note';
+      note.dataset.edge = edgeKey;
+      note.style.left = `${{Math.min(window.innerWidth - 400, Math.max(16, event.clientX + 12))}}px`;
+      note.style.top = `${{Math.min(window.innerHeight - 320, Math.max(16, event.clientY + 12))}}px`;
+      note.innerHTML = `
+        <div class="sticky-header">
+          <span>${{title}}</span>
+          <button class="sticky-close" type="button" aria-label="Close">×</button>
+        </div>
+        ${{edgeBodyHtml(edgeKey)}}
+      `;
+      stickyRoot.appendChild(note);
+      bringToFront(note);
+      makeDraggable(note);
+      note.addEventListener('pointerdown', () => bringToFront(note));
+      const closeButton = note.querySelector('.sticky-close');
+      closeButton.addEventListener('pointerdown', (event) => {{
+        event.stopPropagation();
+      }});
+      closeButton.addEventListener('click', (event) => {{
+        event.preventDefault();
+        event.stopPropagation();
+        note.remove();
+      }});
+    }}
+
     document.querySelectorAll('.node, .bar-row').forEach((element) => {{
       element.addEventListener('click', (event) => {{
         const label = element.getAttribute('data-ligand') || '';
         if (label) {{
           openSticky(label, event);
+        }}
+      }});
+    }});
+
+    document.querySelectorAll('.edge-path, .edge-label').forEach((element) => {{
+      element.addEventListener('click', (event) => {{
+        const edgeKey = element.getAttribute('data-edge') || '';
+        if (edgeKey) {{
+          openEdgeSticky(edgeKey, event);
         }}
       }});
     }});
@@ -2103,6 +2254,7 @@ def write_cinnabar_outputs(
         absolute_offset=absolute_offset,
         merge_bidirectional=result.merge_bidirectional,
         ligand_assets=result.ligand_assets,
+        edge_assets=result.edge_assets,
         absolute_warning=result.absolute_warning,
     ):
         outputs["dashboard_html"] = dashboard_html_path

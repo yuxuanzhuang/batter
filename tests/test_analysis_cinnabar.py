@@ -321,6 +321,8 @@ def test_write_cinnabar_outputs_writes_expected_files(
     assert "tabbar" in dashboard_html
     assert "sticky-note" in dashboard_html
     assert "event.stoppropagation()" in dashboard_html
+    assert "openedgesticky" in dashboard_html
+    assert "edgeassets" in dashboard_html
 
 
 def test_write_cinnabar_outputs_manifest_records_split_directionality(
