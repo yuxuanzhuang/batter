@@ -287,6 +287,9 @@ If you have experimental absolute affinities, pass them with
 ``--experimental-csv`` so Cinnabar can emit DG/DDG comparison plots. BATTER merges
 ``A~B`` and ``B~A`` into one canonical edge by default; add ``--split-directions``
 if you want to keep the two stored directions separate in the Cinnabar export.
+BATTER also writes ``cinnabar_absolute_sorted.png`` from the Cinnabar MLE absolute
+values; use ``--absolute-offset`` if you want to shift that ranking plot onto a
+chosen absolute reference level.
 
 ``fe list`` prints a high-level table for every stored run, while ``fe show`` opens
 the saved record for one transformation pair such as ``LIG1~LIG2``. For a file-by-file

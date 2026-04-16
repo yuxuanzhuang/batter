@@ -131,6 +131,7 @@ the output bundle under ``work/adrb2/results/cinnabar/``. Common files include:
 * ``raw_signed.csv`` – signed per-measurement table after BATTER canonicalizes edge direction
 * ``cinnabar_relative.csv`` – relative measurements exported from the FEMap
 * ``cinnabar_absolute.csv`` – MLE-derived absolute values when the network is connected
+* ``cinnabar_absolute_sorted.png`` – BATTER-rendered absolute ΔG ranking plot, sorted by energy
 * ``cinnabar_network.png`` – best-effort network visualisation
 * ``cinnabar_dg.png`` / ``cinnabar_ddg.png`` – plots when experimental data is provided
 
@@ -159,6 +160,11 @@ By default BATTER also merges opposite-direction rows such as ``LIGA~LIGB`` and
 ``LIGB~LIGA`` into one canonical edge before constructing the FEMap. Use
 ``--split-directions`` if you want those two stored transformations to remain
 separate directional measurements in the exported Cinnabar bundle.
+
+``--absolute-offset`` adds a constant shift to the computed MLE absolute energies in
+``cinnabar_absolute_sorted.png``. This is useful when you want to place the
+arbitrary RBFE-derived absolute scale onto a chosen reference level before
+comparing or presenting rankings.
 
 Clone Executions
 ================

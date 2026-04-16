@@ -284,6 +284,7 @@ def test_write_cinnabar_outputs_writes_expected_files(
         "edge_summary_csv",
         "cinnabar_relative_csv",
         "cinnabar_absolute_csv",
+        "absolute_sorted_png",
         "network_png",
         "manifest_json",
     }
@@ -325,6 +326,7 @@ def test_cli_fe_cinnabar_combined(monkeypatch, tmp_path: Path, runner: CliRunner
     assert called["build_kwargs"]["merge_bidirectional"] is True
     assert called["write_result"] is sentinel
     assert called["write_out_dir"] == tmp_path / "results" / "cinnabar"
+    assert called["write_kwargs"]["absolute_offset"] == 0.0
     assert "combined Cinnabar bundle" in result.output
 
 
@@ -358,6 +360,8 @@ def test_cli_fe_cinnabar_split_runs(monkeypatch, tmp_path: Path, runner: CliRunn
             "--run-id",
             "run2",
             "--split-directions",
+            "--absolute-offset",
+            "1.5",
         ],
     )
 
@@ -368,3 +372,47 @@ def test_cli_fe_cinnabar_split_runs(monkeypatch, tmp_path: Path, runner: CliRunn
         (bundles["run2"], tmp_path / "results" / "cinnabar" / "run2"),
     ]
     assert "2 per-run Cinnabar bundle" in result.output
+
+
+def test_cli_fe_cinnabar_split_runs_passes_absolute_offset(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    calls: list[dict[str, object]] = []
+    bundles = {"run1": object()}
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar_by_run",
+        lambda **kwargs: bundles,
+    )
+
+    def _fake_write(result, out_dir, **kwargs):
+        calls.append({"result": result, "out_dir": out_dir, "kwargs": kwargs})
+        return {}
+
+    monkeypatch.setattr("batter.cli.fe_cmds.write_cinnabar_outputs", _fake_write)
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "cinnabar",
+            str(tmp_path),
+            "--split-runs",
+            "--absolute-offset",
+            "-2.0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [
+        {
+            "result": bundles["run1"],
+            "out_dir": tmp_path / "results" / "cinnabar" / "run1",
+            "kwargs": {
+                "method_name": "BATTER",
+                "target_name": f"{tmp_path.name}:run1",
+                "write_plots": True,
+                "absolute_offset": -2.0,
+            },
+        }
+    ]

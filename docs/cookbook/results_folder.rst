@@ -209,6 +209,7 @@ A combined export typically looks like::
        ├── edge_summary.csv
        ├── cinnabar_relative.csv
        ├── cinnabar_absolute.csv      # when the network is connected
+       ├── cinnabar_absolute_sorted.png
        ├── cinnabar_network.png
        ├── cinnabar_dg.png            # when experiment is provided
        └── cinnabar_ddg.png           # when experiment is provided
@@ -232,9 +233,16 @@ When ``--split-runs`` is used, BATTER writes one subdirectory per run instead::
    MLE-derived absolute values from Cinnabar. BATTER writes this only when the RBFE
    network is connected strongly enough for Cinnabar to solve absolute values.
 
+``cinnabar_absolute_sorted.png``
+   BATTER-rendered ranking plot of the computed absolute free energies, sorted by
+   energy and drawn with horizontal uncertainty bars. When ``--absolute-offset`` is
+   used, BATTER applies that constant shift to the plotted computational energies
+   and records the offset in ``manifest.json``.
+
 ``manifest.json``
    Lightweight summary of what BATTER wrote, including whether experimental data was
-   merged and whether absolute values were successfully generated.
+   merged, whether absolute values were successfully generated, and the absolute
+   offset used for the ranked absolute-energy plot.
 
 Where This Differs From ``executions/``
 ---------------------------------------

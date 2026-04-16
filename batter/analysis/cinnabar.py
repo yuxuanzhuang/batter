@@ -740,6 +740,148 @@ def _render_network_png(
     return out_path.exists()
 
 
+def _render_absolute_sorted_png(
+    absolute_summary: pd.DataFrame,
+    out_path: Path,
+    *,
+    exp_summary: pd.DataFrame | None = None,
+    title: str = "",
+    absolute_offset: float = 0.0,
+) -> bool:
+    """Render a sorted absolute free-energy ranking plot."""
+    if absolute_summary is None or absolute_summary.empty:
+        return False
+
+    try:
+        import matplotlib.pyplot as plt
+    except Exception:
+        return False
+
+    abs_df = absolute_summary.copy()
+    label_col = "label" if "label" in abs_df.columns else None
+    dg_col = next((col for col in abs_df.columns if col.lower().startswith("dg")), None)
+    err_col = next(
+        (
+            col
+            for col in abs_df.columns
+            if "uncertainty" in col.lower() or col.lower().startswith("ddg")
+        ),
+        None,
+    )
+    if label_col is None or dg_col is None:
+        return False
+
+    abs_df = abs_df.dropna(subset=[label_col, dg_col]).copy()
+    if abs_df.empty:
+        return False
+
+    abs_df["DG_shifted"] = pd.to_numeric(abs_df[dg_col], errors="coerce") + float(
+        absolute_offset
+    )
+    if err_col is not None:
+        abs_df["DG_uncertainty"] = pd.to_numeric(abs_df[err_col], errors="coerce").fillna(0.0)
+    else:
+        abs_df["DG_uncertainty"] = 0.0
+    abs_df = abs_df.sort_values("DG_shifted", ascending=True, kind="stable").reset_index(
+        drop=True
+    )
+
+    exp_map: dict[str, tuple[float, float]] = {}
+    if exp_summary is not None and not exp_summary.empty:
+        exp_df = exp_summary.copy()
+        if "label" in exp_df.columns and "exp_DG" in exp_df.columns:
+            exp_df = exp_df.dropna(subset=["label", "exp_DG"]).copy()
+            if not exp_df.empty:
+                exp_df["exp_uncertainty"] = pd.to_numeric(
+                    exp_df.get("exp_uncertainty", 0.0), errors="coerce"
+                ).fillna(0.0)
+                exp_map = {
+                    str(row.label): (float(row.exp_DG), float(row.exp_uncertainty))
+                    for row in exp_df.itertuples(index=False)
+                }
+
+    n_rows = len(abs_df)
+    fig_w = max(8.0, 0.28 * n_rows + 7.0)
+    fig_h = max(6.0, 0.42 * n_rows + 1.5)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("#f6f7fb")
+
+    y = np.arange(n_rows)
+    calc_values = abs_df["DG_shifted"].to_numpy(dtype=float)
+    calc_errs = abs_df["DG_uncertainty"].to_numpy(dtype=float)
+    labels = abs_df[label_col].astype(str).tolist()
+
+    ax.errorbar(
+        calc_values,
+        y,
+        xerr=calc_errs,
+        fmt="o",
+        color="#0b7285",
+        ecolor="#0b7285",
+        elinewidth=1.4,
+        capsize=3,
+        markersize=6.5,
+        label="BATTER MLE",
+        zorder=3,
+    )
+
+    if exp_map:
+        exp_values = []
+        exp_errs = []
+        for label in labels:
+            value, uncertainty = exp_map.get(label, (np.nan, np.nan))
+            exp_values.append(value)
+            exp_errs.append(uncertainty)
+        exp_values_arr = np.asarray(exp_values, dtype=float)
+        exp_errs_arr = np.asarray(exp_errs, dtype=float)
+        valid = np.isfinite(exp_values_arr)
+        if np.any(valid):
+            ax.errorbar(
+                exp_values_arr[valid],
+                y[valid],
+                xerr=exp_errs_arr[valid],
+                fmt="s",
+                color="#bc6c25",
+                ecolor="#bc6c25",
+                elinewidth=1.2,
+                capsize=3,
+                markersize=5.5,
+                label="Experiment",
+                zorder=4,
+            )
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.invert_yaxis()
+    ax.grid(axis="x", color="#d9e2ec", linewidth=0.8, alpha=0.9)
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel("Absolute ΔG (kcal/mol)", color="#102a43")
+    ax.set_ylabel("Ligand", color="#102a43")
+    if title:
+        ax.set_title(title, fontsize=14, fontweight="bold", color="#102a43", pad=14)
+
+    if not np.isclose(float(absolute_offset), 0.0):
+        ax.text(
+            0.99,
+            0.01,
+            f"Applied offset: {float(absolute_offset):+.2f} kcal/mol",
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=9,
+            color="#486581",
+        )
+
+    if exp_map:
+        ax.legend(frameon=False, loc="lower right")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out_path.exists()
+
+
 def write_cinnabar_outputs(
     result: CinnabarConversionResult,
     out_dir: str | Path,
@@ -747,6 +889,7 @@ def write_cinnabar_outputs(
     method_name: str = "BATTER",
     target_name: str = "",
     write_plots: bool = True,
+    absolute_offset: float = 0.0,
 ) -> dict[str, Path]:
     """Write stable on-disk outputs for a converted Cinnabar bundle."""
     _FEMap, plotting, _unit = _import_cinnabar_stack()
@@ -768,6 +911,8 @@ def write_cinnabar_outputs(
     result.femap.get_relative_dataframe().to_csv(rel_path, index=False)
     outputs["cinnabar_relative_csv"] = rel_path
 
+    title = method_name if not target_name else f"{method_name}: {target_name}"
+
     if result.exp_summary is not None:
         exp_path = out_root / "experimental_summary.csv"
         result.exp_summary.to_csv(exp_path, index=False)
@@ -777,9 +922,17 @@ def write_cinnabar_outputs(
         abs_path = out_root / "cinnabar_absolute.csv"
         result.absolute_summary.to_csv(abs_path, index=False)
         outputs["cinnabar_absolute_csv"] = abs_path
+        abs_plot_path = out_root / "cinnabar_absolute_sorted.png"
+        if _render_absolute_sorted_png(
+            result.absolute_summary,
+            abs_plot_path,
+            exp_summary=result.exp_summary,
+            title=title,
+            absolute_offset=absolute_offset,
+        ):
+            outputs["absolute_sorted_png"] = abs_plot_path
 
     graph_path = out_root / "cinnabar_network.png"
-    title = method_name if not target_name else f"{method_name}: {target_name}"
     rendered = _render_network_png(
         result.edge_summary,
         graph_path,
@@ -828,6 +981,7 @@ def write_cinnabar_outputs(
         "n_measurements": int(len(result.raw_signed)),
         "has_experimental": bool(result.exp_summary is not None),
         "has_absolute": bool(result.absolute_summary is not None),
+        "absolute_offset": float(absolute_offset),
         "outputs": {key: path.name for key, path in outputs.items()},
     }
     manifest_path = out_root / "manifest.json"

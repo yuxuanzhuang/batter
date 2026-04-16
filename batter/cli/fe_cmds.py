@@ -306,6 +306,13 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     default=True,
     help="Attempt to write Cinnabar plots when plotting support is available.",
 )
+@click.option(
+    "--absolute-offset",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Constant offset (kcal/mol) added to computed absolute ΔG values in the sorted absolute-energy plot.",
+)
 def fe_cinnabar(
     work_dir: Path,
     run_ids: tuple[str, ...],
@@ -328,6 +335,7 @@ def fe_cinnabar(
     exp_value_unit: str,
     exp_error_unit: str | None,
     write_plots: bool,
+    absolute_offset: float,
 ) -> None:
     """Convert stored BATTER RBFE results into Cinnabar FEMap-ready outputs."""
     exp_df = None
@@ -371,6 +379,7 @@ def fe_cinnabar(
                 method_name="BATTER",
                 target_name=work_dir.name,
                 write_plots=write_plots,
+                absolute_offset=absolute_offset,
             )
             click.echo(
                 f"Wrote combined Cinnabar bundle to {output_root} "
@@ -390,6 +399,7 @@ def fe_cinnabar(
                 method_name="BATTER",
                 target_name=f"{work_dir.name}:{run_id}",
                 write_plots=write_plots,
+                absolute_offset=absolute_offset,
             )
         click.echo(
             f"Wrote {len(bundles)} per-run Cinnabar bundle(s) under {output_root}."
