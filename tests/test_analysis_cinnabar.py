@@ -223,6 +223,54 @@ def test_build_batter_rbfe_cinnabar_by_run_splits_runs(
     assert bundles["run2"].edge_summary.iloc[0]["n_runs"] == 1
 
 
+def test_build_batter_rbfe_cinnabar_can_split_bidirectional_edges(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "run1",
+                "ligand": "A~B",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run1",
+                "ligand": "B~A",
+                "original_name": "",
+                "protocol": "rbfe",
+                "total_dG": -0.9,
+                "total_se": 0.3,
+                "temperature": 300.0,
+                "status": "success",
+            },
+        ]
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    merged = cinnabar_mod.build_batter_rbfe_cinnabar(
+        tmp_path,
+        run_ids=["run1"],
+        merge_bidirectional=True,
+    )
+    split = cinnabar_mod.build_batter_rbfe_cinnabar(
+        tmp_path,
+        run_ids=["run1"],
+        merge_bidirectional=False,
+    )
+
+    assert len(merged.edge_summary) == 1
+    assert {(row.labelA, row.labelB) for row in split.edge_summary.itertuples(index=False)} == {
+        ("A", "B"),
+        ("B", "A"),
+    }
+    assert len(split.edge_summary) == 2
+
+
 def test_write_cinnabar_outputs_writes_expected_files(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
@@ -274,6 +322,7 @@ def test_cli_fe_cinnabar_combined(monkeypatch, tmp_path: Path, runner: CliRunner
 
     assert result.exit_code == 0
     assert called["build_kwargs"]["work_dir"] == tmp_path
+    assert called["build_kwargs"]["merge_bidirectional"] is True
     assert called["write_result"] is sentinel
     assert called["write_out_dir"] == tmp_path / "results" / "cinnabar"
     assert "combined Cinnabar bundle" in result.output
@@ -282,10 +331,15 @@ def test_cli_fe_cinnabar_combined(monkeypatch, tmp_path: Path, runner: CliRunner
 def test_cli_fe_cinnabar_split_runs(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
     calls: list[tuple[object, Path]] = []
     bundles = {"run1": object(), "run2": object()}
+    called: dict[str, object] = {}
+
+    def _fake_build(**kwargs):
+        called["build_kwargs"] = kwargs
+        return bundles
 
     monkeypatch.setattr(
         "batter.cli.fe_cmds.build_batter_rbfe_cinnabar_by_run",
-        lambda **kwargs: bundles,
+        _fake_build,
     )
     monkeypatch.setattr(
         "batter.cli.fe_cmds.write_cinnabar_outputs",
@@ -303,10 +357,12 @@ def test_cli_fe_cinnabar_split_runs(monkeypatch, tmp_path: Path, runner: CliRunn
             "run1",
             "--run-id",
             "run2",
+            "--split-directions",
         ],
     )
 
     assert result.exit_code == 0
+    assert called["build_kwargs"]["merge_bidirectional"] is False
     assert calls == [
         (bundles["run1"], tmp_path / "results" / "cinnabar" / "run1"),
         (bundles["run2"], tmp_path / "results" / "cinnabar" / "run2"),

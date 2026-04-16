@@ -155,6 +155,11 @@ each run before combining runs. Switch to ``--pool-all-measurements`` if you wan
 weight every stored edge measurement directly. ``--uncertainty-mode`` controls the
 repeat-combination rule (``ivw``, ``sample``, or ``max``).
 
+By default BATTER also merges opposite-direction rows such as ``LIGA~LIGB`` and
+``LIGB~LIGA`` into one canonical edge before constructing the FEMap. Use
+``--split-directions`` if you want those two stored transformations to remain
+separate directional measurements in the exported Cinnabar bundle.
+
 Clone Executions
 ================
 

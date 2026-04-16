@@ -184,6 +184,7 @@ def dataframe_to_cinnabar(
     source: str = "BATTER_RBFE",
     uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
     combine_by_run_first: bool = True,
+    merge_bidirectional: bool = True,
     experimental_df: pd.DataFrame | None = None,
     exp_ligand_column: str = "ligand",
     exp_abfe_column: str = "abfe",
@@ -224,16 +225,20 @@ def dataframe_to_cinnabar(
     work["ligand_A_raw"] = lig_split[0].str.strip()
     work["ligand_B_raw"] = lig_split[1].str.strip()
 
-    forward_is_canonical = work["ligand_A_raw"] <= work["ligand_B_raw"]
-    work["labelA"] = np.where(
-        forward_is_canonical, work["ligand_A_raw"], work["ligand_B_raw"]
-    )
-    work["labelB"] = np.where(
-        forward_is_canonical, work["ligand_B_raw"], work["ligand_A_raw"]
-    )
-
     raw_dg = pd.to_numeric(work[dg_column], errors="raise").astype(float)
-    work["signed_dDG"] = np.where(forward_is_canonical, raw_dg, -raw_dg)
+    if merge_bidirectional:
+        forward_is_canonical = work["ligand_A_raw"] <= work["ligand_B_raw"]
+        work["labelA"] = np.where(
+            forward_is_canonical, work["ligand_A_raw"], work["ligand_B_raw"]
+        )
+        work["labelB"] = np.where(
+            forward_is_canonical, work["ligand_B_raw"], work["ligand_A_raw"]
+        )
+        work["signed_dDG"] = np.where(forward_is_canonical, raw_dg, -raw_dg)
+    else:
+        work["labelA"] = work["ligand_A_raw"]
+        work["labelB"] = work["ligand_B_raw"]
+        work["signed_dDG"] = raw_dg
     work["input_se"] = pd.to_numeric(work[se_column], errors="raise").astype(float)
 
     if np.any(work["input_se"] <= 0):
@@ -415,6 +420,7 @@ def build_batter_rbfe_cinnabar(
     edge_separator: str = "~",
     uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
     combine_by_run_first: bool = True,
+    merge_bidirectional: bool = True,
     experimental_df: pd.DataFrame | None = None,
     exp_ligand_column: str = "ligand",
     exp_abfe_column: str = "abfe",
@@ -439,6 +445,7 @@ def build_batter_rbfe_cinnabar(
         edge_separator=edge_separator,
         uncertainty_mode=uncertainty_mode,
         combine_by_run_first=combine_by_run_first,
+        merge_bidirectional=merge_bidirectional,
         experimental_df=experimental_df,
         exp_ligand_column=exp_ligand_column,
         exp_abfe_column=exp_abfe_column,
@@ -461,6 +468,7 @@ def build_batter_rbfe_cinnabar_by_run(
     edge_separator: str = "~",
     uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
     combine_by_run_first: bool = True,
+    merge_bidirectional: bool = True,
     experimental_df: pd.DataFrame | None = None,
     exp_ligand_column: str = "ligand",
     exp_abfe_column: str = "abfe",
@@ -487,6 +495,7 @@ def build_batter_rbfe_cinnabar_by_run(
             edge_separator=edge_separator,
             uncertainty_mode=uncertainty_mode,
             combine_by_run_first=combine_by_run_first,
+            merge_bidirectional=merge_bidirectional,
             experimental_df=experimental_df,
             exp_ligand_column=exp_ligand_column,
             exp_abfe_column=exp_abfe_column,
@@ -521,7 +530,7 @@ def _render_network_png(
     except Exception:
         return False
 
-    graph = nx.Graph()
+    graph = nx.DiGraph()
     for row in edge_summary.itertuples(index=False):
         graph.add_edge(
             str(row.labelA),
@@ -584,12 +593,20 @@ def _render_network_png(
         cmap = colormaps["Blues"]
         colorbar_label = "Node degree"
 
+    def _edge_curvature(node_a: str, node_b: str) -> float:
+        if graph.has_edge(node_b, node_a) and node_a != node_b:
+            ordered = tuple(sorted((str(node_a), str(node_b))))
+            return 0.18 if (str(node_a), str(node_b)) == ordered else -0.18
+        return 0.0
+
     edge_widths = []
     edge_colors = []
-    edge_labels = {}
-    edge_uncertainties = [
-        float(data.get("calc_dDDG", 0.0)) for _, _, data in graph.edges(data=True)
-    ]
+    edge_metadata: list[tuple[str, str, dict[str, Any], float]] = []
+    edge_uncertainties = []
+    for node_a, node_b, data in graph.edges(data=True):
+        curvature = _edge_curvature(str(node_a), str(node_b))
+        edge_metadata.append((str(node_a), str(node_b), data, curvature))
+        edge_uncertainties.append(float(data.get("calc_dDDG", 0.0)))
     if edge_uncertainties:
         emin = min(edge_uncertainties)
         emax = max(edge_uncertainties)
@@ -601,14 +618,10 @@ def _render_network_png(
         edge_norm = mcolors.Normalize(vmin=0, vmax=1)
         edge_cmap = colormaps["magma_r"]
 
-    for node_a, node_b, data in graph.edges(data=True):
+    for node_a, node_b, data, _curvature in edge_metadata:
         n_measurements = max(1, int(data.get("n_measurements", 1)))
         edge_widths.append(2.0 + 0.45 * np.log1p(n_measurements))
         edge_colors.append(edge_cmap(edge_norm(float(data.get("calc_dDDG", 0.0)))))
-        edge_labels[(node_a, node_b)] = (
-            f"{float(data.get('calc_DDG', 0.0)):+.2f}\n"
-            f"±{float(data.get('calc_dDDG', 0.0)):.2f}"
-        )
 
     fig_w = max(7.0, 1.8 * graph.number_of_nodes())
     fig_h = max(5.5, 1.5 * graph.number_of_nodes())
@@ -616,14 +629,24 @@ def _render_network_png(
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#f6f7fb")
 
-    nx.draw_networkx_edges(
-        graph,
-        pos,
-        ax=ax,
-        width=edge_widths,
-        edge_color=edge_colors,
-        alpha=0.95,
-    )
+    for (node_a, node_b, data, curvature), edge_width, edge_color in zip(
+        edge_metadata, edge_widths, edge_colors
+    ):
+        nx.draw_networkx_edges(
+            graph,
+            pos,
+            ax=ax,
+            edgelist=[(node_a, node_b)],
+            width=edge_width,
+            edge_color=[edge_color],
+            alpha=0.95,
+            arrows=True,
+            arrowstyle="-|>",
+            arrowsize=24,
+            min_source_margin=18,
+            min_target_margin=18,
+            connectionstyle=f"arc3,rad={curvature}",
+        )
     node_artist = nx.draw_networkx_nodes(
         graph,
         pos,
@@ -650,23 +673,36 @@ def _render_network_png(
             [path_effects.withStroke(linewidth=3, foreground="white", alpha=0.9)]
         )
 
-    edge_text = nx.draw_networkx_edge_labels(
-        graph,
-        pos,
-        ax=ax,
-        edge_labels=edge_labels,
-        font_size=8,
-        label_pos=0.5,
-        rotate=False,
-        bbox={
-            "boxstyle": "round,pad=0.18",
-            "fc": "white",
-            "ec": "#cbd2d9",
-            "alpha": 0.9,
-        },
-    )
-    for text in edge_text.values():
-        text.set_color("#243b53")
+    for node_a, node_b, data, curvature in edge_metadata:
+        start = np.asarray(pos[node_a], dtype=float)
+        end = np.asarray(pos[node_b], dtype=float)
+        midpoint = 0.5 * (start + end)
+        direction = end - start
+        norm_dir = np.linalg.norm(direction)
+        if norm_dir > 0:
+            perp = np.array([-direction[1], direction[0]]) / norm_dir
+        else:
+            perp = np.array([0.0, 0.0])
+        text_pos = midpoint + perp * curvature * 0.55
+        edge_label = (
+            f"{float(data.get('calc_DDG', 0.0)):+.2f}\n"
+            f"±{float(data.get('calc_dDDG', 0.0)):.2f}"
+        )
+        ax.text(
+            text_pos[0],
+            text_pos[1],
+            edge_label,
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="#243b53",
+            bbox={
+                "boxstyle": "round,pad=0.18",
+                "fc": "white",
+                "ec": "#cbd2d9",
+                "alpha": 0.9,
+            },
+        )
 
     if title:
         ax.set_title(title, fontsize=14, fontweight="bold", color="#102a43", pad=14)
@@ -680,6 +716,16 @@ def _render_network_png(
         0.01,
         0.01,
         "Edge labels show ΔΔG ± s.e. (kcal/mol)",
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=9,
+        color="#486581",
+    )
+    ax.text(
+        0.01,
+        0.055,
+        "Arrows point from labelA to labelB",
         transform=ax.transAxes,
         ha="left",
         va="bottom",

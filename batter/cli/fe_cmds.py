@@ -221,6 +221,12 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Collapse repeated measurements within each run before combining across runs.",
 )
 @click.option(
+    "--merge-directions/--split-directions",
+    "merge_bidirectional",
+    default=True,
+    help="Merge A~B and B~A into one canonical edge, or keep them as separate directional transformations.",
+)
+@click.option(
     "--uncertainty-mode",
     type=click.Choice(["ivw", "sample", "max"], case_sensitive=False),
     default="max",
@@ -307,6 +313,7 @@ def fe_cinnabar(
     out_dir: Path | None,
     combine_runs: bool,
     combine_by_run_first: bool,
+    merge_bidirectional: bool,
     uncertainty_mode: str,
     edge_separator: str,
     source: str,
@@ -341,6 +348,7 @@ def fe_cinnabar(
         "edge_separator": edge_separator,
         "uncertainty_mode": uncertainty_mode.lower(),
         "combine_by_run_first": combine_by_run_first,
+        "merge_bidirectional": merge_bidirectional,
         "experimental_df": exp_df,
         "exp_ligand_column": exp_ligand_column,
         "exp_abfe_column": exp_abfe_column,
