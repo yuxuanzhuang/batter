@@ -1017,6 +1017,7 @@ def _render_network_png(
 
     node_degree = dict(graph.degree())
     node_sizes = [1400 + 220 * node_degree[node] for node in graph.nodes]
+    node_size_map = {node: size for node, size in zip(graph.nodes, node_sizes)}
     color_meta = _node_color_mapping(graph, absolute_summary)
     node_colors = color_meta["values"]
     norm = color_meta["norm"]
@@ -1054,6 +1055,11 @@ def _render_network_png(
 
     edge_color = "#7c3aed"
 
+    def _node_margin_points(node: str, *, arrow: bool) -> float:
+        size = float(node_size_map.get(node, 1400.0))
+        radius_points = np.sqrt(size / np.pi)
+        return radius_points + (12.0 if arrow else 4.0)
+
     fig_w = max(7.0, 1.8 * graph.number_of_nodes())
     fig_h = max(5.5, 1.5 * graph.number_of_nodes())
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
@@ -1073,8 +1079,8 @@ def _render_network_png(
             arrows=True,
             arrowstyle="-|>",
             arrowsize=24,
-            min_source_margin=18,
-            min_target_margin=18,
+            min_source_margin=_node_margin_points(node_a, arrow=False),
+            min_target_margin=_node_margin_points(node_b, arrow=True),
             connectionstyle=f"arc3,rad={curvature}",
         )
     node_artist = nx.draw_networkx_nodes(
@@ -1279,8 +1285,8 @@ def _render_network_html(
         else:
             unit = np.array([0.0, 0.0])
             perp = np.array([0.0, 0.0])
-        start2 = start + unit * node_radius[node_a] * 0.8
-        end2 = end - unit * node_radius[node_b] * 0.8
+        start2 = start + unit * (node_radius[node_a] + 4.0)
+        end2 = end - unit * (node_radius[node_b] + 14.0)
         span = np.linalg.norm(end2 - start2)
         control = 0.5 * (start2 + end2) + perp * curvature * span * 0.75
         path_d = (
@@ -1854,8 +1860,8 @@ def _render_dashboard_html(
         else:
             unit_dir = np.array([0.0, 0.0])
             perp = np.array([0.0, 0.0])
-        start2 = start + unit_dir * node_radius[node_a] * 0.8
-        end2 = end - unit_dir * node_radius[node_b] * 0.8
+        start2 = start + unit_dir * (node_radius[node_a] + 4.0)
+        end2 = end - unit_dir * (node_radius[node_b] + 14.0)
         span = np.linalg.norm(end2 - start2)
         control = 0.5 * (start2 + end2) + perp * curvature * span * 0.75
         path_d = (
