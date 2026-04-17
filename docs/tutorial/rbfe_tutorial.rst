@@ -280,6 +280,10 @@ records into a Cinnabar bundle::
 
     batter fe cinnabar <run.output_folder> --run-id rep1 --run-id rep2
 
+Per-run RBFE analysis already writes a default bundle under
+``results/cinnabar/<run_id>/``. Use the explicit multi-``--run-id`` command above
+when you want to merge replicate runs into one Cinnabar view.
+
 That command reads the saved ``results/index.csv`` rows, combines the selected RBFE
 edges, and writes a derived bundle under ``results/cinnabar/``. Use
 ``--split-runs`` if you want one bundle per run instead of collapsing repeats.

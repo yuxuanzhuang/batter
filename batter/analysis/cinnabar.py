@@ -6,6 +6,7 @@ import html
 import json
 import re
 import base64
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -14,10 +15,9 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
-from batter.api import list_fe_runs
-
 __all__ = [
     "CinnabarConversionResult",
+    "auto_write_rbfe_cinnabar_for_run",
     "build_batter_rbfe_cinnabar",
     "build_batter_rbfe_cinnabar_by_run",
     "dataframe_to_cinnabar",
@@ -38,6 +38,13 @@ class CinnabarConversionResult:
     absolute_warning: str | None = None
     ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
     edge_assets: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
+def list_fe_runs(work_dir: str | Path) -> pd.DataFrame:
+    """Lazy wrapper to avoid a hard import cycle with :mod:`batter.api`."""
+    from batter.api import list_fe_runs as _list_fe_runs
+
+    return _list_fe_runs(work_dir)
 
 
 def summarize_directionality(edge_summary: pd.DataFrame) -> dict[str, Any]:
@@ -69,6 +76,69 @@ def summarize_directionality(edge_summary: pd.DataFrame) -> dict[str, Any]:
         "n_reciprocal_pairs": int(len(reciprocal_pairs)),
         "reciprocal_pairs": [f"{label_a}~{label_b}" for label_a, label_b in reciprocal_pairs],
     }
+
+
+def _rbfe_run_ids_for_replicate_note(
+    work_dir: str | Path,
+    current_run_id: str,
+) -> list[str]:
+    """Return RBFE run ids that look like replicate siblings of ``current_run_id``."""
+    try:
+        df = list_fe_runs(Path(work_dir)).copy()
+    except Exception:
+        return []
+    if df.empty or "run_id" not in df.columns:
+        return []
+
+    protocol_series = (
+        df.get("protocol", df.get("fe_type", pd.Series("", index=df.index)))
+        .fillna("")
+        .astype(str)
+        .str.lower()
+    )
+    rbfe_df = df.loc[protocol_series.eq("rbfe")].copy()
+    if rbfe_df.empty:
+        return []
+
+    rbfe_df["run_id"] = rbfe_df["run_id"].astype(str)
+    current_rows = rbfe_df.loc[rbfe_df["run_id"] == str(current_run_id)].copy()
+    if current_rows.empty:
+        return sorted(rbfe_df["run_id"].dropna().astype(str).unique().tolist())
+
+    if "system_name" in rbfe_df.columns:
+        system_name_series = rbfe_df["system_name"].fillna("").astype(str)
+        current_system_names = (
+            current_rows.get("system_name", pd.Series("", index=current_rows.index))
+            .fillna("")
+            .astype(str)
+        )
+        current_system_name = next(
+            (name for name in current_system_names.tolist() if name),
+            "",
+        )
+        if current_system_name:
+            rbfe_df = rbfe_df.loc[system_name_series.eq(current_system_name)].copy()
+
+    return sorted(rbfe_df["run_id"].dropna().astype(str).unique().tolist())
+
+
+def _replicate_cinnabar_note(work_dir: str | Path, current_run_id: str) -> str | None:
+    """Return a user-facing note for combining replicate RBFE runs."""
+    run_ids = _rbfe_run_ids_for_replicate_note(work_dir, current_run_id)
+    if len(run_ids) <= 1:
+        return None
+    cmd = " ".join(
+        [
+            "batter fe cinnabar",
+            shlex.quote(str(Path(work_dir))),
+            *[f"--run-id {shlex.quote(run_id)}" for run_id in run_ids],
+        ]
+    )
+    return (
+        "Multiple RBFE runs were detected for this work directory. "
+        "To combine replicate runs into one Cinnabar bundle, run: "
+        f"{cmd}"
+    )
 
 
 def _import_cinnabar_stack() -> tuple[Any, Any, Any]:
@@ -803,6 +873,42 @@ def build_batter_rbfe_cinnabar_by_run(
         )
         out[str(run_id)] = result
     return out
+
+
+def auto_write_rbfe_cinnabar_for_run(
+    work_dir: str | Path,
+    run_id: str,
+    *,
+    out_dir: str | Path | None = None,
+    combine_by_run_first: bool = True,
+    merge_bidirectional: bool = True,
+    write_plots: bool = True,
+    absolute_offset: float = 0.0,
+) -> dict[str, Any]:
+    """Write a per-run RBFE Cinnabar bundle plus a replicate-aware follow-up note."""
+    work_root = Path(work_dir)
+    output_dir = Path(out_dir) if out_dir is not None else (work_root / "results" / "cinnabar" / str(run_id))
+    result = build_batter_rbfe_cinnabar(
+        work_root,
+        run_ids=[str(run_id)],
+        combine_by_run_first=combine_by_run_first,
+        merge_bidirectional=merge_bidirectional,
+    )
+    outputs = write_cinnabar_outputs(
+        result,
+        output_dir,
+        method_name="BATTER",
+        target_name=f"{work_root.name}:{run_id}",
+        write_plots=write_plots,
+        absolute_offset=absolute_offset,
+    )
+    return {
+        "result": result,
+        "outputs": outputs,
+        "output_dir": output_dir,
+        "replicate_note": _replicate_cinnabar_note(work_root, str(run_id)),
+        "absolute_warning": getattr(result, "absolute_warning", None),
+    }
 
 
 def _node_color_mapping(

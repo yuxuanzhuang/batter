@@ -112,6 +112,11 @@ production steps in each window. By default existing analysis outputs are preser
 pass ``--overwrite`` to regenerate them. Pass ``--n-bootstrap`` to request MBAR
 bootstrap resamples and ``--no-raise-on-error`` to continue if one ligand fails.
 
+For RBFE runs, ``batter fe analyze`` also writes a per-run Cinnabar bundle under
+``work/adrb2/results/cinnabar/<run_id>/`` by default. When the work directory
+contains replicate RBFE runs, BATTER prints a follow-up note with the matching
+``batter fe cinnabar ... --run-id ...`` command to combine them into one bundle.
+
 Re-run FE analysis for exactly one ligand folder::
 
    batter fe ligand-analyze work/adrb2/executions/run-20240101/simulations/LIG1 --overwrite

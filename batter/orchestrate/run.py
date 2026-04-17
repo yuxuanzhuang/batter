@@ -1275,6 +1275,22 @@ def _run_from_yaml_impl(
             [f"{n} ({status}: {reason})" for n, status, reason in failures]
         )
         logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
+    if rc.protocol == "rbfe":
+        try:
+            from batter.analysis.cinnabar import auto_write_rbfe_cinnabar_for_run
+
+            cinnabar_export = auto_write_rbfe_cinnabar_for_run(rc.run.output_folder, run_id)
+            logger.info(
+                f"Wrote RBFE Cinnabar bundle for run '{run_id}' to {cinnabar_export['output_dir']}."
+            )
+            if cinnabar_export.get("absolute_warning"):
+                logger.warning(str(cinnabar_export["absolute_warning"]))
+            if cinnabar_export.get("replicate_note"):
+                logger.info(str(cinnabar_export["replicate_note"]))
+        except Exception as exc:
+            logger.warning(
+                f"Automatic RBFE Cinnabar export failed for run '{run_id}': {exc}"
+            )
     summary_table = _build_run_summary_table(repo, run_id)
     if summary_table:
         logger.info(f"Final FE summary for run '{run_id}':\n{summary_table}")

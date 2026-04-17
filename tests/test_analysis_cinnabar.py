@@ -395,6 +395,91 @@ def test_write_cinnabar_outputs_manifest_records_split_directionality(
     assert manifest["reciprocal_pairs"] == ["A~B"]
 
 
+def test_auto_write_rbfe_cinnabar_for_run_uses_run_scoped_output_and_replicate_note(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake_result = cinnabar_mod.CinnabarConversionResult(
+        femap=object(),
+        edge_summary=pd.DataFrame([{"labelA": "A", "labelB": "B", "calc_DDG": 1.0, "calc_dDDG": 0.2}]),
+        raw_signed=pd.DataFrame(),
+        absolute_warning="abs warning",
+    )
+    called: dict[str, object] = {}
+
+    def _fake_build(work_dir, **kwargs):
+        called["build_work_dir"] = work_dir
+        called["build_kwargs"] = kwargs
+        return fake_result
+
+    def _fake_write(result, out_dir, **kwargs):
+        called["write_result"] = result
+        called["write_out_dir"] = out_dir
+        called["write_kwargs"] = kwargs
+        return {"dashboard_html": Path(out_dir) / "cinnabar_dashboard.html"}
+
+    monkeypatch.setattr(cinnabar_mod, "build_batter_rbfe_cinnabar", _fake_build)
+    monkeypatch.setattr(cinnabar_mod, "write_cinnabar_outputs", _fake_write)
+    monkeypatch.setattr(
+        cinnabar_mod,
+        "list_fe_runs",
+        lambda work_dir: pd.DataFrame(
+            [
+                {"run_id": "rep1", "protocol": "rbfe", "system_name": "sys"},
+                {"run_id": "rep2", "protocol": "rbfe", "system_name": "sys"},
+            ]
+        ),
+    )
+
+    export = cinnabar_mod.auto_write_rbfe_cinnabar_for_run(tmp_path, "rep1")
+
+    assert called["build_work_dir"] == tmp_path
+    assert called["build_kwargs"] == {
+        "run_ids": ["rep1"],
+        "combine_by_run_first": True,
+        "merge_bidirectional": True,
+    }
+    assert called["write_result"] is fake_result
+    assert called["write_out_dir"] == tmp_path / "results" / "cinnabar" / "rep1"
+    assert export["output_dir"] == tmp_path / "results" / "cinnabar" / "rep1"
+    assert export["absolute_warning"] == "abs warning"
+    note = str(export["replicate_note"])
+    assert "batter fe cinnabar" in note
+    assert "--run-id rep1" in note
+    assert "--run-id rep2" in note
+
+
+def test_auto_write_rbfe_cinnabar_for_run_omits_replicate_note_for_single_run(
+    monkeypatch, tmp_path: Path
+) -> None:
+    fake_result = cinnabar_mod.CinnabarConversionResult(
+        femap=object(),
+        edge_summary=pd.DataFrame([{"labelA": "A", "labelB": "B", "calc_DDG": 1.0, "calc_dDDG": 0.2}]),
+        raw_signed=pd.DataFrame(),
+    )
+
+    monkeypatch.setattr(
+        cinnabar_mod,
+        "build_batter_rbfe_cinnabar",
+        lambda work_dir, **kwargs: fake_result,
+    )
+    monkeypatch.setattr(
+        cinnabar_mod,
+        "write_cinnabar_outputs",
+        lambda result, out_dir, **kwargs: {"dashboard_html": Path(out_dir) / "cinnabar_dashboard.html"},
+    )
+    monkeypatch.setattr(
+        cinnabar_mod,
+        "list_fe_runs",
+        lambda work_dir: pd.DataFrame(
+            [{"run_id": "rep1", "protocol": "rbfe", "system_name": "sys"}]
+        ),
+    )
+
+    export = cinnabar_mod.auto_write_rbfe_cinnabar_for_run(tmp_path, "rep1")
+
+    assert export["replicate_note"] is None
+
+
 @pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()
