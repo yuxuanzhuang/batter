@@ -993,6 +993,33 @@ def _resolve_label_positions(
     return resolved
 
 
+def _normalize_vec(vec: np.ndarray, fallback: np.ndarray | None = None) -> np.ndarray:
+    """Return a unit vector, or a fallback direction when the norm is tiny."""
+    arr = np.asarray(vec, dtype=float)
+    norm = float(np.linalg.norm(arr))
+    if norm > 1e-12:
+        return arr / norm
+    if fallback is not None:
+        fallback_arr = np.asarray(fallback, dtype=float)
+        fallback_norm = float(np.linalg.norm(fallback_arr))
+        if fallback_norm > 1e-12:
+            return fallback_arr / fallback_norm
+    return np.array([1.0, 0.0], dtype=float)
+
+
+def _quadratic_bezier_tangent(
+    start: np.ndarray,
+    control: np.ndarray,
+    end: np.ndarray,
+    t: float,
+) -> np.ndarray:
+    """Return the tangent vector of a quadratic Bezier curve at parameter t."""
+    return (
+        2.0 * (1.0 - float(t)) * (np.asarray(control, dtype=float) - np.asarray(start, dtype=float))
+        + 2.0 * float(t) * (np.asarray(end, dtype=float) - np.asarray(control, dtype=float))
+    )
+
+
 def _render_network_png(
     edge_summary: pd.DataFrame,
     out_path: Path,
@@ -1853,28 +1880,41 @@ def _render_dashboard_html(
         start = np.asarray(_to_xy(pos[node_a]), dtype=float)
         end = np.asarray(_to_xy(pos[node_b]), dtype=float)
         direction = end - start
-        norm_dir = np.linalg.norm(direction)
-        if norm_dir > 0:
-            unit_dir = direction / norm_dir
-            perp = np.array([-unit_dir[1], unit_dir[0]])
-        else:
-            unit_dir = np.array([0.0, 0.0])
-            perp = np.array([0.0, 0.0])
-        start2 = start + unit_dir * (node_radius[node_a] + 4.0)
-        end2 = end - unit_dir * (node_radius[node_b] + 14.0)
-        span = np.linalg.norm(end2 - start2)
-        control = 0.5 * (start2 + end2) + perp * curvature * span * 0.75
+        unit_dir = _normalize_vec(direction, fallback=np.array([1.0, 0.0]))
+        perp = np.array([-unit_dir[1], unit_dir[0]])
+        stroke_width = _edge_width(abs(float(data.get("calc_DDG", 0.0))))
+        head_length = 11.0 + 1.6 * stroke_width
+        head_half_width = 4.5 + 0.85 * stroke_width
+        start2 = start + unit_dir * (node_radius[node_a] + 4.0 + 0.35 * stroke_width)
+        tip = end - unit_dir * (node_radius[node_b] + 7.0 + 0.65 * stroke_width)
+        span = np.linalg.norm(tip - start2)
+        control = 0.5 * (start2 + tip) + perp * curvature * span * 0.75
+        tip_tangent = _normalize_vec(
+            _quadratic_bezier_tangent(start2, control, tip, 1.0),
+            fallback=unit_dir,
+        )
+        tip_normal = np.array([-tip_tangent[1], tip_tangent[0]])
+        shaft_end = tip - tip_tangent * head_length
+        arrow_left = shaft_end + tip_normal * head_half_width
+        arrow_right = shaft_end - tip_normal * head_half_width
         path_d = (
             f"M {start2[0]:.2f} {start2[1]:.2f} "
-            f"Q {control[0]:.2f} {control[1]:.2f} {end2[0]:.2f} {end2[1]:.2f}"
+            f"Q {control[0]:.2f} {control[1]:.2f} {shaft_end[0]:.2f} {shaft_end[1]:.2f}"
         )
+        hit_width = max(14.0, stroke_width + 10.0)
         edge_svg.append(
-            f"<path class=\"edge-path\" data-edge=\"{html.escape(edge_key)}\" d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
-            f"stroke-width=\"{_edge_width(abs(float(data.get('calc_DDG', 0.0)))):.2f}\" "
-            f"stroke-linecap=\"round\" stroke-opacity=\"0.96\" marker-end=\"url(#arrow)\" />"
+            f"<g class=\"edge-path\" data-edge=\"{html.escape(edge_key)}\">"
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"{hit_width:.2f}\" "
+            "stroke-linecap=\"round\" pointer-events=\"stroke\" />"
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
+            f"stroke-width=\"{stroke_width:.2f}\" stroke-linecap=\"round\" stroke-opacity=\"0.96\" />"
+            f"<polygon points=\"{tip[0]:.2f},{tip[1]:.2f} {arrow_left[0]:.2f},{arrow_left[1]:.2f} "
+            f"{arrow_right[0]:.2f},{arrow_right[1]:.2f}\" fill=\"{edge_color}\" stroke=\"{edge_color}\" "
+            "stroke-linejoin=\"round\" stroke-linecap=\"round\" />"
+            "</g>"
         )
 
-        text_pos = 0.25 * start2 + 0.5 * control + 0.25 * end2
+        text_pos = 0.25 * start2 + 0.5 * control + 0.25 * tip
         text_pos = text_pos + perp * curvature * span * 0.18
         label_specs_display.append(
             {"base": text_pos, "tangent": unit_dir, "normal": perp}
@@ -1941,11 +1981,6 @@ def _render_dashboard_html(
 
     network_svg_html = f"""
       <svg viewBox="0 0 {canvas_w} {canvas_h}" role="img" aria-label="{html.escape(title or 'BATTER RBFE network')}">
-        <defs>
-          <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-            <path d="M 0 0 L 12 6 L 0 12 z" fill="{edge_color}" />
-          </marker>
-        </defs>
         {''.join(edge_svg)}
         {''.join(label_svg)}
         {''.join(node_svg)}

@@ -348,6 +348,8 @@ def test_write_cinnabar_outputs_writes_expected_files(
     assert "event.stoppropagation()" in dashboard_html
     assert "openedgesticky" in dashboard_html
     assert "edgeassets" in dashboard_html
+    assert "<polygon points=" in dashboard_html
+    assert "marker-end=" not in dashboard_html
 
 
 def test_write_cinnabar_outputs_manifest_records_split_directionality(
