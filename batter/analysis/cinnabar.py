@@ -13,7 +13,6 @@ from typing import Any, Literal, Sequence
 
 import numpy as np
 import pandas as pd
-import networkx as nx
 
 __all__ = [
     "CinnabarConversionResult",
@@ -38,6 +37,17 @@ class CinnabarConversionResult:
     absolute_warning: str | None = None
     ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
     edge_assets: dict[str, dict[str, str]] = field(default_factory=dict)
+
+
+def _import_networkx():
+    try:
+        import networkx as nx
+    except Exception as exc:
+        raise RuntimeError(
+            "Cinnabar network rendering requires 'networkx'. "
+            "Install it in the BATTER environment before using RBFE Cinnabar export."
+        ) from exc
+    return nx
 
 
 def list_fe_runs(work_dir: str | Path) -> pd.DataFrame:
@@ -982,6 +992,7 @@ def _rgba_to_hex(color_value: Any) -> str:
 
 def _network_graph_with_layout(edge_summary: pd.DataFrame) -> tuple[nx.DiGraph, dict[str, np.ndarray]]:
     """Build the directed graph and a stable layout for rendering."""
+    nx = _import_networkx()
     graph = nx.DiGraph()
     for row in edge_summary.itertuples(index=False):
         graph.add_edge(
@@ -1137,6 +1148,7 @@ def _render_network_png(
     """Render a BATTER-styled RBFE network figure from summarized edge data."""
     if edge_summary.empty:
         return False
+    nx = _import_networkx()
 
     try:
         import matplotlib.pyplot as plt
