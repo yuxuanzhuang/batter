@@ -256,6 +256,34 @@ def test_resolve_label_positions_separates_overlapping_boxes() -> None:
     )
 
 
+def test_network_graph_layout_spreads_dense_nodes() -> None:
+    rows = []
+    labels = [f"L{i}" for i in range(8)]
+    for idx, label_a in enumerate(labels):
+        for label_b in labels[idx + 1 :]:
+            rows.append(
+                {
+                    "labelA": label_a,
+                    "labelB": label_b,
+                    "calc_DDG": 1.0,
+                    "calc_dDDG": 0.2,
+                    "n_runs": 1,
+                    "n_measurements": 1,
+                }
+            )
+    edge_summary = pd.DataFrame(rows)
+
+    graph, pos = cinnabar_mod._network_graph_with_layout(edge_summary)
+    radii = cinnabar_mod._layout_node_radii(graph)
+
+    assert len(pos) == len(labels)
+    nodes = list(pos)
+    for idx, node_a in enumerate(nodes):
+        for node_b in nodes[idx + 1 :]:
+            dist = float(cinnabar_mod.np.linalg.norm(pos[node_b] - pos[node_a]))
+            assert dist >= radii[node_a] + radii[node_b] - 1e-6
+
+
 def test_build_batter_rbfe_cinnabar_by_run_splits_runs(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
@@ -350,6 +378,9 @@ def test_write_cinnabar_outputs_writes_expected_files(
     assert "edgeassets" in dashboard_html
     assert "<polygon points=" in dashboard_html
     assert "marker-end=" not in dashboard_html
+    assert "network-viewport" in dashboard_html
+    assert "fitnetworkviewport" in dashboard_html
+    assert "network-zoom-in" in dashboard_html
 
 
 def test_write_cinnabar_outputs_manifest_records_split_directionality(
