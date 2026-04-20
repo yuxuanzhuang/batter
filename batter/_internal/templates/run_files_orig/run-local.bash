@@ -19,6 +19,11 @@ overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
 skip_window_eq=${SKIP_WINDOW_EQ:-0}
 retry=${RETRY_COUNT:-0}
+if [[ -n ${RERUN_EQ_STEPS_AFTER_FAILURE+x} ]]; then
+    rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE}
+else
+    rerun_eq_steps_after_failure=auto
+fi
 
 # if retry > 3, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
 if [[ $retry -gt 3 ]]; then
@@ -51,9 +56,27 @@ if [[ -f FINISHED ]]; then
     exit 0
 fi
 
-if [[ -f FAILED ]]; then
-    rm -f FAILED
+prior_failed=$(consume_prior_failure_marker)
+
+if [[ $rerun_eq_steps_after_failure == 1 ]]; then
+    prior_failed=1
+elif [[ $rerun_eq_steps_after_failure == auto ]]; then
+    rerun_eq_steps_after_failure=0
+    if [[ $prior_failed -eq 1 ]]; then
+        rerun_eq_steps_after_failure=1
+    elif [[ $only_eq -eq 1 && $retry =~ ^[0-9]+$ && $retry -gt 1 ]]; then
+        prior_failed=1
+        rerun_eq_steps_after_failure=1
+        echo "[INFO] Retry attempt ${retry} detected during equilibration-only run; rerunning completed equilibration stages instead of skipping them."
+    fi
 fi
+
+should_skip_eq_step() {
+    should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
+}
+
+archive_existing_log_file "$log_file"
+cleanup_stale_empty_md_artifacts
 
 report_progress
 
@@ -66,92 +89,112 @@ if [[ $only_eq -eq 1 ]]; then
         echo "mini_eq.in not found, using mini.in instead."
         cp mini.in mini_eq.in
     fi
-    print_and_run "$PMEMD_DPFP_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-    check_sim_failure "Minimization" "$log_file" mini.rst7
-    if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-        print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
-    else
-        print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    if ! should_skip_eq_step "Minimization" "mini.rst7"; then
+        print_and_run "$PMEMD_DPFP_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+        check_sim_failure "Minimization" "$log_file" mini.rst7
     fi
-    check_sim_failure "Minimization" "$log_file" mini2.rst7
 
-    if ! check_min_energy "mini2.out" -1000; then
-        echo "Minimization not passed with cuda; try CPU"
-        rm -f "$log_file"
-        rm -f mini.rst7 mini.nc mini.out
-        rm -f mini2.rst7 mini2.nc mini2.out
-        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-            print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+    if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
+        require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
+        if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
             print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         else
-            print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
             print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         fi
-        check_sim_failure "Minimization" "$log_file" mini.rst7
         check_sim_failure "Minimization" "$log_file" mini2.rst7
 
         if ! check_min_energy "mini2.out" -1000; then
-            echo "Minimization with CPU also failed, exiting."
+            echo "Minimization not passed with cuda; try CPU"
+            rm -f "$log_file"
             rm -f mini.rst7 mini.nc mini.out
             rm -f mini2.rst7 mini2.nc mini2.out
-            exit 1
+            if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
+                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+            else
+                print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+                print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+            fi
+            check_sim_failure "Minimization" "$log_file" mini.rst7
+            check_sim_failure "Minimization" "$log_file" mini2.rst7
+
+            if ! check_min_energy "mini2.out" -1000; then
+                echo "Minimization with CPU also failed, exiting."
+                rm -f mini.rst7 mini.nc mini.out
+                rm -f mini2.rst7 mini2.nc mini2.out
+                mark_failed_and_exit
+            fi
         fi
     fi
 
-    if [[ $overwrite -eq 0 && -s eqnpt_eq.rst7 ]]; then
-        echo "Skipping equilibration steps."
-    else
+    if ! should_skip_eq_step "Pre equilibration" "eqnpt_pre.rst7"; then
+        require_nonempty_file_or_attempt_fail "mini2.rst7" "[ERROR] Missing mini2.rst7; cannot continue to Pre equilibration."
         # Equilibration with protein and lipid restrained
         # this is to equilibrate the density of water
         # Note we are not using the GPU version here
         # because for large box size change, an error will be raised.
-        if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
+        if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
             print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
         else
             print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref mini2.rst7 >> \"$log_file\" 2>&1"
         fi
         check_sim_failure "Pre equilibration" "$log_file" eqnpt_pre.rst7
+    fi
 
+    if ! should_skip_eq_step "Equilibration stage 0" "eqnpt00.rst7"; then
+        require_nonempty_file_or_attempt_fail "eqnpt_pre.rst7" "[ERROR] Missing eqnpt_pre.rst7; cannot continue to Equilibration stage 0."
         print_and_run "$PMEMD_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
         check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
-
-        # Equilibration with protein restrained
-        for step in {1..4}; do
-            prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
-            curr=$(printf "eqnpt%02d" $step)
-            print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
-            check_sim_failure "Equilibration stage $step" "$log_file" ${curr}.rst7 $prev $retry
-        done
     fi
-    
-    # longer equilibration
-    print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
+
+    # Equilibration with protein restrained
+    for step in {1..4}; do
+        prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
+        curr=$(printf "eqnpt%02d" $step)
+        if should_skip_eq_step "Equilibration stage $step" "${curr}.rst7"; then
+            continue
+        fi
+        require_nonempty_file_or_attempt_fail "$prev" "[ERROR] Missing ${prev}; cannot continue to Equilibration stage $step."
+        print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
+        check_sim_failure "Equilibration stage $step" "$log_file" "${curr}.rst7" "$prev" "$retry"
+    done
+
+    if ! should_skip_eq_step "Long equilibration" "eqnpt_eq.rst7"; then
+        require_nonempty_file_or_attempt_fail "eqnpt04.rst7" "[ERROR] Missing eqnpt04.rst7; cannot continue to Long equilibration."
+        print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
+        check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
+    fi
 
     # only do it if N_WINDOWS is not 1
     if [[ NWINDOWS -gt 1 ]]; then
-        print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
-        check_sim_failure "Minimization for FEP" "$log_file" mini.in.rst7
-        if ! check_min_energy "mini.in.out" -1000; then
-            echo "Minimization not passed with cuda; try CPU"
-            rm -f "$log_file"
-            rm -f mini.in.rst7 mini.in.nc mini.in.out
-            if [[ $SLURM_JOB_CPUS_PER_NODE -gt 1 ]]; then
-                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
-            else
-                print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
-            fi
-            check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
+        if ! should_skip_eq_step "Minimization for FEP" "mini.in.rst7"; then
+            require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot continue to FEP minimization."
+            print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+            check_sim_failure "Minimization for FEP" "$log_file" mini.in.rst7
             if ! check_min_energy "mini.in.out" -1000; then
-                echo "Minimization with CPU also failed for window $i, exiting."
+                echo "Minimization not passed with cuda; try CPU"
+                rm -f "$log_file"
                 rm -f mini.in.rst7 mini.in.nc mini.in.out
-                exit 1
+                if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
+                    print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+                else
+                    print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o mini.in.out -r mini.in.rst7 -x mini.in.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
+                fi
+                check_sim_failure "Minimization for window $i" "$log_file" mini.in.rst7
+                if ! check_min_energy "mini.in.out" -1000; then
+                    echo "Minimization with CPU also failed for window $i, exiting."
+                    rm -f mini.in.rst7 mini.in.nc mini.in.out
+                    mark_failed_and_exit
+                fi
             fi
         fi
-        
-        # run one long equilbration with dynamically changed lambda value
-        print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
-        check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
+
+        if ! should_skip_eq_step "Equilibration for window seeds" "eq.rst7"; then
+            require_nonempty_file_or_attempt_fail "mini.in.rst7" "[ERROR] Missing mini.in.rst7; cannot continue to window-seed equilibration."
+            # run one long equilbration with dynamically changed lambda value
+            print_and_run "$PMEMD_EXEC -O -i eq.in -p $PRMTOP_MERGED -c mini.in.rst7 -o eq.out -r eq.rst7 -x eq.nc -ref mini.in.rst7 >> \"$log_file\" 2>&1"
+            check_sim_failure "Equilibration for window $i" "$log_file" eq.rst7
+        fi
 
         # lambda values for EACH EQ frame
         lambda_eq_list=(LAMBDA_EQ_LIST)
@@ -160,11 +203,13 @@ if [[ $only_eq -eq 1 ]]; then
         lambda_set_list=(LAMBDA_SET_LIST)
 
         # 1) Convert eq.nc to per-frame rst7 files: eq.rst7.1, eq.rst7.2, ...
-        cpptraj -p full.prmtop -i /dev/stdin <<'EOF'
+        if [[ $overwrite -ne 0 || ($prior_failed -eq 1 && $rerun_eq_steps_after_failure -eq 1) || ! -s eq.rst7.1 ]]; then
+            $CPPTRAJ_EXEC -p full.prmtop -i /dev/stdin <<'EOF'
 trajin eq.nc
 trajout eq.rst7 multi restart
 run
 EOF
+        fi
         # Find closest index in lambda_eq_list to a target lambda
         closest_index() {
         local target="$1"
@@ -197,6 +242,9 @@ EOF
                 echo "ERROR: missing source restart $src (check eq.rst7.* generation)" >&2
                 exit 1
             fi
+            if should_skip_completed_step "Window equilibration for window $i" "$dst" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"; then
+                continue
+            fi
             mkdir -p "$win_folder"
             cp -f "$src" "$dst"
 
@@ -205,7 +253,12 @@ EOF
         done
     fi
 
-    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y eqnpt_eq.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
+parm $PRMTOP
+trajin eqnpt_eq.rst7
+trajout eq_output.pdb pdb include_ep
+run
+EOF"
 
     echo "Only equilibration requested and finished."
     if [[ -s eq_output.pdb ]]; then
@@ -252,12 +305,10 @@ elif [[ -s md-previous.rst7 ]]; then
     rst_in="md-previous.rst7"
 fi
 
-[[ -s "$rst_in" ]] || {
-    echo "[ERROR] Missing restart file $rst_in; cannot continue."
-    exit 1
-}
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="md-current.rst7"
+win_00=../COMPONENT00
 
 current_steps=$(awk -v t="$current_ps" -v dt="$dt_ps" 'BEGIN{if (dt<=0) {print 0; exit} printf "%d\n", (t/dt)+0.5}')
 remaining_steps=$(( total_steps - current_steps ))
@@ -298,7 +349,7 @@ if (( remaining_steps > 0 )); then
 
     # Rotate md-current restart (avoid Fortran OPEN issues / keep backup)
     if [[ -f md-current.rst7 ]]; then
-        [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
+        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] md-current.rst7 exists but empty; aborting."
         mv -f md-current.rst7 md-previous.rst7
         if [[ "$rst_in" == "md-current.rst7" ]]; then
             rst_in="md-previous.rst7"
@@ -306,7 +357,7 @@ if (( remaining_steps > 0 )); then
     fi
 
     # Run MD: always write restart to md-current.rst7
-    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eq.rst7 >> \"$log_file\" 2>&1"
+    print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc"
 
     # Update progress from restart. completed_steps will:
@@ -320,7 +371,12 @@ if (( remaining_steps > 0 )); then
 fi
 
 if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
-    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
+parm $PRMTOP
+trajin ${last_rst}
+trajout output.pdb pdb include_ep
+run
+EOF"
 
     if [[ -s output.pdb ]]; then
         echo "FINISHED" > FINISHED
@@ -328,8 +384,7 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
         exit 0
     fi
 
-    echo "[ERROR] output.pdb not created or empty; marking FAILED."
-    exit 1
+    mark_failed_and_exit "[ERROR] output.pdb not created or empty; marking ATTEMPT_FAILED."
 fi
 echo "[INFO] Not finished yet; rerun to continue."
 exit 0

@@ -182,6 +182,68 @@ The main CLI entry points for this tree are:
 ``fe list`` reads ``results/index.csv`` and prints one row per stored record.
 ``fe show`` opens ``record.json`` for a single record.
 
+Derived Cinnabar Exports
+------------------------
+
+The portable FE repository above is BATTER's canonical stored-results layer. The
+optional command::
+
+   batter fe cinnabar <run.output_folder>
+
+writes an additional derived export tree under::
+
+   <run.output_folder>/results/cinnabar/
+
+This tree is not used by BATTER's core FE record loader. It is a convenience export
+layer for downstream Cinnabar notebooks, figures, and benchmarking workflows.
+
+A combined export typically looks like::
+
+   results/
+   ├── index.csv
+   ├── <run_id>/
+   │   └── ...
+   └── cinnabar/
+       ├── manifest.json
+       ├── raw_signed.csv
+       ├── edge_summary.csv
+       ├── cinnabar_relative.csv
+       ├── cinnabar_absolute.csv      # when the network is connected
+       ├── cinnabar_absolute_sorted.png
+       ├── cinnabar_network.png
+       ├── cinnabar_dg.png            # when experiment is provided
+       └── cinnabar_ddg.png           # when experiment is provided
+
+When ``--split-runs`` is used, BATTER writes one subdirectory per run instead::
+
+   results/cinnabar/<run_id>/
+
+``raw_signed.csv``
+   Measurement-level table after BATTER filters to RBFE rows, resolves the edge
+   label, and assigns a sign convention based on sorted ligand names.
+
+``edge_summary.csv``
+   Edge-level DDG estimates after repeat combination. This is the main table to
+   inspect when you want one summarized value per perturbation.
+
+``cinnabar_relative.csv``
+   Relative measurements exported from the constructed ``FEMap``.
+
+``cinnabar_absolute.csv``
+   MLE-derived absolute values from Cinnabar. BATTER writes this only when the RBFE
+   network is connected strongly enough for Cinnabar to solve absolute values.
+
+``cinnabar_absolute_sorted.png``
+   BATTER-rendered ranking plot of the computed absolute free energies, sorted by
+   energy and drawn with horizontal uncertainty bars. When ``--absolute-offset`` is
+   used, BATTER applies that constant shift to the plotted computational energies
+   and records the offset in ``manifest.json``.
+
+``manifest.json``
+   Lightweight summary of what BATTER wrote, including whether experimental data was
+   merged, whether absolute values were successfully generated, and the absolute
+   offset used for the ranked absolute-energy plot.
+
 Where This Differs From ``executions/``
 ---------------------------------------
 

@@ -112,12 +112,64 @@ production steps in each window. By default existing analysis outputs are preser
 pass ``--overwrite`` to regenerate them. Pass ``--n-bootstrap`` to request MBAR
 bootstrap resamples and ``--no-raise-on-error`` to continue if one ligand fails.
 
+For RBFE runs, ``batter fe analyze`` also writes a per-run Cinnabar bundle under
+``work/adrb2/results/cinnabar/<run_id>/`` by default. When the work directory
+contains replicate RBFE runs, BATTER prints a follow-up note with the matching
+``batter fe cinnabar ... --run-id ...`` command to combine them into one bundle.
+
 Re-run FE analysis for exactly one ligand folder::
 
    batter fe ligand-analyze work/adrb2/executions/run-20240101/simulations/LIG1 --overwrite
 
 ``ligand-analyze`` also accepts directories outside ``executions/<run_id>`` as long
 as they contain an ``fe/`` folder.
+
+Convert stored RBFE records into `Cinnabar <https://cinnabar.openfree.energy/>`_
+inputs and plots::
+
+   batter fe cinnabar work/adrb2 --run-id rep1 --run-id rep2
+
+By default this aggregates the selected RBFE records into a single FEMap and writes
+the output bundle under ``work/adrb2/results/cinnabar/``. Common files include:
+
+* ``edge_summary.csv`` – combined edge-level DDG estimates and uncertainties
+* ``raw_signed.csv`` – signed per-measurement table after BATTER canonicalizes edge direction
+* ``cinnabar_relative.csv`` – relative measurements exported from the FEMap
+* ``cinnabar_absolute.csv`` – MLE-derived absolute values when the network is connected
+* ``cinnabar_absolute_sorted.png`` – BATTER-rendered absolute ΔG ranking plot, sorted by energy
+* ``cinnabar_network.png`` – best-effort network visualisation
+* ``cinnabar_dg.png`` / ``cinnabar_ddg.png`` – plots when experimental data is provided
+
+Use ``--split-runs`` to emit one Cinnabar bundle per run instead of combining them::
+
+   batter fe cinnabar work/adrb2 --split-runs --run-id rep1 --run-id rep2
+
+This writes bundles under ``work/adrb2/results/cinnabar/<run_id>/``. Use that mode
+when you want to inspect run-to-run variation directly instead of collapsing repeats.
+
+To compare BATTER RBFE results against experiment, pass a CSV with absolute
+affinities::
+
+   batter fe cinnabar work/adrb2 \
+       --experimental-csv experimental.csv \
+       --exp-ligand-column ligand \
+       --exp-abfe-column abfe \
+       --exp-error-column se
+
+Use ``--combine-by-run-first`` (default) to collapse repeated measurements within
+each run before combining runs. Switch to ``--pool-all-measurements`` if you want to
+weight every stored edge measurement directly. ``--uncertainty-mode`` controls the
+repeat-combination rule (``ivw``, ``sample``, or ``max``).
+
+By default BATTER also merges opposite-direction rows such as ``LIGA~LIGB`` and
+``LIGB~LIGA`` into one canonical edge before constructing the FEMap. Use
+``--split-directions`` if you want those two stored transformations to remain
+separate directional measurements in the exported Cinnabar bundle.
+
+``--absolute-offset`` adds a constant shift to the computed MLE absolute energies in
+``cinnabar_absolute_sorted.png``. This is useful when you want to place the
+arbitrary RBFE-derived absolute scale onto a chosen reference level before
+comparing or presenting rankings.
 
 Clone Executions
 ================

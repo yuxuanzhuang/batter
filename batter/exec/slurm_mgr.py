@@ -35,6 +35,11 @@ SLURM_FINAL_BAD = {
     "OUT_OF_MEMORY",
 }
 JOBID_RE = re.compile(r"Submitted batch job\s+(\d+)", re.I)
+SLURM_SUBMIT_RATE_LIMIT_PATTERNS = (
+    "reached jobs per hour limit",
+    "job violates accounting/qos policy",
+    "job submit limit",
+)
 
 
 # ---------- atomic registry append ----------
@@ -418,6 +423,8 @@ class SlurmJobManager:
         self._retries: Dict[Path, int] = {}
         self._submitted_job_ids: set[str] = set()
         self.n_active: int = 0
+        self._active_jobs_synced: bool = False
+        self._last_active_sync_s: float = 0.0
 
     # ---------- stage API ----------
     def set_stage(self, stage: Optional[str]) -> None:
@@ -541,6 +548,31 @@ class SlurmJobManager:
                 pass
 
     # ---------- throttling ----------
+    def _refresh_active_jobs(
+        self,
+        *,
+        user: Optional[str] = None,
+        partition: Optional[str] = None,
+        force: bool = False,
+    ) -> int:
+        """Refresh cached active-job count from Slurm when needed."""
+        target_partition = partition or self.partition
+        now = time.monotonic()
+        refresh_every_s = max(1.0, self.poll_s)
+
+        if (
+            not force
+            and self._active_jobs_synced
+            and (now - self._last_active_sync_s) < refresh_every_s
+        ):
+            return self.n_active
+
+        n_active = _num_active_job(user=user, partition=target_partition)
+        self.n_active = n_active
+        self._active_jobs_synced = True
+        self._last_active_sync_s = now
+        return n_active
+
     def wait_for_slot(
         self,
         poll_s: float | None = None,
@@ -566,8 +598,18 @@ class SlurmJobManager:
         target_partition = partition or self.partition
 
         while True:
-            n_active = _num_active_job(user=user, partition=target_partition)
-            self.n_active = n_active
+            # Sync once before the first submission, then trust the local counter
+            # until we believe we're at the cap.
+            if not self._active_jobs_synced:
+                n_active = self._refresh_active_jobs(
+                    user=user, partition=target_partition, force=True
+                )
+            elif self.n_active < max_active:
+                return
+            else:
+                n_active = self._refresh_active_jobs(
+                    user=user, partition=target_partition, force=True
+                )
             if n_active < max_active:
                 if n_active > 0:
                     logger.debug(
@@ -584,6 +626,7 @@ class SlurmJobManager:
         """Submit a job via ``sbatch`` with retry-on-submission-failure."""
         attempts = 0
         while True:
+            self.wait_for_slot()
             try:
                 return self._submit_once(spec)
             except Exception as exc:
@@ -593,12 +636,23 @@ class SlurmJobManager:
                         f"due to: {exc}"
                     )
                 attempts += 1
-                delay = self.submit_retry_delay_s
+                delay = self._submit_retry_delay(exc, attempts)
                 logger.warning(
                     f"[SLURM] submission attempt {attempts}/{self.submit_retry_limit} "
                     f"failed for {spec.workdir.name}: {exc}; retrying in {delay:.0f}s"
                 )
                 time.sleep(delay)
+
+    def _submit_retry_delay(self, exc: Exception, attempts: int) -> float:
+        """Return the delay before retrying a failed ``sbatch`` submission."""
+        delay = self.submit_retry_delay_s
+        msg = str(exc).lower()
+        if any(pattern in msg for pattern in SLURM_SUBMIT_RATE_LIMIT_PATTERNS):
+            # Jobs/hour limits usually do not clear on a 60s retry cadence.
+            # Back off aggressively so the manager can survive scheduler quotas.
+            delay = max(delay, 15 * 60.0) * (2 ** max(0, attempts - 1))
+            delay = min(delay, 60 * 60.0)
+        return delay
 
     def _submit_once(self, spec: SlurmJobSpec) -> str:
         """Single-attempt sbatch submit; persist JOBID."""
@@ -743,7 +797,6 @@ class SlurmJobManager:
             use_tqdm = False
 
         # initial submission pass
-        self.wait_for_slot()
         submit_iter = (
             tqdm(specs, desc="SLURM submissions", leave=True, dynamic_ncols=True)
             if use_tqdm

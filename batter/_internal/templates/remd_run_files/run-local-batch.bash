@@ -53,6 +53,27 @@ print_and_run() {
     eval "$@"
 }
 
+reduce_dt_for_batch_windows() {
+    local stage=$1
+    local retry_count=${2:-${RETRY_COUNT:-${RETRY:-0}}}
+    local dec=${3:-0.001}
+
+    if [[ $retry_count -lt 3 ]]; then
+        return 0
+    fi
+
+    local i win tmpl
+    for ((i = 0; i < N_WINDOWS; i++)); do
+        win=$(printf "%s%02d" "${COMP}" "$i")
+        tmpl="${PFOLDER}/${win}/mdin-batch-template"
+        if [[ ! -f "$tmpl" ]]; then
+            tmpl="${PFOLDER}/${win}/mdin-template"
+        fi
+        [[ -f "$tmpl" ]] || continue
+        reduce_dt_on_failure "$tmpl" "$dec" "${stage} (${win})" "$retry_count"
+    done
+}
+
 if [[ -f ${PFOLDER}/FINISHED ]]; then
     echo "Simulation is complete."
     exit 0
@@ -61,6 +82,8 @@ fi
 if [[ -f ${PFOLDER}/FAILED ]]; then
     rm -f ${PFOLDER}/FAILED
 fi
+
+archive_existing_log_file "$log_file"
 
 # Determine progress from the first window
 WIN0=$(printf "%s%02d" "${COMP}" 0)
@@ -159,7 +182,22 @@ if (( remaining_steps > 0 )); then
     if (( rc != 0 )); then
         echo "[ERROR] pmemd failed in ${PFOLDER_ABS}; skipping post-step" | tee -a "$log_file"
         cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
+        reduce_dt_for_batch_windows "Batch segment ${seg_idx}" "$retry"
         exit $rc
+    fi
+
+    missing_restart=0
+    for ((i = 0; i < N_WINDOWS; i++)); do
+        win=$(printf "%s%02d" "${COMP}" "$i")
+        if [[ ! -s "${PFOLDER}/${win}/md-current.rst7" ]]; then
+            echo "[ERROR] Missing or empty restart after batch segment ${seg_idx}: ${win}/md-current.rst7" | tee -a "$log_file"
+            missing_restart=1
+        fi
+    done
+    if (( missing_restart )); then
+        cleanup_failed_md_segment "$COMP" "$seg_idx" "$N_WINDOWS" "$PFOLDER"
+        reduce_dt_for_batch_windows "Batch segment ${seg_idx}" "$retry"
+        exit 1
     fi
 else
     current_ps="$total_ps"

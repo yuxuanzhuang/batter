@@ -137,7 +137,7 @@ def find_anchor_atoms(
     return l1_x, l1_y, l1_z, p1_formatted, p2_formatted, p3_formatted, l1_range
 
 
-def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = True) -> List[int]:
+def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = False) -> List[int]:
     """
     Return ligand atom indices suitable for anchor selection.
 
@@ -148,6 +148,9 @@ def get_ligand_candidates(ligand_sdf: str | Path, removeHs: bool = True) -> List
     if Chem is None:
         raise RuntimeError("RDKit is required for get_ligand_candidates.")
 
+    # Preserve the file's original atom indexing. Some later paths use these
+    # indices against full-H molecules, so physically removing Hs here can
+    # create out-of-range RDKit accesses.
     supplier = Chem.SDMolSupplier(str(ligand_sdf), removeHs=removeHs)
     mols = [m for m in supplier if m is not None]
     if not mols:

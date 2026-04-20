@@ -7,6 +7,7 @@ PMEMD_CPU_MPI_EXEC=${PMEMD_CPU_MPI_EXEC:-pmemd.MPI}
 PMEMD_DPFP_EXEC=${PMEMD_DPFP_EXEC:-pmemd.cuda_DPFP}
 PMEMD_CPU_EXEC=${PMEMD_CPU_EXEC:-pmemd}
 SANDER_EXEC=${SANDER_EXEC:-sander}
+CPPTRAJ_EXEC=${CPPTRAJ_EXEC:-cpptraj}
 
 # Define constants for filenames
 PRMTOP="full.hmr.prmtop"
@@ -27,11 +28,12 @@ if [[ -f FINISHED ]]; then
     exit 0
 fi
 
-if [[ -f FAILED ]]; then
-    rm -f FAILED
-fi
-
 source check_run.bash
+
+consume_prior_failure_marker >/dev/null
+
+archive_existing_log_file "$log_file"
+cleanup_stale_empty_md_artifacts
 
 # ------------------------- only_eq mode -------------------------
 if [[ $only_eq -eq 1 ]]; then
@@ -50,7 +52,12 @@ if [[ $only_eq -eq 1 ]]; then
         fi
     done
 
-    print_and_run "cpptraj -p $PRMTOP -y mini.rst7 -x eq_output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
+parm $PRMTOP
+trajin mini.rst7
+trajout eq_output.pdb pdb include_ep
+run
+EOF"
 
     echo "Only seeding requested and finished."
     if [[ -s eq_output.pdb ]]; then
@@ -98,10 +105,7 @@ elif [[ -s md-previous.rst7 ]]; then
     rst_in="md-previous.rst7"
 fi
 
-if [[ ! -s $rst_in ]]; then
-    echo "[ERROR] Missing restart file $rst_in; cannot continue."
-    exit 1
-fi
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="md-current.rst7"
 
@@ -144,7 +148,7 @@ if (( remaining_steps > 0 )); then
 
     # Rotate restart outputs
     if [[ -f md-current.rst7 ]]; then
-        [[ -s md-current.rst7 ]] || { echo "[ERROR] md-current.rst7 exists but empty; aborting."; exit 1; }
+        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] md-current.rst7 exists but empty; aborting."
         mv -f md-current.rst7 md-previous.rst7
         if [[ "$rst_in" == "md-current.rst7" ]]; then
             rst_in="md-previous.rst7"
@@ -164,7 +168,12 @@ if (( remaining_steps > 0 )); then
 fi
 
 if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
-    print_and_run "cpptraj -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
+parm $PRMTOP
+trajin ${last_rst}
+trajout output.pdb pdb include_ep
+run
+EOF"
 
     # check output.pdb exists to catch cases where the simulation did not run to completion
     if [[ -s output.pdb ]]; then
@@ -173,9 +182,7 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
         exit 0
     fi
 
-    echo "[ERROR] output.pdb not created or empty; marking FAILED."
-    echo "FAILED" > FAILED
-    exit 1
+    mark_failed_and_exit "[ERROR] output.pdb not created or empty; marking ATTEMPT_FAILED."
 fi
 echo "[INFO] Not finished yet; rerun to continue."
 exit 0

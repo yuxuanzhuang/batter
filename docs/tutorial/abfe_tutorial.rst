@@ -66,10 +66,8 @@ Installation
        conda env update -n batter -f environment.yml
        conda activate batter
 
-#. Install editable copies of the bundled dependencies plus ``batter`` itself::
+#. Install ``batter`` itself after the environment update (which already installs the bundled ``extern/*`` dependencies)::
 
-       pip install -e ./extern/alchemlyb
-       pip install -e ./extern/rocklinc
        pip install -e .
 
 #. Verify the installation::

@@ -75,6 +75,23 @@ def test_handle_phase_failures_prune_and_raise(tmp_path):
     assert "batter run <run.yaml> --clean-failures" in msg
 
 
+def test_handle_phase_failures_retry_removes_jobid(tmp_path):
+    phase = "example_phase"
+    fail_root = tmp_path / "fail"
+    fail_root.mkdir()
+    _register_example(fail_root, phase)
+
+    (fail_root / "marker.fail").write_text("boom")
+    (fail_root / "JOBID").write_text("12345\n")
+
+    systems = [_make_system(fail_root)]
+    retried = markers.handle_phase_failures(list(systems), phase, mode="retry")
+
+    assert [s.name for s in retried] == ["fail"]
+    assert not (fail_root / "marker.fail").exists()
+    assert not (fail_root / "JOBID").exists()
+
+
 def test_filter_needing_phase_and_is_done(tmp_path):
     phase = "example_phase"
     done_root = tmp_path / "done"

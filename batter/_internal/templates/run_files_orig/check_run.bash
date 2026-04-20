@@ -6,6 +6,33 @@ move_failed_file_if_present() {
     mv -f "$src" "$archive_dir/"
 }
 
+archive_existing_log_file() {
+    local log_path=${1:-}
+    local log_dir log_name archive_dir timestamp archived_path suffix
+
+    [[ -n $log_path ]] || return 0
+    [[ -e "$log_path" ]] || return 0
+
+    log_dir=$(dirname "$log_path")
+    log_name=$(basename "$log_path")
+    archive_dir="${log_dir}/ARCHIVED_LOGS"
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+    archived_path="${archive_dir}/${timestamp}_${log_name}"
+
+    mkdir -p "$archive_dir"
+
+    if [[ -e "$archived_path" ]]; then
+        suffix=1
+        while [[ -e "${archived_path}.${suffix}" ]]; do
+            suffix=$((suffix + 1))
+        done
+        archived_path="${archived_path}.${suffix}"
+    fi
+
+    mv -f "$log_path" "$archived_path"
+    echo "[INFO] Archived existing log file to ${archived_path}"
+}
+
 archive_failed_job_files() {
     local retry_count=${1:-${RETRY_COUNT:-${RETRY:-0}}}
     shift || true
@@ -52,6 +79,117 @@ archive_failed_job_files() {
     fi
 }
 
+ATTEMPT_FAILED_MARKER=${ATTEMPT_FAILED_MARKER:-ATTEMPT_FAILED}
+
+write_attempt_failed_marker() {
+    printf "FAILED\n" > "$ATTEMPT_FAILED_MARKER"
+}
+
+consume_prior_failure_marker() {
+    local prior_failed=0
+
+    if [[ -f "$ATTEMPT_FAILED_MARKER" ]]; then
+        prior_failed=1
+        rm -f "$ATTEMPT_FAILED_MARKER"
+    fi
+
+    echo "$prior_failed"
+}
+
+mark_failed_and_exit() {
+    local message=${1:-}
+    if [[ -n $message ]]; then
+        echo "$message"
+    fi
+    write_attempt_failed_marker
+    exit 1
+}
+
+require_nonempty_file_or_attempt_fail() {
+    local required_path=$1
+    local message=${2:-"[ERROR] Missing required file ${required_path}; aborting."}
+
+    if [[ -n $required_path && -s $required_path ]]; then
+        return 0
+    fi
+
+    mark_failed_and_exit "$message"
+}
+
+remove_empty_file_if_present() {
+    local path=$1
+
+    [[ -n $path && -e $path && ! -s $path ]] || return 1
+
+    rm -f "$path"
+    echo "[INFO] Removed stale empty file $path"
+}
+
+cleanup_stale_empty_md_artifacts() {
+    local pattern f
+    local patterns=(
+        "md-*.out"
+        "md*.out"
+        "md-*.nc"
+        "md*.nc"
+        "md-*.log"
+        "md*.log"
+        "md-*.mden"
+        "md*.mden"
+        "md-*.mdinfo"
+        "md*.mdinfo"
+        "md-current.rst7"
+        "md-previous.rst7"
+        "cmass.txt"
+    )
+
+    if [[ -n ${ZSH_VERSION-} ]]; then
+        setopt local_options null_glob
+        for pattern in "${patterns[@]}"; do
+            for f in ${~pattern}; do
+                remove_empty_file_if_present "$f" || true
+            done
+        done
+        return 0
+    fi
+
+    local nullglob_was_on=0
+    shopt -q nullglob && nullglob_was_on=1
+    shopt -s nullglob
+    for pattern in "${patterns[@]}"; do
+        for f in $pattern; do
+            remove_empty_file_if_present "$f" || true
+        done
+    done
+    if [[ $nullglob_was_on -eq 0 ]]; then
+        shopt -u nullglob
+    fi
+}
+
+should_skip_completed_step() {
+    local stage=$1
+    local artifact=$2
+    local overwrite=${3:-0}
+    local prior_failed=${4:-0}
+    local rerun_after_failure=${5:-0}
+
+    if [[ $overwrite -ne 0 ]]; then
+        return 1
+    fi
+
+    if [[ -z $artifact || ! -s $artifact ]]; then
+        return 1
+    fi
+
+    if [[ $prior_failed -eq 1 && $rerun_after_failure -eq 1 ]]; then
+        echo "[INFO] Prior failure marker found; rerunning ${stage} despite existing artifact ${artifact}."
+        return 1
+    fi
+
+    echo "[INFO] Skipping ${stage}; found existing artifact ${artifact}."
+    return 0
+}
+
 check_sim_failure() {
     local stage=$1
     local log_file=$2
@@ -64,7 +202,11 @@ check_sim_failure() {
     fi
 
     cleanup_outputs() {
-        archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
+        if ((${#extra_files[@]})); then
+            archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
+        else
+            archive_failed_job_files "$retry_count" "$log_file" "$rst_file"
+        fi
     }
 
     # If log doesn't exist yet, don't treat as failure here
@@ -83,6 +225,7 @@ check_sim_failure() {
             echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
             rm -f "$rst_file_prev"
         fi
+        write_attempt_failed_marker
         exit 1
     fi
 
@@ -96,6 +239,7 @@ check_sim_failure() {
             echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
             rm -f "$rst_file_prev"
         fi
+        write_attempt_failed_marker
         exit 1
     fi
 
@@ -172,6 +316,7 @@ check_min_energy() {
 
 highest_out_index_for_pattern() {
     local pattern=$1
+    local require_nonempty=${2:-0}
     local max=-1
     local f n
 
@@ -179,6 +324,9 @@ highest_out_index_for_pattern() {
         setopt local_options null_glob
         for f in ${~pattern}; do
             [[ -e "$f" ]] || continue
+            if [[ $require_nonempty -eq 1 && ! -s "$f" ]]; then
+                continue
+            fi
             if [[ $f =~ ([0-9]+)\.out$ ]]; then
                 n=${match[1]}
                 n=$((10#$n))
@@ -188,6 +336,9 @@ highest_out_index_for_pattern() {
     else
         for f in $pattern; do
             [[ -e "$f" ]] || continue
+            if [[ $require_nonempty -eq 1 && ! -s "$f" ]]; then
+                continue
+            fi
             if [[ $f =~ ([0-9]+)\.out$ ]]; then
                 n=${BASH_REMATCH[1]}
                 n=$((10#$n))
@@ -201,7 +352,7 @@ highest_out_index_for_pattern() {
 
 latest_md_index() {
     local pattern=${1:-"md-*.out"}
-    highest_out_index_for_pattern "$pattern"
+    highest_out_index_for_pattern "$pattern" 1
 }
 
 cleanup_failed_md_segment() {
@@ -237,10 +388,10 @@ report_progress() {
     local seg=-1
     local tps=0
 
-    if ls md-*.out >/dev/null 2>&1 || ls md*.out >/dev/null 2>&1; then
+    seg=$(latest_md_index "md-*.out")
+    [[ $seg -lt 0 ]] && seg=$(latest_md_index "md*.out")
+    if [[ $seg -ge 0 ]]; then
         stage="production"
-        seg=$(latest_md_index "md-*.out")
-        [[ $seg -lt 0 ]] && seg=$(latest_md_index "md*.out")
         tps=$(completed_steps "mdin-template" 2>/dev/null || echo 0)
     elif ls eqnpt*.out >/dev/null 2>&1; then
         stage="equilibration"

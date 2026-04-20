@@ -19,7 +19,11 @@ from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
-from batter._internal.ops.helpers import run_parmed_hmr_if_enabled, merge_first_n_molecules_in_prmtop
+from batter._internal.ops.helpers import (
+    PROTEIN_COM_ATOM_SELECTION,
+    run_parmed_hmr_if_enabled,
+    merge_first_n_molecules_in_prmtop,
+)
 
 
 
@@ -269,7 +273,7 @@ def create_box(ctx: BuildContext) -> None:
 
     # partitions
     final_system_dum = final_system.select_atoms("resname DUM")
-    final_system_dum[0].position = final_system.select_atoms("protein and name CA N C O").center_of_mass()
+    final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
     if comp == 'z':
         final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
     final_system_prot = final_system.select_atoms("protein")

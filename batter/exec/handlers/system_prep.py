@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import contextlib
+import itertools
 import json
 import os
 import shutil
+import string
 from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Union
@@ -24,6 +27,11 @@ from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
 from batter.utils.builder_utils import find_anchor_atoms
 
+_PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
+_CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
+_XY_ROTATION_REFINE_DEGREES = (45.0, 15.0, 5.0, 1.0)
+
+
 def _as_abs(p: str | Path | None, base: Path) -> Path | None:
     if p is None:
         return None
@@ -34,6 +42,333 @@ def _as_abs(p: str | Path | None, base: Path) -> Path | None:
 def _copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+def _chain_id_from_index(index: int) -> str:
+    if index >= len(_CHAIN_ID_ALPHABET):
+        raise ValueError(
+            "Too many protein fragments to encode in single-character PDB chain IDs. "
+            f"Found fragment index {index + 1}, but only {len(_CHAIN_ID_ALPHABET)} IDs are available."
+        )
+    return _CHAIN_ID_ALPHABET[index]
+
+
+def _get_single_ca_position(residue) -> np.ndarray | None:
+    ca_atoms = residue.atoms.select_atoms("name CA")
+    if ca_atoms.n_atoms != 1:
+        return None
+    return np.asarray(ca_atoms.positions[0], dtype=float)
+
+
+def _rotation_matrix_x(angle_deg: float) -> np.ndarray:
+    angle = np.deg2rad(angle_deg)
+    c = float(np.cos(angle))
+    s = float(np.sin(angle))
+    return np.array(
+        [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]],
+        dtype=float,
+    )
+
+
+def _rotation_matrix_y(angle_deg: float) -> np.ndarray:
+    angle = np.deg2rad(angle_deg)
+    c = float(np.cos(angle))
+    s = float(np.sin(angle))
+    return np.array(
+        [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]],
+        dtype=float,
+    )
+
+
+def _rotation_matrix_z(angle_deg: float) -> np.ndarray:
+    angle = np.deg2rad(angle_deg)
+    c = float(np.cos(angle))
+    s = float(np.sin(angle))
+    return np.array(
+        [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
+        dtype=float,
+    )
+
+
+def _apply_rotation(coords: np.ndarray, rotation: np.ndarray) -> np.ndarray:
+    """Apply a column-vector rotation matrix to row-vector coordinates."""
+    return np.asarray(coords, dtype=float) @ rotation.T
+
+
+def _xy_box_score(coords: np.ndarray) -> tuple[float, float, float]:
+    spans = np.ptp(coords, axis=0)
+    return (
+        float(spans[0] * spans[1]),
+        float(spans[2]),
+        float(spans[0] + spans[1]),
+    )
+
+
+def _score_lt(
+    candidate: tuple[float, float, float],
+    current: tuple[float, float, float],
+    *,
+    tol: float = 1e-6,
+) -> bool:
+    for cand_val, curr_val in zip(candidate, current):
+        if cand_val < curr_val - tol:
+            return True
+        if cand_val > curr_val + tol:
+            return False
+    return False
+
+
+def _principal_axis_rotations(coords: np.ndarray) -> list[np.ndarray]:
+    _, _, vh = np.linalg.svd(coords, full_matrices=False)
+    axes = vh.T
+    if np.linalg.det(axes) < 0.0:
+        axes[:, -1] *= -1.0
+
+    rotations: list[np.ndarray] = [np.eye(3, dtype=float)]
+    for perm in itertools.permutations(range(3)):
+        permuted = axes[:, perm]
+        for signs in itertools.product((-1.0, 1.0), repeat=3):
+            basis = permuted * np.asarray(signs, dtype=float)
+            if np.linalg.det(basis) <= 0.0:
+                continue
+            rotations.append(basis.T)
+    return rotations
+
+
+def _refine_xy_box_rotation(
+    coords: np.ndarray,
+    initial_rotation: np.ndarray,
+    *,
+    step_degrees: tuple[float, ...] = _XY_ROTATION_REFINE_DEGREES,
+) -> tuple[np.ndarray, tuple[float, float, float]]:
+    best_rotation = np.asarray(initial_rotation, dtype=float)
+    best_score = _xy_box_score(_apply_rotation(coords, best_rotation))
+
+    for step_deg in step_degrees:
+        while True:
+            improved = False
+            local_best_rotation = best_rotation
+            local_best_score = best_score
+            delta_values = (-step_deg, 0.0, step_deg)
+
+            for dx, dy, dz in itertools.product(delta_values, repeat=3):
+                if dx == dy == dz == 0.0:
+                    continue
+                delta_rotation = (
+                    _rotation_matrix_z(dz)
+                    @ _rotation_matrix_y(dy)
+                    @ _rotation_matrix_x(dx)
+                )
+                candidate_rotation = delta_rotation @ best_rotation
+                candidate_score = _xy_box_score(
+                    _apply_rotation(coords, candidate_rotation)
+                )
+                if _score_lt(candidate_score, local_best_score):
+                    local_best_rotation = candidate_rotation
+                    local_best_score = candidate_score
+                    improved = True
+
+            if not improved:
+                break
+            best_rotation = local_best_rotation
+            best_score = local_best_score
+
+    return best_rotation, best_score
+
+
+def _find_min_xy_box_rotation(
+    coords: np.ndarray,
+) -> tuple[np.ndarray, tuple[float, float, float], tuple[float, float, float]]:
+    coords = np.asarray(coords, dtype=float)
+    if coords.ndim != 2 or coords.shape[1] != 3:
+        raise ValueError(
+            f"Expected an (N, 3) coordinate array for XY box optimization, got {coords.shape}."
+        )
+    if coords.shape[0] < 2:
+        score = _xy_box_score(coords if len(coords) else np.zeros((1, 3), dtype=float))
+        return np.eye(3, dtype=float), score, score
+
+    centered = coords - coords.mean(axis=0, keepdims=True)
+    before_score = _xy_box_score(centered)
+    best_rotation = np.eye(3, dtype=float)
+    best_score = before_score
+
+    for rotation in _principal_axis_rotations(centered):
+        refined_rotation, refined_score = _refine_xy_box_rotation(centered, rotation)
+        if _score_lt(refined_score, best_score):
+            best_rotation = refined_rotation
+            best_score = refined_score
+
+    return best_rotation, before_score, best_score
+
+
+def _split_residues_on_breaks(
+    residues,
+    *,
+    segid: str,
+    chain_id: str,
+    ca_distance_cutoff: float = _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A,
+) -> tuple[list[list[Any]], list[str]]:
+    residue_list = list(residues)
+    if not residue_list:
+        return [], []
+
+    fragments: list[list[Any]] = [[residue_list[0]]]
+    warnings: list[str] = []
+
+    for prev_residue, curr_residue in zip(residue_list, residue_list[1:]):
+        reasons: list[str] = []
+        prev_resid = int(prev_residue.resid)
+        curr_resid = int(curr_residue.resid)
+
+        if curr_resid != prev_resid + 1:
+            reasons.append(f"resid discontinuity ({prev_resid} -> {curr_resid})")
+
+        prev_ca = _get_single_ca_position(prev_residue)
+        curr_ca = _get_single_ca_position(curr_residue)
+        if prev_ca is not None and curr_ca is not None:
+            ca_distance = float(np.linalg.norm(curr_ca - prev_ca))
+            if ca_distance > ca_distance_cutoff:
+                reasons.append(
+                    f"C-alpha distance {ca_distance:.1f} A > {ca_distance_cutoff:.1f} A"
+                )
+
+        if reasons:
+            warnings.append(
+                "Detected a protein break in system_prep "
+                f"(segid={segid or '?'}, chain={chain_id or '?'}) "
+                f"between residues {prev_resid} and {curr_resid}: "
+                + "; ".join(reasons)
+                + ". BATTER will split these residues into separate segments/chains."
+            )
+            fragments.append([])
+
+        fragments[-1].append(curr_residue)
+
+    return fragments, warnings
+
+
+def _group_residues_by_source_identity(residues) -> list[list[Any]]:
+    residue_list = list(residues)
+    if not residue_list:
+        return []
+
+    groups: list[list[Any]] = [[residue_list[0]]]
+    prev_chain_id = str(residue_list[0].atoms.chainIDs[0]).strip() if len(residue_list[0].atoms) else ""
+    prev_segid = str(residue_list[0].segid).strip()
+
+    for residue in residue_list[1:]:
+        chain_id = str(residue.atoms.chainIDs[0]).strip() if len(residue.atoms) else ""
+        segid = str(residue.segid).strip()
+        if chain_id != prev_chain_id or segid != prev_segid:
+            groups.append([])
+        groups[-1].append(residue)
+        prev_chain_id = chain_id
+        prev_segid = segid
+
+    return groups
+
+
+def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], int]:
+    """
+    Build per-atom segid overrides to canonicalize segids within each protein residue.
+
+    Some input PDBs carry a segid on heavy atoms but leave hydrogens blank.
+    MDAnalysis then parses those atoms as separate residues/segments on reload.
+    Compute a residue-level canonical segid so aligned intermediates can be
+    rewritten with consistent per-residue segids before they are reloaded.
+    """
+    try:
+        universe.atoms.segids
+    except AttributeError:
+        return {}, 0
+
+    protein_atoms = universe.select_atoms("protein")
+    if protein_atoms.n_atoms == 0:
+        return {}, 0
+
+    residue_atom_indices: dict[tuple[str, int, str], list[int]] = {}
+    for atom in protein_atoms:
+        chain_id = str(getattr(atom, "chainID", "")).strip()
+        residue_key = (chain_id, int(atom.resid), str(atom.resname).strip())
+        residue_atom_indices.setdefault(residue_key, []).append(int(atom.index))
+
+    segid_overrides: dict[int, str] = {}
+    normalized_count = 0
+    for atom_indices in residue_atom_indices.values():
+        atom_group = universe.atoms[atom_indices]
+        segids = [str(segid).strip() for segid in atom_group.segids]
+        unique_segids = set(segids)
+        if len(unique_segids) <= 1:
+            continue
+
+        nonempty_segids = [segid for segid in segids if segid]
+        if nonempty_segids:
+            canonical_segid = Counter(nonempty_segids).most_common(1)[0][0]
+        else:
+            canonical_segid = segids[0]
+
+        for atom_index in atom_indices:
+            segid_overrides[atom_index] = canonical_segid
+        normalized_count += 1
+
+    return segid_overrides, normalized_count
+
+
+def _write_pdb_with_normalized_protein_segids(
+    universe: mda.Universe,
+    output_path: Path,
+) -> int:
+    """
+    Write a PDB while normalizing mixed per-atom protein segids per residue.
+    """
+    segid_overrides, normalized_count = _protein_segid_overrides(universe)
+    universe.atoms.write(output_path.as_posix())
+    if not segid_overrides:
+        return normalized_count
+
+    rewritten_lines: list[str] = []
+    atom_counter = 0
+    for line in output_path.read_text().splitlines(True):
+        if line.startswith(("ATOM", "HETATM")):
+            atom = universe.atoms[atom_counter]
+            atom_counter += 1
+            canonical_segid = segid_overrides.get(int(atom.index))
+            if canonical_segid is not None:
+                stripped = line.rstrip("\n")
+                if len(stripped) < 76:
+                    stripped = stripped.ljust(76)
+                line = f"{stripped[:72]}{canonical_segid:<4}{stripped[76:]}\n"
+        rewritten_lines.append(line)
+
+    output_path.write_text("".join(rewritten_lines))
+    return normalized_count
+
+
+def _select_fragment_atoms(
+    universe: mda.Universe,
+    residues: list[Any],
+    *,
+    chain_id: str,
+    segid: str,
+):
+    resid_seq = " ".join(str(int(residue.resid)) for residue in residues)
+    selectors: list[str] = []
+    if chain_id:
+        selectors.append(f"protein and chainID {chain_id} and resid {resid_seq}")
+    if segid:
+        selectors.append(f"protein and segid {segid} and resid {resid_seq}")
+    selectors.append(f"protein and resid {resid_seq}")
+
+    for selector in selectors:
+        selection = universe.select_atoms(selector)
+        if selection.n_residues == len(residues):
+            return selection
+
+    raise ValueError(
+        "Could not match a protein fragment back to the aligned protein using "
+        f"segid={segid!r}, chainID={chain_id!r}, residues={[int(r.resid) for r in residues]}."
+    )
 
 
 def _ensure_pdb(lig_path: Path, out_dir: Path) -> Path:
@@ -106,11 +441,11 @@ class _SystemPrepRunner:
         # alignment intermediates
         self._protein_aligned_pdb: str | None = None
         self._system_aligned_pdb: str | None = None
-        self.translation: np.ndarray = np.zeros(3)
         self.mobile_coord: np.ndarray | None = None
         self.ref_coord: np.ndarray | None = None
         self.mobile_com: np.ndarray | None = None
         self.ref_com: np.ndarray | None = None
+        self.box_rotation_matrix: np.ndarray = np.eye(3)
 
         # anchors
         self.anchor_atoms: List[str] = []
@@ -240,18 +575,57 @@ class _SystemPrepRunner:
 
         cog_prot = u_prot.select_atoms("protein and name CA C N O").center_of_geometry()
         u_prot.atoms.positions -= cog_prot
-        u_prot.atoms.write(f"{self.ligands_folder}/protein_aligned.pdb")
-        self._protein_aligned_pdb = f"{self.ligands_folder}/protein_aligned.pdb"
-        u_sys.atoms.write(f"{self.ligands_folder}/system_aligned.pdb")
-        self._system_aligned_pdb = f"{self.ligands_folder}/system_aligned.pdb"
 
-        self.translation = cog_prot
+        self.box_rotation_matrix = np.eye(3)
+        if self._system_topology is None:
+            protein_atoms = u_prot.select_atoms("protein and not resname NMA ACE")
+            if protein_atoms.n_atoms >= 2:
+                rotation_matrix, score_before, score_after = _find_min_xy_box_rotation(
+                    protein_atoms.positions
+                )
+                if _score_lt(score_after, score_before):
+                    u_prot.atoms.positions = _apply_rotation(
+                        u_prot.atoms.positions, rotation_matrix
+                    )
+                    u_sys.atoms.positions = _apply_rotation(
+                        u_sys.atoms.positions, rotation_matrix
+                    )
+                    self.box_rotation_matrix = rotation_matrix
+                    logger.info(
+                        "Optimized protein orientation for smaller XY box area without system_input: "
+                        f"{score_before[0]:.2f} -> {score_after[0]:.2f} A^2 "
+                        f"(z span {score_before[1]:.2f} -> {score_after[1]:.2f} A)."
+                    )
+
+        final_ref = u_prot.select_atoms(self.protein_align).select_atoms(
+            "name CA and not resname NMA ACE"
+        )
+        final_ref_com = final_ref.center(weights=None)
+        final_ref_coord = final_ref.positions - final_ref_com
+
+        protein_aligned_path = self.ligands_folder / "protein_aligned.pdb"
+        system_aligned_path = self.ligands_folder / "system_aligned.pdb"
+        normalized_prot_residues = _write_pdb_with_normalized_protein_segids(
+            u_prot, protein_aligned_path
+        )
+        normalized_sys_residues = _write_pdb_with_normalized_protein_segids(
+            u_sys, system_aligned_path
+        )
+        if normalized_prot_residues or normalized_sys_residues:
+            logger.warning(
+                "Detected mixed per-atom protein segid assignments; normalized segids "
+                f"for {normalized_prot_residues} residue(s) in the aligned protein and "
+                f"{normalized_sys_residues} residue(s) in the aligned system before grouping."
+            )
+
+        self._protein_aligned_pdb = str(protein_aligned_path)
+        self._system_aligned_pdb = str(system_aligned_path)
 
         # store these for ligand alignment
         self.mobile_com = mobile_com
-        self.ref_com = ref_com
         self.mobile_coord = mobile_coord
-        self.ref_coord = ref_coord
+        self.ref_com = final_ref_com
+        self.ref_coord = final_ref_coord
 
     def _process_system(self):
         """
@@ -272,37 +646,46 @@ class _SystemPrepRunner:
             u_sys.atoms.chainIDs
         except AttributeError:
             u_sys.add_TopologyAttr("chainIDs")
+        try:
+            u_prot.atoms.chainIDs
+        except AttributeError:
+            u_prot.add_TopologyAttr("chainIDs")
 
         memb_seg = u_sys.add_Segment(segid="MEMB")
         water_seg = u_sys.add_Segment(segid="WATR")
 
-        # modify the chaininfo to be unique for each segment
-        current_chain = 65
-        u_prot.atoms.tempfactors = 0
+        protein_fragment_groups: list[tuple[Any, str]] = []
+        fragment_chain_index = 0
+        protein_source_groups = _group_residues_by_source_identity(
+            u_prot.select_atoms("protein").residues
+        )
 
-        # read and validate the correct segments
-        n_segments = len(u_sys.select_atoms("protein").segments)
-        n_segment_name = np.unique(u_sys.select_atoms("protein").segids)
-        if len(n_segment_name) != n_segments:
-            logger.warning(
-                f"Number of segments in the system is {n_segments} but the segment names are {n_segment_name}. "
-                f"Setting all segments to 'A' for the protein. If you want to use different segments, "
-                "modify the segments column in the system_topology file manually."
+        for source_group in protein_source_groups:
+            chain_id = (
+                str(source_group[0].atoms.chainIDs[0]).strip() if len(source_group[0].atoms) else ""
             )
-            protein_seg = u_sys.add_Segment(segid="A")
-            u_sys.select_atoms("protein").residues.segments = protein_seg
+            segid = str(source_group[0].segid).strip()
+            residue_groups, split_warnings = _split_residues_on_breaks(
+                source_group,
+                segid=segid,
+                chain_id=chain_id,
+            )
+            for warning_message in split_warnings:
+                logger.warning(warning_message)
 
-        for segment in u_sys.select_atoms("protein").segments:
-            resid_seg = segment.residues.resids
-            resid_seq = " ".join([str(resid) for resid in resid_seg])
-            chain_id = segment.atoms.chainIDs[0]
-            u_prot.select_atoms(
-                f"resid {resid_seq} and chainID {chain_id} and protein"
-            ).atoms.tempfactors = current_chain
-            current_chain += 1
-        u_prot.atoms.chainIDs = [
-            chr(int(chain_nm)) for chain_nm in u_prot.atoms.tempfactors
-        ]
+            for residues in residue_groups:
+                new_chain_id = _chain_id_from_index(fragment_chain_index)
+                fragment_chain_index += 1
+
+                prot_selection = _select_fragment_atoms(
+                    u_prot,
+                    residues,
+                    chain_id=chain_id,
+                    segid=segid,
+                )
+
+                prot_selection.atoms.chainIDs = new_chain_id
+                protein_fragment_groups.append((prot_selection, new_chain_id))
 
         comp_2_combined = []
 
@@ -310,8 +693,6 @@ class _SystemPrepRunner:
             protein_anchor = u_prot.select_atoms(
                 f"segid {self.receptor_segment} and protein"
             )
-            protein_anchor.atoms.chainIDs = "A"
-            protein_anchor.atoms.tempfactors = 65
             other_protein = u_prot.select_atoms(
                 f"not segid {self.receptor_segment} and protein"
             )
@@ -319,6 +700,9 @@ class _SystemPrepRunner:
             comp_2_combined.append(other_protein)
         else:
             comp_2_combined.append(u_prot.select_atoms("protein"))
+
+        for prot_selection, new_chain_id in protein_fragment_groups:
+            prot_selection.residues.segments = u_prot.add_Segment(segid=new_chain_id)
 
         if self.membrane_simulation:
             membrane_ag = u_sys.select_atoms(f'resname {" ".join(self.lipid_mol)}')
@@ -457,7 +841,7 @@ class _SystemPrepRunner:
 
     def _align_2_system(self, mobile_atoms):
         """
-        Apply translation-only movement to bring ligand into system frame.
+        Apply the stored rigid-body transform to bring a ligand into system frame.
         """
         _ = align._fit_to(
             mobile_coordinates=self.mobile_coord,
@@ -466,8 +850,6 @@ class _SystemPrepRunner:
             mobile_com=self.mobile_com,
             ref_com=self.ref_com,
         )
-
-        mobile_atoms.positions -= self.translation
 
     def _prepare_all_ligands(self):
         """

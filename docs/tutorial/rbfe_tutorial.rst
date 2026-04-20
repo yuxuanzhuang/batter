@@ -88,10 +88,8 @@ Installation
        conda env update -n batter -f environment.yml
        conda activate batter
 
-#. Install editable copies of the bundled dependencies plus ``batter`` itself::
+#. Install ``batter`` itself after the environment update (which already installs the bundled ``extern/*`` dependencies)::
 
-       pip install -e ./extern/alchemlyb
-       pip install -e ./extern/rocklinc
        pip install -e .
 
 #. Verify the installation::
@@ -272,10 +270,46 @@ Results and Analysis
 --------------------
 
 Completed runs automatically write MBAR summaries under ``results/<run_id>``.
+For RBFE runs, per-run analysis also writes a Cinnabar bundle under
+``results/cinnabar/<run_id>/``. The most direct ways to inspect those outputs are:
+
+* Open ``results/cinnabar/<run_id>/cinnabar_dashboard.html`` in a browser. That
+  dashboard includes the network view, the absolute ranking view, and the clickable
+  ligand / mapping panels.
+* Read ``edge_summary.csv`` when you want the combined edge-level ``ΔΔG`` table.
+* Read ``cinnabar_relative.csv`` and ``cinnabar_absolute.csv`` when you want the
+  FEMap-exported relative and absolute values.
+* Open ``cinnabar_network.png`` and ``cinnabar_absolute_sorted.png`` for static
+  figures suitable for slides or quick sharing.
+
+If you later merge multiple RBFE runs with ``batter fe cinnabar``, the combined
+bundle is written under ``results/cinnabar/`` at the top level instead of the
+per-run subdirectory.
+
 Use the CLI helpers to inspect them::
 
     batter fe list <run.output_folder>
     batter fe show <run.output_folder> <run_id> --ligand <ligand_pair>
+
+For cross-run RBFE benchmarking or Cinnabar plotting, convert the stored BATTER
+records into a Cinnabar bundle::
+
+    batter fe cinnabar <run.output_folder> --run-id rep1 --run-id rep2
+
+Per-run RBFE analysis already writes a default bundle under
+``results/cinnabar/<run_id>/``. Use the explicit multi-``--run-id`` command above
+when you want to merge replicate runs into one Cinnabar view.
+
+That command reads the saved ``results/index.csv`` rows, combines the selected RBFE
+edges, and writes a derived bundle under ``results/cinnabar/``. Use
+``--split-runs`` if you want one bundle per run instead of collapsing repeats.
+If you have experimental absolute affinities, pass them with
+``--experimental-csv`` so Cinnabar can emit DG/DDG comparison plots. BATTER merges
+``A~B`` and ``B~A`` into one canonical edge by default; add ``--split-directions``
+if you want to keep the two stored directions separate in the Cinnabar export.
+BATTER also writes ``cinnabar_absolute_sorted.png`` from the Cinnabar MLE absolute
+values; use ``--absolute-offset`` if you want to shift that ranking plot onto a
+chosen absolute reference level.
 
 ``fe list`` prints a high-level table for every stored run, while ``fe show`` opens
 the saved record for one transformation pair such as ``LIG1~LIG2``. For a file-by-file

@@ -37,3 +37,26 @@ def test_wait_for_slot_enforces_cap(monkeypatch):
 
     mgr.wait_for_slot()
     assert sleep_called == [0.1]
+
+
+def test_wait_for_slot_uses_cached_local_count_until_cap(monkeypatch):
+    mgr = SlurmJobManager(poll_s=60.0, dry_run=True, max_active_jobs=3)
+
+    call_count = {"n": 0}
+
+    def fake_active(user=None, partition=None):
+        call_count["n"] += 1
+        return 1
+
+    monkeypatch.setattr("batter.exec.slurm_mgr._num_active_job", fake_active)
+
+    mgr.wait_for_slot()
+    assert call_count["n"] == 1
+
+    mgr.n_active = 2
+    mgr.wait_for_slot()
+    assert call_count["n"] == 1
+
+    mgr.n_active = 3
+    mgr.wait_for_slot()
+    assert call_count["n"] == 2

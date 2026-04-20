@@ -403,11 +403,13 @@ def test_clear_failure_markers_removes_retry_counters_and_progress(
     artifact_progress.mkdir(parents=True, exist_ok=True)
 
     failed_marker = win_dir / "FAILED"
+    attempt_failed_marker = win_dir / "ATTEMPT_FAILED"
     attempt_file = win_dir / "job_attempt.txt"
     progress_csv = progress_dir / "state.csv"
     keep_file = win_dir / "keep.txt"
 
     failed_marker.write_text("FAILED\n")
+    attempt_failed_marker.write_text("FAILED\n")
     attempt_file.write_text("3\n")
     progress_csv.write_text("phase,status\n")
     (artifact_progress / "phase_state.json").write_text("{}")
@@ -416,10 +418,60 @@ def test_clear_failure_markers_removes_retry_counters_and_progress(
     run_mod._clear_failure_markers(run_dir)
 
     assert not failed_marker.exists()
+    assert not attempt_failed_marker.exists()
     assert not attempt_file.exists()
     assert not progress_csv.exists()
     assert not artifact_progress.exists()
     assert keep_file.exists()
+
+
+def test_run_phase_with_failure_policy_retries_once_then_prunes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    child = SimSystem(
+        name="sys:LIG:run1",
+        root=tmp_path / "simulations" / "LIG",
+        meta=SystemMeta(ligand="LIG"),
+    )
+    phase = run_mod.Pipeline([])
+
+    run_calls: list[str] = []
+    handle_calls: list[str] = []
+    status_calls = {"count": 0}
+
+    def fake_run_phase(*args, **kwargs):
+        run_calls.append(kwargs.get("on_failure") or "")
+        return False
+
+    def fake_partition(children, phase_name):
+        status_calls["count"] += 1
+        return ([], [child])
+
+    def fake_handle(children, phase_name, mode):
+        handle_calls.append(mode)
+        if mode == "retry":
+            return [child]
+        if mode == "prune":
+            return []
+        raise AssertionError(f"unexpected mode: {mode}")
+
+    monkeypatch.setattr(run_mod, "run_phase_skipping_done", fake_run_phase)
+    monkeypatch.setattr(run_mod, "partition_children_by_status", fake_partition)
+    monkeypatch.setattr(run_mod, "handle_phase_failures", fake_handle)
+
+    out_children, should_exit = run_mod._run_phase_with_failure_policy(
+        phase,
+        [child],
+        "fe",
+        backend=object(),
+        on_failure="retry",
+    )
+
+    assert should_exit is False
+    assert out_children == []
+    assert len(run_calls) == 2
+    assert handle_calls == ["retry", "prune"]
+    assert status_calls["count"] == 2
 
 
 def test_build_run_summary_table_includes_success_and_failure_rows(

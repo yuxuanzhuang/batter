@@ -23,11 +23,11 @@ Equil no ligand
   ntp = 0,
   nstlim = 50000,
   dt = _step_,
-  nmropt = 1,
+  nmropt = 0,
   pencut = -1,
   ntr = 1,
   restraint_wt = 50.0,
-  restraintmask = '(@CA | :_lig_name_) & !@H=',
+  restraintmask = '(@CA | :_lig_name_ | :1) & !@H=',
   mcwat = _enable_mcwat_,
   nmd = 1000,
   nmc = 1000,
@@ -52,12 +52,9 @@ Equil no ligand
   gti_ele_exp     = 2,
   gti_vdw_exp     = 2,
  /
- &pmd
- output_file = 'cmass.txt'
- output_freq = _ntwx_
- cv_file = 'cv.in'
- /
- &wt type = 'END', /
+ &wt type='DUMPFREQ', istep1=_ntwx_, /
+ &wt type='END', /
 DISANG=disang_file.rest
+DUMPAVE=cmass.txt
+LISTIN=POUT
 LISTOUT=POUT
-

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Sequence, Optional, Tuple
+from typing import Sequence, Optional, Tuple, Iterable, List
+import hashlib
 
 import numpy as np
 import pandas as pd
@@ -12,6 +13,8 @@ from loguru import logger
 import os
 import json
 import shutil
+import parmed as pmd
+from parmed.amber.mask import AmberMask
 
 
 from batter._internal.builders.interfaces import BuildContext
@@ -177,7 +180,9 @@ def _patch_restraint_block(
                 else new_mask_component
             )
             if len(mask) > 256:
-                raise ValueError(f"Restraint mask too long (>256 chars): {mask}")
+                logger.warning(
+                    "[restraintmask] Mask exceeds 256 chars; will attempt legacy-group conversion."
+                )
             line = f'  restraintmask = "{mask}",\n'
             seen_mask = True
         elif re.search(r"\brestraint_wt\s*=", line):
@@ -193,6 +198,183 @@ def _patch_restraint_block(
     return "".join(out)
 
 
+def _format_restraint_weight(value: str | float) -> str:
+    if isinstance(value, str):
+        value = value.strip().rstrip(",")
+    try:
+        num = float(value)
+    except Exception:
+        return str(value)
+    text = f"{num:.6f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _convert_restraintmask_to_legacy_group_block(
+    prmtop_path: Path, maskstr: str, restraint_wt: str | float, title: str
+) -> list[str]:
+    parm = pmd.load_file(prmtop_path.as_posix())
+    sel = AmberMask(parm, maskstr).Selection()
+    indices = [i + 1 for i, flag in enumerate(sel) if flag > 0]
+    ranges = _merge_consecutive(indices)
+    selected_count = len(indices)
+    range_count = sum(end - start + 1 for start, end in ranges)
+    if selected_count != range_count:
+        raise ValueError(
+            f"Selection size mismatch: selected={selected_count} vs ranges={range_count}"
+        )
+    out = [title, _format_restraint_weight(restraint_wt)]
+    for i in range(0, len(ranges), 7):
+        chunk = ranges[i : i + 7]
+        parts: List[str] = []
+        for start, end in chunk:
+            parts.append(str(start))
+            parts.append(str(end))
+        out.append("ATOM " + " ".join(parts))
+    out.append("END")
+    out.append("END")
+    return out
+
+
+def _find_prmtop_for_masks(work_dir: Path) -> Optional[Path]:
+    candidates = [
+        "full_merged.prmtop",
+        "full.hmr.prmtop",
+        "full.prmtop",
+    ]
+    for base in [work_dir, *work_dir.parents]:
+        for name in candidates:
+            path = base / name
+            if path.exists():
+                return path
+    return None
+
+
+def _apply_restraintmask_length_limit(
+    mdin_path: Path,
+    prmtop_path: Optional[Path],
+    *,
+    title: str = "Converted from restraintmask",
+    cache_dir: Optional[Path] = None,
+    cache_tag: Optional[str] = None,
+    cache_master: bool = False,
+) -> None:
+    if not mdin_path.exists():
+        return
+    text = mdin_path.read_text()
+    mask = None
+    mask_lines_removed = False
+    lines = text.splitlines(True)
+    out_lines: List[str] = []
+    for line in lines:
+        m = re.search(r'restraintmask\s*=\s*["\']([^"\']*)["\']', line)
+        if m:
+            mask = m.group(1).strip()
+            mask_lines_removed = True
+            continue
+        out_lines.append(line)
+
+    if not mask:
+        return
+
+    cache_path = None
+    mask_hash = hashlib.sha1(mask.encode("utf-8")).hexdigest()
+    if cache_dir is not None and cache_tag:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / f"{cache_tag}.legacy_restraint"
+
+    if cache_path is not None and cache_path.exists() and not cache_master:
+        cached = cache_path.read_text().splitlines()
+        if cached and cached[0].startswith("# mask_sha1="):
+            cached_hash = cached[0].split("=", 1)[1].strip()
+            if cached_hash != mask_hash:
+                logger.debug(
+                    f"[restraintmask] Cache hash mismatch for {mdin_path.name}; reusing cached block anyway."
+                )
+            block = cached[1:]
+            new_text = "".join(out_lines)
+            if not new_text.endswith("\n"):
+                new_text += "\n"
+            new_text += "&end\n"
+            new_text += "\n".join(block) + "\n"
+            mdin_path.write_text(new_text)
+            logger.debug(
+                f"[restraintmask] Reused cached legacy block for {mdin_path.name}."
+            )
+            return
+
+    if prmtop_path is None or not prmtop_path.exists():
+        logger.warning(
+            f"[restraintmask] No prmtop found for {mdin_path.name}; leaving restraintmask as-is."
+        )
+        return
+
+    wt_match = re.search(
+        r"\brestraint_wt\s*=\s*([0-9.+-eEdD]+)", text, flags=re.IGNORECASE
+    )
+    restraint_wt = wt_match.group(1) if wt_match else "0.0"
+
+    try:
+        block = _convert_restraintmask_to_legacy_group_block(
+            prmtop_path, mask, restraint_wt, title
+        )
+    except Exception as exc:
+        logger.warning(
+            f"[restraintmask] Failed to convert mask for {mdin_path.name}: {exc}"
+        )
+        return
+
+    if not mask_lines_removed:
+        return
+
+    new_text = "".join(out_lines)
+    if not new_text.endswith("\n"):
+        new_text += "\n"
+    new_text += "&end\n"
+    new_text += "\n".join(block) + "\n"
+    mdin_path.write_text(new_text)
+    if cache_path is not None and cache_master:
+        cache_path.write_text("# mask_sha1=" + mask_hash + "\n" + "\n".join(block) + "\n")
+    logger.debug(
+        f"[restraintmask] Converted long restraintmask in {mdin_path.name} to legacy group block."
+    )
+
+
+def _first_residue_atom_mask(
+    pdb_path: Path,
+    *,
+    resid: int | None = None,
+    resname: str | None = None,
+) -> str:
+    """Return an AMBER atom-index mask for the first atom in one residue."""
+    if resid is None and resname is None:
+        raise ValueError("Either resid or resname must be provided")
+
+    u = mda.Universe(pdb_path.as_posix())
+    if resid is not None:
+        atoms = u.select_atoms(f"resid {int(resid)}")
+    else:
+        atoms = u.select_atoms(f"resname {resname}")
+
+    if atoms.n_atoms == 0:
+        target = f"resid {resid}" if resid is not None else f"resname {resname}"
+        raise ValueError(f"No atoms matched {target!r} in {pdb_path}")
+
+    atom = atoms[0]
+    return f"@{int(atom.index) + 1}"
+
+
+def _first_absolute_atom_mask(atom_indices: Sequence[int | str]) -> str:
+    """Return an AMBER mask for the smallest 1-based absolute atom index."""
+    tokens = sorted(
+        int(str(atom).strip())
+        for atom in atom_indices
+        if str(atom).strip() and int(str(atom).strip()) > 0
+    )
+    if not tokens:
+        raise ValueError("atom_indices must contain at least one positive atom index")
+    return f"@{tokens[0]}"
+
+
 def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
     base_template = window_dir / "mdin-template"
     if not base_template.exists():
@@ -201,6 +383,14 @@ def _write_batch_mdin_template(window_dir: Path, comp_dir: Path) -> None:
     batch_template.write_text(base_template.read_text())
     prefix = window_dir.relative_to(comp_dir).as_posix()
     patch_mdin_file(batch_template, prefix, add_numexchg=False)
+
+
+def _mask_with_added_component(base_mask: str, new_mask_component: str) -> str:
+    """Append one atom/group to a template restraintmask."""
+    base = re.sub(r"\s*&\s*!@H=\s*$", "", base_mask.strip()).strip()
+    if not base:
+        return f"({new_mask_component}) & !@H="
+    return f"({base} | {new_mask_component}) & !@H="
 
 
 def _maybe_extra_mask(
@@ -338,6 +528,16 @@ def indices_to_selection(
     return f"@{inc_str}"
 
 
+def _write_cmass_dump_block(handle, *, istep1: int | str, disang: str = "disang.rest") -> None:
+    """Write the AMBER wt/DUMPAVE footer used for cv/disang-driven runs."""
+    handle.write(f" &wt type='DUMPFREQ', istep1={istep1}, /\n")
+    handle.write(" &wt type='END', /\n")
+    handle.write(f"DISANG={disang}\n")
+    handle.write("DUMPAVE=cmass.txt\n")
+    handle.write("LISTIN=POUT\n")
+    handle.write("LISTOUT=POUT\n")
+
+
 
 # ------------------------- generic equil files ------------------------- #
 
@@ -354,7 +554,8 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
     temperature = sim.temperature
     mol = ctx.residue_name
-    infe_flag = "1" if infe else "0"
+    # Keep infe disabled while nmropt/disang mirrors the cv restraints.
+    infe_flag = "0"
 
     # disang anchor triplet (L1/L2/L3)
     with open(work / "disang.rest", "r") as f:
@@ -462,6 +663,14 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     text = f"! total_steps={total_steps}\n{text}"
     (work / "mdin-template").write_text(text)
 
+    prmtop_for_masks = _find_prmtop_for_masks(work)
+    _apply_restraintmask_length_limit(work / "mdin-template", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt0.in", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt.in", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt_eq.in", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt_disappear.in", prmtop_for_masks)
+    _apply_restraintmask_length_limit(work / "eqnpt_appear.in", prmtop_for_masks)
+
     logger.debug(f"[Equil] Simulation input files written under {work}")
 
 
@@ -480,8 +689,16 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mol = ctx.residue_name
     win = ctx.win
     windows_dir = ctx.window_dir
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
     all_atoms = sim.all_atoms
     non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = win == -1
 
 
     if not hasattr(sim, "dec_method"):
@@ -514,10 +731,22 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol}')
-    ref_resid = mol_ref_ag.resids[0]
+    ligand_resids = sorted({int(resid) for resid in mol_ref_ag.resids})
+    if not ligand_resids:
+        raise ValueError(f"No residues with resname {mol!r} found in {vac_pdb}")
+    ref_resid = ligand_resids[0]
+    bulk_resid = ligand_resids[1] if len(ligand_resids) > 1 else ref_resid
     ref_lig_in_site_mask = f':{int(ref_resid)}'
+    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(bulk_resid))
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
 
     # compute extra mask once for this window root; applied to mdin-XX only
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
@@ -544,20 +773,24 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     line = f"ntwx = {n_steps_run_per_lambda},\n"
                 # write all atoms
                 elif "ntwprt = " in line:
-                    line = f"\n"
+                    line = "\n"
                 elif "irest" in line:
                     line = "irest = 0,\n"
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
+                elif "nmropt = " in line:
+                    line = "nmropt = 0,\n"
                 elif "restraint_wt = " in line:
-                    line = f"restraint_wt = 0.2,\n"
+                    line = "restraint_wt = 10,\n"
                 elif "restraintmask" in line:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     if rm == "":
-                        #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        #line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
                     else:
-                        line = f"restraintmask = '(@CA | :{mol} | {rm} ) & !@H='\n"
+                        #line = f"restraintmask = '(@CA | :{mol} | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -577,13 +810,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 mdin.write(f" dynlmb = {dynlmb},\n")
                 mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
             # run mcwat
-            mdin.write(f"  mcwat = 1,\n")
-            mdin.write(f"  nmd = 1000,\n")
-            mdin.write(f"  nmc = 1000,\n")
+            mdin.write("  mcwat = 1,\n")
+            mdin.write("  nmd = 1000,\n")
+            mdin.write("  nmc = 1000,\n")
             mdin.write(f"  mcwatmask = \"{ref_lig_in_site_mask}\",\n")
-            mdin.write(f"  mcligshift = 40,\n")
-            mdin.write(f"  mcwatretry = 3000,\n")
-            mdin.write(f"  mcresstr = \"WAT\",\n")
+            mdin.write("  mcligshift = 40,\n")
+            mdin.write("  mcwatretry = 3000,\n")
+            mdin.write("  mcresstr = \"WAT\",\n")
             mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
             mdin.write("  mbar_lambda =")
             for lam in lambdas:
@@ -592,14 +825,14 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             # no need to run infe as everything is restrainted
             mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        _apply_restraintmask_length_limit(
+            out_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-eq.in",
+            cache_master=cache_master,
+        )
 
         # end eq.in
 
@@ -609,6 +842,12 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
+                if "restraintmask" in line:
+                    rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                    line = (
+                        "restraintmask = "
+                        f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -625,16 +864,9 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             for lam in lambdas:
                 mdin.write(f" {lam:6.5f},")
             mdin.write("\n")
-            mdin.write("  infe = 1,\n")
+            mdin.write("  infe = 0,\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
 
         # Patch mdin with extra restraints (only mdin-XX)
         if extra_mask:
@@ -646,6 +878,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 logger.warning(
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
+        _apply_restraintmask_length_limit(
+            out_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-mdin-template",
+            cache_master=cache_master,
+        )
 
         # end mdin-template
 
@@ -671,7 +910,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             raise KeyError(
                 "BuildContext.extra missing 'infe'. Ensure BaseBuilder sets this flag."
             )
-        infe_flag = 1 if extra_ctx["infe"] else 0
+        # Keep infe disabled while nmropt/disang mirrors the cv restraints.
+        infe_flag = 0
         mk1 = ref_resid
         template_mdin = amber_dir / "mdin-unorest-dd"
         template_mini = amber_dir / "mini-unorest-dd"
@@ -687,7 +927,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 elif "dt = " in line:
                     line = "dt = 0.002,\n"
                 elif "restraint_wt = " in line:
-                    line = f"restraint_wt = 0.2,\n"
+                    line = "restraint_wt = 0.2,\n"
                 elif "restraintmask" in line:
                     rm = (
                         line.split("=", 1)[1]
@@ -696,11 +936,11 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                         .replace("'", "")
                     )
                     if rm == "":
-                        #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
-                        line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol}) & !@H='\n"
+                        #line = f"restraintmask = '(@CA | :{mol}) & !@H='\n"
                     else:
-                        #line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
-                        line = f"restraintmask = '(@CA | :{mol}) | {rm} ) & !@H='\n"
+                        line = f"restraintmask = '((@CA & {non_loop_mask}) | :{mol} | {rm} ) & !@H='\n"
+                        #line = f"restraintmask = '(@CA | :{mol}) | {rm} ) & !@H='\n"
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -717,14 +957,14 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("\n")
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
+        _apply_restraintmask_length_limit(
+            eq_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-eq.in",
+            cache_master=cache_master,
+        )
 
         # production template
         n_steps_run = str(steps2)
@@ -732,6 +972,17 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
             fout.write(f"! total_steps={steps2}\n")
             for line in fin:
+                if "restraintmask" in line:
+                    rm = (
+                        line.split("=", 1)[1]
+                        .strip()
+                        .rstrip(",")
+                        .replace("'", "")
+                    )
+                    line = (
+                        "restraintmask = "
+                        f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                    )
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("_num-atoms_", str(vac_atoms))
@@ -749,15 +1000,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             mdin.write("\n")
             mdin.write(f"  infe = {infe_flag},\n")
             mdin.write(" /\n")
-            mdin.write(" &pmd \n")
-            mdin.write("  output_file = 'cmass.txt'\n")
-            mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-            mdin.write("  cv_file = 'cv.in'\n")
-            mdin.write(" /\n")
-            mdin.write(" &wt type = 'END' , /\n")
-            mdin.write("DISANG=disang.rest\n")
-            mdin.write("LISTOUT=POUT\n")
-
+            _write_cmass_dump_block(mdin, istep1=int(ntwx))
         # Patch mdin with extra restraints (only mdin-template)
         if extra_mask:
             try:
@@ -768,6 +1011,13 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 logger.warning(
                     f"[extra_restraints] Could not patch {out_path.name}: {e}"
                 )
+        _apply_restraintmask_length_limit(
+            out_path,
+            prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_tag="z-mdin-template",
+            cache_master=cache_master,
+        )
 
         with (
             template_mini.open("rt") as fin,
@@ -867,6 +1117,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     windows_dir = ctx.window_dir
     win = ctx.win
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = win == -1
     
     temperature = sim.temperature
     steps2 = sim.dic_n_steps[comp]
@@ -897,6 +1149,11 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
     # load scmask.json for scmk1, scmk2
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
+    ligand_cc_solvent_indices = scmk_dict["scmk1_cc_solvent_indices"]
+    if ligand_cc_solvent_indices:
+        ligand_cc_first_atom_mask = _first_absolute_atom_mask(ligand_cc_solvent_indices)
+    else:
+        ligand_cc_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(ref_resid) + 3)
     scmk1_all_indice = scmk_dict['scmk1_all_indices']
     scmk1_exclude_indice = np.concatenate([
                     scmk_dict['scmk1_cc_solvent_indices'],
@@ -920,6 +1177,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     noshakemk = f':{int(ref_resid)},{int(ref_resid)+1},{int(ref_resid)+2},{int(ref_resid)+3}'
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
 
     # optional extra restraints (only applied to mdin-template)
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
@@ -950,17 +1210,27 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 line = "  dt = 0.002,\n"
             elif "restraint_wt = " in line:
                 line = f"  restraint_wt = 5,\n"
+            elif "nmropt = " in line:
+                line = "  nmropt = 0,\n"
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
                     # restraining 1) non loop C-alpha 2) common core of ligands
-                    #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
-                    line = f"restraintmask = '(@CA | ({scmk1_exclude_indice}) ) & !@H='\n"
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
+                    #line = (
+                    #    "restraintmask = "
+                    #    f"'(@CA | ({scmk1_exclude_indice}) ) & !@H=',\n"
+                    #)
                 else:
-                    #line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
-                    line = f"restraintmask = '(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                    #line = (
+                    #    "restraintmask = "
+                    #    f"'(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
+                    #)
                 if len(line) > 256:
-                    logger.warning(f"restraintmask line too long for AMBER: {len(line)} but proceeding")
+                    logger.debug(
+                        f"[restraintmask] Mask exceeds 256 chars in eq.in; conversion will be applied after write."
+                    )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
@@ -996,20 +1266,26 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         # no need to run infe as everything is restrainted
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(
+        eq_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="x-eq.in",
+        cache_master=cache_master,
+    )
 
     # --- mdin-template (production) ---
     out_path = windows_dir / "mdin-template"
     with template_mdin.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={steps2}\n")
         for line in fin:
+            if "restraintmask" in line:
+                rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
+                line = (
+                    "restraintmask = "
+                    f"'{_mask_with_added_component(rm, ligand_cc_first_atom_mask)}',\n"
+                )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-atoms_", str(vac_atoms))
@@ -1028,17 +1304,9 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for lam in lambdas:
             mdin.write(f" {lam:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
-
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
     # Patch mdin with extra restraints (only mdin-template)
     if extra_mask:
         try:
@@ -1049,6 +1317,13 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             logger.warning(
                 f"[extra_restraints] Could not patch {out_path.name}: {e}"
             )
+    _apply_restraintmask_length_limit(
+        out_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="x-mdin-template",
+        cache_master=cache_master,
+    )
 
     # --- mini.in / mini_eq.in ---
     with (amber_dir / "mini-ex").open("rt") as fin, (windows_dir / "mini.in").open(
@@ -1093,6 +1368,8 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     sim = ctx.sim
     mol = ctx.residue_name
     windows_dir = ctx.window_dir
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = ctx.win == -1
 
     temperature = sim.temperature
     n_steps = sim.dic_n_steps["y"]
@@ -1100,8 +1377,13 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     weight = lambdas[ctx.win if ctx.win != -1 else 0]
     mk1 = 2  # ligand-only marker convention
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"Missing required file: {vac_pdb}")
+    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resname=mol)
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     # mini.in from ligand template
     with (
@@ -1186,22 +1468,35 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(
+        eq_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="y-eq.in",
+        cache_master=cache_master,
+    )
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
     with template.open("rt") as fin, out_path.open("wt") as fout:
         fout.write(f"! total_steps={n_steps}\n")
         for line in fin:
+            if "nmropt = " in line:
+                line = "  nmropt = 0,\n"
+            elif "restraintmask" in line:
+                rm = (
+                    line.split("=", 1)[1]
+                    .strip()
+                    .rstrip(",")
+                    .replace("'", "")
+                )
+                line = (
+                    "  restraintmask = "
+                    f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                )
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("_num-steps_", str(n_steps))
@@ -1218,16 +1513,16 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         for lbd in lambdas:
             mdin.write(f" {lbd:6.5f},")
         mdin.write("\n")
-        mdin.write("  infe = 1,\n")
+        mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(
+        out_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="y-mdin-template",
+        cache_master=cache_master,
+    )
 
     logger.debug(
         f"[sim_files_y] wrote mdin/mini/eq inputs in {windows_dir} for comp='y', weight={weight:0.5f}"
@@ -1251,6 +1546,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk1 = 2  # ligand-only marker convention
 
     amber_dir = ctx.amber_dir
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
 
     # mini.in from ligand template
     with (
@@ -1307,14 +1603,14 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("\n")
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(
+        eq_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="m-eq.in",
+        cache_master=cache_master,
+    )
 
     # production template (single long segment)
     out_path = windows_dir / "mdin-template"
@@ -1339,14 +1635,14 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         mdin.write("\n")
         mdin.write("  infe = 0,\n")
         mdin.write(" /\n")
-        mdin.write(" &pmd \n")
-        mdin.write("  output_file = 'cmass.txt'\n")
-        mdin.write(f"  output_freq = {int(ntwx):02d}\n")
-        mdin.write("  cv_file = 'cv.in'\n")
-        mdin.write(" /\n")
-        mdin.write(" &wt type = 'END' , /\n")
-        mdin.write("DISANG=disang.rest\n")
-        mdin.write("LISTOUT=POUT\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(
+        out_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="m-mdin-template",
+        cache_master=cache_master,
+    )
 
     logger.debug(
         f"[sim_files_m] wrote mdin/mini/eq inputs in {windows_dir} for comp='m', weight={weight:0.5f}"

@@ -21,6 +21,7 @@ import parmed as pmd
 from batter._internal.builders.fe_registry import register_create_simulation
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.ops.helpers import (
+    PROTEIN_COM_ATOM_SELECTION,
     load_anchors,
     save_anchors,
     Anchors,
@@ -1078,7 +1079,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
 
     # update DUM protein position
     dum_p = ref_vac.select_atoms('resname DUM')[0]
-    dum_p.position = ref_vac.select_atoms('protein and name CA N C O').center_of_mass()
+    dum_p.position = ref_vac.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
     dum_l = ref_vac.select_atoms('resname DUM')[1]
     ref_res_atoms = ref_vac.select_atoms(f"resname {res_ref}").residues[1].atoms
     mapped_ref_indices = sorted({ref_idx for ref_idx, _ in atomMap})

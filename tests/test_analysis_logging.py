@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+import types
 
 import numpy as np
 import pandas as pd
 
+try:
+    import seaborn  # noqa: F401
+except ModuleNotFoundError:
+    sys.modules["seaborn"] = types.ModuleType("seaborn")
+
 from batter.analysis import analysis as analysis_mod
+import batter
+import logging
 
 
 def test_mbar_extract_window_does_not_remove_global_logger(
@@ -79,3 +88,34 @@ def test_rest_mbar_extract_window_does_not_remove_global_logger(
     )
 
     assert not out.empty
+
+
+def test_allow_loguru_record_suppresses_alchemlyb_info() -> None:
+    record = {
+        "name": "alchemlyb.parsing.amber",
+        "level": type("L", (), {"no": logging.INFO})(),
+    }
+    assert batter._allow_loguru_record(record) is False
+
+
+def test_allow_loguru_record_keeps_alchemlyb_warning() -> None:
+    record = {
+        "name": "alchemlyb.parsing.amber",
+        "level": type("L", (), {"no": logging.WARNING})(),
+    }
+    assert batter._allow_loguru_record(record) is True
+
+
+def test_silence_alchemlyb_only_sets_python_loggers_to_warning() -> None:
+    amber_logger = logging.getLogger("alchemlyb.parsing.amber")
+    prev_level = amber_logger.level
+    amber_logger.setLevel(logging.INFO)
+
+    try:
+        with analysis_mod.SilenceAlchemlybOnly():
+            assert logging.getLogger("alchemlyb").level == logging.WARNING
+            assert logging.getLogger("alchemlyb.parsing").level == logging.WARNING
+            assert amber_logger.level == logging.WARNING
+        assert amber_logger.level == logging.INFO
+    finally:
+        amber_logger.setLevel(prev_level)

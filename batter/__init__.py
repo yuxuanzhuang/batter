@@ -72,11 +72,27 @@ def _configure_logging() -> None:
     logging.getLogger("kartograf").setLevel(logging.WARNING)
     logging.getLogger("MDAnalysis").setLevel(logging.WARNING)
     logging.getLogger("pymbar").setLevel(logging.WARNING)
+    logging.getLogger("alchemlyb").setLevel(logging.WARNING)
+    logging.getLogger("alchemlyb.parsing").setLevel(logging.WARNING)
+    logging.getLogger("alchemlyb.parsing.amber").setLevel(logging.WARNING)
+
+
+def _allow_loguru_record(record: dict) -> bool:
+    """Filter low-priority third-party loguru chatter from terminal output."""
+    name = record["name"] or ""
+    if name.startswith("alchemlyb") and record["level"].no < logging.WARNING:
+        return False
+    return True
 
 
 def _configure_logger() -> None:
     logger.remove()
-    logger.add(sys.stderr, format="{level} | <level>{message}</level> ", level="INFO")
+    logger.add(
+        sys.stderr,
+        format="{level} | <level>{message}</level> ",
+        level="INFO",
+        filter=_allow_loguru_record,
+    )
 
 
 _seed_default_slurm_headers()

@@ -28,15 +28,12 @@ Equilibrate, NPT.
   pencut = -1,
   ntr = 1,
   restraint_wt = 10,
-  restraintmask = '(@CA | :_lig_name_ | :1 | :2) & !@H=',
+  restraintmask = '((@CA & _non_loop_) | :_lig_name_ | :1 | :2) & !@H=',
   infe = 0,
  /
- &pmd
- output_file = 'cmass.txt'
- output_freq = 1000
- cv_file = 'cv.in'
- /
- &wt type = 'END', /
+ &wt type='DUMPFREQ', istep1=1000, /
+ &wt type='END', /
 DISANG=disang.rest
+DUMPAVE=cmass.txt
+LISTIN=POUT
 LISTOUT=POUT
-

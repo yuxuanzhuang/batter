@@ -17,6 +17,12 @@ INPCRD="full.inpcrd"
 log_file="run.log"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
+retry_count=${RETRY_COUNT:-0}
+if [[ -n ${RERUN_EQ_STEPS_AFTER_FAILURE+x} ]]; then
+    rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE}
+else
+    rerun_eq_steps_after_failure=auto
+fi
 
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
@@ -32,10 +38,44 @@ if [[ -f FINISHED ]]; then
     exit 0
 fi
 
-# remove FAILED file if it exists
-if [[ -f FAILED ]]; then
-    rm -f FAILED
+prior_failed=$(consume_prior_failure_marker)
+
+if [[ $rerun_eq_steps_after_failure == 1 ]]; then
+    prior_failed=1
+elif [[ $rerun_eq_steps_after_failure == auto ]]; then
+    rerun_eq_steps_after_failure=0
+    if [[ $prior_failed -eq 1 ]]; then
+        rerun_eq_steps_after_failure=1
+    elif [[ $retry_count =~ ^[0-9]+$ && $retry_count -gt 1 ]]; then
+        prior_failed=1
+        rerun_eq_steps_after_failure=1
+        echo "[INFO] Retry attempt ${retry_count} detected; rerunning completed equilibration stages instead of skipping them."
+    fi
 fi
+
+should_skip_eq_step() {
+    should_skip_completed_step "$1" "$2" "$overwrite" "$prior_failed" "$rerun_eq_steps_after_failure"
+}
+
+run_penetration_check() {
+    local rst_path=$1
+    local err_file=".penetration_check.err"
+    python check_penetration.py "$rst_path" 2>"$err_file"
+    if [[ $? -ne 0 ]]; then
+        if grep -Eq "ModuleNotFoundError: No module named '(networkx|batter)'" "$err_file"; then
+            echo "[WARN] Skipping ring penetration check; missing BATTER Python deps (networkx/batter)."
+            rm -f "$err_file"
+            return 0
+        fi
+        cat "$err_file" >&2
+        rm -f "$err_file"
+        return 1
+    fi
+    rm -f "$err_file"
+}
+
+archive_existing_log_file "$log_file"
+cleanup_stale_empty_md_artifacts
 
 tmpl="mdin-template"
 mdin_current="mdin-current"
@@ -54,12 +94,13 @@ total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}'
 chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
 # ---------------- Minimization ----------------
-if [[ $overwrite -eq 0 && -s eqnpt_appear.rst7 ]]; then
-    echo "Skipping EM steps."
-else
+if ! should_skip_eq_step "Minimization" "mini.rst7"; then
     print_and_run "$PMEMD_DPFP_EXEC -O -i mini.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
     check_sim_failure "Minimization" "$log_file" mini.rst7
+fi
 
+if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
+    require_nonempty_file_or_attempt_fail "mini.rst7" "[ERROR] Missing mini.rst7; cannot continue to Minimization 2."
     if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
         print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
     else
@@ -85,16 +126,15 @@ else
         if ! check_min_energy "mini2.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
             rm -f mini.rst7 mini.nc mini.out mini2.rst7 mini2.nc mini2.out
-            exit 1
+            mark_failed_and_exit
         fi
     fi
 fi
 
 # ---------------- Equilibration ----------------
-if [[ $overwrite -eq 0 && -s eqnpt_appear.rst7 ]]; then
-    echo "Skipping equilibration steps."
-else
-    python check_penetration.py mini2.rst7
+if ! should_skip_eq_step "NVT preparation" "eqnvt.rst7"; then
+    require_nonempty_file_or_attempt_fail "mini2.rst7" "[ERROR] Missing mini2.rst7; cannot continue to NVT preparation."
+    run_penetration_check "mini2.rst7"
 
     if [[ -f RING_PENETRATION ]]; then
         echo "Ligand ring penetration detected previously; using longer equilibration."
@@ -102,15 +142,17 @@ else
         print_and_run "$PMEMD_DPFP_EXEC -O -i eqnvt.in -p $PRMTOP_MERGED -c mini2.rst7 -o eqnvt.out -r eqnvt.rst7 -x eqnvt.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         check_sim_failure "NVT" "$log_file" eqnvt.rst7
 
-        python check_penetration.py eqnvt.rst7
+        run_penetration_check "eqnvt.rst7"
         if [[ -f RING_PENETRATION ]]; then
-            echo "Ligand ring penetration still detected after NVT; exiting."
-            exit 1
+            mark_failed_and_exit "Ligand ring penetration still detected after NVT; exiting."
         fi
     else
         cp mini2.rst7 eqnvt.rst7
     fi
+fi
 
+if ! should_skip_eq_step "Pre equilibration" "eqnpt_pre.rst7"; then
+    require_nonempty_file_or_attempt_fail "eqnvt.rst7" "[ERROR] Missing eqnvt.rst7; cannot continue to Pre equilibration."
     # Equilibration with protein and ligand restrained (CPU for stability)
     if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
         print_and_run "$MPI_EXEC --oversubscribe -np ${SLURM_JOB_CPUS_PER_NODE:-1} $PMEMD_CPU_MPI_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> \"$log_file\" 2>&1"
@@ -118,26 +160,40 @@ else
         print_and_run "$PMEMD_CPU_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnvt.rst7 -o eqnpt_pre.out -r eqnpt_pre.rst7 -x eqnpt_pre.nc -ref eqnvt.rst7 >> \"$log_file\" 2>&1"
     fi
     check_sim_failure "Pre equilibration" "$log_file" eqnpt_pre.rst7
+fi
 
+if ! should_skip_eq_step "Equilibration stage 0" "eqnpt00.rst7"; then
+    require_nonempty_file_or_attempt_fail "eqnpt_pre.rst7" "[ERROR] Missing eqnpt_pre.rst7; cannot continue to Equilibration stage 0."
     # Equilibration with C-alpha restrained
     print_and_run "$PMEMD_DPFP_EXEC -O -i eqnpt0.in -p $PRMTOP_MERGED -c eqnpt_pre.rst7 -o eqnpt00.out -r eqnpt00.rst7 -x traj00.nc -ref eqnpt_pre.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration stage 0" "$log_file" eqnpt00.rst7
+fi
 
-    for step in {1..4}; do
-        prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
-        curr=$(printf "eqnpt%02d" $step)
-        print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
-        check_sim_failure "Equilibration stage $step" "$log_file" "${curr}.rst7" "$prev"
-    done
+for step in {1..4}; do
+    prev=$(printf "eqnpt%02d.rst7" $((step - 1)))
+    curr=$(printf "eqnpt%02d" $step)
+    if should_skip_eq_step "Equilibration stage $step" "${curr}.rst7"; then
+        continue
+    fi
+    require_nonempty_file_or_attempt_fail "$prev" "[ERROR] Missing ${prev}; cannot continue to Equilibration stage $step."
+    print_and_run "$PMEMD_EXEC -O -i eqnpt.in -p $PRMTOP_MERGED -c $prev -o ${curr}.out -r ${curr}.rst7 -x traj${step}.nc -ref $prev >> \"$log_file\" 2>&1"
+    check_sim_failure "Equilibration stage $step" "$log_file" "${curr}.rst7" "$prev"
+done
 
-    # longer equilibration
+if ! should_skip_eq_step "Long equilibration" "eqnpt_eq.rst7"; then
+    require_nonempty_file_or_attempt_fail "eqnpt04.rst7" "[ERROR] Missing eqnpt04.rst7; cannot continue to Long equilibration."
     print_and_run "$PMEMD_EXEC -O -i eqnpt_eq.in -p $PRMTOP_MERGED -c eqnpt04.rst7 -o eqnpt_eq.out -r eqnpt_eq.rst7 -x eqnpt_eq.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Long equilibration" "$log_file" eqnpt_eq.rst7
+fi
 
-    # Additional disappear/appear equilibration steps
+if ! should_skip_eq_step "Equilibration disappear" "eqnpt_disappear.rst7"; then
+    require_nonempty_file_or_attempt_fail "eqnpt_eq.rst7" "[ERROR] Missing eqnpt_eq.rst7; cannot continue to Equilibration disappear."
     print_and_run "$PMEMD_EXEC -O -i eqnpt_disappear.in -p $PRMTOP_MERGED -c eqnpt_eq.rst7 -o eqnpt_disappear.out -r eqnpt_disappear.rst7 -x eqnpt_disappear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration disappear" "$log_file" eqnpt_disappear.rst7
+fi
 
+if ! should_skip_eq_step "Equilibration appear" "eqnpt_appear.rst7"; then
+    require_nonempty_file_or_attempt_fail "eqnpt_disappear.rst7" "[ERROR] Missing eqnpt_disappear.rst7; cannot continue to Equilibration appear."
     print_and_run "$PMEMD_EXEC -O -i eqnpt_appear.in -p $PRMTOP_MERGED -c eqnpt_disappear.rst7 -o eqnpt_appear.out -r eqnpt_appear.rst7 -x eqnpt_appear.nc -ref eqnpt_eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "Equilibration appear" "$log_file" eqnpt_appear.rst7 0 "eqnpt_appear.rst7" "eqnpt_appear.nc"
 fi
@@ -163,10 +219,7 @@ elif [[ -s md-previous.rst7 ]]; then
     rst_in="md-previous.rst7"
 fi
 
-[[ -s "$rst_in" ]] || {
-    echo "[ERROR] Missing restart file $rst_in; cannot continue."
-    exit 1
-}
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="$rst_in"
 
@@ -215,7 +268,7 @@ if (( remaining_steps > 0 )); then
 
     # archive prior restart if present
     if [[ -f md-current.rst7 ]]; then
-        [[ -s md-current.rst7 ]] || { echo "[ERROR] Found md-current.rst7 but empty; aborting."; exit 1; }
+        require_nonempty_file_or_attempt_fail "md-current.rst7" "[ERROR] Found md-current.rst7 but empty; aborting."
         mv -f md-current.rst7 md-previous.rst7
         if [[ "$rst_in" == "md-current.rst7" ]]; then
             rst_in="md-previous.rst7"
@@ -235,7 +288,12 @@ if (( remaining_steps > 0 )); then
 fi
 
 if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
-    print_and_run "$CPPTRAJ_EXEC -p $PRMTOP -y ${last_rst} -x output.pdb >> \"$log_file\" 2>&1"
+    print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
+parm $PRMTOP
+trajin ${last_rst}
+trajout output.pdb pdb include_ep
+run
+EOF"
 
     if [[ -s output.pdb ]]; then
         echo "FINISHED" > FINISHED
@@ -243,9 +301,7 @@ if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
         exit 0
     fi
 
-    echo "[ERROR] output.pdb not created or empty; marking FAILED."
-    echo "FAILED" > FAILED
-    exit 1
+    mark_failed_and_exit "[ERROR] output.pdb not created or empty; marking ATTEMPT_FAILED."
 fi
 echo "[INFO] Not finished yet; rerun to continue."
 exit 0

@@ -9,6 +9,12 @@ import click
 import pandas as pd
 from loguru import logger
 
+from batter.analysis.cinnabar import (
+    build_batter_rbfe_cinnabar,
+    build_batter_rbfe_cinnabar_by_run,
+    summarize_directionality,
+    write_cinnabar_outputs,
+)
 from batter.api import list_fe_runs, load_fe_run, run_analysis_from_execution
 from batter.cli.root import cli
 
@@ -181,6 +187,265 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
             click.echo(df.to_string(index=False))
     else:
         click.secho("\n(no per-window data saved)", fg="yellow")
+
+
+@fe.command("cinnabar")
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--run-id",
+    "run_ids",
+    multiple=True,
+    help="Select one or more stored BATTER run IDs. Defaults to all available RBFE rows.",
+)
+@click.option(
+    "--ligand",
+    "ligands",
+    multiple=True,
+    help="Restrict to specific RBFE edge labels, e.g. 'LIGA~LIGB'.",
+)
+@click.option(
+    "--out-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Output directory for the converted Cinnabar bundle(s). Defaults to <WORK_DIR>/results/cinnabar.",
+)
+@click.option(
+    "--combine-runs/--split-runs",
+    default=True,
+    help="Aggregate selected runs into one FEMap, or emit one bundle per run.",
+)
+@click.option(
+    "--combine-by-run-first/--pool-all-measurements",
+    default=True,
+    help="Collapse repeated measurements within each run before combining across runs.",
+)
+@click.option(
+    "--merge-directions/--split-directions",
+    "merge_bidirectional",
+    default=True,
+    help="Merge A~B and B~A into one canonical edge, or keep them as separate directional transformations.",
+)
+@click.option(
+    "--uncertainty-mode",
+    type=click.Choice(["ivw", "sample", "max"], case_sensitive=False),
+    default="max",
+    show_default=True,
+    help="How to combine repeated uncertainties.",
+)
+@click.option(
+    "--edge-separator",
+    default="~",
+    show_default=True,
+    help="Separator used in BATTER RBFE pair labels.",
+)
+@click.option(
+    "--source",
+    default="BATTER_RBFE",
+    show_default=True,
+    help="Source label stored on computational Cinnabar measurements.",
+)
+@click.option(
+    "--experimental-csv",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional CSV of experimental absolute affinities to merge into the FEMap.",
+)
+@click.option(
+    "--exp-ligand-column",
+    default="ligand",
+    show_default=True,
+    help="Ligand-label column in the experimental CSV.",
+)
+@click.option(
+    "--exp-abfe-column",
+    default="abfe",
+    show_default=True,
+    help="Absolute affinity column in the experimental CSV.",
+)
+@click.option(
+    "--exp-error-column",
+    default=None,
+    help="Optional experimental uncertainty column.",
+)
+@click.option(
+    "--exp-status-column",
+    default=None,
+    help="Optional experimental status column.",
+)
+@click.option(
+    "--exp-success-value",
+    default="success",
+    show_default=True,
+    help="Value in the experimental status column that marks usable rows.",
+)
+@click.option(
+    "--exp-temperature-column",
+    default=None,
+    help="Optional experimental temperature column (Kelvin).",
+)
+@click.option(
+    "--exp-source",
+    default="experiment",
+    show_default=True,
+    help="Source label stored on experimental Cinnabar measurements.",
+)
+@click.option(
+    "--exp-value-unit",
+    default="kcal/mol",
+    show_default=True,
+    help="Unit for experimental absolute values.",
+)
+@click.option(
+    "--exp-error-unit",
+    default=None,
+    help="Unit for experimental uncertainties. Defaults to --exp-value-unit.",
+)
+@click.option(
+    "--write-plots/--no-write-plots",
+    default=True,
+    help="Attempt to write Cinnabar plots when plotting support is available.",
+)
+@click.option(
+    "--absolute-offset",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="Constant offset (kcal/mol) added to computed absolute ΔG values in the sorted absolute-energy plot.",
+)
+def fe_cinnabar(
+    work_dir: Path,
+    run_ids: tuple[str, ...],
+    ligands: tuple[str, ...],
+    out_dir: Path | None,
+    combine_runs: bool,
+    combine_by_run_first: bool,
+    merge_bidirectional: bool,
+    uncertainty_mode: str,
+    edge_separator: str,
+    source: str,
+    experimental_csv: Path | None,
+    exp_ligand_column: str,
+    exp_abfe_column: str,
+    exp_error_column: str | None,
+    exp_status_column: str | None,
+    exp_success_value: str,
+    exp_temperature_column: str | None,
+    exp_source: str,
+    exp_value_unit: str,
+    exp_error_unit: str | None,
+    write_plots: bool,
+    absolute_offset: float,
+) -> None:
+    """Convert stored BATTER RBFE results into Cinnabar FEMap-ready outputs."""
+    exp_df = None
+    if experimental_csv is not None:
+        try:
+            exp_df = pd.read_csv(experimental_csv)
+        except Exception as exc:
+            raise click.ClickException(
+                f"Failed to read experimental CSV '{experimental_csv}': {exc}"
+            ) from exc
+
+    output_root = out_dir or (work_dir / "results" / "cinnabar")
+
+    common_kwargs = {
+        "work_dir": work_dir,
+        "run_ids": run_ids or None,
+        "ligands": ligands or None,
+        "edge_separator": edge_separator,
+        "uncertainty_mode": uncertainty_mode.lower(),
+        "combine_by_run_first": combine_by_run_first,
+        "merge_bidirectional": merge_bidirectional,
+        "experimental_df": exp_df,
+        "exp_ligand_column": exp_ligand_column,
+        "exp_abfe_column": exp_abfe_column,
+        "exp_error_column": exp_error_column,
+        "exp_status_column": exp_status_column,
+        "exp_success_value": exp_success_value,
+        "exp_temperature_column": exp_temperature_column,
+        "source": source,
+        "exp_source": exp_source,
+        "exp_value_unit": exp_value_unit,
+        "exp_error_unit": exp_error_unit,
+    }
+
+    try:
+        if combine_runs:
+            result = build_batter_rbfe_cinnabar(**common_kwargs)
+            outputs = write_cinnabar_outputs(
+                result,
+                output_root,
+                method_name="BATTER",
+                target_name=work_dir.name,
+                write_plots=write_plots,
+                absolute_offset=absolute_offset,
+            )
+            if getattr(result, "absolute_warning", None):
+                click.secho(str(result.absolute_warning), fg="yellow")
+            if not merge_bidirectional and hasattr(result, "edge_summary"):
+                directionality = summarize_directionality(result.edge_summary)
+                if directionality["n_reciprocal_pairs"] == 0:
+                    click.secho(
+                        "Split-direction export requested, but the stored RBFE results "
+                        "contain no reciprocal A~B/B~A transformations. "
+                        "The network will still show one arrow per stored transformation.",
+                        fg="yellow",
+                    )
+                else:
+                    click.echo(
+                        "Split-direction export retained "
+                        f"{directionality['n_directional_edges']} directional edges across "
+                        f"{directionality['n_reciprocal_pairs']} reciprocal ligand pair(s)."
+                    )
+            click.echo(
+                f"Wrote combined Cinnabar bundle to {output_root} "
+                f"({len(outputs)} files tracked)."
+            )
+            return
+
+        bundles = build_batter_rbfe_cinnabar_by_run(**common_kwargs)
+        if not bundles:
+            raise click.ClickException("No per-run RBFE bundles were generated.")
+
+        split_direction_stats: list[dict[str, object]] = []
+        for run_id, result in bundles.items():
+            run_out_dir = output_root / run_id
+            write_cinnabar_outputs(
+                result,
+                run_out_dir,
+                method_name="BATTER",
+                target_name=f"{work_dir.name}:{run_id}",
+                write_plots=write_plots,
+                absolute_offset=absolute_offset,
+            )
+            if getattr(result, "absolute_warning", None):
+                click.secho(f"[{run_id}] {result.absolute_warning}", fg="yellow")
+            if not merge_bidirectional and hasattr(result, "edge_summary"):
+                stats = summarize_directionality(result.edge_summary)
+                stats["run_id"] = run_id
+                split_direction_stats.append(stats)
+        if not merge_bidirectional and split_direction_stats:
+            total_recip = sum(int(item["n_reciprocal_pairs"]) for item in split_direction_stats)
+            total_dir = sum(int(item["n_directional_edges"]) for item in split_direction_stats)
+            if total_recip == 0:
+                click.secho(
+                    "Split-direction export requested, but none of the selected runs contain "
+                    "reciprocal A~B/B~A transformations. The network plots will remain one "
+                    "arrow per stored transformation.",
+                    fg="yellow",
+                )
+            else:
+                click.echo(
+                    "Split-direction export retained "
+                    f"{total_dir} directional edges across {total_recip} reciprocal ligand pair(s)."
+                )
+        click.echo(
+            f"Wrote {len(bundles)} per-run Cinnabar bundle(s) under {output_root}."
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @fe.command("analyze")

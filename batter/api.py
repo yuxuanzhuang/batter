@@ -434,4 +434,20 @@ def run_analysis_from_execution(
             [f"{name} ({status}: {reason})" for name, status, reason in failures]
         )
         logger.warning(f"Analysis recorded issues for run '{run_id}': {failed}")
+    if protocol_lower == "rbfe":
+        try:
+            from batter.analysis.cinnabar import auto_write_rbfe_cinnabar_for_run
+
+            cinnabar_export = auto_write_rbfe_cinnabar_for_run(work_root, run_id)
+            logger.info(
+                f"Wrote RBFE Cinnabar bundle for run '{run_id}' to {cinnabar_export['output_dir']}."
+            )
+            if cinnabar_export.get("absolute_warning"):
+                logger.warning(str(cinnabar_export["absolute_warning"]))
+            if cinnabar_export.get("replicate_note"):
+                logger.info(str(cinnabar_export["replicate_note"]))
+        except Exception as exc:
+            logger.warning(
+                f"Automatic RBFE Cinnabar export failed for run '{run_id}': {exc}"
+            )
     logger.info(f"Analysis complete for run '{run_dir}'.")

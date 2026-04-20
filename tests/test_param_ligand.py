@@ -123,6 +123,18 @@ def test_no_three_digits() -> None:
     assert out == "l12"
 
 
+def test_scientific_notation_like_prefix_falls_back() -> None:
+    out = _convert_mol_name_to_unique(
+        mol_name="8E3N_LIGAND",
+        ind=0,
+        smiles="CC",
+        exist_mol_names=set(),
+    )
+    assert out != "8e3"
+    assert len(out) == 3
+    assert out.lower() == out
+
+
 def test_unique_names_for_conflicting_inputs() -> None:
     exist: set[str] = set()
     out1 = _convert_mol_name_to_unique("###", ind=0, smiles="S", exist_mol_names=exist)

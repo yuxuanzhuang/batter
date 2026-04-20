@@ -35,4 +35,7 @@ dependencies:
   - pytest-snapshot
   
   - pip:
+    - -e ./extern/ParmEd
+    - -e ./extern/alchemlyb
+    - -e ./extern/rocklinc
     - nglview  

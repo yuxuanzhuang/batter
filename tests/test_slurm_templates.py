@@ -213,3 +213,20 @@ def test_non_remd_templates_use_cpu_mpi_exec():
     assert "PMEMD_CPU_MPI_EXEC" in text_equil
     assert "PMEMD_MPI_EXEC" not in text_local
     assert "PMEMD_MPI_EXEC" not in text_equil
+
+
+def test_slurmm_am_body_runs_without_wrapper_tee():
+    repo_root = Path(__file__).resolve().parents[1]
+    slurm_body = (
+        repo_root
+        / "batter"
+        / "_internal"
+        / "templates"
+        / "run_files_orig"
+        / "SLURMM-Am.body"
+    )
+    text = slurm_body.read_text()
+
+    assert "| tee run.log" not in text
+    assert "BATTER_SKIP_STARTUP_LOG_ARCHIVE" not in text
+    assert "bash run-local.bash" in text

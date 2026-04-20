@@ -100,8 +100,8 @@ def _resolve_run_dir_for_submission(
 @click.option(
     "--on-failure",
     type=click.Choice(["prune", "raise", "retry"], case_sensitive=False),
-    default="raise",
-    show_default=True,
+    default=None,
+    help="Override YAML run.on_failure for this invocation.",
 )
 @click.option(
     "--output-folder", type=click.Path(file_okay=False, path_type=Path), default=None
@@ -144,7 +144,7 @@ def _resolve_run_dir_for_submission(
 )
 def cmd_run(
     yaml_path: Path,
-    on_failure: str,
+    on_failure: Optional[str],
     output_folder: Optional[Path],
     run_id: Optional[str],
     allow_run_id_mismatch: Optional[bool],
@@ -204,7 +204,8 @@ def cmd_run(
 
         batter_cmd = _which_batter()
         parts = [batter_cmd, "run", shlex.quote(str(Path(yaml_path).resolve()))]
-        parts += ["--on-failure", shlex.quote(on_failure)]
+        if on_failure:
+            parts += ["--on-failure", shlex.quote(on_failure)]
 
         if output_folder:
             parts += [
@@ -237,7 +238,7 @@ def cmd_run(
         # create a hash based on contents of the yaml and options
         run_hash = hash_run_input(
             yaml_path,
-            on_failure=on_failure.lower(),
+            on_failure=on_failure.lower() if on_failure else "",
             output_folder=str(Path(output_folder).resolve()) if output_folder else "",
             run_id=run_id or "",
             dry_run=("1" if dry_run else "0") if dry_run is not None else "",
@@ -285,7 +286,7 @@ def cmd_run(
 
     run_from_yaml(
         yaml_path,
-        on_failure=on_failure.lower(),
+        on_failure=on_failure.lower() if on_failure else None,
         run_overrides=(run_over or None),
     )
 
@@ -297,8 +298,8 @@ def cmd_run(
 @click.option(
     "--on-failure",
     type=click.Choice(["prune", "raise", "retry"], case_sensitive=False),
-    default="raise",
-    show_default=True,
+    default=None,
+    help="Override YAML run.on_failure for this invocation.",
 )
 @click.option("--dry-run/--no-dry-run", default=None, help="Override YAML run.dry_run.")
 @click.option(
@@ -328,7 +329,7 @@ def cmd_run(
 )
 def cmd_run_exec(
     execution_dir: Path,
-    on_failure: str,
+    on_failure: Optional[str],
     dry_run: Optional[bool],
     clean_failures: Optional[bool],
     only_equil: Optional[bool],
@@ -374,7 +375,8 @@ def cmd_run_exec(
 
         batter_cmd = _which_batter()
         parts = [batter_cmd, "run-exec", shlex.quote(str(exec_dir))]
-        parts += ["--on-failure", shlex.quote(on_failure)]
+        if on_failure:
+            parts += ["--on-failure", shlex.quote(on_failure)]
         if dry_run is not None:
             parts += ["--dry-run" if dry_run else "--no-dry-run"]
         if clean_failures is not None:
@@ -390,7 +392,7 @@ def cmd_run_exec(
 
         run_hash = hash_run_input(
             yaml_copy,
-            on_failure=on_failure.lower(),
+            on_failure=on_failure.lower() if on_failure else "",
             dry_run=("1" if dry_run else "0") if dry_run is not None else "",
             clean_failures=("1" if clean_failures else "0")
             if clean_failures is not None
@@ -437,7 +439,7 @@ def cmd_run_exec(
     try:
         run_from_yaml(
             yaml_copy,
-            on_failure=on_failure.lower(),
+            on_failure=on_failure.lower() if on_failure else None,
             run_overrides=run_overrides,
         )
     except Exception as e:

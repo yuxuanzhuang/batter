@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Iterable
+from typing import Iterable, List, Optional, Sequence
 
+from math import ceil
 import json
 import re
 import MDAnalysis as mda
@@ -11,6 +12,7 @@ from loguru import logger
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_restraints
 from batter._internal.ops.helpers import (
+    PROTEIN_COM_ATOM_SELECTION,
     num_to_mask,
     load_anchors,
     is_atom_line as _is_atom_line,
@@ -19,15 +21,56 @@ from batter._internal.ops.helpers import (
 from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
+COM_RESTRAINT_ANCHORS = (0.0, 0.0, 0.0, 999.0)
 
-# ────────────────────────── small helpers (working-dir aware) ──────────────────────────
+def _stride_atom_serials(
+    atoms: Sequence[str | int],
+    max_n: int,
+) -> list[str]:
+    """Return atom serials strided down to at most ``max_n`` entries."""
+    if max_n <= 0:
+        raise ValueError("max_n must be a positive integer")
 
-def _collect_backbone_heavy_and_lig(vac_pdb: Path, lig_res: str, offset: int = 0) -> List[List[str]]:
-    """Return ([protein_backbone_heavy_atom_serials], [ligand_heavy_atom_serials])."""
+    tokens = [str(atom).strip() for atom in atoms if str(atom).strip()]
+    if len(tokens) <= max_n:
+        return tokens
+
+    step = ceil(len(tokens) / max_n)
+    return tokens[::step]
+
+
+def _collect_calpha_and_lig(
+    vac_pdb: Path,
+    lig_res: str,
+    offset: int = 0,
+    stride_to_max_number: int = 50,
+) -> Tuple[List[str], List[str]]:
+    """Return (protein_calpha_serials, ligand_heavy_atom_serials).
+
+    If either list is longer than `stride_to_max_number`, it is strided so the
+    returned list length is <= `stride_to_max_number`. It is to keep better performance in simulations
+    """
     u = mda.Universe(str(vac_pdb))
-    hvy = list((u.select_atoms('protein and name CA N C O').indices + 1).astype(str))
-    hvy_lig = list((u.select_atoms(f'not type H and resid {int(lig_res) + offset}').indices + 1).astype(str))
-    return hvy, hvy_lig
+
+    protein_calpha_serials = (
+        (u.select_atoms(PROTEIN_COM_ATOM_SELECTION).indices + 1).astype(str).tolist()
+    )
+    ligand_heavy_atom_serials = (
+        (
+            u.select_atoms(f"not type H and resid {int(lig_res) + offset}").indices + 1
+        )
+        .astype(str)
+        .tolist()
+    )
+
+    protein_calpha_serials = _stride_atom_serials(
+        protein_calpha_serials, stride_to_max_number
+    )
+    ligand_heavy_atom_serials = _stride_atom_serials(
+        ligand_heavy_atom_serials, stride_to_max_number
+    )
+
+    return protein_calpha_serials, ligand_heavy_atom_serials
 
 
 def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]:
@@ -56,8 +99,13 @@ def _collect_common_core_heavy_ligand(
     lig_res: str,
     offset: int,
     mapped_indices: Iterable[int],
+    stride_to_max_number: int = 10,
 ) -> List[str]:
-    """Return 1-based atom serials for mapped heavy atoms in one ligand residue."""
+    """Return 1-based atom serials for mapped heavy atoms in one ligand residue.
+
+    If the resulting list is longer than `stride_to_max_number`, it is strided
+    so the returned list length is <= `stride_to_max_number`.
+    """
     u = mda.Universe(str(vac_pdb))
     lig_atoms = u.select_atoms(f"resid {int(lig_res) + offset}")
     if lig_atoms.n_atoms == 0:
@@ -71,7 +119,8 @@ def _collect_common_core_heavy_ligand(
     if cc_atoms.n_atoms == 0:
         return []
 
-    return list((cc_atoms.indices + 1).astype(str))
+    cc_serials = list((cc_atoms.indices + 1).astype(str))
+    return _stride_atom_serials(cc_serials, stride_to_max_number)
 
 def _scan_dihedrals_from_prmtop(prmtop_path: Path, ligand_atm_num: List[str]) -> List[str]:
     """Build ligand dihedral masks (non-H) from vac_ligand.prmtop."""
@@ -177,8 +226,6 @@ def _write_assign_and_read_vals(work: Path, rst_exprs: List[str], prmtop: Path, 
     return [float(v) for v in vals]
 
 
-# ───────────────────── extra conformation restraints (helpers) ─────────────────────
-
 def _gen_cv_blocks_from_distance_restraints(work_dir: Path,
                                             restraints: Iterable[Iterable]) -> list[str]:
     """
@@ -256,6 +303,171 @@ def _append_or_replace_tagged_block(file_path: Path, tag: str, blocks: list[str]
 
     file_path.write_text(text)
 
+def _format_rst_number(value: float | int | str) -> str:
+    """Format AMBER restraint scalars with at least one decimal place."""
+    rendered = f"{float(value):.6f}".rstrip("0").rstrip(".")
+    return rendered if "." in rendered else f"{rendered}.0"
+
+
+def _parse_colvar_csv(raw: str) -> list[str]:
+    """Split a comma-delimited cv.in value while tolerating trailing commas."""
+    return [part.strip().strip("'\"") for part in raw.split(",") if part.strip()]
+
+
+def _extract_colvar_value(block: str, key: str) -> str | None:
+    match = re.search(rf"\b{re.escape(key)}\s*=\s*([^\n/]+)", block)
+    return match.group(1).strip() if match else None
+
+
+def _iter_colvar_blocks(text: str) -> Iterable[str]:
+    """Yield raw &colvar blocks from a cv.in file."""
+    for match in re.finditer(r"&colvar\b(.*?)(?:^\s*/\s*$)", text, flags=re.DOTALL | re.MULTILINE):
+        yield match.group(1)
+
+
+def _format_igr_line(label: str, atoms: Sequence[str]) -> str:
+    """Wrap igr atom lists over multiple lines and terminate with a trailing zero."""
+    tokens = [str(atom).strip() for atom in atoms if str(atom).strip()]
+    tokens.append("0")
+
+    lines: list[str] = []
+    for idx in range(0, len(tokens), 12):
+        chunk = tokens[idx : idx + 12]
+        prefix = f" {label}=" if idx == 0 else "      "
+        suffix = "," if idx + 12 < len(tokens) else ""
+        lines.append(f"{prefix}{','.join(chunk)}{suffix}\n")
+    return "".join(lines)
+
+
+def _render_distance_rst_block(
+    atom1: str,
+    atom2: str,
+    anchors: Sequence[float],
+    strengths: Sequence[float],
+) -> str:
+    return (
+        "&rst\n"
+        f" iat={atom1},{atom2},\n"
+        " r1={r1}, r2={r2}, r3={r3}, r4={r4},\n"
+        " rk2={rk2}, rk3={rk3},\n"
+        "&end\n"
+    ).format(
+        r1=_format_rst_number(anchors[0]),
+        r2=_format_rst_number(anchors[1]),
+        r3=_format_rst_number(anchors[2]),
+        r4=_format_rst_number(anchors[3]),
+        rk2=_format_rst_number(strengths[0]),
+        rk3=_format_rst_number(strengths[1]),
+    )
+
+
+def _render_com_distance_rst_block(
+    anchor_atom: str,
+    group_atoms: Sequence[str],
+    anchors: Sequence[float],
+    strengths: Sequence[float],
+) -> str:
+    return (
+        "&rst\n"
+        " iat=-1,-1,\n"
+        " r1={r1}, r2={r2}, r3={r3}, r4={r4},\n"
+        " rk2={rk2}, rk3={rk3},\n"
+        "{igr1}"
+        "{igr2}"
+        "&end\n"
+    ).format(
+        r1=_format_rst_number(anchors[0]),
+        r2=_format_rst_number(anchors[1]),
+        r3=_format_rst_number(anchors[2]),
+        r4=_format_rst_number(anchors[3]),
+        rk2=_format_rst_number(strengths[0]),
+        rk3=_format_rst_number(strengths[1]),
+        igr1=_format_igr_line("igr1", [anchor_atom]),
+        igr2=_format_igr_line("igr2", group_atoms),
+    )
+
+
+def _write_group_colvar_block(
+    handle,
+    *,
+    anchor_atom: str,
+    group_atoms: Sequence[str],
+    anchors: Sequence[float],
+    strengths: Sequence[float],
+) -> None:
+    """Write a DISTANCE/COM_DISTANCE &colvar block for one anchor atom."""
+    handle.write("&colvar\n")
+    if len(group_atoms) == 1:
+        handle.write(" cv_type = 'DISTANCE'\n")
+        handle.write(f" cv_ni = 2, cv_i = {anchor_atom},{group_atoms[0]},\n")
+    else:
+        handle.write(" cv_type = 'COM_DISTANCE'\n")
+        handle.write(f" cv_ni = {len(group_atoms)+2}, cv_i = {anchor_atom},0,")
+        for atom in group_atoms:
+            handle.write(f"{atom},")
+        handle.write("\n")
+    handle.write(
+        " anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % tuple(anchors)
+    )
+    handle.write(
+        " anchor_strength = %10.4f, %10.4f,\n" % (strengths[0], strengths[1])
+    )
+    handle.write("/\n")
+
+
+def _colvar_block_to_rst(block: str) -> str | None:
+    """Translate a single AMBER &colvar block into an equivalent &rst block."""
+    cv_type = _extract_colvar_value(block, "cv_type")
+    cv_i = _extract_colvar_value(block, "cv_i")
+    anchor_position = _extract_colvar_value(block, "anchor_position")
+    anchor_strength = _extract_colvar_value(block, "anchor_strength")
+
+    if not all((cv_type, cv_i, anchor_position, anchor_strength)):
+        raise ValueError(f"Malformed &colvar block; missing required fields:\n{block}")
+
+    atoms = _parse_colvar_csv(cv_i)
+    anchors = [float(value) for value in _parse_colvar_csv(anchor_position)]
+    strengths = [float(value) for value in _parse_colvar_csv(anchor_strength)]
+    cv_type = cv_type.strip("'\"")
+
+    if len(anchors) < 4 or len(strengths) < 2:
+        raise ValueError(f"Malformed &colvar block; bad anchors/strengths:\n{block}")
+
+    if cv_type == "DISTANCE":
+        if len(atoms) != 2:
+            raise ValueError(f"DISTANCE cv_i must contain exactly two atoms:\n{block}")
+        return _render_distance_rst_block(atoms[0], atoms[1], anchors, strengths)
+
+    if cv_type == "COM_DISTANCE":
+        if len(atoms) < 3 or atoms[1] != "0":
+            raise ValueError(f"COM_DISTANCE cv_i must be <atom>,0,<group...>:\n{block}")
+        return _render_com_distance_rst_block(atoms[0], atoms[2:], anchors, strengths)
+
+    logger.warning(f"[restraints] Unsupported cv_type={cv_type!r}; skipping disang mirror.")
+    return None
+
+
+def _append_colvar_rst_blocks(cv_file: Path, disang_file: Path) -> None:
+    """Append &rst entries derived from every &colvar block in cv_file."""
+    rst_blocks = []
+    for block in _iter_colvar_blocks(cv_file.read_text()):
+        rst_block = _colvar_block_to_rst(block)
+        if rst_block:
+            rst_blocks.append(rst_block)
+
+    if not rst_blocks:
+        return
+
+    existing = disang_file.read_text() if disang_file.exists() else ""
+    with disang_file.open("a") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        if existing.strip():
+            handle.write("\n")
+        handle.write("# Mirrored from cv.in\n")
+        for rst_block in rst_blocks:
+            handle.write(rst_block)
+
 def _maybe_append_extra_conf_blocks(ctx: BuildContext, work_dir: Path, cv_file: Path, *, comp: Optional[str]=None) -> None:
     """
     If ctx.extra['extra_conformation_restraints'] is set, parse JSON and append
@@ -327,7 +539,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
         anchors.lig_res,
     )
 
-    hvy_h, _ = _collect_backbone_heavy_and_lig(vac_pdb, lig_res)
+    hvy_h, _ = _collect_calpha_and_lig(vac_pdb, lig_res)
 
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_lig_pdb.as_posix())
@@ -356,24 +568,17 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     rest = ctx.sim.rest              # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     release_eq = ctx.sim.release_eq  # e.g., [0, 20, 50, 80, 100]
 
-    # cv.in (COM)
+    # cv.in (protein COM only; ligand solvent restraint is now ntr-based)
     cv_in = work / "cv.in"
     with cv_in.open("w") as cvf:
-        cvf.write("cv_file\n&colvar\n")
-        if len(hvy_h) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-            for a in hvy_h:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-        # no restraints on COM in equil
-        cvf.write(" anchor_strength = 0,  0\n")
-        cvf.write("/\n")
+        cvf.write("cv_file\n")
+        _write_group_colvar_block(
+            cvf,
+            anchor_atom="1",
+            group_atoms=hvy_h,
+            anchors=COM_RESTRAINT_ANCHORS,
+            strengths=(5.0, 5.0),
+        )
 
     # ---- integrate extra conformation restraints (equil) ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=work, cv_file=cv_in)
@@ -445,6 +650,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                     except:
                         logger.warning(f"[equil] skipping bad ligand dihedral restraint: {expr}")
 
+    _append_colvar_rst_blocks(cv_in, outp)
     logger.debug(f"[equil] restraints written in {work}")
 
 
@@ -496,7 +702,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
         offset = 3
     else:
         offset = 0
-    hvy_h, hvy_lig = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, offset)
+    hvy_h, hvy_lig = _collect_calpha_and_lig(vac_pdb, lig_res, offset)
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_lig_pdb.as_posix())
 
@@ -529,37 +735,22 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     # cv.in
     cv_in = windows_dir / "cv.in"
     with cv_in.open("w") as cvf:
-        # protein COM restraint
-        cvf.write("cv_file\n&colvar\n")
-        if len(hvy_h) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-            for a in hvy_h:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
-        cvf.write("/\n")
-
-        # ligand COM restraint
-        cvf.write("&colvar\n")
-        if len(hvy_lig) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
-            for a in hvy_lig:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-        cvf.write("/\n")
+        cvf.write("cv_file\n")
+        _write_group_colvar_block(
+            cvf,
+            anchor_atom="1",
+            group_atoms=hvy_h,
+            anchors=COM_RESTRAINT_ANCHORS,
+            strengths=(rcom, rcom),
+        )
+        if comp not in {"v", "o", "z"}:
+            _write_group_colvar_block(
+                cvf,
+                anchor_atom="2",
+                group_atoms=hvy_lig,
+                anchors=COM_RESTRAINT_ANCHORS,
+                strengths=(lcom, lcom),
+            )
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     if ctx.comp in {"z", "o"}:
@@ -610,6 +801,7 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
                     except:
                         logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
+    _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver
     rest_in = windows_dir / "restraints.in"
     with rest_in.open("w") as fh:
@@ -636,60 +828,22 @@ def _build_restraints_v_o_z(builder, ctx: BuildContext) -> None:
 def _build_restraints_y(builder, ctx: BuildContext) -> None:
     """
     Ligand-only (solvation FE) restraints:
-      - cv.in: one COM_DISTANCE block using ligand heavy atoms
-      - disang.rest: empty (no AMBER &rst blocks)
+      - cv.in: placeholder file; ligand solvent restraint now comes from ntr
+      - disang.rest: empty (no mirrored ligand COM block)
       - restraints.in: minimal analysis driver (optional)
     """
     windows_dir = ctx.window_dir
-    lig = ctx.ligand
-    mol = ctx.residue_name
 
     vac_pdb = windows_dir / "vac.pdb"
     if not vac_pdb.exists():
         raise FileNotFoundError(f"[restraints:y] Missing ligand-only vac.pdb: {vac_pdb}")
 
-    # read ligand-only coords and collect heavy atom serials (1-based) for AMBER
-    u_lig = mda.Universe(vac_pdb.as_posix())
-    # prefer selecting by resname if present, otherwise just take all non-H
-    try:
-        lig_atoms = u_lig.select_atoms(f"resname {mol} and not name H*")
-        if lig_atoms.n_atoms == 0:
-            lig_atoms = u_lig.select_atoms("not name H*")
-    except Exception:
-        lig_atoms = u_lig.select_atoms("not name H*")
-
-    if lig_atoms.n_atoms == 0:
-        raise RuntimeError("[restraints:y] Found zero ligand heavy atoms in vac.pdb")
-
-    hvy_serials = [str(a.ix + 1) for a in lig_atoms]  # 1-based serials for AMBER masks
-
-    # strengths from sim.rest: [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
-    rest = ctx.sim.rest
-    try:
-        lcom = float(rest[6])
-    except Exception:
-        raise ValueError(f"[restraints:y] Invalid sim.rest; expected length ≥ 7, got: {rest}")
-
-    # ---- cv.in (single ligand COM restraint) ----
+    # ---- cv.in (placeholder only; solvent ligand restraint is ntr-based) ----
     cv_in = windows_dir / "cv.in"
-    with cv_in.open("w") as cvf:
-        cvf.write("cv_file\n")
-        cvf.write("&colvar\n")
-        if len(hvy_serials) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_serials[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_serials) + 2}, cv_i = 1,0,")
-            cvf.write(",".join(hvy_serials))
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-        cvf.write("/\n")
+    cv_in.write_text("cv_file\n")
 
-    # ---- disang.rest: empty (legacy behavior) ----
-    (windows_dir / "disang.rest").write_text("\n")
+    disang = windows_dir / "disang.rest"
+    disang.write_text("\n")
 
     # (Optional) very small analysis driver to keep downstream scripts happy
     rest_in = windows_dir / "restraints.in"
@@ -698,7 +852,7 @@ def _build_restraints_y(builder, ctx: BuildContext) -> None:
         for k in range(2, 11):
             fh.write(f"trajin md{k:02d}.nc\n")
 
-    logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
+    logger.debug(f"[restraints:y] wrote placeholder cv.in, empty disang.rest, restraints.in in {windows_dir}")
 
 @register_restraints("m")
 def _build_restraints_m(builder, ctx: BuildContext) -> None:
@@ -794,59 +948,26 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     rest = ctx.sim.rest  # [rdhf, rdsf, ldf, laf, ldhf, rcom, lcom]
     rdhf, rdsf, ldf, laf, ldhf, rcom, lcom = rest
 
-    # orig lig
-    hvy_h, hvy_lig_1 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 1)
-    # alt lig
-    _, hvy_lig_2 = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, 3)
-
-    # Use common-core atoms for ligand COM restraints when RBFE mapping is present.
-    mapping_path = ctx.equil_dir / "scmask.json"
-    scmk_dict = json.load(open(mapping_path, "r"))
-
-    hvy_lig_1 = scmk_dict['scmk1_cc_solvent_indices']
-    hvy_lig_2 = scmk_dict['scmk2_cc_solvent_indices']
+    hvy_h, _ = _collect_calpha_and_lig(vac_pdb, lig_res, 1)
 
     # cv.in
     cv_in = windows_dir / "cv.in"
     with cv_in.open("w") as cvf:
-        # protein COM restraint
-        cvf.write("cv_file\n&colvar\n")
-        if len(hvy_h) == 1:
-            # if only one atom, use DISTANCE instead of COM_DISTANCE
-            cvf.write(" cv_type = 'DISTANCE'\n")
-            cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_h[0]},\n")
-        else:
-            cvf.write(" cv_type = 'COM_DISTANCE'\n")
-            cvf.write(f" cv_ni = {len(hvy_h)+2}, cv_i = 1,0,")
-            for a in hvy_h:
-                cvf.write(a + ",")
-        cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-        cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
-        cvf.write("/\n")
-
-        # ligand COM restraint
-        for hvy_lig in [hvy_lig_1, hvy_lig_2]:
-            cvf.write("&colvar\n")
-            if len(hvy_lig) == 1:
-                # if only one atom, use DISTANCE instead of COM_DISTANCE
-                cvf.write(" cv_type = 'DISTANCE'\n")
-                cvf.write(f" cv_ni = 2, cv_i = 1,{hvy_lig[0]},\n")
-            else:
-                cvf.write(" cv_type = 'COM_DISTANCE'\n")
-                cvf.write(f" cv_ni = {len(hvy_lig)+2}, cv_i = 2,0,")
-                for a in hvy_lig:
-                    cvf.write(str(a) + ",")
-            cvf.write("\n")
-            cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
-            cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
-            cvf.write("/\n")
+        cvf.write("cv_file\n")
+        _write_group_colvar_block(
+            cvf,
+            anchor_atom="1",
+            group_atoms=hvy_h,
+            anchors=COM_RESTRAINT_ANCHORS,
+            strengths=(rcom, rcom),
+        )
 
     # ---- integrate extra conformation restraints (FE) only for z/o ----
     _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=ctx.comp)
     
-    # write empty disang.rest
-    (windows_dir / "disang.rest").write_text("")
+    disang = windows_dir / "disang.rest"
+    disang.write_text("")
+    _append_colvar_rst_blocks(cv_in, disang)
 
     logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
 
@@ -905,7 +1026,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
     lig_res    = anchors.lig_res
 
     offset = 3
-    hvy_h, hvy_lig = _collect_backbone_heavy_and_lig(vac_pdb, lig_res, offset)
+    hvy_h, hvy_lig = _collect_calpha_and_lig(vac_pdb, lig_res, offset)
     atm_num         = num_to_mask(vac_pdb.as_posix())
     ligand_atm_num  = num_to_mask(vac_ref_pdb.as_posix())
 
@@ -950,7 +1071,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             for a in hvy_h:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (rcom, rcom))
         cvf.write("/\n")
 
@@ -966,7 +1087,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
             for a in hvy_lig:
                 cvf.write(a + ",")
         cvf.write("\n")
-        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % (0.0, 0.0, 3.0, 999.0))
+        cvf.write(" anchor_position = %10.4f, %10.4f, %10.4f, %10.4f\n" % COM_RESTRAINT_ANCHORS)
         cvf.write(" anchor_strength = %10.4f, %10.4f,\n" % (lcom, lcom))
         cvf.write("/\n")
 
@@ -1019,6 +1140,7 @@ def _build_restraints_x_boresch(builder, ctx: BuildContext) -> None:
                     except:
                         logger.warning(f"[restraints:{comp}] skipping bad ligand dihedral restraint: {expr}")
 
+    _append_colvar_rst_blocks(cv_in, disang)
     # analysis driver
     rest_in = windows_dir / "restraints.in"
     with rest_in.open("w") as fh:
