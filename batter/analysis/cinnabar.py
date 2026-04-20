@@ -1826,6 +1826,8 @@ def _render_absolute_sorted_png(
 
     try:
         import matplotlib.pyplot as plt
+        from matplotlib import cm, colormaps
+        from matplotlib import colors as mcolors
     except Exception:
         return False
 
@@ -1847,9 +1849,8 @@ def _render_absolute_sorted_png(
     if abs_df.empty:
         return False
 
-    abs_df["DG_shifted"] = pd.to_numeric(abs_df[dg_col], errors="coerce") + float(
-        absolute_offset
-    )
+    abs_df["DG_raw"] = pd.to_numeric(abs_df[dg_col], errors="coerce")
+    abs_df["DG_shifted"] = abs_df["DG_raw"] + float(absolute_offset)
     if err_col is not None:
         abs_df["DG_uncertainty"] = pd.to_numeric(abs_df[err_col], errors="coerce").fillna(0.0)
     else:
@@ -1882,14 +1883,26 @@ def _render_absolute_sorted_png(
     y = np.arange(n_rows)
     calc_values = abs_df["DG_shifted"].to_numpy(dtype=float)
     calc_errs = abs_df["DG_uncertainty"].to_numpy(dtype=float)
+    color_values = abs_df["DG_raw"].to_numpy(dtype=float)
     labels = abs_df[label_col].astype(str).tolist()
+
+    finite_colors = color_values[np.isfinite(color_values)]
+    if finite_colors.size:
+        limit = max(abs(float(np.nanmin(finite_colors))), abs(float(np.nanmax(finite_colors))), 1e-8)
+        bar_norm = mcolors.TwoSlopeNorm(vmin=-limit, vcenter=0.0, vmax=limit)
+        bar_cmap = colormaps["bwr_r"]
+        bar_colors = [bar_cmap(bar_norm(value)) if np.isfinite(value) else "#88c0d0" for value in color_values]
+    else:
+        bar_norm = None
+        bar_cmap = None
+        bar_colors = ["#88c0d0"] * len(calc_values)
 
     ax.barh(
         y,
         calc_values,
         xerr=calc_errs,
         height=0.66,
-        color="#88c0d0",
+        color=bar_colors,
         edgecolor="#0b7285",
         linewidth=1.2,
         error_kw={
@@ -1938,6 +1951,12 @@ def _render_absolute_sorted_png(
     ax.set_ylabel("Ligand", color="#102a43")
     if title:
         ax.set_title(title, fontsize=14, fontweight="bold", color="#102a43", pad=14)
+
+    if bar_cmap is not None and bar_norm is not None:
+        scalar = cm.ScalarMappable(norm=bar_norm, cmap=bar_cmap)
+        scalar.set_array([])
+        cbar = fig.colorbar(scalar, ax=ax, shrink=0.86, pad=0.02)
+        cbar.set_label("MLE ΔG (kcal/mol)", rotation=90)
 
     if not np.isclose(float(absolute_offset), 0.0):
         ax.text(
