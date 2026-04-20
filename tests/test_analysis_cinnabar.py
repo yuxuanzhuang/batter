@@ -521,6 +521,51 @@ def test_auto_write_rbfe_cinnabar_for_run_omits_replicate_note_for_single_run(
     assert export["replicate_note"] is None
 
 
+def test_read_cinnabar_outputs_reads_relative_and_absolute_tables(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "cinnabar"
+    bundle_dir.mkdir()
+    relative = pd.DataFrame(
+        [{"labelA": "A", "labelB": "B", "DDG (kcal/mol)": 1.0}]
+    )
+    absolute = pd.DataFrame(
+        [{"label": "A", "DG (kcal/mol)": -5.0}]
+    )
+    relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
+    absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+
+    relative_df, absolute_df = cinnabar_mod.read_cinnabar_outputs(bundle_dir)
+
+    pd.testing.assert_frame_equal(relative_df, relative)
+    assert absolute_df is not None
+    pd.testing.assert_frame_equal(absolute_df, absolute)
+
+
+def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "cinnabar"
+    out_dir = tmp_path / "exported"
+    bundle_dir.mkdir()
+    relative = pd.DataFrame(
+        [{"labelA": "A", "labelB": "B", "DDG (kcal/mol)": 1.0}]
+    )
+    absolute = pd.DataFrame(
+        [{"label": "A", "DG (kcal/mol)": -5.0}]
+    )
+    relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
+    absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+
+    outputs = cinnabar_mod.convert_cinnabar_outputs_to_csv(
+        bundle_dir,
+        out_dir,
+        relative_name="rbfe_relative.csv",
+        absolute_name="rbfe_absolute.csv",
+    )
+
+    assert outputs["relative_csv"] == out_dir / "rbfe_relative.csv"
+    assert outputs["absolute_csv"] == out_dir / "rbfe_absolute.csv"
+    pd.testing.assert_frame_equal(pd.read_csv(outputs["relative_csv"]), relative)
+    pd.testing.assert_frame_equal(pd.read_csv(outputs["absolute_csv"]), absolute)
+
+
 @pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()

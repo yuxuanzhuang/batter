@@ -83,6 +83,7 @@ __all__ = [
     "SimSystem",
     "list_fe_runs",
     "load_fe_run",
+    "read_cinnabar_outputs",
     "run_analysis_from_execution",
     "clone_execution",
 ]
@@ -178,6 +179,33 @@ def load_fe_run(
         )
     ligand_name = matches.iloc[0]["ligand"]
     return repo.load(run_id, ligand_name)
+
+
+def read_cinnabar_outputs(
+    bundle_dir: Union[str, Path],
+    *,
+    require_absolute: bool = False,
+):
+    """
+    Read a generated Cinnabar export bundle from disk.
+
+    Parameters
+    ----------
+    bundle_dir : str or Path
+        Directory containing ``cinnabar_relative.csv`` and optionally
+        ``cinnabar_absolute.csv``.
+    require_absolute : bool, optional
+        When ``True``, raise if the bundle does not contain
+        ``cinnabar_absolute.csv``.
+
+    Returns
+    -------
+    tuple[pandas.DataFrame, pandas.DataFrame | None]
+        Relative and optional absolute tables loaded from the bundle.
+    """
+    from batter.analysis.cinnabar import read_cinnabar_outputs as _read
+
+    return _read(bundle_dir, require_absolute=require_absolute)
 
 
 def run_analysis_from_execution(

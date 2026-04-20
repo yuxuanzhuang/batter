@@ -19,8 +19,10 @@ __all__ = [
     "auto_write_rbfe_cinnabar_for_run",
     "build_batter_rbfe_cinnabar",
     "build_batter_rbfe_cinnabar_by_run",
+    "convert_cinnabar_outputs_to_csv",
     "dataframe_to_cinnabar",
     "load_batter_rbfe_results",
+    "read_cinnabar_outputs",
     "summarize_directionality",
     "write_cinnabar_outputs",
 ]
@@ -37,7 +39,6 @@ class CinnabarConversionResult:
     absolute_warning: str | None = None
     ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
     edge_assets: dict[str, dict[str, str]] = field(default_factory=dict)
-
 
 def _import_networkx():
     try:
@@ -919,6 +920,61 @@ def auto_write_rbfe_cinnabar_for_run(
         "replicate_note": _replicate_cinnabar_note(work_root, str(run_id)),
         "absolute_warning": getattr(result, "absolute_warning", None),
     }
+
+
+def read_cinnabar_outputs(
+    bundle_dir: str | Path,
+    *,
+    require_absolute: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Read the standard relative/absolute tables from a Cinnabar bundle directory."""
+    root = Path(bundle_dir)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Cinnabar bundle directory does not exist: {root}")
+
+    rel_path = root / "cinnabar_relative.csv"
+    if not rel_path.exists():
+        raise FileNotFoundError(f"Missing Cinnabar relative CSV: {rel_path}")
+
+    relative_df = pd.read_csv(rel_path)
+    abs_path = root / "cinnabar_absolute.csv"
+    if abs_path.exists():
+        absolute_df: pd.DataFrame | None = pd.read_csv(abs_path)
+    else:
+        absolute_df = None
+        if require_absolute:
+            raise FileNotFoundError(f"Missing Cinnabar absolute CSV: {abs_path}")
+
+    return relative_df, absolute_df
+
+
+def convert_cinnabar_outputs_to_csv(
+    bundle_dir: str | Path,
+    out_dir: str | Path,
+    *,
+    relative_name: str = "relative.csv",
+    absolute_name: str = "absolute.csv",
+    require_absolute: bool = False,
+) -> dict[str, Path]:
+    """Load a Cinnabar bundle directory and rewrite its tables as plain CSV files."""
+    relative_df, absolute_df = read_cinnabar_outputs(
+        bundle_dir,
+        require_absolute=require_absolute,
+    )
+    out_root = Path(out_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    outputs: dict[str, Path] = {}
+    relative_path = out_root / relative_name
+    relative_df.to_csv(relative_path, index=False)
+    outputs["relative_csv"] = relative_path
+
+    if absolute_df is not None:
+        absolute_path = out_root / absolute_name
+        absolute_df.to_csv(absolute_path, index=False)
+        outputs["absolute_csv"] = absolute_path
+
+    return outputs
 
 
 def _node_color_mapping(
