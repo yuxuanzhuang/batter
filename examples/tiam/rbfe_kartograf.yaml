@@ -14,9 +14,9 @@
       - name CA and resid 861
       - name CA and resid 916
     overwrite: false
-    receptor_ff: protein.ff14SB
+    receptor_ff: protein.ff19SB
     solv_shell: 15.0
-    water_model: TIP3P
+    water_model: OPC
 
   run:
     output_folder: tiam_rbfe_aligned_new

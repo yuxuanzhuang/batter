@@ -20,7 +20,7 @@ create:
   # solvent padding used to create the ligand-only water box
   solv_shell: 15.0
   # explicit water model passed to tleap
-  water_model: TIP3P
+  water_model: OPC
 
 run:
   # top-level work directory for executions/ and results/

@@ -35,13 +35,13 @@ create:
   # rebuild staged files even if they already exist
   overwrite: false
   # AMBER force field for the receptor
-  receptor_ff: protein.ff14SB
+  receptor_ff: protein.ff19SB
   # AMBER lipid force field for membrane systems
   lipid_ff: lipid21
   # solvent padding used when BATTER needs to add solvent around a ligand-only system
   solv_shell: 15.0
   # explicit water model passed to tleap
-  water_model: TIP3P
+  water_model: OPC
 
 run:
   # top-level work directory for executions/ and results/
