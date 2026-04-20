@@ -270,6 +270,22 @@ Results and Analysis
 --------------------
 
 Completed runs automatically write MBAR summaries under ``results/<run_id>``.
+For RBFE runs, per-run analysis also writes a Cinnabar bundle under
+``results/cinnabar/<run_id>/``. The most direct ways to inspect those outputs are:
+
+* Open ``results/cinnabar/<run_id>/cinnabar_dashboard.html`` in a browser. That
+  dashboard includes the network view, the absolute ranking view, and the clickable
+  ligand / mapping panels.
+* Read ``edge_summary.csv`` when you want the combined edge-level ``ΔΔG`` table.
+* Read ``cinnabar_relative.csv`` and ``cinnabar_absolute.csv`` when you want the
+  FEMap-exported relative and absolute values.
+* Open ``cinnabar_network.png`` and ``cinnabar_absolute_sorted.png`` for static
+  figures suitable for slides or quick sharing.
+
+If you later merge multiple RBFE runs with ``batter fe cinnabar``, the combined
+bundle is written under ``results/cinnabar/`` at the top level instead of the
+per-run subdirectory.
+
 Use the CLI helpers to inspect them::
 
     batter fe list <run.output_folder>
