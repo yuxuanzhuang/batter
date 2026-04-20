@@ -284,6 +284,16 @@ def test_network_graph_layout_spreads_dense_nodes() -> None:
             assert dist >= radii[node_a] + radii[node_b] - 1e-6
 
 
+def test_png_layout_scale_grows_for_dense_networks() -> None:
+    sparse_graph = cinnabar_mod._import_networkx().DiGraph()
+    sparse_graph.add_edge("A", "B")
+    sparse_graph.add_edge("B", "C")
+
+    dense_graph = cinnabar_mod._import_networkx().complete_graph(8, create_using=cinnabar_mod._import_networkx().DiGraph())
+
+    assert cinnabar_mod._png_layout_scale(dense_graph) > cinnabar_mod._png_layout_scale(sparse_graph)
+
+
 def test_build_batter_rbfe_cinnabar_by_run_splits_runs(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:

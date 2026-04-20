@@ -1242,6 +1242,17 @@ def _network_graph_with_layout(edge_summary: pd.DataFrame) -> tuple[Any, dict[st
     return graph, packed
 
 
+def _png_layout_scale(graph) -> float:
+    """Return an expansion factor for the static PNG network layout."""
+    n_nodes = max(int(graph.number_of_nodes()), 1)
+    n_edges = max(int(graph.number_of_edges()), 0)
+    avg_degree = (2.0 * float(n_edges)) / float(n_nodes)
+    scale = 1.12
+    scale += min(0.42, 0.045 * np.sqrt(max(n_nodes - 3, 0)))
+    scale += min(0.26, 0.035 * max(avg_degree - 1.5, 0.0))
+    return float(scale)
+
+
 def _label_rects_overlap(
     center_a: np.ndarray,
     size_a: tuple[float, float],
@@ -1386,6 +1397,11 @@ def _render_network_png(
         return False
 
     graph, pos = _network_graph_with_layout(edge_summary)
+    png_scale = _png_layout_scale(graph)
+    plot_pos = {
+        node: np.asarray(point, dtype=float) * png_scale
+        for node, point in pos.items()
+    }
 
     node_degree = dict(graph.degree())
     node_sizes = [1400 + 220 * node_degree[node] for node in graph.nodes]
@@ -1432,25 +1448,26 @@ def _render_network_png(
         radius_points = np.sqrt(size / np.pi)
         return radius_points + (12.0 if arrow else 4.0)
 
-    if pos:
-        xs = [float(point[0]) for point in pos.values()]
-        ys = [float(point[1]) for point in pos.values()]
+    if plot_pos:
+        xs = [float(point[0]) for point in plot_pos.values()]
+        ys = [float(point[1]) for point in plot_pos.values()]
         layout_w = max(xs) - min(xs)
         layout_h = max(ys) - min(ys)
     else:
         layout_w = 800.0
         layout_h = 600.0
-    fig_w = max(8.0, layout_w / 140.0 + 2.4)
-    fig_h = max(6.5, layout_h / 140.0 + 2.6)
+    fig_w = max(10.5, layout_w / 110.0 + 3.4)
+    fig_h = max(8.0, layout_h / 110.0 + 3.6)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    fig.subplots_adjust(left=0.04, right=0.88, top=0.92, bottom=0.16)
+    fig.subplots_adjust(left=0.035, right=0.88, top=0.93, bottom=0.145)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#f6f7fb")
+    ax.margins(x=0.10, y=0.12)
 
     for node_a, node_b, data, curvature in edge_metadata:
         nx.draw_networkx_edges(
             graph,
-            pos,
+            plot_pos,
             ax=ax,
             edgelist=[(node_a, node_b)],
             width=_edge_width(abs(float(data.get("calc_DDG", 0.0)))),
@@ -1465,7 +1482,7 @@ def _render_network_png(
         )
     node_artist = nx.draw_networkx_nodes(
         graph,
-        pos,
+        plot_pos,
         ax=ax,
         node_size=node_sizes,
         node_color=node_colors,
@@ -1478,7 +1495,7 @@ def _render_network_png(
 
     label_text = nx.draw_networkx_labels(
         graph,
-        pos,
+        plot_pos,
         ax=ax,
         font_size=10,
         font_weight="bold",
@@ -1494,8 +1511,8 @@ def _render_network_png(
     label_specs_display: list[dict[str, np.ndarray]] = []
     label_payloads: list[str] = []
     for node_a, node_b, data, curvature in edge_metadata:
-        start = np.asarray(pos[node_a], dtype=float)
-        end = np.asarray(pos[node_b], dtype=float)
+        start = np.asarray(plot_pos[node_a], dtype=float)
+        end = np.asarray(plot_pos[node_b], dtype=float)
         midpoint = 0.5 * (start + end)
         direction = end - start
         norm_dir = np.linalg.norm(direction)
