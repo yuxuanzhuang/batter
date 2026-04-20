@@ -16,11 +16,11 @@ create:
   # JSON dictionary mapping ligand names to input files
   ligand_input: reference/nonmembrane/ligands_dict.json
   # ligand force field / parameter set
-  ligand_ff: openff-2.2.1
+  ligand_ff: openff-2.3.0
   # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
   # partial-charge model used during ligand parameterization
-  param_charge: am1bcc
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
   # three receptor anchor atoms used to define BATTER restraints
   anchor_atoms:
     - "name CA and resid 425"

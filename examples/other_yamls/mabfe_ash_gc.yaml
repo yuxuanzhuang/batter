@@ -18,7 +18,7 @@ create:
   # JSON dictionary mapping ligand names to input files
   ligand_input: reference/ligands_dict.json
   # ligand force field / parameter set
-  ligand_ff: openff-2.3.0-rc2
+  ligand_ff: openff-2.3.0
   # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
   # partial-charge model used during ligand parameterization

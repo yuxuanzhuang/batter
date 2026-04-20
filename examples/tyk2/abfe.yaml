@@ -6,7 +6,7 @@
     system_name: tyk2
     protein_input: INPUTS/tyk2_protein.pdb
     ligand_input: ligand_dict.json
-    ligand_ff: openff-2.3.0-rc2
+    ligand_ff: openff-2.3.0
     retain_lig_prot: true
     param_charge: "openff-gnn-am1bcc-1.0.0.pt"
     anchor_atoms:
