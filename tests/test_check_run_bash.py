@@ -50,3 +50,57 @@ def test_archive_existing_log_file_moves_log(tmp_path: Path) -> None:
     assert len(archived_logs) == 1
     assert archived_logs[0].read_text() == "old log\n"
     assert not log_file.exists()
+
+
+def test_reduce_dt_on_failure_updates_template_and_current(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    current = tmp_path / "mdin-current"
+
+    tmpl.write_text("nstlim = 10,\ndt = 0.004,\n")
+    current.write_text("nstlim = 8,\ndt = 0.004,\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& reduce_dt_on_failure 'mdin-template' 0.001 'MD segment 1' 3"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dt=0.003000" in tmpl.read_text()
+    assert "dt=0.003000" in current.read_text()
+
+
+def test_write_mdin_current_preserves_lower_existing_dt(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    current = tmp_path / "mdin-current"
+    rendered = tmp_path / "rendered-current"
+
+    tmpl.write_text("irest = 1,\nntx = 5,\nnstlim = 10,\ndt = 0.004,\n")
+    current.write_text("irest = 1,\nntx = 5,\nnstlim = 6,\ndt = 0.003,\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current 'mdin-template' 8 0 'mdin-current' > 'rendered-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered_text = rendered.read_text()
+    assert "nstlim = 8," in rendered_text
+    assert "dt=0.003" in rendered_text
