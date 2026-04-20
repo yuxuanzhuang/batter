@@ -2,11 +2,13 @@ from pathlib import Path
 import subprocess
 
 import pytest
+from loguru import logger
 
 from batter.exec.slurm_mgr import (
     SlurmJobManager,
     SlurmJobSpec,
     _atomic_append_jsonl_unique,
+    _format_workdir_label,
 )
 
 
@@ -246,3 +248,55 @@ def test_submit_uses_submit_dir(monkeypatch, tmp_path):
     assert jobid == "42"
     assert calls["cwd"] == submit_dir
     assert script.name in calls["cmd"]
+
+
+def test_format_workdir_label_prefers_ligand_stage_window_suffix(tmp_path: Path) -> None:
+    workdir = tmp_path / "executions" / "rep1" / "simulations" / "G1I" / "fe" / "x" / "x01"
+    workdir.mkdir(parents=True)
+
+    assert _format_workdir_label(workdir) == "G1I/fe/x/x01"
+
+
+def test_wait_loop_warning_uses_expanded_workdir_label(monkeypatch, tmp_path: Path) -> None:
+    workdir = tmp_path / "executions" / "rep1" / "simulations" / "G1I" / "fe" / "x" / "x01"
+    workdir.mkdir(parents=True)
+    (workdir / "SLURMM-run").write_text("#!/bin/bash\n")
+    (workdir / "JOBID").write_text("21949383\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        resubmit_backoff_s=0.0,
+        max_retries=3,
+    )
+
+    sentinel_calls = {"count": 0}
+
+    def fake_sentinel_done(_spec: SlurmJobSpec):
+        sentinel_calls["count"] += 1
+        if sentinel_calls["count"] >= 2:
+            return True, "FINISHED"
+        return False, None
+
+    monkeypatch.setattr(manager, "_sentinel_done", fake_sentinel_done)
+    monkeypatch.setattr(manager, "_submit", lambda _spec: "21949384")
+    monkeypatch.setattr("batter.exec.slurm_mgr._states_from_squeue", lambda _jobids: {})
+    monkeypatch.setattr(
+        "batter.exec.slurm_mgr._states_from_sacct",
+        lambda jobids: {jid: "FAILED" for jid in jobids},
+    )
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    messages: list[str] = []
+    sink_id = logger.add(lambda msg: messages.append(str(msg)), format="{message}")
+    try:
+        manager._wait_loop([spec])
+    finally:
+        logger.remove(sink_id)
+
+    joined = "".join(messages)
+    assert (
+        "[SLURM] G1I/fe/x/x01: job 21949383 state=FAILED; resubmitting (1/3)"
+        in joined
+    )

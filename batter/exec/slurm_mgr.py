@@ -97,6 +97,33 @@ def _write_text(p: Path, txt: str) -> None:
     p.write_text(txt)
 
 
+def _format_workdir_label(path: Path) -> str:
+    """Return a readable workdir label for logging.
+
+    Prefer a ligand/stage/window style suffix such as ``G1I/fe/x/x01`` when the
+    workdir lives under a ``simulations`` tree. Fall back to a shorter suffix for
+    FE/equil paths, otherwise use the full path.
+    """
+    parts = path.parts
+
+    for anchor in ("simulations", "systems"):
+        if anchor in parts:
+            idx = parts.index(anchor)
+            suffix = parts[idx + 1 :]
+            if suffix:
+                return "/".join(suffix)
+
+    for anchor in ("fe", "equil"):
+        if anchor in parts:
+            idx = max(i for i, part in enumerate(parts) if part == anchor)
+            start = max(0, idx - 1)
+            suffix = parts[start:]
+            if suffix:
+                return "/".join(suffix)
+
+    return str(path)
+
+
 def _states_from_squeue(jobids: Sequence[str]) -> Dict[str, str]:
     """Return ``{jobid: state}`` for jobids currently visible in squeue.
 
@@ -639,7 +666,7 @@ class SlurmJobManager:
                 delay = self._submit_retry_delay(exc, attempts)
                 logger.warning(
                     f"[SLURM] submission attempt {attempts}/{self.submit_retry_limit} "
-                    f"failed for {spec.workdir.name}: {exc}; retrying in {delay:.0f}s"
+                    f"failed for {_format_workdir_label(spec.workdir)}: {exc}; retrying in {delay:.0f}s"
                 )
                 time.sleep(delay)
 
@@ -720,7 +747,10 @@ class SlurmJobManager:
         _write_text(spec.jobid_path(), f"{jobid}\n")
         self._submitted_job_ids.add(jobid)
         self.n_active += 1
-        logger.debug(f"[SLURM] submitted {spec.workdir.name} → job {jobid} (active≈{self.n_active})")
+        logger.debug(
+            f"[SLURM] submitted {_format_workdir_label(spec.workdir)} → job {jobid} "
+            f"(active≈{self.n_active})"
+        )
         return jobid
 
     # ---------- status ----------
@@ -746,7 +776,9 @@ class SlurmJobManager:
         """
         done, status = self._sentinel_done(spec)
         if done:
-            logger.debug(f"[SLURM] {spec.workdir.name}: already {status}; not submitting")
+            logger.debug(
+                f"[SLURM] {_format_workdir_label(spec.workdir)}: already {status}; not submitting"
+            )
             return
         if self.dry_run:
             self.triggered = True
@@ -850,6 +882,7 @@ class SlurmJobManager:
             failed_cnt = 0
 
             for wd, sp in list(pending.items()):
+                wd_label = _format_workdir_label(wd)
                 # sentinel checks first (no slurm calls)
                 done, st = self._sentinel_done(sp)
                 if done:
@@ -874,7 +907,7 @@ class SlurmJobManager:
                 r = retries.get(wd, 0)
                 if (not timeout_state and not completed_state) and r >= self.max_retries:
                     logger.error(
-                        f"[SLURM] {wd.name}: exceeded max_retries={self.max_retries} "
+                        f"[SLURM] {wd_label}: exceeded max_retries={self.max_retries} "
                         f"(state={resub_reason}); marking FAILED"
                     )
                     try:
@@ -889,15 +922,18 @@ class SlurmJobManager:
                 resub_cnt += 1
                 if timeout_state:
                     logger.debug(
-                        f"[SLURM] {wd.name}: job{(' ' + jid) if jid else ''} state=TIMEOUT; resubmitting"
+                        f"[SLURM] {wd_label}: job{(' ' + jid) if jid else ''} "
+                        f"state=TIMEOUT; resubmitting"
                     )
                 elif completed_state:
                     logger.debug(
-                        f"[SLURM] {wd.name}: job{(' ' + jid) if jid else ''} COMPLETED without FINISHED; resubmitting"
+                        f"[SLURM] {wd_label}: job{(' ' + jid) if jid else ''} "
+                        f"COMPLETED without FINISHED; resubmitting"
                     )
                 else:
                     logger.warning(
-                        f"[SLURM] {wd.name}: job{(' ' + jid) if jid else ''} state={resub_reason}; "
+                        f"[SLURM] {wd_label}: job{(' ' + jid) if jid else ''} "
+                        f"state={resub_reason}; "
                         f"resubmitting ({r + 1}/{self.max_retries})"
                     )
 
@@ -908,7 +944,7 @@ class SlurmJobManager:
                         retries[wd] = r + 1
                         self._retries[wd] = retries[wd]
                 except Exception as e:
-                    logger.error(f"[SLURM] {wd.name}: resubmit failed: {e}")
+                    logger.error(f"[SLURM] {wd_label}: resubmit failed: {e}")
                     raise
 
             # finalize done items
