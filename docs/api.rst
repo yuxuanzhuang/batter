@@ -196,6 +196,12 @@ Analysis Modules
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: batter.analysis.cycle_closure
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: batter.analysis.remd
    :noindex:
    :members:
