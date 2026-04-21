@@ -436,6 +436,71 @@ def test_write_cinnabar_outputs_manifest_records_split_directionality(
     assert manifest["reciprocal_pairs"] == ["A~B"]
 
 
+def test_write_cinnabar_outputs_also_writes_cycle_closure(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "ligand": "A~B",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "status": "success",
+                "temperature": 300.0,
+            },
+            {
+                "ligand": "B~C",
+                "total_dG": 1.0,
+                "total_se": 0.3,
+                "status": "success",
+                "temperature": 300.0,
+            },
+            {
+                "ligand": "C~A",
+                "total_dG": -3.0,
+                "total_se": 0.4,
+                "status": "success",
+                "temperature": 300.0,
+            },
+        ]
+    )
+    result = cinnabar_mod.dataframe_to_cinnabar(df)
+
+    outputs = cinnabar_mod.write_cinnabar_outputs(result, tmp_path / "out")
+
+    assert {
+        "cycle_closure_nodes_csv",
+        "cycle_closure_edges_csv",
+        "cycle_closure_cycles_csv",
+    }.issubset(outputs)
+    assert set(pd.read_csv(outputs["cycle_closure_nodes_csv"])["label"]) == {
+        "A",
+        "B",
+        "C",
+    }
+    manifest = json.loads(outputs["manifest_json"].read_text())
+    assert manifest["cycle_closure"]["status"] == "success"
+    assert manifest["cycle_closure"]["n_cycles"] >= 1
+    assert "cycle_closure_nodes_csv" in manifest["outputs"]
+
+
+def test_write_cinnabar_outputs_can_disable_cycle_closure(
+    monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: rbfe_index_df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path)
+    outputs = cinnabar_mod.write_cinnabar_outputs(
+        result,
+        tmp_path / "out",
+        write_cycle_closure=False,
+    )
+
+    assert "cycle_closure_nodes_csv" not in outputs
+    manifest = json.loads(outputs["manifest_json"].read_text())
+    assert manifest["cycle_closure"]["status"] == "disabled"
+
+
 def test_auto_write_rbfe_cinnabar_for_run_uses_run_scoped_output_and_replicate_note(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -600,7 +665,30 @@ def test_cli_fe_cinnabar_combined(monkeypatch, tmp_path: Path, runner: CliRunner
     assert called["write_result"] is sentinel
     assert called["write_out_dir"] == tmp_path / "results" / "cinnabar"
     assert called["write_kwargs"]["absolute_offset"] == 0.0
+    assert called["write_kwargs"]["write_cycle_closure"] is True
     assert "combined Cinnabar bundle" in result.output
+
+
+def test_cli_fe_cinnabar_can_disable_cycle_closure(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar",
+        lambda **kwargs: object(),
+    )
+
+    def _fake_write(result, out_dir, **kwargs):
+        called["write_kwargs"] = kwargs
+        return {}
+
+    monkeypatch.setattr("batter.cli.fe_cmds.write_cinnabar_outputs", _fake_write)
+
+    result = runner.invoke(cli, ["fe", "cinnabar", str(tmp_path), "--no-cycle-closure"])
+
+    assert result.exit_code == 0
+    assert called["write_kwargs"]["write_cycle_closure"] is False
 
 
 def test_cli_fe_cinnabar_split_runs(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
@@ -685,6 +773,7 @@ def test_cli_fe_cinnabar_split_runs_passes_absolute_offset(
                 "method_name": "BATTER",
                 "target_name": f"{tmp_path.name}:run1",
                 "write_plots": True,
+                "write_cycle_closure": True,
                 "absolute_offset": -2.0,
             },
         }

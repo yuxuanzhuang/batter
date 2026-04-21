@@ -308,6 +308,13 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Attempt to write Cinnabar plots when plotting support is available.",
 )
 @click.option(
+    "--cycle-closure/--no-cycle-closure",
+    "write_cycle_closure",
+    default=True,
+    show_default=True,
+    help="Also write RBFE cycle-closure correction tables into the Cinnabar bundle.",
+)
+@click.option(
     "--absolute-offset",
     type=float,
     default=0.0,
@@ -336,6 +343,7 @@ def fe_cinnabar(
     exp_value_unit: str,
     exp_error_unit: str | None,
     write_plots: bool,
+    write_cycle_closure: bool,
     absolute_offset: float,
 ) -> None:
     """Convert stored BATTER RBFE results into Cinnabar FEMap-ready outputs."""
@@ -380,6 +388,7 @@ def fe_cinnabar(
                 method_name="BATTER",
                 target_name=work_dir.name,
                 write_plots=write_plots,
+                write_cycle_closure=write_cycle_closure,
                 absolute_offset=absolute_offset,
             )
             if getattr(result, "absolute_warning", None):
@@ -418,6 +427,7 @@ def fe_cinnabar(
                 method_name="BATTER",
                 target_name=f"{work_dir.name}:{run_id}",
                 write_plots=write_plots,
+                write_cycle_closure=write_cycle_closure,
                 absolute_offset=absolute_offset,
             )
             if getattr(result, "absolute_warning", None):

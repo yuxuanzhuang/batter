@@ -894,6 +894,7 @@ def auto_write_rbfe_cinnabar_for_run(
     combine_by_run_first: bool = True,
     merge_bidirectional: bool = True,
     write_plots: bool = True,
+    write_cycle_closure: bool = True,
     absolute_offset: float = 0.0,
 ) -> dict[str, Any]:
     """Write a per-run RBFE Cinnabar bundle plus a replicate-aware follow-up note."""
@@ -911,6 +912,7 @@ def auto_write_rbfe_cinnabar_for_run(
         method_name="BATTER",
         target_name=f"{work_root.name}:{run_id}",
         write_plots=write_plots,
+        write_cycle_closure=write_cycle_closure,
         absolute_offset=absolute_offset,
     )
     return {
@@ -2923,6 +2925,95 @@ def _render_dashboard_html(
     return out_path.exists()
 
 
+def _cycle_closure_reference(result: CinnabarConversionResult) -> tuple[str, float]:
+    labels: list[str] = []
+    for row in result.edge_summary.itertuples(index=False):
+        for label in (str(row.labelA), str(row.labelB)):
+            if label and label not in labels:
+                labels.append(label)
+    if not labels:
+        raise ValueError("Cycle closure requires at least one RBFE edge.")
+
+    reference = labels[0]
+    reference_free_energy = 0.0
+    absolute_summary = result.absolute_summary
+    if absolute_summary is not None and not absolute_summary.empty:
+        value_col = _first_present_column(
+            absolute_summary,
+            ("DG (kcal/mol)", "dG", "DG", "calc_DG"),
+        )
+        if value_col is not None and "label" in absolute_summary.columns:
+            match = absolute_summary.loc[
+                absolute_summary["label"].astype(str) == reference,
+                value_col,
+            ]
+            if not match.empty and pd.notna(match.iloc[0]):
+                reference_free_energy = float(match.iloc[0])
+
+    return reference, reference_free_energy
+
+
+def _first_present_column(df: pd.DataFrame, names: Sequence[str]) -> str | None:
+    for name in names:
+        if name in df.columns:
+            return name
+    return None
+
+
+def _write_cycle_closure_outputs(
+    result: CinnabarConversionResult,
+    out_root: Path,
+    *,
+    enabled: bool,
+) -> tuple[dict[str, Any], dict[str, Path]]:
+    if not enabled:
+        return {"status": "disabled"}, {}
+
+    try:
+        from batter.analysis.cycle_closure import cycle_closure_from_dataframe
+
+        reference, reference_free_energy = _cycle_closure_reference(result)
+        closure = cycle_closure_from_dataframe(
+            result.edge_summary,
+            reference=reference,
+            reference_free_energy=reference_free_energy,
+        )
+    except ValueError as exc:
+        return {"status": "skipped", "warning": str(exc)}, {}
+    except Exception as exc:  # pragma: no cover - defensive, recorded in manifest
+        return {"status": "failed", "warning": str(exc)}, {}
+
+    node_path = out_root / "cycle_closure_nodes.csv"
+    edge_path = out_root / "cycle_closure_edges.csv"
+    cycle_path = out_root / "cycle_closure_cycles.csv"
+
+    closure.node_results.to_csv(node_path, index=False)
+    closure.edge_results.to_csv(edge_path, index=False)
+    pd.DataFrame(
+        {
+            "cycle": ["~".join(cycle) for cycle in closure.cycles],
+            "n_edges": [max(0, len(cycle) - 1) for cycle in closure.cycles],
+        }
+    ).to_csv(cycle_path, index=False)
+
+    paths = {
+        "cycle_closure_nodes_csv": node_path,
+        "cycle_closure_edges_csv": edge_path,
+        "cycle_closure_cycles_csv": cycle_path,
+    }
+    return (
+        {
+            "status": "success",
+            "reference": closure.reference,
+            "reference_free_energy": closure.reference_free_energy,
+            "n_cycles": int(len(closure.cycles)),
+            "iterations": list(closure.iterations),
+            "converged": list(closure.converged),
+        },
+        paths,
+    )
+
+
 def write_cinnabar_outputs(
     result: CinnabarConversionResult,
     out_dir: str | Path,
@@ -2931,6 +3022,7 @@ def write_cinnabar_outputs(
     target_name: str = "",
     write_plots: bool = True,
     absolute_offset: float = 0.0,
+    write_cycle_closure: bool = True,
 ) -> dict[str, Path]:
     """Write stable on-disk outputs for a converted Cinnabar bundle."""
     _FEMap, plotting, _unit = _import_cinnabar_stack()
@@ -2948,6 +3040,13 @@ def write_cinnabar_outputs(
     edge_path = out_root / "edge_summary.csv"
     result.edge_summary.to_csv(edge_path, index=False)
     outputs["edge_summary_csv"] = edge_path
+
+    cycle_closure_info, cycle_closure_outputs = _write_cycle_closure_outputs(
+        result,
+        out_root,
+        enabled=write_cycle_closure,
+    )
+    outputs.update(cycle_closure_outputs)
 
     rel_path = out_root / "cinnabar_relative.csv"
     result.femap.get_relative_dataframe().to_csv(rel_path, index=False)
@@ -3045,6 +3144,7 @@ def write_cinnabar_outputs(
         "n_directional_edges": directionality["n_directional_edges"],
         "n_reciprocal_pairs": directionality["n_reciprocal_pairs"],
         "reciprocal_pairs": directionality["reciprocal_pairs"],
+        "cycle_closure": cycle_closure_info,
         "outputs": {key: path.name for key, path in outputs.items()},
     }
     manifest_path = out_root / "manifest.json"
