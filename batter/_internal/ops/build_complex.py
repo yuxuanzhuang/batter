@@ -36,6 +36,120 @@ from batter._internal.ops.helpers import (
     save_anchors,
 )
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # type: ignore
+
+
+def _atom_is_hydrogen(atom) -> bool:
+    """Best-effort hydrogen check for MDAnalysis atoms from PDB/MOL2 inputs."""
+    try:
+        element = str(atom.element).strip().upper()
+        if element:
+            return element == "H"
+    except Exception:
+        pass
+
+    name = str(getattr(atom, "name", "")).strip().upper()
+    return name.startswith("H") or (len(name) > 1 and name[0].isdigit() and name[1] == "H")
+
+
+def _sdf_heavy_atom_ordinals(sdf_file: str | Path) -> tuple[int | None, dict[int, int]]:
+    """Return SDF atom count and a map from SDF atom index to heavy-atom ordinal."""
+    try:
+        from rdkit import Chem
+    except Exception:
+        return None, {}
+
+    try:
+        supplier = Chem.SDMolSupplier(str(sdf_file), removeHs=False)
+        mols = [mol for mol in supplier if mol is not None]
+    except Exception:
+        return None, {}
+    if not mols:
+        return None, {}
+
+    mol = mols[0]
+    heavy_ordinals: dict[int, int] = {}
+    heavy_ordinal = 0
+    for atom in mol.GetAtoms():
+        if atom.GetAtomicNum() == 1:
+            continue
+        heavy_ordinals[int(atom.GetIdx())] = heavy_ordinal
+        heavy_ordinal += 1
+    return int(mol.GetNumAtoms()), heavy_ordinals
+
+
+def _candidate_ligand_atom_name_string(
+    sdf_file: str | Path,
+    ligand_atoms,
+    *,
+    ligand_label: str,
+    stage: str,
+) -> str:
+    """Map RDKit candidate atom indices onto atom names present in the final PDB.
+
+    ``get_ligand_candidates`` returns RDKit atom indices from the SDF. Those are
+    valid only when the final ligand atom list still has the same full-H atom
+    order. If hydrogens were removed during prep, map candidates through heavy
+    atom ordinals instead of indexing into the shorter PDB atom-name array.
+    """
+    lig_names = [str(name) for name in ligand_atoms.names]
+    if not lig_names:
+        raise ValueError(
+            f"No atoms with ligand residue were found while preparing {ligand_label} ({stage})."
+        )
+
+    candidate_indices = [int(idx) for idx in get_ligand_candidates(str(sdf_file))]
+    sdf_atom_count, heavy_ordinals = _sdf_heavy_atom_ordinals(sdf_file)
+
+    names: list[str] = []
+    dropped: list[int] = []
+    if sdf_atom_count == len(lig_names):
+        for idx in candidate_indices:
+            if 0 <= idx < len(lig_names):
+                names.append(lig_names[idx])
+            else:
+                dropped.append(idx)
+    elif heavy_ordinals:
+        heavy_names = [
+            str(atom.name)
+            for atom in ligand_atoms
+            if not _atom_is_hydrogen(atom)
+        ]
+        for idx in candidate_indices:
+            heavy_ordinal = heavy_ordinals.get(idx)
+            if heavy_ordinal is not None and 0 <= heavy_ordinal < len(heavy_names):
+                names.append(heavy_names[heavy_ordinal])
+            else:
+                dropped.append(idx)
+    else:
+        for idx in candidate_indices:
+            if 0 <= idx < len(lig_names):
+                names.append(lig_names[idx])
+            else:
+                dropped.append(idx)
+
+    if dropped:
+        logger.warning(
+            "[build_complex] Ignored {} stale ligand candidate atom index/indices "
+            "for {} ({}): {}. SDF atom count={}, final ligand atom count={}.",
+            len(dropped),
+            ligand_label,
+            stage,
+            ", ".join(str(idx) for idx in dropped[:10]),
+            sdf_atom_count if sdf_atom_count is not None else "unknown",
+            len(lig_names),
+        )
+    if not names:
+        logger.warning(
+            "[build_complex] No mapped ligand candidate atom names for {} ({}); "
+            "using all final ligand atoms for anchor search.",
+            ligand_label,
+            stage,
+        )
+        names = lig_names
+
+    return " ".join(names)
+
+
 def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     """
     Creates the aligned + cleaned PDBs (protein/others/lipids), finds
@@ -281,11 +395,16 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
         u_aln.atoms.write(str(build_dir / "aligned_amber.pdb"))
 
     sdf_file = build_dir / f"{mol}.sdf"
-    candidates_indices = get_ligand_candidates(str(sdf_file))
     pdb_file = build_dir / "aligned_amber.pdb"
     u = mda.Universe(str(pdb_file))
-    lig_names = u.select_atoms(f"resname {mol}").names
-    lig_name_str = " ".join([str(x) for x in lig_names[candidates_indices]])
+    lig_atoms = u.select_atoms(f"resname {mol}")
+    lig_names = lig_atoms.names
+    lig_name_str = _candidate_ligand_atom_name_string(
+        sdf_file,
+        lig_atoms,
+        ligand_label=ligand,
+        stage="equil",
+    )
 
     # Build VMD prep.tcl from template, try with candidate names first
     prep_ini = build_dir / "prep-ini.tcl"
@@ -552,20 +671,26 @@ def build_complex_z(ctx) -> bool:
     run_with_log(
         f"pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y", working_dir=workdir
     )
+    u = mda.Universe(str(_p("aligned_amber.pdb")))
 
     # optional lipid resid fix post-amber
     if membrane_builder:
-        u = mda.Universe(_p("aligned_amber.pdb"))
         non_water_ag = u.select_atoms("not resname WAT Na+ Cl- K+")
         non_water_ag.residues.resids = final_resids
 
         u.atoms.write(_p("aligned_amber.pdb"))
+        u = mda.Universe(str(_p("aligned_amber.pdb")))
 
     # 10) ligand candidates for Boresch
     sdf_file = _p(f"{mol}.sdf")
-    candidates_indices = get_ligand_candidates(str(sdf_file))
-    lig_names = u.select_atoms(f"resname {mol}").names
-    lig_name_str = " ".join(str(x) for x in lig_names[candidates_indices])
+    lig_atoms = u.select_atoms(f"resname {mol}")
+    lig_names = lig_atoms.names
+    lig_name_str = _candidate_ligand_atom_name_string(
+        sdf_file,
+        lig_atoms,
+        ligand_label=ligand,
+        stage="fe-z",
+    )
 
     # 11) prep.tcl
     with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
