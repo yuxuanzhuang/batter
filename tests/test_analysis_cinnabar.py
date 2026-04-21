@@ -611,7 +611,7 @@ def test_auto_write_rbfe_cinnabar_for_run_omits_replicate_note_for_single_run(
     assert export["replicate_note"] is None
 
 
-def test_read_cinnabar_outputs_reads_relative_and_absolute_tables(tmp_path: Path) -> None:
+def test_read_cinnabar_outputs_reads_all_bundle_csv_tables(tmp_path: Path) -> None:
     bundle_dir = tmp_path / "cinnabar"
     bundle_dir.mkdir()
     relative = pd.DataFrame(
@@ -620,17 +620,30 @@ def test_read_cinnabar_outputs_reads_relative_and_absolute_tables(tmp_path: Path
     absolute = pd.DataFrame(
         [{"label": "A", "DG (kcal/mol)": -5.0}]
     )
+    cycle_nodes = pd.DataFrame(
+        [{"label": "A", "dG_cc": -5.1, "path_dependent_error": 0.2}]
+    )
+    custom = pd.DataFrame([{"source": "plugin", "value": 3}])
     relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
     absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+    cycle_nodes.to_csv(bundle_dir / "cycle_closure_nodes.csv", index=False)
+    custom.to_csv(bundle_dir / "custom_table.csv", index=False)
 
-    relative_df, absolute_df = cinnabar_mod.read_cinnabar_outputs(bundle_dir)
+    tables = cinnabar_mod.read_cinnabar_outputs(bundle_dir)
 
-    pd.testing.assert_frame_equal(relative_df, relative)
-    assert absolute_df is not None
-    pd.testing.assert_frame_equal(absolute_df, absolute)
+    assert tables["relative"] is not None
+    pd.testing.assert_frame_equal(tables["relative"], relative)
+    assert tables["absolute"] is not None
+    pd.testing.assert_frame_equal(tables["absolute"], absolute)
+    assert tables["cycle_closure_nodes"] is not None
+    pd.testing.assert_frame_equal(tables["cycle_closure_nodes"], cycle_nodes)
+    assert tables["cycle_closure_edges"] is None
+    assert tables["raw_signed"] is None
+    assert tables["custom_table"] is not None
+    pd.testing.assert_frame_equal(tables["custom_table"], custom)
 
 
-def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None:
+def test_convert_cinnabar_outputs_to_csv_writes_all_available_csvs(tmp_path: Path) -> None:
     bundle_dir = tmp_path / "cinnabar"
     out_dir = tmp_path / "exported"
     bundle_dir.mkdir()
@@ -640,8 +653,12 @@ def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None
     absolute = pd.DataFrame(
         [{"label": "A", "DG (kcal/mol)": -5.0}]
     )
+    cycle_edges = pd.DataFrame(
+        [{"labelA": "A", "labelB": "B", "ddG_cc": 1.2, "pair_error": 0.1}]
+    )
     relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
     absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+    cycle_edges.to_csv(bundle_dir / "cycle_closure_edges.csv", index=False)
 
     outputs = cinnabar_mod.convert_cinnabar_outputs_to_csv(
         bundle_dir,
@@ -652,8 +669,13 @@ def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None
 
     assert outputs["relative_csv"] == out_dir / "rbfe_relative.csv"
     assert outputs["absolute_csv"] == out_dir / "rbfe_absolute.csv"
+    assert outputs["cycle_closure_edges_csv"] == out_dir / "cycle_closure_edges.csv"
     pd.testing.assert_frame_equal(pd.read_csv(outputs["relative_csv"]), relative)
     pd.testing.assert_frame_equal(pd.read_csv(outputs["absolute_csv"]), absolute)
+    pd.testing.assert_frame_equal(
+        pd.read_csv(outputs["cycle_closure_edges_csv"]),
+        cycle_edges,
+    )
 
 
 @pytest.fixture()

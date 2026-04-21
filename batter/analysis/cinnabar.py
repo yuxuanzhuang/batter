@@ -28,6 +28,18 @@ __all__ = [
 ]
 
 
+_CINNABAR_OUTPUT_TABLES: dict[str, str] = {
+    "relative": "cinnabar_relative.csv",
+    "absolute": "cinnabar_absolute.csv",
+    "raw_signed": "raw_signed.csv",
+    "edge_summary": "edge_summary.csv",
+    "experimental_summary": "experimental_summary.csv",
+    "cycle_closure_nodes": "cycle_closure_nodes.csv",
+    "cycle_closure_edges": "cycle_closure_edges.csv",
+    "cycle_closure_cycles": "cycle_closure_cycles.csv",
+}
+
+
 @dataclass
 class CinnabarConversionResult:
     femap: Any
@@ -928,8 +940,8 @@ def read_cinnabar_outputs(
     bundle_dir: str | Path,
     *,
     require_absolute: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    """Read the standard relative/absolute tables from a Cinnabar bundle directory."""
+) -> dict[str, pd.DataFrame | None]:
+    """Read every CSV table from a generated Cinnabar bundle directory."""
     root = Path(bundle_dir)
     if not root.is_dir():
         raise FileNotFoundError(f"Cinnabar bundle directory does not exist: {root}")
@@ -938,16 +950,23 @@ def read_cinnabar_outputs(
     if not rel_path.exists():
         raise FileNotFoundError(f"Missing Cinnabar relative CSV: {rel_path}")
 
-    relative_df = pd.read_csv(rel_path)
     abs_path = root / "cinnabar_absolute.csv"
-    if abs_path.exists():
-        absolute_df: pd.DataFrame | None = pd.read_csv(abs_path)
-    else:
-        absolute_df = None
-        if require_absolute:
-            raise FileNotFoundError(f"Missing Cinnabar absolute CSV: {abs_path}")
+    if require_absolute and not abs_path.exists():
+        raise FileNotFoundError(f"Missing Cinnabar absolute CSV: {abs_path}")
 
-    return relative_df, absolute_df
+    tables: dict[str, pd.DataFrame | None] = {}
+    known_paths = set()
+    for key, filename in _CINNABAR_OUTPUT_TABLES.items():
+        path = root / filename
+        known_paths.add(path)
+        tables[key] = pd.read_csv(path) if path.exists() else None
+
+    for csv_path in sorted(root.glob("*.csv")):
+        if csv_path in known_paths:
+            continue
+        tables.setdefault(csv_path.stem, pd.read_csv(csv_path))
+
+    return tables
 
 
 def convert_cinnabar_outputs_to_csv(
@@ -958,8 +977,8 @@ def convert_cinnabar_outputs_to_csv(
     absolute_name: str = "absolute.csv",
     require_absolute: bool = False,
 ) -> dict[str, Path]:
-    """Load a Cinnabar bundle directory and rewrite its tables as plain CSV files."""
-    relative_df, absolute_df = read_cinnabar_outputs(
+    """Load a Cinnabar bundle directory and rewrite all available CSV tables."""
+    tables = read_cinnabar_outputs(
         bundle_dir,
         require_absolute=require_absolute,
     )
@@ -967,14 +986,18 @@ def convert_cinnabar_outputs_to_csv(
     out_root.mkdir(parents=True, exist_ok=True)
 
     outputs: dict[str, Path] = {}
-    relative_path = out_root / relative_name
-    relative_df.to_csv(relative_path, index=False)
-    outputs["relative_csv"] = relative_path
-
-    if absolute_df is not None:
-        absolute_path = out_root / absolute_name
-        absolute_df.to_csv(absolute_path, index=False)
-        outputs["absolute_csv"] = absolute_path
+    for key, table in tables.items():
+        if table is None:
+            continue
+        if key == "relative":
+            filename = relative_name
+        elif key == "absolute":
+            filename = absolute_name
+        else:
+            filename = _CINNABAR_OUTPUT_TABLES.get(key, f"{key}.csv")
+        out_path = out_root / filename
+        table.to_csv(out_path, index=False)
+        outputs[f"{key}_csv"] = out_path
 
     return outputs
 

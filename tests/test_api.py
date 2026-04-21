@@ -33,11 +33,20 @@ def test_api_read_cinnabar_outputs_reads_bundle(tmp_path: Path) -> None:
     bundle_dir.mkdir()
     relative_csv = bundle_dir / "cinnabar_relative.csv"
     absolute_csv = bundle_dir / "cinnabar_absolute.csv"
+    cycle_nodes_csv = bundle_dir / "cycle_closure_nodes.csv"
     relative_csv.write_text("labelA,labelB,DDG (kcal/mol)\nA,B,1.0\n")
     absolute_csv.write_text("label,DG (kcal/mol)\nA,-5.0\n")
+    cycle_nodes_csv.write_text("label,dG_cc,path_dependent_error\nA,-5.1,0.2\n")
 
-    relative_df, absolute_df = api_mod.read_cinnabar_outputs(bundle_dir)
+    tables = api_mod.read_cinnabar_outputs(bundle_dir)
 
-    assert list(relative_df.columns) == ["labelA", "labelB", "DDG (kcal/mol)"]
-    assert absolute_df is not None
-    assert list(absolute_df.columns) == ["label", "DG (kcal/mol)"]
+    assert tables["relative"] is not None
+    assert list(tables["relative"].columns) == ["labelA", "labelB", "DDG (kcal/mol)"]
+    assert tables["absolute"] is not None
+    assert list(tables["absolute"].columns) == ["label", "DG (kcal/mol)"]
+    assert tables["cycle_closure_nodes"] is not None
+    assert list(tables["cycle_closure_nodes"].columns) == [
+        "label",
+        "dG_cc",
+        "path_dependent_error",
+    ]
