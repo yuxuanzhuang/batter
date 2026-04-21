@@ -34,19 +34,27 @@ def test_api_read_cinnabar_outputs_reads_bundle(tmp_path: Path) -> None:
     relative_csv = bundle_dir / "cinnabar_relative.csv"
     absolute_csv = bundle_dir / "cinnabar_absolute.csv"
     cycle_nodes_csv = bundle_dir / "cycle_closure_nodes.csv"
-    relative_csv.write_text("labelA,labelB,DDG (kcal/mol)\nA,B,1.0\n")
-    absolute_csv.write_text("label,DG (kcal/mol)\nA,-5.0\n")
-    cycle_nodes_csv.write_text("label,dG_cc,path_dependent_error\nA,-5.1,0.2\n")
+    cycle_edges_csv = bundle_dir / "cycle_closure_edges.csv"
+    relative_csv.write_text(
+        "labelA,labelB,DDG (kcal/mol),uncertainty (kcal/mol)\nA,B,1.0,0.2\n"
+    )
+    absolute_csv.write_text(
+        "label,DG (kcal/mol),uncertainty (kcal/mol)\nA,-5.0,0.1\n"
+    )
+    cycle_nodes_csv.write_text(
+        "label,dG_cc,dG_wcc1,path_dependent_error,path_independent_error\n"
+        "A,-5.1,-5.2,0.3,0.4\n"
+    )
+    cycle_edges_csv.write_text(
+        "labelA,labelB,ddG_cc,ddG_wcc1,pair_error\nA,B,1.1,1.2,0.5\n"
+    )
 
-    tables = api_mod.read_cinnabar_outputs(bundle_dir)
+    relative_df, absolute_df = api_mod.read_cinnabar_outputs(bundle_dir)
 
-    assert tables["relative"] is not None
-    assert list(tables["relative"].columns) == ["labelA", "labelB", "DDG (kcal/mol)"]
-    assert tables["absolute"] is not None
-    assert list(tables["absolute"].columns) == ["label", "DG (kcal/mol)"]
-    assert tables["cycle_closure_nodes"] is not None
-    assert list(tables["cycle_closure_nodes"].columns) == [
-        "label",
-        "dG_cc",
-        "path_dependent_error",
-    ]
+    assert relative_df.loc[0, "DDG_uncorrected (kcal/mol)"] == pytest.approx(1.0)
+    assert relative_df.loc[0, "DDG_cycle_closure (kcal/mol)"] == pytest.approx(1.2)
+    assert relative_df.loc[0, "uncertainty_cycle_closure (kcal/mol)"] == pytest.approx(
+        0.5
+    )
+    assert absolute_df.loc[0, "DG_uncorrected (kcal/mol)"] == pytest.approx(-5.0)
+    assert absolute_df.loc[0, "DG_cycle_closure (kcal/mol)"] == pytest.approx(-5.2)

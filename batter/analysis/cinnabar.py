@@ -28,18 +28,6 @@ __all__ = [
 ]
 
 
-_CINNABAR_OUTPUT_TABLES: dict[str, str] = {
-    "relative": "cinnabar_relative.csv",
-    "absolute": "cinnabar_absolute.csv",
-    "raw_signed": "raw_signed.csv",
-    "edge_summary": "edge_summary.csv",
-    "experimental_summary": "experimental_summary.csv",
-    "cycle_closure_nodes": "cycle_closure_nodes.csv",
-    "cycle_closure_edges": "cycle_closure_edges.csv",
-    "cycle_closure_cycles": "cycle_closure_cycles.csv",
-}
-
-
 @dataclass
 class CinnabarConversionResult:
     femap: Any
@@ -936,12 +924,259 @@ def auto_write_rbfe_cinnabar_for_run(
     }
 
 
+def _read_csv_if_present(path: Path) -> pd.DataFrame | None:
+    return pd.read_csv(path) if path.exists() else None
+
+
+def _numeric_column(
+    df: pd.DataFrame,
+    column: str | None,
+) -> pd.Series:
+    if column is None or column not in df.columns:
+        return pd.Series(np.nan, index=df.index, dtype="float64")
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def _merge_edge_result_columns(
+    target: pd.DataFrame,
+    source: pd.DataFrame | None,
+    *,
+    value_col: str | None,
+    error_col: str | None,
+    value_out: str,
+    error_out: str,
+) -> pd.DataFrame:
+    out = target.copy()
+    out[value_out] = np.nan
+    out[error_out] = np.nan
+    if (
+        source is None
+        or source.empty
+        or (value_col is not None and value_col not in source.columns)
+        or (error_col is not None and error_col not in source.columns)
+        or (value_col is None and error_col is None)
+        or not {"labelA", "labelB"}.issubset(out.columns)
+        or not {"labelA", "labelB"}.issubset(source.columns)
+    ):
+        return out
+
+    work = source[["labelA", "labelB"]].copy()
+    work[value_out] = _numeric_column(source, value_col)
+    work[error_out] = _numeric_column(source, error_col)
+    work["_labelA_key"] = work["labelA"].astype(str)
+    work["_labelB_key"] = work["labelB"].astype(str)
+
+    exact = (
+        work[["_labelA_key", "_labelB_key", value_out, error_out]]
+        .drop_duplicates(["_labelA_key", "_labelB_key"], keep="first")
+    )
+    out["_labelA_key"] = out["labelA"].astype(str)
+    out["_labelB_key"] = out["labelB"].astype(str)
+    out = out.drop(columns=[value_out, error_out]).merge(
+        exact,
+        on=["_labelA_key", "_labelB_key"],
+        how="left",
+    )
+
+    reverse = work.copy()
+    reverse[value_out] = -reverse[value_out]
+    reverse = reverse.rename(
+        columns={
+            "_labelA_key": "_labelB_key",
+            "_labelB_key": "_labelA_key",
+            value_out: f"_{value_out}",
+            error_out: f"_{error_out}",
+        }
+    )
+    reverse = (
+        reverse[["_labelA_key", "_labelB_key", f"_{value_out}", f"_{error_out}"]]
+        .drop_duplicates(["_labelA_key", "_labelB_key"], keep="first")
+    )
+    out = out.merge(reverse, on=["_labelA_key", "_labelB_key"], how="left")
+    out[value_out] = out[value_out].combine_first(out[f"_{value_out}"])
+    out[error_out] = out[error_out].combine_first(out[f"_{error_out}"])
+    return out.drop(
+        columns=["_labelA_key", "_labelB_key", f"_{value_out}", f"_{error_out}"]
+    )
+
+
+def _merge_node_result_columns(
+    target: pd.DataFrame,
+    source: pd.DataFrame | None,
+    *,
+    value_col: str | None,
+) -> pd.DataFrame:
+    out = target.copy()
+    out["DG_cycle_closure (kcal/mol)"] = np.nan
+    out["uncertainty_cycle_closure_path_dependent (kcal/mol)"] = np.nan
+    out["uncertainty_cycle_closure_path_independent (kcal/mol)"] = np.nan
+    if (
+        source is None
+        or source.empty
+        or value_col is None
+        or value_col not in source.columns
+        or "label" not in out.columns
+        or "label" not in source.columns
+    ):
+        return out
+
+    work = pd.DataFrame(
+        {
+            "_label_key": source["label"].astype(str),
+            "DG_cycle_closure (kcal/mol)": pd.to_numeric(
+                source[value_col],
+                errors="coerce",
+            ),
+            "uncertainty_cycle_closure_path_dependent (kcal/mol)": _numeric_column(
+                source,
+                "path_dependent_error",
+            ),
+            "uncertainty_cycle_closure_path_independent (kcal/mol)": _numeric_column(
+                source,
+                "path_independent_error",
+            ),
+        }
+    ).drop_duplicates("_label_key", keep="first")
+    out["_label_key"] = out["label"].astype(str)
+    out = out.drop(
+        columns=[
+            "DG_cycle_closure (kcal/mol)",
+            "uncertainty_cycle_closure_path_dependent (kcal/mol)",
+            "uncertainty_cycle_closure_path_independent (kcal/mol)",
+        ]
+    ).merge(work, on="_label_key", how="left")
+    return out.drop(columns=["_label_key"])
+
+
+def _cycle_closure_value_column(
+    df: pd.DataFrame | None,
+    *,
+    prefix: str,
+    fallback: str,
+) -> str | None:
+    if df is None or df.empty:
+        return None
+    try:
+        return _last_numbered_column(df, prefix, fallback)
+    except ValueError:
+        return None
+
+
+def _merged_relative_cinnabar_table(root: Path) -> pd.DataFrame:
+    relative = pd.read_csv(root / "cinnabar_relative.csv")
+    edge_summary = _read_csv_if_present(root / "edge_summary.csv")
+    cycle_edges = _read_csv_if_present(root / "cycle_closure_edges.csv")
+
+    out = relative.copy()
+    value_col = _first_present_column(
+        out,
+        ("DDG (kcal/mol)", "calc_DDG", "ddG", "ddg", "dG", "total_dG"),
+    )
+    error_col = _first_present_column(
+        out,
+        (
+            "uncertainty (kcal/mol)",
+            "calc_dDDG",
+            "dDDG (kcal/mol)",
+            "error",
+            "stderr",
+            "standard_error",
+        ),
+    )
+    out["DDG_uncorrected (kcal/mol)"] = _numeric_column(out, value_col)
+    out["uncertainty_uncorrected (kcal/mol)"] = _numeric_column(out, error_col)
+
+    if out["uncertainty_uncorrected (kcal/mol)"].isna().all():
+        out = _merge_edge_result_columns(
+            out,
+            edge_summary,
+            value_col=None,
+            error_col="calc_dDDG",
+            value_out="_edge_summary_value",
+            error_out="_edge_summary_error",
+        )
+        out["uncertainty_uncorrected (kcal/mol)"] = out[
+            "uncertainty_uncorrected (kcal/mol)"
+        ].combine_first(out["_edge_summary_error"])
+        out = out.drop(columns=["_edge_summary_value", "_edge_summary_error"])
+
+    out = _merge_edge_result_columns(
+        out,
+        cycle_edges,
+        value_col=_cycle_closure_value_column(
+            cycle_edges,
+            prefix="ddG_wcc",
+            fallback="ddG_cc",
+        ),
+        error_col="pair_error",
+        value_out="DDG_cycle_closure (kcal/mol)",
+        error_out="uncertainty_cycle_closure (kcal/mol)",
+    )
+    return out
+
+
+def _merged_absolute_cinnabar_table(root: Path) -> pd.DataFrame:
+    absolute = _read_csv_if_present(root / "cinnabar_absolute.csv")
+    cycle_nodes = _read_csv_if_present(root / "cycle_closure_nodes.csv")
+    if absolute is None:
+        if cycle_nodes is not None and "label" in cycle_nodes.columns:
+            absolute = pd.DataFrame({"label": cycle_nodes["label"].astype(str)})
+        else:
+            absolute = pd.DataFrame(columns=["label"])
+
+    out = absolute.copy()
+    if (
+        cycle_nodes is not None
+        and "label" in out.columns
+        and "label" in cycle_nodes.columns
+    ):
+        existing_labels = set(out["label"].astype(str))
+        missing_labels = [
+            str(label)
+            for label in cycle_nodes["label"].tolist()
+            if str(label) not in existing_labels
+        ]
+        if missing_labels:
+            out = pd.concat(
+                [out, pd.DataFrame({"label": missing_labels})],
+                ignore_index=True,
+                sort=False,
+            )
+
+    value_col = _first_present_column(
+        out,
+        ("DG (kcal/mol)", "dG", "DG", "calc_DG"),
+    )
+    error_col = _first_present_column(
+        out,
+        (
+            "uncertainty (kcal/mol)",
+            "dDG (kcal/mol)",
+            "error",
+            "stderr",
+            "standard_error",
+        ),
+    )
+    out["DG_uncorrected (kcal/mol)"] = _numeric_column(out, value_col)
+    out["uncertainty_uncorrected (kcal/mol)"] = _numeric_column(out, error_col)
+    out = _merge_node_result_columns(
+        out,
+        cycle_nodes,
+        value_col=_cycle_closure_value_column(
+            cycle_nodes,
+            prefix="dG_wcc",
+            fallback="dG_cc",
+        ),
+    )
+    return out
+
+
 def read_cinnabar_outputs(
     bundle_dir: str | Path,
     *,
     require_absolute: bool = False,
-) -> dict[str, pd.DataFrame | None]:
-    """Read every CSV table from a generated Cinnabar bundle directory."""
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Read merged relative and absolute Cinnabar tables from an export bundle."""
     root = Path(bundle_dir)
     if not root.is_dir():
         raise FileNotFoundError(f"Cinnabar bundle directory does not exist: {root}")
@@ -954,19 +1189,7 @@ def read_cinnabar_outputs(
     if require_absolute and not abs_path.exists():
         raise FileNotFoundError(f"Missing Cinnabar absolute CSV: {abs_path}")
 
-    tables: dict[str, pd.DataFrame | None] = {}
-    known_paths = set()
-    for key, filename in _CINNABAR_OUTPUT_TABLES.items():
-        path = root / filename
-        known_paths.add(path)
-        tables[key] = pd.read_csv(path) if path.exists() else None
-
-    for csv_path in sorted(root.glob("*.csv")):
-        if csv_path in known_paths:
-            continue
-        tables.setdefault(csv_path.stem, pd.read_csv(csv_path))
-
-    return tables
+    return _merged_relative_cinnabar_table(root), _merged_absolute_cinnabar_table(root)
 
 
 def convert_cinnabar_outputs_to_csv(
@@ -977,8 +1200,8 @@ def convert_cinnabar_outputs_to_csv(
     absolute_name: str = "absolute.csv",
     require_absolute: bool = False,
 ) -> dict[str, Path]:
-    """Load a Cinnabar bundle directory and rewrite all available CSV tables."""
-    tables = read_cinnabar_outputs(
+    """Load a Cinnabar bundle directory and rewrite merged relative/absolute CSVs."""
+    relative_df, absolute_df = read_cinnabar_outputs(
         bundle_dir,
         require_absolute=require_absolute,
     )
@@ -986,18 +1209,13 @@ def convert_cinnabar_outputs_to_csv(
     out_root.mkdir(parents=True, exist_ok=True)
 
     outputs: dict[str, Path] = {}
-    for key, table in tables.items():
-        if table is None:
-            continue
-        if key == "relative":
-            filename = relative_name
-        elif key == "absolute":
-            filename = absolute_name
-        else:
-            filename = _CINNABAR_OUTPUT_TABLES.get(key, f"{key}.csv")
-        out_path = out_root / filename
-        table.to_csv(out_path, index=False)
-        outputs[f"{key}_csv"] = out_path
+    relative_path = out_root / relative_name
+    relative_df.to_csv(relative_path, index=False)
+    outputs["relative_csv"] = relative_path
+
+    absolute_path = out_root / absolute_name
+    absolute_df.to_csv(absolute_path, index=False)
+    outputs["absolute_csv"] = absolute_path
 
     return outputs
 

@@ -192,17 +192,17 @@ def read_cinnabar_outputs(
     Parameters
     ----------
     bundle_dir : str or Path
-        Directory containing ``cinnabar_relative.csv`` and any other CSVs
-        produced by the Cinnabar export.
+        Directory containing ``cinnabar_relative.csv`` and optional absolute
+        and cycle-closure CSVs produced by the Cinnabar export.
     require_absolute : bool, optional
         When ``True``, raise if the bundle does not contain
         ``cinnabar_absolute.csv``.
 
     Returns
     -------
-    dict[str, pandas.DataFrame | None]
-        Loaded CSV tables keyed by table name. Optional outputs such as
-        ``absolute`` and ``cycle_closure_nodes`` are ``None`` when absent.
+    tuple[pandas.DataFrame, pandas.DataFrame]
+        Relative and absolute tables. Each table includes uncorrected columns
+        and cycle-closure columns when those outputs are present.
     """
     from batter.analysis.cinnabar import read_cinnabar_outputs as _read
 
