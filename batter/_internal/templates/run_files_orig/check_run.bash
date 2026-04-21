@@ -456,6 +456,47 @@ parse_dt_ps() {
     [[ -n $dt ]] && echo "$dt" || echo 0.001
 }
 
+rewrite_mdin_dt_file() {
+    local target=$1
+    local new_dt=$2
+
+    [[ -f "$target" ]] || return 0
+    if ! awk 'BEGIN{IGNORECASE=1} /^[[:space:]]*dt[[:space:]]*=/ {found=1; exit} END{exit !found}' "$target"; then
+        return 0
+    fi
+
+    awk -v newdt="$new_dt" '
+        BEGIN{IGNORECASE=1; done=0}
+        {
+            if (!done && match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/)) {
+                sub(/dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/, "dt=" newdt)
+                done=1
+            }
+            print
+        }
+    ' "$target" > "${target}.tmp" && mv "${target}.tmp" "$target"
+}
+
+current_mdin_for_template() {
+    local tmpl=${1:-mdin-template}
+    local dir base
+
+    dir=$(dirname -- "$tmpl")
+    base=$(basename -- "$tmpl")
+
+    case "$base" in
+        mdin-template|mdin-batch-template)
+            echo "${dir}/mdin-current"
+            ;;
+        mdin-remd-template)
+            echo "${dir}/mdin-remd-current"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 reduce_dt_on_failure() {
     local tmpl=${1:-mdin-template}
     local dec=${2:-0.001}
@@ -476,19 +517,15 @@ reduce_dt_on_failure() {
         return
     fi
 
-    awk -v newdt="$new_dt" '
-        BEGIN{IGNORECASE=1; done=0}
-        {
-            if (!done && match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/)) {
-                sub(/dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/, "dt=" newdt)
-                done=1
-            }
-            print
-        }
-    ' "$tmpl" > "${tmpl}.tmp" && mv "${tmpl}.tmp" "$tmpl"
+    rewrite_mdin_dt_file "$tmpl" "$new_dt"
+
+    local current_mdin
+    if current_mdin=$(current_mdin_for_template "$tmpl"); then
+        rewrite_mdin_dt_file "$current_mdin" "$new_dt"
+    fi
 
     # remove old sims if there's any.
-    rm md-*
+    rm -f md-*
     echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 
@@ -608,11 +645,35 @@ write_mdin_current() {
     local tmpl=${1:-mdin-template}
     local nstlim_value=$2
     local first_run=$3
+    local current_mdin=${4:-mdin-current}
 
     [[ -f $tmpl ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
 
     local text
     text=$(<"$tmpl")
+
+    local template_dt current_dt effective_dt
+    template_dt=$(parse_dt_ps "$tmpl")
+    effective_dt="$template_dt"
+    if [[ -f "$current_mdin" ]]; then
+        current_dt=$(parse_dt_ps "$current_mdin")
+        if awk -v current="$current_dt" -v template="$template_dt" 'BEGIN{exit !(current > 0 && current < template)}'; then
+            effective_dt="$current_dt"
+        fi
+    fi
+
+    if awk -v eff="$effective_dt" -v template="$template_dt" 'BEGIN{exit !(eff != template)}'; then
+        text=$(echo "$text" | awk -v newdt="$effective_dt" '
+            BEGIN{IGNORECASE=1; done=0}
+            {
+                if (!done && match($0, /^[[:space:]]*dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/)) {
+                    sub(/dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?/, "dt=" newdt)
+                    done=1
+                }
+                print
+            }
+        ')
+    fi
 
     text=$(echo "$text" \
         | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' \

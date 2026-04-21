@@ -19,8 +19,10 @@ __all__ = [
     "auto_write_rbfe_cinnabar_for_run",
     "build_batter_rbfe_cinnabar",
     "build_batter_rbfe_cinnabar_by_run",
+    "convert_cinnabar_outputs_to_csv",
     "dataframe_to_cinnabar",
     "load_batter_rbfe_results",
+    "read_cinnabar_outputs",
     "summarize_directionality",
     "write_cinnabar_outputs",
 ]
@@ -37,7 +39,6 @@ class CinnabarConversionResult:
     absolute_warning: str | None = None
     ligand_assets: dict[str, dict[str, str]] = field(default_factory=dict)
     edge_assets: dict[str, dict[str, str]] = field(default_factory=dict)
-
 
 def _import_networkx():
     try:
@@ -921,6 +922,61 @@ def auto_write_rbfe_cinnabar_for_run(
     }
 
 
+def read_cinnabar_outputs(
+    bundle_dir: str | Path,
+    *,
+    require_absolute: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Read the standard relative/absolute tables from a Cinnabar bundle directory."""
+    root = Path(bundle_dir)
+    if not root.is_dir():
+        raise FileNotFoundError(f"Cinnabar bundle directory does not exist: {root}")
+
+    rel_path = root / "cinnabar_relative.csv"
+    if not rel_path.exists():
+        raise FileNotFoundError(f"Missing Cinnabar relative CSV: {rel_path}")
+
+    relative_df = pd.read_csv(rel_path)
+    abs_path = root / "cinnabar_absolute.csv"
+    if abs_path.exists():
+        absolute_df: pd.DataFrame | None = pd.read_csv(abs_path)
+    else:
+        absolute_df = None
+        if require_absolute:
+            raise FileNotFoundError(f"Missing Cinnabar absolute CSV: {abs_path}")
+
+    return relative_df, absolute_df
+
+
+def convert_cinnabar_outputs_to_csv(
+    bundle_dir: str | Path,
+    out_dir: str | Path,
+    *,
+    relative_name: str = "relative.csv",
+    absolute_name: str = "absolute.csv",
+    require_absolute: bool = False,
+) -> dict[str, Path]:
+    """Load a Cinnabar bundle directory and rewrite its tables as plain CSV files."""
+    relative_df, absolute_df = read_cinnabar_outputs(
+        bundle_dir,
+        require_absolute=require_absolute,
+    )
+    out_root = Path(out_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    outputs: dict[str, Path] = {}
+    relative_path = out_root / relative_name
+    relative_df.to_csv(relative_path, index=False)
+    outputs["relative_csv"] = relative_path
+
+    if absolute_df is not None:
+        absolute_path = out_root / absolute_name
+        absolute_df.to_csv(absolute_path, index=False)
+        outputs["absolute_csv"] = absolute_path
+
+    return outputs
+
+
 def _node_color_mapping(
     graph: nx.DiGraph,
     absolute_summary: pd.DataFrame | None,
@@ -990,8 +1046,225 @@ def _rgba_to_hex(color_value: Any) -> str:
         return "#5b8def"
 
 
-def _network_graph_with_layout(edge_summary: pd.DataFrame) -> tuple[nx.DiGraph, dict[str, np.ndarray]]:
-    """Build the directed graph and a stable layout for rendering."""
+def _layout_node_radii(graph) -> dict[str, float]:
+    """Return conservative layout radii that leave room for labels and arrows."""
+    node_degree = dict(graph.degree())
+    return {
+        str(node): 48.0 + 4.0 * float(node_degree.get(node, 0))
+        for node in graph.nodes
+    }
+
+
+def _layout_bounds(
+    positions: dict[str, np.ndarray],
+    radii: dict[str, float],
+    *,
+    padding: float = 0.0,
+) -> tuple[float, float, float, float]:
+    """Return bounding box including node radii."""
+    min_x = min(float(positions[node][0]) - float(radii[node]) - padding for node in positions)
+    max_x = max(float(positions[node][0]) + float(radii[node]) + padding for node in positions)
+    min_y = min(float(positions[node][1]) - float(radii[node]) - padding for node in positions)
+    max_y = max(float(positions[node][1]) + float(radii[node]) + padding for node in positions)
+    return min_x, max_x, min_y, max_y
+
+
+def _ensure_node_spacing(
+    positions: dict[str, np.ndarray],
+    radii: dict[str, float],
+    *,
+    padding: float = 24.0,
+    iterations: int = 220,
+) -> dict[str, np.ndarray]:
+    """Repel overlapping nodes until their effective circles no longer collide."""
+    nodes = list(positions)
+    if len(nodes) < 2:
+        return {node: np.asarray(pos, dtype=float).copy() for node, pos in positions.items()}
+
+    adjusted = {node: np.asarray(pos, dtype=float).copy() for node, pos in positions.items()}
+    anchors = {node: pos.copy() for node, pos in adjusted.items()}
+
+    for _ in range(iterations):
+        disp = {node: np.zeros(2, dtype=float) for node in nodes}
+        moved = False
+        for idx, node_a in enumerate(nodes):
+            for node_b in nodes[idx + 1 :]:
+                delta = adjusted[node_b] - adjusted[node_a]
+                dist = float(np.linalg.norm(delta))
+                target = float(radii[node_a] + radii[node_b] + padding)
+                if dist >= target:
+                    continue
+                direction = _normalize_vec(
+                    delta,
+                    fallback=np.array([1.0 + 0.17 * idx, 0.35 + 0.11 * (idx + 1)], dtype=float),
+                )
+                push = 0.5 * (target - dist + 1e-3)
+                disp[node_a] -= direction * push
+                disp[node_b] += direction * push
+                moved = True
+        if not moved:
+            break
+        for node in nodes:
+            adjusted[node] += 0.55 * disp[node] + 0.04 * (anchors[node] - adjusted[node])
+
+    center = np.mean(np.stack([adjusted[node] for node in nodes]), axis=0)
+    for node in nodes:
+        adjusted[node] = adjusted[node] - center
+
+    scale = 1.0
+    for idx, node_a in enumerate(nodes):
+        for node_b in nodes[idx + 1 :]:
+            delta = adjusted[node_b] - adjusted[node_a]
+            dist = float(np.linalg.norm(delta))
+            target = float(radii[node_a] + radii[node_b] + padding)
+            if dist <= 1e-6:
+                scale = max(scale, 2.0)
+            elif dist < target:
+                scale = max(scale, target / dist)
+    if scale > 1.0:
+        for node in nodes:
+            adjusted[node] = adjusted[node] * (scale * 1.05)
+
+    return adjusted
+
+
+def _initial_component_layout(component_graph) -> dict[str, np.ndarray]:
+    """Create a stable initial layout for one connected component."""
+    nx = _import_networkx()
+    nodes = list(component_graph.nodes)
+    n_nodes = len(nodes)
+    if n_nodes == 1:
+        return {str(nodes[0]): np.array([0.0, 0.0], dtype=float)}
+    if n_nodes == 2:
+        return {
+            str(nodes[0]): np.array([-90.0, 0.0], dtype=float),
+            str(nodes[1]): np.array([90.0, 0.0], dtype=float),
+        }
+
+    undirected = component_graph.to_undirected()
+    degree = dict(undirected.degree())
+    try:
+        closeness = nx.closeness_centrality(undirected)
+    except Exception:
+        closeness = {str(node): 0.0 for node in undirected.nodes}
+    center = max(
+        undirected.nodes,
+        key=lambda node: (
+            float(closeness.get(node, 0.0)),
+            float(degree.get(node, 0)),
+            str(node),
+        ),
+    )
+    distances = nx.single_source_shortest_path_length(undirected, center)
+    shells: dict[int, list[str]] = {}
+    for node, dist in distances.items():
+        shells.setdefault(int(dist), []).append(str(node))
+    nlist = [
+        sorted(
+            shell_nodes,
+            key=lambda node: (
+                -sum(
+                    1
+                    for nbr in undirected.neighbors(node)
+                    if int(distances.get(nbr, 10**9)) < shell_idx
+                ),
+                -float(degree.get(node, 0)),
+                str(node),
+            ),
+        )
+        for shell_idx, shell_nodes in sorted(shells.items())
+    ]
+    shell_seed = nx.shell_layout(undirected, nlist=nlist, scale=1.0)
+    refined = nx.spring_layout(
+        undirected,
+        pos=shell_seed,
+        seed=42,
+        iterations=400 if n_nodes <= 24 else 520,
+        k=max(0.8, 2.8 / np.sqrt(float(n_nodes))),
+        weight=None,
+    )
+    out = {str(node): np.asarray(refined[node], dtype=float) for node in refined}
+    points = np.stack(list(out.values()))
+    center_point = np.mean(points, axis=0)
+    span = max(float(np.ptp(points[:, 0])), float(np.ptp(points[:, 1])), 1e-6)
+    target_span = max(260.0, 180.0 * np.sqrt(float(n_nodes)))
+    scale = target_span / span
+    for node in out:
+        out[node] = (out[node] - center_point) * scale
+    return out
+
+
+def _pack_component_layouts(
+    component_layouts: Sequence[tuple[dict[str, np.ndarray], dict[str, float]]],
+    *,
+    gap: float = 180.0,
+) -> dict[str, np.ndarray]:
+    """Pack connected components into rows to avoid inter-component overlap."""
+    if not component_layouts:
+        return {}
+    if len(component_layouts) == 1:
+        positions, _ = component_layouts[0]
+        return {node: np.asarray(pos, dtype=float).copy() for node, pos in positions.items()}
+
+    records: list[dict[str, Any]] = []
+    total_area = 0.0
+    for positions, radii in component_layouts:
+        min_x, max_x, min_y, max_y = _layout_bounds(positions, radii, padding=18.0)
+        width = max_x - min_x
+        height = max_y - min_y
+        total_area += width * height
+        records.append(
+            {
+                "positions": positions,
+                "radii": radii,
+                "min_x": min_x,
+                "max_x": max_x,
+                "min_y": min_y,
+                "max_y": max_y,
+                "width": width,
+                "height": height,
+                "area": width * height,
+            }
+        )
+
+    records.sort(key=lambda item: float(item["area"]), reverse=True)
+    target_row_width = max(
+        max(float(item["width"]) for item in records),
+        np.sqrt(max(total_area, 1.0)) * 1.35,
+    )
+
+    packed: dict[str, np.ndarray] = {}
+    cursor_x = 0.0
+    cursor_y = 0.0
+    row_height = 0.0
+    for item in records:
+        width = float(item["width"])
+        height = float(item["height"])
+        if cursor_x > 0.0 and cursor_x + width > target_row_width:
+            cursor_x = 0.0
+            cursor_y += row_height + gap
+            row_height = 0.0
+        shift = np.array(
+            [cursor_x - float(item["min_x"]), cursor_y - float(item["min_y"])],
+            dtype=float,
+        )
+        for node, pos in item["positions"].items():
+            packed[str(node)] = np.asarray(pos, dtype=float) + shift
+        cursor_x += width + gap
+        row_height = max(row_height, height)
+
+    min_x = min(float(pos[0]) for pos in packed.values())
+    max_x = max(float(pos[0]) for pos in packed.values())
+    min_y = min(float(pos[1]) for pos in packed.values())
+    max_y = max(float(pos[1]) for pos in packed.values())
+    center = np.array([(min_x + max_x) * 0.5, (min_y + max_y) * 0.5], dtype=float)
+    for node in packed:
+        packed[node] = packed[node] - center
+    return packed
+
+
+def _network_graph_with_layout(edge_summary: pd.DataFrame) -> tuple[Any, dict[str, np.ndarray]]:
+    """Build the directed graph and a packed non-overlapping layout for rendering."""
     nx = _import_networkx()
     graph = nx.DiGraph()
     for row in edge_summary.itertuples(index=False):
@@ -1004,15 +1277,36 @@ def _network_graph_with_layout(edge_summary: pd.DataFrame) -> tuple[nx.DiGraph, 
             n_measurements=int(getattr(row, "n_measurements", 1)),
         )
 
-    if graph.number_of_nodes() == 1:
-        only = next(iter(graph.nodes))
-        pos = {only: np.array([0.0, 0.0])}
-    elif graph.number_of_nodes() == 2:
-        nodes = list(graph.nodes)
-        pos = {nodes[0]: np.array([-1.0, 0.0]), nodes[1]: np.array([1.0, 0.0])}
-    else:
-        pos = nx.kamada_kawai_layout(graph)
-    return graph, pos
+    if graph.number_of_nodes() == 0:
+        return graph, {}
+
+    undirected = graph.to_undirected()
+    component_layouts: list[tuple[dict[str, np.ndarray], dict[str, float]]] = []
+    for component_nodes in nx.connected_components(undirected):
+        subgraph = graph.subgraph(component_nodes).copy()
+        radii = _layout_node_radii(subgraph)
+        positions = _initial_component_layout(subgraph)
+        positions = _ensure_node_spacing(
+            positions,
+            radii,
+            padding=26.0,
+            iterations=260 if subgraph.number_of_nodes() > 12 else 200,
+        )
+        component_layouts.append((positions, radii))
+
+    packed = _pack_component_layouts(component_layouts)
+    return graph, packed
+
+
+def _png_layout_scale(graph) -> float:
+    """Return an expansion factor for the static PNG network layout."""
+    n_nodes = max(int(graph.number_of_nodes()), 1)
+    n_edges = max(int(graph.number_of_edges()), 0)
+    avg_degree = (2.0 * float(n_edges)) / float(n_nodes)
+    scale = 1.12
+    scale += min(0.42, 0.045 * np.sqrt(max(n_nodes - 3, 0)))
+    scale += min(0.26, 0.035 * max(avg_degree - 1.5, 0.0))
+    return float(scale)
 
 
 def _label_rects_overlap(
@@ -1159,6 +1453,11 @@ def _render_network_png(
         return False
 
     graph, pos = _network_graph_with_layout(edge_summary)
+    png_scale = _png_layout_scale(graph)
+    plot_pos = {
+        node: np.asarray(point, dtype=float) * png_scale
+        for node, point in pos.items()
+    }
 
     node_degree = dict(graph.degree())
     node_sizes = [1400 + 220 * node_degree[node] for node in graph.nodes]
@@ -1205,17 +1504,26 @@ def _render_network_png(
         radius_points = np.sqrt(size / np.pi)
         return radius_points + (12.0 if arrow else 4.0)
 
-    fig_w = max(7.0, 1.8 * graph.number_of_nodes())
-    fig_h = max(5.5, 1.5 * graph.number_of_nodes())
+    if plot_pos:
+        xs = [float(point[0]) for point in plot_pos.values()]
+        ys = [float(point[1]) for point in plot_pos.values()]
+        layout_w = max(xs) - min(xs)
+        layout_h = max(ys) - min(ys)
+    else:
+        layout_w = 800.0
+        layout_h = 600.0
+    fig_w = max(10.5, layout_w / 110.0 + 3.4)
+    fig_h = max(8.0, layout_h / 110.0 + 3.6)
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-    fig.subplots_adjust(left=0.04, right=0.88, top=0.92, bottom=0.16)
+    fig.subplots_adjust(left=0.035, right=0.88, top=0.93, bottom=0.145)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#f6f7fb")
+    ax.margins(x=0.10, y=0.12)
 
     for node_a, node_b, data, curvature in edge_metadata:
         nx.draw_networkx_edges(
             graph,
-            pos,
+            plot_pos,
             ax=ax,
             edgelist=[(node_a, node_b)],
             width=_edge_width(abs(float(data.get("calc_DDG", 0.0)))),
@@ -1230,7 +1538,7 @@ def _render_network_png(
         )
     node_artist = nx.draw_networkx_nodes(
         graph,
-        pos,
+        plot_pos,
         ax=ax,
         node_size=node_sizes,
         node_color=node_colors,
@@ -1243,7 +1551,7 @@ def _render_network_png(
 
     label_text = nx.draw_networkx_labels(
         graph,
-        pos,
+        plot_pos,
         ax=ax,
         font_size=10,
         font_weight="bold",
@@ -1259,8 +1567,8 @@ def _render_network_png(
     label_specs_display: list[dict[str, np.ndarray]] = []
     label_payloads: list[str] = []
     for node_a, node_b, data, curvature in edge_metadata:
-        start = np.asarray(pos[node_a], dtype=float)
-        end = np.asarray(pos[node_b], dtype=float)
+        start = np.asarray(plot_pos[node_a], dtype=float)
+        end = np.asarray(plot_pos[node_b], dtype=float)
         midpoint = 0.5 * (start + end)
         direction = end - start
         norm_dir = np.linalg.norm(direction)
@@ -1574,6 +1882,8 @@ def _render_absolute_sorted_png(
 
     try:
         import matplotlib.pyplot as plt
+        from matplotlib import cm, colormaps
+        from matplotlib import colors as mcolors
     except Exception:
         return False
 
@@ -1595,9 +1905,8 @@ def _render_absolute_sorted_png(
     if abs_df.empty:
         return False
 
-    abs_df["DG_shifted"] = pd.to_numeric(abs_df[dg_col], errors="coerce") + float(
-        absolute_offset
-    )
+    abs_df["DG_raw"] = pd.to_numeric(abs_df[dg_col], errors="coerce")
+    abs_df["DG_shifted"] = abs_df["DG_raw"] + float(absolute_offset)
     if err_col is not None:
         abs_df["DG_uncertainty"] = pd.to_numeric(abs_df[err_col], errors="coerce").fillna(0.0)
     else:
@@ -1630,14 +1939,26 @@ def _render_absolute_sorted_png(
     y = np.arange(n_rows)
     calc_values = abs_df["DG_shifted"].to_numpy(dtype=float)
     calc_errs = abs_df["DG_uncertainty"].to_numpy(dtype=float)
+    color_values = abs_df["DG_raw"].to_numpy(dtype=float)
     labels = abs_df[label_col].astype(str).tolist()
+
+    finite_colors = color_values[np.isfinite(color_values)]
+    if finite_colors.size:
+        limit = max(abs(float(np.nanmin(finite_colors))), abs(float(np.nanmax(finite_colors))), 1e-8)
+        bar_norm = mcolors.TwoSlopeNorm(vmin=-limit, vcenter=0.0, vmax=limit)
+        bar_cmap = colormaps["bwr_r"]
+        bar_colors = [bar_cmap(bar_norm(value)) if np.isfinite(value) else "#88c0d0" for value in color_values]
+    else:
+        bar_norm = None
+        bar_cmap = None
+        bar_colors = ["#88c0d0"] * len(calc_values)
 
     ax.barh(
         y,
         calc_values,
         xerr=calc_errs,
         height=0.66,
-        color="#88c0d0",
+        color=bar_colors,
         edgecolor="#0b7285",
         linewidth=1.2,
         error_kw={
@@ -1686,6 +2007,12 @@ def _render_absolute_sorted_png(
     ax.set_ylabel("Ligand", color="#102a43")
     if title:
         ax.set_title(title, fontsize=14, fontweight="bold", color="#102a43", pad=14)
+
+    if bar_cmap is not None and bar_norm is not None:
+        scalar = cm.ScalarMappable(norm=bar_norm, cmap=bar_cmap)
+        scalar.set_array([])
+        cbar = fig.colorbar(scalar, ax=ax, shrink=0.86, pad=0.02)
+        cbar.set_label("MLE ΔG (kcal/mol)", rotation=90)
 
     if not np.isclose(float(absolute_offset), 0.0):
         ax.text(
@@ -1944,23 +2271,28 @@ def _render_dashboard_html(
     assets = ligand_assets or {}
     mapping_assets = edge_assets or {}
 
-    canvas_w = 1100
-    canvas_h = 760
-    pad_x = 110
-    pad_y = 90
-    note_h = 120
-    plot_h = canvas_h - note_h
+    if pos:
+        xs = [float(coord[0]) for coord in pos.values()]
+        ys = [float(coord[1]) for coord in pos.values()]
+        layout_min_x, layout_max_x = min(xs), max(xs)
+        layout_min_y, layout_max_y = min(ys), max(ys)
+        layout_span_x = max(layout_max_x - layout_min_x, 1.0)
+        layout_span_y = max(layout_max_y - layout_min_y, 1.0)
+    else:
+        layout_min_x = layout_min_y = -300.0
+        layout_max_x = layout_max_y = 300.0
+        layout_span_x = layout_span_y = 600.0
 
-    xs = [float(coord[0]) for coord in pos.values()]
-    ys = [float(coord[1]) for coord in pos.values()]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-    span_x = max(max_x - min_x, 1e-8)
-    span_y = max(max_y - min_y, 1e-8)
+    pad_x = max(110, int(0.10 * layout_span_x))
+    pad_y = max(90, int(0.11 * layout_span_y))
+    note_h = 120
+    canvas_w = int(max(1100, layout_span_x + 2.0 * pad_x))
+    plot_h = int(max(640, layout_span_y + 2.0 * pad_y))
+    canvas_h = plot_h + note_h
 
     def _to_xy(point: np.ndarray) -> tuple[float, float]:
-        x = pad_x + ((float(point[0]) - min_x) / span_x) * (canvas_w - 2 * pad_x)
-        y = pad_y + ((max_y - float(point[1])) / span_y) * (plot_h - 2 * pad_y)
+        x = pad_x + (float(point[0]) - layout_min_x)
+        y = pad_y + (layout_max_y - float(point[1]))
         return x, y
 
     def _edge_curvature(node_a: str, node_b: str) -> float:
@@ -2086,6 +2418,7 @@ def _render_dashboard_html(
             if merge_bidirectional
             else "Direction mode: split stored directions"
         ),
+        "Use mouse wheel to zoom and drag the background to pan",
         "Click a node to pin a ligand structure card",
         "Arrows point from labelA to labelB",
         "Edge labels show ΔΔG ± s.e. (kcal/mol)",
@@ -2098,10 +2431,19 @@ def _render_dashboard_html(
     ]
 
     network_svg_html = f"""
-      <svg viewBox="0 0 {canvas_w} {canvas_h}" role="img" aria-label="{html.escape(title or 'BATTER RBFE network')}">
-        {''.join(edge_svg)}
-        {''.join(label_svg)}
-        {''.join(node_svg)}
+      <div class="network-toolbar">
+        <button class="zoom-btn" id="network-zoom-in" type="button">+</button>
+        <button class="zoom-btn" id="network-zoom-out" type="button">−</button>
+        <button class="zoom-btn" id="network-fit" type="button">Fit</button>
+        <button class="zoom-btn" id="network-reset" type="button">Reset</button>
+      </div>
+      <svg id="network-svg" viewBox="0 0 {canvas_w} {canvas_h}" role="img" aria-label="{html.escape(title or 'BATTER RBFE network')}">
+        <rect id="network-pan-surface" x="0" y="0" width="{canvas_w}" height="{canvas_h}" fill="#f6f7fb" />
+        <g id="network-viewport">
+          {''.join(edge_svg)}
+          {''.join(label_svg)}
+          {''.join(node_svg)}
+        </g>
       </svg>
     """
 
@@ -2279,9 +2621,15 @@ def _render_dashboard_html(
     .panel {{ display: none; background: white; border: 1px solid #d9e2ec; border-radius: 16px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); overflow: hidden; }}
     .panel.active {{ display: block; }}
     .panel svg {{ width: 100%; height: auto; display: block; background: #f6f7fb; }}
+    .network-toolbar {{ display: flex; justify-content: flex-end; gap: 8px; padding: 12px 14px 0; }}
+    .zoom-btn {{ border: 1px solid #cbd2d9; background: white; color: #334e68; border-radius: 10px; padding: 6px 12px; font-size: 13px; cursor: pointer; }}
+    .zoom-btn:hover {{ border-color: #9fb3c8; background: #f8fafc; }}
     .notes {{ margin: 12px 14px 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 10px; background: rgba(255,255,255,0.96); color: #486581; white-space: pre-line; }}
     .empty-panel {{ padding: 36px 24px; font-size: 15px; color: #52606d; text-align: center; }}
     .node, .bar-row, .edge-path, .edge-label {{ cursor: pointer; }}
+    #network-svg {{ touch-action: none; user-select: none; }}
+    #network-pan-surface {{ cursor: grab; }}
+    #network-pan-surface.dragging {{ cursor: grabbing; }}
     #stickies {{ position: fixed; inset: 0; pointer-events: none; z-index: 1000; }}
     .sticky-note {{ position: fixed; width: 280px; min-height: 160px; background: #fff9c4; border: 1px solid #e0c56e; border-radius: 14px; box-shadow: 0 16px 38px rgba(15, 23, 42, 0.18); padding: 12px 12px 10px; pointer-events: auto; }}
     .sticky-note.edge-note {{ width: 360px; background: #eef2ff; border-color: #c7d2fe; }}
@@ -2317,6 +2665,56 @@ def _render_dashboard_html(
     const edgeAssets = {json.dumps(mapping_assets)};
     const stickyRoot = document.getElementById('stickies');
     let zCounter = 1000;
+    const networkSvg = document.getElementById('network-svg');
+    const networkViewport = document.getElementById('network-viewport');
+    const networkPanSurface = document.getElementById('network-pan-surface');
+    let networkScale = 1.0;
+    let networkPanX = 0.0;
+    let networkPanY = 0.0;
+    let networkDragging = false;
+    let dragStartX = 0.0;
+    let dragStartY = 0.0;
+    let dragPanX = 0.0;
+    let dragPanY = 0.0;
+
+    function updateNetworkTransform() {{
+      if (!networkViewport) return;
+      networkViewport.setAttribute(
+        'transform',
+        `translate(${{networkPanX.toFixed(2)}} ${{networkPanY.toFixed(2)}}) scale(${{networkScale.toFixed(5)}})`
+      );
+    }}
+
+    function fitNetworkViewport(extraScale = 1.0) {{
+      if (!networkSvg || !networkViewport) return;
+      const bbox = networkViewport.getBBox();
+      const viewBox = networkSvg.viewBox.baseVal;
+      if (!bbox || bbox.width <= 0 || bbox.height <= 0) return;
+      const pad = 32.0;
+      const scaleX = (viewBox.width - 2.0 * pad) / bbox.width;
+      const scaleY = (viewBox.height - 2.0 * pad) / bbox.height;
+      networkScale = Math.min(scaleX, scaleY) * extraScale;
+      networkPanX = viewBox.x + (viewBox.width - bbox.width * networkScale) * 0.5 - bbox.x * networkScale;
+      networkPanY = viewBox.y + (viewBox.height - bbox.height * networkScale) * 0.5 - bbox.y * networkScale;
+      updateNetworkTransform();
+    }}
+
+    function zoomNetwork(factor, clientX = null, clientY = null) {{
+      if (!networkSvg || !networkViewport) return;
+      const viewBox = networkSvg.viewBox.baseVal;
+      const rect = networkSvg.getBoundingClientRect();
+      const anchorX = clientX === null ? rect.left + rect.width * 0.5 : clientX;
+      const anchorY = clientY === null ? rect.top + rect.height * 0.5 : clientY;
+      const svgX = viewBox.x + ((anchorX - rect.left) / rect.width) * viewBox.width;
+      const svgY = viewBox.y + ((anchorY - rect.top) / rect.height) * viewBox.height;
+      const nextScale = Math.min(8.0, Math.max(0.25, networkScale * factor));
+      const localX = (svgX - networkPanX) / networkScale;
+      const localY = (svgY - networkPanY) / networkScale;
+      networkScale = nextScale;
+      networkPanX = svgX - localX * networkScale;
+      networkPanY = svgY - localY * networkScale;
+      updateNetworkTransform();
+    }}
 
     function stickyBodyHtml(label) {{
       const asset = ligandAssets[label] || {{}};
@@ -2455,6 +2853,57 @@ def _render_dashboard_html(
       }});
     }});
 
+    document.getElementById('network-zoom-in')?.addEventListener('click', () => {{
+      zoomNetwork(1.18);
+    }});
+    document.getElementById('network-zoom-out')?.addEventListener('click', () => {{
+      zoomNetwork(1.0 / 1.18);
+    }});
+    document.getElementById('network-fit')?.addEventListener('click', () => {{
+      fitNetworkViewport(1.0);
+    }});
+    document.getElementById('network-reset')?.addEventListener('click', () => {{
+      fitNetworkViewport(0.96);
+    }});
+
+    networkSvg?.addEventListener('wheel', (event) => {{
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.12 : (1.0 / 1.12);
+      zoomNetwork(factor, event.clientX, event.clientY);
+    }}, {{ passive: false }});
+
+    networkSvg?.addEventListener('pointerdown', (event) => {{
+      if (!networkPanSurface) return;
+      if (event.target && event.target.closest('.node, .edge-path, .edge-label')) {{
+        return;
+      }}
+      networkDragging = true;
+      dragStartX = event.clientX;
+      dragStartY = event.clientY;
+      dragPanX = networkPanX;
+      dragPanY = networkPanY;
+      networkPanSurface.classList.add('dragging');
+      networkSvg.setPointerCapture(event.pointerId);
+    }});
+
+    networkSvg?.addEventListener('pointermove', (event) => {{
+      if (!networkDragging) return;
+      networkPanX = dragPanX + (event.clientX - dragStartX);
+      networkPanY = dragPanY + (event.clientY - dragStartY);
+      updateNetworkTransform();
+    }});
+
+    function endNetworkDrag(event) {{
+      if (!networkDragging) return;
+      networkDragging = false;
+      networkPanSurface?.classList.remove('dragging');
+      try {{ networkSvg?.releasePointerCapture(event.pointerId); }} catch (_e) {{}}
+    }}
+
+    networkSvg?.addEventListener('pointerup', endNetworkDrag);
+    networkSvg?.addEventListener('pointercancel', endNetworkDrag);
+    networkSvg?.addEventListener('pointerleave', endNetworkDrag);
+
     document.querySelectorAll('.tab').forEach((button) => {{
       button.addEventListener('click', () => {{
         document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'));
@@ -2463,6 +2912,8 @@ def _render_dashboard_html(
         document.getElementById(button.dataset.panel).classList.add('active');
       }});
     }});
+
+    fitNetworkViewport(0.96);
   </script>
 </body>
 </html>

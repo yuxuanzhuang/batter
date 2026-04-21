@@ -26,3 +26,18 @@ def test_resolve_execution_run_defaults_to_latest(tmp_path: Path) -> None:
 def test_resolve_execution_run_raises_when_no_runs(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="No executions found"):
         api_mod._resolve_execution_run(tmp_path, None)
+
+
+def test_api_read_cinnabar_outputs_reads_bundle(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "cinnabar"
+    bundle_dir.mkdir()
+    relative_csv = bundle_dir / "cinnabar_relative.csv"
+    absolute_csv = bundle_dir / "cinnabar_absolute.csv"
+    relative_csv.write_text("labelA,labelB,DDG (kcal/mol)\nA,B,1.0\n")
+    absolute_csv.write_text("label,DG (kcal/mol)\nA,-5.0\n")
+
+    relative_df, absolute_df = api_mod.read_cinnabar_outputs(bundle_dir)
+
+    assert list(relative_df.columns) == ["labelA", "labelB", "DDG (kcal/mol)"]
+    assert absolute_df is not None
+    assert list(absolute_df.columns) == ["label", "DG (kcal/mol)"]

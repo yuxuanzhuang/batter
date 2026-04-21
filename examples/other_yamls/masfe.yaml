@@ -8,15 +8,15 @@ create:
   # JSON dictionary mapping ligand names to input files
   ligand_input: reference/ligands_dict.json
   # ligand force field / parameter set
-  ligand_ff: openff-2.2.1
+  ligand_ff: openff-2.3.0
   # partial-charge model used during ligand parameterization
-  param_charge: am1bcc
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
   # rebuild staged files even if they already exist
   overwrite: false
   # solvent padding used to create the ligand-only water box
   solv_shell: 15.0
   # explicit water model passed to tleap
-  water_model: TIP3P
+  water_model: OPC
 
 run:
   # top-level work directory for executions/ and results/

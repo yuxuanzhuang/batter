@@ -256,6 +256,44 @@ def test_resolve_label_positions_separates_overlapping_boxes() -> None:
     )
 
 
+def test_network_graph_layout_spreads_dense_nodes() -> None:
+    rows = []
+    labels = [f"L{i}" for i in range(8)]
+    for idx, label_a in enumerate(labels):
+        for label_b in labels[idx + 1 :]:
+            rows.append(
+                {
+                    "labelA": label_a,
+                    "labelB": label_b,
+                    "calc_DDG": 1.0,
+                    "calc_dDDG": 0.2,
+                    "n_runs": 1,
+                    "n_measurements": 1,
+                }
+            )
+    edge_summary = pd.DataFrame(rows)
+
+    graph, pos = cinnabar_mod._network_graph_with_layout(edge_summary)
+    radii = cinnabar_mod._layout_node_radii(graph)
+
+    assert len(pos) == len(labels)
+    nodes = list(pos)
+    for idx, node_a in enumerate(nodes):
+        for node_b in nodes[idx + 1 :]:
+            dist = float(cinnabar_mod.np.linalg.norm(pos[node_b] - pos[node_a]))
+            assert dist >= radii[node_a] + radii[node_b] - 1e-6
+
+
+def test_png_layout_scale_grows_for_dense_networks() -> None:
+    sparse_graph = cinnabar_mod._import_networkx().DiGraph()
+    sparse_graph.add_edge("A", "B")
+    sparse_graph.add_edge("B", "C")
+
+    dense_graph = cinnabar_mod._import_networkx().complete_graph(8, create_using=cinnabar_mod._import_networkx().DiGraph())
+
+    assert cinnabar_mod._png_layout_scale(dense_graph) > cinnabar_mod._png_layout_scale(sparse_graph)
+
+
 def test_build_batter_rbfe_cinnabar_by_run_splits_runs(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
@@ -350,6 +388,9 @@ def test_write_cinnabar_outputs_writes_expected_files(
     assert "edgeassets" in dashboard_html
     assert "<polygon points=" in dashboard_html
     assert "marker-end=" not in dashboard_html
+    assert "network-viewport" in dashboard_html
+    assert "fitnetworkviewport" in dashboard_html
+    assert "network-zoom-in" in dashboard_html
 
 
 def test_write_cinnabar_outputs_manifest_records_split_directionality(
@@ -478,6 +519,51 @@ def test_auto_write_rbfe_cinnabar_for_run_omits_replicate_note_for_single_run(
     export = cinnabar_mod.auto_write_rbfe_cinnabar_for_run(tmp_path, "rep1")
 
     assert export["replicate_note"] is None
+
+
+def test_read_cinnabar_outputs_reads_relative_and_absolute_tables(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "cinnabar"
+    bundle_dir.mkdir()
+    relative = pd.DataFrame(
+        [{"labelA": "A", "labelB": "B", "DDG (kcal/mol)": 1.0}]
+    )
+    absolute = pd.DataFrame(
+        [{"label": "A", "DG (kcal/mol)": -5.0}]
+    )
+    relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
+    absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+
+    relative_df, absolute_df = cinnabar_mod.read_cinnabar_outputs(bundle_dir)
+
+    pd.testing.assert_frame_equal(relative_df, relative)
+    assert absolute_df is not None
+    pd.testing.assert_frame_equal(absolute_df, absolute)
+
+
+def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "cinnabar"
+    out_dir = tmp_path / "exported"
+    bundle_dir.mkdir()
+    relative = pd.DataFrame(
+        [{"labelA": "A", "labelB": "B", "DDG (kcal/mol)": 1.0}]
+    )
+    absolute = pd.DataFrame(
+        [{"label": "A", "DG (kcal/mol)": -5.0}]
+    )
+    relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
+    absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+
+    outputs = cinnabar_mod.convert_cinnabar_outputs_to_csv(
+        bundle_dir,
+        out_dir,
+        relative_name="rbfe_relative.csv",
+        absolute_name="rbfe_absolute.csv",
+    )
+
+    assert outputs["relative_csv"] == out_dir / "rbfe_relative.csv"
+    assert outputs["absolute_csv"] == out_dir / "rbfe_absolute.csv"
+    pd.testing.assert_frame_equal(pd.read_csv(outputs["relative_csv"]), relative)
+    pd.testing.assert_frame_equal(pd.read_csv(outputs["absolute_csv"]), absolute)
 
 
 @pytest.fixture()

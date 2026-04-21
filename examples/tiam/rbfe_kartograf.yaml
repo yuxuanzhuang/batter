@@ -6,7 +6,7 @@
     system_name: tiam1
     protein_input: tiam1.pdb
     ligand_input: ligands_dict_aligned.json
-    ligand_ff: openff-2.3.0-rc2
+    ligand_ff: openff-2.3.0
     retain_lig_prot: true
     param_charge: "openff-gnn-am1bcc-1.0.0.pt"
     anchor_atoms:
@@ -14,9 +14,9 @@
       - name CA and resid 861
       - name CA and resid 916
     overwrite: false
-    receptor_ff: protein.ff14SB
+    receptor_ff: protein.ff19SB
     solv_shell: 15.0
-    water_model: TIP3P
+    water_model: OPC
 
   run:
     output_folder: tiam_rbfe_aligned_new

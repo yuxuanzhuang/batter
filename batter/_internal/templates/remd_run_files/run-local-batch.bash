@@ -145,7 +145,7 @@ if (( remaining_steps > 0 )); then
             exit 1
         }
         current_mdin="${PFOLDER}/${win}/mdin-current"
-        write_mdin_current "$tmpl" "$run_steps" "$first_run" > "$current_mdin"
+        write_mdin_current "$tmpl" "$run_steps" "$first_run" "$current_mdin" > "$current_mdin"
 
         # Determine restart input per window (prefer rolling restarts, else eq.rst7)
         rst_in="eq.rst7"

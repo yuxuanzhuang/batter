@@ -337,7 +337,7 @@ if (( remaining_steps > 0 )); then
     out_tag=$(printf "md-%02d" $((seg_idx + 1)))
     echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
 
-    write_mdin_current "$tmpl" "$run_steps" "$first_run" > "$mdin_current"
+    write_mdin_current "$tmpl" "$run_steps" "$first_run" "$mdin_current" > "$mdin_current"
 
     # Preflight: must be able to write restart output in this directory
     : > .write_test.$$ 2>/dev/null || {

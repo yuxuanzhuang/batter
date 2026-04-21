@@ -18,11 +18,11 @@ create:
   # JSON dictionary mapping ligand names to input files
   ligand_input: reference/ligands_dict.json
   # ligand force field / parameter set
-  ligand_ff: openff-2.2.1
+  ligand_ff: openff-2.3.0
   # keep the staged ligand+protein complex files after setup
   retain_lig_prot: true
   # partial-charge model used during ligand parameterization
-  param_charge: am1bcc
+  param_charge: "openff-gnn-am1bcc-1.0.0.pt"
 
   # three receptor anchor atoms used to define BATTER restraints
   anchor_atoms:
@@ -34,13 +34,13 @@ create:
   # rebuild staged files even if they already exist
   overwrite: false
   # AMBER force field for the receptor
-  receptor_ff: protein.ff14SB
+  receptor_ff: protein.ff19SB
   # AMBER lipid force field for membrane systems
   lipid_ff: lipid21
   # solvent padding used when BATTER needs to add solvent around a ligand-only system
   solv_shell: 15.0
   # explicit water model passed to tleap
-  water_model: TIP3P
+  water_model: OPC
 
 run:
   # top-level work directory for executions/ and results/

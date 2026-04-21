@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import traceback
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -21,7 +22,7 @@ def _run_pipeline_task(
     pipeline: Pipeline,
     backend: "LocalBackend",
     sys: SimSystem,
-) -> Tuple[str, Mapping[str, ExecResult] | None, BaseException | None]:
+) -> Tuple[str, Mapping[str, ExecResult] | None, BaseException | None, str | None]:
     """Execute ``pipeline`` for a single system.
 
     Parameters
@@ -35,15 +36,70 @@ def _run_pipeline_task(
 
     Returns
     -------
-    tuple of (str, Mapping[str, ExecResult] or None, BaseException or None)
-        Three-tuple containing the system name, the step results if successful,
-        and the raised exception otherwise. The structure is joblib-friendly.
+    tuple of (str, Mapping[str, ExecResult] or None, BaseException or None, str or None)
+        Tuple containing the system name, the step results if successful, the
+        raised exception otherwise, and formatted traceback text captured inside
+        the worker process. The structure is joblib-friendly.
     """
     try:
         results = pipeline.run(backend, sys)
-        return sys.name, results, None
+        return sys.name, results, None, None
     except BaseException as exc:  # pragma: no cover - propagated to parent
-        return sys.name, None, exc
+        return sys.name, None, exc, traceback.format_exc()
+
+
+def _format_failure_detail(exc: BaseException, tb_text: str | None = None) -> str:
+    """Return useful failure detail for parent-process logging."""
+    text = (tb_text or "").strip()
+    if text:
+        return text
+    return "".join(traceback.format_exception_only(type(exc), exc)).strip()
+
+
+def _failure_summary_line(exc: BaseException, tb_text: str | None = None) -> str:
+    """Return a compact one-line failure summary."""
+    detail = _format_failure_detail(exc, tb_text)
+    for line in reversed(detail.splitlines()):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return repr(exc)
+
+
+def _log_failures(
+    prefix: str,
+    errors: Mapping[str, BaseException],
+    tracebacks: Mapping[str, str | None],
+) -> None:
+    """Log per-system failure details in the parent process."""
+    logger.error(
+        "{}: {} system(s) failed: {}",
+        prefix,
+        len(errors),
+        ", ".join(errors.keys()),
+    )
+    for name, exc in errors.items():
+        logger.error(
+            "{}: failure details for {}\n{}",
+            prefix,
+            name,
+            _format_failure_detail(exc, tracebacks.get(name)),
+        )
+
+
+def _parallel_failure_message(
+    prefix: str,
+    errors: Mapping[str, BaseException],
+    tracebacks: Mapping[str, str | None],
+) -> str:
+    """Build an exception message that keeps per-system failure causes visible."""
+    lines = [
+        f"{prefix}: failures encountered for {', '.join(errors.keys())}",
+        "Failure summaries:",
+    ]
+    for name, exc in errors.items():
+        lines.append(f"- {name}: {_failure_summary_line(exc, tracebacks.get(name))}")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -158,20 +214,18 @@ class LocalBackend(ExecBackend):
             )
             out: Dict[str, Mapping[str, ExecResult]] = {}
             errors: Dict[str, BaseException] = {}
+            traces: Dict[str, str | None] = {}
             for sys in systems:
                 try:
                     out[sys.name] = pipeline.run(self, sys)
                 except BaseException as exc:  # pragma: no cover - passthrough
                     errors[sys.name] = exc
+                    traces[sys.name] = traceback.format_exc()
             if errors:
-                logger.error(
-                    "LOCAL(parallel-serial): {} system(s) failed: {}",
-                    len(errors),
-                    ", ".join(errors),
-                )
+                prefix = "LOCAL(parallel-serial)"
+                _log_failures(prefix, errors, traces)
                 raise RuntimeError(
-                    "LOCAL(parallel-serial): failures encountered for "
-                    f"{', '.join(errors)}"
+                    _parallel_failure_message(prefix, errors, traces)
                 ) from next(iter(errors.values()))
             return out
 
@@ -188,7 +242,9 @@ class LocalBackend(ExecBackend):
             description,
         )
 
-        results: List[Tuple[str, Mapping[str, ExecResult] | None, BaseException | None]] = Parallel(
+        results: List[
+            Tuple[str, Mapping[str, ExecResult] | None, BaseException | None, str | None]
+        ] = Parallel(
             n_jobs=worker_cap,
             backend=backend,
             prefer=prefer,
@@ -202,23 +258,21 @@ class LocalBackend(ExecBackend):
 
         out: Dict[str, Mapping[str, ExecResult]] = {}
         errors: Dict[str, BaseException] = {}
+        traces: Dict[str, str | None] = {}
 
-        for name, res, err in results:
+        for name, res, err, tb_text in results:
             if err is None and res is not None:
                 out[name] = res
                 logger.debug("LOCAL(parallel): finished {}", name)
             else:
                 errors[name] = err or RuntimeError("Unknown error")
+                traces[name] = tb_text
 
         if errors:
-            logger.error(
-                "LOCAL(parallel): {} system(s) failed: {}",
-                len(errors),
-                ", ".join(errors.keys()),
-            )
+            prefix = "LOCAL(parallel)"
+            _log_failures(prefix, errors, traces)
             raise RuntimeError(
-                "LOCAL(parallel): failures encountered for "
-                f"{', '.join(errors.keys())}"
+                _parallel_failure_message(prefix, errors, traces)
             ) from next(iter(errors.values()))
 
         return out
