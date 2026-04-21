@@ -373,6 +373,7 @@ def test_write_cinnabar_outputs_writes_expected_files(
         "cinnabar_relative_csv",
         "cinnabar_absolute_csv",
         "absolute_sorted_png",
+        "dg_values_png",
         "network_png",
         "dashboard_html",
         "manifest_json",
@@ -472,7 +473,16 @@ def test_write_cinnabar_outputs_also_writes_cycle_closure(
         "cycle_closure_nodes_csv",
         "cycle_closure_edges_csv",
         "cycle_closure_cycles_csv",
+        "cycle_closure_network_png",
+        "cycle_closure_dg_values_png",
+        "cycle_closure_errors_png",
     }.issubset(outputs)
+    for key in (
+        "cycle_closure_network_png",
+        "cycle_closure_dg_values_png",
+        "cycle_closure_errors_png",
+    ):
+        assert outputs[key].exists()
     assert set(pd.read_csv(outputs["cycle_closure_nodes_csv"])["label"]) == {
         "A",
         "B",
@@ -481,7 +491,18 @@ def test_write_cinnabar_outputs_also_writes_cycle_closure(
     manifest = json.loads(outputs["manifest_json"].read_text())
     assert manifest["cycle_closure"]["status"] == "success"
     assert manifest["cycle_closure"]["n_cycles"] >= 1
+    assert manifest["cycle_closure"]["edge_value_column"] == "ddG_wcc1"
+    assert manifest["cycle_closure"]["node_value_column"] == "dG_wcc1"
     assert "cycle_closure_nodes_csv" in manifest["outputs"]
+    assert "cycle_closure_network_png" in manifest["outputs"]
+
+    dashboard_html = outputs["dashboard_html"].read_text().lower()
+    assert "cycle-closure-toggle" in dashboard_html
+    assert "show-cycle-closure" in dashboard_html
+    assert "result-view-cycle" in dashboard_html
+    assert "cycle_closure_network.png" in dashboard_html
+    assert "cycle_closure_dg_values.png" in dashboard_html
+    assert "cycle_closure_errors.png" in dashboard_html
 
 
 def test_write_cinnabar_outputs_can_disable_cycle_closure(

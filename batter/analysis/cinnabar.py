@@ -2259,6 +2259,7 @@ def _render_dashboard_html(
     ligand_assets: dict[str, dict[str, str]] | None = None,
     edge_assets: dict[str, dict[str, str]] | None = None,
     absolute_warning: str | None = None,
+    cycle_closure_assets: dict[str, str] | None = None,
 ) -> bool:
     """Render a single tabbed HTML dashboard for network and absolute plots."""
     if edge_summary is None or edge_summary.empty:
@@ -2272,6 +2273,10 @@ def _render_dashboard_html(
     color_mode = color_meta.get("mode", "degree")
     assets = ligand_assets or {}
     mapping_assets = edge_assets or {}
+    cc_assets = cycle_closure_assets or {}
+    has_cycle_closure_view = bool(
+        cc_assets.get("network_png") or cc_assets.get("dg_values_png")
+    )
 
     if pos:
         xs = [float(coord[0]) for coord in pos.values()]
@@ -2433,6 +2438,7 @@ def _render_dashboard_html(
     ]
 
     network_svg_html = f"""
+      <div class="result-view result-view-uncorrected">
       <div class="network-toolbar">
         <button class="zoom-btn" id="network-zoom-in" type="button">+</button>
         <button class="zoom-btn" id="network-zoom-out" type="button">−</button>
@@ -2447,7 +2453,22 @@ def _render_dashboard_html(
           {''.join(node_svg)}
         </g>
       </svg>
+      </div>
     """
+
+    cycle_network_html = ""
+    if cc_assets.get("network_png"):
+        cycle_network_html = f"""
+      <div class="result-view result-view-cycle">
+        <img class="dashboard-plot" src="{html.escape(cc_assets['network_png'])}" alt="Cycle-closure adjusted RBFE network" />
+      </div>
+        """
+    cycle_network_notes = [
+        "Cycle-closure view",
+        "Network uses adjusted ΔΔG values from weighted cycle closure when available",
+        "Edge labels show adjusted ΔΔG ± pair error (kcal/mol)",
+        "Node colors use cycle-closed dG values",
+    ]
 
     absolute_panel_html = "<div class=\"empty-panel\">Absolute ΔG values are not available for this network.</div>"
     absolute_notes = [
@@ -2608,6 +2629,40 @@ def _render_dashboard_html(
                 if not np.isclose(float(absolute_offset), 0.0):
                     absolute_notes.append(f"Applied offset: {float(absolute_offset):+.2f} kcal/mol")
 
+    cycle_absolute_items: list[str] = []
+    if cc_assets.get("dg_values_png"):
+        cycle_absolute_items.append(
+            f"<img class=\"dashboard-plot\" src=\"{html.escape(cc_assets['dg_values_png'])}\" "
+            "alt=\"Cycle-closure adjusted dG values\" />"
+        )
+    if cc_assets.get("errors_png"):
+        cycle_absolute_items.append(
+            f"<img class=\"dashboard-plot\" src=\"{html.escape(cc_assets['errors_png'])}\" "
+            "alt=\"Cycle-closure error summary\" />"
+        )
+    cycle_absolute_html = ""
+    if cycle_absolute_items:
+        cycle_absolute_html = (
+            "<div class=\"result-view result-view-cycle\">"
+            + "".join(cycle_absolute_items)
+            + "</div>"
+        )
+    cycle_absolute_notes = [
+        "Cycle-closure view",
+        "dG plot shows cycle-closed ligand values with path-dependent error bars",
+        "Orange markers/error bars show path-independent node error",
+        "Error summary shows ligand path errors and per-edge pair errors",
+    ]
+
+    cycle_toggle_html = ""
+    if has_cycle_closure_view:
+        cycle_toggle_html = """
+      <label class="mode-toggle">
+        <input id="cycle-closure-toggle" type="checkbox" />
+        <span>Cycle closure</span>
+      </label>
+        """
+
     html_text = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2620,9 +2675,15 @@ def _render_dashboard_html(
     .tabbar {{ display: flex; gap: 10px; margin-bottom: 14px; justify-content: center; }}
     .tab {{ border: 1px solid #cbd2d9; background: white; color: #334e68; border-radius: 999px; padding: 8px 16px; font-size: 14px; cursor: pointer; }}
     .tab.active {{ background: #7c3aed; border-color: #7c3aed; color: white; }}
+    .mode-toggle {{ display: inline-flex; align-items: center; gap: 7px; border: 1px solid #cbd2d9; background: white; color: #334e68; border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer; }}
+    .mode-toggle input {{ width: 15px; height: 15px; margin: 0; accent-color: #7c3aed; }}
     .panel {{ display: none; background: white; border: 1px solid #d9e2ec; border-radius: 16px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); overflow: hidden; }}
     .panel.active {{ display: block; }}
     .panel svg {{ width: 100%; height: auto; display: block; background: #f6f7fb; }}
+    .dashboard-plot {{ width: 100%; height: auto; display: block; background: #f6f7fb; }}
+    .result-view-cycle {{ display: none; }}
+    body.show-cycle-closure .result-view-uncorrected {{ display: none; }}
+    body.show-cycle-closure .result-view-cycle {{ display: block; }}
     .network-toolbar {{ display: flex; justify-content: flex-end; gap: 8px; padding: 12px 14px 0; }}
     .zoom-btn {{ border: 1px solid #cbd2d9; background: white; color: #334e68; border-radius: 10px; padding: 6px 12px; font-size: 13px; cursor: pointer; }}
     .zoom-btn:hover {{ border-color: #9fb3c8; background: #f8fafc; }}
@@ -2651,14 +2712,21 @@ def _render_dashboard_html(
     <div class="tabbar">
       <button class="tab active" data-panel="network-panel">Network</button>
       <button class="tab" data-panel="absolute-panel">Absolute</button>
+      {cycle_toggle_html}
     </div>
     <section id="network-panel" class="panel active">
       {network_svg_html}
-      <div class="notes">{html.escape(chr(10).join(network_notes))}</div>
+      {cycle_network_html}
+      <div class="notes result-view result-view-uncorrected">{html.escape(chr(10).join(network_notes))}</div>
+      <div class="notes result-view result-view-cycle">{html.escape(chr(10).join(cycle_network_notes))}</div>
     </section>
     <section id="absolute-panel" class="panel">
+      <div class="result-view result-view-uncorrected">
       {absolute_panel_html}
-      <div class="notes">{html.escape(chr(10).join(absolute_notes))}</div>
+      </div>
+      {cycle_absolute_html}
+      <div class="notes result-view result-view-uncorrected">{html.escape(chr(10).join(absolute_notes))}</div>
+      <div class="notes result-view result-view-cycle">{html.escape(chr(10).join(cycle_absolute_notes))}</div>
     </section>
   </div>
   <div id="stickies"></div>
@@ -2915,6 +2983,13 @@ def _render_dashboard_html(
       }});
     }});
 
+    document.getElementById('cycle-closure-toggle')?.addEventListener('change', (event) => {{
+      document.body.classList.toggle('show-cycle-closure', event.target.checked);
+      if (!event.target.checked) {{
+        fitNetworkViewport(0.96);
+      }}
+    }});
+
     fitNetworkViewport(0.96);
   </script>
 </body>
@@ -2960,11 +3035,288 @@ def _first_present_column(df: pd.DataFrame, names: Sequence[str]) -> str | None:
     return None
 
 
+def _last_numbered_column(df: pd.DataFrame, prefix: str, fallback: str) -> str:
+    numbered = [
+        column
+        for column in df.columns
+        if re.fullmatch(rf"{re.escape(prefix)}\d+", str(column))
+    ]
+    if numbered:
+        return max(numbered, key=lambda column: int(str(column).removeprefix(prefix)))
+    if fallback in df.columns:
+        return fallback
+    raise ValueError(f"Cycle-closure results are missing '{fallback}'.")
+
+
+def _cycle_closure_plot_frames(
+    closure: Any,
+) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
+    node_value_col = _last_numbered_column(closure.node_results, "dG_wcc", "dG_cc")
+    edge_value_col = _last_numbered_column(closure.edge_results, "ddG_wcc", "ddG_cc")
+
+    nodes = closure.node_results.copy()
+    edges = closure.edge_results.copy()
+    absolute_summary = pd.DataFrame(
+        {
+            "label": nodes["label"].astype(str),
+            "DG (kcal/mol)": pd.to_numeric(nodes[node_value_col], errors="raise"),
+            "uncertainty (kcal/mol)": pd.to_numeric(
+                nodes.get("path_dependent_error", 0.0),
+                errors="coerce",
+            ).fillna(0.0),
+            "path_independent_error": pd.to_numeric(
+                nodes.get("path_independent_error", 0.0),
+                errors="coerce",
+            ).fillna(0.0),
+        }
+    )
+    edge_summary = pd.DataFrame(
+        {
+            "labelA": edges["labelA"].astype(str),
+            "labelB": edges["labelB"].astype(str),
+            "calc_DDG": pd.to_numeric(edges[edge_value_col], errors="raise"),
+            "calc_dDDG": pd.to_numeric(
+                edges.get("pair_error", 0.0),
+                errors="coerce",
+            ).fillna(0.0),
+            "n_runs": 1,
+            "n_measurements": 1,
+        }
+    )
+    return edge_summary, absolute_summary, edge_value_col, node_value_col
+
+
+def _render_cycle_closure_dg_png(
+    node_results: pd.DataFrame,
+    out_path: Path,
+    *,
+    value_col: str,
+    title: str = "",
+) -> bool:
+    if node_results is None or node_results.empty:
+        return False
+
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib import cm, colormaps
+        from matplotlib import colors as mcolors
+    except Exception:
+        return False
+
+    required = {"label", value_col}
+    if not required.issubset(node_results.columns):
+        return False
+
+    work = node_results.dropna(subset=["label", value_col]).copy()
+    if work.empty:
+        return False
+    work["value"] = pd.to_numeric(work[value_col], errors="coerce")
+    work["path_dependent_error"] = pd.to_numeric(
+        work.get("path_dependent_error", 0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    work["path_independent_error"] = pd.to_numeric(
+        work.get("path_independent_error", 0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    work = (
+        work.dropna(subset=["value"])
+        .sort_values("value", kind="stable")
+        .reset_index(drop=True)
+    )
+    if work.empty:
+        return False
+
+    labels = work["label"].astype(str).tolist()
+    values = work["value"].to_numpy(dtype=float)
+    dep_err = work["path_dependent_error"].to_numpy(dtype=float)
+    indep_err = work["path_independent_error"].to_numpy(dtype=float)
+
+    n_rows = len(work)
+    fig_w = max(8.2, 0.28 * n_rows + 7.2)
+    fig_h = max(6.0, 0.44 * n_rows + 1.8)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), constrained_layout=True)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("#f6f7fb")
+
+    finite_values = values[np.isfinite(values)]
+    if finite_values.size:
+        limit = max(
+            abs(float(np.nanmin(finite_values))),
+            abs(float(np.nanmax(finite_values))),
+            1e-8,
+        )
+        norm = mcolors.TwoSlopeNorm(vmin=-limit, vcenter=0.0, vmax=limit)
+        cmap = colormaps["bwr_r"]
+        colors = [
+            cmap(norm(value)) if np.isfinite(value) else "#88c0d0"
+            for value in values
+        ]
+    else:
+        norm = None
+        cmap = None
+        colors = ["#88c0d0"] * len(values)
+
+    y = np.arange(n_rows)
+    ax.barh(
+        y,
+        values,
+        xerr=dep_err,
+        height=0.66,
+        color=colors,
+        edgecolor="#0b7285",
+        linewidth=1.2,
+        error_kw={
+            "ecolor": "#0b7285",
+            "elinewidth": 1.4,
+            "capsize": 3,
+            "capthick": 1.4,
+        },
+        label="cycle-closed dG ± path-dependent error",
+        zorder=2,
+    )
+    ax.errorbar(
+        values,
+        y,
+        xerr=indep_err,
+        fmt="o",
+        mfc="white",
+        mec="#bc6c25",
+        ecolor="#bc6c25",
+        elinewidth=1.2,
+        capsize=3,
+        markersize=5.2,
+        label="path-independent error",
+        zorder=4,
+    )
+    ax.axvline(
+        0.0,
+        color="#7b8794",
+        linewidth=1.0,
+        linestyle="--",
+        alpha=0.9,
+        zorder=1,
+    )
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.invert_yaxis()
+    ax.grid(axis="x", color="#d9e2ec", linewidth=0.8, alpha=0.9)
+    ax.grid(axis="y", visible=False)
+    ax.set_xlabel(f"Cycle-closed dG from {value_col} (kcal/mol)", color="#102a43")
+    ax.set_ylabel("Ligand", color="#102a43")
+    if title:
+        ax.set_title(title, fontsize=14, fontweight="bold", color="#102a43", pad=14)
+    if cmap is not None and norm is not None:
+        scalar = cm.ScalarMappable(norm=norm, cmap=cmap)
+        scalar.set_array([])
+        cbar = fig.colorbar(scalar, ax=ax, shrink=0.86, pad=0.02)
+        cbar.set_label("Cycle-closed dG (kcal/mol)", rotation=90)
+    ax.legend(frameon=False, loc="lower right")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out_path.exists()
+
+
+def _render_cycle_closure_error_png(
+    node_results: pd.DataFrame,
+    edge_results: pd.DataFrame,
+    out_path: Path,
+    *,
+    title: str = "",
+) -> bool:
+    if node_results is None or node_results.empty:
+        return False
+
+    try:
+        import matplotlib.pyplot as plt
+    except Exception:
+        return False
+
+    nodes = node_results.copy()
+    if "label" not in nodes.columns:
+        return False
+    nodes["path_dependent_error"] = pd.to_numeric(
+        nodes.get("path_dependent_error", 0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    nodes["path_independent_error"] = pd.to_numeric(
+        nodes.get("path_independent_error", 0.0),
+        errors="coerce",
+    ).fillna(0.0)
+    nodes = nodes.sort_values("path_dependent_error", ascending=False, kind="stable")
+
+    edges = edge_results.copy() if edge_results is not None else pd.DataFrame()
+    if not edges.empty and {"labelA", "labelB", "pair_error"}.issubset(edges.columns):
+        edges["edge"] = edges["labelA"].astype(str) + "→" + edges["labelB"].astype(str)
+        edges["pair_error"] = pd.to_numeric(
+            edges["pair_error"],
+            errors="coerce",
+        ).fillna(0.0)
+        edges = edges.sort_values("pair_error", ascending=False, kind="stable")
+    else:
+        edges = pd.DataFrame(columns=["edge", "pair_error"])
+
+    fig_h = max(6.4, 0.28 * max(len(nodes), len(edges), 1) + 3.5)
+    fig, axes = plt.subplots(1, 2, figsize=(13.0, fig_h), constrained_layout=True)
+    fig.patch.set_facecolor("white")
+    for ax in axes:
+        ax.set_facecolor("#f6f7fb")
+
+    y_nodes = np.arange(len(nodes))
+    axes[0].barh(
+        y_nodes - 0.18,
+        nodes["path_dependent_error"].to_numpy(dtype=float),
+        height=0.34,
+        color="#0b7285",
+        label="path-dependent",
+    )
+    axes[0].barh(
+        y_nodes + 0.18,
+        nodes["path_independent_error"].to_numpy(dtype=float),
+        height=0.34,
+        color="#bc6c25",
+        label="path-independent",
+    )
+    axes[0].set_yticks(y_nodes)
+    axes[0].set_yticklabels(nodes["label"].astype(str).tolist(), fontsize=9)
+    axes[0].invert_yaxis()
+    axes[0].set_xlabel("Node error (kcal/mol)")
+    axes[0].set_title("Ligand errors")
+    axes[0].grid(axis="x", color="#d9e2ec", linewidth=0.8, alpha=0.9)
+    axes[0].legend(frameon=False)
+
+    y_edges = np.arange(len(edges))
+    axes[1].barh(
+        y_edges,
+        edges["pair_error"].to_numpy(dtype=float),
+        height=0.58,
+        color="#7c3aed",
+    )
+    axes[1].set_yticks(y_edges)
+    axes[1].set_yticklabels(edges["edge"].astype(str).tolist(), fontsize=8)
+    axes[1].invert_yaxis()
+    axes[1].set_xlabel("Pair error (kcal/mol)")
+    axes[1].set_title("Edge errors")
+    axes[1].grid(axis="x", color="#d9e2ec", linewidth=0.8, alpha=0.9)
+
+    if title:
+        fig.suptitle(title, fontsize=15, fontweight="bold", color="#102a43")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    return out_path.exists()
+
+
 def _write_cycle_closure_outputs(
     result: CinnabarConversionResult,
     out_root: Path,
     *,
     enabled: bool,
+    title: str = "",
+    merge_bidirectional: bool = True,
 ) -> tuple[dict[str, Any], dict[str, Path]]:
     if not enabled:
         return {"status": "disabled"}, {}
@@ -3001,6 +3353,39 @@ def _write_cycle_closure_outputs(
         "cycle_closure_edges_csv": edge_path,
         "cycle_closure_cycles_csv": cycle_path,
     }
+
+    cc_edge_summary, cc_absolute_summary, edge_value_col, node_value_col = (
+        _cycle_closure_plot_frames(closure)
+    )
+    cc_title = title if not title else f"{title}: cycle closure"
+    network_path = out_root / "cycle_closure_network.png"
+    if _render_network_png(
+        cc_edge_summary,
+        network_path,
+        absolute_summary=cc_absolute_summary,
+        title=cc_title,
+        merge_bidirectional=merge_bidirectional,
+    ):
+        paths["cycle_closure_network_png"] = network_path
+
+    dg_path = out_root / "cycle_closure_dg_values.png"
+    if _render_cycle_closure_dg_png(
+        closure.node_results,
+        dg_path,
+        value_col=node_value_col,
+        title=cc_title,
+    ):
+        paths["cycle_closure_dg_values_png"] = dg_path
+
+    error_path = out_root / "cycle_closure_errors.png"
+    if _render_cycle_closure_error_png(
+        closure.node_results,
+        closure.edge_results,
+        error_path,
+        title=cc_title,
+    ):
+        paths["cycle_closure_errors_png"] = error_path
+
     return (
         {
             "status": "success",
@@ -3009,6 +3394,8 @@ def _write_cycle_closure_outputs(
             "n_cycles": int(len(closure.cycles)),
             "iterations": list(closure.iterations),
             "converged": list(closure.converged),
+            "edge_value_column": edge_value_col,
+            "node_value_column": node_value_col,
         },
         paths,
     )
@@ -3041,18 +3428,20 @@ def write_cinnabar_outputs(
     result.edge_summary.to_csv(edge_path, index=False)
     outputs["edge_summary_csv"] = edge_path
 
+    title = method_name if not target_name else f"{method_name}: {target_name}"
+
     cycle_closure_info, cycle_closure_outputs = _write_cycle_closure_outputs(
         result,
         out_root,
         enabled=write_cycle_closure,
+        title=title,
+        merge_bidirectional=result.merge_bidirectional,
     )
     outputs.update(cycle_closure_outputs)
 
     rel_path = out_root / "cinnabar_relative.csv"
     result.femap.get_relative_dataframe().to_csv(rel_path, index=False)
     outputs["cinnabar_relative_csv"] = rel_path
-
-    title = method_name if not target_name else f"{method_name}: {target_name}"
 
     if result.exp_summary is not None:
         exp_path = out_root / "experimental_summary.csv"
@@ -3073,6 +3462,9 @@ def write_cinnabar_outputs(
             merge_bidirectional=result.merge_bidirectional,
         ):
             outputs["absolute_sorted_png"] = abs_plot_path
+            dg_values_path = out_root / "cinnabar_dg_values.png"
+            dg_values_path.write_bytes(abs_plot_path.read_bytes())
+            outputs["dg_values_png"] = dg_values_path
 
     graph_path = out_root / "cinnabar_network.png"
     rendered = _render_network_png(
@@ -3090,6 +3482,19 @@ def write_cinnabar_outputs(
             rendered = False
     if rendered:
         outputs["network_png"] = graph_path
+
+    cycle_closure_dashboard_assets = {
+        "network_png": outputs["cycle_closure_network_png"].name,
+    } if "cycle_closure_network_png" in outputs else {}
+    if "cycle_closure_dg_values_png" in outputs:
+        cycle_closure_dashboard_assets["dg_values_png"] = outputs[
+            "cycle_closure_dg_values_png"
+        ].name
+    if "cycle_closure_errors_png" in outputs:
+        cycle_closure_dashboard_assets["errors_png"] = outputs[
+            "cycle_closure_errors_png"
+        ].name
+
     dashboard_html_path = out_root / "cinnabar_dashboard.html"
     if _render_dashboard_html(
         result.edge_summary,
@@ -3102,6 +3507,7 @@ def write_cinnabar_outputs(
         ligand_assets=result.ligand_assets,
         edge_assets=result.edge_assets,
         absolute_warning=result.absolute_warning,
+        cycle_closure_assets=cycle_closure_dashboard_assets,
     ):
         outputs["dashboard_html"] = dashboard_html_path
 
