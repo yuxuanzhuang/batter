@@ -202,7 +202,8 @@ def read_cinnabar_outputs(
     -------
     tuple[pandas.DataFrame, pandas.DataFrame]
         Relative and absolute tables. Each table includes uncorrected columns
-        and cycle-closure columns when those outputs are present.
+        and cycle-closure columns when those outputs are present, with free-energy
+        units stored in a ``unit`` column.
     """
     from batter.analysis.cinnabar import read_cinnabar_outputs as _read
 

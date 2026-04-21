@@ -658,26 +658,29 @@ def test_read_cinnabar_outputs_returns_merged_relative_and_absolute_tables(
 
     relative_df, absolute_df = cinnabar_mod.read_cinnabar_outputs(bundle_dir)
 
-    assert relative_df.loc[0, "DDG_uncorrected (kcal/mol)"] == pytest.approx(1.0)
-    assert relative_df.loc[0, "uncertainty_uncorrected (kcal/mol)"] == pytest.approx(
-        0.2
-    )
-    assert relative_df.loc[0, "DDG_cycle_closure (kcal/mol)"] == pytest.approx(1.2)
-    assert relative_df.loc[0, "uncertainty_cycle_closure (kcal/mol)"] == pytest.approx(
-        0.5
-    )
-    assert absolute_df.loc[0, "DG_uncorrected (kcal/mol)"] == pytest.approx(-5.0)
-    assert absolute_df.loc[0, "uncertainty_uncorrected (kcal/mol)"] == pytest.approx(
-        0.1
-    )
-    assert absolute_df.loc[0, "DG_cycle_closure (kcal/mol)"] == pytest.approx(-5.2)
+    assert "DDG (kcal/mol)" not in relative_df.columns
+    assert "uncertainty (kcal/mol)" not in relative_df.columns
+    assert relative_df.loc[0, "unit"] == "kcal/mol"
+    assert relative_df.loc[0, "DDG"] == pytest.approx(1.0)
+    assert relative_df.loc[0, "uncertainty"] == pytest.approx(0.2)
+    assert relative_df.loc[0, "DDG_uncorrected"] == pytest.approx(1.0)
+    assert relative_df.loc[0, "uncertainty_uncorrected"] == pytest.approx(0.2)
+    assert relative_df.loc[0, "DDG_cycle_closure"] == pytest.approx(1.2)
+    assert relative_df.loc[0, "uncertainty_cycle_closure"] == pytest.approx(0.5)
+    assert "DG (kcal/mol)" not in absolute_df.columns
+    assert absolute_df.loc[0, "unit"] == "kcal/mol"
+    assert absolute_df.loc[0, "DG"] == pytest.approx(-5.0)
+    assert absolute_df.loc[0, "uncertainty"] == pytest.approx(0.1)
+    assert absolute_df.loc[0, "DG_uncorrected"] == pytest.approx(-5.0)
+    assert absolute_df.loc[0, "uncertainty_uncorrected"] == pytest.approx(0.1)
+    assert absolute_df.loc[0, "DG_cycle_closure"] == pytest.approx(-5.2)
     assert absolute_df.loc[
         0,
-        "uncertainty_cycle_closure_path_dependent (kcal/mol)",
+        "uncertainty_cycle_closure_path_dependent",
     ] == pytest.approx(0.3)
     assert absolute_df.loc[
         0,
-        "uncertainty_cycle_closure_path_independent (kcal/mol)",
+        "uncertainty_cycle_closure_path_independent",
     ] == pytest.approx(0.4)
 
 
@@ -709,9 +712,11 @@ def test_convert_cinnabar_outputs_to_csv_writes_merged_csvs(tmp_path: Path) -> N
     assert outputs["absolute_csv"] == out_dir / "rbfe_absolute.csv"
     relative_out = pd.read_csv(outputs["relative_csv"])
     absolute_out = pd.read_csv(outputs["absolute_csv"])
-    assert relative_out.loc[0, "DDG_uncorrected (kcal/mol)"] == pytest.approx(1.0)
-    assert relative_out.loc[0, "DDG_cycle_closure (kcal/mol)"] == pytest.approx(1.2)
-    assert absolute_out.loc[0, "DG_uncorrected (kcal/mol)"] == pytest.approx(-5.0)
+    assert relative_out.loc[0, "unit"] == "kcal/mol"
+    assert relative_out.loc[0, "DDG_uncorrected"] == pytest.approx(1.0)
+    assert relative_out.loc[0, "DDG_cycle_closure"] == pytest.approx(1.2)
+    assert absolute_out.loc[0, "unit"] == "kcal/mol"
+    assert absolute_out.loc[0, "DG_uncorrected"] == pytest.approx(-5.0)
 
 
 @pytest.fixture()

@@ -51,10 +51,12 @@ def test_api_read_cinnabar_outputs_reads_bundle(tmp_path: Path) -> None:
 
     relative_df, absolute_df = api_mod.read_cinnabar_outputs(bundle_dir)
 
-    assert relative_df.loc[0, "DDG_uncorrected (kcal/mol)"] == pytest.approx(1.0)
-    assert relative_df.loc[0, "DDG_cycle_closure (kcal/mol)"] == pytest.approx(1.2)
-    assert relative_df.loc[0, "uncertainty_cycle_closure (kcal/mol)"] == pytest.approx(
-        0.5
-    )
-    assert absolute_df.loc[0, "DG_uncorrected (kcal/mol)"] == pytest.approx(-5.0)
-    assert absolute_df.loc[0, "DG_cycle_closure (kcal/mol)"] == pytest.approx(-5.2)
+    assert relative_df.loc[0, "unit"] == "kcal/mol"
+    assert "DDG (kcal/mol)" not in relative_df.columns
+    assert relative_df.loc[0, "DDG_uncorrected"] == pytest.approx(1.0)
+    assert relative_df.loc[0, "DDG_cycle_closure"] == pytest.approx(1.2)
+    assert relative_df.loc[0, "uncertainty_cycle_closure"] == pytest.approx(0.5)
+    assert absolute_df.loc[0, "unit"] == "kcal/mol"
+    assert "DG (kcal/mol)" not in absolute_df.columns
+    assert absolute_df.loc[0, "DG_uncorrected"] == pytest.approx(-5.0)
+    assert absolute_df.loc[0, "DG_cycle_closure"] == pytest.approx(-5.2)

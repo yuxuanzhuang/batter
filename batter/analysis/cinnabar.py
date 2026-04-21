@@ -937,6 +937,39 @@ def _numeric_column(
     return pd.to_numeric(df[column], errors="coerce")
 
 
+def _with_energy_unit_column(
+    df: pd.DataFrame,
+    *,
+    default_unit: str = "kcal/mol",
+) -> pd.DataFrame:
+    out = df.copy()
+    rename: dict[str, str] = {}
+    detected_unit: str | None = None
+    reserved = set(out.columns)
+    for column in out.columns:
+        match = re.fullmatch(r"(.+?)\s*\(([^()]+)\)\s*", str(column))
+        if match is None:
+            continue
+        name, unit_name = match.group(1).strip(), match.group(2).strip()
+        if "mol" not in unit_name.lower():
+            continue
+        detected_unit = detected_unit or unit_name
+        if name and name not in reserved:
+            rename[str(column)] = name
+            reserved.add(name)
+
+    if rename:
+        out = out.rename(columns=rename)
+
+    unit_value = detected_unit or default_unit
+    if "unit" in out.columns:
+        out["unit"] = out["unit"].fillna(unit_value)
+        out.loc[out["unit"].astype(str).str.strip() == "", "unit"] = unit_value
+    else:
+        out["unit"] = unit_value
+    return out
+
+
 def _merge_edge_result_columns(
     target: pd.DataFrame,
     source: pd.DataFrame | None,
@@ -1007,9 +1040,9 @@ def _merge_node_result_columns(
     value_col: str | None,
 ) -> pd.DataFrame:
     out = target.copy()
-    out["DG_cycle_closure (kcal/mol)"] = np.nan
-    out["uncertainty_cycle_closure_path_dependent (kcal/mol)"] = np.nan
-    out["uncertainty_cycle_closure_path_independent (kcal/mol)"] = np.nan
+    out["DG_cycle_closure"] = np.nan
+    out["uncertainty_cycle_closure_path_dependent"] = np.nan
+    out["uncertainty_cycle_closure_path_independent"] = np.nan
     if (
         source is None
         or source.empty
@@ -1023,15 +1056,15 @@ def _merge_node_result_columns(
     work = pd.DataFrame(
         {
             "_label_key": source["label"].astype(str),
-            "DG_cycle_closure (kcal/mol)": pd.to_numeric(
+            "DG_cycle_closure": pd.to_numeric(
                 source[value_col],
                 errors="coerce",
             ),
-            "uncertainty_cycle_closure_path_dependent (kcal/mol)": _numeric_column(
+            "uncertainty_cycle_closure_path_dependent": _numeric_column(
                 source,
                 "path_dependent_error",
             ),
-            "uncertainty_cycle_closure_path_independent (kcal/mol)": _numeric_column(
+            "uncertainty_cycle_closure_path_independent": _numeric_column(
                 source,
                 "path_independent_error",
             ),
@@ -1040,9 +1073,9 @@ def _merge_node_result_columns(
     out["_label_key"] = out["label"].astype(str)
     out = out.drop(
         columns=[
-            "DG_cycle_closure (kcal/mol)",
-            "uncertainty_cycle_closure_path_dependent (kcal/mol)",
-            "uncertainty_cycle_closure_path_independent (kcal/mol)",
+            "DG_cycle_closure",
+            "uncertainty_cycle_closure_path_dependent",
+            "uncertainty_cycle_closure_path_independent",
         ]
     ).merge(work, on="_label_key", how="left")
     return out.drop(columns=["_label_key"])
@@ -1070,23 +1103,25 @@ def _merged_relative_cinnabar_table(root: Path) -> pd.DataFrame:
     out = relative.copy()
     value_col = _first_present_column(
         out,
-        ("DDG (kcal/mol)", "calc_DDG", "ddG", "ddg", "dG", "total_dG"),
+        ("DDG (kcal/mol)", "DDG", "calc_DDG", "ddG", "ddg", "dG", "total_dG"),
     )
     error_col = _first_present_column(
         out,
         (
             "uncertainty (kcal/mol)",
+            "uncertainty",
             "calc_dDDG",
             "dDDG (kcal/mol)",
+            "dDDG",
             "error",
             "stderr",
             "standard_error",
         ),
     )
-    out["DDG_uncorrected (kcal/mol)"] = _numeric_column(out, value_col)
-    out["uncertainty_uncorrected (kcal/mol)"] = _numeric_column(out, error_col)
+    out["DDG_uncorrected"] = _numeric_column(out, value_col)
+    out["uncertainty_uncorrected"] = _numeric_column(out, error_col)
 
-    if out["uncertainty_uncorrected (kcal/mol)"].isna().all():
+    if out["uncertainty_uncorrected"].isna().all():
         out = _merge_edge_result_columns(
             out,
             edge_summary,
@@ -1095,9 +1130,9 @@ def _merged_relative_cinnabar_table(root: Path) -> pd.DataFrame:
             value_out="_edge_summary_value",
             error_out="_edge_summary_error",
         )
-        out["uncertainty_uncorrected (kcal/mol)"] = out[
-            "uncertainty_uncorrected (kcal/mol)"
-        ].combine_first(out["_edge_summary_error"])
+        out["uncertainty_uncorrected"] = out["uncertainty_uncorrected"].combine_first(
+            out["_edge_summary_error"]
+        )
         out = out.drop(columns=["_edge_summary_value", "_edge_summary_error"])
 
     out = _merge_edge_result_columns(
@@ -1109,10 +1144,10 @@ def _merged_relative_cinnabar_table(root: Path) -> pd.DataFrame:
             fallback="ddG_cc",
         ),
         error_col="pair_error",
-        value_out="DDG_cycle_closure (kcal/mol)",
-        error_out="uncertainty_cycle_closure (kcal/mol)",
+        value_out="DDG_cycle_closure",
+        error_out="uncertainty_cycle_closure",
     )
-    return out
+    return _with_energy_unit_column(out)
 
 
 def _merged_absolute_cinnabar_table(root: Path) -> pd.DataFrame:
@@ -1151,14 +1186,16 @@ def _merged_absolute_cinnabar_table(root: Path) -> pd.DataFrame:
         out,
         (
             "uncertainty (kcal/mol)",
+            "uncertainty",
             "dDG (kcal/mol)",
+            "dDG",
             "error",
             "stderr",
             "standard_error",
         ),
     )
-    out["DG_uncorrected (kcal/mol)"] = _numeric_column(out, value_col)
-    out["uncertainty_uncorrected (kcal/mol)"] = _numeric_column(out, error_col)
+    out["DG_uncorrected"] = _numeric_column(out, value_col)
+    out["uncertainty_uncorrected"] = _numeric_column(out, error_col)
     out = _merge_node_result_columns(
         out,
         cycle_nodes,
@@ -1168,7 +1205,7 @@ def _merged_absolute_cinnabar_table(root: Path) -> pd.DataFrame:
             fallback="dG_cc",
         ),
     )
-    return out
+    return _with_energy_unit_column(out)
 
 
 def read_cinnabar_outputs(
