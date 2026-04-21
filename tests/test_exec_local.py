@@ -52,5 +52,20 @@ def test_local_backend_run_parallel_propagates_errors(tmp_path):
     pipeline = Pipeline([Step(name="demo", payload={})])
     systems = [make_system(tmp_path, 0)]
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="boom-sys0"):
         backend.run_parallel(pipeline, systems, max_workers=2, prefer="threads")
+
+
+def test_local_backend_run_parallel_error_message_names_each_failure(tmp_path):
+    backend = LocalBackend()
+    backend.register("demo", _failing_handler)
+
+    pipeline = Pipeline([Step(name="demo", payload={})])
+    systems = [make_system(tmp_path, 0), make_system(tmp_path, 1)]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend.run_parallel(pipeline, systems, max_workers=2, prefer="threads")
+
+    message = str(exc_info.value)
+    assert "sys0: RuntimeError: boom-sys0" in message
+    assert "sys1: RuntimeError: boom-sys1" in message
