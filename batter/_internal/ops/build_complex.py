@@ -39,7 +39,20 @@ from batter._internal.templates import BUILD_FILES_DIR as build_files_orig  # ty
 
 
 def _atom_is_hydrogen(atom) -> bool:
-    """Best-effort hydrogen check for MDAnalysis atoms from PDB/MOL2 inputs."""
+    """Check whether an MDAnalysis atom is hydrogen.
+
+    Parameters
+    ----------
+    atom
+        MDAnalysis atom-like object. The object may expose ``element`` and
+        ``name`` attributes depending on the source topology.
+
+    Returns
+    -------
+    bool
+        ``True`` when the atom is identified as hydrogen from its element or
+        atom name, otherwise ``False``.
+    """
     try:
         element = str(atom.element).strip().upper()
         if element:
@@ -52,7 +65,21 @@ def _atom_is_hydrogen(atom) -> bool:
 
 
 def _sdf_heavy_atom_ordinals(sdf_file: str | Path) -> tuple[int | None, dict[int, int]]:
-    """Return SDF atom count and a map from SDF atom index to heavy-atom ordinal."""
+    """Build a heavy-atom ordinal map for an SDF molecule.
+
+    Parameters
+    ----------
+    sdf_file
+        Path to the ligand SDF file. Hydrogens are preserved when reading so
+        returned indices match the original SDF atom ordering.
+
+    Returns
+    -------
+    tuple[int | None, dict[int, int]]
+        Total SDF atom count and a mapping from original SDF atom index to its
+        zero-based heavy-atom ordinal. Returns ``(None, {})`` when RDKit is not
+        available or the file cannot be read.
+    """
     try:
         from rdkit import Chem
     except Exception:
@@ -84,8 +111,27 @@ def _candidate_ligand_atom_name_string(
     ligand_label: str,
     stage: str,
 ) -> str:
-    """Map RDKit candidate atom indices onto atom names present in the final PDB.
+    """Map RDKit candidate atom indices to final ligand atom names.
 
+    Parameters
+    ----------
+    sdf_file
+        Path to the ligand SDF used to generate candidate atom indices.
+    ligand_atoms
+        MDAnalysis atom group for the ligand as it appears in the final prepared
+        PDB.
+    ligand_label
+        User-facing ligand identifier used for diagnostics.
+    stage
+        Build stage label used for diagnostics.
+
+    Returns
+    -------
+    str
+        Space-separated ligand atom names for VMD anchor selection.
+
+    Notes
+    -----
     ``get_ligand_candidates`` returns RDKit atom indices from the SDF. Those are
     valid only when the final ligand atom list still has the same full-H atom
     order. If hydrogens were removed during prep, map candidates through heavy
