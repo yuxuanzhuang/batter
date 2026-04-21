@@ -75,13 +75,13 @@ custom plots.
 For quick visual checks, call :func:`batter.analysis.remd.plot_trajectory`, which
 renders either a single combined plot or a grid of per-replica subplots.
 
-RBFE Cycle Closure
-==================
+RBFE SFC Correction
+===================
 
-``batter.analysis.cycle_closure`` applies unweighted and uncertainty-weighted
-cycle-closure correction to RBFE networks. It accepts BATTER/Cinnabar-style
+``batter.analysis.cycle_closure`` applies state-function based free-energy
+correction (SFC/WSFC) to RBFE networks. It accepts BATTER/Cinnabar-style
 edge tables with ``labelA``, ``labelB``, ``calc_DDG``, and ``calc_dDDG`` columns,
-or whitespace-delimited WCC-style input files.
+or whitespace-delimited SFC-style input files.
 
 Minimal example::
 

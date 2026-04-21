@@ -1,38 +1,53 @@
-"""Weighted cycle-closure correction for RBFE networks.
+"""State-function based free-energy correction for RBFE networks.
 
 Acknowledgement
 ---------------
-This module rewrites the cycle-closure workflow from the MIT-licensed
-``zlisysu/Weighted_cc`` reference implementation for BATTER's analysis API:
-https://github.com/zlisysu/Weighted_cc
+This module rewrites the matrix-based State-Function Based Free Energy
+Correction (SFC) workflow from the MIT-licensed reference implementation for
+BATTER's analysis API:
+https://github.com/ZheLi-Lab/State-Function-based-free-energy-correction-SFC-
 
-For the WCC method, see Li et al., J. Chem. Inf. Model. 2022.
+Reference
+---------
+Liu, R.; Lai, Y.; Yao, Y.; Huang, W.; Zhong, Y.; Luo, H.-B.; Li, Z.
+State Function-Based Correction: A Simple and Efficient Free-Energy Correction
+Algorithm for Large-Scale Relative Binding Free-Energy Calculations.
+J. Phys. Chem. Lett. https://doi.org/10.1021/acs.jpclett.5c01119
+
+The historical ``cycle_closure_*`` function names are kept for compatibility
+with the existing BATTER Cinnabar integration. They now run SFC/WSFC rather
+than the earlier cycle-enumeration WCC algorithm.
 """
 
 from __future__ import annotations
 
-import heapq
 import math
-from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
 
+import numpy as np
 import pandas as pd
 
 __all__ = [
     "CycleClosureEdge",
     "CycleClosureResult",
+    "StateFunctionCorrectionEdge",
+    "StateFunctionCorrectionResult",
     "calculate_cycle_closure",
+    "calculate_state_function_correction",
     "cycle_closure_from_dataframe",
     "cycle_closure_from_file",
     "read_cycle_closure_file",
+    "read_state_function_correction_file",
+    "state_function_correction_from_dataframe",
+    "state_function_correction_from_file",
 ]
 
 
 @dataclass(frozen=True)
 class CycleClosureEdge:
-    """One directed RBFE edge used as cycle-closure input.
+    """One directed RBFE edge used as SFC input.
 
     Parameters
     ----------
@@ -41,8 +56,8 @@ class CycleClosureEdge:
     ddg
         Relative free energy for ``label_a -> label_b``.
     uncertainties
-        Optional standard-deviation columns. Each value creates one weighted
-        cycle-closure estimate using variance weighting.
+        Optional standard-error columns. Each supplied column creates one WSFC
+        estimate using uncertainty-derived weights.
     """
 
     label_a: str
@@ -53,185 +68,21 @@ class CycleClosureEdge:
 
 @dataclass(frozen=True)
 class CycleClosureResult:
-    """Cycle-closure result tables and metadata."""
+    """SFC result tables and metadata."""
 
     reference: str
     reference_free_energy: float
     node_results: pd.DataFrame
     edge_results: pd.DataFrame
-    cycles: tuple[tuple[str, ...], ...]
-    iterations: tuple[int, ...]
-    converged: tuple[bool, ...]
+    cycles: tuple[tuple[str, ...], ...] = ()
+    iterations: tuple[int, ...] = ()
+    converged: tuple[bool, ...] = ()
+    method: str = "sfc"
+    schemes: tuple[str, ...] = ()
 
 
-class _CycleClosureGraph:
-    def __init__(self, edges: Sequence[CycleClosureEdge]) -> None:
-        if not edges:
-            raise ValueError("Cycle closure requires at least one edge.")
-
-        uncertainty_counts = {len(edge.uncertainties) for edge in edges}
-        if len(uncertainty_counts) != 1:
-            raise ValueError("All cycle-closure edges must use the same uncertainty columns.")
-
-        self.edges = tuple(edges)
-        self.n_estimates = 1 + next(iter(uncertainty_counts))
-        self.nodes: list[str] = []
-        self.adjacency: dict[str, list[str]] = defaultdict(list)
-        self.values: dict[tuple[str, str], list[float]] = {}
-        self.variances: dict[tuple[str, str], list[float]] = {}
-        self.pair_errors: dict[tuple[str, str], float] = {}
-        self.edge_order: list[tuple[str, str]] = []
-        seen_pairs: set[frozenset[str]] = set()
-
-        for edge in self.edges:
-            label_a = str(edge.label_a).strip()
-            label_b = str(edge.label_b).strip()
-            if not label_a or not label_b:
-                raise ValueError("Cycle-closure edge labels cannot be empty.")
-            if label_a == label_b:
-                raise ValueError("Cycle-closure edges cannot connect a ligand to itself.")
-
-            pair_key = frozenset((label_a, label_b))
-            if pair_key in seen_pairs:
-                raise ValueError(
-                    f"Duplicate undirected cycle-closure edge: {label_a!r}, {label_b!r}."
-                )
-            seen_pairs.add(pair_key)
-
-            ddg = float(edge.ddg)
-            if not math.isfinite(ddg):
-                raise ValueError(f"Non-finite cycle-closure ddG for {label_a}->{label_b}.")
-
-            uncertainties = tuple(float(value) for value in edge.uncertainties)
-            if any((not math.isfinite(value)) or value <= 0 for value in uncertainties):
-                raise ValueError(
-                    f"Uncertainties for {label_a}->{label_b} must be finite and > 0."
-                )
-
-            for label in (label_a, label_b):
-                if label not in self.adjacency:
-                    self.nodes.append(label)
-                    self.adjacency[label] = []
-
-            self.adjacency[label_a].append(label_b)
-            self.adjacency[label_b].append(label_a)
-            self.edge_order.append((label_a, label_b))
-
-            values = [ddg for _ in range(self.n_estimates)]
-            reverse_values = [-ddg for _ in range(self.n_estimates)]
-            variances = [1.0, *(value * value for value in uncertainties)]
-            initial_error = uncertainties[0] if uncertainties else 0.0
-
-            self.values[(label_a, label_b)] = values
-            self.values[(label_b, label_a)] = reverse_values
-            self.variances[(label_a, label_b)] = list(variances)
-            self.variances[(label_b, label_a)] = list(variances)
-            self.pair_errors[(label_a, label_b)] = initial_error
-            self.pair_errors[(label_b, label_a)] = initial_error
-
-    def cycles(self) -> tuple[tuple[str, ...], ...]:
-        """Enumerate simple cycles in the same deterministic spirit as WCC."""
-
-        cycles: list[tuple[str, ...]] = []
-        seen: set[tuple[str, ...]] = set()
-        visited = {node: False for node in self.nodes}
-
-        def dfs(start: str, current: str, path: list[str], depth: int) -> None:
-            if depth > 0:
-                visited[current] = True
-            path.append(current)
-
-            if depth > 0 and current == start:
-                if len(path) > 3:
-                    key = tuple(sorted(path[:-1]))
-                    if key not in seen:
-                        cycles.append(tuple(path))
-                        seen.add(key)
-            else:
-                for neighbor in self.adjacency[current]:
-                    if not visited[neighbor]:
-                        dfs(start, neighbor, path, depth + 1)
-
-            path.pop()
-            visited[current] = False
-
-        for node in self.nodes:
-            dfs(node, node, [], 0)
-            visited[node] = True
-
-        return tuple(cycles)
-
-    def cycle_delta(self, cycle: Sequence[str], estimate_index: int) -> tuple[float, int, float]:
-        delta = 0.0
-        variance_sum = 0.0
-        edges = 0
-        for label_a, label_b in zip(cycle, cycle[1:]):
-            delta += self.values[(label_a, label_b)][estimate_index]
-            variance_sum += self.variances[(label_a, label_b)][estimate_index]
-            edges += 1
-        return delta, edges, variance_sum
-
-    def snapshot(self, estimate_index: int) -> dict[tuple[str, str], float]:
-        return {key: values[estimate_index] for key, values in self.values.items()}
-
-    def changed(
-        self,
-        previous: dict[tuple[str, str], float],
-        estimate_index: int,
-        tolerance: float,
-    ) -> bool:
-        return any(
-            abs(previous[key] - values[estimate_index]) > tolerance
-            for key, values in self.values.items()
-        )
-
-    def apply_cycle_closure(
-        self,
-        cycles: Sequence[Sequence[str]],
-        estimate_index: int,
-        *,
-        edge_error_only: bool,
-        max_error_cycle_edges: int,
-    ) -> None:
-        for cycle in cycles:
-            delta, edge_count, variance_sum = self.cycle_delta(cycle, estimate_index)
-            if edge_count == 0:
-                continue
-
-            if edge_error_only:
-                if edge_count > max_error_cycle_edges:
-                    continue
-                cycle_error = abs(delta / math.sqrt(edge_count))
-                for label_a, label_b in zip(cycle, cycle[1:]):
-                    if cycle_error > self.pair_errors[(label_a, label_b)]:
-                        self.pair_errors[(label_a, label_b)] = cycle_error
-                        self.pair_errors[(label_b, label_a)] = cycle_error
-                continue
-
-            if variance_sum <= 0:
-                raise ValueError("Cycle-closure variance sum must be positive.")
-
-            for label_a, label_b in zip(cycle, cycle[1:]):
-                scale = self.variances[(label_a, label_b)][estimate_index] / variance_sum
-                corrected = self.values[(label_a, label_b)][estimate_index] - scale * delta
-                self.values[(label_a, label_b)][estimate_index] = corrected
-                self.values[(label_b, label_a)][estimate_index] = -corrected
-
-    def edge_dataframe(self) -> pd.DataFrame:
-        records: list[dict[str, float | str]] = []
-        for label_a, label_b in self.edge_order:
-            record: dict[str, float | str] = {
-                "labelA": label_a,
-                "labelB": label_b,
-                "ddG_cc": self.values[(label_a, label_b)][0],
-            }
-            for estimate_index in range(1, self.n_estimates):
-                record[f"ddG_wcc{estimate_index}"] = self.values[(label_a, label_b)][
-                    estimate_index
-                ]
-            record["pair_error"] = self.pair_errors[(label_a, label_b)]
-            records.append(record)
-        return pd.DataFrame.from_records(records)
+StateFunctionCorrectionEdge = CycleClosureEdge
+StateFunctionCorrectionResult = CycleClosureResult
 
 
 def _coerce_edges(
@@ -240,90 +91,224 @@ def _coerce_edges(
     coerced: list[CycleClosureEdge] = []
     for edge in edges:
         if isinstance(edge, CycleClosureEdge):
-            coerced.append(edge)
-            continue
-        if len(edge) < 3:
-            raise ValueError("Cycle-closure edge sequences must contain at least 3 values.")
-        label_a, label_b, ddg, *uncertainties = edge
-        coerced.append(
-            CycleClosureEdge(
+            candidate = edge
+        else:
+            if len(edge) < 3:
+                raise ValueError("SFC edge sequences must contain at least 3 values.")
+            label_a, label_b, ddg, *uncertainties = edge
+            candidate = CycleClosureEdge(
                 label_a=str(label_a),
                 label_b=str(label_b),
                 ddg=float(ddg),
                 uncertainties=tuple(float(value) for value in uncertainties),
             )
+
+        label_a = str(candidate.label_a).strip()
+        label_b = str(candidate.label_b).strip()
+        if not label_a or not label_b:
+            raise ValueError("SFC edge labels cannot be empty.")
+        if label_a == label_b:
+            raise ValueError("SFC edges cannot connect a ligand to itself.")
+        if not math.isfinite(float(candidate.ddg)):
+            raise ValueError(f"Non-finite SFC ddG for {label_a}->{label_b}.")
+
+        uncertainties = tuple(float(value) for value in candidate.uncertainties)
+        if any((not math.isfinite(value)) or value <= 0 for value in uncertainties):
+            raise ValueError(
+                f"Uncertainties for {label_a}->{label_b} must be finite and > 0."
+            )
+        coerced.append(
+            CycleClosureEdge(
+                label_a=label_a,
+                label_b=label_b,
+                ddg=float(candidate.ddg),
+                uncertainties=uncertainties,
+            )
         )
+
+    if not coerced:
+        raise ValueError("SFC requires at least one edge.")
+
+    uncertainty_counts = {len(edge.uncertainties) for edge in coerced}
+    if len(uncertainty_counts) != 1:
+        raise ValueError("All SFC edges must use the same uncertainty columns.")
+
     return tuple(coerced)
 
 
-def _shortest_error_paths(
-    graph: _CycleClosureGraph,
-    reference: str,
-) -> tuple[dict[str, float], dict[str, list[str]]]:
-    distances = {node: math.inf for node in graph.nodes}
-    previous: dict[str, str | None] = {node: None for node in graph.nodes}
-    distances[reference] = 0.0
-    queue: list[tuple[float, str]] = [(0.0, reference)]
+def _ordered_labels(
+    edges: Sequence[CycleClosureEdge],
+    reference: str | None,
+) -> list[str]:
+    labels: list[str] = []
+    for edge in edges:
+        for label in (edge.label_a, edge.label_b):
+            if label not in labels:
+                labels.append(label)
 
-    while queue:
-        distance, node = heapq.heappop(queue)
-        if distance > distances[node]:
+    if reference is None:
+        return labels
+
+    reference = str(reference).strip()
+    if reference not in labels:
+        raise ValueError(f"Reference ligand {reference!r} is not present in the graph.")
+    return [reference, *[label for label in labels if label != reference]]
+
+
+def _design_matrix(
+    edges: Sequence[CycleClosureEdge],
+    labels: Sequence[str],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    label_index = {label: idx for idx, label in enumerate(labels)}
+    n_edges = len(edges)
+    n_labels = len(labels)
+    n_uncertainty_cols = len(edges[0].uncertainties)
+
+    a_matrix = np.zeros((n_edges, n_labels), dtype=float)
+    b_vector = np.zeros(n_edges, dtype=float)
+    uncertainty_matrix = np.zeros((n_edges, n_uncertainty_cols), dtype=float)
+
+    for row_idx, edge in enumerate(edges):
+        idx_a = label_index[edge.label_a]
+        idx_b = label_index[edge.label_b]
+        a_matrix[row_idx, idx_a] = -1.0
+        a_matrix[row_idx, idx_b] = 1.0
+        b_vector[row_idx] = edge.ddg
+        for col_idx, uncertainty in enumerate(edge.uncertainties):
+            uncertainty_matrix[row_idx, col_idx] = uncertainty
+
+    return a_matrix, b_vector, uncertainty_matrix
+
+
+def _validate_connected_system(a_matrix: np.ndarray, n_labels: int) -> None:
+    rank = int(np.linalg.matrix_rank(a_matrix))
+    if rank < n_labels - 1:
+        raise ValueError(
+            "SFC requires a connected RBFE graph; the design matrix is rank "
+            f"deficient (rank={rank}, expected at least {n_labels - 1})."
+        )
+
+
+def _uncertainty_weights(uncertainties: np.ndarray) -> np.ndarray:
+    total = float(np.sum(uncertainties))
+    if not math.isfinite(total) or total <= 0:
+        raise ValueError("SFC uncertainty weights require positive uncertainties.")
+    normalized = uncertainties / total
+    return 1.0 / np.square(normalized)
+
+
+def _solve_state_function(
+    a_matrix: np.ndarray,
+    b_vector: np.ndarray,
+    *,
+    weights: np.ndarray | None,
+    reference_index: int,
+    reference_free_energy: float,
+    reference_weight: float,
+) -> np.ndarray:
+    n_labels = a_matrix.shape[1]
+    ref_row = np.zeros((1, n_labels), dtype=float)
+    ref_row[0, reference_index] = 1.0
+    a_aug = np.vstack([a_matrix, ref_row])
+    b_aug = np.concatenate([b_vector, [float(reference_free_energy)]])
+
+    if weights is None:
+        weights_aug = np.ones(a_aug.shape[0], dtype=float)
+        weights_aug[-1] = float(reference_weight)
+    else:
+        if len(weights) != len(b_vector):
+            raise ValueError("SFC weights must match the number of RBFE edges.")
+        weights_aug = np.concatenate([np.asarray(weights, dtype=float), [reference_weight]])
+
+    if np.any(~np.isfinite(weights_aug)) or np.any(weights_aug <= 0):
+        raise ValueError("SFC weights must be finite and > 0.")
+
+    sqrt_weights = np.sqrt(weights_aug)
+    weighted_a = a_aug * sqrt_weights[:, None]
+    weighted_b = b_aug * sqrt_weights
+    solution, *_ = np.linalg.lstsq(weighted_a, weighted_b, rcond=None)
+
+    # A constant shift leaves every predicted ddG unchanged and makes the
+    # reported reference free energy exact instead of merely high-weighted.
+    solution = solution + (float(reference_free_energy) - solution[reference_index])
+    return solution
+
+
+def _edge_dataframe(
+    edges: Sequence[CycleClosureEdge],
+    labels: Sequence[str],
+    scheme_vectors: dict[str, np.ndarray],
+    selected_scheme: str,
+) -> pd.DataFrame:
+    label_index = {label: idx for idx, label in enumerate(labels)}
+    records: list[dict[str, float | str]] = []
+
+    for edge in edges:
+        idx_a = label_index[edge.label_a]
+        idx_b = label_index[edge.label_b]
+        record: dict[str, float | str] = {
+            "labelA": edge.label_a,
+            "labelB": edge.label_b,
+        }
+        for scheme, vector in scheme_vectors.items():
+            predicted = float(vector[idx_b] - vector[idx_a])
+            record[f"ddG_{scheme}"] = predicted
+            record[f"pair_error_{scheme}"] = abs(float(edge.ddg) - predicted)
+        record["pair_error"] = float(record[f"pair_error_{selected_scheme}"])
+        records.append(record)
+
+    return pd.DataFrame.from_records(records)
+
+
+def _node_error_vectors(
+    edges: Sequence[CycleClosureEdge],
+    labels: Sequence[str],
+    vector: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    label_index = {label: idx for idx, label in enumerate(labels)}
+    incident_errors: list[list[float]] = [[] for _ in labels]
+    for edge in edges:
+        idx_a = label_index[edge.label_a]
+        idx_b = label_index[edge.label_b]
+        predicted = float(vector[idx_b] - vector[idx_a])
+        residual = abs(float(edge.ddg) - predicted)
+        incident_errors[idx_a].append(residual)
+        incident_errors[idx_b].append(residual)
+
+    max_error = np.zeros(len(labels), dtype=float)
+    rms_error = np.zeros(len(labels), dtype=float)
+    for idx, errors in enumerate(incident_errors):
+        if not errors:
             continue
-        for neighbor in graph.adjacency[node]:
-            edge_error = graph.pair_errors[(node, neighbor)]
-            candidate = distance + edge_error * edge_error
-            if candidate < distances[neighbor]:
-                distances[neighbor] = candidate
-                previous[neighbor] = node
-                heapq.heappush(queue, (candidate, neighbor))
-
-    paths: dict[str, list[str]] = {}
-    for node in graph.nodes:
-        if not math.isfinite(distances[node]):
-            raise ValueError(f"Reference ligand {reference!r} cannot reach ligand {node!r}.")
-        path = [node]
-        current = node
-        while current != reference:
-            parent = previous[current]
-            if parent is None:
-                raise ValueError(
-                    f"Reference ligand {reference!r} cannot reach ligand {node!r}."
-                )
-            path.append(parent)
-            current = parent
-        paths[node] = path
-
-    return distances, paths
-
-
-def _path_independent_errors(graph: _CycleClosureGraph) -> dict[str, float]:
-    errors: dict[str, float] = {}
-    for node in graph.nodes:
-        edge_errors = [graph.pair_errors[(node, neighbor)] for neighbor in graph.adjacency[node]]
-        errors[node] = max(edge_errors, default=0.0)
-    return errors
+        arr = np.asarray(errors, dtype=float)
+        max_error[idx] = float(np.max(arr))
+        rms_error[idx] = float(np.sqrt(np.mean(np.square(arr))))
+    return max_error, rms_error
 
 
 def _node_dataframe(
-    graph: _CycleClosureGraph,
-    reference: str,
-    reference_free_energy: float,
+    edges: Sequence[CycleClosureEdge],
+    labels: Sequence[str],
+    scheme_vectors: dict[str, np.ndarray],
+    selected_scheme: str,
 ) -> pd.DataFrame:
-    path_dependent_variance, paths = _shortest_error_paths(graph, reference)
-    path_independent = _path_independent_errors(graph)
-    records: list[dict[str, float | str]] = []
+    scheme_errors = {
+        scheme: _node_error_vectors(edges, labels, vector)
+        for scheme, vector in scheme_vectors.items()
+    }
 
-    for node in graph.nodes:
-        record: dict[str, float | str] = {"label": node}
-        path = paths[node]
-        for estimate_index in range(graph.n_estimates):
-            free_energy = float(reference_free_energy)
-            for label_a, label_b in zip(path, path[1:]):
-                free_energy -= graph.values[(label_a, label_b)][estimate_index]
-            column = "dG_cc" if estimate_index == 0 else f"dG_wcc{estimate_index}"
-            record[column] = free_energy
-        record["path_dependent_error"] = math.sqrt(path_dependent_variance[node])
-        record["path_independent_error"] = path_independent[node]
+    records: list[dict[str, float | str]] = []
+    for idx, label in enumerate(labels):
+        record: dict[str, float | str] = {"label": label}
+        for scheme, vector in scheme_vectors.items():
+            max_error, rms_error = scheme_errors[scheme]
+            record[f"dG_{scheme}"] = float(vector[idx])
+            record[f"path_dependent_error_{scheme}"] = float(max_error[idx])
+            record[f"path_independent_error_{scheme}"] = float(rms_error[idx])
+
+        selected_max, selected_rms = scheme_errors[selected_scheme]
+        record["path_dependent_error"] = float(selected_max[idx])
+        record["path_independent_error"] = float(selected_rms[idx])
         records.append(record)
 
     return pd.DataFrame.from_records(records)
@@ -334,71 +319,57 @@ def calculate_cycle_closure(
     *,
     reference: str | None = None,
     reference_free_energy: float = 0.0,
-    tolerance: float = 0.001,
-    minimum_iterations: int = 2,
-    max_iterations: int = 10000,
-    max_error_cycle_edges: int = 6,
-    require_cycles: bool = True,
+    reference_weight: float = 1e6,
+    require_cycles: bool | None = None,
+    **_compat_kwargs,
 ) -> CycleClosureResult:
-    """Run cycle-closure correction on an RBFE graph.
+    """Run SFC/WSFC correction on an RBFE graph.
 
-    The first returned estimate, ``dG_cc``/``ddG_cc``, is the unweighted cycle
-    closure. Each supplied uncertainty column adds a weighted estimate named
-    ``dG_wcc1``, ``dG_wcc2``, and so on.
+    ``require_cycles`` and extra keyword arguments are accepted for compatibility
+    with the previous WCC implementation. SFC does not enumerate cycles and can
+    operate on any connected RBFE graph.
     """
 
-    if tolerance <= 0:
-        raise ValueError("tolerance must be > 0.")
-    if minimum_iterations < 1:
-        raise ValueError("minimum_iterations must be >= 1.")
-    if max_iterations < minimum_iterations:
-        raise ValueError("max_iterations must be >= minimum_iterations.")
-    if max_error_cycle_edges < 1:
-        raise ValueError("max_error_cycle_edges must be >= 1.")
+    coerced_edges = _coerce_edges(edges)
+    labels = _ordered_labels(coerced_edges, reference)
+    reference = labels[0]
+    a_matrix, b_vector, uncertainty_matrix = _design_matrix(coerced_edges, labels)
+    _validate_connected_system(a_matrix, len(labels))
 
-    graph = _CycleClosureGraph(_coerce_edges(edges))
-    cycles = graph.cycles()
-    if require_cycles and not cycles:
-        raise ValueError("Cycle closure requires at least one graph cycle.")
+    scheme_vectors: dict[str, np.ndarray] = {
+        "sfc": _solve_state_function(
+            a_matrix,
+            b_vector,
+            weights=None,
+            reference_index=0,
+            reference_free_energy=reference_free_energy,
+            reference_weight=reference_weight,
+        )
+    }
 
-    if reference is None:
-        reference = graph.nodes[0]
-    reference = str(reference).strip()
-    if reference not in graph.nodes:
-        raise ValueError(f"Reference ligand {reference!r} is not present in the graph.")
+    for col_idx in range(uncertainty_matrix.shape[1]):
+        scheme = f"wsfc{col_idx + 1}"
+        scheme_vectors[scheme] = _solve_state_function(
+            a_matrix,
+            b_vector,
+            weights=_uncertainty_weights(uncertainty_matrix[:, col_idx]),
+            reference_index=0,
+            reference_free_energy=reference_free_energy,
+            reference_weight=reference_weight,
+        )
 
-    iteration_counts: list[int] = []
-    convergence: list[bool] = []
-    for estimate_index in range(graph.n_estimates):
-        iteration = 0
-        previous = graph.snapshot(estimate_index)
-        converged = False
-        while iteration < minimum_iterations or graph.changed(
-            previous, estimate_index, tolerance
-        ):
-            if iteration >= max_iterations:
-                break
-            previous = graph.snapshot(estimate_index)
-            graph.apply_cycle_closure(
-                cycles,
-                estimate_index,
-                edge_error_only=(iteration == 0),
-                max_error_cycle_edges=max_error_cycle_edges,
-            )
-            iteration += 1
-        else:
-            converged = True
-        iteration_counts.append(iteration)
-        convergence.append(converged)
-
+    selected_scheme = next(reversed(scheme_vectors))
+    schemes = tuple(scheme_vectors.keys())
     return CycleClosureResult(
         reference=reference,
         reference_free_energy=float(reference_free_energy),
-        node_results=_node_dataframe(graph, reference, reference_free_energy),
-        edge_results=graph.edge_dataframe(),
-        cycles=cycles,
-        iterations=tuple(iteration_counts),
-        converged=tuple(convergence),
+        node_results=_node_dataframe(coerced_edges, labels, scheme_vectors, selected_scheme),
+        edge_results=_edge_dataframe(coerced_edges, labels, scheme_vectors, selected_scheme),
+        cycles=(),
+        iterations=tuple(1 for _ in schemes),
+        converged=tuple(True for _ in schemes),
+        method="sfc",
+        schemes=schemes,
     )
 
 
@@ -420,15 +391,15 @@ def cycle_closure_from_dataframe(
     reference_free_energy: float = 0.0,
     **kwargs,
 ) -> CycleClosureResult:
-    """Build cycle-closure input from a dataframe and run the correction."""
+    """Build SFC input from a dataframe and run the correction."""
 
     if ddg_col is None:
         ddg_col = _first_existing_column(
             df,
-            ("calc_DDG", "DDG (kcal/mol)", "ddG", "ddg", "dG", "total_dG"),
+            ("calc_DDG", "DDG (kcal/mol)", "DDG", "ddG", "ddg", "dG", "total_dG"),
         )
     if ddg_col is None:
-        raise ValueError("Could not infer the cycle-closure ddG column.")
+        raise ValueError("Could not infer the SFC ddG column.")
 
     if uncertainty_cols is None:
         uncertainty_col = _first_existing_column(
@@ -436,6 +407,7 @@ def cycle_closure_from_dataframe(
             (
                 "calc_dDDG",
                 "uncertainty (kcal/mol)",
+                "uncertainty",
                 "dDDG",
                 "ddG_error",
                 "total_se",
@@ -447,7 +419,7 @@ def cycle_closure_from_dataframe(
     required = {label_a_col, label_b_col, ddg_col, *uncertainty_cols}
     missing = required - set(df.columns)
     if missing:
-        raise ValueError(f"Missing cycle-closure dataframe columns: {sorted(missing)}")
+        raise ValueError(f"Missing SFC dataframe columns: {sorted(missing)}")
 
     edges = [
         CycleClosureEdge(
@@ -467,17 +439,17 @@ def cycle_closure_from_dataframe(
 
 
 def read_cycle_closure_file(path: str | Path) -> pd.DataFrame:
-    """Read a whitespace-delimited WCC-style input file.
+    """Read a whitespace-delimited SFC input file.
 
     The first three columns are named ``labelA``, ``labelB``, and ``ddG``.
-    Additional columns are treated as standard-deviation columns named
-    ``std1``, ``std2``, etc.
+    Additional columns are treated as standard-error columns named ``std1``,
+    ``std2``, etc.
     """
 
     input_path = Path(path)
     df = pd.read_csv(input_path, sep=r"\s+", header=None, comment="#")
     if df.shape[1] < 3:
-        raise ValueError("Cycle-closure input files need at least three columns.")
+        raise ValueError("SFC input files need at least three columns.")
 
     columns = ["labelA", "labelB", "ddG"]
     columns.extend(f"std{idx}" for idx in range(1, df.shape[1] - 2))
@@ -492,7 +464,7 @@ def cycle_closure_from_file(
     reference_free_energy: float = 0.0,
     **kwargs,
 ) -> CycleClosureResult:
-    """Read a WCC-style input file and run cycle-closure correction."""
+    """Read an SFC-style input file and run state-function correction."""
 
     df = read_cycle_closure_file(path)
     uncertainty_cols = [column for column in df.columns if column.startswith("std")]
@@ -504,3 +476,9 @@ def cycle_closure_from_file(
         reference_free_energy=reference_free_energy,
         **kwargs,
     )
+
+
+calculate_state_function_correction = calculate_cycle_closure
+state_function_correction_from_dataframe = cycle_closure_from_dataframe
+read_state_function_correction_file = read_cycle_closure_file
+state_function_correction_from_file = cycle_closure_from_file

@@ -193,7 +193,7 @@ def read_cinnabar_outputs(
     ----------
     bundle_dir : str or Path
         Directory containing ``cinnabar_relative.csv`` and optional absolute
-        and cycle-closure CSVs produced by the Cinnabar export.
+        and SFC correction CSVs produced by the Cinnabar export.
     require_absolute : bool, optional
         When ``True``, raise if the bundle does not contain
         ``cinnabar_absolute.csv``.
@@ -202,8 +202,10 @@ def read_cinnabar_outputs(
     -------
     tuple[pandas.DataFrame, pandas.DataFrame]
         Relative and absolute tables. Each table includes uncorrected columns
-        and cycle-closure columns when those outputs are present, with free-energy
-        units stored in a ``unit`` column.
+        and SFC correction columns when those outputs are present, with free-energy
+        units stored in a ``unit`` column. The ``*_uncorrected`` columns are
+        sourced from Cinnabar's CSVs, and the ``*_cycle_closure`` columns are
+        sourced from the SFC CSVs.
     """
     from batter.analysis.cinnabar import read_cinnabar_outputs as _read
 

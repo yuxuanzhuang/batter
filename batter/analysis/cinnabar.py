@@ -1084,15 +1084,23 @@ def _merge_node_result_columns(
 def _cycle_closure_value_column(
     df: pd.DataFrame | None,
     *,
-    prefix: str,
-    fallback: str,
+    prefixes: Sequence[str],
+    fallbacks: Sequence[str],
 ) -> str | None:
     if df is None or df.empty:
         return None
-    try:
-        return _last_numbered_column(df, prefix, fallback)
-    except ValueError:
-        return None
+    for prefix in prefixes:
+        numbered = [
+            column
+            for column in df.columns
+            if re.fullmatch(rf"{re.escape(prefix)}\d+", str(column))
+        ]
+        if numbered:
+            return max(numbered, key=lambda column: int(str(column).removeprefix(prefix)))
+    for fallback in fallbacks:
+        if fallback in df.columns:
+            return fallback
+    return None
 
 
 def _merged_relative_cinnabar_table(root: Path) -> pd.DataFrame:
@@ -1140,8 +1148,8 @@ def _merged_relative_cinnabar_table(root: Path) -> pd.DataFrame:
         cycle_edges,
         value_col=_cycle_closure_value_column(
             cycle_edges,
-            prefix="ddG_wcc",
-            fallback="ddG_cc",
+            prefixes=("ddG_wsfc", "ddG_wcc"),
+            fallbacks=("ddG_sfc", "ddG_cc"),
         ),
         error_col="pair_error",
         value_out="DDG_cycle_closure",
@@ -1201,8 +1209,8 @@ def _merged_absolute_cinnabar_table(root: Path) -> pd.DataFrame:
         cycle_nodes,
         value_col=_cycle_closure_value_column(
             cycle_nodes,
-            prefix="dG_wcc",
-            fallback="dG_cc",
+            prefixes=("dG_wsfc", "dG_wcc"),
+            fallbacks=("dG_sfc", "dG_cc"),
         ),
     )
     return _with_energy_unit_column(out)
@@ -1213,7 +1221,12 @@ def read_cinnabar_outputs(
     *,
     require_absolute: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Read merged relative and absolute Cinnabar tables from an export bundle."""
+    """Read merged relative and absolute Cinnabar tables from an export bundle.
+
+    The ``*_uncorrected`` columns are copied from Cinnabar's original relative
+    and absolute CSVs. The ``*_cycle_closure`` columns are merged from the SFC
+    outputs, ``cycle_closure_edges.csv`` and ``cycle_closure_nodes.csv``.
+    """
     root = Path(bundle_dir)
     if not root.is_dir():
         raise FileNotFoundError(f"Cinnabar bundle directory does not exist: {root}")
@@ -2918,14 +2931,14 @@ def _render_dashboard_html(
     if cc_assets.get("network_png"):
         cycle_network_html = f"""
       <div class="result-view result-view-cycle">
-        <img class="dashboard-plot" src="{html.escape(cc_assets['network_png'])}" alt="Cycle-closure adjusted RBFE network" />
+        <img class="dashboard-plot" src="{html.escape(cc_assets['network_png'])}" alt="SFC-adjusted RBFE network" />
       </div>
         """
     cycle_network_notes = [
-        "Cycle-closure view",
-        "Network uses adjusted ΔΔG values from weighted cycle closure when available",
+        "SFC correction view",
+        "Network uses adjusted ΔΔG values from state-function correction when available",
         "Edge labels show adjusted ΔΔG ± pair error (kcal/mol)",
-        "Node colors use cycle-closed dG values",
+        "Node colors use SFC-corrected dG values",
     ]
     network_svg_html = _dashboard_network_view_html(
         edge_summary,
@@ -2938,7 +2951,7 @@ def _render_dashboard_html(
         cycle_network_html = _dashboard_network_view_html(
             cc_assets["edge_summary"],
             absolute_summary=cc_assets.get("absolute_summary"),
-            title=f"{title or 'BATTER RBFE network'}: cycle closure",
+            title=f"{title or 'BATTER RBFE network'}: SFC correction",
             view_class="result-view-cycle",
             id_prefix="cycle-network",
         )
@@ -3106,12 +3119,12 @@ def _render_dashboard_html(
     if cc_assets.get("dg_values_png"):
         cycle_absolute_items.append(
             f"<img class=\"dashboard-plot\" src=\"{html.escape(cc_assets['dg_values_png'])}\" "
-            "alt=\"Cycle-closure adjusted dG values\" />"
+            "alt=\"SFC-adjusted dG values\" />"
         )
     if cc_assets.get("errors_png"):
         cycle_absolute_items.append(
             f"<img class=\"dashboard-plot\" src=\"{html.escape(cc_assets['errors_png'])}\" "
-            "alt=\"Cycle-closure error summary\" />"
+            "alt=\"SFC error summary\" />"
         )
     cycle_absolute_html = ""
     if cycle_absolute_items:
@@ -3121,8 +3134,8 @@ def _render_dashboard_html(
             + "</div>"
         )
     cycle_absolute_notes = [
-        "Cycle-closure view",
-        "dG plot shows cycle-closed ligand values with path-dependent error bars",
+        "SFC correction view",
+        "dG plot shows SFC-corrected ligand values with path-dependent error bars",
         "Orange markers/error bars show path-independent node error",
         "Error summary shows ligand path errors and per-edge pair errors",
     ]
@@ -3132,7 +3145,7 @@ def _render_dashboard_html(
         cycle_toggle_html = """
       <label class="mode-toggle">
         <input id="cycle-closure-toggle" type="checkbox" checked />
-        <span>Cycle closure</span>
+        <span>SFC correction</span>
       </label>
         """
     body_class = "show-cycle-closure" if has_cycle_closure_view else ""
@@ -3595,7 +3608,7 @@ def _cycle_closure_reference(result: CinnabarConversionResult) -> tuple[str, flo
             if label and label not in labels:
                 labels.append(label)
     if not labels:
-        raise ValueError("Cycle closure requires at least one RBFE edge.")
+        raise ValueError("SFC correction requires at least one RBFE edge.")
 
     reference = labels[0]
     reference_free_energy = 0.0
@@ -3623,24 +3636,21 @@ def _first_present_column(df: pd.DataFrame, names: Sequence[str]) -> str | None:
     return None
 
 
-def _last_numbered_column(df: pd.DataFrame, prefix: str, fallback: str) -> str:
-    numbered = [
-        column
-        for column in df.columns
-        if re.fullmatch(rf"{re.escape(prefix)}\d+", str(column))
-    ]
-    if numbered:
-        return max(numbered, key=lambda column: int(str(column).removeprefix(prefix)))
-    if fallback in df.columns:
-        return fallback
-    raise ValueError(f"Cycle-closure results are missing '{fallback}'.")
-
-
 def _cycle_closure_plot_frames(
     closure: Any,
 ) -> tuple[pd.DataFrame, pd.DataFrame, str, str]:
-    node_value_col = _last_numbered_column(closure.node_results, "dG_wcc", "dG_cc")
-    edge_value_col = _last_numbered_column(closure.edge_results, "ddG_wcc", "ddG_cc")
+    node_value_col = _cycle_closure_value_column(
+        closure.node_results,
+        prefixes=("dG_wsfc", "dG_wcc"),
+        fallbacks=("dG_sfc", "dG_cc"),
+    )
+    edge_value_col = _cycle_closure_value_column(
+        closure.edge_results,
+        prefixes=("ddG_wsfc", "ddG_wcc"),
+        fallbacks=("ddG_sfc", "ddG_cc"),
+    )
+    if node_value_col is None or edge_value_col is None:
+        raise ValueError("Correction results are missing SFC value columns.")
 
     nodes = closure.node_results.copy()
     edges = closure.edge_results.copy()
@@ -3760,7 +3770,7 @@ def _render_cycle_closure_dg_png(
             "capsize": 3,
             "capthick": 1.4,
         },
-        label="cycle-closed dG ± path-dependent error",
+        label="SFC dG ± path-dependent error",
         zorder=2,
     )
     ax.errorbar(
@@ -3790,7 +3800,7 @@ def _render_cycle_closure_dg_png(
     ax.invert_yaxis()
     ax.grid(axis="x", color="#d9e2ec", linewidth=0.8, alpha=0.9)
     ax.grid(axis="y", visible=False)
-    ax.set_xlabel(f"Cycle-closed dG from {value_col} (kcal/mol)", color="#102a43")
+    ax.set_xlabel(f"SFC dG from {value_col} (kcal/mol)", color="#102a43")
     ax.set_ylabel("Ligand", color="#102a43")
     if title:
         ax.set_title(title, fontsize=14, fontweight="bold", color="#102a43", pad=14)
@@ -3798,7 +3808,7 @@ def _render_cycle_closure_dg_png(
         scalar = cm.ScalarMappable(norm=norm, cmap=cmap)
         scalar.set_array([])
         cbar = fig.colorbar(scalar, ax=ax, shrink=0.86, pad=0.02)
-        cbar.set_label("Cycle-closed dG (kcal/mol)", rotation=90)
+        cbar.set_label("SFC dG (kcal/mol)", rotation=90)
     ax.legend(frameon=False, loc="lower right")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3945,7 +3955,7 @@ def _write_cycle_closure_outputs(
     cc_edge_summary, cc_absolute_summary, edge_value_col, node_value_col = (
         _cycle_closure_plot_frames(closure)
     )
-    cc_title = title if not title else f"{title}: cycle closure"
+    cc_title = title if not title else f"{title}: SFC correction"
     network_path = out_root / "cycle_closure_network.png"
     if _render_network_png(
         cc_edge_summary,
@@ -3977,11 +3987,13 @@ def _write_cycle_closure_outputs(
     return (
         {
             "status": "success",
+            "algorithm": getattr(closure, "method", "sfc"),
             "reference": closure.reference,
             "reference_free_energy": closure.reference_free_energy,
             "n_cycles": int(len(closure.cycles)),
             "iterations": list(closure.iterations),
             "converged": list(closure.converged),
+            "schemes": list(getattr(closure, "schemes", ())),
             "edge_value_column": edge_value_col,
             "node_value_column": node_value_col,
         },
@@ -4079,8 +4091,8 @@ def write_cinnabar_outputs(
     ):
         cc_nodes = pd.read_csv(outputs["cycle_closure_nodes_csv"])
         cc_edges = pd.read_csv(outputs["cycle_closure_edges_csv"])
-        edge_value_col = str(cycle_closure_info.get("edge_value_column", "ddG_cc"))
-        node_value_col = str(cycle_closure_info.get("node_value_column", "dG_cc"))
+        edge_value_col = str(cycle_closure_info.get("edge_value_column", "ddG_sfc"))
+        node_value_col = str(cycle_closure_info.get("node_value_column", "dG_sfc"))
         cycle_closure_dashboard_assets["edge_summary"] = pd.DataFrame(
             {
                 "labelA": cc_edges["labelA"].astype(str),

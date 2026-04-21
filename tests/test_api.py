@@ -42,11 +42,11 @@ def test_api_read_cinnabar_outputs_reads_bundle(tmp_path: Path) -> None:
         "label,DG (kcal/mol),uncertainty (kcal/mol)\nA,-5.0,0.1\n"
     )
     cycle_nodes_csv.write_text(
-        "label,dG_cc,dG_wcc1,path_dependent_error,path_independent_error\n"
+        "label,dG_sfc,dG_wsfc1,path_dependent_error,path_independent_error\n"
         "A,-5.1,-5.2,0.3,0.4\n"
     )
     cycle_edges_csv.write_text(
-        "labelA,labelB,ddG_cc,ddG_wcc1,pair_error\nA,B,1.1,1.2,0.5\n"
+        "labelA,labelB,ddG_sfc,ddG_wsfc1,pair_error\nA,B,1.1,1.2,0.5\n"
     )
 
     relative_df, absolute_df = api_mod.read_cinnabar_outputs(bundle_dir)

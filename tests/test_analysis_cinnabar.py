@@ -490,9 +490,10 @@ def test_write_cinnabar_outputs_also_writes_cycle_closure(
     }
     manifest = json.loads(outputs["manifest_json"].read_text())
     assert manifest["cycle_closure"]["status"] == "success"
-    assert manifest["cycle_closure"]["n_cycles"] >= 1
-    assert manifest["cycle_closure"]["edge_value_column"] == "ddG_wcc1"
-    assert manifest["cycle_closure"]["node_value_column"] == "dG_wcc1"
+    assert manifest["cycle_closure"]["algorithm"] == "sfc"
+    assert manifest["cycle_closure"]["n_cycles"] == 0
+    assert manifest["cycle_closure"]["edge_value_column"] == "ddG_wsfc1"
+    assert manifest["cycle_closure"]["node_value_column"] == "dG_wsfc1"
     assert "cycle_closure_nodes_csv" in manifest["outputs"]
     assert "cycle_closure_network_png" in manifest["outputs"]
 
@@ -633,8 +634,8 @@ def test_read_cinnabar_outputs_returns_merged_relative_and_absolute_tables(
         [
             {
                 "label": "A",
-                "dG_cc": -5.1,
-                "dG_wcc1": -5.2,
+                "dG_sfc": -5.1,
+                "dG_wsfc1": -5.2,
                 "path_dependent_error": 0.3,
                 "path_independent_error": 0.4,
             }
@@ -645,8 +646,8 @@ def test_read_cinnabar_outputs_returns_merged_relative_and_absolute_tables(
             {
                 "labelA": "A",
                 "labelB": "B",
-                "ddG_cc": 1.1,
-                "ddG_wcc1": 1.2,
+                "ddG_sfc": 1.1,
+                "ddG_wsfc1": 1.2,
                 "pair_error": 0.5,
             }
         ]
@@ -695,7 +696,7 @@ def test_convert_cinnabar_outputs_to_csv_writes_merged_csvs(tmp_path: Path) -> N
         [{"label": "A", "DG (kcal/mol)": -5.0}]
     )
     cycle_edges = pd.DataFrame(
-        [{"labelA": "A", "labelB": "B", "ddG_cc": 1.2, "pair_error": 0.1}]
+        [{"labelA": "A", "labelB": "B", "ddG_sfc": 1.2, "pair_error": 0.1}]
     )
     relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
     absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
