@@ -498,9 +498,13 @@ def test_write_cinnabar_outputs_also_writes_cycle_closure(
 
     dashboard_html = outputs["dashboard_html"].read_text().lower()
     assert "cycle-closure-toggle" in dashboard_html
+    assert 'body class="show-cycle-closure"' in dashboard_html
+    assert 'id="cycle-closure-toggle" type="checkbox" checked' in dashboard_html
     assert "show-cycle-closure" in dashboard_html
     assert "result-view-cycle" in dashboard_html
-    assert "cycle_closure_network.png" in dashboard_html
+    assert "cycle-network-svg" in dashboard_html
+    assert "cycle-network-viewport" in dashboard_html
+    assert "cycle-network-zoom-in" in dashboard_html
     assert "cycle_closure_dg_values.png" in dashboard_html
     assert "cycle_closure_errors.png" in dashboard_html
 

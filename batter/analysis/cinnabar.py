@@ -2247,6 +2247,185 @@ def _render_absolute_sorted_html(
     return out_path.exists()
 
 
+def _dashboard_network_view_html(
+    edge_summary: pd.DataFrame,
+    *,
+    absolute_summary: pd.DataFrame | None,
+    title: str,
+    view_class: str,
+    id_prefix: str,
+) -> str:
+    graph, pos = _network_graph_with_layout(edge_summary)
+    color_meta = _node_color_mapping(graph, absolute_summary)
+    node_values = color_meta["values"]
+    norm = color_meta["norm"]
+    cmap = color_meta["cmap"]
+
+    if pos:
+        xs = [float(coord[0]) for coord in pos.values()]
+        ys = [float(coord[1]) for coord in pos.values()]
+        layout_min_x, layout_max_x = min(xs), max(xs)
+        layout_min_y, layout_max_y = min(ys), max(ys)
+        layout_span_x = max(layout_max_x - layout_min_x, 1.0)
+        layout_span_y = max(layout_max_y - layout_min_y, 1.0)
+    else:
+        layout_min_x = layout_min_y = -300.0
+        layout_max_x = layout_max_y = 300.0
+        layout_span_x = layout_span_y = 600.0
+
+    pad_x = max(110, int(0.10 * layout_span_x))
+    pad_y = max(90, int(0.11 * layout_span_y))
+    note_h = 120
+    canvas_w = int(max(1100, layout_span_x + 2.0 * pad_x))
+    plot_h = int(max(640, layout_span_y + 2.0 * pad_y))
+    canvas_h = plot_h + note_h
+
+    def _to_xy(point: np.ndarray) -> tuple[float, float]:
+        x = pad_x + (float(point[0]) - layout_min_x)
+        y = pad_y + (layout_max_y - float(point[1]))
+        return x, y
+
+    def _edge_curvature(node_a: str, node_b: str) -> float:
+        if graph.has_edge(node_b, node_a) and node_a != node_b:
+            return 0.24
+        return 0.0
+
+    edge_magnitudes = [
+        abs(float(data.get("calc_DDG", 0.0))) for _, _, data in graph.edges(data=True)
+    ]
+    edge_mag_min = min(edge_magnitudes) if edge_magnitudes else 0.0
+    edge_mag_max = max(edge_magnitudes) if edge_magnitudes else 1.0
+    if np.isclose(edge_mag_min, edge_mag_max):
+        edge_mag_max = edge_mag_min + 1.0
+
+    def _edge_width(abs_ddg: float) -> float:
+        scaled = (abs_ddg - edge_mag_min) / max(edge_mag_max - edge_mag_min, 1e-12)
+        return 2.8 + 4.2 * scaled
+
+    edge_color = "#7c3aed"
+    node_degree = dict(graph.degree())
+    node_radius = {node: 26.0 + 2.0 * node_degree[node] for node in graph.nodes}
+    node_fill = {}
+    for node, value in zip(graph.nodes, node_values):
+        if norm is not None and cmap is not None and np.isfinite(value):
+            node_fill[node] = _rgba_to_hex(cmap(norm(float(value))))
+        else:
+            node_fill[node] = "#88c0d0"
+
+    edge_svg: list[str] = []
+    label_svg: list[str] = []
+    label_specs_display: list[dict[str, np.ndarray]] = []
+    label_payloads: list[tuple[str, str]] = []
+    for node_a, node_b, data in graph.edges(data=True):
+        edge_key = f"{node_a}~{node_b}"
+        curvature = _edge_curvature(str(node_a), str(node_b))
+        start = np.asarray(_to_xy(pos[node_a]), dtype=float)
+        end = np.asarray(_to_xy(pos[node_b]), dtype=float)
+        direction = end - start
+        unit_dir = _normalize_vec(direction, fallback=np.array([1.0, 0.0]))
+        perp = np.array([-unit_dir[1], unit_dir[0]])
+        stroke_width = _edge_width(abs(float(data.get("calc_DDG", 0.0))))
+        head_length = 11.0 + 1.6 * stroke_width
+        head_half_width = 4.5 + 0.85 * stroke_width
+        start2 = start + unit_dir * (node_radius[node_a] + 4.0 + 0.35 * stroke_width)
+        tip = end - unit_dir * (node_radius[node_b] + 7.0 + 0.65 * stroke_width)
+        span = np.linalg.norm(tip - start2)
+        control = 0.5 * (start2 + tip) + perp * curvature * span * 0.75
+        tip_tangent = _normalize_vec(
+            _quadratic_bezier_tangent(start2, control, tip, 1.0),
+            fallback=unit_dir,
+        )
+        tip_normal = np.array([-tip_tangent[1], tip_tangent[0]])
+        shaft_end = tip - tip_tangent * head_length
+        arrow_left = shaft_end + tip_normal * head_half_width
+        arrow_right = shaft_end - tip_normal * head_half_width
+        path_d = (
+            f"M {start2[0]:.2f} {start2[1]:.2f} "
+            f"Q {control[0]:.2f} {control[1]:.2f} {shaft_end[0]:.2f} {shaft_end[1]:.2f}"
+        )
+        hit_width = max(14.0, stroke_width + 10.0)
+        edge_svg.append(
+            f"<g class=\"edge-path\" data-edge=\"{html.escape(edge_key)}\">"
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"{hit_width:.2f}\" "
+            "stroke-linecap=\"round\" pointer-events=\"stroke\" />"
+            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
+            f"stroke-width=\"{stroke_width:.2f}\" stroke-linecap=\"round\" stroke-opacity=\"0.96\" />"
+            f"<polygon points=\"{tip[0]:.2f},{tip[1]:.2f} {arrow_left[0]:.2f},{arrow_left[1]:.2f} "
+            f"{arrow_right[0]:.2f},{arrow_right[1]:.2f}\" fill=\"{edge_color}\" stroke=\"{edge_color}\" "
+            "stroke-linejoin=\"round\" stroke-linecap=\"round\" />"
+            "</g>"
+        )
+
+        text_pos = 0.25 * start2 + 0.5 * control + 0.25 * tip
+        text_pos = text_pos + perp * curvature * span * 0.18
+        label_specs_display.append({"base": text_pos, "tangent": unit_dir, "normal": perp})
+        label_payloads.append(
+            (
+                edge_key,
+                html.escape(
+                    f"{float(data.get('calc_DDG', 0.0)):+.2f}\n"
+                    f"±{float(data.get('calc_dDDG', 0.0)):.2f}"
+                ),
+            )
+        )
+
+    resolved_label_positions = _resolve_label_positions(
+        label_specs_display,
+        box_size=(60.0, 42.0),
+    )
+
+    for resolved_pos, (edge_key, edge_label) in zip(
+        resolved_label_positions,
+        label_payloads,
+    ):
+        edge_label_lines = edge_label.split("\n")
+        label_svg.append(
+            f"<g class=\"edge-label\" data-edge=\"{html.escape(edge_key)}\">"
+            f"<rect x=\"{resolved_pos[0] - 30:.2f}\" y=\"{resolved_pos[1] - 22:.2f}\" width=\"60\" height=\"42\" "
+            "rx=\"6\" ry=\"6\" fill=\"white\" fill-opacity=\"0.92\" stroke=\"#cbd2d9\" stroke-width=\"1.0\" />"
+            f"<text x=\"{resolved_pos[0]:.2f}\" y=\"{resolved_pos[1] - 4:.2f}\" text-anchor=\"middle\" "
+            "font-size=\"12\" fill=\"#243b53\">"
+            f"{edge_label_lines[0]}</text>"
+            f"<text x=\"{resolved_pos[0]:.2f}\" y=\"{resolved_pos[1] + 13:.2f}\" text-anchor=\"middle\" "
+            "font-size=\"12\" fill=\"#243b53\">"
+            f"{edge_label_lines[1]}</text>"
+            "</g>"
+        )
+
+    node_svg: list[str] = []
+    for node in graph.nodes:
+        x, y = _to_xy(pos[node])
+        label = html.escape(str(node))
+        node_svg.append(
+            "<g class=\"node\" "
+            f"data-ligand=\"{label}\" transform=\"translate({x:.2f},{y:.2f})\">"
+            f"<circle r=\"{node_radius[node]:.2f}\" fill=\"{node_fill[node]}\" stroke=\"#243b53\" stroke-width=\"3\" />"
+            f"<text text-anchor=\"middle\" dominant-baseline=\"middle\" font-size=\"18\" font-weight=\"700\" "
+            "fill=\"#102a43\" paint-order=\"stroke\" stroke=\"white\" stroke-width=\"5\" stroke-linejoin=\"round\">"
+            f"{label}</text>"
+            "</g>"
+        )
+
+    return f"""
+      <div class="result-view {view_class}">
+      <div class="network-toolbar">
+        <button class="zoom-btn" id="{id_prefix}-zoom-in" type="button">+</button>
+        <button class="zoom-btn" id="{id_prefix}-zoom-out" type="button">−</button>
+        <button class="zoom-btn" id="{id_prefix}-fit" type="button">Fit</button>
+        <button class="zoom-btn" id="{id_prefix}-reset" type="button">Reset</button>
+      </div>
+      <svg id="{id_prefix}-svg" class="network-svg" viewBox="0 0 {canvas_w} {canvas_h}" role="img" aria-label="{html.escape(title)}">
+        <rect id="{id_prefix}-pan-surface" class="network-pan-surface" x="0" y="0" width="{canvas_w}" height="{canvas_h}" fill="#f6f7fb" />
+        <g id="{id_prefix}-viewport">
+          {''.join(edge_svg)}
+          {''.join(label_svg)}
+          {''.join(node_svg)}
+        </g>
+      </svg>
+      </div>
+    """
+
+
 def _render_dashboard_html(
     edge_summary: pd.DataFrame,
     out_path: Path,
@@ -2275,7 +2454,8 @@ def _render_dashboard_html(
     mapping_assets = edge_assets or {}
     cc_assets = cycle_closure_assets or {}
     has_cycle_closure_view = bool(
-        cc_assets.get("network_png") or cc_assets.get("dg_values_png")
+        isinstance(cc_assets.get("edge_summary"), pd.DataFrame)
+        and not cc_assets["edge_summary"].empty
     )
 
     if pos:
@@ -2469,6 +2649,21 @@ def _render_dashboard_html(
         "Edge labels show adjusted ΔΔG ± pair error (kcal/mol)",
         "Node colors use cycle-closed dG values",
     ]
+    network_svg_html = _dashboard_network_view_html(
+        edge_summary,
+        absolute_summary=absolute_summary,
+        title=title or "BATTER RBFE network",
+        view_class="result-view-uncorrected",
+        id_prefix="network",
+    )
+    if has_cycle_closure_view:
+        cycle_network_html = _dashboard_network_view_html(
+            cc_assets["edge_summary"],
+            absolute_summary=cc_assets.get("absolute_summary"),
+            title=f"{title or 'BATTER RBFE network'}: cycle closure",
+            view_class="result-view-cycle",
+            id_prefix="cycle-network",
+        )
 
     absolute_panel_html = "<div class=\"empty-panel\">Absolute ΔG values are not available for this network.</div>"
     absolute_notes = [
@@ -2658,10 +2853,11 @@ def _render_dashboard_html(
     if has_cycle_closure_view:
         cycle_toggle_html = """
       <label class="mode-toggle">
-        <input id="cycle-closure-toggle" type="checkbox" />
+        <input id="cycle-closure-toggle" type="checkbox" checked />
         <span>Cycle closure</span>
       </label>
         """
+    body_class = "show-cycle-closure" if has_cycle_closure_view else ""
 
     html_text = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2690,9 +2886,9 @@ def _render_dashboard_html(
     .notes {{ margin: 12px 14px 14px; padding: 10px 12px; border: 1px solid #cbd2d9; border-radius: 10px; background: rgba(255,255,255,0.96); color: #486581; white-space: pre-line; }}
     .empty-panel {{ padding: 36px 24px; font-size: 15px; color: #52606d; text-align: center; }}
     .node, .bar-row, .edge-path, .edge-label {{ cursor: pointer; }}
-    #network-svg {{ touch-action: none; user-select: none; }}
-    #network-pan-surface {{ cursor: grab; }}
-    #network-pan-surface.dragging {{ cursor: grabbing; }}
+    .network-svg {{ touch-action: none; user-select: none; }}
+    .network-pan-surface {{ cursor: grab; }}
+    .network-pan-surface.dragging {{ cursor: grabbing; }}
     #stickies {{ position: fixed; inset: 0; pointer-events: none; z-index: 1000; }}
     .sticky-note {{ position: fixed; width: 280px; min-height: 160px; background: #fff9c4; border: 1px solid #e0c56e; border-radius: 14px; box-shadow: 0 16px 38px rgba(15, 23, 42, 0.18); padding: 12px 12px 10px; pointer-events: auto; }}
     .sticky-note.edge-note {{ width: 360px; background: #eef2ff; border-color: #c7d2fe; }}
@@ -2706,7 +2902,7 @@ def _render_dashboard_html(
     .sticky-meta {{ margin-top: 8px; font-size: 11px; color: #52606d; }}
   </style>
 </head>
-<body>
+<body class="{body_class}">
   <div class="wrap">
     <h1>{html.escape(title or "BATTER Cinnabar dashboard")}</h1>
     <div class="tabbar">
@@ -2785,6 +2981,114 @@ def _render_dashboard_html(
       networkPanY = svgY - localY * networkScale;
       updateNetworkTransform();
     }}
+
+    function setupDashboardNetwork(prefix) {{
+      const svg = document.getElementById(`${{prefix}}-svg`);
+      const viewport = document.getElementById(`${{prefix}}-viewport`);
+      const panSurface = document.getElementById(`${{prefix}}-pan-surface`);
+      let scale = 1.0;
+      let panX = 0.0;
+      let panY = 0.0;
+      let dragging = false;
+      let startX = 0.0;
+      let startY = 0.0;
+      let startPanX = 0.0;
+      let startPanY = 0.0;
+
+      function update() {{
+        if (!viewport) return;
+        viewport.setAttribute(
+          'transform',
+          `translate(${{panX.toFixed(2)}} ${{panY.toFixed(2)}}) scale(${{scale.toFixed(5)}})`
+        );
+      }}
+
+      function fit(extraScale = 1.0) {{
+        if (!svg || !viewport) return;
+        const bbox = viewport.getBBox();
+        const viewBox = svg.viewBox.baseVal;
+        if (!bbox || bbox.width <= 0 || bbox.height <= 0) return;
+        const pad = 32.0;
+        const scaleX = (viewBox.width - 2.0 * pad) / bbox.width;
+        const scaleY = (viewBox.height - 2.0 * pad) / bbox.height;
+        scale = Math.min(scaleX, scaleY) * extraScale;
+        panX = viewBox.x + (viewBox.width - bbox.width * scale) * 0.5 - bbox.x * scale;
+        panY = viewBox.y + (viewBox.height - bbox.height * scale) * 0.5 - bbox.y * scale;
+        update();
+      }}
+
+      function zoom(factor, clientX = null, clientY = null) {{
+        if (!svg || !viewport) return;
+        const viewBox = svg.viewBox.baseVal;
+        const rect = svg.getBoundingClientRect();
+        const anchorX = clientX === null ? rect.left + rect.width * 0.5 : clientX;
+        const anchorY = clientY === null ? rect.top + rect.height * 0.5 : clientY;
+        const svgX = viewBox.x + ((anchorX - rect.left) / rect.width) * viewBox.width;
+        const svgY = viewBox.y + ((anchorY - rect.top) / rect.height) * viewBox.height;
+        const nextScale = Math.min(8.0, Math.max(0.25, scale * factor));
+        const localX = (svgX - panX) / scale;
+        const localY = (svgY - panY) / scale;
+        scale = nextScale;
+        panX = svgX - localX * scale;
+        panY = svgY - localY * scale;
+        update();
+      }}
+
+      document.getElementById(`${{prefix}}-zoom-in`)?.addEventListener('click', () => {{
+        zoom(1.18);
+      }});
+      document.getElementById(`${{prefix}}-zoom-out`)?.addEventListener('click', () => {{
+        zoom(1.0 / 1.18);
+      }});
+      document.getElementById(`${{prefix}}-fit`)?.addEventListener('click', () => {{
+        fit(1.0);
+      }});
+      document.getElementById(`${{prefix}}-reset`)?.addEventListener('click', () => {{
+        fit(0.96);
+      }});
+
+      svg?.addEventListener('wheel', (event) => {{
+        event.preventDefault();
+        const factor = event.deltaY < 0 ? 1.12 : (1.0 / 1.12);
+        zoom(factor, event.clientX, event.clientY);
+      }}, {{ passive: false }});
+
+      svg?.addEventListener('pointerdown', (event) => {{
+        if (!panSurface) return;
+        if (event.target && event.target.closest('.node, .edge-path, .edge-label')) {{
+          return;
+        }}
+        dragging = true;
+        startX = event.clientX;
+        startY = event.clientY;
+        startPanX = panX;
+        startPanY = panY;
+        panSurface.classList.add('dragging');
+        svg.setPointerCapture(event.pointerId);
+      }});
+
+      svg?.addEventListener('pointermove', (event) => {{
+        if (!dragging) return;
+        panX = startPanX + (event.clientX - startX);
+        panY = startPanY + (event.clientY - startY);
+        update();
+      }});
+
+      function endDrag(event) {{
+        if (!dragging) return;
+        dragging = false;
+        panSurface?.classList.remove('dragging');
+        try {{ svg?.releasePointerCapture(event.pointerId); }} catch (_e) {{}}
+      }}
+
+      svg?.addEventListener('pointerup', endDrag);
+      svg?.addEventListener('pointercancel', endDrag);
+      svg?.addEventListener('pointerleave', endDrag);
+
+      return {{ fit }};
+    }}
+
+    const cycleNetworkControls = setupDashboardNetwork('cycle-network');
 
     function stickyBodyHtml(label) {{
       const asset = ligandAssets[label] || {{}};
@@ -2985,12 +3289,18 @@ def _render_dashboard_html(
 
     document.getElementById('cycle-closure-toggle')?.addEventListener('change', (event) => {{
       document.body.classList.toggle('show-cycle-closure', event.target.checked);
-      if (!event.target.checked) {{
+      if (event.target.checked) {{
+        cycleNetworkControls.fit(0.96);
+      }} else {{
         fitNetworkViewport(0.96);
       }}
     }});
 
-    fitNetworkViewport(0.96);
+    if (document.body.classList.contains('show-cycle-closure')) {{
+      cycleNetworkControls.fit(0.96);
+    }} else {{
+      fitNetworkViewport(0.96);
+    }}
   </script>
 </body>
 </html>
@@ -3483,9 +3793,39 @@ def write_cinnabar_outputs(
     if rendered:
         outputs["network_png"] = graph_path
 
-    cycle_closure_dashboard_assets = {
-        "network_png": outputs["cycle_closure_network_png"].name,
-    } if "cycle_closure_network_png" in outputs else {}
+    cycle_closure_dashboard_assets: dict[str, Any] = {}
+    if (
+        cycle_closure_info.get("status") == "success"
+        and "cycle_closure_nodes_csv" in outputs
+        and "cycle_closure_edges_csv" in outputs
+    ):
+        cc_nodes = pd.read_csv(outputs["cycle_closure_nodes_csv"])
+        cc_edges = pd.read_csv(outputs["cycle_closure_edges_csv"])
+        edge_value_col = str(cycle_closure_info.get("edge_value_column", "ddG_cc"))
+        node_value_col = str(cycle_closure_info.get("node_value_column", "dG_cc"))
+        cycle_closure_dashboard_assets["edge_summary"] = pd.DataFrame(
+            {
+                "labelA": cc_edges["labelA"].astype(str),
+                "labelB": cc_edges["labelB"].astype(str),
+                "calc_DDG": pd.to_numeric(cc_edges[edge_value_col], errors="raise"),
+                "calc_dDDG": pd.to_numeric(
+                    cc_edges.get("pair_error", 0.0),
+                    errors="coerce",
+                ).fillna(0.0),
+                "n_runs": 1,
+                "n_measurements": 1,
+            }
+        )
+        cycle_closure_dashboard_assets["absolute_summary"] = pd.DataFrame(
+            {
+                "label": cc_nodes["label"].astype(str),
+                "DG (kcal/mol)": pd.to_numeric(cc_nodes[node_value_col], errors="raise"),
+                "uncertainty (kcal/mol)": pd.to_numeric(
+                    cc_nodes.get("path_dependent_error", 0.0),
+                    errors="coerce",
+                ).fillna(0.0),
+            }
+        )
     if "cycle_closure_dg_values_png" in outputs:
         cycle_closure_dashboard_assets["dg_values_png"] = outputs[
             "cycle_closure_dg_values_png"
