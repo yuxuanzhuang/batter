@@ -373,6 +373,7 @@ def test_write_cinnabar_outputs_writes_expected_files(
         "cinnabar_relative_csv",
         "cinnabar_absolute_csv",
         "absolute_sorted_png",
+        "dg_values_png",
         "network_png",
         "dashboard_html",
         "manifest_json",
@@ -434,6 +435,96 @@ def test_write_cinnabar_outputs_manifest_records_split_directionality(
     assert manifest["n_directional_edges"] == 2
     assert manifest["n_reciprocal_pairs"] == 1
     assert manifest["reciprocal_pairs"] == ["A~B"]
+
+
+def test_write_cinnabar_outputs_also_writes_cycle_closure(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "ligand": "A~B",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "status": "success",
+                "temperature": 300.0,
+            },
+            {
+                "ligand": "B~C",
+                "total_dG": 1.0,
+                "total_se": 0.3,
+                "status": "success",
+                "temperature": 300.0,
+            },
+            {
+                "ligand": "C~A",
+                "total_dG": -3.0,
+                "total_se": 0.4,
+                "status": "success",
+                "temperature": 300.0,
+            },
+        ]
+    )
+    result = cinnabar_mod.dataframe_to_cinnabar(df)
+
+    outputs = cinnabar_mod.write_cinnabar_outputs(result, tmp_path / "out")
+
+    assert {
+        "cycle_closure_nodes_csv",
+        "cycle_closure_edges_csv",
+        "cycle_closure_cycles_csv",
+        "cycle_closure_network_png",
+        "cycle_closure_dg_values_png",
+        "cycle_closure_errors_png",
+    }.issubset(outputs)
+    for key in (
+        "cycle_closure_network_png",
+        "cycle_closure_dg_values_png",
+        "cycle_closure_errors_png",
+    ):
+        assert outputs[key].exists()
+    assert set(pd.read_csv(outputs["cycle_closure_nodes_csv"])["label"]) == {
+        "A",
+        "B",
+        "C",
+    }
+    manifest = json.loads(outputs["manifest_json"].read_text())
+    assert manifest["cycle_closure"]["status"] == "success"
+    assert manifest["cycle_closure"]["algorithm"] == "sfc"
+    assert manifest["cycle_closure"]["n_cycles"] == 0
+    assert manifest["cycle_closure"]["edge_value_column"] == "ddG_wsfc1"
+    assert manifest["cycle_closure"]["node_value_column"] == "dG_wsfc1"
+    assert "cycle_closure_nodes_csv" in manifest["outputs"]
+    assert "cycle_closure_network_png" in manifest["outputs"]
+
+    dashboard_html = outputs["dashboard_html"].read_text().lower()
+    assert "cycle-closure-toggle" in dashboard_html
+    assert 'body class="show-cycle-closure"' in dashboard_html
+    assert 'id="cycle-closure-toggle" type="checkbox" checked' in dashboard_html
+    assert "show-cycle-closure" in dashboard_html
+    assert "result-view-cycle" in dashboard_html
+    assert "cycle-network-svg" in dashboard_html
+    assert "cycle-network-viewport" in dashboard_html
+    assert "cycle-network-zoom-in" in dashboard_html
+    assert "cycle_closure_dg_values.png" in dashboard_html
+    assert "cycle_closure_errors.png" in dashboard_html
+
+
+def test_write_cinnabar_outputs_can_disable_cycle_closure(
+    monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: rbfe_index_df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path)
+    outputs = cinnabar_mod.write_cinnabar_outputs(
+        result,
+        tmp_path / "out",
+        write_cycle_closure=False,
+    )
+
+    assert "cycle_closure_nodes_csv" not in outputs
+    manifest = json.loads(outputs["manifest_json"].read_text())
+    assert manifest["cycle_closure"]["status"] == "disabled"
 
 
 def test_auto_write_rbfe_cinnabar_for_run_uses_run_scoped_output_and_replicate_note(
@@ -521,26 +612,80 @@ def test_auto_write_rbfe_cinnabar_for_run_omits_replicate_note_for_single_run(
     assert export["replicate_note"] is None
 
 
-def test_read_cinnabar_outputs_reads_relative_and_absolute_tables(tmp_path: Path) -> None:
+def test_read_cinnabar_outputs_returns_merged_relative_and_absolute_tables(
+    tmp_path: Path,
+) -> None:
     bundle_dir = tmp_path / "cinnabar"
     bundle_dir.mkdir()
     relative = pd.DataFrame(
-        [{"labelA": "A", "labelB": "B", "DDG (kcal/mol)": 1.0}]
+        [
+            {
+                "labelA": "A",
+                "labelB": "B",
+                "DDG (kcal/mol)": 1.0,
+                "uncertainty (kcal/mol)": 0.2,
+            }
+        ]
     )
     absolute = pd.DataFrame(
-        [{"label": "A", "DG (kcal/mol)": -5.0}]
+        [{"label": "A", "DG (kcal/mol)": -5.0, "uncertainty (kcal/mol)": 0.1}]
+    )
+    cycle_nodes = pd.DataFrame(
+        [
+            {
+                "label": "A",
+                "dG_sfc": -5.1,
+                "dG_wsfc1": -5.2,
+                "path_dependent_error": 0.3,
+                "path_independent_error": 0.4,
+            }
+        ]
+    )
+    cycle_edges = pd.DataFrame(
+        [
+            {
+                "labelA": "A",
+                "labelB": "B",
+                "ddG_sfc": 1.1,
+                "ddG_wsfc1": 1.2,
+                "pair_error": 0.5,
+            }
+        ]
     )
     relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
     absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+    cycle_nodes.to_csv(bundle_dir / "cycle_closure_nodes.csv", index=False)
+    cycle_edges.to_csv(bundle_dir / "cycle_closure_edges.csv", index=False)
 
     relative_df, absolute_df = cinnabar_mod.read_cinnabar_outputs(bundle_dir)
 
-    pd.testing.assert_frame_equal(relative_df, relative)
-    assert absolute_df is not None
-    pd.testing.assert_frame_equal(absolute_df, absolute)
+    assert "DDG (kcal/mol)" not in relative_df.columns
+    assert "uncertainty (kcal/mol)" not in relative_df.columns
+    assert relative_df.loc[0, "unit"] == "kcal/mol"
+    assert relative_df.loc[0, "DDG"] == pytest.approx(1.0)
+    assert relative_df.loc[0, "uncertainty"] == pytest.approx(0.2)
+    assert relative_df.loc[0, "DDG_uncorrected"] == pytest.approx(1.0)
+    assert relative_df.loc[0, "uncertainty_uncorrected"] == pytest.approx(0.2)
+    assert relative_df.loc[0, "DDG_cycle_closure"] == pytest.approx(1.2)
+    assert relative_df.loc[0, "uncertainty_cycle_closure"] == pytest.approx(0.5)
+    assert "DG (kcal/mol)" not in absolute_df.columns
+    assert absolute_df.loc[0, "unit"] == "kcal/mol"
+    assert absolute_df.loc[0, "DG"] == pytest.approx(-5.0)
+    assert absolute_df.loc[0, "uncertainty"] == pytest.approx(0.1)
+    assert absolute_df.loc[0, "DG_uncorrected"] == pytest.approx(-5.0)
+    assert absolute_df.loc[0, "uncertainty_uncorrected"] == pytest.approx(0.1)
+    assert absolute_df.loc[0, "DG_cycle_closure"] == pytest.approx(-5.2)
+    assert absolute_df.loc[
+        0,
+        "uncertainty_cycle_closure_path_dependent",
+    ] == pytest.approx(0.3)
+    assert absolute_df.loc[
+        0,
+        "uncertainty_cycle_closure_path_independent",
+    ] == pytest.approx(0.4)
 
 
-def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None:
+def test_convert_cinnabar_outputs_to_csv_writes_merged_csvs(tmp_path: Path) -> None:
     bundle_dir = tmp_path / "cinnabar"
     out_dir = tmp_path / "exported"
     bundle_dir.mkdir()
@@ -550,8 +695,12 @@ def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None
     absolute = pd.DataFrame(
         [{"label": "A", "DG (kcal/mol)": -5.0}]
     )
+    cycle_edges = pd.DataFrame(
+        [{"labelA": "A", "labelB": "B", "ddG_sfc": 1.2, "pair_error": 0.1}]
+    )
     relative.to_csv(bundle_dir / "cinnabar_relative.csv", index=False)
     absolute.to_csv(bundle_dir / "cinnabar_absolute.csv", index=False)
+    cycle_edges.to_csv(bundle_dir / "cycle_closure_edges.csv", index=False)
 
     outputs = cinnabar_mod.convert_cinnabar_outputs_to_csv(
         bundle_dir,
@@ -562,8 +711,13 @@ def test_convert_cinnabar_outputs_to_csv_writes_two_csvs(tmp_path: Path) -> None
 
     assert outputs["relative_csv"] == out_dir / "rbfe_relative.csv"
     assert outputs["absolute_csv"] == out_dir / "rbfe_absolute.csv"
-    pd.testing.assert_frame_equal(pd.read_csv(outputs["relative_csv"]), relative)
-    pd.testing.assert_frame_equal(pd.read_csv(outputs["absolute_csv"]), absolute)
+    relative_out = pd.read_csv(outputs["relative_csv"])
+    absolute_out = pd.read_csv(outputs["absolute_csv"])
+    assert relative_out.loc[0, "unit"] == "kcal/mol"
+    assert relative_out.loc[0, "DDG_uncorrected"] == pytest.approx(1.0)
+    assert relative_out.loc[0, "DDG_cycle_closure"] == pytest.approx(1.2)
+    assert absolute_out.loc[0, "unit"] == "kcal/mol"
+    assert absolute_out.loc[0, "DG_uncorrected"] == pytest.approx(-5.0)
 
 
 @pytest.fixture()
@@ -600,7 +754,30 @@ def test_cli_fe_cinnabar_combined(monkeypatch, tmp_path: Path, runner: CliRunner
     assert called["write_result"] is sentinel
     assert called["write_out_dir"] == tmp_path / "results" / "cinnabar"
     assert called["write_kwargs"]["absolute_offset"] == 0.0
+    assert called["write_kwargs"]["write_cycle_closure"] is True
     assert "combined Cinnabar bundle" in result.output
+
+
+def test_cli_fe_cinnabar_can_disable_cycle_closure(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar",
+        lambda **kwargs: object(),
+    )
+
+    def _fake_write(result, out_dir, **kwargs):
+        called["write_kwargs"] = kwargs
+        return {}
+
+    monkeypatch.setattr("batter.cli.fe_cmds.write_cinnabar_outputs", _fake_write)
+
+    result = runner.invoke(cli, ["fe", "cinnabar", str(tmp_path), "--no-cycle-closure"])
+
+    assert result.exit_code == 0
+    assert called["write_kwargs"]["write_cycle_closure"] is False
 
 
 def test_cli_fe_cinnabar_split_runs(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
@@ -685,6 +862,7 @@ def test_cli_fe_cinnabar_split_runs_passes_absolute_offset(
                 "method_name": "BATTER",
                 "target_name": f"{tmp_path.name}:run1",
                 "write_plots": True,
+                "write_cycle_closure": True,
                 "absolute_offset": -2.0,
             },
         }

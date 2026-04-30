@@ -104,3 +104,30 @@ def test_write_mdin_current_preserves_lower_existing_dt(tmp_path: Path) -> None:
     rendered_text = rendered.read_text()
     assert "nstlim = 8," in rendered_text
     assert "dt=0.003" in rendered_text
+
+
+def test_write_mdin_current_same_file_redirect_keeps_template_dt(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    current = tmp_path / "mdin-current"
+
+    tmpl.write_text("irest = 1,\nntx = 5,\nnstlim = 10,\ndt = 0.004,\n")
+    current.write_text("old current content\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current 'mdin-template' 8 1 'mdin-current' > 'mdin-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    current_text = current.read_text()
+    assert "nstlim = 8," in current_text
+    assert "dt = 0.004," in current_text

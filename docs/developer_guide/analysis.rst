@@ -74,3 +74,23 @@ custom plots.
 
 For quick visual checks, call :func:`batter.analysis.remd.plot_trajectory`, which
 renders either a single combined plot or a grid of per-replica subplots.
+
+RBFE SFC Correction
+===================
+
+``batter.analysis.cycle_closure`` applies state-function based free-energy
+correction (SFC/WSFC) to RBFE networks. It accepts BATTER/Cinnabar-style
+edge tables with ``labelA``, ``labelB``, ``calc_DDG``, and ``calc_dDDG`` columns,
+or whitespace-delimited SFC-style input files.
+
+Minimal example::
+
+    from batter.analysis.cycle_closure import cycle_closure_from_dataframe
+
+    result = cycle_closure_from_dataframe(
+        edge_summary,
+        reference="LIG_A",
+        reference_free_energy=-8.3,
+    )
+    print(result.node_results)
+    print(result.edge_results)

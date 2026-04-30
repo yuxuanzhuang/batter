@@ -908,6 +908,14 @@ class RunConfig(BaseModel):
     @classmethod
     def _lower_backend(cls, v):
         return str(v).lower() if v else v
+    
+    # disable backend slurm for now
+    @field_validator("backend", mode="before")
+    @classmethod
+    def _disable_slurm(cls, v):
+        if v == "slurm":
+            raise ValueError("SLURM backend is currently disabled.")
+        return v
 
     @classmethod
     def load(cls, path: Path | str) -> "RunConfig":
