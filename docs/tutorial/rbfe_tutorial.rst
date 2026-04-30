@@ -11,7 +11,7 @@ applies a hybrid topology that behaves like dual-topology with a shared core.
 It uses the simultaneous decoupling/recoupling
 (SDR) protocol with both ligands present, and relies on softcore
 electrostatics/van der Waals potentials so the entire calculation completes in a
-single leg. We reference ``examples/rbfe.yaml`` so you can reproduce the run locally
+single leg. We reference ``examples/rbfe_example.yaml`` so you can reproduce the run locally
 before adapting it to your own system.
 
 Quick walkthrough
@@ -99,7 +99,7 @@ Installation
 Preparing the System
 --------------------
 
-Use ``examples/rbfe.yaml`` as the starting configuration. Each field is documented in
+Use ``examples/rbfe_example.yaml`` as the starting configuration. Each field is documented in
 :doc:`../cookbook/configuration`, but review the inputs below before running anything:
 
 Required Files
@@ -149,7 +149,7 @@ Generating Simulation Inputs
 ----------------------------
 
 1. **Copy and edit the template.**
-   Start from `examples/rbfe.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/rbfe.yaml>`_
+   Start from `examples/rbfe_example.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/rbfe_example.yaml>`_
    and save a copy beside your project data. Update:
 
    - ``run.output_folder`` – dedicated directory for outputs/logs.
@@ -191,7 +191,7 @@ Generating Simulation Inputs
 
 2. **Validate the configuration before heavy computation (Optional)**::
 
-       batter run examples/rbfe.yaml --dry-run
+       batter run examples/rbfe_example.yaml --dry-run
 
    This command runs ligand parameterisation (a heavy step) and prepares the
    equilibration systems.
@@ -206,7 +206,7 @@ Generating Simulation Inputs
 
 4. **Launch the full workflow manager (local execution)**::
 
-       batter run examples/rbfe.yaml
+       batter run examples/rbfe_example.yaml
 
    Production runs take hours to days depending on system size, the number of ligands,
    and available hardware. Progress is streamed to the terminal and to
@@ -231,7 +231,7 @@ Seed the default headers if needed::
 
 To submit the same run through SLURM::
 
-    batter run examples/rbfe.yaml --slurm-submit
+    batter run examples/rbfe_example.yaml --slurm-submit
 
 Provide ``--slurm-manager-path`` if you maintain a custom SLURM header template
 (accounts, modules, partitions, etc.). Copy and modify the default template from
