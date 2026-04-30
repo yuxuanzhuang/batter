@@ -655,7 +655,7 @@ write_mdin_current() {
     local template_dt current_dt effective_dt
     template_dt=$(parse_dt_ps "$tmpl")
     effective_dt="$template_dt"
-    if [[ -f "$current_mdin" ]]; then
+    if [[ -s "$current_mdin" ]] && awk 'BEGIN{IGNORECASE=1} /^[[:space:]]*dt[[:space:]]*=/ {found=1; exit} END{exit !found}' "$current_mdin"; then
         current_dt=$(parse_dt_ps "$current_mdin")
         if awk -v current="$current_dt" -v template="$template_dt" 'BEGIN{exit !(current > 0 && current < template)}'; then
             effective_dt="$current_dt"
