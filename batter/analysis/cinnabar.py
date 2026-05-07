@@ -229,6 +229,32 @@ def _pick_edge_label(row: pd.Series, edge_separator: str) -> str:
     return ligand
 
 
+def _include_in_analysis_mask(series: pd.Series) -> pd.Series:
+    """Return a boolean mask for the FE index include flag."""
+    truthy = {"1", "true", "t", "yes", "y", "on", "enabled", "include", "included"}
+    falsy = {"0", "false", "f", "no", "n", "off", "disabled", "exclude", "excluded"}
+
+    def _coerce(value: Any) -> bool:
+        if value is None or value is pd.NA:
+            return True
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text:
+                return True
+            if text in truthy:
+                return True
+            if text in falsy:
+                return False
+        try:
+            if pd.isna(value):
+                return True
+        except Exception:
+            pass
+        return bool(value)
+
+    return series.map(_coerce).astype(bool)
+
+
 def _metadata_pair_values(
     value: Any,
     left: str,
@@ -750,6 +776,13 @@ def load_batter_rbfe_results(
     if work.empty:
         raise ValueError(f"No RBFE-like FE results found under {work_dir}.")
 
+    if "include_in_analysis" in work.columns:
+        work = work.loc[_include_in_analysis_mask(work["include_in_analysis"])].copy()
+        if work.empty:
+            raise ValueError(
+                "No RBFE rows remain after filtering rows disabled by include_in_analysis."
+            )
+
     if run_ids:
         requested = {str(v).strip() for v in run_ids if str(v).strip()}
         work = work.loc[work["run_id"].astype(str).isin(requested)].copy()
@@ -815,6 +848,8 @@ def dataframe_to_cinnabar(
     work = rbfe_df.copy()
     if status_column in work.columns:
         work = work.loc[work[status_column] == success_value].copy()
+    if "include_in_analysis" in work.columns:
+        work = work.loc[_include_in_analysis_mask(work["include_in_analysis"])].copy()
 
     work = work.dropna(subset=[ligand_column, dg_column, se_column]).copy()
     if work.empty:

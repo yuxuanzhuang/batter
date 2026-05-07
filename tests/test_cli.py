@@ -13,7 +13,8 @@ from click.testing import CliRunner
 
 from batter.cli.run import cli
 from batter.api import run_analysis_from_execution
-from batter.runtime.fe_repo import FERecord, WindowResult
+from batter.runtime.fe_repo import FERecord, FEResultsRepository, WindowResult
+from batter.runtime.portable import ArtifactStore
 from tests.data import EQUIL_FINISHED_DIR, FE_FINISHED_EXECUTION_DIR
 
 
@@ -206,6 +207,38 @@ def test_cli_fe_show(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
     assert result.exit_code == 0
     assert "run_id     : run1" in result.output
     assert "total_dG   : -5.000" in result.output
+
+
+def test_cli_fe_analysis_inclusion_interactive_updates_flag(
+    tmp_path: Path, runner: CliRunner
+) -> None:
+    work_dir = tmp_path / "work"
+    repo = FEResultsRepository(ArtifactStore(work_dir))
+    repo.save(
+        FERecord(
+            run_id="run1",
+            ligand="A~B",
+            mol_name="A",
+            system_name="sys",
+            fe_type="rbfe",
+            temperature=300.0,
+            total_dG=1.0,
+            total_se=0.2,
+            components=["x"],
+            protocol="rbfe",
+        )
+    )
+
+    result = runner.invoke(
+        cli,
+        ["fe", "analysis-inclusion", str(work_dir)],
+        input="disable 1\nquit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Disabled 1 index row" in result.output
+    row = repo.index().iloc[0]
+    assert bool(row["include_in_analysis"]) is False
 
 
 def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:

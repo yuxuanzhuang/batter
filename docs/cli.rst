@@ -124,6 +124,14 @@ Re-run FE analysis for exactly one ligand folder::
 ``ligand-analyze`` also accepts directories outside ``executions/<run_id>`` as long
 as they contain an ``fe/`` folder.
 
+Interactively enable or disable stored FE rows for aggregate analysis::
+
+   batter fe analysis-inclusion work/adrb2
+
+This command edits the ``include_in_analysis`` flag in ``results/index.csv``.
+Rows set to ``False`` are preserved on disk but skipped by Cinnabar export and
+other aggregate analyses.
+
 Convert stored RBFE records into `Cinnabar <https://cinnabar.openfree.energy/>`_
 inputs and plots::
 

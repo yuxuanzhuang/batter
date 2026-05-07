@@ -69,6 +69,25 @@ SMILES, those endpoints merge into one node, connecting the networks. If the nam
 matches but the canonical SMILES differs, BATTER keeps separate nodes with
 deterministic suffixed labels so different molecules are not silently merged.
 
+Enable or disable rows
+----------------------
+
+Each saved FE row in ``results/index.csv`` has an ``include_in_analysis`` flag.
+Rows with ``include_in_analysis`` set to ``False`` are skipped when BATTER builds
+Cinnabar bundles. This is useful when you want to remove a bad transformation from
+aggregate analysis without deleting its raw result artifacts.
+
+Use the interactive CLI to change the flag:
+
+.. code-block:: console
+
+   batter fe analysis-inclusion work/adrb2
+
+The command prints numbered rows and accepts commands such as ``disable 3``,
+``disable 1,4``, ``enable 2``, ``disable all``, ``show``, and ``quit``. Use
+``--run-id`` one or more times to restrict the interactive table to specific run
+ids.
+
 Split or merge directionality
 -----------------------------
 

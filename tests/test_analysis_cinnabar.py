@@ -214,6 +214,22 @@ def test_build_batter_rbfe_cinnabar_combines_runs(
     assert set(result.absolute_summary["label"]) == {"A", "B"}
 
 
+def test_build_batter_rbfe_cinnabar_skips_rows_disabled_for_analysis(
+    monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
+) -> None:
+    df = rbfe_index_df.copy()
+    df["include_in_analysis"] = True
+    df.loc[df["run_id"] == "run2", "include_in_analysis"] = False
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1", "run2"])
+
+    edge = result.edge_summary.iloc[0]
+    assert edge["n_runs"] == 1
+    assert edge["n_measurements"] == 2
+    assert pytest.approx(edge["calc_DDG"], rel=1e-6) == 1.2
+
+
 def test_build_batter_rbfe_cinnabar_merges_matching_name_and_smiles(
     monkeypatch, fake_cinnabar_stack, tmp_path: Path
 ) -> None:

@@ -140,6 +140,35 @@ def test_index_upsert_key_includes_analysis_start_step_and_n_bootstraps(
     assert updated["total_dG"] == pytest.approx(-4.0)
 
 
+def test_set_analysis_inclusion_updates_index_and_survives_resave(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+    rec = FERecord(
+        run_id="run1",
+        ligand="lig1",
+        mol_name="lig1",
+        system_name="sys",
+        fe_type="rest",
+        temperature=300.0,
+        method="mbar",
+        total_dG=-1.0,
+        total_se=0.1,
+        components=["z"],
+    )
+
+    repo.save(rec)
+    assert bool(repo.index().iloc[0]["include_in_analysis"]) is True
+
+    updated = repo.set_analysis_inclusion(run_id="run1", ligand="lig1", include=False)
+    assert updated == 1
+    assert bool(repo.index().iloc[0]["include_in_analysis"]) is False
+
+    repo.save(rec.model_copy(update={"total_dG": -2.0}))
+    row = repo.index().iloc[0]
+    assert row["total_dG"] == pytest.approx(-2.0)
+    assert bool(row["include_in_analysis"]) is False
+
+
 def test_save_does_not_emit_futurewarning_on_index_append(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path)
     repo = FEResultsRepository(store)

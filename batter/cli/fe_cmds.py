@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 
 import click
@@ -17,6 +18,8 @@ from batter.analysis.cinnabar import (
 )
 from batter.api import list_fe_runs, load_fe_run, run_analysis_from_execution
 from batter.cli.root import cli
+from batter.runtime.fe_repo import FEResultsRepository
+from batter.runtime.portable import ArtifactStore
 
 
 @cli.group("fe")
@@ -66,6 +69,7 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         "total_dG",
         "total_se",
         "original_name",
+        "include_in_analysis",
         "status",
         "protocol",
         "created_at",
@@ -112,6 +116,134 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         if "total_se" in show.columns:
             show["total_se"] = show["total_se"].map(_fmt)
         click.echo(show.to_string(index=False))
+
+
+def _selection_indices(selection: str, *, max_index: int) -> list[int]:
+    text = selection.strip().lower()
+    if text == "all":
+        return list(range(max_index))
+    out: list[int] = []
+    for part in re.split(r"[\s,]+", text):
+        if not part:
+            continue
+        try:
+            idx = int(part)
+        except ValueError as exc:
+            raise click.ClickException(
+                f"Invalid selection '{part}'. Use row numbers or 'all'."
+            ) from exc
+        if idx < 1 or idx > max_index:
+            raise click.ClickException(f"Selection {idx} is outside 1..{max_index}.")
+        out.append(idx - 1)
+    return sorted(set(out))
+
+
+@fe.command("analysis-inclusion")
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--run-id",
+    "run_ids",
+    multiple=True,
+    help="Only show rows from the selected run id(s).",
+)
+def fe_analysis_inclusion(work_dir: Path, run_ids: tuple[str, ...]) -> None:
+    """Interactively enable or disable FE rows for aggregate analysis."""
+    repo = FEResultsRepository(ArtifactStore(work_dir))
+    try:
+        df = repo.index().copy()
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    if df.empty:
+        click.secho("No FE runs found.", fg="yellow")
+        return
+
+    if run_ids:
+        requested = {str(run_id) for run_id in run_ids}
+        df = df.loc[df["run_id"].astype(str).isin(requested)].copy()
+        if df.empty:
+            raise click.ClickException(
+                "No FE rows remain after filtering for run id(s): "
+                + ", ".join(sorted(requested))
+            )
+
+    df = df.reset_index(drop=True)
+
+    def _display() -> None:
+        show_cols = [
+            "row",
+            "include_in_analysis",
+            "run_id",
+            "ligand",
+            "original_name",
+            "status",
+            "protocol",
+            "total_dG",
+            "total_se",
+        ]
+        show = df.copy()
+        show.insert(0, "row", range(1, len(show) + 1))
+        for col in show_cols:
+            if col not in show.columns:
+                show[col] = ""
+        for col in ("total_dG", "total_se"):
+            show[col] = show[col].map(
+                lambda value: ""
+                if pd.isna(value) or str(value).strip() == ""
+                else f"{float(value):.3f}"
+            )
+        click.echo(show[show_cols].to_string(index=False))
+
+    click.echo(
+        "Rows with include_in_analysis=False are skipped by Cinnabar and other aggregate analyses."
+    )
+    _display()
+    click.echo("Commands: 'disable 1,3', 'enable 2', 'disable all', 'show', 'quit'.")
+
+    while True:
+        command = click.prompt("analysis-inclusion", default="quit", show_default=False)
+        command = command.strip()
+        if not command:
+            continue
+        lower = command.lower()
+        if lower in {"q", "quit", "exit", "done"}:
+            break
+        if lower == "show":
+            _display()
+            continue
+        parts = command.split(maxsplit=1)
+        if len(parts) != 2 or parts[0].lower() not in {"enable", "disable"}:
+            click.secho(
+                "Expected 'enable <rows>', 'disable <rows>', 'show', or 'quit'.",
+                fg="yellow",
+            )
+            continue
+        include = parts[0].lower() == "enable"
+        try:
+            indices = _selection_indices(parts[1], max_index=len(df))
+        except click.ClickException as exc:
+            click.secho(str(exc), fg="red")
+            continue
+        updated = 0
+        for idx in indices:
+            row = df.iloc[idx]
+            updated += repo.set_analysis_inclusion(
+                run_id=str(row["run_id"]),
+                ligand=str(row["ligand"]),
+                include=include,
+                analysis_start_step=FEResultsRepository._normalize_optional_int(
+                    row.get("analysis_start_step")
+                ),
+                n_bootstraps=FEResultsRepository._normalize_n_bootstraps(
+                    row.get("n_bootstraps")
+                ),
+            )
+            df.loc[idx, "include_in_analysis"] = include
+        click.echo(
+            f"{'Enabled' if include else 'Disabled'} {updated} index row(s) for aggregate analysis."
+        )
+        _display()
 
 
 @fe.command("show")
