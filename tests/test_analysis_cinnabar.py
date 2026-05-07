@@ -214,6 +214,87 @@ def test_build_batter_rbfe_cinnabar_combines_runs(
     assert set(result.absolute_summary["label"]) == {"A", "B"}
 
 
+def test_build_batter_rbfe_cinnabar_merges_matching_name_and_smiles(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "run1",
+                "ligand": "A~B",
+                "original_name": "lig_a~lig_b",
+                "canonical_smiles": "CC~CCC",
+                "protocol": "rbfe",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run2",
+                "ligand": "A2~C",
+                "original_name": "lig_b~lig_c",
+                "canonical_smiles": "CCC~CCCC",
+                "protocol": "rbfe",
+                "total_dG": 2.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+        ]
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1", "run2"])
+
+    assert {(row.labelA, row.labelB) for row in result.edge_summary.itertuples(index=False)} == {
+        ("lig_a", "lig_b"),
+        ("lig_b", "lig_c"),
+    }
+    assert set(result.absolute_summary["label"]) == {"lig_a", "lig_b", "lig_c"}
+
+
+def test_build_batter_rbfe_cinnabar_keeps_same_name_different_smiles_separate(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": "run1",
+                "ligand": "A~B",
+                "original_name": "lig_a~shared",
+                "canonical_smiles": "CC~CCC",
+                "protocol": "rbfe",
+                "total_dG": 1.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+            {
+                "run_id": "run2",
+                "ligand": "B2~C",
+                "original_name": "shared~lig_c",
+                "canonical_smiles": "NCC~CCCC",
+                "protocol": "rbfe",
+                "total_dG": 2.0,
+                "total_se": 0.2,
+                "temperature": 300.0,
+                "status": "success",
+            },
+        ]
+    )
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1", "run2"])
+
+    labels = set(result.absolute_summary["label"])
+    shared_labels = {label for label in labels if label.startswith("shared")}
+    assert len(shared_labels) == 2
+    assert "lig_a" in labels
+    assert "lig_c" in labels
+    assert len(result.edge_summary) == 2
+
+
 def test_build_batter_rbfe_cinnabar_warns_when_absolute_solution_missing(
     monkeypatch, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:

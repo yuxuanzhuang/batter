@@ -7,6 +7,7 @@ import json
 import re
 import base64
 import shlex
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -228,6 +229,196 @@ def _pick_edge_label(row: pd.Series, edge_separator: str) -> str:
     return ligand
 
 
+def _metadata_pair_values(
+    value: Any,
+    left: str,
+    right: str,
+    *,
+    edge_separator: str = "~",
+) -> tuple[str, str]:
+    """Return endpoint metadata from a pair-valued string/list/dict when possible."""
+    if value is None:
+        return "", ""
+    if not isinstance(value, (dict, list, tuple)):
+        try:
+            if pd.isna(value):
+                return "", ""
+        except Exception:
+            pass
+    if isinstance(value, float) and pd.isna(value):
+        return "", ""
+    if isinstance(value, dict):
+        left_val = value.get(left, value.get("left", value.get("A", value.get("ref", ""))))
+        right_val = value.get(right, value.get("right", value.get("B", value.get("alt", ""))))
+        return str(left_val or "").strip(), str(right_val or "").strip()
+    if isinstance(value, (list, tuple)):
+        if len(value) >= 2:
+            return str(value[0] or "").strip(), str(value[1] or "").strip()
+        if len(value) == 1:
+            return str(value[0] or "").strip(), ""
+        return "", ""
+
+    text = str(value).strip()
+    if not text:
+        return "", ""
+    if text[0] in "[{":
+        try:
+            return _metadata_pair_values(
+                json.loads(text),
+                left,
+                right,
+                edge_separator=edge_separator,
+            )
+        except Exception:
+            pass
+    if edge_separator in text:
+        parts = [part.strip() for part in text.split(edge_separator, 1)]
+        return parts[0], parts[1]
+    return text, ""
+
+
+def _first_row_value(row: pd.Series, names: Sequence[str]) -> str:
+    for name in names:
+        if name in row.index and pd.notna(row[name]):
+            value = str(row[name]).strip()
+            if value:
+                return value
+    return ""
+
+
+def _endpoint_metadata_from_row(
+    row: pd.Series,
+    left: str,
+    right: str,
+    *,
+    edge_separator: str = "~",
+    base_column: str,
+) -> tuple[str, str]:
+    """Resolve pair endpoint metadata from side-specific or pair-valued columns."""
+    left_value = _first_row_value(
+        row,
+        (
+            f"{base_column}_A",
+            f"{base_column}_a",
+            f"{base_column}_left",
+            f"{base_column}_ref",
+            f"ref_{base_column}",
+            f"ligand_A_{base_column}",
+            f"ligand_a_{base_column}",
+            f"ligand_ref_{base_column}",
+        ),
+    )
+    right_value = _first_row_value(
+        row,
+        (
+            f"{base_column}_B",
+            f"{base_column}_b",
+            f"{base_column}_right",
+            f"{base_column}_alt",
+            f"alt_{base_column}",
+            f"ligand_B_{base_column}",
+            f"ligand_b_{base_column}",
+            f"ligand_alt_{base_column}",
+        ),
+    )
+    if left_value or right_value:
+        return left_value, right_value
+    if base_column in row.index:
+        return _metadata_pair_values(
+            row[base_column],
+            left,
+            right,
+            edge_separator=edge_separator,
+        )
+    return "", ""
+
+
+def _metadata_suffix(value: str) -> str:
+    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:6]
+
+
+def _assign_ligand_node_labels(
+    work: pd.DataFrame,
+    *,
+    edge_separator: str = "~",
+) -> pd.DataFrame:
+    """Map endpoint ligand names to node labels using name + canonical SMILES identity.
+
+    The same displayed ligand name can appear in separate runs for different
+    molecules. When canonical SMILES disagree, keep those nodes separate by adding
+    a deterministic suffix. Rows with the same name and same canonical SMILES share
+    one node, which lets matching ligands connect networks across runs.
+    """
+    out = work.copy()
+    identity_order: list[tuple[str, str]] = []
+    raw_to_smiles: dict[str, set[str]] = {}
+    left_smiles: list[str] = []
+    right_smiles: list[str] = []
+    left_paths: list[str] = []
+    right_paths: list[str] = []
+
+    for row in out.itertuples(index=False):
+        row_series = pd.Series(row._asdict())
+        left = str(row_series.get("ligand_A_raw", "") or "").strip()
+        right = str(row_series.get("ligand_B_raw", "") or "").strip()
+        smi_left, smi_right = _endpoint_metadata_from_row(
+            row_series,
+            left,
+            right,
+            edge_separator=edge_separator,
+            base_column="canonical_smiles",
+        )
+        path_left, path_right = _endpoint_metadata_from_row(
+            row_series,
+            left,
+            right,
+            edge_separator=edge_separator,
+            base_column="original_path",
+        )
+        left_smiles.append(smi_left)
+        right_smiles.append(smi_right)
+        left_paths.append(path_left)
+        right_paths.append(path_right)
+
+        for label, smiles in ((left, smi_left), (right, smi_right)):
+            if not label:
+                continue
+            key = (label, smiles)
+            if key not in identity_order:
+                identity_order.append(key)
+            raw_to_smiles.setdefault(label, set()).add(smiles)
+
+    out["ligand_A_smiles"] = left_smiles
+    out["ligand_B_smiles"] = right_smiles
+    out["ligand_A_path"] = left_paths
+    out["ligand_B_path"] = right_paths
+
+    label_by_identity: dict[tuple[str, str], str] = {}
+    used_labels: set[str] = set()
+    for raw_label, smiles in identity_order:
+        variants = raw_to_smiles.get(raw_label, {smiles})
+        needs_suffix = len(variants) > 1 and bool(smiles)
+        candidate = f"{raw_label}_{_metadata_suffix(smiles)}" if needs_suffix else raw_label
+        if candidate in used_labels and label_by_identity.get((raw_label, smiles)) != candidate:
+            base = candidate
+            idx = 2
+            while f"{base}_{idx}" in used_labels:
+                idx += 1
+            candidate = f"{base}_{idx}"
+        label_by_identity[(raw_label, smiles)] = candidate
+        used_labels.add(candidate)
+
+    out["ligand_A_node"] = [
+        label_by_identity.get((str(label).strip(), str(smiles).strip()), str(label).strip())
+        for label, smiles in zip(out["ligand_A_raw"], out["ligand_A_smiles"])
+    ]
+    out["ligand_B_node"] = [
+        label_by_identity.get((str(label).strip(), str(smiles).strip()), str(label).strip())
+        for label, smiles in zip(out["ligand_B_raw"], out["ligand_B_smiles"])
+    ]
+    return out
+
+
 def _scan_rbfe_input_paths(
     work_dir: str | Path,
     run_ids: Sequence[str],
@@ -314,22 +505,86 @@ def _build_ligand_assets(
     path_series = rbfe_df.get("original_path", pd.Series(index=rbfe_df.index, dtype=str))
     run_series = rbfe_df.get("run_id", pd.Series(index=rbfe_df.index, dtype=str))
 
-    for edge_label, canonical_smiles, original_path in zip(
-        edge_series.fillna("").astype(str),
-        canonical_series.fillna("").astype(str),
-        path_series.fillna("").astype(str),
-    ):
-        if edge_separator not in edge_label:
-            continue
-        left, right = (piece.strip() for piece in edge_label.split(edge_separator, 1))
-        if left:
-            labels.add(left)
-        if right:
-            labels.add(right)
-        if left and canonical_smiles and left not in smiles_by_label:
-            smiles_by_label[left] = canonical_smiles.strip()
-        if left and original_path and left not in path_by_label:
-            path_by_label[left] = original_path.strip()
+    if {"labelA", "labelB"}.issubset(rbfe_df.columns):
+        for row in rbfe_df.itertuples(index=False):
+            data = pd.Series(row._asdict())
+            left = str(data.get("ligand_A_raw", data.get("labelA", "")) or "").strip()
+            right = str(data.get("ligand_B_raw", data.get("labelB", "")) or "").strip()
+            label_left = str(data.get("labelA", "") or "").strip()
+            label_right = str(data.get("labelB", "") or "").strip()
+            node_left = str(data.get("ligand_A_node", left) or "").strip()
+            node_right = str(data.get("ligand_B_node", right) or "").strip()
+            smi_left = str(data.get("ligand_A_smiles", "") or "").strip()
+            smi_right = str(data.get("ligand_B_smiles", "") or "").strip()
+            path_left = str(data.get("ligand_A_path", "") or "").strip()
+            path_right = str(data.get("ligand_B_path", "") or "").strip()
+            if not smi_left or not smi_right:
+                meta_left, meta_right = _endpoint_metadata_from_row(
+                    data,
+                    left,
+                    right,
+                    edge_separator=edge_separator,
+                    base_column="canonical_smiles",
+                )
+                smi_left = smi_left or meta_left
+                smi_right = smi_right or meta_right
+            if not path_left or not path_right:
+                meta_left, meta_right = _endpoint_metadata_from_row(
+                    data,
+                    left,
+                    right,
+                    edge_separator=edge_separator,
+                    base_column="original_path",
+                )
+                path_left = path_left or meta_left
+                path_right = path_right or meta_right
+            endpoint_assets = {
+                node_left: (smi_left, path_left),
+                node_right: (smi_right, path_right),
+            }
+            for label, smiles, input_path in (
+                (label_left, *endpoint_assets.get(label_left, ("", ""))),
+                (label_right, *endpoint_assets.get(label_right, ("", ""))),
+            ):
+                if not label:
+                    continue
+                labels.add(label)
+                if smiles and label not in smiles_by_label:
+                    smiles_by_label[label] = smiles
+                if input_path and label not in path_by_label:
+                    path_by_label[label] = input_path
+    else:
+        for edge_label, canonical_smiles, original_path in zip(
+            edge_series.fillna("").astype(str),
+            canonical_series.fillna("").astype(str),
+            path_series.fillna("").astype(str),
+        ):
+            if edge_separator not in edge_label:
+                continue
+            left, right = (piece.strip() for piece in edge_label.split(edge_separator, 1))
+            smi_left, smi_right = _metadata_pair_values(
+                canonical_smiles,
+                left,
+                right,
+                edge_separator=edge_separator,
+            )
+            path_left, path_right = _metadata_pair_values(
+                original_path,
+                left,
+                right,
+                edge_separator=edge_separator,
+            )
+            for label, smiles, input_path in (
+                (left, smi_left, path_left),
+                (right, smi_right, path_right),
+            ):
+                if not label:
+                    continue
+                labels.add(label)
+                if smiles and label not in smiles_by_label:
+                    smiles_by_label[label] = smiles.strip()
+                if input_path and label not in path_by_label:
+                    path_by_label[label] = input_path.strip()
 
     if work_dir is not None:
         scanned = _scan_rbfe_input_paths(
@@ -408,12 +663,17 @@ def _build_edge_assets(
     work_root = Path(work_dir)
 
     for row in rbfe_df.itertuples(index=False):
-        edge_label = str(getattr(row, "edge_label", "") or getattr(row, "ligand", "") or "").strip()
-        if edge_separator not in edge_label:
-            continue
-        left, right = (part.strip() for part in edge_label.split(edge_separator, 1))
-        if not left or not right:
-            continue
+        label_a_existing = str(getattr(row, "labelA", "") or "").strip()
+        label_b_existing = str(getattr(row, "labelB", "") or "").strip()
+        if label_a_existing and label_b_existing:
+            left, right = label_a_existing, label_b_existing
+        else:
+            edge_label = str(getattr(row, "edge_label", "") or getattr(row, "ligand", "") or "").strip()
+            if edge_separator not in edge_label:
+                continue
+            left, right = (part.strip() for part in edge_label.split(edge_separator, 1))
+            if not left or not right:
+                continue
         if merge_bidirectional:
             label_a, label_b = sorted((left, right))
         else:
@@ -568,20 +828,21 @@ def dataframe_to_cinnabar(
 
     work["ligand_A_raw"] = lig_split[0].str.strip()
     work["ligand_B_raw"] = lig_split[1].str.strip()
+    work = _assign_ligand_node_labels(work, edge_separator=edge_separator)
 
     raw_dg = pd.to_numeric(work[dg_column], errors="raise").astype(float)
     if merge_bidirectional:
-        forward_is_canonical = work["ligand_A_raw"] <= work["ligand_B_raw"]
+        forward_is_canonical = work["ligand_A_node"] <= work["ligand_B_node"]
         work["labelA"] = np.where(
-            forward_is_canonical, work["ligand_A_raw"], work["ligand_B_raw"]
+            forward_is_canonical, work["ligand_A_node"], work["ligand_B_node"]
         )
         work["labelB"] = np.where(
-            forward_is_canonical, work["ligand_B_raw"], work["ligand_A_raw"]
+            forward_is_canonical, work["ligand_B_node"], work["ligand_A_node"]
         )
         work["signed_dDG"] = np.where(forward_is_canonical, raw_dg, -raw_dg)
     else:
-        work["labelA"] = work["ligand_A_raw"]
-        work["labelB"] = work["ligand_B_raw"]
+        work["labelA"] = work["ligand_A_node"]
+        work["labelB"] = work["ligand_B_node"]
         work["signed_dDG"] = raw_dg
     work["input_se"] = pd.to_numeric(work[se_column], errors="raise").astype(float)
 
@@ -810,12 +1071,12 @@ def build_batter_rbfe_cinnabar(
         exp_error_unit=exp_error_unit,
     )
     result.ligand_assets = _build_ligand_assets(
-        work,
+        result.raw_signed,
         work_dir=work_dir,
         edge_separator=edge_separator,
     )
     result.edge_assets = _build_edge_assets(
-        work,
+        result.raw_signed,
         work_dir=work_dir,
         merge_bidirectional=merge_bidirectional,
         edge_separator=edge_separator,
@@ -872,12 +1133,12 @@ def build_batter_rbfe_cinnabar_by_run(
             exp_error_unit=exp_error_unit,
         )
         result.ligand_assets = _build_ligand_assets(
-            group,
+            result.raw_signed,
             work_dir=work_dir,
             edge_separator=edge_separator,
         )
         result.edge_assets = _build_edge_assets(
-            group,
+            result.raw_signed,
             work_dir=work_dir,
             merge_bidirectional=merge_bidirectional,
             edge_separator=edge_separator,
