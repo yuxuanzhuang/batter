@@ -283,36 +283,49 @@ For RBFE runs, per-run analysis also writes a Cinnabar bundle under
   figures suitable for slides or quick sharing.
 
 If you later merge multiple RBFE runs with ``batter fe cinnabar``, the combined
-bundle is written under ``results/cinnabar/`` at the top level instead of the
-per-run subdirectory.
+bundle is written separately from the per-run subdirectory. Same-work-dir
+replicates default to ``results/cinnabar/``; cross-work-dir combinations should
+use an explicit ``--out-dir``.
 
 Use the CLI helpers to inspect them::
 
     batter fe list <run.output_folder>
     batter fe show <run.output_folder> <run_id> --ligand <ligand_pair>
 
-For cross-run RBFE benchmarking or Cinnabar plotting, convert the stored BATTER
-records into a Cinnabar bundle::
+For cross-run RBFE benchmarking or Cinnabar plotting, convert stored BATTER
+records into a Cinnabar bundle. The recommended form treats each run as an atomic
+``WORK_DIR`` + ``RUN_ID`` input, so runs from different work directories can be
+combined:
+
+.. code-block:: console
+
+    batter fe cinnabar \
+        --run work/adrb2 rep1 \
+        --run work/adrb2_retry rep2 \
+        --out-dir combined_cinnabar
+
+Per-run RBFE analysis already writes a default bundle under
+``results/cinnabar/<run_id>/``. Use explicit ``--run`` inputs when you want to
+merge replicate runs into one Cinnabar view. If all runs are in the same work
+directory, this shortcut is equivalent::
 
     batter fe cinnabar <run.output_folder> --run-id rep1 --run-id rep2
 
-Per-run RBFE analysis already writes a default bundle under
-``results/cinnabar/<run_id>/``. Use the explicit multi-``--run-id`` command above
-when you want to merge replicate runs into one Cinnabar view.
-
 The same workflow is available from Python via
-:func:`batter.analysis.cinnabar.build_batter_rbfe_cinnabar`. This is the function
-to use when you want to combine replicate run ids programmatically or connect
-networks from different runs. BATTER matches ligand endpoints by ligand name plus
-canonical SMILES: matching name/SMILES pairs merge into one node, while same-name
-but different-SMILES endpoints remain separate suffixed nodes.
+:func:`batter.analysis.cinnabar.build_batter_rbfe_cinnabar_from_runs`. This is the
+function to use when you want to combine replicate run ids programmatically or
+connect networks from different work directories. BATTER matches ligand endpoints
+by ligand name plus canonical SMILES: matching name/SMILES pairs merge into one
+node, while same-name but different-SMILES endpoints remain separate suffixed
+nodes.
 
 See :doc:`cinnabar` for the dedicated Cinnabar workflow page, including the
 default per-run output layout and the Python API for combined replicate bundles.
 
-That command reads the saved ``results/index.csv`` rows, combines the selected RBFE
-edges, and writes a derived bundle under ``results/cinnabar/``. Use
-``--split-runs`` if you want one bundle per run instead of collapsing repeats.
+Those commands read the saved ``results/index.csv`` rows, combine the selected
+RBFE edges, and write a derived bundle. Use ``--split-runs`` only with the
+same-work-dir shortcut if you want one bundle per run instead of collapsing
+repeats.
 If you have experimental absolute affinities, pass them with
 ``--experimental-csv`` so Cinnabar can emit DG/DDG comparison plots. BATTER merges
 ``A~B`` and ``B~A`` into one canonical edge by default; add ``--split-directions``

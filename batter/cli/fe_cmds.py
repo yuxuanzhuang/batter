@@ -13,6 +13,7 @@ from loguru import logger
 from batter.analysis.cinnabar import (
     build_batter_rbfe_cinnabar,
     build_batter_rbfe_cinnabar_by_run,
+    build_batter_rbfe_cinnabar_from_runs,
     summarize_directionality,
     write_cinnabar_outputs,
 )
@@ -323,7 +324,20 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 
 @fe.command("cinnabar")
 @click.argument(
-    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+    "work_dir",
+    required=False,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option(
+    "--run",
+    "run_inputs",
+    multiple=True,
+    nargs=2,
+    type=(click.Path(exists=True, file_okay=False, path_type=Path), str),
+    help=(
+        "Explicit atomic run input as WORK_DIR RUN_ID. Repeat to combine runs "
+        "from different work directories."
+    ),
 )
 @click.option(
     "--run-id",
@@ -454,7 +468,8 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Constant offset (kcal/mol) added to computed absolute ΔG values in the sorted absolute-energy plot.",
 )
 def fe_cinnabar(
-    work_dir: Path,
+    work_dir: Path | None,
+    run_inputs: tuple[tuple[Path, str], ...],
     run_ids: tuple[str, ...],
     ligands: tuple[str, ...],
     out_dir: Path | None,
@@ -479,6 +494,15 @@ def fe_cinnabar(
     absolute_offset: float,
 ) -> None:
     """Convert stored BATTER RBFE results into Cinnabar FEMap-ready outputs."""
+    if run_inputs and work_dir is not None:
+        raise click.ClickException(
+            "Use either WORK_DIR with --run-id, or explicit --run WORK_DIR RUN_ID inputs, not both."
+        )
+    if run_inputs and run_ids:
+        raise click.ClickException("--run-id cannot be combined with explicit --run inputs.")
+    if work_dir is None and not run_inputs:
+        raise click.ClickException("Provide WORK_DIR or at least one --run WORK_DIR RUN_ID input.")
+
     exp_df = None
     if experimental_csv is not None:
         try:
@@ -488,11 +512,19 @@ def fe_cinnabar(
                 f"Failed to read experimental CSV '{experimental_csv}': {exc}"
             ) from exc
 
-    output_root = out_dir or (work_dir / "results" / "cinnabar")
+    if out_dir is not None:
+        output_root = out_dir
+    elif run_inputs:
+        unique_roots = {Path(work).resolve() for work, _run_id in run_inputs}
+        if len(unique_roots) == 1:
+            output_root = next(iter(unique_roots)) / "results" / "cinnabar"
+        else:
+            output_root = Path.cwd() / "cinnabar"
+    else:
+        assert work_dir is not None
+        output_root = work_dir / "results" / "cinnabar"
 
     common_kwargs = {
-        "work_dir": work_dir,
-        "run_ids": run_ids or None,
         "ligands": ligands or None,
         "edge_separator": edge_separator,
         "uncertainty_mode": uncertainty_mode.lower(),
@@ -512,8 +544,41 @@ def fe_cinnabar(
     }
 
     try:
+        if run_inputs:
+            if not combine_runs:
+                raise click.ClickException(
+                    "--split-runs is not supported with explicit --run inputs; "
+                    "invoke the command separately for each run if separate bundles are needed."
+                )
+            result = build_batter_rbfe_cinnabar_from_runs(
+                list(run_inputs),
+                **common_kwargs,
+            )
+            outputs = write_cinnabar_outputs(
+                result,
+                output_root,
+                method_name="BATTER",
+                target_name="combined explicit runs",
+                write_plots=write_plots,
+                write_cycle_closure=write_cycle_closure,
+                absolute_offset=absolute_offset,
+            )
+            if getattr(result, "absolute_warning", None):
+                click.secho(str(result.absolute_warning), fg="yellow")
+            click.echo(
+                f"Wrote combined Cinnabar bundle to {output_root} "
+                f"({len(outputs)} files tracked)."
+            )
+            return
+
+        assert work_dir is not None
+        legacy_kwargs = {
+            "work_dir": work_dir,
+            "run_ids": run_ids or None,
+            **common_kwargs,
+        }
         if combine_runs:
-            result = build_batter_rbfe_cinnabar(**common_kwargs)
+            result = build_batter_rbfe_cinnabar(**legacy_kwargs)
             outputs = write_cinnabar_outputs(
                 result,
                 output_root,
@@ -546,7 +611,7 @@ def fe_cinnabar(
             )
             return
 
-        bundles = build_batter_rbfe_cinnabar_by_run(**common_kwargs)
+        bundles = build_batter_rbfe_cinnabar_by_run(**legacy_kwargs)
         if not bundles:
             raise click.ClickException("No per-run RBFE bundles were generated.")
 

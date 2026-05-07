@@ -20,9 +20,11 @@ __all__ = [
     "auto_write_rbfe_cinnabar_for_run",
     "build_batter_rbfe_cinnabar",
     "build_batter_rbfe_cinnabar_by_run",
+    "build_batter_rbfe_cinnabar_from_runs",
     "convert_cinnabar_outputs_to_csv",
     "dataframe_to_cinnabar",
     "load_batter_rbfe_results",
+    "load_batter_rbfe_results_from_runs",
     "read_cinnabar_outputs",
     "summarize_directionality",
     "write_cinnabar_outputs",
@@ -739,6 +741,34 @@ def _build_edge_assets(
     return assets
 
 
+def _build_edge_assets_by_work_dir(
+    rbfe_df: pd.DataFrame,
+    *,
+    merge_bidirectional: bool,
+    edge_separator: str = "~",
+) -> dict[str, dict[str, str]]:
+    """Build edge-click assets for rows that carry ``source_work_dir``."""
+    if (
+        rbfe_df is None
+        or rbfe_df.empty
+        or "source_work_dir" not in rbfe_df.columns
+    ):
+        return {}
+    assets: dict[str, dict[str, str]] = {}
+    for work_dir, group in rbfe_df.groupby("source_work_dir", sort=True):
+        if not str(work_dir).strip():
+            continue
+        assets.update(
+            _build_edge_assets(
+                group,
+                work_dir=Path(str(work_dir)),
+                merge_bidirectional=merge_bidirectional,
+                edge_separator=edge_separator,
+            )
+        )
+    return assets
+
+
 def load_batter_rbfe_results(
     work_dir: str | Path,
     *,
@@ -805,6 +835,30 @@ def load_batter_rbfe_results(
             )
 
     return work
+
+
+def load_batter_rbfe_results_from_runs(
+    runs: Sequence[tuple[str | Path, str]],
+    *,
+    ligands: Sequence[str] | None = None,
+    edge_separator: str = "~",
+) -> pd.DataFrame:
+    """Load RBFE rows from explicit ``(work_dir, run_id)`` inputs."""
+    frames: list[pd.DataFrame] = []
+    for work_dir, run_id in runs:
+        root = Path(work_dir)
+        frame = load_batter_rbfe_results(
+            root,
+            run_ids=[str(run_id)],
+            ligands=ligands,
+            edge_separator=edge_separator,
+        ).copy()
+        frame["source_work_dir"] = str(root)
+        frame["source_run_key"] = str(root.resolve()) + "::" + str(run_id)
+        frames.append(frame)
+    if not frames:
+        raise ValueError("At least one explicit RBFE run is required.")
+    return pd.concat(frames, ignore_index=True, sort=False)
 
 
 def dataframe_to_cinnabar(
@@ -1113,6 +1167,64 @@ def build_batter_rbfe_cinnabar(
     result.edge_assets = _build_edge_assets(
         result.raw_signed,
         work_dir=work_dir,
+        merge_bidirectional=merge_bidirectional,
+        edge_separator=edge_separator,
+    )
+    return result
+
+
+def build_batter_rbfe_cinnabar_from_runs(
+    runs: Sequence[tuple[str | Path, str]],
+    *,
+    ligands: Sequence[str] | None = None,
+    edge_separator: str = "~",
+    uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
+    combine_by_run_first: bool = True,
+    merge_bidirectional: bool = True,
+    experimental_df: pd.DataFrame | None = None,
+    exp_ligand_column: str = "ligand",
+    exp_abfe_column: str = "abfe",
+    exp_error_column: str | None = None,
+    exp_status_column: str | None = None,
+    exp_success_value: str = "success",
+    exp_temperature_column: str | None = None,
+    source: str = "BATTER_RBFE",
+    exp_source: str = "experiment",
+    exp_value_unit: Any = "kcal/mol",
+    exp_error_unit: Any = None,
+) -> CinnabarConversionResult:
+    work = load_batter_rbfe_results_from_runs(
+        runs,
+        ligands=ligands,
+        edge_separator=edge_separator,
+    )
+    result = dataframe_to_cinnabar(
+        work,
+        ligand_column="edge_label",
+        run_column="source_run_key",
+        edge_separator=edge_separator,
+        uncertainty_mode=uncertainty_mode,
+        combine_by_run_first=combine_by_run_first,
+        merge_bidirectional=merge_bidirectional,
+        experimental_df=experimental_df,
+        exp_ligand_column=exp_ligand_column,
+        exp_abfe_column=exp_abfe_column,
+        exp_error_column=exp_error_column,
+        exp_status_column=exp_status_column,
+        exp_success_value=exp_success_value,
+        exp_temperature_column=exp_temperature_column,
+        source=source,
+        exp_source=exp_source,
+        exp_value_unit=exp_value_unit,
+        exp_error_unit=exp_error_unit,
+    )
+    result.ligand_assets = _build_ligand_assets(
+        result.raw_signed,
+        work_dir=None,
+        edge_separator=edge_separator,
+    )
+    result.edge_assets = _build_edge_assets_by_work_dir(
+        result.raw_signed,
         merge_bidirectional=merge_bidirectional,
         edge_separator=edge_separator,
     )

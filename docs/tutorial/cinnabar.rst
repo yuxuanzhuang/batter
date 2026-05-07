@@ -34,33 +34,49 @@ Combine replicates and connect networks
 
 If you ran replicate RBFE runs, or if different runs contain overlapping ligands
 that should connect into one larger network, build a combined bundle with
-``build_batter_rbfe_cinnabar``:
+``build_batter_rbfe_cinnabar_from_runs``. This API treats each run as an atomic
+``(work_dir, run_id)`` input, so it works even when the runs are stored in
+different BATTER work directories:
 
 .. code-block:: python
 
    from pathlib import Path
-   from batter.analysis.cinnabar import build_batter_rbfe_cinnabar, write_cinnabar_outputs
-
-   work_dir = Path("work/adrb2")
-
-   result = build_batter_rbfe_cinnabar(
-       work_dir,
-       run_ids=["rep1", "rep2", "rep3"],
+   from batter.analysis.cinnabar import (
+       build_batter_rbfe_cinnabar_from_runs,
+       write_cinnabar_outputs,
    )
+
+   runs = [
+       (Path("work/adrb2"), "rep1"),
+       (Path("work/adrb2_retry"), "rep2"),
+   ]
+
+   result = build_batter_rbfe_cinnabar_from_runs(runs)
    write_cinnabar_outputs(
        result,
-       work_dir / "results" / "cinnabar",
+       Path("combined_cinnabar"),
        method_name="BATTER",
        target_name="adrb2 replicates",
    )
 
-The equivalent CLI command is::
+The equivalent CLI command is:
+
+.. code-block:: console
+
+   batter fe cinnabar \
+       --run work/adrb2 rep1 \
+       --run work/adrb2_retry rep2 \
+       --out-dir combined_cinnabar
+
+If all runs are stored in one work directory, the same-work-dir shortcut remains
+available::
 
    batter fe cinnabar work/adrb2 --run-id rep1 --run-id rep2 --run-id rep3
 
-The combined bundle is written under::
-
-   <run.output_folder>/results/cinnabar/
+For the shortcut, the combined bundle is written under
+``<run.output_folder>/results/cinnabar/``. For explicit ``--run`` inputs from
+multiple work directories, pass ``--out-dir``; if it is omitted, BATTER writes to
+``./cinnabar``.
 
 By default BATTER combines repeated measurements within each run first, then
 combines runs into one FEMap. Ligand nodes are matched by ligand name plus
@@ -105,7 +121,8 @@ remain separate directional measurements:
    )
 
 For one Cinnabar bundle per run instead of one combined bundle, use
-``build_batter_rbfe_cinnabar_by_run`` in Python or ``--split-runs`` in the CLI.
+``build_batter_rbfe_cinnabar_by_run`` in Python or ``--split-runs`` with the
+same-work-dir CLI shortcut.
 
 Experimental comparisons
 ------------------------

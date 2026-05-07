@@ -214,6 +214,61 @@ def test_build_batter_rbfe_cinnabar_combines_runs(
     assert set(result.absolute_summary["label"]) == {"A", "B"}
 
 
+def test_build_batter_rbfe_cinnabar_from_runs_combines_different_work_dirs(
+    monkeypatch, fake_cinnabar_stack, tmp_path: Path
+) -> None:
+    work_a = tmp_path / "work_a"
+    work_b = tmp_path / "work_b"
+    work_a.mkdir()
+    work_b.mkdir()
+
+    def _fake_list(work_dir):
+        if Path(work_dir) == work_a:
+            return pd.DataFrame(
+                [
+                    {
+                        "run_id": "rep1",
+                        "ligand": "A~B",
+                        "original_name": "lig_a~shared",
+                        "canonical_smiles": "CC~CCC",
+                        "protocol": "rbfe",
+                        "total_dG": 1.0,
+                        "total_se": 0.2,
+                        "temperature": 300.0,
+                        "status": "success",
+                    }
+                ]
+            )
+        return pd.DataFrame(
+            [
+                {
+                    "run_id": "rep2",
+                    "ligand": "B~C",
+                    "original_name": "shared~lig_c",
+                    "canonical_smiles": "CCC~CCCC",
+                    "protocol": "rbfe",
+                    "total_dG": 2.0,
+                    "total_se": 0.2,
+                    "temperature": 300.0,
+                    "status": "success",
+                }
+            ]
+        )
+
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", _fake_list)
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar_from_runs(
+        [(work_a, "rep1"), (work_b, "rep2")]
+    )
+
+    assert {(row.labelA, row.labelB) for row in result.edge_summary.itertuples(index=False)} == {
+        ("lig_a", "shared"),
+        ("lig_c", "shared"),
+    }
+    assert set(result.absolute_summary["label"]) == {"lig_a", "shared", "lig_c"}
+    assert set(result.raw_signed["source_work_dir"]) == {str(work_a), str(work_b)}
+
+
 def test_build_batter_rbfe_cinnabar_skips_rows_disabled_for_analysis(
     monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
@@ -852,6 +907,57 @@ def test_cli_fe_cinnabar_combined(monkeypatch, tmp_path: Path, runner: CliRunner
     assert called["write_out_dir"] == tmp_path / "results" / "cinnabar"
     assert called["write_kwargs"]["absolute_offset"] == 0.0
     assert called["write_kwargs"]["write_cycle_closure"] is True
+    assert "combined Cinnabar bundle" in result.output
+
+
+def test_cli_fe_cinnabar_accepts_explicit_run_inputs(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    work_a = tmp_path / "work_a"
+    work_b = tmp_path / "work_b"
+    out_dir = tmp_path / "combined"
+    work_a.mkdir()
+    work_b.mkdir()
+    called: dict[str, object] = {}
+    sentinel = object()
+
+    def _fake_build(runs, **kwargs):
+        called["runs"] = runs
+        called["build_kwargs"] = kwargs
+        return sentinel
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.build_batter_rbfe_cinnabar_from_runs",
+        _fake_build,
+    )
+
+    def _fake_write(result, out_dir_arg, **kwargs):
+        called["write_result"] = result
+        called["write_out_dir"] = out_dir_arg
+        return {"manifest_json": Path(out_dir_arg) / "manifest.json"}
+
+    monkeypatch.setattr("batter.cli.fe_cmds.write_cinnabar_outputs", _fake_write)
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "cinnabar",
+            "--run",
+            str(work_a),
+            "rep1",
+            "--run",
+            str(work_b),
+            "rep2",
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["runs"] == [(work_a, "rep1"), (work_b, "rep2")]
+    assert called["write_result"] is sentinel
+    assert called["write_out_dir"] == out_dir
     assert "combined Cinnabar bundle" in result.output
 
 
