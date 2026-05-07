@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import warnings
 from pathlib import Path
 
@@ -50,6 +51,29 @@ def test_record_failure_creates_row_and_artifact(
     data = json.loads(failure_file.read_text())
     assert data["status"] == status
     assert data["reason"] == reason
+
+
+def test_index_csv_is_world_readable_when_created(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+
+    repo.save(
+        FERecord(
+            run_id="run1",
+            ligand="lig1",
+            mol_name="lig1",
+            system_name="sys",
+            fe_type="rest",
+            temperature=300.0,
+            total_dG=-1.0,
+            total_se=0.1,
+            components=["z"],
+        )
+    )
+
+    mode = stat.S_IMODE((tmp_path / "results" / "index.csv").stat().st_mode)
+    assert mode & stat.S_IROTH
+    assert mode & stat.S_IRGRP
 
 
 def test_save_clears_stale_failure_artifact(tmp_path: Path) -> None:
