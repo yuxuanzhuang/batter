@@ -9,3 +9,4 @@ This section contains step-by-step guides for running BATTER workflows.
 
    abfe_tutorial
    rbfe_tutorial
+   cinnabar

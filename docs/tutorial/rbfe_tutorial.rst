@@ -300,6 +300,16 @@ Per-run RBFE analysis already writes a default bundle under
 ``results/cinnabar/<run_id>/``. Use the explicit multi-``--run-id`` command above
 when you want to merge replicate runs into one Cinnabar view.
 
+The same workflow is available from Python via
+:func:`batter.analysis.cinnabar.build_batter_rbfe_cinnabar`. This is the function
+to use when you want to combine replicate run ids programmatically or connect
+networks from different runs. BATTER matches ligand endpoints by ligand name plus
+canonical SMILES: matching name/SMILES pairs merge into one node, while same-name
+but different-SMILES endpoints remain separate suffixed nodes.
+
+See :doc:`cinnabar` for the dedicated Cinnabar workflow page, including the
+default per-run output layout and the Python API for combined replicate bundles.
+
 That command reads the saved ``results/index.csv`` rows, combines the selected RBFE
 edges, and writes a derived bundle under ``results/cinnabar/``. Use
 ``--split-runs`` if you want one bundle per run instead of collapsing repeats.
