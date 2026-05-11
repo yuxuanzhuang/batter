@@ -142,6 +142,11 @@ if [[ ! -f "$tmpl0" ]]; then
     exit 1
 fi
 
+for ((i = 0; i < N_WINDOWS; i++)); do
+    win=$(printf "%s%02d" "${COMP}" "$i")
+    apply_retry_dt_reduction "${PFOLDER}/${win}/mdin-remd-template" "$retry" 0.001 "REMD startup"
+done
+
 total_steps=$(parse_total_steps "$tmpl0")
 chunk_steps=$(parse_nstlim "$tmpl0")
 dt_ps=$(parse_dt_ps "$tmpl0")

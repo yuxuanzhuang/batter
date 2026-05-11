@@ -96,6 +96,15 @@ if [[ ! -f "$tmpl0" ]]; then
     exit 1
 fi
 
+for ((i = 0; i < N_WINDOWS; i++)); do
+    win=$(printf "%s%02d" "${COMP}" "$i")
+    tmpl="${PFOLDER}/${win}/mdin-batch-template"
+    if [[ ! -f "$tmpl" ]]; then
+        tmpl="${PFOLDER}/${win}/mdin-template"
+    fi
+    apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "batch startup"
+done
+
 total_steps=$(parse_total_steps "$tmpl0")
 chunk_steps=$(parse_nstlim "$tmpl0")
 dt_ps=$(parse_dt_ps "$tmpl0")

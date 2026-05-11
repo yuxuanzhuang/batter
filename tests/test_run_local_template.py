@@ -263,12 +263,11 @@ def test_run_local_remaining_steps_follow_reduced_dt(tmp_path: Path) -> None:
     (work / "eq.rst7").write_text("eqrst")
     (work / "md-current.rst7").write_text("time=0.0200000000\n")
     (work / "mdin-template").write_text(
-        "! target_dt=0.004\n"
         "! total_steps=10\n"
         "irest = 1,\n"
         "ntx   = 5,\n"
         "nstlim = 10,\n"
-        "dt = 0.003,\n"
+        "dt = 0.004,\n"
     )
 
     stub = work / "stub.sh"
@@ -325,7 +324,9 @@ exit 0
 
     env = os.environ.copy()
     env["PMEMD_EXEC"] = str(stub)
+    env["PMEMD_DPFP_EXEC"] = str(stub)
     env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
+    env["RETRY_COUNT"] = "4"
     env["PATH"] = f"{work}:{env.get('PATH','')}"
 
     subprocess.run(
@@ -336,3 +337,6 @@ exit 0
     )
 
     assert (work / "run_steps.txt").read_text().strip() == "7"
+    mdin_text = (work / "mdin-template").read_text()
+    assert "! target_dt=0.004" in mdin_text
+    assert "dt=0.003000" in mdin_text

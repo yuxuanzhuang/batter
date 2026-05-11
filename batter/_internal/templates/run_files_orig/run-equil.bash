@@ -87,6 +87,8 @@ if [[ ! -f $tmpl ]]; then
 fi
 
 # template-driven MD params
+apply_retry_dt_reduction "$tmpl" "$retry_count" 0.001 "production startup"
+
 dt_ps=$(parse_dt_ps "$tmpl")
 target_dt_ps=$(parse_target_dt_ps "$tmpl")
 total_steps=$(parse_total_steps "$tmpl")

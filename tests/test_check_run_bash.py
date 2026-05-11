@@ -106,6 +106,32 @@ def test_target_dt_and_remaining_steps_use_reduced_dt(tmp_path: Path) -> None:
     assert result.stdout.strip() == "7"
 
 
+def test_apply_retry_dt_reduction_is_idempotent(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+
+    tmpl.write_text("! total_steps=10\nnstlim = 10,\ndt = 0.004,\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& apply_retry_dt_reduction mdin-template 4 0.001 test "
+        "&& apply_retry_dt_reduction mdin-template 4 0.001 test"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    text = tmpl.read_text()
+    assert "! target_dt=0.004" in text
+    assert "dt=0.003000" in text
+
+
 def test_write_mdin_current_preserves_lower_existing_dt(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"

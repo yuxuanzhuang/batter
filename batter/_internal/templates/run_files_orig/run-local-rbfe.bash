@@ -176,6 +176,8 @@ if [[ ! -f $tmpl ]]; then
     exit 1
 fi
 
+apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "production startup"
+
 dt_ps=$(parse_dt_ps "$tmpl")
 target_dt_ps=$(parse_target_dt_ps "$tmpl")
 total_steps=$(parse_total_steps "$tmpl")
