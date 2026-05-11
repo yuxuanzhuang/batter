@@ -456,6 +456,59 @@ parse_dt_ps() {
     [[ -n $dt ]] && echo "$dt" || echo 0.001
 }
 
+parse_target_dt_ps() {
+    local tmpl=${1:-mdin-template}
+    local dt
+
+    [[ -f $tmpl ]] || { echo 0.001; return; }
+
+    dt=$(
+        grep -E '^[!#][[:space:]]*target_dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?' "$tmpl" \
+        | tail -1 \
+        | sed -E 's/.*target_dt[[:space:]]*=[[:space:]]*([-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?).*/\1/' \
+        | tr 'dD' 'eE'
+    )
+
+    [[ -n $dt ]] && echo "$dt" || parse_dt_ps "$tmpl"
+}
+
+ensure_target_dt_marker() {
+    local tmpl=${1:-mdin-template}
+    local target_dt=${2:-}
+
+    [[ -f "$tmpl" ]] || return 0
+    if grep -Eq '^[!#][[:space:]]*target_dt[[:space:]]*=' "$tmpl"; then
+        return 0
+    fi
+
+    [[ -n $target_dt ]] || target_dt=$(parse_dt_ps "$tmpl")
+    printf "! target_dt=%s\n" "$target_dt" > "${tmpl}.tmp"
+    cat "$tmpl" >> "${tmpl}.tmp"
+    mv "${tmpl}.tmp" "$tmpl"
+}
+
+remaining_steps_from_time() {
+    local total_ps=$1
+    local current_ps=$2
+    local dt_ps=$3
+
+    awk -v tot="$total_ps" -v cur="$current_ps" -v dt="$dt_ps" '
+        BEGIN {
+            rem = tot - cur
+            if (dt <= 0 || rem <= 0) {
+                print 0
+                exit
+            }
+            n = rem / dt
+            whole = int(n)
+            if (n - whole > 1e-9) {
+                whole += 1
+            }
+            print whole
+        }
+    '
+}
+
 rewrite_mdin_dt_file() {
     local target=$1
     local new_dt=$2
@@ -517,6 +570,7 @@ reduce_dt_on_failure() {
         return
     fi
 
+    ensure_target_dt_marker "$tmpl" "$dt"
     rewrite_mdin_dt_file "$tmpl" "$new_dt"
 
     local current_mdin

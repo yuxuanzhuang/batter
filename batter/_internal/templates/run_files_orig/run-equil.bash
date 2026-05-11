@@ -88,9 +88,10 @@ fi
 
 # template-driven MD params
 dt_ps=$(parse_dt_ps "$tmpl")
+target_dt_ps=$(parse_target_dt_ps "$tmpl")
 total_steps=$(parse_total_steps "$tmpl")
 chunk_steps=$(parse_nstlim "$tmpl")
-total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
+total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
 # ---------------- Minimization ----------------
@@ -229,12 +230,8 @@ if [[ $seg_idx -lt 0 ]]; then
     seg_idx=0
 fi
 
-current_steps=$(awk -v t="$current_ps" -v dt="$dt_ps" 'BEGIN{if (dt<=0) {print 0; exit} printf "%d\n", (t/dt)+0.5}')
-remaining_steps=$(( total_steps - current_steps ))
-if (( remaining_steps < 0 )); then
-    remaining_steps=0
-fi
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
+remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
 if awk -v tot="$total_ps" -v rem="$remaining_ps" 'BEGIN{exit !(tot>=100 && rem<=100)}'; then
     remaining_steps=0
     current_ps="$total_ps"
