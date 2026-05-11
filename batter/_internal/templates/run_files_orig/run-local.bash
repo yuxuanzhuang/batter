@@ -25,8 +25,8 @@ else
     rerun_eq_steps_after_failure=auto
 fi
 
-# if retry > 3, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
-if [[ $retry -gt 3 ]]; then
+# if retry is 5 during equilibration-only runs, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
+if [[ $only_eq -eq 1 && $retry =~ ^[0-9]+$ && $retry -eq 5 ]]; then
     PMEMD_EXEC=${PMEMD_DPFP_EXEC}
 fi
 
