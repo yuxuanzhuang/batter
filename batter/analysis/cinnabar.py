@@ -4504,6 +4504,14 @@ def write_cinnabar_outputs(
             dg_values_path.write_bytes(abs_plot_path.read_bytes())
             outputs["dg_values_png"] = dg_values_path
 
+    merged_relative, merged_absolute = read_cinnabar_outputs(out_root)
+    relative_path = out_root / "relative.csv"
+    merged_relative.to_csv(relative_path, index=False)
+    outputs["relative_csv"] = relative_path
+    absolute_path = out_root / "absolute.csv"
+    merged_absolute.to_csv(absolute_path, index=False)
+    outputs["absolute_csv"] = absolute_path
+
     graph_path = out_root / "cinnabar_network.png"
     rendered = _render_network_png(
         result.edge_summary,

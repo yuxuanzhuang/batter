@@ -666,6 +666,10 @@ def test_write_cinnabar_outputs_also_writes_cycle_closure(
     assert manifest["cycle_closure"]["node_value_column"] == "dG_wsfc1"
     assert "cycle_closure_nodes_csv" in manifest["outputs"]
     assert "cycle_closure_network_png" in manifest["outputs"]
+    relative = pd.read_csv(outputs["relative_csv"])
+    absolute = pd.read_csv(outputs["absolute_csv"])
+    assert "DDG_cycle_closure" in relative.columns
+    assert "DG_cycle_closure" in absolute.columns
 
     dashboard_html = outputs["dashboard_html"].read_text().lower()
     assert "cycle-closure-toggle" in dashboard_html

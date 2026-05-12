@@ -44,6 +44,8 @@ __all__ = [
     "state_function_correction_from_file",
 ]
 
+SFC_MIN_UNCERTAINTY = 1.0e-6
+
 
 @dataclass(frozen=True)
 class CycleClosureEdge:
@@ -113,10 +115,14 @@ def _coerce_edges(
             raise ValueError(f"Non-finite SFC ddG for {label_a}->{label_b}.")
 
         uncertainties = tuple(float(value) for value in candidate.uncertainties)
-        if any((not math.isfinite(value)) or value <= 0 for value in uncertainties):
+        if any((not math.isfinite(value)) or value < 0 for value in uncertainties):
             raise ValueError(
-                f"Uncertainties for {label_a}->{label_b} must be finite and > 0."
+                f"Uncertainties for {label_a}->{label_b} must be finite and >= 0."
             )
+        uncertainties = tuple(
+            SFC_MIN_UNCERTAINTY if value == 0 else value
+            for value in uncertainties
+        )
         coerced.append(
             CycleClosureEdge(
                 label_a=label_a,
