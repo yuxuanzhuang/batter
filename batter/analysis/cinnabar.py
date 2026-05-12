@@ -476,19 +476,103 @@ def _assign_ligand_node_labels(
     return out
 
 
-def _scan_rbfe_input_paths(
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _existing_ligand_structure_path(candidates: Sequence[Path]) -> str:
+    for candidate in candidates:
+        if candidate.is_file() and candidate.suffix.lower() in {
+            ".sdf",
+            ".sd",
+            ".mol",
+            ".mol2",
+            ".pdb",
+        }:
+            return str(candidate)
+    return ""
+
+
+def _scan_rbfe_input_assets(
     work_dir: str | Path,
     run_ids: Sequence[str],
     ligand_labels: Sequence[str],
-) -> dict[str, str]:
-    """Best-effort map of ligand label -> staged RBFE input path."""
+) -> dict[str, dict[str, str]]:
+    """Best-effort map of ligand label -> staged RBFE input metadata."""
     labels = {str(label).strip() for label in ligand_labels if str(label).strip()}
     if not labels:
         return {}
 
-    mapping: dict[str, str] = {}
+    mapping: dict[str, dict[str, str]] = {}
+
+    def _store(label: str, *, path: str = "", smiles: str = "") -> None:
+        label = str(label or "").strip()
+        if not label or label not in labels:
+            return
+        rec = mapping.setdefault(label, {"input_path": "", "smiles": ""})
+        if path and not rec["input_path"]:
+            rec["input_path"] = path
+        if smiles and not rec["smiles"]:
+            rec["smiles"] = smiles
+
     work_root = Path(work_dir)
     for run_id in run_ids:
+        run_root = work_root / "executions" / str(run_id)
+        index_path = run_root / "artifacts" / "ligand_params" / "index.json"
+        index_payload = _read_json_dict(index_path)
+        for entry in index_payload.get("ligands", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            ligand = str(entry.get("ligand") or "").strip()
+            residue = str(entry.get("residue_name") or "").strip()
+            title = str(entry.get("title") or "").strip()
+            store_dir = Path(str(entry.get("store_dir") or ""))
+            linked_dir = Path(str(entry.get("linked_dir") or ""))
+            if not store_dir.is_absolute():
+                store_dir = work_root / store_dir
+            if not linked_dir.is_absolute():
+                linked_dir = work_root / linked_dir
+
+            metadata = _read_json_dict(store_dir / "metadata.json")
+            local_param_dir = run_root / "simulations" / ligand / "params"
+            local_input_dir = run_root / "simulations" / ligand / "inputs"
+            local_metadata = _read_json_dict(local_param_dir / "metadata.json")
+            if local_metadata:
+                metadata = {**metadata, **local_metadata}
+
+            smiles = str(metadata.get("canonical_smiles") or "").strip()
+            aliases = {
+                ligand,
+                residue,
+                title,
+                str(metadata.get("title") or "").strip(),
+                str(metadata.get("prepared_base") or "").strip(),
+            }
+            metadata_aliases = metadata.get("aliases", []) or []
+            if isinstance(metadata_aliases, str):
+                metadata_aliases = [metadata_aliases]
+            aliases.update(str(alias or "").strip() for alias in metadata_aliases)
+            path = _existing_ligand_structure_path(
+                [
+                    Path(str(metadata.get("input_path") or "")),
+                    store_dir / "lig.sdf",
+                    store_dir / f"{residue}.sdf",
+                    linked_dir / "lig.sdf",
+                    linked_dir / f"{residue}.sdf",
+                    local_param_dir / "lig.sdf",
+                    local_param_dir / f"{residue}.sdf",
+                    local_input_dir / "ligand.sdf",
+                    local_input_dir / f"{ligand}.sdf",
+                    local_input_dir / f"{residue}.sdf",
+                ]
+            )
+            for alias in aliases:
+                _store(alias, path=path, smiles=smiles)
+
         trans_root = work_root / "executions" / str(run_id) / "simulations" / "transformations"
         if not trans_root.is_dir():
             continue
@@ -499,9 +583,21 @@ def _scan_rbfe_input_paths(
                 if not child.is_file():
                     continue
                 stem = child.stem.strip()
-                if stem in labels and stem not in mapping:
-                    mapping[stem] = str(child)
+                _store(stem, path=str(child))
     return mapping
+
+
+def _scan_rbfe_input_paths(
+    work_dir: str | Path,
+    run_ids: Sequence[str],
+    ligand_labels: Sequence[str],
+) -> dict[str, str]:
+    """Best-effort map of ligand label -> staged RBFE input path."""
+    return {
+        label: rec["input_path"]
+        for label, rec in _scan_rbfe_input_assets(work_dir, run_ids, ligand_labels).items()
+        if rec.get("input_path")
+    }
 
 
 def _mol_from_any_path(path_str: str):
@@ -644,13 +740,22 @@ def _build_ligand_assets(
                     path_by_label[label] = input_path.strip()
 
     if work_dir is not None:
-        scanned = _scan_rbfe_input_paths(
+        scanned = _scan_rbfe_input_assets(
             work_dir,
             [str(run_id).strip() for run_id in run_series.dropna().astype(str).unique()],
             sorted(labels),
         )
-        for label, input_path in scanned.items():
-            path_by_label.setdefault(label, input_path)
+        for label, metadata in scanned.items():
+            input_path = metadata.get("input_path", "")
+            smiles = metadata.get("smiles", "")
+            existing_path = path_by_label.get(label, "").strip()
+            if input_path and (
+                not existing_path
+                or not Path(existing_path).is_file()
+            ):
+                path_by_label[label] = input_path
+            if smiles and not smiles_by_label.get(label, "").strip():
+                smiles_by_label[label] = smiles
 
     try:
         from rdkit import Chem

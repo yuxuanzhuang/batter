@@ -384,6 +384,57 @@ def test_build_batter_rbfe_cinnabar_keeps_same_name_different_smiles_separate(
     assert len(result.edge_summary) == 2
 
 
+def test_ligand_assets_fall_back_to_run_staged_sdf_for_original_titles(tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    run_id = "rbfe-run"
+    run_root = work_dir / "executions" / run_id
+    index_dir = run_root / "artifacts" / "ligand_params"
+    index_dir.mkdir(parents=True)
+    params_a = run_root / "simulations" / "LIGA" / "params"
+    params_b = run_root / "simulations" / "LIGB" / "params"
+    params_a.mkdir(parents=True)
+    params_b.mkdir(parents=True)
+    sdf_a = params_a / "ra.sdf"
+    sdf_b = params_b / "rb.sdf"
+    sdf_a.write_text("placeholder\n")
+    sdf_b.write_text("placeholder\n")
+    index_dir.joinpath("index.json").write_text(
+        json.dumps(
+            {
+                "ligands": [
+                    {
+                        "ligand": "LIGA",
+                        "residue_name": "ra",
+                        "title": "Pretty A",
+                        "store_dir": "missing/a",
+                    },
+                    {
+                        "ligand": "LIGB",
+                        "residue_name": "rb",
+                        "title": "Pretty B",
+                        "store_dir": "missing/b",
+                    },
+                ]
+            }
+        )
+    )
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": run_id,
+                "edge_label": "Pretty A~Pretty B",
+                "original_path": "/stale/a.sdf~/stale/b.sdf",
+                "canonical_smiles": "",
+            }
+        ]
+    )
+
+    assets = cinnabar_mod._build_ligand_assets(df, work_dir=work_dir)
+
+    assert assets["Pretty A"]["input_path"] == str(sdf_a)
+    assert assets["Pretty B"]["input_path"] == str(sdf_b)
+
+
 def test_build_batter_rbfe_cinnabar_warns_when_absolute_solution_missing(
     monkeypatch, rbfe_index_df: pd.DataFrame, tmp_path: Path
 ) -> None:
