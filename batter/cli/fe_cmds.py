@@ -730,6 +730,10 @@ def fe_analyze(
         "<level>{message}</level>",
     )
 
+    if run_id is None and work_dir.parent.name == "executions":
+        run_id = work_dir.name
+        work_dir = work_dir.parent.parent
+
     if run_id:
         run_ids = [run_id]
     else:

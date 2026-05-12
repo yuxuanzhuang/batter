@@ -386,6 +386,37 @@ def test_cli_fe_analyze_invokes_api(
     assert called["raise_on_error"] is True
 
 
+def test_cli_fe_analyze_accepts_execution_dir(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    run_dir = tmp_path / "tyk2_rbfe" / "executions" / "rep3"
+    run_dir.mkdir(parents=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called["work_dir"] = work_dir
+        called["run_id"] = run_id
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(cli, ["fe", "analyze", str(run_dir)])
+
+    assert result.exit_code == 0
+    assert called == {"work_dir": tmp_path / "tyk2_rbfe", "run_id": "rep3"}
+
+
 def test_cli_fe_analyze_can_disable_raise(
     monkeypatch, tmp_path: Path, runner: CliRunner
 ) -> None:
