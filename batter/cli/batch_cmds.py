@@ -67,6 +67,75 @@ def _hash_path_list(paths: Sequence[Path]) -> str:
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:12]
 
 
+def _execution_root_for_path(path: Path) -> Path | None:
+    """Return the execution root for paths accepted by ``batter batch``."""
+    path = path.resolve()
+    if (path / "simulations").is_dir():
+        return path
+    if path.name == "simulations" and path.is_dir():
+        return path.parent
+    if path.name == "transformations" and path.is_dir():
+        return path.parent.parent
+
+    for parent in path.parents:
+        if (parent / "simulations").is_dir():
+            return parent
+    return None
+
+
+def _is_rbfe_execution(exec_root: Path) -> bool:
+    config_dir = exec_root / "artifacts" / "config"
+    if (config_dir / "rbfe_network.json").is_file():
+        return True
+
+    for name in ("run_meta.json", "run_config.normalized.json"):
+        path = config_dir / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        if str(data.get("protocol", "")).lower() == "rbfe":
+            return True
+
+    for name in ("run_config.yaml", "sim.resolved.yaml"):
+        path = config_dir / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text()
+        except Exception:
+            continue
+        if re.search(r"(?im)^\s*protocol\s*:\s*['\"]?rbfe['\"]?\s*$", text):
+            return True
+
+    return False
+
+
+def _rbfe_missing_transformations_notes(paths: Sequence[Path]) -> list[str]:
+    notes: list[str] = []
+    seen: set[Path] = set()
+    for path in paths:
+        exec_root = _execution_root_for_path(path)
+        if exec_root is None or exec_root in seen:
+            continue
+        seen.add(exec_root)
+        sim_root = exec_root / "simulations"
+        if (
+            _is_rbfe_execution(exec_root)
+            and sim_root.is_dir()
+            and not (sim_root / "transformations").is_dir()
+        ):
+            notes.append(
+                f"RBFE execution {exec_root} is missing "
+                f"{sim_root / 'transformations'}. Transformation components "
+                "such as fe/x cannot be discovered until FE preparation creates "
+                "simulations/transformations/<ligandA~ligandB>/fe/..."
+            )
+    return notes
+
+
 def _resolve_ligand_dirs(exec_path: Path) -> List[Path]:
     """
     Return FE leaf directories under an execution path.
@@ -84,6 +153,15 @@ def _resolve_ligand_dirs(exec_path: Path) -> List[Path]:
                 if entry.is_dir() and (entry / "fe").is_dir():
                     out.append(entry)
             return out
+
+        exec_root = _execution_root_for_path(sim_root)
+        if exec_root and _is_rbfe_execution(exec_root):
+            logger.warning(
+                f"[batch] RBFE execution {exec_root} has no "
+                f"{sim_root / 'transformations'} directory; transformation "
+                "components such as fe/x will not be picked up. Resume/run FE "
+                "preparation first, then rerun batter batch."
+            )
         
         for entry in sim_root.iterdir():
             if not entry.is_dir():
@@ -527,9 +605,11 @@ def _run_remd_batch(
             logger.debug(f"[remd-batch] Queued {t.comp_dir} (windows={win_note}).")
 
     if not tasks:
-        raise click.ClickException(
-            "No unfinished REMD component folders found under the provided paths."
-        )
+        msg = "No unfinished REMD component folders found under the provided paths."
+        notes = _rbfe_missing_transformations_notes(exec_paths)
+        if notes:
+            msg += "\n\n" + "\n".join(notes)
+        raise click.ClickException(msg)
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
     if auto_resubmit and signal_mins <= 0:
@@ -915,9 +995,11 @@ def batch(
             logger.debug(f"[batch] Queued {t.comp_dir} (windows={win_note}).")
 
     if not tasks:
-        raise click.ClickException(
-            "No unfinished component folders found under the provided paths."
-        )
+        msg = "No unfinished component folders found under the provided paths."
+        notes = _rbfe_missing_transformations_notes(exec_paths)
+        if notes:
+            msg += "\n\n" + "\n".join(notes)
+        raise click.ClickException(msg)
 
     tasks.sort(key=lambda t: (str(t.execution), t.ligand, t.component))
     if auto_resubmit and signal_mins <= 0:
