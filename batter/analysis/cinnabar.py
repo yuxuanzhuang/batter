@@ -30,6 +30,8 @@ __all__ = [
     "write_cinnabar_outputs",
 ]
 
+CINNABAR_MIN_UNCERTAINTY_KCAL_MOL = 1.0e-6
+
 
 @dataclass
 class CinnabarConversionResult:
@@ -219,6 +221,15 @@ def _combine_estimates(
         raise ValueError("uncertainty_mode must be 'ivw', 'sample', or 'max'.")
 
     return mean, out_se
+
+
+def _cinnabar_solver_uncertainty_kcal_mol(se: float) -> float:
+    """Return an uncertainty safe for Cinnabar's inverse-variance solver."""
+    if not np.isfinite(se) or se < 0:
+        raise ValueError("Cinnabar uncertainty must be finite and non-negative.")
+    if se == 0:
+        return CINNABAR_MIN_UNCERTAINTY_KCAL_MOL
+    return float(se)
 
 
 def _normalize_energy_unit(unit_obj: Any, unit_module: Any) -> Any:
@@ -1024,7 +1035,8 @@ def dataframe_to_cinnabar(
             labelA=row.labelA,
             labelB=row.labelB,
             value=float(row.calc_DDG) * unit.kilocalorie_per_mole,
-            uncertainty=float(row.calc_dDDG) * unit.kilocalorie_per_mole,
+            uncertainty=_cinnabar_solver_uncertainty_kcal_mol(float(row.calc_dDDG))
+            * unit.kilocalorie_per_mole,
             source=source,
             temperature=float(row.temperature_K) * unit.kelvin,
         )

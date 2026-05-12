@@ -297,6 +297,10 @@ def test_build_batter_rbfe_cinnabar_allows_zero_total_se(
     edge = result.edge_summary.iloc[0]
     assert edge["calc_DDG"] == 1.0
     assert edge["calc_dDDG"] == 0.0
+    relative = result.femap.get_relative_dataframe().iloc[0]
+    assert relative["uncertainty (kcal/mol)"] == pytest.approx(
+        cinnabar_mod.CINNABAR_MIN_UNCERTAINTY_KCAL_MOL
+    )
 
 
 def test_build_batter_rbfe_cinnabar_merges_matching_name_and_smiles(
