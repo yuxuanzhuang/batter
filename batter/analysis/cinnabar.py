@@ -180,11 +180,29 @@ def _combine_estimates(
         raise ValueError("No values to combine.")
     if np.any(~np.isfinite(values_arr)):
         raise ValueError("Non-finite values found.")
-    if np.any(~np.isfinite(ses_arr)) or np.any(ses_arr <= 0):
-        raise ValueError("All uncertainties must be finite and > 0.")
+    if np.any(~np.isfinite(ses_arr)) or np.any(ses_arr < 0):
+        raise ValueError("All uncertainties must be finite and >= 0.")
 
     if len(values_arr) == 1:
         return float(values_arr[0]), float(ses_arr[0])
+
+    zero_se = ses_arr == 0
+    if np.any(zero_se):
+        values_arr = values_arr[zero_se]
+        ses_arr = ses_arr[zero_se]
+        if len(values_arr) == 1:
+            return float(values_arr[0]), 0.0
+        mean = float(np.mean(values_arr))
+        sample_se = float(np.std(values_arr, ddof=1) / np.sqrt(len(values_arr)))
+        if uncertainty_mode == "sample":
+            out_se = sample_se
+        elif uncertainty_mode == "max":
+            out_se = sample_se
+        elif uncertainty_mode == "ivw":
+            out_se = 0.0
+        else:  # pragma: no cover - guarded by Literal/click
+            raise ValueError("uncertainty_mode must be 'ivw', 'sample', or 'max'.")
+        return mean, out_se
 
     weights = 1.0 / np.square(ses_arr)
     mean = float(np.sum(weights * values_arr) / np.sum(weights))
@@ -935,8 +953,8 @@ def dataframe_to_cinnabar(
         work["signed_dDG"] = raw_dg
     work["input_se"] = pd.to_numeric(work[se_column], errors="raise").astype(float)
 
-    if np.any(work["input_se"] <= 0):
-        raise ValueError(f"Column '{se_column}' must contain only positive values.")
+    if np.any(work["input_se"] < 0):
+        raise ValueError(f"Column '{se_column}' must contain only non-negative values.")
 
     if temperature_column in work.columns:
         work["temperature_K"] = pd.to_numeric(work[temperature_column], errors="coerce")

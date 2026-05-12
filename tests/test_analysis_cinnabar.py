@@ -285,6 +285,20 @@ def test_build_batter_rbfe_cinnabar_skips_rows_disabled_for_analysis(
     assert pytest.approx(edge["calc_DDG"], rel=1e-6) == 1.2
 
 
+def test_build_batter_rbfe_cinnabar_allows_zero_total_se(
+    monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
+) -> None:
+    df = rbfe_index_df.iloc[:1].copy()
+    df.loc[:, "total_se"] = 0.0
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1"])
+
+    edge = result.edge_summary.iloc[0]
+    assert edge["calc_DDG"] == 1.0
+    assert edge["calc_dDDG"] == 0.0
+
+
 def test_build_batter_rbfe_cinnabar_merges_matching_name_and_smiles(
     monkeypatch, fake_cinnabar_stack, tmp_path: Path
 ) -> None:
