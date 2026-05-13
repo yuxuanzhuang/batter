@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 
 import click
@@ -12,11 +13,14 @@ from loguru import logger
 from batter.analysis.cinnabar import (
     build_batter_rbfe_cinnabar,
     build_batter_rbfe_cinnabar_by_run,
+    build_batter_rbfe_cinnabar_from_runs,
     summarize_directionality,
     write_cinnabar_outputs,
 )
 from batter.api import list_fe_runs, load_fe_run, run_analysis_from_execution
 from batter.cli.root import cli
+from batter.runtime.fe_repo import FEResultsRepository
+from batter.runtime.portable import ArtifactStore
 
 
 @cli.group("fe")
@@ -66,6 +70,7 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         "total_dG",
         "total_se",
         "original_name",
+        "include_in_analysis",
         "status",
         "protocol",
         "created_at",
@@ -112,6 +117,134 @@ def fe_list(work_dir: Path, fmt: str) -> None:
         if "total_se" in show.columns:
             show["total_se"] = show["total_se"].map(_fmt)
         click.echo(show.to_string(index=False))
+
+
+def _selection_indices(selection: str, *, max_index: int) -> list[int]:
+    text = selection.strip().lower()
+    if text == "all":
+        return list(range(max_index))
+    out: list[int] = []
+    for part in re.split(r"[\s,]+", text):
+        if not part:
+            continue
+        try:
+            idx = int(part)
+        except ValueError as exc:
+            raise click.ClickException(
+                f"Invalid selection '{part}'. Use row numbers or 'all'."
+            ) from exc
+        if idx < 1 or idx > max_index:
+            raise click.ClickException(f"Selection {idx} is outside 1..{max_index}.")
+        out.append(idx - 1)
+    return sorted(set(out))
+
+
+@fe.command("analysis-inclusion")
+@click.argument(
+    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+)
+@click.option(
+    "--run-id",
+    "run_ids",
+    multiple=True,
+    help="Only show rows from the selected run id(s).",
+)
+def fe_analysis_inclusion(work_dir: Path, run_ids: tuple[str, ...]) -> None:
+    """Interactively enable or disable FE rows for aggregate analysis."""
+    repo = FEResultsRepository(ArtifactStore(work_dir))
+    try:
+        df = repo.index().copy()
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    if df.empty:
+        click.secho("No FE runs found.", fg="yellow")
+        return
+
+    if run_ids:
+        requested = {str(run_id) for run_id in run_ids}
+        df = df.loc[df["run_id"].astype(str).isin(requested)].copy()
+        if df.empty:
+            raise click.ClickException(
+                "No FE rows remain after filtering for run id(s): "
+                + ", ".join(sorted(requested))
+            )
+
+    df = df.reset_index(drop=True)
+
+    def _display() -> None:
+        show_cols = [
+            "row",
+            "include_in_analysis",
+            "run_id",
+            "ligand",
+            "original_name",
+            "status",
+            "protocol",
+            "total_dG",
+            "total_se",
+        ]
+        show = df.copy()
+        show.insert(0, "row", range(1, len(show) + 1))
+        for col in show_cols:
+            if col not in show.columns:
+                show[col] = ""
+        for col in ("total_dG", "total_se"):
+            show[col] = show[col].map(
+                lambda value: ""
+                if pd.isna(value) or str(value).strip() == ""
+                else f"{float(value):.3f}"
+            )
+        click.echo(show[show_cols].to_string(index=False))
+
+    click.echo(
+        "Rows with include_in_analysis=False are skipped by Cinnabar and other aggregate analyses."
+    )
+    _display()
+    click.echo("Commands: 'disable 1,3', 'enable 2', 'disable all', 'show', 'quit'.")
+
+    while True:
+        command = click.prompt("analysis-inclusion", default="quit", show_default=False)
+        command = command.strip()
+        if not command:
+            continue
+        lower = command.lower()
+        if lower in {"q", "quit", "exit", "done"}:
+            break
+        if lower == "show":
+            _display()
+            continue
+        parts = command.split(maxsplit=1)
+        if len(parts) != 2 or parts[0].lower() not in {"enable", "disable"}:
+            click.secho(
+                "Expected 'enable <rows>', 'disable <rows>', 'show', or 'quit'.",
+                fg="yellow",
+            )
+            continue
+        include = parts[0].lower() == "enable"
+        try:
+            indices = _selection_indices(parts[1], max_index=len(df))
+        except click.ClickException as exc:
+            click.secho(str(exc), fg="red")
+            continue
+        updated = 0
+        for idx in indices:
+            row = df.iloc[idx]
+            updated += repo.set_analysis_inclusion(
+                run_id=str(row["run_id"]),
+                ligand=str(row["ligand"]),
+                include=include,
+                analysis_start_step=FEResultsRepository._normalize_optional_int(
+                    row.get("analysis_start_step")
+                ),
+                n_bootstraps=FEResultsRepository._normalize_n_bootstraps(
+                    row.get("n_bootstraps")
+                ),
+            )
+            df.loc[idx, "include_in_analysis"] = include
+        click.echo(
+            f"{'Enabled' if include else 'Disabled'} {updated} index row(s) for aggregate analysis."
+        )
+        _display()
 
 
 @fe.command("show")
@@ -191,7 +324,20 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
 
 @fe.command("cinnabar")
 @click.argument(
-    "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
+    "work_dir",
+    required=False,
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+)
+@click.option(
+    "--run",
+    "run_inputs",
+    multiple=True,
+    nargs=2,
+    type=(click.Path(exists=True, file_okay=False, path_type=Path), str),
+    help=(
+        "Explicit atomic run input as WORK_DIR RUN_ID. Repeat to combine runs "
+        "from different work directories."
+    ),
 )
 @click.option(
     "--run-id",
@@ -322,7 +468,8 @@ def fe_show(work_dir: Path, run_id: str, ligand: str | None) -> None:
     help="Constant offset (kcal/mol) added to computed absolute ΔG values in the sorted absolute-energy plot.",
 )
 def fe_cinnabar(
-    work_dir: Path,
+    work_dir: Path | None,
+    run_inputs: tuple[tuple[Path, str], ...],
     run_ids: tuple[str, ...],
     ligands: tuple[str, ...],
     out_dir: Path | None,
@@ -347,6 +494,15 @@ def fe_cinnabar(
     absolute_offset: float,
 ) -> None:
     """Convert stored BATTER RBFE results into Cinnabar FEMap-ready outputs."""
+    if run_inputs and work_dir is not None:
+        raise click.ClickException(
+            "Use either WORK_DIR with --run-id, or explicit --run WORK_DIR RUN_ID inputs, not both."
+        )
+    if run_inputs and run_ids:
+        raise click.ClickException("--run-id cannot be combined with explicit --run inputs.")
+    if work_dir is None and not run_inputs:
+        raise click.ClickException("Provide WORK_DIR or at least one --run WORK_DIR RUN_ID input.")
+
     exp_df = None
     if experimental_csv is not None:
         try:
@@ -356,11 +512,19 @@ def fe_cinnabar(
                 f"Failed to read experimental CSV '{experimental_csv}': {exc}"
             ) from exc
 
-    output_root = out_dir or (work_dir / "results" / "cinnabar")
+    if out_dir is not None:
+        output_root = out_dir
+    elif run_inputs:
+        unique_roots = {Path(work).resolve() for work, _run_id in run_inputs}
+        if len(unique_roots) == 1:
+            output_root = next(iter(unique_roots)) / "results" / "cinnabar"
+        else:
+            output_root = Path.cwd() / "cinnabar"
+    else:
+        assert work_dir is not None
+        output_root = work_dir / "results" / "cinnabar"
 
     common_kwargs = {
-        "work_dir": work_dir,
-        "run_ids": run_ids or None,
         "ligands": ligands or None,
         "edge_separator": edge_separator,
         "uncertainty_mode": uncertainty_mode.lower(),
@@ -380,8 +544,41 @@ def fe_cinnabar(
     }
 
     try:
+        if run_inputs:
+            if not combine_runs:
+                raise click.ClickException(
+                    "--split-runs is not supported with explicit --run inputs; "
+                    "invoke the command separately for each run if separate bundles are needed."
+                )
+            result = build_batter_rbfe_cinnabar_from_runs(
+                list(run_inputs),
+                **common_kwargs,
+            )
+            outputs = write_cinnabar_outputs(
+                result,
+                output_root,
+                method_name="BATTER",
+                target_name="combined explicit runs",
+                write_plots=write_plots,
+                write_cycle_closure=write_cycle_closure,
+                absolute_offset=absolute_offset,
+            )
+            if getattr(result, "absolute_warning", None):
+                click.secho(str(result.absolute_warning), fg="yellow")
+            click.echo(
+                f"Wrote combined Cinnabar bundle to {output_root} "
+                f"({len(outputs)} files tracked)."
+            )
+            return
+
+        assert work_dir is not None
+        legacy_kwargs = {
+            "work_dir": work_dir,
+            "run_ids": run_ids or None,
+            **common_kwargs,
+        }
         if combine_runs:
-            result = build_batter_rbfe_cinnabar(**common_kwargs)
+            result = build_batter_rbfe_cinnabar(**legacy_kwargs)
             outputs = write_cinnabar_outputs(
                 result,
                 output_root,
@@ -414,7 +611,7 @@ def fe_cinnabar(
             )
             return
 
-        bundles = build_batter_rbfe_cinnabar_by_run(**common_kwargs)
+        bundles = build_batter_rbfe_cinnabar_by_run(**legacy_kwargs)
         if not bundles:
             raise click.ClickException("No per-run RBFE bundles were generated.")
 
@@ -532,6 +729,10 @@ def fe_analyze(
         "<cyan>{module}</cyan>:<cyan>{line}</cyan> - "
         "<level>{message}</level>",
     )
+
+    if run_id is None and work_dir.parent.name == "executions":
+        run_id = work_dir.name
+        work_dir = work_dir.parent.parent
 
     if run_id:
         run_ids = [run_id]

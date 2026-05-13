@@ -19,11 +19,14 @@ developers should consult in order to become productive quickly.
    location pointed to by ``run.slurm_header_dir``. See
    :doc:`cookbook/slurm_headers` for the full layout and examples.
 
+   If you need to compile or patch AMBER GPU builds for BATTER runs, review
+   :doc:`cookbook/amber_compilation` before launching production windows.
+
 Follow the Tutorial
 ===================
 
 The best way to see BATTER in action is to follow :doc:`tutorial/index`. It walks through setting up
-an environment, preparing input files, and running a full ABFE example. Completing
+an environment, preparing input files, and running full ABFE and RBFE examples. Completing
 the tutorial ensures all required dependencies are installed and introduces the core
 workflow.
 
@@ -39,24 +42,24 @@ controls.
 Understanding the outputs
 =========================
 
-``batter`` generate several output files and directories during execution. To inspect
-simulations, analyze results, or troubleshoot issues, consult :doc:`developer_guide` now
-and a dedicated guide will be added soon.
+``batter`` generates several output files and directories during execution.
+Use :doc:`cookbook/results_folder` to inspect the output layout, and consult
+:doc:`developer_guide` when debugging orchestration or analysis internals.
 
 
 Developing Pipelines
 ====================
 
 If you plan to modify or extend BATTER's internals—for example, adding new pipeline
-steps or integrating a custom backend—read the :doc:`developer_guide`. These documents explain
-the architecture, typed payloads, metadata model, and orchestration flow used by the
-codebase.
+steps or integrating a custom backend—read the :doc:`developer_guide`. These
+documents explain the architecture, typed payloads, metadata model, and orchestration
+flow used by the codebase.
 
 Additional Resources
 ====================
 
 * ``examples/`` – Ready-to-run YAML configurations demonstrating ABFE (membrane
-  and soluble) and ASFE scenarios.
+  and soluble), RBFE, ASFE, and plain MD scenarios.
 * ``tests/`` – A suite of unit tests that exercise pipeline handlers, state registry,
   and metadata helpers; useful for understanding expected behaviour.
 * ``README.rst`` – Project overview, installation, and quickstart commands.

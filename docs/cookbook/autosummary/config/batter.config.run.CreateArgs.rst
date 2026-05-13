@@ -1,4 +1,4 @@
-﻿batter.config.run.CreateArgs
+batter.config.run.CreateArgs
 ============================
 
 .. currentmodule:: batter.config.run

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import warnings
 from pathlib import Path
 
@@ -50,6 +51,29 @@ def test_record_failure_creates_row_and_artifact(
     data = json.loads(failure_file.read_text())
     assert data["status"] == status
     assert data["reason"] == reason
+
+
+def test_index_csv_is_world_readable_when_created(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+
+    repo.save(
+        FERecord(
+            run_id="run1",
+            ligand="lig1",
+            mol_name="lig1",
+            system_name="sys",
+            fe_type="rest",
+            temperature=300.0,
+            total_dG=-1.0,
+            total_se=0.1,
+            components=["z"],
+        )
+    )
+
+    mode = stat.S_IMODE((tmp_path / "results" / "index.csv").stat().st_mode)
+    assert mode & stat.S_IROTH
+    assert mode & stat.S_IRGRP
 
 
 def test_save_clears_stale_failure_artifact(tmp_path: Path) -> None:
@@ -138,6 +162,35 @@ def test_index_upsert_key_includes_analysis_start_step_and_n_bootstraps(
         (rows["analysis_start_step"] == 5000) & (rows["n_bootstraps"] == 64)
     ].iloc[0]
     assert updated["total_dG"] == pytest.approx(-4.0)
+
+
+def test_set_analysis_inclusion_updates_index_and_survives_resave(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path)
+    repo = FEResultsRepository(store)
+    rec = FERecord(
+        run_id="run1",
+        ligand="lig1",
+        mol_name="lig1",
+        system_name="sys",
+        fe_type="rest",
+        temperature=300.0,
+        method="mbar",
+        total_dG=-1.0,
+        total_se=0.1,
+        components=["z"],
+    )
+
+    repo.save(rec)
+    assert bool(repo.index().iloc[0]["include_in_analysis"]) is True
+
+    updated = repo.set_analysis_inclusion(run_id="run1", ligand="lig1", include=False)
+    assert updated == 1
+    assert bool(repo.index().iloc[0]["include_in_analysis"]) is False
+
+    repo.save(rec.model_copy(update={"total_dG": -2.0}))
+    row = repo.index().iloc[0]
+    assert row["total_dG"] == pytest.approx(-2.0)
+    assert bool(row["include_in_analysis"]) is False
 
 
 def test_save_does_not_emit_futurewarning_on_index_append(tmp_path: Path) -> None:

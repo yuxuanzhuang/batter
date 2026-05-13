@@ -65,6 +65,22 @@ def test_wsfc_uses_uncertainty_weights() -> None:
     ]
 
 
+def test_wsfc_accepts_zero_uncertainty_as_exact_weight() -> None:
+    df = pd.DataFrame(
+        [
+            {"labelA": "A", "labelB": "B", "calc_DDG": 1.0, "calc_dDDG": 0.0},
+            {"labelA": "B", "labelB": "C", "calc_DDG": 1.0, "calc_dDDG": 0.2},
+            {"labelA": "A", "labelB": "C", "calc_DDG": 3.0, "calc_dDDG": 0.2},
+        ]
+    )
+
+    result = cycle_closure_from_dataframe(df, reference="A", reference_free_energy=0.0)
+
+    assert result.schemes == ("sfc", "wsfc1")
+    edges = result.edge_results.set_index(["labelA", "labelB"])
+    assert edges.loc[("A", "B"), "ddG_wsfc1"] == pytest.approx(1.0)
+
+
 def test_sfc_reads_whitespace_input_files(tmp_path: Path) -> None:
     input_file = tmp_path / "sfc_input.dat"
     input_file.write_text("A B 1.0 0.2\nB C 1.0 0.2\nA C 3.0 0.2\n")

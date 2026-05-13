@@ -185,8 +185,8 @@ The main CLI entry points for this tree are:
 Derived Cinnabar Exports
 ------------------------
 
-The portable FE repository above is BATTER's canonical stored-results layer. The
-optional command::
+The portable FE repository above is BATTER's canonical stored-results layer. For
+one work directory, the optional command::
 
    batter fe cinnabar <run.output_folder>
 
@@ -196,6 +196,17 @@ writes an additional derived export tree under::
 
 This tree is not used by BATTER's core FE record loader. It is a convenience export
 layer for downstream Cinnabar notebooks, figures, and benchmarking workflows.
+
+For production benchmarking across different BATTER work directories, pass each
+run as an atomic ``--run WORK_DIR RUN_ID`` input and choose an output directory::
+
+   batter fe cinnabar \
+       --run work/adrb2 rep1 \
+       --run work/adrb2_retry rep2 \
+       --out-dir combined_cinnabar
+
+If explicit ``--run`` inputs come from multiple work directories and ``--out-dir``
+is omitted, BATTER writes to ``./cinnabar``.
 
 A combined export typically looks like::
 
@@ -214,7 +225,8 @@ A combined export typically looks like::
        ├── cinnabar_dg.png            # when experiment is provided
        └── cinnabar_ddg.png           # when experiment is provided
 
-When ``--split-runs`` is used, BATTER writes one subdirectory per run instead::
+When ``--split-runs`` is used with the same-work-dir command form, BATTER writes
+one subdirectory per run instead::
 
    results/cinnabar/<run_id>/
 

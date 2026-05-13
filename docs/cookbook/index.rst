@@ -12,6 +12,7 @@ need a full tutorial.
    slurm_headers
    production_runs
    remd_submission
+   amber_compilation
    results_folder
    rbfe
    fek_schedule

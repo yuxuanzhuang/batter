@@ -96,22 +96,28 @@ if [[ ! -f "$tmpl0" ]]; then
     exit 1
 fi
 
+for ((i = 0; i < N_WINDOWS; i++)); do
+    win=$(printf "%s%02d" "${COMP}" "$i")
+    tmpl="${PFOLDER}/${win}/mdin-batch-template"
+    if [[ ! -f "$tmpl" ]]; then
+        tmpl="${PFOLDER}/${win}/mdin-template"
+    fi
+    apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "batch startup"
+done
+
 total_steps=$(parse_total_steps "$tmpl0")
 chunk_steps=$(parse_nstlim "$tmpl0")
 dt_ps=$(parse_dt_ps "$tmpl0")
-total_ps=$(awk -v s="$total_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
+target_dt_ps=$(parse_target_dt_ps "$tmpl0")
+total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
 read current_ps last_idx < <(window_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
 [[ -z $current_ps ]] && current_ps=0
 
 echo "Current completed time (from restart): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
 
-current_steps=$(awk -v t="$current_ps" -v dt="$dt_ps" 'BEGIN{if (dt<=0) {print 0; exit} printf "%d\n", (t/dt)+0.5}')
-remaining_steps=$(( total_steps - current_steps ))
-if (( remaining_steps < 0 )); then
-    remaining_steps=0
-fi
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
+remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
 if awk -v tot="$total_ps" -v rem="$remaining_ps" 'BEGIN{exit !(tot>=100 && rem<=100)}'; then
     remaining_steps=0
     current_ps="$total_ps"

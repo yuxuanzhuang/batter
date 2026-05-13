@@ -209,7 +209,7 @@ def test_run_from_yaml_passes_max_active_jobs(monkeypatch, tmp_path: Path) -> No
     run_yaml.write_text(
         f"""
 protocol: abfe
-backend: slurm
+backend: local
 run:
   output_folder: "{tmp_path / 'out'}"
   run_id: auto
@@ -241,6 +241,7 @@ fe_sim:
         raise Sentinel
 
     monkeypatch.setattr(run_mod, "SlurmJobManager", fake_mgr)
+    monkeypatch.setattr(run_mod, "register_local_handlers", lambda backend: None)
     monkeypatch.setattr(run_mod, "_select_system_builder", lambda *a, **k: DummyBuilder())
     monkeypatch.setattr(
         run_mod,

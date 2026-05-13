@@ -5,9 +5,9 @@ BATTER Developer Guide
 This guide provides an up-to-date overview of the internal architecture of **BATTER**.
 It targets contributors who need to understand or extend the codebase.
 
-The project powers absolute binding (ABFE) and solvation (ASFE) free-energy workflows,
-supports both local execution and SLURM clusters, and packages results in a portable
-artifact store.
+The project powers absolute binding (ABFE), relative binding (RBFE), and solvation
+(ASFE) free-energy workflows, supports both local execution and SLURM clusters, and
+packages results in a portable artifact store.
 
 .. toctree::
    :maxdepth: 1
@@ -210,7 +210,7 @@ Orchestration
 :func:`~batter.orchestrate.run.run_from_yaml` wires every layer together:
 
 1. Load the run YAML and apply optional overrides.
-2. Instantiate a system builder inferred from the selected protocol (abfe/md → MABFE, asfe → MASFE; overrides via ``run.system_type`` remain for backward compatibility).
+2. Instantiate a system builder inferred from the selected protocol (``abfe``/``rbfe``/``md`` → ``MABFE``, ``asfe`` → ``MASFE``; overrides via ``run.system_type`` remain for backward compatibility).
 3. Resolve staged ligands (supporting resume) and regenerate the system if required.
 4. Construct the ABFE/ASFE pipeline using :func:`select_pipeline
    <batter.orchestrate.pipeline_utils.select_pipeline>`.
@@ -223,9 +223,9 @@ Orchestration
 Run identifiers and config signatures
 -------------------------------------
 
-Each execution lives under ``<output_folder>/executions/<run_id>/``. When a run_id
-already exists, :func:`batter.orchestrate.run._compute_run_signature` compares the
-current YAML against the stored signature under ``artifacts/config/run_config.hash``.
+Each execution lives under ``<output_folder>/executions/<run_id>/``. When a run ID
+already exists, :func:`batter.orchestrate.run_support.compute_run_signature` compares
+the current YAML against the stored signature under ``artifacts/config/run_config.hash``.
 Only the simulation inputs are hashed (``create`` and ``fe_sim``/``fe``); ``run`` and
 override flags do not affect the signature. A normalized JSON snapshot of the hashed
 payload is also written to ``artifacts/config/run_config.normalized.json`` to aid

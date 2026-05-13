@@ -1,5 +1,5 @@
-﻿batter.config.dump\_simulation\_config
-======================================
+batter.config.dump_simulation_config
+====================================
 
 .. currentmodule:: batter.config
 

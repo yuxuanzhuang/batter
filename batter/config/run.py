@@ -908,7 +908,7 @@ class RunConfig(BaseModel):
     @classmethod
     def _lower_backend(cls, v):
         return str(v).lower() if v else v
-    
+
     # disable backend slurm for now
     @field_validator("backend", mode="before")
     @classmethod
@@ -936,6 +936,15 @@ class RunConfig(BaseModel):
         p = Path(path)
         data = yaml.safe_load(p.read_text()) or {}
         data = expand_env_vars(data, base_dir=p.parent)
+        create_data = data.get("create") if isinstance(data, Mapping) else None
+        if isinstance(create_data, dict):
+            conf_restraints = create_data.get("extra_conformation_restraints")
+            if conf_restraints not in (None, ""):
+                conf_path = Path(str(conf_restraints))
+                if not conf_path.is_absolute():
+                    create_data["extra_conformation_restraints"] = str(
+                        (p.parent / conf_path).resolve()
+                    )
         cfg = cls.model_validate(data)
         return cfg.with_base_dir(p.parent)
 

@@ -1,4 +1,4 @@
-﻿batter.config.run.FESimArgs
+batter.config.run.FESimArgs
 ===========================
 
 .. currentmodule:: batter.config.run

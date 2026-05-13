@@ -6,8 +6,9 @@ import json
 import shutil
 import re
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Iterator, Tuple
 
 import numpy as np
 import pandas as pd
@@ -26,6 +27,103 @@ from batter._internal.ops.helpers import (
 )
 
 
+
+
+_HY36_DIGITS_UPPER = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_HY36_DIGITS_LOWER = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+def _decode_pure_base36(value: str, digits: str) -> int:
+    decoded = 0
+    for char in value:
+        decoded *= len(digits)
+        decoded += digits.index(char)
+    return decoded
+
+
+def _hy36decode(width: int, value: str) -> int:
+    """Decode a hybrid-36 PDB number.
+
+    AmberTools can use hybrid-36 residue IDs once a PDB exceeds the decimal
+    residue field. MDAnalysis decodes hybrid-36 atom serials, but not residue
+    IDs, so BATTER normalizes those fields before handing the PDB to MDAnalysis.
+    """
+    if len(value) != width:
+        raise ValueError(f"invalid hybrid-36 field width: {value!r}")
+
+    first = value[0]
+    if first in {"-", " "} or first.isdigit():
+        return int(value)
+    if first in _HY36_DIGITS_UPPER:
+        return (
+            _decode_pure_base36(value, _HY36_DIGITS_UPPER)
+            - 10 * 36 ** (width - 1)
+            + 10**width
+        )
+    if first in _HY36_DIGITS_LOWER:
+        return (
+            _decode_pure_base36(value, _HY36_DIGITS_LOWER)
+            + 16 * 36 ** (width - 1)
+            + 10**width
+        )
+    raise ValueError(f"invalid hybrid-36 field: {value!r}")
+
+
+def _normalize_hybrid36_resids_for_mdanalysis(pdb_path: Path) -> Path | None:
+    """Return a temp PDB with hybrid-36 residue IDs converted for MDAnalysis.
+
+    MDAnalysis' PDB parser treats non-decimal residue fields such as ``A6VB`` as
+    missing and assigns resid 1, which merges consecutive waters into one
+    residue. For MDAnalysis parsing only, convert such fields to their decimal
+    residue number modulo the 4-column PDB field. MDAnalysis' existing wraparound
+    logic then restores monotonically increasing residue IDs for normal Amber
+    output order. Decimal PDB and older Amber five-digit residue output are left
+    unchanged.
+    """
+    normalized_lines: list[str] = []
+    changed = False
+
+    with pdb_path.open() as handle:
+        for line in handle:
+            if line.startswith(("ATOM  ", "HETATM")) and len(line) >= 26:
+                resid_field = line[22:26]
+                try:
+                    int(resid_field)
+                except ValueError:
+                    try:
+                        resid = _hy36decode(4, resid_field)
+                    except ValueError:
+                        normalized_lines.append(line)
+                    else:
+                        changed = True
+                        normalized_lines.append(f"{line[:22]}{resid % 10000:04d}{line[26:]}")
+                else:
+                    normalized_lines.append(line)
+            else:
+                normalized_lines.append(line)
+
+    if not changed:
+        return None
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb", mode="w")
+    try:
+        tmp.writelines(normalized_lines)
+    finally:
+        tmp.close()
+    return Path(tmp.name)
+
+
+@contextmanager
+def _mdanalysis_pdb_path(pdb_path: Path) -> Iterator[Path]:
+    normalized = _normalize_hybrid36_resids_for_mdanalysis(pdb_path)
+    if normalized is None:
+        yield pdb_path
+        return
+
+    try:
+        yield normalized
+    finally:
+        normalized.unlink(missing_ok=True)
 
 
 def _cp(src: Path, dst: Path) -> None:
@@ -219,116 +317,117 @@ def create_box(ctx: BuildContext) -> None:
         prev_resid = row["old_resid"]
 
     # MDAnalysis universes
-    u = mda.Universe(str(window_dir / "full_pre.pdb"))
-    final_system = u.atoms
-    system_dimensions = u.dimensions[:3]
+    with _mdanalysis_pdb_path(window_dir / "full_pre.pdb") as full_pre_pdb:
+        u = mda.Universe(str(full_pre_pdb))
+        final_system = u.atoms
+        system_dimensions = u.dimensions[:3]
 
-    if membrane_builder:
-        u_ref = mda.Universe(str(window_dir / "equil-reference.pdb"))
-        u.dimensions[0] = u_ref.dimensions[0]
-        u.dimensions[1] = u_ref.dimensions[1]
-        u.dimensions[2] = u.dimensions[2] - 3
-        u.atoms.positions[:, 2] -= 3
+        if membrane_builder:
+            u_ref = mda.Universe(str(window_dir / "equil-reference.pdb"))
+            u.dimensions[0] = u_ref.dimensions[0]
+            u.dimensions[1] = u_ref.dimensions[1]
+            u.dimensions[2] = u.dimensions[2] - 3
+            u.atoms.positions[:, 2] -= 3
 
-        membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
-        memb_z_max = membrane_region.select_atoms("type P").positions[:, 2].max() - 10
-        memb_z_min = membrane_region.select_atoms("type P").positions[:, 2].min() + 10
-        water_in_mem = u.select_atoms(
-            f"byres (resname WAT and prop z > {memb_z_min} and prop z < {memb_z_max})"
+            membrane_region = u.select_atoms(f'resname {" ".join(lipid_mol)}')
+            memb_z_max = membrane_region.select_atoms("type P").positions[:, 2].max() - 10
+            memb_z_min = membrane_region.select_atoms("type P").positions[:, 2].min() + 10
+            water_in_mem = u.select_atoms(
+                f"byres (resname WAT and prop z > {memb_z_min} and prop z < {memb_z_max})"
+            )
+            final_system = final_system - water_in_mem
+
+        box_xy = [u.dimensions[0], u.dimensions[1]]
+        water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
+        final_system = final_system | water_around_prot
+
+        if membrane_builder:
+            outside_wat = final_system.select_atoms(
+                "byres (resname WAT and "
+                f"((prop x > {box_xy[0]/2}) or (prop x < -{box_xy[0]/2}) or "
+                f"(prop y > {box_xy[1]/2}) or (prop y < -{box_xy[1]/2})))"
+            )
+            final_system = final_system - outside_wat
+
+        if comp in ["e", "v", "o", "z"]:
+            min_pos = final_system.positions[:, 2].min()
+            system_dimensions[2] = abs_z
+
+            outside_wat_z = final_system.select_atoms(
+                "byres (resname WAT and "
+                f"(prop z > {abs_z + min_pos}))"
+            )
+            final_system = final_system - outside_wat_z
+
+        # renumber residues
+        revised_resids = np.array(revised_resids)
+        total_residues = final_system.residues.n_residues
+        final_resids = np.zeros(total_residues, dtype=int)
+        final_resids[: len(revised_resids)] = revised_resids
+        next_resnum = revised_resids[-1] + 1
+        final_resids[len(revised_resids) :] = np.arange(
+            next_resnum, total_residues - len(revised_resids) + next_resnum
         )
-        final_system = final_system - water_in_mem
+        final_system.residues.resids = final_resids
 
-    box_xy = [u.dimensions[0], u.dimensions[1]]
-    water_around_prot = u.select_atoms("resname WAT").residues[:num_waters].atoms
-    final_system = final_system | water_around_prot
-
-    if membrane_builder:
-        outside_wat = final_system.select_atoms(
-            "byres (resname WAT and "
-            f"((prop x > {box_xy[0]/2}) or (prop x < -{box_xy[0]/2}) or "
-            f"(prop y > {box_xy[1]/2}) or (prop y < -{box_xy[1]/2})))"
+        # partitions
+        final_system_dum = final_system.select_atoms("resname DUM")
+        final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
+        if comp == 'z':
+            final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
+        final_system_prot = final_system.select_atoms("protein")
+        final_system_others = final_system - final_system_prot - final_system_dum
+        final_system_ligs = final_system.select_atoms(f"resname {mol}")
+        final_system_other_mol = (
+            final_system_others.select_atoms("not resname WAT") - final_system_ligs
         )
-        final_system = final_system - outside_wat
-
-    if comp in ["e", "v", "o", "z"]:
-        min_pos = final_system.positions[:, 2].min()
-        system_dimensions[2] = abs_z
-
-        outside_wat_z = final_system.select_atoms(
-            "byres (resname WAT and "
-            f"(prop z > {abs_z + min_pos}))"
+        final_system_water = final_system_others.select_atoms("resname WAT")
+        final_system_water_notaround = final_system.select_atoms(
+            "byres (resname WAT and not (around 6 protein))"
         )
-        final_system = final_system - outside_wat_z
+        final_system_water_around = final_system_water - final_system_water_notaround
 
-    # renumber residues
-    revised_resids = np.array(revised_resids)
-    total_residues = final_system.residues.n_residues
-    final_resids = np.zeros(total_residues, dtype=int)
-    final_resids[: len(revised_resids)] = revised_resids
-    next_resnum = revised_resids[-1] + 1
-    final_resids[len(revised_resids) :] = np.arange(
-        next_resnum, total_residues - len(revised_resids) + next_resnum
-    )
-    final_system.residues.resids = final_resids
+        # write parts
+        _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
 
-    # partitions
-    final_system_dum = final_system.select_atoms("resname DUM")
-    final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
-    if comp == 'z':
-        final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
-    final_system_prot = final_system.select_atoms("protein")
-    final_system_others = final_system - final_system_prot - final_system_dum
-    final_system_ligs = final_system.select_atoms(f"resname {mol}")
-    final_system_other_mol = (
-        final_system_others.select_atoms("not resname WAT") - final_system_ligs
-    )
-    final_system_water = final_system_others.select_atoms("resname WAT")
-    final_system_water_notaround = final_system.select_atoms(
-        "byres (resname WAT and not (around 6 protein))"
-    )
-    final_system_water_around = final_system_water - final_system_water_notaround
+        # set chainIDs using renum_df and write protein by chains
+        for residue in u.select_atoms("protein").residues:
+            resid_str = residue.resid
+            resid_resname = (
+                "HIS"
+                if residue.resname in ["HIS", "HIE", "HIP", "HID"]
+                else residue.resname
+            )
+            residue.atoms.chainIDs = renum_df.query(
+                "old_resid == @resid_str and old_resname == @resid_resname"
+            ).old_chain.values[0]
+        prot_lines = []
+        for chain_name in np.unique(final_system_prot.atoms.chainIDs):
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb")
+            final_system.select_atoms(f"chainID {chain_name}").write(tmp.name)
+            tmp.close()
+            with open(tmp.name) as f:
+                prot_lines += [ln for ln in f if ln.startswith("ATOM")]
+            prot_lines.append("TER\n")
+        (window_dir / "solvate_pre_prot.pdb").write_text("".join(prot_lines))
 
-    # write parts
-    _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
+        _write_res_blocks(final_system_ligs, window_dir / "solvate_pre_ligands.pdb")
 
-    # set chainIDs using renum_df and write protein by chains
-    for residue in u.select_atoms("protein").residues:
-        resid_str = residue.resid
-        resid_resname = (
-            "HIS"
-            if residue.resname in ["HIS", "HIE", "HIP", "HID"]
-            else residue.resname
-        )
-        residue.atoms.chainIDs = renum_df.query(
-            "old_resid == @resid_str and old_resname == @resid_resname"
-        ).old_chain.values[0]
-    prot_lines = []
-    for chain_name in np.unique(final_system_prot.atoms.chainIDs):
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb")
-        final_system.select_atoms(f"chainID {chain_name}").write(tmp.name)
-        tmp.close()
-        with open(tmp.name) as f:
-            prot_lines += [ln for ln in f if ln.startswith("ATOM")]
-        prot_lines.append("TER\n")
-    (window_dir / "solvate_pre_prot.pdb").write_text("".join(prot_lines))
+        other_lines_exist = len(final_system_other_mol.residues) != 0
+        if other_lines_exist:
+            _write_res_blocks(final_system_other_mol, window_dir / "solvate_pre_others.pdb")
 
-    _write_res_blocks(final_system_ligs, window_dir / "solvate_pre_ligands.pdb")
+        outside_wat_exist = len(final_system_water_notaround.residues) != 0
+        if outside_wat_exist:
+            _write_res_blocks(
+                final_system_water_notaround, window_dir / "solvate_pre_outside_wat.pdb"
+            )
 
-    other_lines_exist = len(final_system_other_mol.residues) != 0
-    if other_lines_exist:
-        _write_res_blocks(final_system_other_mol, window_dir / "solvate_pre_others.pdb")
-
-    outside_wat_exist = len(final_system_water_notaround.residues) != 0
-    if outside_wat_exist:
-        _write_res_blocks(
-            final_system_water_notaround, window_dir / "solvate_pre_outside_wat.pdb"
-        )
-
-    around_wat_exist = len(final_system_water_around.residues) != 0
-    if around_wat_exist:
-        _write_res_blocks(
-            final_system_water_around, window_dir / "solvate_pre_around_water.pdb"
-        )
+        around_wat_exist = len(final_system_water_around.residues) != 0
+        if around_wat_exist:
+            _write_res_blocks(
+                final_system_water_around, window_dir / "solvate_pre_around_water.pdb"
+            )
 
     # --- tleap parts (all with working_dir=window_dir) ---
 

@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from batter.config.simulation import SimulationConfig
+from batter.orchestrate.results_io import extract_ligand_metadata
 from batter.orchestrate.run import save_fe_records
 from batter.runtime.fe_repo import FERecord, FEResultsRepository
 from batter.runtime.portable import ArtifactStore
@@ -110,6 +111,53 @@ def test_save_fe_records_uses_stored_original_name_for_success(
     df = pd.read_csv(run_dir / "results" / "index.csv")
     row = df[(df["run_id"] == "run1") & (df["ligand"] == "lig1")].iloc[0]
     assert row["original_name"] == "Ligand One Original"
+
+
+def test_extract_ligand_metadata_records_both_rbfe_endpoints(tmp_path: Path) -> None:
+    ref_dir = tmp_path / "params" / "ref"
+    alt_dir = tmp_path / "params" / "alt"
+    ref_dir.mkdir(parents=True)
+    alt_dir.mkdir(parents=True)
+    (ref_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "canonical_smiles": "CC",
+                "input_path": "/inputs/ref.sdf",
+                "aliases": ["Ref Ligand"],
+            }
+        )
+    )
+    (alt_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "canonical_smiles": "CCC",
+                "input_path": "/inputs/alt.sdf",
+                "aliases": ["Alt Ligand"],
+            }
+        )
+    )
+    child = SimSystem(
+        name="sys:pair:run1",
+        root=tmp_path / "pair",
+        meta=SystemMeta(
+            ligand="ref~alt",
+            residue_name="REF",
+            mode="RBFE",
+            param_dir_dict={"REF": str(ref_dir), "ALT": str(alt_dir)},
+            extras={
+                "ligand_ref": "ref",
+                "ligand_alt": "alt",
+                "residue_ref": "REF",
+                "residue_alt": "ALT",
+            },
+        ),
+    )
+
+    canonical_smiles, original_name, original_path = extract_ligand_metadata(child)
+
+    assert canonical_smiles == "CC~CCC"
+    assert original_name == "Ref Ligand~Alt Ligand"
+    assert original_path == "/inputs/ref.sdf~/inputs/alt.sdf"
 
 
 def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:

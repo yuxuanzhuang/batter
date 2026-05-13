@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "batter"
-description = "A python package that set up FEP simulations with bat.py"
+description = "A Python package for setting up free-energy simulation workflows."
 dynamic = ["version"]
 readme = "README.rst"
 authors = [

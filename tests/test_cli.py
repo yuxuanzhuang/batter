@@ -13,7 +13,8 @@ from click.testing import CliRunner
 
 from batter.cli.run import cli
 from batter.api import run_analysis_from_execution
-from batter.runtime.fe_repo import FERecord, WindowResult
+from batter.runtime.fe_repo import FERecord, FEResultsRepository, WindowResult
+from batter.runtime.portable import ArtifactStore
 from tests.data import EQUIL_FINISHED_DIR, FE_FINISHED_EXECUTION_DIR
 
 
@@ -208,6 +209,38 @@ def test_cli_fe_show(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
     assert "total_dG   : -5.000" in result.output
 
 
+def test_cli_fe_analysis_inclusion_interactive_updates_flag(
+    tmp_path: Path, runner: CliRunner
+) -> None:
+    work_dir = tmp_path / "work"
+    repo = FEResultsRepository(ArtifactStore(work_dir))
+    repo.save(
+        FERecord(
+            run_id="run1",
+            ligand="A~B",
+            mol_name="A",
+            system_name="sys",
+            fe_type="rbfe",
+            temperature=300.0,
+            total_dG=1.0,
+            total_se=0.2,
+            components=["x"],
+            protocol="rbfe",
+        )
+    )
+
+    result = runner.invoke(
+        cli,
+        ["fe", "analysis-inclusion", str(work_dir)],
+        input="disable 1\nquit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Disabled 1 index row" in result.output
+    row = repo.index().iloc[0]
+    assert bool(row["include_in_analysis"]) is False
+
+
 def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: CliRunner) -> None:
     yaml_path = tmp_path / "run.yaml"
     yaml_path.write_text("dummy: true\n")
@@ -351,6 +384,37 @@ def test_cli_fe_analyze_invokes_api(
     assert called["n_bootstraps"] == 64
     assert called["overwrite"] is False
     assert called["raise_on_error"] is True
+
+
+def test_cli_fe_analyze_accepts_execution_dir(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    called: dict[str, Any] = {}
+    run_dir = tmp_path / "tyk2_rbfe" / "executions" / "rep3"
+    run_dir.mkdir(parents=True)
+
+    def fake_run(
+        work_dir,
+        run_id,
+        *,
+        ligand,
+        components=None,
+        n_workers,
+        analysis_start_step,
+        n_bootstraps=None,
+        overwrite=True,
+        raise_on_error=True,
+    ):
+        called["work_dir"] = work_dir
+        called["run_id"] = run_id
+
+    monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
+    monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
+
+    result = runner.invoke(cli, ["fe", "analyze", str(run_dir)])
+
+    assert result.exit_code == 0
+    assert called == {"work_dir": tmp_path / "tyk2_rbfe", "run_id": "rep3"}
 
 
 def test_cli_fe_analyze_can_disable_raise(

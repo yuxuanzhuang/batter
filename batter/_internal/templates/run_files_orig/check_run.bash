@@ -456,6 +456,96 @@ parse_dt_ps() {
     [[ -n $dt ]] && echo "$dt" || echo 0.001
 }
 
+parse_target_dt_ps() {
+    local tmpl=${1:-mdin-template}
+    local dt
+
+    [[ -f $tmpl ]] || { echo 0.001; return; }
+
+    dt=$(
+        grep -E '^[!#][[:space:]]*target_dt[[:space:]]*=[[:space:]]*[-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?' "$tmpl" \
+        | tail -1 \
+        | sed -E 's/.*target_dt[[:space:]]*=[[:space:]]*([-+]?[0-9]*\.?[0-9]+([eEdD][-+]?[0-9]+)?).*/\1/' \
+        | tr 'dD' 'eE'
+    )
+
+    [[ -n $dt ]] && echo "$dt" || parse_dt_ps "$tmpl"
+}
+
+ensure_target_dt_marker() {
+    local tmpl=${1:-mdin-template}
+    local target_dt=${2:-}
+
+    [[ -f "$tmpl" ]] || return 0
+    if grep -Eq '^[!#][[:space:]]*target_dt[[:space:]]*=' "$tmpl"; then
+        return 0
+    fi
+
+    [[ -n $target_dt ]] || target_dt=$(parse_dt_ps "$tmpl")
+    printf "! target_dt=%s\n" "$target_dt" > "${tmpl}.tmp"
+    cat "$tmpl" >> "${tmpl}.tmp"
+    mv "${tmpl}.tmp" "$tmpl"
+}
+
+remaining_steps_from_time() {
+    local total_ps=$1
+    local current_ps=$2
+    local dt_ps=$3
+
+    awk -v tot="$total_ps" -v cur="$current_ps" -v dt="$dt_ps" '
+        BEGIN {
+            rem = tot - cur
+            if (dt <= 0 || rem <= 0) {
+                print 0
+                exit
+            }
+            n = rem / dt
+            whole = int(n)
+            if (n - whole > 1e-9) {
+                whole += 1
+            }
+            print whole
+        }
+    '
+}
+
+apply_retry_dt_reduction() {
+    local tmpl=${1:-mdin-template}
+    local retry_count=${2:-${RETRY_COUNT:-${RETRY:-0}}}
+    local dec=${3:-0.001}
+    local stage=${4:-"retry startup"}
+
+    [[ -f "$tmpl" ]] || return 0
+    [[ $retry_count =~ ^[0-9]+$ ]] || return 0
+    if [[ $retry_count -le 3 ]]; then
+        return 0
+    fi
+
+    local current_dt target_dt reductions desired_dt
+    current_dt=$(parse_dt_ps "$tmpl")
+    ensure_target_dt_marker "$tmpl" "$current_dt"
+    target_dt=$(parse_target_dt_ps "$tmpl")
+    reductions=$((retry_count - 3))
+    desired_dt=$(awk -v target="$target_dt" -v dec="$dec" -v n="$reductions" 'BEGIN{printf "%.6f\n", target - dec*n}')
+
+    if ! awk -v nd="$desired_dt" 'BEGIN{exit !(nd>0)}'; then
+        echo "[WARN] dt reduction skipped for $tmpl at ${stage} (target dt=${target_dt}, retry=${retry_count}, dec=${dec})."
+        return 0
+    fi
+    if ! awk -v current="$current_dt" -v desired="$desired_dt" 'BEGIN{exit !(current > desired)}'; then
+        return 0
+    fi
+
+    rewrite_mdin_dt_file "$tmpl" "$desired_dt"
+
+    local current_mdin
+    if current_mdin=$(current_mdin_for_template "$tmpl"); then
+        rewrite_mdin_dt_file "$current_mdin" "$desired_dt"
+    fi
+
+    echo "[INFO] Applied retry dt reduction in $tmpl for ${stage} (attempt ${retry_count}): ${current_dt} -> ${desired_dt}"
+}
+
 rewrite_mdin_dt_file() {
     local target=$1
     local new_dt=$2
@@ -517,6 +607,7 @@ reduce_dt_on_failure() {
         return
     fi
 
+    ensure_target_dt_marker "$tmpl" "$dt"
     rewrite_mdin_dt_file "$tmpl" "$new_dt"
 
     local current_mdin

@@ -24,7 +24,7 @@ create:
   # partial-charge model used during ligand parameterization
   param_charge: "openff-gnn-am1bcc-1.0.0.pt"
 
-  # three receptor anchor atoms used to define BATTER restraints
+  # three receptor anchor atoms used by staging and binding-site validation
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
@@ -66,12 +66,12 @@ rbfe:
   # can be kartograf or lomap
   atom_mapper: kartograf
   # Konnektor network layout heuristic
-  konnektor_layout: minimalspanningtree
+  konnektor_layout: redundantminimalspanningtree
   # whether to generate both directions for each edge
   both_directions: false
 
 fe_sim:
-  # 48 windows for Lambda schedule required for RBFE.
+  # 48-window lambda schedule for larger or harder RBFE transformations.
   lambdas: [0.00000000, 0.12542000, 0.16637000, 0.19653000, 0.22148000, 0.24326000, 0.26289000, 0.28094000, 0.29779000, 0.31370000, 0.32884000, 0.34336000, 0.35737000, 0.37095000, 0.38416000, 0.39707000, 0.40971000, 0.42215000, 0.43441000, 0.44652000, 0.45852000, 0.47043000, 0.48228000, 0.49410000, 0.50590000, 0.51772000, 0.52958000, 0.54150000, 0.55351000, 0.56563000, 0.57790000, 0.59036000, 0.60303000, 0.61596000, 0.62920000, 0.64280000, 0.65684000, 0.67140000, 0.68659000, 0.70254000, 0.71944000, 0.73754000, 0.75722000, 0.77906000, 0.80408000, 0.83431000, 0.87533000, 1.00000000]
   # production steps for the x component
   x_n_steps: 1000000
@@ -93,3 +93,7 @@ fe_sim:
   buffer_y: 10.0
   # simulation temperature in Kelvin
   temperature: 298.15
+  # analysis only start from 100000 steps
+  analysis_start_step: 100000
+  # MBAR analysis blocks
+  blocks: 5

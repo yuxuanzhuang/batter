@@ -313,7 +313,7 @@ class SimulationConfig(BaseModel):
         description="Enable REMD execution (submission only; inputs are always prepared).",
     )
     remd_nstlim: int = Field(
-        100, description="Steps per REMD segment (applied to mdin-*-remd copies)."
+        100, description="Steps per REMD segment (applied to ``mdin-*-remd`` copies)."
     )
     slurm_header_dir: Path = Field(
         default_factory=lambda: Path.home() / ".batter",

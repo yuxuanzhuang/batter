@@ -2,17 +2,17 @@
 
 Acknowledgement
 ---------------
-This module rewrites the matrix-based State-Function Based Free Energy
-Correction (SFC) workflow from the MIT-licensed reference implementation for
-BATTER's analysis API:
-https://github.com/ZheLi-Lab/State-Function-based-free-energy-correction-SFC-
+This module implements the matrix-based State-Function Based Free Energy
+Correction (SFC) workflow for BATTER's analysis API, following the article
+and supporting information cited below.
 
 Reference
 ---------
 Liu, R.; Lai, Y.; Yao, Y.; Huang, W.; Zhong, Y.; Luo, H.-B.; Li, Z.
 State Function-Based Correction: A Simple and Efficient Free-Energy Correction
 Algorithm for Large-Scale Relative Binding Free-Energy Calculations.
-J. Phys. Chem. Lett. https://doi.org/10.1021/acs.jpclett.5c01119
+J. Phys. Chem. Lett. 2025, 16, 23, 5763-5768.
+doi:10.1021/acs.jpclett.5c01119
 
 The historical ``cycle_closure_*`` function names are kept for compatibility
 with the existing BATTER Cinnabar integration. They now run SFC/WSFC rather
@@ -43,6 +43,8 @@ __all__ = [
     "state_function_correction_from_dataframe",
     "state_function_correction_from_file",
 ]
+
+SFC_MIN_UNCERTAINTY = 1.0e-6
 
 
 @dataclass(frozen=True)
@@ -113,10 +115,14 @@ def _coerce_edges(
             raise ValueError(f"Non-finite SFC ddG for {label_a}->{label_b}.")
 
         uncertainties = tuple(float(value) for value in candidate.uncertainties)
-        if any((not math.isfinite(value)) or value <= 0 for value in uncertainties):
+        if any((not math.isfinite(value)) or value < 0 for value in uncertainties):
             raise ValueError(
-                f"Uncertainties for {label_a}->{label_b} must be finite and > 0."
+                f"Uncertainties for {label_a}->{label_b} must be finite and >= 0."
             )
+        uncertainties = tuple(
+            SFC_MIN_UNCERTAINTY if value == 0 else value
+            for value in uncertainties
+        )
         coerced.append(
             CycleClosureEdge(
                 label_a=label_a,

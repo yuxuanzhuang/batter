@@ -1,5 +1,5 @@
-﻿batter.config.dump\_run\_config
-===============================
+batter.config.dump_run_config
+=============================
 
 .. currentmodule:: batter.config
 

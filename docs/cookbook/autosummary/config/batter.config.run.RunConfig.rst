@@ -1,4 +1,4 @@
-﻿batter.config.run.RunConfig
+batter.config.run.RunConfig
 ===========================
 
 .. currentmodule:: batter.config.run

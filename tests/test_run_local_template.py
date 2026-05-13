@@ -248,3 +248,95 @@ exit 0
     assert (work / "md-current.rst7").read_text().strip() == "time=0.0100000000"
     assert (work / "md-01.nc").read_text().strip() == "ok"
     assert not (work / "cmass.txt").exists()
+
+
+def test_run_local_remaining_steps_follow_reduced_dt(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    work = tmp_path
+    (work / "run-local.bash").write_text(script.read_text())
+    (work / "check_run.bash").write_text(check_run.read_text())
+    (work / "full.hmr.prmtop").write_text("prmtop")
+    (work / "full_merged.prmtop").write_text("prmtop")
+    (work / "eq.rst7").write_text("eqrst")
+    (work / "md-current.rst7").write_text("time=0.0200000000\n")
+    (work / "mdin-template").write_text(
+        "! total_steps=10\n"
+        "irest = 1,\n"
+        "ntx   = 5,\n"
+        "nstlim = 10,\n"
+        "dt = 0.004,\n"
+    )
+
+    stub = work / "stub.sh"
+    _write_stub_exe(
+        stub,
+        """#!/usr/bin/env bash
+out=""
+rst=""
+nc=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) shift; out="$1";;
+    -r) shift; rst="$1";;
+    -x) shift; nc="$1";;
+  esac
+  shift
+done
+sed -nE 's/.*nstlim[[:space:]]*=[[:space:]]*([0-9]+).*/\\1/p' mdin-current | head -n 1 > run_steps.txt
+[[ -n "$out" ]] && echo "TIME(PS) = 0.041000" > "$out"
+[[ -n "$rst" ]] && echo "time=0.0410000000" > "$rst"
+[[ -n "$nc" ]] && echo "ok" > "$nc"
+exit 0
+""",
+    )
+    cpptraj_stub = work / "cpptraj"
+    _write_stub_exe(
+        cpptraj_stub,
+        """#!/usr/bin/env bash
+target=$(awk '/^trajout[[:space:]]+/ { print $2; exit }' < /dev/stdin)
+[[ -n "$target" ]] && echo "pdb" > "$target"
+exit 0
+""",
+    )
+    ncdump_stub = work / "ncdump"
+    _write_stub_exe(
+        ncdump_stub,
+        """#!/usr/bin/env bash
+file=""
+for arg in "$@"; do
+  if [[ "$arg" != -* ]]; then
+    file="$arg"
+  fi
+done
+time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
+[[ -n "$time" ]] || time=0
+cat <<EOF
+        double time ;
+                time:units = "picosecond" ;
+ time = $time ;
+EOF
+exit 0
+""",
+    )
+
+    env = os.environ.copy()
+    env["PMEMD_EXEC"] = str(stub)
+    env["PMEMD_DPFP_EXEC"] = str(stub)
+    env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
+    env["RETRY_COUNT"] = "4"
+    env["PATH"] = f"{work}:{env.get('PATH','')}"
+
+    subprocess.run(
+        ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"],
+        cwd=work,
+        check=True,
+        env=env,
+    )
+
+    assert (work / "run_steps.txt").read_text().strip() == "7"
+    mdin_text = (work / "mdin-template").read_text()
+    assert "! target_dt=0.004" in mdin_text
+    assert "dt=0.003000" in mdin_text

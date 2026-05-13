@@ -13,13 +13,15 @@ You can also seed them explicitly:
 
 Once seeded, edit the headers to match your cluster defaults (queue/partition, env exports,
 executable paths). Do not edit the body files; they are managed by the package.
+The packaged Rondror defaults source Amber with
+``source /home/groups/rondror/software/amber26/setup_amber.sh > /dev/null 2>&1``.
 
 Header files
 ------------
 
 * ``SLURMM-Am.header``: equilibration/FE runs
 * ``SLURMM-BATCH-remd.header``: REMD runs
-* ``job_manager.header``: manager script used by ``batter --slurm-submit``
+* ``job_manager.header``: manager script used by ``batter run --slurm-submit``
 
 Common environment overrides
 ----------------------------

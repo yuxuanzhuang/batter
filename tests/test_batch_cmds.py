@@ -82,3 +82,28 @@ def test_batch_cli_remd_renders_run_local_remd(
     text = out.read_text()
     assert "bash ./run-local-remd.bash" in text
     assert "bash ./run-local-batch.bash" not in text
+
+
+def test_batch_cli_remd_explains_missing_rbfe_transformations(tmp_path: Path) -> None:
+    exec_path = tmp_path / "executions" / "rep2"
+    _setup_abfe_component(exec_path, ligand="L1", comp="z")
+    config_dir = exec_path / "artifacts" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "rbfe_network.json").write_text('{"pairs": [["L1", "L2"]]}\n')
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "batch",
+            "--remd",
+            "-e",
+            str(exec_path),
+            "--no-auto-resubmit",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "missing" in result.output
+    assert "simulations/transformations" in result.output
+    assert "fe/x" in result.output

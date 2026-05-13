@@ -14,8 +14,9 @@ batter
    :alt: Documentation Status
 
 ``batter`` is a modern, object-oriented toolkit for free-energy workflows.
-It provides **absolute binding free energy (ABFE)** calculations for ligands––**including
-charged species**–––bound to membrane proteins, as well as **absolute solvation free energy (ASFE)**.
+It provides **absolute binding free energy (ABFE)** and **relative binding free energy (RBFE)**
+calculations for ligands, including **charged species** bound to membrane proteins,
+as well as **absolute solvation free energy (ASFE)**.
 It extends the original `BAT.py <https://github.com/GHeinzelmann/BAT.py>`_ package with the support of
 membrane proteins, single-leg ABFE protocols, enhanced sampling via Hamiltonian replica exchange MD (H-REMD),
 OpenFF, and a revamped codebase for maintainability and extensibility.
@@ -59,11 +60,14 @@ The Conda environment installs the bundled ``extern/*`` dependencies through its
 ``pip`` section. Run the environment update from the repository root so the
 relative editable paths resolve correctly.
 
+For the full setup checklist and links to the main workflow docs, see the
+`Getting Started guide <https://batter.readthedocs.io/en/latest/getting_started.html>`_.
+
 Installation tips (clusters)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- Building the environment can be storage hungry and slow.
-  try `micromamba <https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html>`_
+- Building the environment can be storage hungry and slow. Try
+  `micromamba <https://mamba.readthedocs.io/en/latest/user_guide/micromamba.html>`_
   and/or run the install on a compute node.
 - VMD often needs X11 forwarding and its own shared libraries on clusters. Set
   ``LD_LIBRARY_PATH`` to include ``$CONDA_PREFIX/lib/vmd`` (or your env path) and load
@@ -76,7 +80,7 @@ To use this package without the core components—useful for running CLI command
 building docs, or running simple tests—install only the package itself:
 
 .. code-block:: bash
-   
+
    pip install .
 
 Quickstart
@@ -85,7 +89,7 @@ Quickstart
 .. warning::
 
    The following command will run compute-heavy jobs.
-   
+
    It will also dispatch multiple MD jobs to your SLURM scheduler.
 
 Run an example configuration:
@@ -98,7 +102,7 @@ Run an example configuration:
 
    # modify ~/.batter/***.header to suit your cluster if needed
 
-   batter run mabfe.yaml
+   batter run mabfe_example.yaml
 
 Use ``--help`` to see all commands:
 
@@ -112,16 +116,21 @@ Examples
 YAML files in ``examples/`` illustrate common setups:
 
 **Absolute Binding Free Energy (ABFE)**
-   1. ``mabfe.yaml`` — membrane protein (e.g., B2AR) in a lipid bilayer
-   2. ``mabfe_nonmembrane.yaml`` — soluble protein (e.g., BRD4) in water
+   1. ``mabfe_example.yaml`` — membrane protein (e.g., B2AR) in a lipid bilayer
+   2. ``mabfe_nonmembrane_example.yaml`` — soluble protein (e.g., BRD4) in water
    3. ``extra_restraints/mabfe.yaml`` — add positional restraints to selected atoms
    4. ``conformational_restraints/mabfe.yaml`` — add conformational restraints (distance between atoms)
 
+**Relative Binding Free Energy (RBFE)**
+   1. ``rbfe_example.yaml`` — suitable for small transformations with 24 lambda windows
+   2. ``rbfe_48win_example.yaml`` — suitable for larger transformations with 48 lambda windows (e.g. charge changes)
+   3. ``plot_rbfe.ipynb`` — analyze BATTER RBFE Cinnabar bundles and optional experimental comparisons
+
 **Absolute Solvation Free Energy (ASFE)**
-   1. ``masfe.yaml`` — small molecule (e.g., epinephrine) in water
+   1. ``masfe_example.yaml`` — small molecule (e.g., epinephrine) in water
 
 **Plain Molecular Dynamics (MD)**
-   1. ``md.yaml`` — standard MD production run for a protein-ligand complex
+   1. ``md_example.yaml`` — standard MD production run for a protein-ligand complex
 
 Example YAMLs are intended as starting points; adjust to your system.
 

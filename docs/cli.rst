@@ -11,7 +11,7 @@ Run Workflows
 
 .. code-block:: console
 
-   batter run examples/mabfe.yaml
+   batter run examples/mabfe_example.yaml
 
 Options:
 
@@ -115,7 +115,8 @@ bootstrap resamples and ``--no-raise-on-error`` to continue if one ligand fails.
 For RBFE runs, ``batter fe analyze`` also writes a per-run Cinnabar bundle under
 ``work/adrb2/results/cinnabar/<run_id>/`` by default. When the work directory
 contains replicate RBFE runs, BATTER prints a follow-up note with the matching
-``batter fe cinnabar ... --run-id ...`` command to combine them into one bundle.
+``batter fe cinnabar ... --run-id ...`` command to combine same-work-dir
+replicates into one bundle.
 
 Re-run FE analysis for exactly one ligand folder::
 
@@ -124,13 +125,32 @@ Re-run FE analysis for exactly one ligand folder::
 ``ligand-analyze`` also accepts directories outside ``executions/<run_id>`` as long
 as they contain an ``fe/`` folder.
 
-Convert stored RBFE records into `Cinnabar <https://cinnabar.openfree.energy/>`_
-inputs and plots::
+Interactively enable or disable stored FE rows for aggregate analysis::
+
+   batter fe analysis-inclusion work/adrb2
+
+This command edits the ``include_in_analysis`` flag in ``results/index.csv``.
+Rows set to ``False`` are preserved on disk but skipped by Cinnabar export and
+other aggregate analyses.
+
+Convert stored RBFE records into `Cinnabar <https://cinnabar.openfree.energy/en/latest/>`_
+inputs and plots. Prefer explicit atomic run inputs when collecting production
+replicates, especially if the runs may live in different BATTER work directories::
+
+   batter fe cinnabar \
+       --run work/adrb2 rep1 \
+       --run work/adrb2_retry rep2 \
+       --out-dir combined_cinnabar
+
+If all selected runs are in the same work directory, the older shortcut remains
+available::
 
    batter fe cinnabar work/adrb2 --run-id rep1 --run-id rep2
 
-By default this aggregates the selected RBFE records into a single FEMap and writes
-the output bundle under ``work/adrb2/results/cinnabar/``. Common files include:
+By default this aggregates the selected RBFE records into a single FEMap. For the
+same-work-dir shortcut, BATTER writes under ``work/adrb2/results/cinnabar/``. For
+explicit ``--run`` inputs from multiple work directories, pass ``--out-dir``; if it
+is omitted, BATTER writes to ``./cinnabar``. Common files include:
 
 * ``edge_summary.csv`` – combined edge-level DDG estimates and uncertainties
 * ``raw_signed.csv`` – signed per-measurement table after BATTER canonicalizes edge direction
@@ -140,7 +160,8 @@ the output bundle under ``work/adrb2/results/cinnabar/``. Common files include:
 * ``cinnabar_network.png`` – best-effort network visualisation
 * ``cinnabar_dg.png`` / ``cinnabar_ddg.png`` – plots when experimental data is provided
 
-Use ``--split-runs`` to emit one Cinnabar bundle per run instead of combining them::
+Use ``--split-runs`` with the same-work-dir shortcut to emit one Cinnabar bundle
+per run instead of combining them::
 
    batter fe cinnabar work/adrb2 --split-runs --run-id rep1 --run-id rep2
 

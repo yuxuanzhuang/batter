@@ -92,6 +92,9 @@ class FERecord(BaseModel):
         First production step included in analysis.
     n_bootstraps : int, optional
         Number of MBAR bootstrap resamples used during analysis.
+    include_in_analysis : bool
+        Whether downstream aggregate analyses, such as Cinnabar export, should use
+        this record.
     status : {"success","failed","unbound"}
         Final status recorded for the ligand.
     """
@@ -116,6 +119,7 @@ class FERecord(BaseModel):
     protocol: str = "abfe"
     analysis_start_step: int | None = None
     n_bootstraps: int | None = None
+    include_in_analysis: bool = True
     status: Literal["success", "failed", "unbound"] = "success"
 
     @field_validator("analysis_start_step", "n_bootstraps", mode="before")
@@ -144,6 +148,12 @@ class FEResultsRepository:
     def ligand_dir(self, run_id: str, ligand: str) -> Path:
         return self._lig_dir(run_id, ligand)
 
+    def _publish_index_file(self, tmp_path: str) -> None:
+        os.replace(tmp_path, self._idx)
+        # ``mkstemp`` creates files as 0600. The shared FE index is intended to
+        # be inspectable by collaborators, while remaining writable by owner only.
+        os.chmod(self._idx, 0o644)
+
     @staticmethod
     def _normalize_optional_int(value: Any) -> int | None:
         if value is None or value is pd.NA:
@@ -162,6 +172,45 @@ class FEResultsRepository:
         normalized = FEResultsRepository._normalize_optional_int(value)
         return 0 if normalized is None else normalized
 
+    @staticmethod
+    def _normalize_bool(value: Any, *, default: bool = True) -> bool:
+        if value is None or value is pd.NA:
+            return bool(default)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text:
+                return bool(default)
+            if text in {
+                "1",
+                "true",
+                "t",
+                "yes",
+                "y",
+                "on",
+                "enabled",
+                "include",
+                "included",
+            }:
+                return True
+            if text in {
+                "0",
+                "false",
+                "f",
+                "no",
+                "n",
+                "off",
+                "disabled",
+                "exclude",
+                "excluded",
+            }:
+                return False
+        try:
+            if pd.isna(value):
+                return bool(default)
+        except Exception:
+            pass
+        return bool(value)
+
     def _normalize_row(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(row)
         normalized.setdefault("temperature", pd.NA)
@@ -173,6 +222,7 @@ class FEResultsRepository:
         normalized.setdefault("protocol", "")
         normalized.setdefault("analysis_start_step", pd.NA)
         normalized.setdefault("n_bootstraps", 0)
+        normalized.setdefault("include_in_analysis", True)
         normalized.setdefault(
             "created_at", datetime.now(timezone.utc).isoformat(timespec="seconds")
         )
@@ -197,6 +247,7 @@ class FEResultsRepository:
             "protocol",
             "analysis_start_step",
             "n_bootstraps",
+            "include_in_analysis",
             "status",
             "failure_reason",
             "created_at",
@@ -226,6 +277,21 @@ class FEResultsRepository:
                 else:
                     same_step = step_series == row_step
                 same_bootstrap = bootstrap_series == row_bootstraps
+                existing = df.loc[
+                    (df["run_id"] == row["run_id"])
+                    & (df["ligand"] == row["ligand"])
+                    & same_step
+                    & same_bootstrap
+                ]
+                if (
+                    "include_in_analysis" in df.columns
+                    and not existing.empty
+                    and self._normalize_bool(row.get("include_in_analysis"), default=True)
+                ):
+                    row["include_in_analysis"] = self._normalize_bool(
+                        existing.iloc[-1].get("include_in_analysis"),
+                        default=True,
+                    )
                 logger.info(
                     "Updating index for run_id={}, ligand={}, analysis_start_step={}, n_bootstraps={}",
                     row["run_id"],
@@ -260,7 +326,7 @@ class FEResultsRepository:
                     df.to_csv(f, index=False)
                     f.flush()
                     os.fsync(f.fileno())
-                os.replace(tmp, self._idx)  # atomic
+                self._publish_index_file(tmp)
             finally:
                 try:
                     os.unlink(tmp)
@@ -302,6 +368,7 @@ class FEResultsRepository:
             "n_bootstraps": (
                 int(n_bootstraps_val) if n_bootstraps_val is not None else 0
             ),
+            "include_in_analysis": rec.include_in_analysis,
             "created_at": rec.created_at,
             "status": rec.status,
             "failure_reason": pd.NA,
@@ -323,6 +390,7 @@ class FEResultsRepository:
             "protocol",
             "analysis_start_step",
             "n_bootstraps",
+            "include_in_analysis",
             "created_at",
         ]
         if self._idx.exists():
@@ -341,11 +409,81 @@ class FEResultsRepository:
                 df[key] = pd.NA
         for col in cols:
             if col not in df.columns:
-                df[col] = 0 if col == "n_bootstraps" else pd.NA
+                if col == "n_bootstraps":
+                    df[col] = 0
+                elif col == "include_in_analysis":
+                    df[col] = True
+                else:
+                    df[col] = pd.NA
         if "n_bootstraps" in df.columns:
             df["n_bootstraps"] = df["n_bootstraps"].fillna(0)
+        df["include_in_analysis"] = df["include_in_analysis"].map(
+            lambda value: self._normalize_bool(value, default=True)
+        )
         df["failure_reason"] = df["failure_reason"].fillna("")
         return df[cols + ["status", "failure_reason"]]
+
+    def set_analysis_inclusion(
+        self,
+        *,
+        run_id: str,
+        ligand: str,
+        include: bool,
+        analysis_start_step: int | None = None,
+        n_bootstraps: int | None = None,
+    ) -> int:
+        """Set ``include_in_analysis`` for matching rows in ``results/index.csv``."""
+        if not self._idx.exists():
+            raise FileNotFoundError(f"Missing FE results index: {self._idx}")
+
+        lock = FileLock(str(self._idx_lock))
+        with lock:
+            df = pd.read_csv(self._idx)
+            for col in (
+                "run_id",
+                "ligand",
+                "analysis_start_step",
+                "n_bootstraps",
+                "include_in_analysis",
+            ):
+                if col not in df.columns:
+                    if col == "include_in_analysis":
+                        df[col] = True
+                    elif col == "n_bootstraps":
+                        df[col] = 0
+                    else:
+                        df[col] = pd.NA
+
+            mask = (df["run_id"].astype(str) == str(run_id)) & (
+                df["ligand"].astype(str) == str(ligand)
+            )
+            if analysis_start_step is not None:
+                step_series = df["analysis_start_step"].map(self._normalize_optional_int)
+                mask &= step_series == int(analysis_start_step)
+            if n_bootstraps is not None:
+                bootstrap_series = df["n_bootstraps"].map(self._normalize_n_bootstraps)
+                mask &= bootstrap_series == int(n_bootstraps)
+
+            n_updated = int(mask.sum())
+            if n_updated == 0:
+                return 0
+            df.loc[mask, "include_in_analysis"] = bool(include)
+
+            fd, tmp = tempfile.mkstemp(
+                prefix=self._idx.name + ".", suffix=".tmp", dir=str(self._idx.parent)
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+                    df.to_csv(f, index=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                self._publish_index_file(tmp)
+            finally:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+            return n_updated
 
     def record_failure(
         self,
@@ -392,6 +530,7 @@ class FEResultsRepository:
             "protocol": protocol,
             "analysis_start_step": analysis_start_step_val,
             "n_bootstraps": n_bootstraps_val,
+            "include_in_analysis": True,
             "status": status,
             "failure_reason": reason or "",
             "created_at": failure_detail["timestamp"],

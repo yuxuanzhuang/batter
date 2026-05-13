@@ -30,6 +30,14 @@ Config Modules
    :members:
    :undoc-members:
 
+RBFE Helpers
+------------
+
+.. automodule:: batter.rbfe
+   :noindex:
+   :members:
+   :undoc-members:
+
 Orchestrator Modules
 --------------------
 

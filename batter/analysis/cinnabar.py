@@ -7,6 +7,7 @@ import json
 import re
 import base64
 import shlex
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Sequence
@@ -19,13 +20,17 @@ __all__ = [
     "auto_write_rbfe_cinnabar_for_run",
     "build_batter_rbfe_cinnabar",
     "build_batter_rbfe_cinnabar_by_run",
+    "build_batter_rbfe_cinnabar_from_runs",
     "convert_cinnabar_outputs_to_csv",
     "dataframe_to_cinnabar",
     "load_batter_rbfe_results",
+    "load_batter_rbfe_results_from_runs",
     "read_cinnabar_outputs",
     "summarize_directionality",
     "write_cinnabar_outputs",
 ]
+
+CINNABAR_MIN_UNCERTAINTY_KCAL_MOL = 1.0e-6
 
 
 @dataclass
@@ -177,11 +182,29 @@ def _combine_estimates(
         raise ValueError("No values to combine.")
     if np.any(~np.isfinite(values_arr)):
         raise ValueError("Non-finite values found.")
-    if np.any(~np.isfinite(ses_arr)) or np.any(ses_arr <= 0):
-        raise ValueError("All uncertainties must be finite and > 0.")
+    if np.any(~np.isfinite(ses_arr)) or np.any(ses_arr < 0):
+        raise ValueError("All uncertainties must be finite and >= 0.")
 
     if len(values_arr) == 1:
         return float(values_arr[0]), float(ses_arr[0])
+
+    zero_se = ses_arr == 0
+    if np.any(zero_se):
+        values_arr = values_arr[zero_se]
+        ses_arr = ses_arr[zero_se]
+        if len(values_arr) == 1:
+            return float(values_arr[0]), 0.0
+        mean = float(np.mean(values_arr))
+        sample_se = float(np.std(values_arr, ddof=1) / np.sqrt(len(values_arr)))
+        if uncertainty_mode == "sample":
+            out_se = sample_se
+        elif uncertainty_mode == "max":
+            out_se = sample_se
+        elif uncertainty_mode == "ivw":
+            out_se = 0.0
+        else:  # pragma: no cover - guarded by Literal/click
+            raise ValueError("uncertainty_mode must be 'ivw', 'sample', or 'max'.")
+        return mean, out_se
 
     weights = 1.0 / np.square(ses_arr)
     mean = float(np.sum(weights * values_arr) / np.sum(weights))
@@ -198,6 +221,15 @@ def _combine_estimates(
         raise ValueError("uncertainty_mode must be 'ivw', 'sample', or 'max'.")
 
     return mean, out_se
+
+
+def _cinnabar_solver_uncertainty_kcal_mol(se: float) -> float:
+    """Return an uncertainty safe for Cinnabar's inverse-variance solver."""
+    if not np.isfinite(se) or se < 0:
+        raise ValueError("Cinnabar uncertainty must be finite and non-negative.")
+    if se == 0:
+        return CINNABAR_MIN_UNCERTAINTY_KCAL_MOL
+    return float(se)
 
 
 def _normalize_energy_unit(unit_obj: Any, unit_module: Any) -> Any:
@@ -228,19 +260,319 @@ def _pick_edge_label(row: pd.Series, edge_separator: str) -> str:
     return ligand
 
 
-def _scan_rbfe_input_paths(
+def _include_in_analysis_mask(series: pd.Series) -> pd.Series:
+    """Return a boolean mask for the FE index include flag."""
+    truthy = {"1", "true", "t", "yes", "y", "on", "enabled", "include", "included"}
+    falsy = {"0", "false", "f", "no", "n", "off", "disabled", "exclude", "excluded"}
+
+    def _coerce(value: Any) -> bool:
+        if value is None or value is pd.NA:
+            return True
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if not text:
+                return True
+            if text in truthy:
+                return True
+            if text in falsy:
+                return False
+        try:
+            if pd.isna(value):
+                return True
+        except Exception:
+            pass
+        return bool(value)
+
+    return series.map(_coerce).astype(bool)
+
+
+def _metadata_pair_values(
+    value: Any,
+    left: str,
+    right: str,
+    *,
+    edge_separator: str = "~",
+) -> tuple[str, str]:
+    """Return endpoint metadata from a pair-valued string/list/dict when possible."""
+    if value is None:
+        return "", ""
+    if not isinstance(value, (dict, list, tuple)):
+        try:
+            if pd.isna(value):
+                return "", ""
+        except Exception:
+            pass
+    if isinstance(value, float) and pd.isna(value):
+        return "", ""
+    if isinstance(value, dict):
+        left_val = value.get(left, value.get("left", value.get("A", value.get("ref", ""))))
+        right_val = value.get(right, value.get("right", value.get("B", value.get("alt", ""))))
+        return str(left_val or "").strip(), str(right_val or "").strip()
+    if isinstance(value, (list, tuple)):
+        if len(value) >= 2:
+            return str(value[0] or "").strip(), str(value[1] or "").strip()
+        if len(value) == 1:
+            return str(value[0] or "").strip(), ""
+        return "", ""
+
+    text = str(value).strip()
+    if not text:
+        return "", ""
+    if text[0] in "[{":
+        try:
+            return _metadata_pair_values(
+                json.loads(text),
+                left,
+                right,
+                edge_separator=edge_separator,
+            )
+        except Exception:
+            pass
+    if edge_separator in text:
+        parts = [part.strip() for part in text.split(edge_separator, 1)]
+        return parts[0], parts[1]
+    return text, ""
+
+
+def _first_row_value(row: pd.Series, names: Sequence[str]) -> str:
+    for name in names:
+        if name in row.index and pd.notna(row[name]):
+            value = str(row[name]).strip()
+            if value:
+                return value
+    return ""
+
+
+def _endpoint_metadata_from_row(
+    row: pd.Series,
+    left: str,
+    right: str,
+    *,
+    edge_separator: str = "~",
+    base_column: str,
+) -> tuple[str, str]:
+    """Resolve pair endpoint metadata from side-specific or pair-valued columns."""
+    left_value = _first_row_value(
+        row,
+        (
+            f"{base_column}_A",
+            f"{base_column}_a",
+            f"{base_column}_left",
+            f"{base_column}_ref",
+            f"ref_{base_column}",
+            f"ligand_A_{base_column}",
+            f"ligand_a_{base_column}",
+            f"ligand_ref_{base_column}",
+        ),
+    )
+    right_value = _first_row_value(
+        row,
+        (
+            f"{base_column}_B",
+            f"{base_column}_b",
+            f"{base_column}_right",
+            f"{base_column}_alt",
+            f"alt_{base_column}",
+            f"ligand_B_{base_column}",
+            f"ligand_b_{base_column}",
+            f"ligand_alt_{base_column}",
+        ),
+    )
+    if left_value or right_value:
+        return left_value, right_value
+    if base_column in row.index:
+        return _metadata_pair_values(
+            row[base_column],
+            left,
+            right,
+            edge_separator=edge_separator,
+        )
+    return "", ""
+
+
+def _metadata_suffix(value: str) -> str:
+    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:6]
+
+
+def _assign_ligand_node_labels(
+    work: pd.DataFrame,
+    *,
+    edge_separator: str = "~",
+) -> pd.DataFrame:
+    """Map endpoint ligand names to node labels using name + canonical SMILES identity.
+
+    The same displayed ligand name can appear in separate runs for different
+    molecules. When canonical SMILES disagree, keep those nodes separate by adding
+    a deterministic suffix. Rows with the same name and same canonical SMILES share
+    one node, which lets matching ligands connect networks across runs.
+    """
+    out = work.copy()
+    identity_order: list[tuple[str, str]] = []
+    raw_to_smiles: dict[str, set[str]] = {}
+    left_smiles: list[str] = []
+    right_smiles: list[str] = []
+    left_paths: list[str] = []
+    right_paths: list[str] = []
+
+    for row in out.itertuples(index=False):
+        row_series = pd.Series(row._asdict())
+        left = str(row_series.get("ligand_A_raw", "") or "").strip()
+        right = str(row_series.get("ligand_B_raw", "") or "").strip()
+        smi_left, smi_right = _endpoint_metadata_from_row(
+            row_series,
+            left,
+            right,
+            edge_separator=edge_separator,
+            base_column="canonical_smiles",
+        )
+        path_left, path_right = _endpoint_metadata_from_row(
+            row_series,
+            left,
+            right,
+            edge_separator=edge_separator,
+            base_column="original_path",
+        )
+        left_smiles.append(smi_left)
+        right_smiles.append(smi_right)
+        left_paths.append(path_left)
+        right_paths.append(path_right)
+
+        for label, smiles in ((left, smi_left), (right, smi_right)):
+            if not label:
+                continue
+            key = (label, smiles)
+            if key not in identity_order:
+                identity_order.append(key)
+            raw_to_smiles.setdefault(label, set()).add(smiles)
+
+    out["ligand_A_smiles"] = left_smiles
+    out["ligand_B_smiles"] = right_smiles
+    out["ligand_A_path"] = left_paths
+    out["ligand_B_path"] = right_paths
+
+    label_by_identity: dict[tuple[str, str], str] = {}
+    used_labels: set[str] = set()
+    for raw_label, smiles in identity_order:
+        variants = raw_to_smiles.get(raw_label, {smiles})
+        needs_suffix = len(variants) > 1 and bool(smiles)
+        candidate = f"{raw_label}_{_metadata_suffix(smiles)}" if needs_suffix else raw_label
+        if candidate in used_labels and label_by_identity.get((raw_label, smiles)) != candidate:
+            base = candidate
+            idx = 2
+            while f"{base}_{idx}" in used_labels:
+                idx += 1
+            candidate = f"{base}_{idx}"
+        label_by_identity[(raw_label, smiles)] = candidate
+        used_labels.add(candidate)
+
+    out["ligand_A_node"] = [
+        label_by_identity.get((str(label).strip(), str(smiles).strip()), str(label).strip())
+        for label, smiles in zip(out["ligand_A_raw"], out["ligand_A_smiles"])
+    ]
+    out["ligand_B_node"] = [
+        label_by_identity.get((str(label).strip(), str(smiles).strip()), str(label).strip())
+        for label, smiles in zip(out["ligand_B_raw"], out["ligand_B_smiles"])
+    ]
+    return out
+
+
+def _read_json_dict(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _existing_ligand_structure_path(candidates: Sequence[Path]) -> str:
+    for candidate in candidates:
+        if candidate.is_file() and candidate.suffix.lower() in {
+            ".sdf",
+            ".sd",
+            ".mol",
+            ".mol2",
+            ".pdb",
+        }:
+            return str(candidate)
+    return ""
+
+
+def _scan_rbfe_input_assets(
     work_dir: str | Path,
     run_ids: Sequence[str],
     ligand_labels: Sequence[str],
-) -> dict[str, str]:
-    """Best-effort map of ligand label -> staged RBFE input path."""
+) -> dict[str, dict[str, str]]:
+    """Best-effort map of ligand label -> staged RBFE input metadata."""
     labels = {str(label).strip() for label in ligand_labels if str(label).strip()}
     if not labels:
         return {}
 
-    mapping: dict[str, str] = {}
+    mapping: dict[str, dict[str, str]] = {}
+
+    def _store(label: str, *, path: str = "", smiles: str = "") -> None:
+        label = str(label or "").strip()
+        if not label or label not in labels:
+            return
+        rec = mapping.setdefault(label, {"input_path": "", "smiles": ""})
+        if path and not rec["input_path"]:
+            rec["input_path"] = path
+        if smiles and not rec["smiles"]:
+            rec["smiles"] = smiles
+
     work_root = Path(work_dir)
     for run_id in run_ids:
+        run_root = work_root / "executions" / str(run_id)
+        index_path = run_root / "artifacts" / "ligand_params" / "index.json"
+        index_payload = _read_json_dict(index_path)
+        for entry in index_payload.get("ligands", []) or []:
+            if not isinstance(entry, dict):
+                continue
+            ligand = str(entry.get("ligand") or "").strip()
+            residue = str(entry.get("residue_name") or "").strip()
+            title = str(entry.get("title") or "").strip()
+            store_dir = Path(str(entry.get("store_dir") or ""))
+            linked_dir = Path(str(entry.get("linked_dir") or ""))
+            if not store_dir.is_absolute():
+                store_dir = work_root / store_dir
+            if not linked_dir.is_absolute():
+                linked_dir = work_root / linked_dir
+
+            metadata = _read_json_dict(store_dir / "metadata.json")
+            local_param_dir = run_root / "simulations" / ligand / "params"
+            local_input_dir = run_root / "simulations" / ligand / "inputs"
+            local_metadata = _read_json_dict(local_param_dir / "metadata.json")
+            if local_metadata:
+                metadata = {**metadata, **local_metadata}
+
+            smiles = str(metadata.get("canonical_smiles") or "").strip()
+            aliases = {
+                ligand,
+                residue,
+                title,
+                str(metadata.get("title") or "").strip(),
+                str(metadata.get("prepared_base") or "").strip(),
+            }
+            metadata_aliases = metadata.get("aliases", []) or []
+            if isinstance(metadata_aliases, str):
+                metadata_aliases = [metadata_aliases]
+            aliases.update(str(alias or "").strip() for alias in metadata_aliases)
+            path = _existing_ligand_structure_path(
+                [
+                    Path(str(metadata.get("input_path") or "")),
+                    store_dir / "lig.sdf",
+                    store_dir / f"{residue}.sdf",
+                    linked_dir / "lig.sdf",
+                    linked_dir / f"{residue}.sdf",
+                    local_param_dir / "lig.sdf",
+                    local_param_dir / f"{residue}.sdf",
+                    local_input_dir / "ligand.sdf",
+                    local_input_dir / f"{ligand}.sdf",
+                    local_input_dir / f"{residue}.sdf",
+                ]
+            )
+            for alias in aliases:
+                _store(alias, path=path, smiles=smiles)
+
         trans_root = work_root / "executions" / str(run_id) / "simulations" / "transformations"
         if not trans_root.is_dir():
             continue
@@ -251,9 +583,21 @@ def _scan_rbfe_input_paths(
                 if not child.is_file():
                     continue
                 stem = child.stem.strip()
-                if stem in labels and stem not in mapping:
-                    mapping[stem] = str(child)
+                _store(stem, path=str(child))
     return mapping
+
+
+def _scan_rbfe_input_paths(
+    work_dir: str | Path,
+    run_ids: Sequence[str],
+    ligand_labels: Sequence[str],
+) -> dict[str, str]:
+    """Best-effort map of ligand label -> staged RBFE input path."""
+    return {
+        label: rec["input_path"]
+        for label, rec in _scan_rbfe_input_assets(work_dir, run_ids, ligand_labels).items()
+        if rec.get("input_path")
+    }
 
 
 def _mol_from_any_path(path_str: str):
@@ -314,31 +658,104 @@ def _build_ligand_assets(
     path_series = rbfe_df.get("original_path", pd.Series(index=rbfe_df.index, dtype=str))
     run_series = rbfe_df.get("run_id", pd.Series(index=rbfe_df.index, dtype=str))
 
-    for edge_label, canonical_smiles, original_path in zip(
-        edge_series.fillna("").astype(str),
-        canonical_series.fillna("").astype(str),
-        path_series.fillna("").astype(str),
-    ):
-        if edge_separator not in edge_label:
-            continue
-        left, right = (piece.strip() for piece in edge_label.split(edge_separator, 1))
-        if left:
-            labels.add(left)
-        if right:
-            labels.add(right)
-        if left and canonical_smiles and left not in smiles_by_label:
-            smiles_by_label[left] = canonical_smiles.strip()
-        if left and original_path and left not in path_by_label:
-            path_by_label[left] = original_path.strip()
+    if {"labelA", "labelB"}.issubset(rbfe_df.columns):
+        for row in rbfe_df.itertuples(index=False):
+            data = pd.Series(row._asdict())
+            left = str(data.get("ligand_A_raw", data.get("labelA", "")) or "").strip()
+            right = str(data.get("ligand_B_raw", data.get("labelB", "")) or "").strip()
+            label_left = str(data.get("labelA", "") or "").strip()
+            label_right = str(data.get("labelB", "") or "").strip()
+            node_left = str(data.get("ligand_A_node", left) or "").strip()
+            node_right = str(data.get("ligand_B_node", right) or "").strip()
+            smi_left = str(data.get("ligand_A_smiles", "") or "").strip()
+            smi_right = str(data.get("ligand_B_smiles", "") or "").strip()
+            path_left = str(data.get("ligand_A_path", "") or "").strip()
+            path_right = str(data.get("ligand_B_path", "") or "").strip()
+            if not smi_left or not smi_right:
+                meta_left, meta_right = _endpoint_metadata_from_row(
+                    data,
+                    left,
+                    right,
+                    edge_separator=edge_separator,
+                    base_column="canonical_smiles",
+                )
+                smi_left = smi_left or meta_left
+                smi_right = smi_right or meta_right
+            if not path_left or not path_right:
+                meta_left, meta_right = _endpoint_metadata_from_row(
+                    data,
+                    left,
+                    right,
+                    edge_separator=edge_separator,
+                    base_column="original_path",
+                )
+                path_left = path_left or meta_left
+                path_right = path_right or meta_right
+            endpoint_assets = {
+                node_left: (smi_left, path_left),
+                node_right: (smi_right, path_right),
+            }
+            for label, smiles, input_path in (
+                (label_left, *endpoint_assets.get(label_left, ("", ""))),
+                (label_right, *endpoint_assets.get(label_right, ("", ""))),
+            ):
+                if not label:
+                    continue
+                labels.add(label)
+                if smiles and label not in smiles_by_label:
+                    smiles_by_label[label] = smiles
+                if input_path and label not in path_by_label:
+                    path_by_label[label] = input_path
+    else:
+        for edge_label, canonical_smiles, original_path in zip(
+            edge_series.fillna("").astype(str),
+            canonical_series.fillna("").astype(str),
+            path_series.fillna("").astype(str),
+        ):
+            if edge_separator not in edge_label:
+                continue
+            left, right = (piece.strip() for piece in edge_label.split(edge_separator, 1))
+            smi_left, smi_right = _metadata_pair_values(
+                canonical_smiles,
+                left,
+                right,
+                edge_separator=edge_separator,
+            )
+            path_left, path_right = _metadata_pair_values(
+                original_path,
+                left,
+                right,
+                edge_separator=edge_separator,
+            )
+            for label, smiles, input_path in (
+                (left, smi_left, path_left),
+                (right, smi_right, path_right),
+            ):
+                if not label:
+                    continue
+                labels.add(label)
+                if smiles and label not in smiles_by_label:
+                    smiles_by_label[label] = smiles.strip()
+                if input_path and label not in path_by_label:
+                    path_by_label[label] = input_path.strip()
 
     if work_dir is not None:
-        scanned = _scan_rbfe_input_paths(
+        scanned = _scan_rbfe_input_assets(
             work_dir,
             [str(run_id).strip() for run_id in run_series.dropna().astype(str).unique()],
             sorted(labels),
         )
-        for label, input_path in scanned.items():
-            path_by_label.setdefault(label, input_path)
+        for label, metadata in scanned.items():
+            input_path = metadata.get("input_path", "")
+            smiles = metadata.get("smiles", "")
+            existing_path = path_by_label.get(label, "").strip()
+            if input_path and (
+                not existing_path
+                or not Path(existing_path).is_file()
+            ):
+                path_by_label[label] = input_path
+            if smiles and not smiles_by_label.get(label, "").strip():
+                smiles_by_label[label] = smiles
 
     try:
         from rdkit import Chem
@@ -408,12 +825,17 @@ def _build_edge_assets(
     work_root = Path(work_dir)
 
     for row in rbfe_df.itertuples(index=False):
-        edge_label = str(getattr(row, "edge_label", "") or getattr(row, "ligand", "") or "").strip()
-        if edge_separator not in edge_label:
-            continue
-        left, right = (part.strip() for part in edge_label.split(edge_separator, 1))
-        if not left or not right:
-            continue
+        label_a_existing = str(getattr(row, "labelA", "") or "").strip()
+        label_b_existing = str(getattr(row, "labelB", "") or "").strip()
+        if label_a_existing and label_b_existing:
+            left, right = label_a_existing, label_b_existing
+        else:
+            edge_label = str(getattr(row, "edge_label", "") or getattr(row, "ligand", "") or "").strip()
+            if edge_separator not in edge_label:
+                continue
+            left, right = (part.strip() for part in edge_label.split(edge_separator, 1))
+            if not left or not right:
+                continue
         if merge_bidirectional:
             label_a, label_b = sorted((left, right))
         else:
@@ -450,6 +872,34 @@ def _build_edge_assets(
             "image_data_uri": image_data_uri,
         }
 
+    return assets
+
+
+def _build_edge_assets_by_work_dir(
+    rbfe_df: pd.DataFrame,
+    *,
+    merge_bidirectional: bool,
+    edge_separator: str = "~",
+) -> dict[str, dict[str, str]]:
+    """Build edge-click assets for rows that carry ``source_work_dir``."""
+    if (
+        rbfe_df is None
+        or rbfe_df.empty
+        or "source_work_dir" not in rbfe_df.columns
+    ):
+        return {}
+    assets: dict[str, dict[str, str]] = {}
+    for work_dir, group in rbfe_df.groupby("source_work_dir", sort=True):
+        if not str(work_dir).strip():
+            continue
+        assets.update(
+            _build_edge_assets(
+                group,
+                work_dir=Path(str(work_dir)),
+                merge_bidirectional=merge_bidirectional,
+                edge_separator=edge_separator,
+            )
+        )
     return assets
 
 
@@ -490,6 +940,13 @@ def load_batter_rbfe_results(
     if work.empty:
         raise ValueError(f"No RBFE-like FE results found under {work_dir}.")
 
+    if "include_in_analysis" in work.columns:
+        work = work.loc[_include_in_analysis_mask(work["include_in_analysis"])].copy()
+        if work.empty:
+            raise ValueError(
+                "No RBFE rows remain after filtering rows disabled by include_in_analysis."
+            )
+
     if run_ids:
         requested = {str(v).strip() for v in run_ids if str(v).strip()}
         work = work.loc[work["run_id"].astype(str).isin(requested)].copy()
@@ -512,6 +969,30 @@ def load_batter_rbfe_results(
             )
 
     return work
+
+
+def load_batter_rbfe_results_from_runs(
+    runs: Sequence[tuple[str | Path, str]],
+    *,
+    ligands: Sequence[str] | None = None,
+    edge_separator: str = "~",
+) -> pd.DataFrame:
+    """Load RBFE rows from explicit ``(work_dir, run_id)`` inputs."""
+    frames: list[pd.DataFrame] = []
+    for work_dir, run_id in runs:
+        root = Path(work_dir)
+        frame = load_batter_rbfe_results(
+            root,
+            run_ids=[str(run_id)],
+            ligands=ligands,
+            edge_separator=edge_separator,
+        ).copy()
+        frame["source_work_dir"] = str(root)
+        frame["source_run_key"] = str(root.resolve()) + "::" + str(run_id)
+        frames.append(frame)
+    if not frames:
+        raise ValueError("At least one explicit RBFE run is required.")
+    return pd.concat(frames, ignore_index=True, sort=False)
 
 
 def dataframe_to_cinnabar(
@@ -555,6 +1036,8 @@ def dataframe_to_cinnabar(
     work = rbfe_df.copy()
     if status_column in work.columns:
         work = work.loc[work[status_column] == success_value].copy()
+    if "include_in_analysis" in work.columns:
+        work = work.loc[_include_in_analysis_mask(work["include_in_analysis"])].copy()
 
     work = work.dropna(subset=[ligand_column, dg_column, se_column]).copy()
     if work.empty:
@@ -568,25 +1051,26 @@ def dataframe_to_cinnabar(
 
     work["ligand_A_raw"] = lig_split[0].str.strip()
     work["ligand_B_raw"] = lig_split[1].str.strip()
+    work = _assign_ligand_node_labels(work, edge_separator=edge_separator)
 
     raw_dg = pd.to_numeric(work[dg_column], errors="raise").astype(float)
     if merge_bidirectional:
-        forward_is_canonical = work["ligand_A_raw"] <= work["ligand_B_raw"]
+        forward_is_canonical = work["ligand_A_node"] <= work["ligand_B_node"]
         work["labelA"] = np.where(
-            forward_is_canonical, work["ligand_A_raw"], work["ligand_B_raw"]
+            forward_is_canonical, work["ligand_A_node"], work["ligand_B_node"]
         )
         work["labelB"] = np.where(
-            forward_is_canonical, work["ligand_B_raw"], work["ligand_A_raw"]
+            forward_is_canonical, work["ligand_B_node"], work["ligand_A_node"]
         )
         work["signed_dDG"] = np.where(forward_is_canonical, raw_dg, -raw_dg)
     else:
-        work["labelA"] = work["ligand_A_raw"]
-        work["labelB"] = work["ligand_B_raw"]
+        work["labelA"] = work["ligand_A_node"]
+        work["labelB"] = work["ligand_B_node"]
         work["signed_dDG"] = raw_dg
     work["input_se"] = pd.to_numeric(work[se_column], errors="raise").astype(float)
 
-    if np.any(work["input_se"] <= 0):
-        raise ValueError(f"Column '{se_column}' must contain only positive values.")
+    if np.any(work["input_se"] < 0):
+        raise ValueError(f"Column '{se_column}' must contain only non-negative values.")
 
     if temperature_column in work.columns:
         work["temperature_K"] = pd.to_numeric(work[temperature_column], errors="coerce")
@@ -656,7 +1140,8 @@ def dataframe_to_cinnabar(
             labelA=row.labelA,
             labelB=row.labelB,
             value=float(row.calc_DDG) * unit.kilocalorie_per_mole,
-            uncertainty=float(row.calc_dDDG) * unit.kilocalorie_per_mole,
+            uncertainty=_cinnabar_solver_uncertainty_kcal_mol(float(row.calc_dDDG))
+            * unit.kilocalorie_per_mole,
             source=source,
             temperature=float(row.temperature_K) * unit.kelvin,
         )
@@ -810,13 +1295,71 @@ def build_batter_rbfe_cinnabar(
         exp_error_unit=exp_error_unit,
     )
     result.ligand_assets = _build_ligand_assets(
-        work,
+        result.raw_signed,
         work_dir=work_dir,
         edge_separator=edge_separator,
     )
     result.edge_assets = _build_edge_assets(
-        work,
+        result.raw_signed,
         work_dir=work_dir,
+        merge_bidirectional=merge_bidirectional,
+        edge_separator=edge_separator,
+    )
+    return result
+
+
+def build_batter_rbfe_cinnabar_from_runs(
+    runs: Sequence[tuple[str | Path, str]],
+    *,
+    ligands: Sequence[str] | None = None,
+    edge_separator: str = "~",
+    uncertainty_mode: Literal["ivw", "sample", "max"] = "max",
+    combine_by_run_first: bool = True,
+    merge_bidirectional: bool = True,
+    experimental_df: pd.DataFrame | None = None,
+    exp_ligand_column: str = "ligand",
+    exp_abfe_column: str = "abfe",
+    exp_error_column: str | None = None,
+    exp_status_column: str | None = None,
+    exp_success_value: str = "success",
+    exp_temperature_column: str | None = None,
+    source: str = "BATTER_RBFE",
+    exp_source: str = "experiment",
+    exp_value_unit: Any = "kcal/mol",
+    exp_error_unit: Any = None,
+) -> CinnabarConversionResult:
+    work = load_batter_rbfe_results_from_runs(
+        runs,
+        ligands=ligands,
+        edge_separator=edge_separator,
+    )
+    result = dataframe_to_cinnabar(
+        work,
+        ligand_column="edge_label",
+        run_column="source_run_key",
+        edge_separator=edge_separator,
+        uncertainty_mode=uncertainty_mode,
+        combine_by_run_first=combine_by_run_first,
+        merge_bidirectional=merge_bidirectional,
+        experimental_df=experimental_df,
+        exp_ligand_column=exp_ligand_column,
+        exp_abfe_column=exp_abfe_column,
+        exp_error_column=exp_error_column,
+        exp_status_column=exp_status_column,
+        exp_success_value=exp_success_value,
+        exp_temperature_column=exp_temperature_column,
+        source=source,
+        exp_source=exp_source,
+        exp_value_unit=exp_value_unit,
+        exp_error_unit=exp_error_unit,
+    )
+    result.ligand_assets = _build_ligand_assets(
+        result.raw_signed,
+        work_dir=None,
+        edge_separator=edge_separator,
+    )
+    result.edge_assets = _build_edge_assets_by_work_dir(
+        result.raw_signed,
         merge_bidirectional=merge_bidirectional,
         edge_separator=edge_separator,
     )
@@ -872,12 +1415,12 @@ def build_batter_rbfe_cinnabar_by_run(
             exp_error_unit=exp_error_unit,
         )
         result.ligand_assets = _build_ligand_assets(
-            group,
+            result.raw_signed,
             work_dir=work_dir,
             edge_separator=edge_separator,
         )
         result.edge_assets = _build_edge_assets(
-            group,
+            result.raw_signed,
             work_dir=work_dir,
             merge_bidirectional=merge_bidirectional,
             edge_separator=edge_separator,
@@ -4065,6 +4608,14 @@ def write_cinnabar_outputs(
             dg_values_path = out_root / "cinnabar_dg_values.png"
             dg_values_path.write_bytes(abs_plot_path.read_bytes())
             outputs["dg_values_png"] = dg_values_path
+
+    merged_relative, merged_absolute = read_cinnabar_outputs(out_root)
+    relative_path = out_root / "relative.csv"
+    merged_relative.to_csv(relative_path, index=False)
+    outputs["relative_csv"] = relative_path
+    absolute_path = out_root / "absolute.csv"
+    merged_absolute.to_csv(absolute_path, index=False)
+    outputs["absolute_csv"] = absolute_path
 
     graph_path = out_root / "cinnabar_network.png"
     rendered = _render_network_png(

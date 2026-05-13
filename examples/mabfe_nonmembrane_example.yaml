@@ -66,11 +66,11 @@ fe_sim:
   # MBAR analysis blocks
   blocks: 5
   # solvent padding along X for soluble systems
-  buffer_x: 12.0
+  buffer_x: 10.0
   # solvent padding along Y for soluble systems
-  buffer_y: 12.0
+  buffer_y: 10.0
   # solvent padding along Z for soluble systems
-  buffer_z: 15.0
+  buffer_z: 10.0
   # short equilibration for this development example
   eq_steps: 10000
   # production steps for the z component
@@ -78,10 +78,14 @@ fe_sim:
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # barostat choice in the AMBER templates
-  barostat: 1
+  barostat: 2
   # use hydrogen mass repartitioning
   hmr: yes
   # 4 fs time step with HMR
   dt: 0.004
   # simulation temperature in Kelvin
   temperature: 298.15
+  # analysis only starts after the first 10000 steps
+  analysis_start_step: 10000
+  # MBAR analysis blocks
+  blocks: 5

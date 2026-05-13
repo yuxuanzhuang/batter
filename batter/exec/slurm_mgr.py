@@ -843,14 +843,29 @@ class SlurmJobManager:
                 logger.error(f"[SLURM] submit failed for {s.workdir}: {e}")
                 raise
 
-        pending: Dict[Path, SlurmJobSpec] = {s.workdir: s for s in specs}
+        pending: Dict[Path, SlurmJobSpec] = {}
+        completed: set[Path] = set()
+        failed_total = 0
+        for s in specs:
+            done, status = self._sentinel_done(s)
+            if done:
+                completed.add(s.workdir)
+                if status == "FAILED":
+                    failed_total += 1
+            else:
+                pending[s.workdir] = s
         retries: Dict[Path, int] = {s.workdir: self._retries.get(s.workdir, 0) for s in specs}
 
         total = len(specs)
-        completed: set[Path] = set()
         last_log = 0.0
         pbar = (
-            tqdm(total=total, desc="SLURM jobs", leave=True, dynamic_ncols=True)
+            tqdm(
+                total=total,
+                initial=len(completed),
+                desc="SLURM jobs",
+                leave=True,
+                dynamic_ncols=True,
+            )
             if use_tqdm
             else None
         )
@@ -876,19 +891,16 @@ class SlurmJobManager:
                     return None
                 return squeue_states.get(jid) or sacct_states.get(jid)
 
-            done_now: List[Path] = []
+            done_now: Dict[Path, str] = {}
             running_cnt = 0
             resub_cnt = 0
-            failed_cnt = 0
 
             for wd, sp in list(pending.items()):
                 wd_label = _format_workdir_label(wd)
                 # sentinel checks first (no slurm calls)
                 done, st = self._sentinel_done(sp)
                 if done:
-                    if st == "FAILED":
-                        failed_cnt += 1
-                    done_now.append(wd)
+                    done_now[wd] = st or "FINISHED"
                     continue
 
                 jid = wd_jobid.get(wd)
@@ -914,8 +926,7 @@ class SlurmJobManager:
                         sp.failed_path().touch()
                     except Exception:
                         pass
-                    failed_cnt += 1
-                    done_now.append(wd)
+                    done_now[wd] = "FAILED"
                     continue
 
                 # resubmit
@@ -948,22 +959,31 @@ class SlurmJobManager:
                     raise
 
             # finalize done items
-            for wd in done_now:
+            for wd, status in done_now.items():
                 pending.pop(wd, None)
                 if wd not in completed:
                     completed.add(wd)
-                    if pbar:
-                        pbar.update(1)
+                    if status == "FAILED":
+                        failed_total += 1
 
             if pbar:
-                pbar.set_postfix({"running": running_cnt, "failed": failed_cnt})
+                pbar.n = len(completed)
+                pbar.set_postfix(
+                    {
+                        "running": running_cnt,
+                        "resubmitting": resub_cnt,
+                        "failed": failed_total,
+                        "pending": len(pending),
+                    }
+                )
+                pbar.refresh()
             else:
                 now = time.time()
                 if now - last_log > 30 or not pending:
                     logger.info(
                         f"[SLURM] progress {len(completed)}/{total} "
                         f"(running={running_cnt}, resub={resub_cnt}, "
-                        f"failed={failed_cnt}, pending={len(pending)})"
+                        f"failed={failed_total}, pending={len(pending)})"
                     )
                     last_log = now
 

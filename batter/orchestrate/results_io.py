@@ -83,29 +83,67 @@ def extract_ligand_metadata(
     Metadata is pulled from the parameterization artifact (``metadata.json``) when
     available and combined with any original ligand-name mapping stored on disk.
     """
+    def _read_param_metadata(residue_name: str | None) -> dict:
+        if not residue_name:
+            return {}
+        param_dirs = child.meta.get("param_dir_dict", {}) or {}
+        param_dir = param_dirs.get(residue_name)
+        if not param_dir:
+            return {}
+        meta_path = Path(param_dir) / "metadata.json"
+        if not meta_path.exists():
+            return {}
+        try:
+            return json.loads(meta_path.read_text())
+        except Exception as exc:  # pragma: no cover - best-effort metadata
+            logger.debug(f"Failed to read ligand metadata {meta_path}: {exc}")
+            return {}
+
+    def _metadata_name(ligand_name: str | None, meta: dict) -> str:
+        original_name = str(ligand_name or "")
+        if original_map and ligand_name:
+            original_name = str(original_map.get(ligand_name, original_name))
+        if meta.get("title"):
+            return str(meta["title"])
+        aliases = meta.get("aliases") or []
+        if aliases:
+            return str(aliases[0])
+        return str(meta.get("prepared_base") or original_name)
+
+    is_rbfe = str(child.meta.get("mode", "")).upper() == "RBFE"
+    ref = child.meta.get("ligand_ref")
+    alt = child.meta.get("ligand_alt")
+    if is_rbfe and ref and alt:
+        ref_meta = _read_param_metadata(child.meta.get("residue_ref") or child.meta.get("residue_name"))
+        alt_meta = _read_param_metadata(child.meta.get("residue_alt"))
+        canonical_smiles = "~".join(
+            [
+                str(ref_meta.get("canonical_smiles") or ""),
+                str(alt_meta.get("canonical_smiles") or ""),
+            ]
+        )
+        original_name = "~".join([_metadata_name(ref, ref_meta), _metadata_name(alt, alt_meta)])
+        original_path = "~".join(
+            [
+                str(ref_meta.get("input_path") or child.meta.get("input_ref") or ""),
+                str(alt_meta.get("input_path") or child.meta.get("input_alt") or ""),
+            ]
+        )
+        return canonical_smiles, original_name, original_path
+
     canonical_smiles: str | None = None
     original_name: str | None = child.meta.get("ligand")
     original_path: str | None = None
-
-    param_dirs = child.meta.get("param_dir_dict", {}) or {}
-    residue_name = child.meta.get("residue_name")
-    param_dir = param_dirs.get(residue_name) if residue_name else None
-    if param_dir:
-        meta_path = Path(param_dir) / "metadata.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text())
-            except Exception as exc:  # pragma: no cover - best-effort metadata
-                logger.debug(f"Failed to read ligand metadata {meta_path}: {exc}")
-                meta = {}
-            canonical_smiles = meta.get("canonical_smiles")
-            original_path = meta.get("input_path")
-            original_name = meta.get("title") or original_name
-            aliases = meta.get("aliases") or []
-            if aliases and not meta.get("title"):
-                original_name = aliases[0]
-            else:
-                original_name = meta.get("prepared_base") or original_name
+    meta = _read_param_metadata(child.meta.get("residue_name"))
+    if meta:
+        canonical_smiles = meta.get("canonical_smiles")
+        original_path = meta.get("input_path")
+        original_name = meta.get("title") or original_name
+        aliases = meta.get("aliases") or []
+        if aliases and not meta.get("title"):
+            original_name = aliases[0]
+        else:
+            original_name = meta.get("prepared_base") or original_name
     if original_map and child.meta.get("ligand"):
         original_name = original_map.get(child.meta.get("ligand"), original_name)
     return canonical_smiles, original_name, original_path
