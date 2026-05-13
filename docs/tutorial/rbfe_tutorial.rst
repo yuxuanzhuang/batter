@@ -284,6 +284,10 @@ For RBFE runs, per-run analysis also writes a Cinnabar bundle under
   FEMap-exported relative and absolute values.
 * Open ``cinnabar_network.png`` and ``cinnabar_absolute_sorted.png`` for static
   figures suitable for slides or quick sharing.
+* Use the `RBFE Cinnabar analysis notebook
+  <https://github.com/yuxuanzhuang/batter/blob/main/examples/plot_rbfe.ipynb>`_
+  when you want notebook-based tables, plots, and optional experimental
+  comparisons.
 
 If you later merge multiple RBFE runs with ``batter fe cinnabar``, the combined
 bundle is written separately from the per-run subdirectory. Same-work-dir
