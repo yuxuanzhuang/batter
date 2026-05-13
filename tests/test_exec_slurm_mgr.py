@@ -1,5 +1,7 @@
 from pathlib import Path
 import subprocess
+import sys
+from types import SimpleNamespace
 
 import pytest
 from loguru import logger
@@ -275,7 +277,7 @@ def test_wait_loop_warning_uses_expanded_workdir_label(monkeypatch, tmp_path: Pa
 
     def fake_sentinel_done(_spec: SlurmJobSpec):
         sentinel_calls["count"] += 1
-        if sentinel_calls["count"] >= 2:
+        if sentinel_calls["count"] >= 3:
             return True, "FINISHED"
         return False, None
 
@@ -300,3 +302,73 @@ def test_wait_loop_warning_uses_expanded_workdir_label(monkeypatch, tmp_path: Pa
         "[SLURM] G1I/fe/x/x01: job 21949383 state=FAILED; resubmitting (1/3)"
         in joined
     )
+
+
+def test_wait_loop_progress_starts_from_existing_sentinels(
+    monkeypatch, tmp_path: Path
+) -> None:
+    finished_dir = tmp_path / "done"
+    running_dir = tmp_path / "running"
+    finished_dir.mkdir()
+    running_dir.mkdir()
+    (finished_dir / "FINISHED").write_text("FINISHED\n")
+    (running_dir / "JOBID").write_text("1\n")
+
+    class FakeTqdm:
+        instances: list["FakeTqdm"] = []
+
+        def __init__(self, iterable=None, total=None, initial=0, desc=None, **_kwargs):
+            self.iterable = iterable
+            self.total = total
+            self.initial = initial
+            self.desc = desc
+            self.n = initial
+            self.postfix = {}
+            FakeTqdm.instances.append(self)
+
+        def __iter__(self):
+            return iter(self.iterable or [])
+
+        def set_postfix(self, values):
+            self.postfix = dict(values)
+
+        def refresh(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "tqdm", SimpleNamespace(tqdm=FakeTqdm))
+
+    polls = {"count": 0}
+
+    def fake_squeue(jobids):
+        polls["count"] += 1
+        if polls["count"] == 1:
+            return {"1": "RUNNING"}
+        (running_dir / "FINISHED").write_text("FINISHED\n")
+        return {}
+
+    monkeypatch.setattr("batter.exec.slurm_mgr._states_from_squeue", fake_squeue)
+    monkeypatch.setattr("batter.exec.slurm_mgr._states_from_sacct", lambda _jobids: {})
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        resubmit_backoff_s=0.0,
+        max_retries=0,
+    )
+
+    manager._wait_loop(
+        [
+            SlurmJobSpec(workdir=finished_dir),
+            SlurmJobSpec(workdir=running_dir),
+        ]
+    )
+
+    progress = next(inst for inst in FakeTqdm.instances if inst.desc == "SLURM jobs")
+    assert progress.total == 2
+    assert progress.initial == 1
+    assert progress.n == 2
+    assert progress.postfix["pending"] == 0
