@@ -11,7 +11,7 @@ Run Workflows
 
 .. code-block:: console
 
-   batter run examples/mabfe.yaml
+   batter run examples/mabfe_example.yaml
 
 Options:
 
@@ -133,7 +133,7 @@ This command edits the ``include_in_analysis`` flag in ``results/index.csv``.
 Rows set to ``False`` are preserved on disk but skipped by Cinnabar export and
 other aggregate analyses.
 
-Convert stored RBFE records into `Cinnabar <https://cinnabar.openfree.energy/>`_
+Convert stored RBFE records into `Cinnabar <https://cinnabar.openfree.energy/en/latest/>`_
 inputs and plots. Prefer explicit atomic run inputs when collecting production
 replicates, especially if the runs may live in different BATTER work directories::
 

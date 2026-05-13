@@ -92,18 +92,18 @@ Required Files
    stripped during staging. BATTER currently does not support cofactors or other
    non-protein residues in ``protein_input.pdb``.
 
-2. **Ligand structures** – one ligand per ``.sdf`` file with 3D coordinates.  
+2. **Ligand structures** – one ligand per ``.sdf`` file with 3D coordinates.
    Docked poses, aligned experimental structures, or co-folding models all work as
    long as the coordinates align with the provided ``protein_input.pdb``. Ensure hydrogens/protonation states
-   are correct (Open Babel, `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_, or a similar tool can help).
+   are correct (Open Babel, the ``scripts/get_protonation.ipynb`` notebook, or a similar tool can help).
 
-3. **System topology and coordinates (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``  
+3. **System topology and coordinates (optional)** – ``system_input.pdb`` / ``system_input.inpcrd``
    Needed for membrane protein system.
-   
+
    The membrane-embedded system can be generated via `Dabble <https://github.com/Eigenstate/dabble>`_ (preferred with ``protein_input.pdb``).
    ``system_input.pdb`` must encode the correct unit-cell vectors (box information) if ``system_input.inpcrd`` is not provided (Dabble does this by default).
    If ``system_input.inpcrd`` is provided its coordinates and box information take precedence.
-   
+
    ``protein_input.pdb`` **does not** need to be aligned to ``system_input.pdb``; it can be helpful in cases e.g.,
    the protein structure used for docking (so all the docked poses are superposed to this protein) is oriented differently
    from the membrane system. During system staging, the protein will be aligned to the membrane system, and the alignment
@@ -121,8 +121,8 @@ Required Files
 Generating Simulation Inputs
 ----------------------------
 
-1. **Copy and edit the template.**  
-   Start from `examples/mabfe_example.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/mabfe_example.yaml>`_
+1. **Copy and edit the template.**
+   Start from ``examples/mabfe_example.yaml``
    and save a copy beside your project data. Update:
 
    - ``run.output_folder`` – dedicated directory for outputs/logs.
@@ -139,7 +139,7 @@ Generating Simulation Inputs
 
      For GPCR orthosteric sites, a common choice is P1=3x32,
      P2=2x53, P3=7x42.
-   
+
    Additional field that may need adjustment based on your cluster environment:
 
    - ``run.email_on_completion`` – email address to notify when the BATTER manager finishes or aborts with an uncaught failure.
@@ -159,7 +159,7 @@ Generating Simulation Inputs
    equilibration systems.
    On shared clusters, run the dry-run on a compute node if possible to avoid overloading login nodes.
 
-3. **Inspect the staged system (Optional)**  
+3. **Inspect the staged system (Optional)**
    Once the dry-run completes, review ``<run.output_folder>/executions/<run_id>/``:
 
    - ``simulations/<LIGAND>/equil/full.pdb`` – ligand-specific equilibration systems.
@@ -297,10 +297,7 @@ result.
 Additional Resources
 --------------------
 
-- Start from SMILES and protein sequence (with or without available structures) to absolute
-  binding free energy: `bat_mem <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/>`_
-
-- Unsure about the protonation state of the ligand: `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_.
+- Unsure about the protonation state of the ligand: see ``scripts/get_protonation.ipynb``.
 
 Lambda-Schedule Tuning
 ----------------------

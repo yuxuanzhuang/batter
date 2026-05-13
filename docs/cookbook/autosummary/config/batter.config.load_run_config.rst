@@ -1,5 +1,5 @@
-﻿batter.config.load\_run\_config
-===============================
+batter.config.load_run_config
+=============================
 
 .. currentmodule:: batter.config
 

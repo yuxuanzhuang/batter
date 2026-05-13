@@ -1,4 +1,4 @@
-﻿batter.config.run.RunSection
+batter.config.run.RunSection
 ============================
 
 .. currentmodule:: batter.config.run

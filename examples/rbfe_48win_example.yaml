@@ -66,7 +66,7 @@ rbfe:
   # can be kartograf or lomap
   atom_mapper: kartograf
   # Konnektor network layout heuristic
-  konnektor_layout: minimalspanningtree
+  konnektor_layout: redundantminimalspanningtree
   # whether to generate both directions for each edge
   both_directions: false
 
@@ -93,3 +93,7 @@ fe_sim:
   buffer_y: 10.0
   # simulation temperature in Kelvin
   temperature: 298.15
+  # analysis only start from 100000 steps
+  analysis_start_step: 100000
+  # MBAR analysis blocks
+  blocks: 5

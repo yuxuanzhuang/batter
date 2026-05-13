@@ -908,7 +908,7 @@ class RunConfig(BaseModel):
     @classmethod
     def _lower_backend(cls, v):
         return str(v).lower() if v else v
-    
+
     # disable backend slurm for now
     @field_validator("backend", mode="before")
     @classmethod

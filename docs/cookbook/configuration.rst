@@ -3,7 +3,7 @@ Configuration Overview
 
 BATTER's configuration layer is driven by :class:`batter.config.run.RunConfig`,
 the user-facing schema that describes the system to build, the FE protocol to
-execute, runtime options, and backend preferences. Derived simulation knobs are
+execute, runtime options, and execution settings. Derived simulation knobs are
 produced by :meth:`RunConfig.resolved_sim_config`; the resulting
 :class:`~batter.config.simulation.SimulationConfig` is documented in the
 developer guide (:doc:`../developer_guide`).
@@ -178,7 +178,7 @@ executable paths). Bodies remain managed by the package. Header files:
 
 * ``SLURMM-Am.header`` (equil/FE runs)
 * ``SLURMM-BATCH-remd.header`` (REMD runs)
-* ``job_manager.header`` (manager script for ``batter --slurm-submit``)
+* ``job_manager.header`` (manager script for ``batter run --slurm-submit``)
 
 The header lookup/seed location is controlled by ``run.slurm_header_dir``; when omitted it
 defaults to ``~/.batter``.
@@ -197,13 +197,14 @@ SLURM configuration block
 The ``run.slurm`` block maps directly onto ``sbatch`` flags. All fields are optional; if a
 value is omitted it will not be added to the submission command. You can also use
 ``run.slurm_header_dir`` to point at a custom header directory seeded with
-``batter seed-headers``.
+``batter seed-headers``. Keep ``backend: local`` in the YAML; submit the manager
+through SLURM with ``batter run ... --slurm-submit`` when you want cluster execution.
 
 Example:
 
 .. code-block:: yaml
 
-   backend: slurm
+   backend: local
    run:
      slurm_header_dir: /path/to/slurm_headers
      slurm:
@@ -292,8 +293,8 @@ Quick Reference
    batter.config.run.FESimArgs
    batter.config.run.MDSimArgs
    batter.config.run.RunSection
-    batter.config.simulation.SimulationConfig
+   batter.config.simulation.SimulationConfig
    batter.config.load_run_config
    batter.config.dump_run_config
-    batter.config.load_simulation_config
-    batter.config.dump_simulation_config
+   batter.config.load_simulation_config
+   batter.config.dump_simulation_config

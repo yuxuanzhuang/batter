@@ -39,18 +39,18 @@ controls.
 Understanding the outputs
 =========================
 
-``batter`` generate several output files and directories during execution. To inspect
-simulations, analyze results, or troubleshoot issues, consult :doc:`developer_guide` now
-and a dedicated guide will be added soon.
+``batter`` generates several output files and directories during execution.
+Use :doc:`cookbook/results_folder` to inspect the output layout, and consult
+:doc:`developer_guide` when debugging orchestration or analysis internals.
 
 
 Developing Pipelines
 ====================
 
 If you plan to modify or extend BATTER's internals—for example, adding new pipeline
-steps or integrating a custom backend—read the :doc:`developer_guide`. These documents explain
-the architecture, typed payloads, metadata model, and orchestration flow used by the
-codebase.
+steps or integrating a custom backend—read the :doc:`developer_guide`. These
+documents explain the architecture, typed payloads, metadata model, and orchestration
+flow used by the codebase.
 
 Additional Resources
 ====================

@@ -21,7 +21,7 @@ Header files
 
 * ``SLURMM-Am.header``: equilibration/FE runs
 * ``SLURMM-BATCH-remd.header``: REMD runs
-* ``job_manager.header``: manager script used by ``batter --slurm-submit``
+* ``job_manager.header``: manager script used by ``batter run --slurm-submit``
 
 Common environment overrides
 ----------------------------

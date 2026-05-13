@@ -4,7 +4,7 @@ Using Cinnabar with RBFE Results
 ================================
 
 BATTER can convert stored RBFE records into
-`Cinnabar <https://cinnabar.openfree.energy/>`_ ``FEMap`` objects and write
+`Cinnabar <https://cinnabar.openfree.energy/en/latest/>`_ ``FEMap`` objects and write
 analysis-ready tables, static plots, and an interactive dashboard.
 
 Default per-run output

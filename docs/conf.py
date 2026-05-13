@@ -12,7 +12,7 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 
-# Incase the project was not installed
+# In case the project was not installed
 import os
 import sys
 
@@ -31,9 +31,9 @@ copyright = (
 author = "Yuxuan Zhuang"
 
 # The short X.Y version
-version = ""
+version = batter.__version__
 # The full version, including alpha/beta/rc tags
-release = ""
+release = batter.__version__
 
 
 # -- General configuration ---------------------------------------------------
@@ -59,7 +59,7 @@ extensions = [
 ]
 
 
-autosummary_generate = True
+autosummary_generate = False
 autoclass_content = "both"
 napoleon_google_docstring = False
 napoleon_use_param = False
@@ -71,13 +71,23 @@ autodoc_pydantic_field_show_default = True
 autodoc_pydantic_field_show_required = True
 autodoc_pydantic_field_doc_policy = "both"
 autodoc_mock_imports = [
+    "alchemlyb",
     "gufe",
+    "joblib",
     "kartograf",
     "lomap",
+    "matplotlib",
+    "MDAnalysis",
+    "mpl_toolkits",
     "openff",
     "openmm",
     "parmed",
+    "pymbar",
+    "rdkit",
+    "rocklinc",
+    "scipy",
     "seaborn",
+    "tqdm",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -187,7 +197,7 @@ texinfo_documents = [
         "batter Documentation",
         author,
         "batter",
-        "A python package that set up FEP simulations with bat.py",
+        "A Python package for setting up free-energy simulation workflows.",
         "Miscellaneous",
     ),
 ]

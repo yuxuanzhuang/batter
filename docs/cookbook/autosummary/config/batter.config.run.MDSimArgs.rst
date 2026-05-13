@@ -1,4 +1,4 @@
-﻿batter.config.run.MDSimArgs
+batter.config.run.MDSimArgs
 ===========================
 
 .. currentmodule:: batter.config.run

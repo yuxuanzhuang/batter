@@ -117,7 +117,7 @@ Required Files
 2. **Ligand structures** – one ligand per ``.sdf`` file with 3D coordinates.
    Docked poses, aligned experimental structures, or co-folding models all work as
    long as the coordinates align with the provided ``protein_input.pdb``. Ensure hydrogens/protonation states
-   are correct (Open Babel, `unipKa <https://github.com/yuxuanzhuang/batter/blob/main/scripts/get_protonation.ipynb>`_, or a similar tool can help).
+   are correct (Open Babel, the ``scripts/get_protonation.ipynb`` notebook, or a similar tool can help).
    If you use ``rbfe.atom_mapper: kartograf`` (the BATTER default), the ligands should
    preferably be pre-aligned in a consistent binding pose, since well-aligned
    molecules are one of Kartograf's core assumptions for finding a good mapping. See
@@ -149,7 +149,7 @@ Generating Simulation Inputs
 ----------------------------
 
 1. **Copy and edit the template.**
-   Start from `examples/rbfe_example.yaml <https://github.com/yuxuanzhuang/batter/blob/main/examples/rbfe_example.yaml>`_
+   Start from ``examples/rbfe_example.yaml``
    and save a copy beside your project data. Update:
 
    - ``run.output_folder`` – dedicated directory for outputs/logs.

@@ -1,4 +1,4 @@
-﻿batter.config.simulation.SimulationConfig
+batter.config.simulation.SimulationConfig
 =========================================
 
 .. currentmodule:: batter.config.simulation

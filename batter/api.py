@@ -14,20 +14,20 @@ Typical usage
 Run a workflow from a top-level YAML::
 
     from batter.api import run_from_yaml
-    run_from_yaml(\"examples/mabfe.yaml\")
+    run_from_yaml("examples/mabfe_example.yaml")
 
 Inspect FE records stored in a work directory::
 
     from batter.api import list_fe_runs, load_fe_run
-    runs = list_fe_runs(\"work/adrb2\")
-    latest = runs.iloc[-1][\"run_id\"]
+    runs = list_fe_runs("work/adrb2")
+    latest = runs.iloc[-1]["run_id"]
     # pass ``ligand`` when the run contains more than one ligand
-    record = load_fe_run(\"work/adrb2\", latest, ligand=\"LIG1\")
+    record = load_fe_run("work/adrb2", latest, ligand="LIG1")
 
 Run FE analysis on an existing execution::
 
     from batter.api import run_analysis_from_execution
-    run_analysis_from_execution(\"work/adrb2\", latest, ligand=\"LIG1\")
+    run_analysis_from_execution("work/adrb2", latest, ligand="LIG1")
 
 For more examples, refer to ``docs/getting_started.rst`` and the tutorials.
 """
