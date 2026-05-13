@@ -29,6 +29,9 @@ This per-run folder is the first place to look after a normal RBFE run. For exam
 
    open <run.output_folder>/results/cinnabar/<run_id>/cinnabar_dashboard.html
 
+For a static example of the interactive dashboard layout, open or download the
+:download:`sample Cinnabar dashboard <../assets/cinnabar_dashboard.html>`.
+
 Combine replicates and connect networks
 ---------------------------------------
 

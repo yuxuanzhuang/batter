@@ -60,6 +60,9 @@ The Conda environment installs the bundled ``extern/*`` dependencies through its
 ``pip`` section. Run the environment update from the repository root so the
 relative editable paths resolve correctly.
 
+For the full setup checklist and links to the main workflow docs, see the
+`Getting Started guide <https://batter.readthedocs.io/en/latest/getting_started.html>`_.
+
 Installation tips (clusters)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -19,6 +19,9 @@ developers should consult in order to become productive quickly.
    location pointed to by ``run.slurm_header_dir``. See
    :doc:`cookbook/slurm_headers` for the full layout and examples.
 
+   If you need to compile or patch AMBER GPU builds for BATTER runs, review
+   :doc:`cookbook/amber_compilation` before launching production windows.
+
 Follow the Tutorial
 ===================
 
