@@ -124,6 +124,7 @@ YAML files in ``examples/`` illustrate common setups:
 **Relative Binding Free Energy (RBFE)**
    1. ``rbfe_example.yaml`` — suitable for small transformations with 24 lambda windows
    2. ``rbfe_48win_example.yaml`` — suitable for larger transformations with 48 lambda windows (e.g. charge changes)
+   3. ``plot_rbfe.ipynb`` — analyze BATTER RBFE Cinnabar bundles and optional experimental comparisons
 
 **Absolute Solvation Free Energy (ASFE)**
    1. ``masfe_example.yaml`` — small molecule (e.g., epinephrine) in water
