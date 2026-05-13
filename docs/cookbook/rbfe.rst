@@ -18,6 +18,10 @@ Minimal RBFE configuration
    create:
      system_name: my_system
      protein_input: /path/to/protein.pdb
+     anchor_atoms:
+       - "name CA and resid 113"
+       - "name CA and resid 82"
+       - "name CA and resid 316"
      ligand_paths:
        LIG1: /path/to/lig1.sdf
        LIG2: /path/to/lig2.sdf
@@ -26,6 +30,10 @@ Minimal RBFE configuration
    rbfe:
      mapping: default
      atom_mapper: kartograf
+
+   fe_sim:
+     lambdas: [0.0, 0.5, 1.0]
+     x_n_steps: 300000
 
 If you omit ``rbfe.mapping`` (and do not provide files), BATTER uses
 ``default``.

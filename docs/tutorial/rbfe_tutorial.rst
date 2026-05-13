@@ -37,12 +37,15 @@ protein binding site. The main steps are:
 #. **Network planning** – Build the RBFE transformation map (pair list) based on the selected scheme.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
 #. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
-#. **FE production runs** – Each window is submitted as an independent SLURM job.
-   The main process monitors job status and streams updates to the terminal.
+#. **FE production runs** – Each window runs as an independent local task or
+   scheduler job, depending on how you launch the workflow. The main process
+   monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
    to cap how many SLURM jobs BATTER keeps active at once and avoid overloading the scheduler.
 #. **Analysis** – Once all windows complete, MBAR analysis is performed and the final
    results are written to the portable ``results/`` repository.
+
+.. _rbfe_network_planning_schemes:
 
 Network planning schemes
 ------------------------
@@ -156,7 +159,9 @@ Generating Simulation Inputs
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
-   - ``create.anchor_atoms`` – The three atoms that defines the binding site; not strictly required now, but kept for consistency. Choose stable backbone atoms (CA/C/N) with the guidelines below.
+   - ``create.anchor_atoms`` – The three atoms that define the binding site and
+     anchor geometry used during staging and validation. Choose stable backbone
+     atoms (CA/C/N) with the guidelines below.
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
@@ -176,14 +181,12 @@ Generating Simulation Inputs
    - ``rbfe.mapping`` / ``rbfe.mapping_file`` – choose your network planning scheme.
    - ``rbfe.atom_mapper`` – choose RBFE atom mapper backend: ``kartograf`` (default) or ``lomap``.
 
-      The available schemes are described in :ref:`Network planning schemes <rbfe_tutorial>`.
+      The available schemes are described in :ref:`rbfe_network_planning_schemes`.
       For mapper-specific behavior and examples, see the `Kartograf documentation <https://kartograf.openfree.energy/en/latest/>`_
       and the `LoMap documentation <https://lomap.openfree.energy/en/stable/>`_.
       As a practical default, start with ``kartograf`` unless you have a reason to prefer
-      ``lomap`` for a particular ligand series. This recommendation is consistent with
-      OpenFE switching its CLI default atom mapper from LoMap to Kartograf in line with
-      benchmark-backed recommended defaults. LoMap remains available and can still be a
-      better fit for some chemotypes or mapping preferences.
+      ``lomap`` for a particular ligand series. ``lomap`` remains available and can
+      still be a better fit for some chemotypes or mapping preferences.
 
    Use :doc:`../cookbook/configuration` for the full YAML field reference and
    :doc:`../cookbook/rbfe` for the RBFE-specific mapping examples and defaults. If you

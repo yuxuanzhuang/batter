@@ -24,7 +24,7 @@ create:
   # partial-charge model used during ligand parameterization
   param_charge: "openff-gnn-am1bcc-1.0.0.pt"
 
-  # three receptor anchor atoms used to define BATTER restraints
+  # three receptor anchor atoms used by staging and binding-site validation
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"
@@ -71,7 +71,7 @@ rbfe:
   both_directions: false
 
 fe_sim:
-  # 24 windows for Lambda schedule required for RBFE.
+  # 24-window lambda schedule for RBFE.
   lambdas: [0.        , 0.04347826, 0.08695652, 0.13043478, 0.17391304,
       0.2173913 , 0.26086957, 0.30434783, 0.34782609, 0.39130435,
       0.43478261, 0.47826087, 0.52173913, 0.56521739, 0.60869565,

@@ -23,7 +23,7 @@ Follow the Tutorial
 ===================
 
 The best way to see BATTER in action is to follow :doc:`tutorial/index`. It walks through setting up
-an environment, preparing input files, and running a full ABFE example. Completing
+an environment, preparing input files, and running full ABFE and RBFE examples. Completing
 the tutorial ensures all required dependencies are installed and introduces the core
 workflow.
 
@@ -56,7 +56,7 @@ Additional Resources
 ====================
 
 * ``examples/`` – Ready-to-run YAML configurations demonstrating ABFE (membrane
-  and soluble) and ASFE scenarios.
+  and soluble), RBFE, ASFE, and plain MD scenarios.
 * ``tests/`` – A suite of unit tests that exercise pipeline handlers, state registry,
   and metadata helpers; useful for understanding expected behaviour.
 * ``README.rst`` – Project overview, installation, and quickstart commands.

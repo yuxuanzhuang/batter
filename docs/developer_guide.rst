@@ -5,9 +5,9 @@ BATTER Developer Guide
 This guide provides an up-to-date overview of the internal architecture of **BATTER**.
 It targets contributors who need to understand or extend the codebase.
 
-The project powers absolute binding (ABFE) and solvation (ASFE) free-energy workflows,
-supports both local execution and SLURM clusters, and packages results in a portable
-artifact store.
+The project powers absolute binding (ABFE), relative binding (RBFE), and solvation
+(ASFE) free-energy workflows, supports both local execution and SLURM clusters, and
+packages results in a portable artifact store.
 
 .. toctree::
    :maxdepth: 1

@@ -266,6 +266,32 @@ def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:
     assert cfg2.barostat == 1
 
 
+def test_run_config_load_resolves_relative_conformation_restraints(tmp_path: Path) -> None:
+    conf_json = tmp_path / "rest.json"
+    conf_json.write_text("[]")
+    yaml_path = tmp_path / "run.yaml"
+    yaml_path.write_text(
+        """
+protocol: abfe
+backend: local
+create:
+  system_name: sys
+  ligand_paths:
+    LIG: lig.sdf
+  extra_conformation_restraints: rest.json
+run:
+  output_folder: out
+fe_sim:
+  lambdas: [0.0, 1.0]
+  z_n_steps: 300000
+"""
+    )
+
+    cfg = RunConfig.load(yaml_path)
+
+    assert cfg.create.extra_conformation_restraints == conf_json.resolve()
+
+
 def test_simulation_config_enable_mcwat_defaults_to_yes() -> None:
     cfg = SimulationConfig(**base_sim_kwargs())
     assert cfg.enable_mcwat == "yes"

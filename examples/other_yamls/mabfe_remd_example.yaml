@@ -69,8 +69,6 @@ fe_sim:
   remd:
     # MD steps per REMD exchange segment
     nstlim: 100
-    # number of attempted exchanges per REMD batch
-    numexchg: 3000
   # 48 lambda windows
   lambdas: [
     0.0, 0.10565, 0.14832, 0.17842, 0.20427, 0.22603, 0.24433, 0.2625, 0.27917, 0.29575,

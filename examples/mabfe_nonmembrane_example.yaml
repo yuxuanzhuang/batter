@@ -85,7 +85,7 @@ fe_sim:
   dt: 0.004
   # simulation temperature in Kelvin
   temperature: 298.15
-  # analysis only start from 100000 steps
-  analysis_start_step: 100000
+  # analysis only starts after the first 10000 steps
+  analysis_start_step: 10000
   # MBAR analysis blocks
   blocks: 5

@@ -35,8 +35,9 @@ protein binding site. The main steps are:
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
 #. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
-#. **FE production runs** – Each window is submitted as an independent SLURM job.
-   The main process monitors job status and streams updates to the terminal.
+#. **FE production runs** – Each window runs as an independent local task or
+   scheduler job, depending on how you launch the workflow. The main process
+   monitors job status and streams updates to the terminal.
    Set ``run.max_active_jobs`` in your YAML (default 1000, ``0`` disables throttling)
    to cap how many SLURM jobs BATTER keeps active at once and avoid overloading the scheduler.
 #. **Analysis** – Once all windows complete, MBAR analysis is performed and the final
@@ -129,7 +130,8 @@ Generating Simulation Inputs
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
-   - ``create.anchor_atoms`` – The three atoms that defines the binding site and for generating the restraint files. Choose stable backbone atoms (CA/C/N) with the guidelines below.
+   - ``create.anchor_atoms`` – The three atoms that define the binding site and
+     restraint geometry. Choose stable backbone atoms (CA/C/N) with the guidelines below.
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
@@ -245,10 +247,8 @@ manager process but the SLURM jobs keep running, cancel them via::
 Optional: Additional Conformational Restraints
 ----------------------------------------------
 
-#. Use the restraint-generation notebook from
-   `bat_mem restraint notebook <https://github.com/yuxuanzhuang/bat_mem/blob/main/tutorial/TEMPLATES/generate_restraints.ipynb>`_
-   or an equivalent script to build a ``restraints.json`` describing the distance
-   constraints you need.
+#. Use your local restraint-generation workflow to build a ``restraints.json``
+   describing the distance constraints you need.
 
 #. Point ``create.extra_conformation_restraints`` at the resulting JSON file::
 

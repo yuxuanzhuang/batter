@@ -48,6 +48,8 @@ fe_sim:
   temperature: 298.15
   # production steps for the y component
   y_n_steps: 30000
+  # production steps for the m component
+  m_n_steps: 30000
   # non-bonded cutoff in Angstrom
   cut: 9.0
   # Monte Carlo barostat
