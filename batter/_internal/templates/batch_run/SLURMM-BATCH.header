@@ -19,7 +19,7 @@
 #SBATCH --mem=60G
 
 # Change to the way you load Amber as needed for your system
-source $GROUP_HOME/software/amber24/setup_amber.sh > /dev/null 2>&1
+source /home/groups/rondror/software/amber26/setup_amber.sh > /dev/null 2>&1
 
 # Optional overrides for executables:
 #   PMEMD_EXEC        (default: pmemd.cuda)
