@@ -21,8 +21,8 @@ skip_window_eq=${SKIP_WINDOW_EQ:-0}
 retry=${RETRY_COUNT:-0}
 rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE:-0}
 
-# if retry > 3, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
-if [[ $retry -gt 3 ]]; then
+# if retry is 5 during equilibration-only runs, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
+if [[ $only_eq -eq 1 && $retry =~ ^[0-9]+$ && $retry -eq 5 ]]; then
     PMEMD_EXEC=${PMEMD_DPFP_EXEC}
 fi
 

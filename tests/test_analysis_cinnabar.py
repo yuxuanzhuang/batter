@@ -285,6 +285,24 @@ def test_build_batter_rbfe_cinnabar_skips_rows_disabled_for_analysis(
     assert pytest.approx(edge["calc_DDG"], rel=1e-6) == 1.2
 
 
+def test_build_batter_rbfe_cinnabar_allows_zero_total_se(
+    monkeypatch, fake_cinnabar_stack, rbfe_index_df: pd.DataFrame, tmp_path: Path
+) -> None:
+    df = rbfe_index_df.iloc[:1].copy()
+    df.loc[:, "total_se"] = 0.0
+    monkeypatch.setattr(cinnabar_mod, "list_fe_runs", lambda work_dir: df.copy())
+
+    result = cinnabar_mod.build_batter_rbfe_cinnabar(tmp_path, run_ids=["run1"])
+
+    edge = result.edge_summary.iloc[0]
+    assert edge["calc_DDG"] == 1.0
+    assert edge["calc_dDDG"] == 0.0
+    relative = result.femap.get_relative_dataframe().iloc[0]
+    assert relative["uncertainty (kcal/mol)"] == pytest.approx(
+        cinnabar_mod.CINNABAR_MIN_UNCERTAINTY_KCAL_MOL
+    )
+
+
 def test_build_batter_rbfe_cinnabar_merges_matching_name_and_smiles(
     monkeypatch, fake_cinnabar_stack, tmp_path: Path
 ) -> None:
@@ -364,6 +382,57 @@ def test_build_batter_rbfe_cinnabar_keeps_same_name_different_smiles_separate(
     assert "lig_a" in labels
     assert "lig_c" in labels
     assert len(result.edge_summary) == 2
+
+
+def test_ligand_assets_fall_back_to_run_staged_sdf_for_original_titles(tmp_path: Path) -> None:
+    work_dir = tmp_path / "work"
+    run_id = "rbfe-run"
+    run_root = work_dir / "executions" / run_id
+    index_dir = run_root / "artifacts" / "ligand_params"
+    index_dir.mkdir(parents=True)
+    params_a = run_root / "simulations" / "LIGA" / "params"
+    params_b = run_root / "simulations" / "LIGB" / "params"
+    params_a.mkdir(parents=True)
+    params_b.mkdir(parents=True)
+    sdf_a = params_a / "ra.sdf"
+    sdf_b = params_b / "rb.sdf"
+    sdf_a.write_text("placeholder\n")
+    sdf_b.write_text("placeholder\n")
+    index_dir.joinpath("index.json").write_text(
+        json.dumps(
+            {
+                "ligands": [
+                    {
+                        "ligand": "LIGA",
+                        "residue_name": "ra",
+                        "title": "Pretty A",
+                        "store_dir": "missing/a",
+                    },
+                    {
+                        "ligand": "LIGB",
+                        "residue_name": "rb",
+                        "title": "Pretty B",
+                        "store_dir": "missing/b",
+                    },
+                ]
+            }
+        )
+    )
+    df = pd.DataFrame(
+        [
+            {
+                "run_id": run_id,
+                "edge_label": "Pretty A~Pretty B",
+                "original_path": "/stale/a.sdf~/stale/b.sdf",
+                "canonical_smiles": "",
+            }
+        ]
+    )
+
+    assets = cinnabar_mod._build_ligand_assets(df, work_dir=work_dir)
+
+    assert assets["Pretty A"]["input_path"] == str(sdf_a)
+    assert assets["Pretty B"]["input_path"] == str(sdf_b)
 
 
 def test_build_batter_rbfe_cinnabar_warns_when_absolute_solution_missing(
@@ -648,6 +717,10 @@ def test_write_cinnabar_outputs_also_writes_cycle_closure(
     assert manifest["cycle_closure"]["node_value_column"] == "dG_wsfc1"
     assert "cycle_closure_nodes_csv" in manifest["outputs"]
     assert "cycle_closure_network_png" in manifest["outputs"]
+    relative = pd.read_csv(outputs["relative_csv"])
+    absolute = pd.read_csv(outputs["absolute_csv"])
+    assert "DDG_cycle_closure" in relative.columns
+    assert "DG_cycle_closure" in absolute.columns
 
     dashboard_html = outputs["dashboard_html"].read_text().lower()
     assert "cycle-closure-toggle" in dashboard_html
