@@ -15,7 +15,7 @@ log_file="run.log"
 INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
-retry=${RETRY_COUNT:-0}
+retry=${RETRY_COUNT:-${RETRY:-}}
 
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {

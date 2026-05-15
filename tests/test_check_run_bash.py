@@ -132,15 +132,16 @@ def test_apply_retry_dt_reduction_is_idempotent(tmp_path: Path) -> None:
     assert "dt=0.003000" in text
 
 
-def test_write_mdin_current_preserves_lower_existing_dt(tmp_path: Path) -> None:
+def test_write_mdin_current_uses_job_attempt_dt(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     tmpl = tmp_path / "mdin-template"
     current = tmp_path / "mdin-current"
     rendered = tmp_path / "rendered-current"
 
-    tmpl.write_text("irest = 1,\nntx = 5,\nnstlim = 10,\ndt = 0.004,\n")
-    current.write_text("irest = 1,\nntx = 5,\nnstlim = 6,\ndt = 0.003,\n")
+    tmpl.write_text("! target_dt=0.004\nirest = 1,\nntx = 5,\nnstlim = 10,\ndt = 0.004,\n")
+    current.write_text("irest = 1,\nntx = 5,\nnstlim = 6,\ndt = 0.004,\n")
+    (tmp_path / "job_attempt.txt").write_text("5\n")
 
     cmd = (
         f"source '{check_run}' "
@@ -157,7 +158,36 @@ def test_write_mdin_current_preserves_lower_existing_dt(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     rendered_text = rendered.read_text()
     assert "nstlim = 8," in rendered_text
-    assert "dt=0.003" in rendered_text
+    assert "dt=0.002000" in rendered_text
+
+
+def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    current = tmp_path / "mdin-current"
+
+    tmpl.write_text("! target_dt=0.004\nirest = 1,\nntx = 5,\nnstlim = 10,\ndt = 0.001,\n")
+    current.write_text("irest = 1,\nntx = 5,\nnstlim = 8,\ndt = 0.001,\n")
+    (tmp_path / "job_attempt.txt").write_text("4\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& apply_retry_dt_reduction 'mdin-template' '' 0.001 'startup'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "dt=0.003000" in tmpl.read_text()
+    current_text = current.read_text()
+    assert "nstlim = 8," in current_text
+    assert "dt=0.003000" in current_text
 
 
 def test_write_mdin_current_same_file_redirect_keeps_template_dt(tmp_path: Path) -> None:

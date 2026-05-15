@@ -18,7 +18,7 @@ INPCRD="full.inpcrd"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
 skip_window_eq=${SKIP_WINDOW_EQ:-0}
-retry=${RETRY_COUNT:-0}
+retry=${RETRY_COUNT:-${RETRY:-}}
 rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE:-0}
 
 # if retry is 5 during equilibration-only runs, use PMEMD_DPFP_EXEC instead of PMEMD_EXEC
