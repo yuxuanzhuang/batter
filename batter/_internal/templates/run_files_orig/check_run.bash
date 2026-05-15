@@ -549,14 +549,14 @@ retry_count_for_template() {
 retry_adjusted_dt_ps() {
     local tmpl=${1:-mdin-template}
     local retry_count=${2:-}
-    local dec=${3:-0.001}
-    local reduction_start=${4:-3}
+    local _dec=${3:-0.001}
+    local _reduction_start=${4:-3}
 
     [[ -f "$tmpl" ]] || { echo 0.001; return; }
     retry_count=$(retry_count_for_template "$tmpl" "$retry_count")
     [[ $retry_count =~ ^[0-9]+$ ]] || { parse_dt_ps "$tmpl"; return; }
 
-    local current_dt target_dt reductions desired_dt
+    local current_dt target_dt desired_dt
     current_dt=$(parse_dt_ps "$tmpl")
     if grep -Eq '^[!#][[:space:]]*target_dt[[:space:]]*=' "$tmpl"; then
         target_dt=$(parse_target_dt_ps "$tmpl")
@@ -564,19 +564,26 @@ retry_adjusted_dt_ps() {
         target_dt="$current_dt"
     fi
 
-    reductions=$((retry_count - reduction_start))
-    if [[ $reductions -le 0 ]]; then
-        echo "$current_dt"
-        return
+    desired_dt="$target_dt"
+    if [[ $retry_count -ge 9 ]]; then
+        desired_dt=0.001
+    elif [[ $retry_count -ge 6 ]]; then
+        desired_dt=0.002
+    elif [[ $retry_count -ge 3 ]]; then
+        desired_dt=0.003
     fi
 
-    desired_dt=$(awk -v target="$target_dt" -v dec="$dec" -v n="$reductions" 'BEGIN{printf "%.6f\n", target - dec*n}')
-    if awk -v nd="$desired_dt" 'BEGIN{exit !(nd>0)}'; then
-        echo "$desired_dt"
-    else
-        echo "$current_dt"
-        return
-    fi
+    awk -v target="$target_dt" -v desired="$desired_dt" -v current="$current_dt" '
+        BEGIN {
+            if (desired <= 0) {
+                printf "%.6f\n", current
+            } else if (desired > target) {
+                printf "%.6f\n", target
+            } else {
+                printf "%.6f\n", desired
+            }
+        }
+    '
 }
 
 sync_current_mdin_from_template() {
@@ -646,7 +653,7 @@ apply_retry_dt_reduction() {
 
     local current_dt desired_dt
     current_dt=$(parse_dt_ps "$tmpl")
-    if [[ $retry_count -gt 3 ]]; then
+    if [[ $retry_count -ge 3 ]]; then
         ensure_target_dt_marker "$tmpl" "$current_dt"
     fi
     desired_dt=$(retry_adjusted_dt_ps "$tmpl" "$retry_count" "$dec" 3)
@@ -734,10 +741,11 @@ reduce_dt_on_failure() {
         echo "[WARN] dt reduction skipped (current dt=${dt}, dec=${dec})."
         return
     fi
-
-    if awk -v current="$dt" -v desired="$new_dt" 'BEGIN{diff=current-desired; if (diff<0) diff=-diff; exit !(diff>1e-9)}'; then
-        rewrite_mdin_dt_file "$tmpl" "$new_dt"
+    if ! awk -v current="$dt" -v desired="$new_dt" 'BEGIN{diff=current-desired; if (diff<0) diff=-diff; exit !(diff>1e-9)}'; then
+        return 0
     fi
+
+    rewrite_mdin_dt_file "$tmpl" "$new_dt"
 
     local current_mdin
     if current_mdin=$(current_mdin_for_template "$tmpl"); then

@@ -132,6 +132,43 @@ def test_apply_retry_dt_reduction_is_idempotent(tmp_path: Path) -> None:
     assert "dt=0.003000" in text
 
 
+def test_retry_dt_schedule_uses_attempt_thresholds(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+
+    tmpl.write_text("! target_dt=0.004\nnstlim = 10,\ndt = 0.004,\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& retry_adjusted_dt_ps mdin-template 1 "
+        "&& retry_adjusted_dt_ps mdin-template 3 "
+        "&& retry_adjusted_dt_ps mdin-template 5 "
+        "&& retry_adjusted_dt_ps mdin-template 6 "
+        "&& retry_adjusted_dt_ps mdin-template 8 "
+        "&& retry_adjusted_dt_ps mdin-template 9 "
+        "&& retry_adjusted_dt_ps mdin-template 10"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        "0.004000",
+        "0.003000",
+        "0.003000",
+        "0.002000",
+        "0.002000",
+        "0.001000",
+        "0.001000",
+    ]
+
+
 def test_write_mdin_current_uses_job_attempt_dt(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
@@ -158,7 +195,7 @@ def test_write_mdin_current_uses_job_attempt_dt(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     rendered_text = rendered.read_text()
     assert "nstlim = 8," in rendered_text
-    assert "dt=0.002000" in rendered_text
+    assert "dt=0.003000" in rendered_text
 
 
 def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_path: Path) -> None:
