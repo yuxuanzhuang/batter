@@ -250,6 +250,103 @@ exit 0
     assert not (work / "cmass.txt").exists()
 
 
+def test_run_local_archives_incomplete_md_out_before_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    work = tmp_path
+    (work / "run-local.bash").write_text(script.read_text())
+    (work / "check_run.bash").write_text(check_run.read_text())
+
+    (work / "full.hmr.prmtop").write_text("prmtop")
+    (work / "full_merged.prmtop").write_text("prmtop")
+    (work / "eq.rst7").write_text("eqrst")
+    (work / "run.log").write_text("old log\n")
+    (work / "mdin-template").write_text(
+        "! total_steps=10\n"
+        "irest = 1,\n"
+        "ntx   = 5,\n"
+        "nstlim = 10,\n"
+        "dt = 0.001,\n"
+    )
+    (work / "md-01.out").write_text("job started but amber never wrote headers\n")
+    (work / "md-01.nc").write_text("partial nc\n")
+
+    stub = work / "stub.sh"
+    _write_stub_exe(
+        stub,
+        """#!/usr/bin/env bash
+out=""
+rst=""
+nc=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) shift; out="$1";;
+    -r) shift; rst="$1";;
+    -x) shift; nc="$1";;
+  esac
+  shift
+done
+[[ -n "$out" ]] && echo "TIME(PS) = 0.010000" > "$out"
+[[ -n "$rst" ]] && echo "time=0.0100000000" > "$rst"
+[[ -n "$nc" ]] && echo "ok" > "$nc"
+exit 0
+""",
+    )
+    cpptraj_stub = work / "cpptraj"
+    _write_stub_exe(
+        cpptraj_stub,
+        """#!/usr/bin/env bash
+target=$(awk '/^trajout[[:space:]]+/ { print $2; exit }' < /dev/stdin)
+[[ -n "$target" ]] && echo "pdb" > "$target"
+exit 0
+""",
+    )
+    ncdump_stub = work / "ncdump"
+    _write_stub_exe(
+        ncdump_stub,
+        """#!/usr/bin/env bash
+file=""
+for arg in "$@"; do
+  if [[ "$arg" != -* ]]; then
+    file="$arg"
+  fi
+done
+time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
+[[ -n "$time" ]] || time=0
+cat <<EOF
+        double time ;
+                time:units = "picosecond" ;
+ time = $time ;
+EOF
+exit 0
+""",
+    )
+
+    env = os.environ.copy()
+    env["PMEMD_EXEC"] = str(stub)
+    env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
+    env["PATH"] = f"{work}:{env.get('PATH','')}"
+
+    result = subprocess.run(
+        ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"],
+        cwd=work,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "[INFO] Archived incomplete MD output md-01.out before restart." in result.stdout
+    assert "Running segment 1 -> md-01.out" in result.stdout
+    archived = list((work / "WRONG_FAIL").glob("*/md-01.out"))
+    assert len(archived) == 1
+    assert archived[0].read_text() == "job started but amber never wrote headers\n"
+    assert (work / "md-01.out").read_text().strip() == "TIME(PS) = 0.010000"
+    assert (work / "md-01.nc").read_text().strip() == "ok"
+
+
 def test_run_local_remaining_steps_follow_reduced_dt(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"

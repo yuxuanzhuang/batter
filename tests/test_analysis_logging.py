@@ -54,6 +54,46 @@ def test_mbar_extract_window_does_not_remove_global_logger(
     assert not out.empty
 
 
+def test_mbar_extract_window_skips_incomplete_mdout(tmp_path: Path, monkeypatch) -> None:
+    win_dir = tmp_path / "z00"
+    win_dir.mkdir()
+    bad = win_dir / "md-01.out"
+    good = win_dir / "md-02.out"
+    bad.write_text("job started but amber never wrote headers\n")
+    good.write_text("parseable amber output\n")
+
+    monkeypatch.setattr(analysis_mod.logger, "debug", lambda *a, **k: None)
+    monkeypatch.setattr(analysis_mod.logger, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(analysis_mod, "exclude_outliers", lambda df, iclam: df)
+
+    index = pd.MultiIndex.from_arrays(
+        [[0.0, 1.0], [0.0, 0.0]],
+        names=["time", "lambdas"],
+    )
+    parsed = pd.DataFrame(
+        {0.0: [0.0, 1.0], 1.0: [0.5, 1.5]},
+        index=index,
+    )
+
+    def _fake_extract(path, *args, **kwargs):
+        if Path(path).name == "md-01.out":
+            raise ValueError(f'no "CONTROL DATA" section found in file {path}')
+        return parsed
+
+    monkeypatch.setattr(analysis_mod, "extract_u_nk", _fake_extract)
+
+    out = analysis_mod.MBARAnalysis._extract_all_for_window(
+        win_i=0,
+        comp_folder=str(tmp_path),
+        component="z",
+        temperature=300.0,
+        analysis_start_step=0,
+        truncate=False,
+    )
+
+    assert not out.empty
+
+
 def test_rest_mbar_extract_window_does_not_remove_global_logger(
     tmp_path: Path, monkeypatch
 ) -> None:

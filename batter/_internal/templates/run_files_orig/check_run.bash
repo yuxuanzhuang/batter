@@ -125,6 +125,32 @@ remove_empty_file_if_present() {
     echo "[INFO] Removed stale empty file $path"
 }
 
+md_out_has_amber_control_data() {
+    local path=$1
+    [[ -s "$path" ]] || return 1
+    grep -Eq 'CONTROL[[:space:]]+DATA[[:space:]]+FOR[[:space:]]+THE[[:space:]]+RUN' "$path"
+}
+
+archive_incomplete_md_out_if_present() {
+    local path=$1
+    local retry_count=${2:-}
+
+    [[ -n $path && -s $path ]] || return 1
+    md_out_has_amber_control_data "$path" && return 1
+
+    local stem
+    stem=${path%.out}
+    retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
+    archive_failed_job_files "$retry_count" \
+        "$path" \
+        "${stem}.nc" \
+        "${stem}.log" \
+        "${stem}.mden" \
+        "${stem}.mdinfo"
+    echo "[INFO] Archived incomplete MD output $path before restart."
+    return 0
+}
+
 cleanup_stale_empty_md_artifacts() {
     local pattern f
     local patterns=(
@@ -150,6 +176,11 @@ cleanup_stale_empty_md_artifacts() {
                 remove_empty_file_if_present "$f" || true
             done
         done
+        if [[ ! -s md-current.rst7 && ! -s md-previous.rst7 ]]; then
+            for f in md-*.out md*.out; do
+                archive_incomplete_md_out_if_present "$f" || true
+            done
+        fi
         return 0
     fi
 
@@ -161,6 +192,12 @@ cleanup_stale_empty_md_artifacts() {
             remove_empty_file_if_present "$f" || true
         done
     done
+    if [[ ! -s md-current.rst7 && ! -s md-previous.rst7 ]]; then
+        for f in md-*.out md*.out; do
+            [[ -e "$f" ]] || continue
+            archive_incomplete_md_out_if_present "$f" || true
+        done
+    fi
     if [[ $nullglob_was_on -eq 0 ]]; then
         shopt -u nullglob
     fi
