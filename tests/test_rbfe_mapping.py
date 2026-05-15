@@ -233,6 +233,79 @@ def test_konnektor_pairs_uses_lomap_mapper(monkeypatch, tmp_path: Path) -> None:
     assert isinstance(seen["mapper"], LomapAtomMapper)
 
 
+def test_konnektor_pairs_forwards_lomap_options(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    class StarNetworkGenerator:
+        def __init__(self, *args, **kwargs):
+            seen["mapper"] = kwargs.get("mappers")
+
+        def generate_ligand_network(self, components):
+            class Network:
+                def __init__(self, comps):
+                    self.edges = [(comps[0], comps[1])]
+
+            return Network(components)
+
+    _install_fake_konnektor(monkeypatch, {"StarNetworkGenerator": StarNetworkGenerator})
+    monkeypatch.setattr("batter.rbfe._load_rdkit_mol", lambda path: object())
+
+    konnektor_pairs(
+        ["L1", "L2"],
+        {"L1": tmp_path / "l1.sdf", "L2": tmp_path / "l2.sdf"},
+        layout="star",
+        atom_mapper="lomap",
+        lomap_options={"time": 7, "max3d": 2.0, "shift": False},
+    )
+
+    assert seen["mapper"].kwargs == {
+        "time": 7,
+        "threed": True,
+        "max3d": 2.0,
+        "element_change": False,
+        "shift": False,
+    }
+
+
+def test_konnektor_pairs_forwards_kartograf_options(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    class StarNetworkGenerator:
+        def __init__(self, *args, **kwargs):
+            seen["mapper"] = kwargs.get("mappers")
+
+        def generate_ligand_network(self, components):
+            class Network:
+                def __init__(self, comps):
+                    self.edges = [(comps[0], comps[1])]
+
+            return Network(components)
+
+    _install_fake_konnektor(monkeypatch, {"StarNetworkGenerator": StarNetworkGenerator})
+    monkeypatch.setattr("batter.rbfe._load_rdkit_mol", lambda path: object())
+
+    konnektor_pairs(
+        ["L1", "L2"],
+        {"L1": tmp_path / "l1.sdf", "L2": tmp_path / "l2.sdf"},
+        layout="star",
+        atom_mapper="kartograf",
+        kartograf_options={
+            "atom_max_distance": 1.23,
+            "allow_bond_breaks": True,
+            "filter_element_changes": False,
+            "atom_map_hydrogens": True,
+            "map_hydrogens_on_hydrogens_only": False,
+        },
+    )
+
+    kwargs = seen["mapper"].kwargs
+    assert kwargs["atom_max_distance"] == 1.23
+    assert kwargs["allow_bond_breaks"] is True
+    assert kwargs["atom_map_hydrogens"] is False
+    assert kwargs["map_hydrogens_on_hydrogens_only"] is True
+    assert kwargs["additional_mapping_filter_functions"] == []
+
+
 def test_konnektor_pairs_rejects_unknown_atom_mapper(monkeypatch, tmp_path: Path) -> None:
     class StarNetworkGenerator:
         def __init__(self, *args, **kwargs):

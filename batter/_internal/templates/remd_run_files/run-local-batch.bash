@@ -17,7 +17,7 @@ PFOLDER_ABS=$(cd "${PFOLDER}" 2>/dev/null && pwd -P)
 overwrite=${OVERWRITE:-0}
 COMP=${COMP:-$(basename "$PWD")}
 log_file="${PFOLDER}/run.log"
-retry=${RETRY_COUNT:-0}
+retry=${RETRY_COUNT:-${RETRY:-}}
 
 if [[ ! -f ./check_run.bash ]]; then
     echo "[ERROR] Missing check_run.bash in ${PFOLDER}; cannot continue."

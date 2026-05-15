@@ -17,7 +17,7 @@ INPCRD="full.inpcrd"
 log_file="run.log"
 overwrite=${OVERWRITE:-0}
 only_eq=${ONLY_EQ:-0}
-retry_count=${RETRY_COUNT:-0}
+retry_count=${RETRY_COUNT:-${RETRY:-}}
 if [[ -n ${RERUN_EQ_STEPS_AFTER_FAILURE+x} ]]; then
     rerun_eq_steps_after_failure=${RERUN_EQ_STEPS_AFTER_FAILURE}
 else
@@ -275,7 +275,7 @@ if (( remaining_steps > 0 )); then
     fi
 
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" 0 "${out_tag}.out" "${out_tag}.nc"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry_count" "${out_tag}.out" "${out_tag}.nc"
 
     # Update progress from restart
     current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)

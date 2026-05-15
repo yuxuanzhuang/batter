@@ -56,7 +56,8 @@ RBFE mappings can be created in a few ways:
 * **Konnektor** – uses the ``konnektor`` library to build a network; configure with
   ``rbfe.mapping: konnektor`` and optionally ``rbfe.konnektor_layout``.
   Choose atom mapping backend via ``rbfe.atom_mapper`` (``kartograf`` or ``lomap``).
-  The exact Kartograf/Lomap mapper parameters are documented in :doc:`../cookbook/rbfe`.
+  The exact Kartograf/LoMap mapper parameters and YAML option blocks are documented in
+  :ref:`rbfe_atom_mapper_options`.
   The available layouts are listed in the `Konnektor documentation <https://konnektor.openfree.energy/en/latest/api/konnektor.planners.html>`_.
   In BATTER, ``rbfe.konnektor_layout`` can be written either as the full class name
   such as ``MinimalSpanningTreeNetworkGenerator`` or as the lowercase shorthand
@@ -182,6 +183,8 @@ Generating Simulation Inputs
    - ``rbfe.atom_mapper`` – choose RBFE atom mapper backend: ``kartograf`` (default) or ``lomap``.
 
       The available schemes are described in :ref:`rbfe_network_planning_schemes`.
+      Mapper options can be overridden under ``rbfe.kartograf`` and ``rbfe.lomap``;
+      see :ref:`rbfe_atom_mapper_options` for the accepted keys and defaults.
       For mapper-specific behavior and examples, see the `Kartograf documentation <https://kartograf.openfree.energy/en/latest/>`_
       and the `LoMap documentation <https://lomap.openfree.energy/en/stable/>`_.
       As a practical default, start with ``kartograf`` unless you have a reason to prefer

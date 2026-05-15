@@ -79,6 +79,20 @@ class SilenceAlchemlybOnly:
                 py_logger.setLevel(prev_level)
 
 
+def _is_incomplete_amber_out_error(exc: ValueError) -> bool:
+    msg = str(exc)
+    incomplete_markers = (
+        'no "CONTROL DATA" section found',
+        'no "RESULTS" section found',
+        'no "ATOMIC" section found',
+        "No starting simulation time",
+        "no free energy section found",
+        'no valid "temp0" record found',
+        "does not contain any data",
+    )
+    return any(marker in msg for marker in incomplete_markers)
+
+
 class FEAnalysisBase(ABC):
     """
     Minimal interface shared across component analysis routines.
@@ -388,10 +402,21 @@ class MBARAnalysis(FEAnalysisBase):
         dfs = []
         with SilenceAlchemlybOnly():
             for fn in mdouts:
-                df_part = extract_u_nk(
-                    fn, T=temperature, reduced=False, raise_error=False
-                )
+                try:
+                    df_part = extract_u_nk(
+                        fn, T=temperature, reduced=False, raise_error=False
+                    )
+                except ValueError as exc:
+                    if _is_incomplete_amber_out_error(exc):
+                        logger.warning(
+                            f"[MBARAnalysis] Skipping incomplete Amber out file: {fn} ({exc})"
+                        )
+                        continue
+                    raise
                 dfs.append(df_part)
+
+        if not dfs:
+            raise FileNotFoundError(f"No parseable Amber out files in {win_dir}")
 
         df = pd.concat(dfs)
 
