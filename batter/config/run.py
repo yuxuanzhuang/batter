@@ -666,17 +666,25 @@ class KartografMapperArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_hydrogen_mapping_overrides(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+        restricted = {
+            "atom_map_hydrogens",
+            "map_hydrogens_on_hydrogens_only",
+        }.intersection(data)
+        if restricted:
+            fields = ", ".join(sorted(restricted))
+            raise ValueError(
+                f"rbfe.kartograf {fields} are fixed for AMBER compatibility and cannot be overridden."
+            )
+        return data
+
     atom_max_distance: float = Field(
         0.95,
         description="Override KartografAtomMapper atom_max_distance.",
-    )
-    atom_map_hydrogens: bool = Field(
-        True,
-        description="Override KartografAtomMapper atom_map_hydrogens.",
-    )
-    map_hydrogens_on_hydrogens_only: bool = Field(
-        False,
-        description="Override KartografAtomMapper map_hydrogens_on_hydrogens_only.",
     )
     map_exact_ring_matches_only: bool = Field(
         True,

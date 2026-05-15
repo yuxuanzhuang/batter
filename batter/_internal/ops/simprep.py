@@ -315,10 +315,12 @@ def _kartograf_mapper_kwargs(
     mapper_options = _mapper_options_dict(options)
     use_element_filter = mapper_options.pop("filter_element_changes", True)
     use_attached_h_filter = mapper_options.pop("filter_mismatched_attached_h_count", False)
+    mapper_options.pop("atom_map_hydrogens", None)
+    mapper_options.pop("map_hydrogens_on_hydrogens_only", None)
 
     kwargs = {
         "atom_max_distance": 0.95,
-        "map_hydrogens_on_hydrogens_only": False,
+        "map_hydrogens_on_hydrogens_only": True,
         "atom_map_hydrogens": atom_map_hydrogens_default,
         "map_exact_ring_matches_only": True,
         "allow_partial_fused_rings": True,

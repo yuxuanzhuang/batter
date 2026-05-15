@@ -72,11 +72,11 @@ For ``protocol: rbfe``, the ``rbfe`` block controls network planning and atom ma
 * ``rbfe.both_directions`` – when true, run both directions for each mapped edge.
 * ``rbfe.atom_mapper`` – atom mapper backend used for RBFE mapping:
 
-  - ``kartograf`` (default), configured as ``KartografAtomMapper(atom_max_distance=0.95, atom_map_hydrogens=True, map_hydrogens_on_hydrogens_only=False, map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False, additional_mapping_filter_functions=[filter_element_changes])`` during network planning.
+  - ``kartograf`` (default), configured as ``KartografAtomMapper(atom_max_distance=0.95, map_hydrogens_on_hydrogens_only=True, atom_map_hydrogens=False, map_exact_ring_matches_only=True, allow_partial_fused_rings=True, allow_bond_breaks=False, additional_mapping_filter_functions=[filter_element_changes])`` during network planning.
   - ``lomap``, using ``LomapAtomMapper(time=20, threed=True, max3d=1.5, element_change=False, shift=True)``.
 
-Mapper constructor options can be overridden in nested blocks. Omitted values use
-the Kartograf/LoMap defaults documented in :doc:`rbfe`.
+Mapper constructor options can be overridden in nested blocks. Omitted values keep
+BATTER's previous Kartograf/LoMap defaults documented in :doc:`rbfe`.
 
 .. code-block:: yaml
 
@@ -88,8 +88,6 @@ the Kartograf/LoMap defaults documented in :doc:`rbfe`.
        shift: false
      kartograf:
        atom_max_distance: 1.1
-       atom_map_hydrogens: true
-       map_hydrogens_on_hydrogens_only: false
        allow_bond_breaks: true
        filter_element_changes: false
 

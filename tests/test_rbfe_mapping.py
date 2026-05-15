@@ -293,14 +293,16 @@ def test_konnektor_pairs_forwards_kartograf_options(monkeypatch, tmp_path: Path)
             "atom_max_distance": 1.23,
             "allow_bond_breaks": True,
             "filter_element_changes": False,
+            "atom_map_hydrogens": True,
+            "map_hydrogens_on_hydrogens_only": False,
         },
     )
 
     kwargs = seen["mapper"].kwargs
     assert kwargs["atom_max_distance"] == 1.23
     assert kwargs["allow_bond_breaks"] is True
-    assert kwargs["atom_map_hydrogens"] is True
-    assert kwargs["map_hydrogens_on_hydrogens_only"] is False
+    assert kwargs["atom_map_hydrogens"] is False
+    assert kwargs["map_hydrogens_on_hydrogens_only"] is True
     assert kwargs["additional_mapping_filter_functions"] == []
 
 
