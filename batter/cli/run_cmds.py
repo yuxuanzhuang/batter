@@ -13,7 +13,11 @@ import click
 
 from batter.api import run_from_yaml
 from batter.cli.root import cli
-from batter.cli.shared import _upsert_sbatch_option, _which_batter
+from batter.cli.shared import (
+    _batter_path_export_block,
+    _upsert_sbatch_option,
+    _which_batter,
+)
 from batter.config.run import RunConfig, SlurmConfig
 from batter.data import job_manager
 from batter.orchestrate.run_support import (
@@ -267,6 +271,7 @@ def cmd_run(
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")
+            f.write(_batter_path_export_block())
             f.write(run_cmd)
             f.write("\n")
             f.write("echo 'Job completed.'\n")
@@ -421,6 +426,7 @@ def cmd_run_exec(
         with open(f"{run_hash}_job_manager.sbatch", "w") as f:
             f.write(manager_code)
             f.write("\n")
+            f.write(_batter_path_export_block())
             f.write(run_cmd)
             f.write("\n")
             f.write("echo 'Job completed.'\n")

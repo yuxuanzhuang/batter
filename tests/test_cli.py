@@ -245,6 +245,13 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     yaml_path = tmp_path / "run.yaml"
     yaml_path.write_text("dummy: true\n")
     header_root = tmp_path / "headers"
+    fake_batter = tmp_path / "env" / "bin" / "batter"
+    fake_batter.parent.mkdir(parents=True)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(fake_batter) if name == "batter" else None,
+    )
 
     class DummySection:
         def __init__(self, **values):
@@ -325,6 +332,12 @@ def test_cli_run_slurm_submit_uses_header(monkeypatch, tmp_path: Path, runner: C
     assert "/simulations/manager" in script_text
     assert "__JOB_NAME__" not in script_text
     assert "--on-failure" not in script_text
+    assert "# BATTER environment captured at submit time" in script_text
+    assert f"BATTER_ENV_BIN={fake_batter.parent}" in script_text
+    assert 'export PATH="$BATTER_ENV_BIN:$PATH"' in script_text
+    assert script_text.index("BATTER_ENV_BIN=") < script_text.index(
+        str(yaml_path.resolve())
+    )
     # sbatch invoked on the generated script
     assert scripts[0].name in calls["cmd"]
 
