@@ -89,8 +89,8 @@ RBFE atom mapping backend is controlled by ``rbfe.atom_mapper``:
      # network planning mapper (rbfe.py)
      KartografAtomMapper(
          atom_max_distance=0.95,
-         map_hydrogens_on_hydrogens_only=True,
-         atom_map_hydrogens=False,
+         atom_map_hydrogens=True,
+         map_hydrogens_on_hydrogens_only=False,
          map_exact_ring_matches_only=True,
          allow_partial_fused_rings=True,
          allow_bond_breaks=False,
@@ -98,8 +98,7 @@ RBFE atom mapping backend is controlled by ``rbfe.atom_mapper``:
      )
 
   During RBFE transformation setup (``_internal/ops/simprep.py``), BATTER uses
-  the same Kartograf settings except ``atom_map_hydrogens=True`` and then removes
-  hydrogen pairs from the final core mapping.
+  the same Kartograf defaults unless ``rbfe.kartograf`` overrides them.
 
 * ``lomap`` – uses:
 
@@ -126,6 +125,8 @@ Example:
        shift: false
      kartograf:
        atom_max_distance: 1.1
+       atom_map_hydrogens: true
+       map_hydrogens_on_hydrogens_only: false
        allow_bond_breaks: true
        filter_element_changes: false
 

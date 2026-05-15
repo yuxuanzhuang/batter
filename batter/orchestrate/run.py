@@ -85,7 +85,7 @@ def _options_dict(value: Any) -> Dict[str, Any]:
     if value is None:
         return {}
     if hasattr(value, "model_dump"):
-        return dict(value.model_dump(mode="json", exclude_none=True))
+        return dict(value.model_dump(mode="json", exclude_none=True, exclude_unset=True))
     if isinstance(value, dict):
         return {str(key): val for key, val in value.items() if val is not None}
     return dict(value)

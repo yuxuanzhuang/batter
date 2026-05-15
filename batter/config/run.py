@@ -666,36 +666,36 @@ class KartografMapperArgs(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    atom_max_distance: Optional[float] = Field(
-        None,
+    atom_max_distance: float = Field(
+        0.95,
         description="Override KartografAtomMapper atom_max_distance.",
     )
-    map_hydrogens_on_hydrogens_only: Optional[bool] = Field(
-        None,
-        description="Override KartografAtomMapper map_hydrogens_on_hydrogens_only.",
-    )
-    atom_map_hydrogens: Optional[bool] = Field(
-        None,
+    atom_map_hydrogens: bool = Field(
+        True,
         description="Override KartografAtomMapper atom_map_hydrogens.",
     )
-    map_exact_ring_matches_only: Optional[bool] = Field(
-        None,
+    map_hydrogens_on_hydrogens_only: bool = Field(
+        False,
+        description="Override KartografAtomMapper map_hydrogens_on_hydrogens_only.",
+    )
+    map_exact_ring_matches_only: bool = Field(
+        True,
         description="Override KartografAtomMapper map_exact_ring_matches_only.",
     )
-    allow_partial_fused_rings: Optional[bool] = Field(
-        None,
+    allow_partial_fused_rings: bool = Field(
+        True,
         description="Override KartografAtomMapper allow_partial_fused_rings.",
     )
-    allow_bond_breaks: Optional[bool] = Field(
-        None,
+    allow_bond_breaks: bool = Field(
+        False,
         description="Override KartografAtomMapper allow_bond_breaks.",
     )
-    filter_element_changes: Optional[bool] = Field(
-        None,
+    filter_element_changes: bool = Field(
+        True,
         description="Include BATTER's element-change mapping filter.",
     )
-    filter_mismatched_attached_h_count: Optional[bool] = Field(
-        None,
+    filter_mismatched_attached_h_count: bool = Field(
+        False,
         description="Include BATTER's attached-hydrogen-count mapping filter.",
     )
 

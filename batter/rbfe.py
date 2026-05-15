@@ -27,7 +27,7 @@ def _mapper_options_dict(options: Any | None) -> dict[str, Any]:
     if options is None:
         return {}
     if hasattr(options, "model_dump"):
-        return dict(options.model_dump(exclude_none=True))
+        return dict(options.model_dump(exclude_none=True, exclude_unset=True))
     if isinstance(options, Mapping):
         return {str(key): value for key, value in options.items() if value is not None}
     return dict(options)
@@ -56,7 +56,7 @@ def _kartograf_mapper_kwargs(
 
     kwargs = {
         "atom_max_distance": 0.95,
-        "map_hydrogens_on_hydrogens_only": True,
+        "map_hydrogens_on_hydrogens_only": False,
         "atom_map_hydrogens": atom_map_hydrogens_default,
         "map_exact_ring_matches_only": True,
         "allow_partial_fused_rings": True,
@@ -100,7 +100,7 @@ def _build_current_kartograf_atom_mapper_for_network(
     return KartografAtomMapper(
         **_kartograf_mapper_kwargs(
             kartograf_options,
-            atom_map_hydrogens_default=False,
+            atom_map_hydrogens_default=True,
         )
     )
 

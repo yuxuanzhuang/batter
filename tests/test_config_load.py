@@ -126,8 +126,13 @@ rbfe:
     assert cfg.rbfe.lomap.max3d == 2.0
     assert cfg.rbfe.lomap.shift is False
     assert cfg.rbfe.kartograf.atom_max_distance == 1.1
+    assert cfg.rbfe.kartograf.atom_map_hydrogens is True
+    assert cfg.rbfe.kartograf.map_hydrogens_on_hydrogens_only is False
+    assert cfg.rbfe.kartograf.map_exact_ring_matches_only is True
+    assert cfg.rbfe.kartograf.allow_partial_fused_rings is True
     assert cfg.rbfe.kartograf.allow_bond_breaks is True
     assert cfg.rbfe.kartograf.filter_element_changes is False
+    assert cfg.rbfe.kartograf.filter_mismatched_attached_h_count is False
 
 
 def base_sim_kwargs(**overrides):
