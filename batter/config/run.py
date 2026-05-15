@@ -661,6 +661,60 @@ class MDSimArgs(BaseModel):
         return coerce_yes_no(v) or "no"
 
 
+class KartografMapperArgs(BaseModel):
+    """Kartograf atom mapper option overrides for RBFE."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    atom_max_distance: Optional[float] = Field(
+        None,
+        description="Override KartografAtomMapper atom_max_distance.",
+    )
+    map_hydrogens_on_hydrogens_only: Optional[bool] = Field(
+        None,
+        description="Override KartografAtomMapper map_hydrogens_on_hydrogens_only.",
+    )
+    atom_map_hydrogens: Optional[bool] = Field(
+        None,
+        description="Override KartografAtomMapper atom_map_hydrogens.",
+    )
+    map_exact_ring_matches_only: Optional[bool] = Field(
+        None,
+        description="Override KartografAtomMapper map_exact_ring_matches_only.",
+    )
+    allow_partial_fused_rings: Optional[bool] = Field(
+        None,
+        description="Override KartografAtomMapper allow_partial_fused_rings.",
+    )
+    allow_bond_breaks: Optional[bool] = Field(
+        None,
+        description="Override KartografAtomMapper allow_bond_breaks.",
+    )
+    filter_element_changes: Optional[bool] = Field(
+        None,
+        description="Include BATTER's element-change mapping filter.",
+    )
+    filter_mismatched_attached_h_count: Optional[bool] = Field(
+        None,
+        description="Include BATTER's attached-hydrogen-count mapping filter.",
+    )
+
+
+class LomapMapperArgs(BaseModel):
+    """LoMap atom mapper option overrides for RBFE."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    time: Optional[int] = Field(None, description="Override LomapAtomMapper time.")
+    threed: Optional[bool] = Field(None, description="Override LomapAtomMapper threed.")
+    max3d: Optional[float] = Field(None, description="Override LomapAtomMapper max3d.")
+    element_change: Optional[bool] = Field(
+        None,
+        description="Override LomapAtomMapper element_change.",
+    )
+    shift: Optional[bool] = Field(None, description="Override LomapAtomMapper shift.")
+
+
 class RBFENetworkArgs(BaseModel):
     """
     RBFE network mapping controls.
@@ -678,6 +732,14 @@ class RBFENetworkArgs(BaseModel):
     atom_mapper: Literal["kartograf", "lomap"] = Field(
         "kartograf",
         description="Atom mapper backend for RBFE pair mapping ('kartograf' or 'lomap').",
+    )
+    kartograf: KartografMapperArgs = Field(
+        default_factory=KartografMapperArgs,
+        description="KartografAtomMapper option overrides.",
+    )
+    lomap: LomapMapperArgs = Field(
+        default_factory=LomapMapperArgs,
+        description="LomapAtomMapper option overrides.",
     )
     konnektor_layout: Optional[str] = Field(
         None,

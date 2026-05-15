@@ -23,35 +23,85 @@ def _normalize_atom_mapper(atom_mapper: str | None) -> str:
     return mapper
 
 
-def _build_konnektor_atom_mapper(atom_mapper: str, *, hmr: bool = True):
+def _mapper_options_dict(options: Any | None) -> dict[str, Any]:
+    if options is None:
+        return {}
+    if hasattr(options, "model_dump"):
+        return dict(options.model_dump(exclude_none=True))
+    if isinstance(options, Mapping):
+        return {str(key): value for key, value in options.items() if value is not None}
+    return dict(options)
+
+
+def _lomap_mapper_kwargs(options: Any | None = None) -> dict[str, Any]:
+    kwargs = {
+        "time": 20,
+        "threed": True,
+        "max3d": 1.5,
+        "element_change": False,
+        "shift": True,
+    }
+    kwargs.update(_mapper_options_dict(options))
+    return kwargs
+
+
+def _kartograf_mapper_kwargs(
+    options: Any | None = None,
+    *,
+    atom_map_hydrogens_default: bool,
+) -> dict[str, Any]:
+    mapper_options = _mapper_options_dict(options)
+    use_element_filter = mapper_options.pop("filter_element_changes", True)
+    use_attached_h_filter = mapper_options.pop("filter_mismatched_attached_h_count", False)
+
+    kwargs = {
+        "atom_max_distance": 0.95,
+        "map_hydrogens_on_hydrogens_only": True,
+        "atom_map_hydrogens": atom_map_hydrogens_default,
+        "map_exact_ring_matches_only": True,
+        "allow_partial_fused_rings": True,
+        "allow_bond_breaks": False,
+    }
+    kwargs.update(mapper_options)
+
+    additional_mapping_filter_functions = []
+    if use_element_filter:
+        additional_mapping_filter_functions.append(filter_element_changes)
+    if use_attached_h_filter:
+        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+    kwargs["additional_mapping_filter_functions"] = additional_mapping_filter_functions
+    return kwargs
+
+
+def _build_konnektor_atom_mapper(
+    atom_mapper: str,
+    *,
+    hmr: bool = True,
+    kartograf_options: Any | None = None,
+    lomap_options: Any | None = None,
+):
     mapper_name = _normalize_atom_mapper(atom_mapper)
     if mapper_name == "lomap":
         from lomap import LomapAtomMapper
 
-        return LomapAtomMapper(
-            time=20,
-            threed=True,
-            max3d=1.5,
-            element_change=False,
-            shift=True,
-        )
+        return LomapAtomMapper(**_lomap_mapper_kwargs(lomap_options))
 
-    return _build_current_kartograf_atom_mapper_for_network()
+    return _build_current_kartograf_atom_mapper_for_network(
+        kartograf_options=kartograf_options
+    )
 
 
-def _build_current_kartograf_atom_mapper_for_network():
+def _build_current_kartograf_atom_mapper_for_network(
+    kartograf_options: Any | None = None,
+):
     """Return the Kartograf mapper currently used for RBFE network generation."""
     from kartograf.atom_mapper import KartografAtomMapper
 
-    additional_mapping_filter_functions = [filter_element_changes]
     return KartografAtomMapper(
-        atom_max_distance=0.95,
-        map_hydrogens_on_hydrogens_only=True,
-        atom_map_hydrogens=False,
-        map_exact_ring_matches_only=True,
-        allow_partial_fused_rings=True,
-        allow_bond_breaks=False,
-        additional_mapping_filter_functions=additional_mapping_filter_functions,
+        **_kartograf_mapper_kwargs(
+            kartograf_options,
+            atom_map_hydrogens_default=False,
+        )
     )
 
 
@@ -284,6 +334,8 @@ def konnektor_pairs(
     plot_path: Path | None = None,
     hmr: bool = True,
     atom_mapper: str = "kartograf",
+    kartograf_options: Any | None = None,
+    lomap_options: Any | None = None,
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
@@ -304,7 +356,12 @@ def konnektor_pairs(
             "Konnektor 'explicit' layout requires explicit edges; use rbfe.mapping_file."
         )
     
-    mapper = _build_konnektor_atom_mapper(atom_mapper, hmr=hmr)
+    mapper = _build_konnektor_atom_mapper(
+        atom_mapper,
+        hmr=hmr,
+        kartograf_options=kartograf_options,
+        lomap_options=lomap_options,
+    )
 
     generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
 
@@ -347,6 +404,8 @@ def draw_explicit_konnektor_network(
     plot_path: Path,
     hmr: bool = True,
     atom_mapper: str = "kartograf",
+    kartograf_options: Any | None = None,
+    lomap_options: Any | None = None,
 ) -> None:
     """Build an explicit Konnektor network from pairs and draw it."""
     mapper_name = _normalize_atom_mapper(atom_mapper)
@@ -364,7 +423,12 @@ def draw_explicit_konnektor_network(
         return
 
     try:
-        mapper = _build_konnektor_atom_mapper(mapper_name, hmr=hmr)
+        mapper = _build_konnektor_atom_mapper(
+            mapper_name,
+            hmr=hmr,
+            kartograf_options=kartograf_options,
+            lomap_options=lomap_options,
+        )
     except Exception:
         return
 

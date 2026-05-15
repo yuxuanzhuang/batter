@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 import pickle
 import os
-from typing import Iterable, List, Tuple, Optional, Set, Sequence
+from typing import Any, Iterable, List, Mapping, Tuple, Optional, Set, Sequence
 import shutil
 import re
 import random
@@ -285,17 +285,65 @@ def filter_mismatched_attached_h_count(
     return filtered
 
 
-def _build_current_kartograf_atom_mapper_for_simprep_x():
+def _mapper_options_dict(options: Any | None) -> dict[str, Any]:
+    if options is None:
+        return {}
+    if hasattr(options, "model_dump"):
+        return dict(options.model_dump(exclude_none=True))
+    if isinstance(options, Mapping):
+        return {str(key): value for key, value in options.items() if value is not None}
+    return dict(options)
+
+
+def _lomap_mapper_kwargs(options: Any | None = None) -> dict[str, Any]:
+    kwargs = {
+        "time": 20,
+        "threed": True,
+        "max3d": 1.5,
+        "element_change": False,
+        "shift": True,
+    }
+    kwargs.update(_mapper_options_dict(options))
+    return kwargs
+
+
+def _kartograf_mapper_kwargs(
+    options: Any | None = None,
+    *,
+    atom_map_hydrogens_default: bool,
+) -> dict[str, Any]:
+    mapper_options = _mapper_options_dict(options)
+    use_element_filter = mapper_options.pop("filter_element_changes", True)
+    use_attached_h_filter = mapper_options.pop("filter_mismatched_attached_h_count", False)
+
+    kwargs = {
+        "atom_max_distance": 0.95,
+        "map_hydrogens_on_hydrogens_only": True,
+        "atom_map_hydrogens": atom_map_hydrogens_default,
+        "map_exact_ring_matches_only": True,
+        "allow_partial_fused_rings": True,
+        "allow_bond_breaks": False,
+    }
+    kwargs.update(mapper_options)
+
+    additional_mapping_filter_functions = []
+    if use_element_filter:
+        additional_mapping_filter_functions.append(filter_element_changes)
+    if use_attached_h_filter:
+        additional_mapping_filter_functions.append(filter_mismatched_attached_h_count)
+    kwargs["additional_mapping_filter_functions"] = additional_mapping_filter_functions
+    return kwargs
+
+
+def _build_current_kartograf_atom_mapper_for_simprep_x(
+    kartograf_options: Any | None = None,
+):
     """Return the Kartograf mapper currently used by RBFE simprep x-component."""
-    additional_mapping_filter_functions = [filter_element_changes]
     return KartografAtomMapper(
-        atom_max_distance=0.95,
-        map_hydrogens_on_hydrogens_only=True,
-        atom_map_hydrogens=True,
-        map_exact_ring_matches_only=True,
-        allow_partial_fused_rings=True,
-        allow_bond_breaks=False,
-        additional_mapping_filter_functions=additional_mapping_filter_functions,
+        **_kartograf_mapper_kwargs(
+            kartograf_options,
+            atom_map_hydrogens_default=True,
+        )
     )
 
 
@@ -984,6 +1032,11 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         raise ValueError(
             f"Unsupported RBFE atom_mapper '{atom_mapper_name}'. Choose 'kartograf' or 'lomap'."
         )
+    atom_mapper_options = _mapper_options_dict(extra.get("atom_mapper_options"))
+    kartograf_options = _mapper_options_dict(
+        extra.get("kartograf_options") or extra.get("kartograf")
+    )
+    lomap_options = _mapper_options_dict(extra.get("lomap_options") or extra.get("lomap"))
 
     mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
     mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
@@ -991,11 +1044,7 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     atom_mapping_obj = None
     if atom_mapper_name == "lomap":
         mapper = LomapAtomMapper(
-            time=20,
-            threed=True,
-            max3d=1.5,
-            element_change=False,
-            shift=True,
+            **_lomap_mapper_kwargs(atom_mapper_options or lomap_options)
         )
         atom_mapping_obj = next(
             mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
@@ -1004,7 +1053,9 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     else:
         mol_alt_aligned = align_mol_shape(mol_alt_component, ref_mol=mol_ref_component)
 
-        mapper = _build_current_kartograf_atom_mapper_for_simprep_x()
+        mapper = _build_current_kartograf_atom_mapper_for_simprep_x(
+            atom_mapper_options or kartograf_options
+        )
         atom_mapping_obj = next(
             mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
         )

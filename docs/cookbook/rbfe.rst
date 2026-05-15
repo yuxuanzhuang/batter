@@ -75,6 +75,8 @@ When using ``konnektor``, you can optionally set ``rbfe.konnektor_layout``.
      konnektor_layout: star
      both_directions: false
 
+.. _rbfe_atom_mapper_options:
+
 Atom mapper backends
 --------------------
 
@@ -118,6 +120,22 @@ Example:
    rbfe:
      mapping: konnektor
      atom_mapper: lomap
+     lomap:
+       time: 7
+       max3d: 2.0
+       shift: false
+     kartograf:
+       atom_max_distance: 1.1
+       allow_bond_breaks: true
+       filter_element_changes: false
+
+Only the selected backend's options are used for a run. The available Kartograf
+keys are ``atom_max_distance``, ``map_hydrogens_on_hydrogens_only``,
+``atom_map_hydrogens``, ``map_exact_ring_matches_only``,
+``allow_partial_fused_rings``, ``allow_bond_breaks``,
+``filter_element_changes``, and ``filter_mismatched_attached_h_count``.
+The available LoMap keys are ``time``, ``threed``, ``max3d``,
+``element_change``, and ``shift``.
 
 Bidirectional RBFE edges
 ------------------------

@@ -104,6 +104,9 @@ def prepare_fe_handler(
             "input_ref",
             "input_alt",
             "atom_mapper",
+            "atom_mapper_options",
+            "kartograf_options",
+            "lomap_options",
         )
         if system.meta.get(key) is not None
     }
@@ -230,6 +233,9 @@ def prepare_fe_windows_handler(
             "input_ref",
             "input_alt",
             "atom_mapper",
+            "atom_mapper_options",
+            "kartograf_options",
+            "lomap_options",
         )
         if system.meta.get(key) is not None
     }

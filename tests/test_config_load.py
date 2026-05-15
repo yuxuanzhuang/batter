@@ -87,6 +87,49 @@ fe_sim: {}
     assert cfg.create.ligand_input == Path("reference/ligands.json")
 
 
+def test_run_config_accepts_rbfe_mapper_options(tmp_path: Path) -> None:
+    lig1 = tmp_path / "lig1.sdf"
+    lig2 = tmp_path / "lig2.sdf"
+    lig1.write_text("dummy\n")
+    lig2.write_text("dummy\n")
+
+    run_yaml = tmp_path / "rbfe_mapper_options.yaml"
+    run_yaml.write_text(
+        f"""
+protocol: rbfe
+run:
+  output_folder: "{tmp_path / 'work'}"
+create:
+  system_name: rbfe-example
+  ligand_paths:
+    lig1: "{lig1}"
+    lig2: "{lig2}"
+fe_sim: {{}}
+rbfe:
+  mapping: konnektor
+  atom_mapper: lomap
+  lomap:
+    time: 7
+    max3d: 2.0
+    shift: false
+  kartograf:
+    atom_max_distance: 1.1
+    allow_bond_breaks: true
+    filter_element_changes: false
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    assert cfg.rbfe is not None
+    assert cfg.rbfe.atom_mapper == "lomap"
+    assert cfg.rbfe.lomap.time == 7
+    assert cfg.rbfe.lomap.max3d == 2.0
+    assert cfg.rbfe.lomap.shift is False
+    assert cfg.rbfe.kartograf.atom_max_distance == 1.1
+    assert cfg.rbfe.kartograf.allow_bond_breaks is True
+    assert cfg.rbfe.kartograf.filter_element_changes is False
+
+
 def base_sim_kwargs(**overrides):
     data = {
         "system_name": "sys",

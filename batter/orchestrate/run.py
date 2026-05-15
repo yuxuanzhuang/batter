@@ -81,6 +81,25 @@ _PHASE_STEP_NAMES: dict[str, frozenset[str]] = {
 }
 
 
+def _options_dict(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if hasattr(value, "model_dump"):
+        return dict(value.model_dump(mode="json", exclude_none=True))
+    if isinstance(value, dict):
+        return {str(key): val for key, val in value.items() if val is not None}
+    return dict(value)
+
+
+def _rbfe_mapper_options(rbfe_cfg) -> Dict[str, Dict[str, Any]]:
+    if rbfe_cfg is None:
+        return {"kartograf": {}, "lomap": {}}
+    return {
+        "kartograf": _options_dict(getattr(rbfe_cfg, "kartograf", None)),
+        "lomap": _options_dict(getattr(rbfe_cfg, "lomap", None)),
+    }
+
+
 def _slurm_registry_path(run_dir: Path) -> Path:
     """Return the registry path under artifacts/slurm, migrating legacy .slurm if present."""
     new_path = run_dir / "artifacts" / "slurm" / "queue.jsonl"
@@ -321,7 +340,8 @@ def _build_rbfe_network_plan(
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
-    atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf")
+    atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf").lower()
+    mapper_options = _rbfe_mapper_options(rbfe_cfg)
     pairs: List[tuple[str, str]] = []
     if rbfe_cfg.mapping_file:
         pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
@@ -336,6 +356,8 @@ def _build_rbfe_network_plan(
                 layout=rbfe_cfg.konnektor_layout,
                 plot_path=config_dir / "rbfe_network.png",
                 atom_mapper=atom_mapper,
+                kartograf_options=mapper_options["kartograf"],
+                lomap_options=mapper_options["lomap"],
             )
             network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
             mapping_source["mapping"] = "konnektor"
@@ -349,6 +371,8 @@ def _build_rbfe_network_plan(
                     layout="star",
                     plot_path=config_dir / "rbfe_network.png",
                     atom_mapper=atom_mapper,
+                    kartograf_options=mapper_options["kartograf"],
+                    lomap_options=mapper_options["lomap"],
                 )
                 network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
                 mapping_source["mapping"] = mapping_name
@@ -368,6 +392,11 @@ def _build_rbfe_network_plan(
             pairs = list(network.pairs)
             mapping_source["mapping"] = mapping_name
     mapping_source["atom_mapper"] = atom_mapper
+    if any(mapper_options.values()):
+        mapping_source["mapper_options"] = mapper_options
+    selected_mapper_options = mapper_options.get(atom_mapper, {})
+    if selected_mapper_options:
+        mapping_source["atom_mapper_options"] = selected_mapper_options
 
     payload = network.to_mapping()
     if bool(getattr(rbfe_cfg, "both_directions", False)):
@@ -1073,6 +1102,19 @@ def _run_from_yaml_impl(
             or getattr(rc.rbfe, "atom_mapper", "kartograf")
             or "kartograf"
         ).lower()
+        payload_mapper_options = payload.get("mapper_options")
+        if isinstance(payload_mapper_options, dict):
+            mapper_options = {
+                "kartograf": _options_dict(payload_mapper_options.get("kartograf")),
+                "lomap": _options_dict(payload_mapper_options.get("lomap")),
+            }
+        else:
+            mapper_options = _rbfe_mapper_options(rc.rbfe)
+        payload_atom_mapper_options = payload.get("atom_mapper_options")
+        if isinstance(payload_atom_mapper_options, dict):
+            atom_mapper_options = _options_dict(payload_atom_mapper_options)
+        else:
+            atom_mapper_options = mapper_options.get(atom_mapper, {})
 
         # Build transformation systems under simulations/transformations/
         trans_root = run_dir / "simulations" / "transformations"
@@ -1114,6 +1156,9 @@ def _run_from_yaml_impl(
                 input_ref=str(ref_dst),
                 input_alt=str(alt_dst),
                 atom_mapper=atom_mapper,
+                atom_mapper_options=atom_mapper_options,
+                kartograf_options=mapper_options.get("kartograf", {}),
+                lomap_options=mapper_options.get("lomap", {}),
             )
 
             rbfe_children.append(
