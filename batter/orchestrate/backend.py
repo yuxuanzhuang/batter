@@ -29,6 +29,7 @@ def register_local_handlers(backend: LocalBackend) -> None:
         from batter.exec.handlers.system_prep import system_prep as _system_prep
         from batter.exec.handlers.system_prep_masfe import system_prep_masfe as _system_prep_masfe
         from batter.exec.handlers.param_ligands import param_ligands as _param_ligands
+        from batter.exec.handlers.prepare_rbfe import prepare_rbfe_handler as _prepare_rbfe
         from batter.exec.handlers.prepare_equil import prepare_equil_handler as _prepare_equil
         from batter.exec.handlers.equil import equil_handler as _equil
         from batter.exec.handlers.equil_analysis import equil_analysis_handler as _equil_analysis
@@ -51,6 +52,7 @@ def register_local_handlers(backend: LocalBackend) -> None:
     backend.register("system_prep", _system_prep)
     backend.register("system_prep_asfe", _system_prep_masfe)
     backend.register("param_ligands", _param_ligands)
+    backend.register("prepare_rbfe", _prepare_rbfe)
     backend.register("prepare_equil", _prepare_equil)
     backend.register("equil", _equil)
     backend.register("equil_analysis", _equil_analysis)

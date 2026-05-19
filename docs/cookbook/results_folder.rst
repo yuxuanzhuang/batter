@@ -152,6 +152,7 @@ RBFE records use the same top-level pattern, but the payload is slightly differe
    ├── Results/
    │   ├── Results.dat
    │   ├── rbfe_network.png
+   │   ├── rbfe_network.html
    │   ├── mapping.json
    │   ├── mapping.pkl
    │   └── mapping.png
@@ -162,8 +163,15 @@ RBFE records use the same top-level pattern, but the payload is slightly differe
    Copy of the resolved RBFE network plot from
    ``executions/<run_id>/artifacts/config/rbfe_network.png``.
 
+``Results/rbfe_network.html``
+   Copy of the planned RBFE network dashboard from
+   ``executions/<run_id>/artifacts/config/rbfe_network.html``. The dashboard is
+   generated during ``prepare_rbfe`` and includes the prepared atom-mapping images
+   when drawing succeeds.
+
 ``Results/mapping.*``
-   Atom-mapping artifacts copied from the transformation setup directory.
+   Atom-mapping artifacts copied into the transformation setup directory from
+   ``executions/<run_id>/artifacts/config/rbfe_mappings/<ligand_ref~ligand_alt>/``.
 
 ``Equil_ref/`` and ``Equil_alt/``
    Equilibration reference material for the two ligands that define the

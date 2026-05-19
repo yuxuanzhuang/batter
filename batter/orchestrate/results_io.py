@@ -447,12 +447,13 @@ def _copy_mapping_artifacts(src_dir: Path, dest_root: Path) -> None:
 def _copy_rbfe_network_plot(
     run_dir: Path, repo: FEResultsRepository, run_id: str, ligand: str
 ) -> None:
-    src = run_dir / "artifacts" / "config" / "rbfe_network.png"
-    if not src.exists():
-        return
     dest_dir = repo.ligand_dir(run_id, ligand) / "Results"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        shutil.copy2(src, dest_dir / src.name)
-    except Exception:
-        pass
+    for name in ("rbfe_network.png", "rbfe_network.html"):
+        src = run_dir / "artifacts" / "config" / name
+        if not src.exists():
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copy2(src, dest_dir / src.name)
+        except Exception:
+            pass

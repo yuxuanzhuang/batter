@@ -184,6 +184,8 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
 
 
 def _phase_ok_patterns(phase_name: str) -> List[str]:
+    if phase_name == "prepare_rbfe":
+        return ["artifacts/config/rbfe_network.json", "artifacts/config/prepare_rbfe.ok"]
     if phase_name == "prepare_equil":
         return ["equil/full.prmtop", "equil/prepare_equil.ok"]
     if phase_name == "equil":
@@ -207,6 +209,7 @@ def _maybe_invalidate_progress_for_phase(
     children: List[SimSystem], phase_name: str
 ) -> None:
     if phase_name not in {
+        "prepare_rbfe",
         "prepare_equil",
         "equil",
         "prepare_fe",

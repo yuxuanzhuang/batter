@@ -67,6 +67,11 @@ RBFE mappings can be created in a few ways:
   text file with one pair per line).
 
 Set ``rbfe.both_directions: true`` if you want to run both directions for every edge.
+During ``prepare_rbfe``, BATTER writes
+``executions/<run_id>/artifacts/config/rbfe_network.html`` plus
+``artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.*`` so the planned graph and
+atom maps can be inspected before ligand equilibration and later transformation
+setup.
 
 Installation
 ------------
@@ -347,7 +352,8 @@ chosen absolute reference level.
 ``fe list`` prints a high-level table for every stored run, while ``fe show`` opens
 the saved record for one transformation pair such as ``LIG1~LIG2``. For a file-by-file
 description of the portable repository, including the RBFE-only ``mapping.*``,
-``rbfe_network.png``, and ``Equil_ref`` / ``Equil_alt`` exports, see
+``rbfe_network.png``, ``rbfe_network.html``, and ``Equil_ref`` / ``Equil_alt``
+exports, see
 :doc:`../cookbook/results_folder`.
 
 For final error estimation, it is usually better to run three independent repeats

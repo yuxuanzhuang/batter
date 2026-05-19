@@ -110,6 +110,11 @@ Execution Modules
    :members:
    :undoc-members:
 
+.. automodule:: batter.exec.handlers.prepare_rbfe
+   :noindex:
+   :members:
+   :undoc-members:
+
 .. automodule:: batter.exec.handlers.prepare_equil
    :noindex:
    :members:

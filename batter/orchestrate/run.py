@@ -67,7 +67,9 @@ from batter.orchestrate.run_support import (
     store_ligand_names as _store_ligand_names,
 )
 
-_PARENT_ONLY_STEP_NAMES = frozenset({"system_prep", "system_prep_asfe", "param_ligands"})
+_PARENT_ONLY_STEP_NAMES = frozenset(
+    {"system_prep", "system_prep_asfe", "param_ligands", "prepare_rbfe"}
+)
 _PHASE_STEP_NAMES: dict[str, frozenset[str]] = {
     "prepare_equil": frozenset({"prepare_equil"}),
     "equil": frozenset({"equil"}),
@@ -328,6 +330,7 @@ def _build_rbfe_network_plan(
         resolve_mapping_fn,
         load_mapping_file,
         konnektor_pairs,
+        write_planned_mapping_artifacts,
     )
     try:
         import konnektor
@@ -410,9 +413,42 @@ def _build_rbfe_network_plan(
                 bidirectional_pairs.append([pair[0], pair[1]])
         payload["pairs"] = bidirectional_pairs
         mapping_source["both_directions"] = True
+    ligand_files = {
+        name: Path(lig_map[name])
+        for name in available
+        if name in lig_map
+    }
+    mapping_artifacts_dir = config_dir / "rbfe_mappings"
+    edge_assets = write_planned_mapping_artifacts(
+        pairs=payload.get("pairs", []),
+        ligand_files=ligand_files,
+        out_dir=mapping_artifacts_dir,
+        atom_mapper=atom_mapper,
+        kartograf_options=mapper_options["kartograf"],
+        lomap_options=mapper_options["lomap"],
+        atom_mapper_options=selected_mapper_options,
+    )
+    mapping_source["mapping_artifacts_dir"] = mapping_artifacts_dir.name
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"
     rbfe_network_path.write_text(json.dumps(payload, indent=2))
+    try:
+        from batter.analysis.network import write_planned_rbfe_network_html
+
+        html_path = config_dir / "rbfe_network.html"
+        rendered_html = write_planned_rbfe_network_html(
+            ligands=payload.get("ligands", []),
+            pairs=payload.get("pairs", []),
+            out_path=html_path,
+            ligand_files=ligand_files,
+            title="BATTER planned RBFE network",
+            metadata=mapping_source,
+            edge_assets=edge_assets,
+        )
+        if rendered_html:
+            logger.info(f"RBFE planned network HTML written: {html_path}")
+    except Exception as exc:
+        logger.debug(f"RBFE planned network HTML rendering skipped: {exc}")
     logger.info(
         f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs with both directions={mapping_source.get('both_directions', False)}"
     )
@@ -685,6 +721,12 @@ def _run_from_yaml_impl(
         "extra_conformation_restraints": extra_conf_path
         or rc.create.extra_conformation_restraints,
     }
+    if rc.protocol == "rbfe":
+        sys_params["rbfe"] = (
+            rc.rbfe.model_dump(mode="json", exclude_none=True)
+            if rc.rbfe is not None
+            else {}
+        )
 
     base_meta = {}
     if rc.protocol == "rbfe":
@@ -796,10 +838,29 @@ def _run_from_yaml_impl(
         rbfe_network_path = config_dir / "rbfe_network.json"
         if not rbfe_network_path.exists():
             from batter.config.run import RBFENetworkArgs
+            from batter.orchestrate.state_registry import register_phase_state
 
             rbfe_cfg = rc.rbfe or RBFENetworkArgs()
             _build_rbfe_network_plan(
                 list(lig_map.keys()), lig_map, rbfe_cfg, config_dir
+            )
+            marker = config_dir / "prepare_rbfe.ok"
+            marker.write_text("ok\n")
+            register_phase_state(
+                run_dir,
+                "prepare_rbfe",
+                required=[
+                    [
+                        "artifacts/config/rbfe_network.json",
+                        "artifacts/config/prepare_rbfe.ok",
+                    ]
+                ],
+                success=[
+                    [
+                        "artifacts/config/rbfe_network.json",
+                        "artifacts/config/prepare_rbfe.ok",
+                    ]
+                ],
             )
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
@@ -1155,6 +1216,7 @@ def _run_from_yaml_impl(
                 residue_alt=resn_alt,
                 input_ref=str(ref_dst),
                 input_alt=str(alt_dst),
+                prepared_mapping_dir=str(config_dir / "rbfe_mappings" / pair_id),
                 atom_mapper=atom_mapper,
                 atom_mapper_options=atom_mapper_options,
                 kartograf_options=mapper_options.get("kartograf", {}),

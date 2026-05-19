@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 import json
+import pickle
 from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence, Tuple, List, Any, Mapping
 from loguru import logger
@@ -103,6 +105,20 @@ def _build_current_kartograf_atom_mapper_for_network(
         **_kartograf_mapper_kwargs(
             kartograf_options,
             atom_map_hydrogens_default=False,
+        )
+    )
+
+
+def _build_current_kartograf_atom_mapper_for_simprep_x(
+    kartograf_options: Any | None = None,
+):
+    """Return the Kartograf mapper used by RBFE x-component simprep."""
+    from kartograf.atom_mapper import KartografAtomMapper
+
+    return KartografAtomMapper(
+        **_kartograf_mapper_kwargs(
+            kartograf_options,
+            atom_map_hydrogens_default=True,
         )
     )
 
@@ -273,6 +289,164 @@ def _load_rdkit_mol(path: Path):
     if mol is None:
         raise ValueError(f"Failed to load ligand from {path} with RDKit.")
     return mol
+
+
+def _small_molecule_component(mol: Chem.Mol, name: str):
+    from kartograf import SmallMoleculeComponent
+
+    if hasattr(SmallMoleculeComponent, "from_rdkit"):
+        try:
+            return SmallMoleculeComponent.from_rdkit(mol)
+        except TypeError:
+            return SmallMoleculeComponent.from_rdkit(mol, name=name)
+    return SmallMoleculeComponent(mol, name=name)
+
+
+def _mapping_png_data_uri(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]:
+    asset: dict[str, Any] = {
+        "mapping_path": (pair_dir / "mapping.json").as_posix(),
+        "mapping_dir": pair_dir.as_posix(),
+    }
+    png = pair_dir / "mapping.png"
+    if png.is_file():
+        asset["image_data_uri"] = _mapping_png_data_uri(png)
+        asset["image_alt"] = f"Atom mapping for {pair_id}"
+    status = pair_dir / "mapping_status.json"
+    if status.is_file():
+        try:
+            status_payload = json.loads(status.read_text())
+            if "n_mapped" in status_payload:
+                asset["n_mapped"] = status_payload["n_mapped"]
+            if "mapper" in status_payload:
+                asset["mapper"] = status_payload["mapper"]
+        except Exception:
+            pass
+    return asset
+
+
+def _serialize_atom_mapping(mapping: Mapping[Any, Any]) -> dict[int, int]:
+    return {int(k): int(v) for k, v in mapping.items()}
+
+
+def write_pair_mapping_artifacts(
+    *,
+    ref: str,
+    alt: str,
+    ligand_files: Mapping[str, Path | str],
+    out_dir: Path,
+    atom_mapper: str = "kartograf",
+    kartograf_options: Any | None = None,
+    lomap_options: Any | None = None,
+    atom_mapper_options: Any | None = None,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate reusable atom-mapping artifacts for one planned RBFE pair."""
+    pair_id = f"{ref}~{alt}"
+    pair_dir = Path(out_dir) / pair_id
+    mapping_json = pair_dir / "mapping.json"
+    if mapping_json.is_file() and not overwrite:
+        return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+
+    mapper_name = _normalize_atom_mapper(atom_mapper)
+    ref_path = Path(ligand_files[ref])
+    alt_path = Path(ligand_files[alt])
+    rdmol_ref = _load_rdkit_mol(ref_path)
+    rdmol_alt = _load_rdkit_mol(alt_path)
+    component_ref = _small_molecule_component(rdmol_ref, ref)
+    component_alt = _small_molecule_component(rdmol_alt, alt)
+
+    atom_mapping_obj = None
+    if mapper_name == "lomap":
+        from lomap import LomapAtomMapper
+
+        mapper = LomapAtomMapper(
+            **_lomap_mapper_kwargs(atom_mapper_options or lomap_options)
+        )
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(component_ref, component_alt), None
+        )
+    else:
+        from kartograf.atom_aligner import align_mol_shape
+
+        component_alt = align_mol_shape(component_alt, ref_mol=component_ref)
+        mapper = _build_current_kartograf_atom_mapper_for_simprep_x(
+            atom_mapper_options or kartograf_options
+        )
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(component_ref, component_alt), None
+        )
+
+    map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+    map_b_to_a = _serialize_atom_mapping(map_b_to_a)
+    if not map_b_to_a:
+        raise ValueError(f"No atom mapping found for planned RBFE pair {pair_id}.")
+
+    pair_dir.mkdir(parents=True, exist_ok=True)
+    mapping_json.write_text(json.dumps(map_b_to_a, indent=2, sort_keys=True))
+    status_payload = {
+        "pair_id": pair_id,
+        "reference": ref,
+        "target": alt,
+        "mapper": mapper_name,
+        "n_mapped": len(map_b_to_a),
+    }
+    (pair_dir / "mapping_status.json").write_text(
+        json.dumps(status_payload, indent=2, sort_keys=True)
+    )
+    try:
+        with (pair_dir / "mapping.pkl").open("wb") as fh:
+            pickle.dump(atom_mapping_obj, fh)
+    except Exception as exc:
+        logger.debug(f"Could not write RBFE atom-mapping pickle for {pair_id}: {exc}")
+
+    try:
+        atom_mapping_obj.draw_to_file(fname=pair_dir / "mapping.png")
+    except Exception as exc:
+        logger.debug(f"Could not draw RBFE atom-mapping image for {pair_id}: {exc}")
+
+    return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+
+
+def write_planned_mapping_artifacts(
+    *,
+    pairs: Sequence[Sequence[str] | tuple[str, str]],
+    ligand_files: Mapping[str, Path | str],
+    out_dir: Path,
+    atom_mapper: str = "kartograf",
+    kartograf_options: Any | None = None,
+    lomap_options: Any | None = None,
+    atom_mapper_options: Any | None = None,
+    overwrite: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """Generate reusable atom-mapping artifacts for a planned RBFE network."""
+    assets: dict[str, dict[str, Any]] = {}
+    for ref_raw, alt_raw in pairs:
+        ref = sanitize_ligand_name(str(ref_raw))
+        alt = sanitize_ligand_name(str(alt_raw))
+        missing = [name for name in (ref, alt) if name not in ligand_files]
+        if missing:
+            raise FileNotFoundError(
+                f"Missing ligand file(s) for RBFE mapping {ref}~{alt}: {missing}"
+            )
+        assets[f"{ref}~{alt}"] = write_pair_mapping_artifacts(
+            ref=ref,
+            alt=alt,
+            ligand_files=ligand_files,
+            out_dir=out_dir,
+            atom_mapper=atom_mapper,
+            kartograf_options=kartograf_options,
+            lomap_options=lomap_options,
+            atom_mapper_options=atom_mapper_options,
+            overwrite=overwrite,
+        )
+    return assets
 
 
 def _resolve_konnektor_generator(layout: str | None):

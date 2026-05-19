@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 import json
@@ -165,6 +167,7 @@ def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
     config_dir = run_dir / "artifacts" / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "rbfe_network.png").write_text("png")
+    (config_dir / "rbfe_network.html").write_text("<html></html>")
 
     child_root = run_dir / "simulations" / "pair1"
     results_dir = child_root / "fe" / "Results"
@@ -203,6 +206,117 @@ def test_save_fe_records_copies_rbfe_network_plot(tmp_path: Path) -> None:
     assert not failures
     out = run_dir / "results" / "run1" / "pair1" / "Results" / "rbfe_network.png"
     assert out.exists()
+    html_out = run_dir / "results" / "run1" / "pair1" / "Results" / "rbfe_network.html"
+    assert html_out.exists()
+
+
+def test_build_rbfe_network_plan_writes_planned_html(
+    monkeypatch, tmp_path: Path
+) -> None:
+    pytest.importorskip("networkx")
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+    cfg = RBFENetworkArgs(mapping_file=mapping_file)
+
+    def _fake_mapping_artifacts(**kwargs):
+        return {
+            "A~B": {
+                "image_data_uri": "data:image/png;base64,ZmFrZQ==",
+                "mapper": kwargs["atom_mapper"],
+                "n_mapped": 2,
+            }
+        }
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        cfg,
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["A", "B"], ["A", "C"]]
+    html_path = tmp_path / "rbfe_network.html"
+    assert html_path.exists()
+    html_text = html_path.read_text()
+    assert "network-viewport" in html_text
+    assert "plannedEdges" in html_text
+    assert "A~B" in html_text
+    assert "data:image/png;base64,ZmFrZQ==" in html_text
+    assert payload["mapping_artifacts_dir"] == "rbfe_mappings"
+
+
+def test_prepare_rbfe_handler_writes_parent_stage_marker(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from batter.exec.handlers.prepare_rbfe import prepare_rbfe_handler
+    from batter.orchestrate.state_registry import get_phase_state
+    from batter.pipeline.payloads import StepPayload
+    from batter.pipeline.step import Step
+
+    called: dict[str, object] = {}
+
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir):
+        called["ligands"] = list(ligands)
+        called["lig_map"] = dict(lig_map)
+        called["config_dir"] = config_dir
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "rbfe_network.json").write_text(
+            json.dumps({"ligands": ligands, "pairs": [["A", "B"]]})
+        )
+        return {"pairs": [["A", "B"]]}
+
+    monkeypatch.setattr(run_mod, "_build_rbfe_network_plan", _fake_build)
+    payload = StepPayload(
+        sys_params={
+            "ligand_paths": {
+                "A": tmp_path / "A.sdf",
+                "B": tmp_path / "B.sdf",
+            },
+            "rbfe": {"mapping": "default"},
+        }
+    )
+    system = SimSystem(name="sys:run1", root=tmp_path)
+
+    prepare_rbfe_handler(
+        Step(name="prepare_rbfe"),
+        system,
+        payload.model_dump(),
+    )
+
+    assert called["ligands"] == ["A", "B"]
+    assert (tmp_path / "artifacts" / "config" / "prepare_rbfe.ok").exists()
+    state = get_phase_state(tmp_path, "prepare_rbfe")
+    assert state.success == [
+        ["artifacts/config/rbfe_network.json", "artifacts/config/prepare_rbfe.ok"]
+    ]
+
+
+def test_rbfe_pipeline_prepares_network_before_equil() -> None:
+    from batter.pipeline.factory import make_rbfe_pipeline
+
+    pipeline = make_rbfe_pipeline(_make_sim_cfg(), sys_params={})
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert names[:4] == [
+        "system_prep",
+        "param_ligands",
+        "prepare_rbfe",
+        "prepare_equil",
+    ]
+    assert pipeline.dependencies("prepare_rbfe") == ["param_ligands"]
+    assert pipeline.dependencies("prepare_equil") == ["prepare_rbfe"]
 
 
 def test_save_fe_records_copies_rbfe_mapping_artifacts(

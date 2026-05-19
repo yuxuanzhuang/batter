@@ -349,6 +349,48 @@ def _build_current_kartograf_atom_mapper_for_simprep_x(
     )
 
 
+def _load_prepared_rbfe_mapping(
+    prepared_dir: Path | str | None,
+    dest_dir: Path,
+) -> tuple[dict[int, int], Any | None, bool]:
+    """Load and copy a mapping produced by prepare_rbfe, if present."""
+    if not prepared_dir:
+        return {}, None, False
+    source_dir = Path(prepared_dir)
+    source_json = source_dir / "mapping.json"
+    if not source_json.is_file():
+        return {}, None, False
+
+    data = json.loads(source_json.read_text())
+    if not isinstance(data, Mapping):
+        raise ValueError(f"Prepared RBFE mapping must be a JSON object: {source_json}")
+    map_b_to_a = {int(key): int(value) for key, value in data.items()}
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("mapping.json", "mapping.pkl", "mapping.png", "mapping_status.json"):
+        source = source_dir / name
+        if not source.exists():
+            continue
+        target = dest_dir / name
+        try:
+            if source.resolve() == target.resolve():
+                continue
+        except FileNotFoundError:
+            pass
+        shutil.copy2(source, target)
+
+    atom_mapping_obj = None
+    source_pkl = source_dir / "mapping.pkl"
+    if source_pkl.is_file():
+        try:
+            with source_pkl.open("rb") as fh:
+                atom_mapping_obj = pickle.load(fh)
+        except Exception as exc:
+            logger.debug(f"Could not load prepared RBFE mapping pickle: {exc}")
+
+    return map_b_to_a, atom_mapping_obj, True
+
+
 def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem.Mol:
     """
     Set atomic coordinates for mol from xyz (shape: (n_atoms, 3)).
@@ -1040,28 +1082,46 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     )
     lomap_options = _mapper_options_dict(extra.get("lomap_options") or extra.get("lomap"))
 
-    mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
-    mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
-    
     atom_mapping_obj = None
-    if atom_mapper_name == "lomap":
-        mapper = LomapAtomMapper(
-            **_lomap_mapper_kwargs(atom_mapper_options or lomap_options)
-        )
-        atom_mapping_obj = next(
-            mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
-        )
-        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
-    else:
-        mol_alt_aligned = align_mol_shape(mol_alt_component, ref_mol=mol_ref_component)
+    pair_id = str(extra.get("pair_id") or f"{lig_ref}~{lig_alt}")
+    prepared_mapping_dir = extra.get("prepared_mapping_dir") or (
+        sys_root / "artifacts" / "config" / "rbfe_mappings" / pair_id
+    )
+    map_b_to_a, atom_mapping_obj, used_prepared_mapping = _load_prepared_rbfe_mapping(
+        prepared_mapping_dir,
+        dest_dir,
+    )
 
-        mapper = _build_current_kartograf_atom_mapper_for_simprep_x(
-            atom_mapper_options or kartograf_options
+    if not used_prepared_mapping:
+        mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
+        mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
+
+        if atom_mapper_name == "lomap":
+            mapper = LomapAtomMapper(
+                **_lomap_mapper_kwargs(atom_mapper_options or lomap_options)
+            )
+            atom_mapping_obj = next(
+                mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
+            )
+            map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+        else:
+            mol_alt_aligned = align_mol_shape(
+                mol_alt_component,
+                ref_mol=mol_ref_component,
+            )
+
+            mapper = _build_current_kartograf_atom_mapper_for_simprep_x(
+                atom_mapper_options or kartograf_options
+            )
+            atom_mapping_obj = next(
+                mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
+            )
+            map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+        map_b_to_a = {int(key): int(value) for key, value in map_b_to_a.items()}
+    else:
+        logger.debug(
+            f"[simprep:x] using prepared RBFE mapping from {prepared_mapping_dir}"
         )
-        atom_mapping_obj = next(
-            mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
-        )
-        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
     # need to exclude hydrogens from the atom mapping
     # map_b_to_a = filter_exclude_hydroge_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
 
@@ -1187,19 +1247,20 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
 
-    with open(dest_dir / "mapping.json", "w") as f:
-        json.dump(map_b_to_a, f)
+    if not used_prepared_mapping:
+        with open(dest_dir / "mapping.json", "w") as f:
+            json.dump(map_b_to_a, f)
 
-    try:
-        with open(dest_dir / "mapping.pkl", "wb") as f:
-            pickle.dump(atom_mapping_obj, f)
-    except Exception:
-        pass
+        try:
+            with open(dest_dir / "mapping.pkl", "wb") as f:
+                pickle.dump(atom_mapping_obj, f)
+        except Exception:
+            pass
 
-    try:
-        atom_mapping_obj.draw_to_file(fname=dest_dir / "mapping.png")
-    except Exception:
-        pass
+        try:
+            atom_mapping_obj.draw_to_file(fname=dest_dir / "mapping.png")
+        except Exception:
+            pass
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 

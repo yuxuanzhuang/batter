@@ -190,12 +190,20 @@ Where RBFE mapping is stored
 BATTER writes the resolved network to:
 
 * ``executions/<run_id>/artifacts/config/rbfe_network.json``
+* ``executions/<run_id>/artifacts/config/rbfe_network.html``
+* ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.json``
+* ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.pkl``
+* ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.png``
+
+Open ``rbfe_network.html`` before production windows are submitted to inspect the
+planned ligand graph and atom-mapping images in the same interactive style as the
+Cinnabar dashboard.
 
 Transformation systems are created under:
 
 * ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/``
 
-For each transformation pair, BATTER stores atom-mapping artifacts in:
+For each transformation pair, BATTER copies the prepared atom-mapping artifacts into:
 
 * ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/fe/x/x-1/mapping.json``
 * ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/fe/x/x-1/mapping.pkl``
@@ -207,6 +215,7 @@ These generic ``mapping.*`` filenames are used for both ``kartograf`` and
 Pipeline notes
 --------------
 
-In RBFE, BATTER runs ligand-level prep/equilibration first, then builds
-transformation pairs from the resolved network and runs component ``x`` FE on
-those pairs.
+In RBFE, BATTER runs ``prepare_rbfe`` after ligand parametrization and before
+``prepare_equil``. This stage resolves the network and atom mappings once under
+``artifacts/config``. Later transformation setup copies those prepared mapping
+artifacts instead of generating new atom maps.
