@@ -771,7 +771,7 @@ def build_complex_z(ctx) -> bool:
             working_dir=workdir,
         )
     except RuntimeError:
-        logger.info(
+        logger.debug(
             f"[build_complex] Default candidates failed; retry with ALL ligand atoms for anchors in {ligand}"
         )
         lig_name_str = " ".join(str(x) for x in lig_names)
