@@ -161,7 +161,10 @@ class CreateArgs(BaseModel):
     # Environment / anchors
     anchor_atoms: list[str] = Field(
         default_factory=list,
-        description="List of anchor atom selections used for restraint placement.",
+        description=(
+            "List of three receptor anchor atom selections used for restraint "
+            "placement. If omitted, anchors are auto-selected from the first ligand."
+        ),
     )
     lipid_mol: list[str] = Field(
         default_factory=list,

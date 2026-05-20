@@ -263,6 +263,76 @@ def test_run_includes_dssp_in_manifest(monkeypatch, tmp_path: Path) -> None:
     assert saved_manifest["dssp"] == fake_dssp
 
 
+def test_run_auto_selects_anchor_atoms_when_omitted(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+
+    protein = tmp_path / "protein.pdb"
+    ligand = tmp_path / "ligand.pdb"
+    _make_protein_pdb(protein)
+    _make_ligand_pdb(ligand)
+
+    fake_dssp = {
+        "npy": str(system.root / "all-ligands" / "protein_input_dssp.npy"),
+        "json": str(system.root / "all-ligands" / "protein_input_dssp.json"),
+        "shape": [1, 2],
+        "results": [["H", "E"]],
+    }
+    selected = [
+        "resid 1 and name CA",
+        "resid 2 and name CA",
+        "resid 1 and name C",
+    ]
+    seen = {}
+
+    monkeypatch.setattr(
+        _SystemPrepRunner, "_run_input_protein_dssp", lambda self: fake_dssp
+    )
+    monkeypatch.setattr(_SystemPrepRunner, "_get_alignment", lambda self: None)
+
+    def _fake_process_system(self) -> None:
+        self.ligands_folder.mkdir(parents=True, exist_ok=True)
+        _make_protein_pdb(self.ligands_folder / "reference.pdb")
+        _make_protein_pdb(self.ligands_folder / f"{self.system_name}.pdb")
+
+    def _fake_prepare_all_ligands(self) -> None:
+        out = self.ligands_folder / "LIG1.pdb"
+        _make_ligand_pdb(out)
+        self.ligand_dict = {"LIG1": str(out)}
+
+    def _fake_select_receptor_anchor_atoms(*args, **kwargs):
+        seen["protein_dssp"] = kwargs.get("protein_dssp")
+        return selected
+
+    def _fake_find_anchor_atoms(*args, **kwargs):
+        seen["anchor_atoms"] = args[3]
+        return (1.0, 2.0, 3.0, ":1@CA", ":2@CA", ":1@C", 4.0)
+
+    monkeypatch.setattr(_SystemPrepRunner, "_process_system", _fake_process_system)
+    monkeypatch.setattr(
+        _SystemPrepRunner, "_prepare_all_ligands", _fake_prepare_all_ligands
+    )
+    monkeypatch.setattr(
+        system_prep_mod,
+        "select_receptor_anchor_atoms",
+        _fake_select_receptor_anchor_atoms,
+    )
+    monkeypatch.setattr(system_prep_mod, "find_anchor_atoms", _fake_find_anchor_atoms)
+
+    manifest = runner.run(
+        system_name="SYS",
+        protein_input=str(protein),
+        ligand_paths={"LIG1": str(ligand)},
+        anchor_atoms=[],
+    )
+
+    assert seen["protein_dssp"] == fake_dssp["results"]
+    assert seen["anchor_atoms"] == selected
+    assert manifest["anchor_atom_selections"] == selected
+
+
 def test_get_alignment_reduces_xy_area_and_rotates_ligand_without_system_input(
     tmp_path: Path,
 ) -> None:

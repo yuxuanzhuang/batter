@@ -25,7 +25,7 @@ from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
-from batter.utils.builder_utils import find_anchor_atoms
+from batter.utils.builder_utils import find_anchor_atoms, select_receptor_anchor_atoms
 
 _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
 _CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
@@ -435,6 +435,7 @@ class _SystemPrepRunner:
         self.verbose: bool = False
 
         self.ligand_dict: Dict[str, str] = {}
+        self.ligand_order: List[str] = []
         self.unique_mol_names: List[str] = []
         self.system_dimensions = np.zeros(3)
 
@@ -913,7 +914,10 @@ class _SystemPrepRunner:
             else None
         )
 
-        self.ligand_dict = {k: self._resolve_input_path(v) for k, v in ligand_paths.items()}
+        self.ligand_dict = {
+            k: self._resolve_input_path(v) for k, v in ligand_paths.items()
+        }
+        self.ligand_order = list(ligand_paths.keys())
         # prefer the provided keys for naming
         self.unique_mol_names = [k.upper() for k in ligand_paths.keys()]
 
@@ -1011,19 +1015,33 @@ class _SystemPrepRunner:
 
         # Anchors from first ligand + protein
         u_prot = mda.Universe(f"{self.output_dir}/all-ligands/reference.pdb")
-        first_ligand_path = sorted(self.ligand_dict.values())[0]
+        first_ligand_name = (
+            self.ligand_order[0]
+            if self.ligand_order
+            else sorted(self.ligand_dict)[0]
+        )
+        first_ligand_path = self.ligand_dict[first_ligand_name]
         u_lig = mda.Universe(first_ligand_path)
-        lig_sdf = str(Path(ligand_paths[self.unique_mol_names[0]]))
+        lig_sdf = str(Path(ligand_paths[first_ligand_name]))
+        resolved_anchor_atoms = list(anchor_atoms or [])
+        if not resolved_anchor_atoms:
+            resolved_anchor_atoms = select_receptor_anchor_atoms(
+                u_prot,
+                u_lig,
+                lig_sdf,
+                protein_dssp=dssp_result.get("results"),
+            )
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
             u_prot,
             u_lig,
             lig_sdf,
-            anchor_atoms,
+            resolved_anchor_atoms,
             ligand_anchor_atom,
             unbound_threshold=unbound_threshold,
+            protein_dssp=dssp_result.get("results"),
         )
-        self.anchor_atoms = anchor_atoms
+        self.anchor_atoms = resolved_anchor_atoms
         self.ligand_anchor_atom = ligand_anchor_atom
         self.l1_x, self.l1_y, self.l1_z = l1_x, l1_y, l1_z
         self.p1, self.p2, self.p3 = p1, p2, p3
@@ -1037,6 +1055,7 @@ class _SystemPrepRunner:
             "ligands": dict(self.ligand_dict),
             "dssp": dssp_result,
             "anchors": {"p1": self.p1, "p2": self.p2, "p3": self.p3},
+            "anchor_atom_selections": list(self.anchor_atoms),
             "l1": {
                 "x": self.l1_x,
                 "y": self.l1_y,
