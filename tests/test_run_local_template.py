@@ -437,3 +437,199 @@ exit 0
     mdin_text = (work / "mdin-template").read_text()
     assert "! target_dt=0.004" in mdin_text
     assert "dt=0.003000" in mdin_text
+
+
+def test_run_local_scales_segment_steps_when_dt_reduced(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    work = tmp_path
+    (work / "run-local.bash").write_text(script.read_text())
+    (work / "check_run.bash").write_text(check_run.read_text())
+    (work / "full.hmr.prmtop").write_text("prmtop")
+    (work / "full_merged.prmtop").write_text("prmtop")
+    (work / "eq.rst7").write_text(
+        "Cpptraj Generated Restart\n"
+        "64844  8.0000000E+01\n"
+        "  1.0  2.0  3.0\n"
+    )
+    (work / "mdin-template").write_text(
+        "! target_dt=0.004\n"
+        "! total_steps=1000000\n"
+        "irest = 1,\n"
+        "ntx   = 5,\n"
+        "nstlim = 1000000,\n"
+        "ntwr = 2500,\n"
+        "dt = 0.002,\n"
+    )
+
+    stub = work / "stub.sh"
+    _write_stub_exe(
+        stub,
+        """#!/usr/bin/env bash
+out=""
+rst=""
+nc=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) shift; out="$1";;
+    -r) shift; rst="$1";;
+    -x) shift; nc="$1";;
+  esac
+  shift
+done
+sed -nE 's/.*nstlim[[:space:]]*=[[:space:]]*([0-9]+).*/\\1/p' mdin-current | head -n 1 > run_steps.txt
+[[ -n "$out" ]] && echo "TIME(PS) = 4080.000000" > "$out"
+[[ -n "$rst" ]] && echo "time=4080.0000000000" > "$rst"
+[[ -n "$nc" ]] && echo "ok" > "$nc"
+exit 0
+""",
+    )
+    cpptraj_stub = work / "cpptraj"
+    _write_stub_exe(
+        cpptraj_stub,
+        """#!/usr/bin/env bash
+target=$(awk '/^trajout[[:space:]]+/ { print $2; exit }' < /dev/stdin)
+[[ -n "$target" ]] && echo "pdb" > "$target"
+exit 0
+""",
+    )
+    ncdump_stub = work / "ncdump"
+    _write_stub_exe(
+        ncdump_stub,
+        """#!/usr/bin/env bash
+file=""
+for arg in "$@"; do
+  if [[ "$arg" != -* ]]; then
+    file="$arg"
+  fi
+done
+time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
+[[ -n "$time" ]] || exit 1
+cat <<EOF
+        double time ;
+                time:units = "picosecond" ;
+ time = $time ;
+EOF
+exit 0
+""",
+    )
+
+    env = os.environ.copy()
+    env["PMEMD_EXEC"] = str(stub)
+    env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
+    env["RETRY_COUNT"] = "6"
+    env["PATH"] = f"{work}:{env.get('PATH','')}"
+
+    result = subprocess.run(
+        ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"],
+        cwd=work,
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Running segment 1 -> md-01.out for 2000000 steps (4000.000000 ps)" in result.stdout
+    assert (work / "run_steps.txt").read_text().strip() == "2000000"
+
+
+def test_run_local_subtracts_initial_restart_time_for_production_progress(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "run-local.bash"
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    work = tmp_path
+    (work / "run-local.bash").write_text(script.read_text())
+    (work / "check_run.bash").write_text(check_run.read_text())
+    (work / "full.hmr.prmtop").write_text("prmtop")
+    (work / "full_merged.prmtop").write_text("prmtop")
+    (work / "eq.rst7").write_text(
+        "Cpptraj Generated Restart\n"
+        "64844  8.0000000E+01\n"
+        "  1.0  2.0  3.0\n"
+    )
+    (work / "md-current.rst7").write_text("time=2080.0000000000\n")
+    (work / "md-01.out").write_text("CONTROL DATA FOR THE RUN\nTIME(PS) = 2080.000000\n")
+    (work / "md-01.nc").write_text("traj\n")
+    (work / "mdin-template").write_text(
+        "! target_dt=0.004\n"
+        "! total_steps=1000000\n"
+        "irest = 1,\n"
+        "ntx   = 5,\n"
+        "nstlim = 1000000,\n"
+        "ntwr = 2500,\n"
+        "dt = 0.002,\n"
+    )
+
+    stub = work / "stub.sh"
+    _write_stub_exe(
+        stub,
+        """#!/usr/bin/env bash
+out=""
+rst=""
+nc=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) shift; out="$1";;
+    -r) shift; rst="$1";;
+    -x) shift; nc="$1";;
+  esac
+  shift
+done
+sed -nE 's/.*nstlim[[:space:]]*=[[:space:]]*([0-9]+).*/\\1/p' mdin-current | head -n 1 > run_steps.txt
+[[ -n "$out" ]] && echo "TIME(PS) = 4080.000000" > "$out"
+[[ -n "$rst" ]] && echo "time=4080.0000000000" > "$rst"
+[[ -n "$nc" ]] && echo "ok" > "$nc"
+exit 0
+""",
+    )
+    cpptraj_stub = work / "cpptraj"
+    _write_stub_exe(
+        cpptraj_stub,
+        """#!/usr/bin/env bash
+target=$(awk '/^trajout[[:space:]]+/ { print $2; exit }' < /dev/stdin)
+[[ -n "$target" ]] && echo "pdb" > "$target"
+exit 0
+""",
+    )
+    ncdump_stub = work / "ncdump"
+    _write_stub_exe(
+        ncdump_stub,
+        """#!/usr/bin/env bash
+file=""
+for arg in "$@"; do
+  if [[ "$arg" != -* ]]; then
+    file="$arg"
+  fi
+done
+time=$(sed -nE 's/^time=([0-9.+-eE]+).*/\\1/p' "$file" | tail -n 1)
+[[ -n "$time" ]] || exit 1
+cat <<EOF
+        double time ;
+                time:units = "picosecond" ;
+ time = $time ;
+EOF
+exit 0
+""",
+    )
+
+    env = os.environ.copy()
+    env["PMEMD_EXEC"] = str(stub)
+    env["CPPTRAJ_EXEC"] = str(cpptraj_stub)
+    env["RETRY_COUNT"] = "6"
+    env["PATH"] = f"{work}:{env.get('PATH','')}"
+
+    result = subprocess.run(
+        ["bash", "-lc", f"PATH={work}:$PATH; source run-local.bash"],
+        cwd=work,
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Current completed production time: 2000 ps / 4000.000000 ps" in result.stdout
+    assert (work / "production-start.ps").read_text().strip() == "8.0000000E+01"
+    assert (work / "run_steps.txt").read_text().strip() == "1000000"

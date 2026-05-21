@@ -233,14 +233,16 @@ check_sim_failure() {
     local rst_file=$3
     local rst_file_prev=${4:-}
     local retry_count=${5:-${RETRY_COUNT:-${RETRY:-}}}
-    local extra_files=()
+    local -a extra_files=()
+    local extra_file_count=0
     if (( $# > 5 )); then
         extra_files=("${@:6}")
+        extra_file_count=${#extra_files[@]}
     fi
     retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
 
     cleanup_outputs() {
-        if ((${#extra_files[@]})); then
+        if (( extra_file_count > 0 )); then
             archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
         else
             archive_failed_job_files "$retry_count" "$log_file" "$rst_file"
@@ -431,6 +433,9 @@ report_progress() {
     if [[ $seg -ge 0 ]]; then
         stage="production"
         tps=$(completed_steps "mdin-template" 2>/dev/null || echo 0)
+        if [[ -s production-start.ps ]]; then
+            tps=$(production_elapsed_ps "$tps" "$(cat production-start.ps)")
+        fi
     elif ls eqnpt*.out >/dev/null 2>&1; then
         stage="equilibration"
         seg=$(highest_out_index_for_pattern "eqnpt*.out")
@@ -467,6 +472,42 @@ parse_nstlim() {
     nst=$(grep -E "^[[:space:]]*nstlim[[:space:]]*=" "$tmpl" | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
     [[ -n $nst ]] || { echo "[ERROR] Could not parse nstlim from $tmpl" >&2; return 1; }
     echo "$nst"
+}
+
+scale_steps_for_dt() {
+    local steps=$1
+    local target_dt=$2
+    local current_dt=$3
+
+    awk -v steps="$steps" -v target="$target_dt" -v current="$current_dt" '
+        BEGIN {
+            if (steps <= 0 || target <= 0 || current <= 0) {
+                print steps
+                exit
+            }
+            n = steps * target / current
+            whole = int(n)
+            if (n - whole > 1e-9) {
+                whole += 1
+            }
+            if (whole < 1) {
+                whole = 1
+            }
+            print whole
+        }
+    '
+}
+
+scaled_nstlim_for_dt() {
+    local tmpl=${1:-mdin-template}
+    local current_dt=${2:-}
+    local target_dt nstlim
+
+    nstlim=$(parse_nstlim "$tmpl") || return 1
+    target_dt=$(parse_target_dt_ps "$tmpl")
+    [[ -n $current_dt ]] || current_dt=$(parse_dt_ps "$tmpl")
+
+    scale_steps_for_dt "$nstlim" "$target_dt" "$current_dt"
 }
 
 # Parse dt (ps) from template; default 0.001 ps if missing/unparsable.
@@ -776,16 +817,56 @@ completed_time_ps_from_out() {
 completed_time_ps_from_rst() {
     local rst_file=$1
     [[ -f $rst_file ]] || { echo 0; return; }
-    command -v ncdump >/dev/null 2>&1 || { echo 0; return; }
+    local tps fallback_tps
 
-    ncdump -v time "$rst_file" 2>/dev/null | awk '
+    if command -v ncdump >/dev/null 2>&1; then
+        tps=$(ncdump -v time "$rst_file" 2>/dev/null | awk '
       BEGIN{IGNORECASE=1}
       tolower($1) == "time" && $2 == "=" {
         gsub(/;/, "", $3)
         print $3
         exit
       }
-    '
+        ')
+        if [[ -n $tps && $tps != 0 && $tps != 0.0 && $tps != 0.000 && $tps != 0.0000 ]]; then
+            echo "$tps"
+            return
+        fi
+    fi
+
+    if LC_ALL=C grep -Iq . "$rst_file"; then
+        fallback_tps=$(awk '
+          BEGIN{
+            num="^[-+]?[0-9]*\\.?[0-9]+([eEdD][-+]?[0-9]+)?$"
+          }
+          /^time[[:space:]]*=/ {
+            s=$0
+            sub(/^time[[:space:]]*=[[:space:]]*/, "", s)
+            gsub(/[[:space:];]/, "", s)
+            gsub(/[dD]/, "e", s)
+            if (s ~ num) {
+              print s
+              exit
+            }
+          }
+          NR == 2 && NF >= 2 {
+            s=$2
+            gsub(/[dD]/, "e", s)
+            if (s ~ num) {
+              print s
+              exit
+            }
+          }
+        ' "$rst_file")
+    fi
+
+    if [[ -n $fallback_tps ]]; then
+        echo "$fallback_tps"
+    elif [[ -n $tps ]]; then
+        echo "$tps"
+    else
+        echo 0
+    fi
 }
 
 completed_steps() {
@@ -866,6 +947,59 @@ completed_steps() {
     fi
 
     echo "$tps"
+}
+
+production_start_ps() {
+    local marker=${1:-production-start.ps}
+    local initial_rst=${2:-eq.rst7}
+    local start_ps
+
+    if [[ -s "$marker" ]]; then
+        start_ps=$(tr -d '[:space:]' < "$marker")
+        if [[ $start_ps =~ ^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]]; then
+            echo "$start_ps"
+            return
+        fi
+    fi
+
+    start_ps=$(completed_time_ps_from_rst "$initial_rst")
+    [[ -n $start_ps ]] || start_ps=0
+
+    mkdir -p "$(dirname -- "$marker")" 2>/dev/null || true
+    printf "%s\n" "$start_ps" > "$marker" 2>/dev/null || true
+    echo "$start_ps"
+}
+
+production_elapsed_ps() {
+    local absolute_ps=${1:-0}
+    local start_ps=${2:-0}
+
+    awk -v abs="$absolute_ps" -v start="$start_ps" '
+      BEGIN {
+        elapsed = abs - start
+        if (elapsed < 0) {
+          elapsed = 0
+        }
+        s = sprintf("%.10f", elapsed)
+        sub(/\.?0+$/, "", s)
+        if (s == "") {
+          s = "0"
+        }
+        print s
+      }
+    '
+}
+
+completed_production_ps() {
+    local tmpl=${1:-mdin-template}
+    local marker=${2:-production-start.ps}
+    local initial_rst=${3:-eq.rst7}
+    local absolute_ps start_ps
+
+    absolute_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    [[ -n $absolute_ps ]] || absolute_ps=0
+    start_ps=$(production_start_ps "$marker" "$initial_rst")
+    production_elapsed_ps "$absolute_ps" "$start_ps"
 }
 
 

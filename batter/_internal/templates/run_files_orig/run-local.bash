@@ -282,17 +282,22 @@ apply_retry_dt_reduction "$tmpl" "$retry" 0.001 "production startup"
 dt_ps=$(parse_dt_ps "$tmpl")
 target_dt_ps=$(parse_target_dt_ps "$tmpl")
 total_steps=$(parse_total_steps "$tmpl")
-chunk_steps=$(parse_nstlim "$tmpl")
+chunk_steps=$(scaled_nstlim_for_dt "$tmpl" "$dt_ps")
 
 # Convert target steps -> ps using the original requested dt; rerun steps use current dt.
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-# Progress from restart (completed_steps prints a single number to STDOUT)
-current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+# Progress is production elapsed time, not absolute Amber restart time.
+production_start_marker="production-start.ps"
+production_initial_rst="eq.rst7"
+start_ps=$(production_start_ps "$production_start_marker" "$production_initial_rst")
+restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+[[ -z $restart_ps ]] && restart_ps=0
+current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
 
-echo "Current completed time (from restart): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
+echo "Current completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps, dt=${dt_ps} ps)"
 
 # Determine current segment index from existing OUT files
 seg_idx=$(latest_md_index "md-*.out")
@@ -359,11 +364,12 @@ if (( remaining_steps > 0 )); then
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP_MERGED -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref ${win_00}/eq.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc"
 
-    # Update progress from restart. completed_steps will:
-    # - if latest out has 0 ps, use previous and delete the bad latest.
-    current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    # Update production elapsed time from the rolling restart.
+    restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    [[ -z $restart_ps ]] && restart_ps=0
+    current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0
-    echo "[INFO] Updated completed time (from restart): ${current_ps} ps / ${total_ps} ps"
+    echo "[INFO] Updated completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps)"
 
     rst_in="md-current.rst7"
     last_rst="md-current.rst7"

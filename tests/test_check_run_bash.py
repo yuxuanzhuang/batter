@@ -106,6 +106,26 @@ def test_target_dt_and_remaining_steps_use_reduced_dt(tmp_path: Path) -> None:
     assert result.stdout.strip() == "7"
 
 
+def test_scaled_nstlim_uses_target_dt_duration(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+
+    tmpl.write_text("! target_dt=0.004\nnstlim = 1000000,\ndt = 0.002,\n")
+
+    cmd = f"source '{check_run}' && scaled_nstlim_for_dt mdin-template"
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "2000000"
+
+
 def test_apply_retry_dt_reduction_is_idempotent(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
@@ -252,3 +272,27 @@ def test_write_mdin_current_same_file_redirect_keeps_template_dt(tmp_path: Path)
     current_text = current.read_text()
     assert "nstlim = 8," in current_text
     assert "dt = 0.004," in current_text
+
+
+def test_completed_time_ps_from_ascii_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    rst = tmp_path / "eq.rst7"
+    rst.write_text(
+        "Cpptraj Generated Restart\n"
+        "64844  8.0000000E+01\n"
+        "  1.0  2.0  3.0\n"
+    )
+
+    cmd = f"source '{check_run}' && completed_time_ps_from_rst '{rst}'"
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "8.0000000E+01"
+
