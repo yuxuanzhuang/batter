@@ -235,16 +235,27 @@ def _write_build_dry_no_water(build_pdb: Path, out_dry: Path) -> None:
                 continue
             fout.write(ln)
 
-def filter_exclude_hydroge_atoms(
+def filter_exclude_hydrogen_atoms(
     molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
 ) -> dict[int, int]:
-    """Force a mapping to exclde H atoms"""
+    """Force a mapping to exclude H atoms."""
     filtered_mapping = {}
     for i, j in mapping.items():
-        if molA.GetAtomWithIdx(i).GetAtomicNum() == 1 or molB.GetAtomWithIdx(j).GetAtomicNum() == 1:
+        if (
+            molA.GetAtomWithIdx(i).GetAtomicNum() == 1
+            or molB.GetAtomWithIdx(j).GetAtomicNum() == 1
+        ):
             continue
         filtered_mapping[i] = j
     return filtered_mapping
+
+
+def filter_exclude_hydroge_atoms(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Deprecated spelling; use filter_exclude_hydrogen_atoms."""
+    return filter_exclude_hydrogen_atoms(molA, molB, mapping)
+
 
 def filter_element_changes(
     molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
@@ -470,6 +481,13 @@ def force_mapped_coords_and_minimize(
         p = conf1.GetAtomPosition(i1)
         conf2.SetAtomPosition(i2, p)
 
+    mapped2 = sorted({i2 for _, i2 in atom_map_1to2})
+    if len(mapped2) >= lig2.GetNumAtoms():
+        logger.debug(
+            "Skipping constrained RDKit minimization because all atoms are fixed."
+        )
+        return Chem.Mol(lig2)
+
     # 3) Build force field
     lig2_ffmol = Chem.Mol(lig2)  # keep same object; just being explicit
     if ff.upper() == "MMFF":
@@ -483,7 +501,6 @@ def force_mapped_coords_and_minimize(
         raise ValueError("ff must be 'MMFF' or 'UFF'")
 
     # 4) Freeze or strongly restrain mapped atoms, then minimize
-    mapped2 = [i2 for _, i2 in atom_map_1to2]
     if restrain_instead_of_freeze:
         # Keep atoms near their exact target coords; still allows tiny relaxation
         # (maxDispl=0.0 means hard constraint in practice; you can set small >0 if needed)
@@ -1122,8 +1139,18 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
         logger.debug(
             f"[simprep:x] using prepared RBFE mapping from {prepared_mapping_dir}"
         )
-    # need to exclude hydrogens from the atom mapping
-    # map_b_to_a = filter_exclude_hydroge_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
+    # Keep RBFE common-core masks and coordinate restraints on heavy atoms only.
+    # Hydrogen-inclusive prepared maps can overconstrain RDKit minimization when
+    # every atom in the alternate ligand is mapped.
+    n_mapped_raw = len(map_b_to_a)
+    map_b_to_a = filter_exclude_hydrogen_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
+    if len(map_b_to_a) != n_mapped_raw:
+        logger.debug(
+            "[simprep:x] removed "
+            f"{n_mapped_raw - len(map_b_to_a)} hydrogen atom mapping(s)"
+        )
+    with open(dest_dir / "mapping.json", "w") as f:
+        json.dump(map_b_to_a, f, indent=2, sort_keys=True)
 
     logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
     atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
@@ -1248,9 +1275,6 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
 
     if not used_prepared_mapping:
-        with open(dest_dir / "mapping.json", "w") as f:
-            json.dump(map_b_to_a, f)
-
         try:
             with open(dest_dir / "mapping.pkl", "wb") as f:
                 pickle.dump(atom_mapping_obj, f)
