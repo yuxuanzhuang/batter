@@ -128,7 +128,13 @@ remove_empty_file_if_present() {
 md_out_has_amber_control_data() {
     local path=$1
     [[ -s "$path" ]] || return 1
-    grep -Eq 'CONTROL[[:space:]]+DATA[[:space:]]+FOR[[:space:]]+THE[[:space:]]+RUN' "$path"
+    grep -Eq 'CONTROL[[:space:]]+DATA[[:space:]]+FOR[[:space:]]+THE[[:space:]]+RUN|Amber[[:space:]]+[0-9]+[[:space:]]+PMEMD|File Assignments:|Here is the input file:' "$path"
+}
+
+md_out_has_completion_marker() {
+    local path=$1
+    [[ -s "$path" ]] || return 1
+    grep -Eq 'Final Performance Info|Total wall time' "$path"
 }
 
 archive_incomplete_md_out_if_present() {
@@ -149,6 +155,52 @@ archive_incomplete_md_out_if_present() {
         "${stem}.mdinfo"
     echo "[INFO] Archived incomplete MD output $path before restart."
     return 0
+}
+
+archive_suspect_md_restart_if_present() {
+    local restart_file=$1
+    local out_file=$2
+    local retry_count=${3:-}
+
+    [[ -n $restart_file && -s "$restart_file" ]] || return 1
+    [[ -n $out_file && -s "$out_file" ]] || return 1
+    md_out_has_amber_control_data "$out_file" || return 1
+    ! md_out_has_completion_marker "$out_file" || return 1
+
+    local stem
+    stem=${out_file%.out}
+    retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
+    archive_failed_job_files "$retry_count" \
+        "$out_file" \
+        "${stem}.nc" \
+        "${stem}.log" \
+        "${stem}.mden" \
+        "${stem}.mdinfo" \
+        "$restart_file"
+    echo "[INFO] Archived incomplete MD segment $out_file and suspect restart $restart_file before resume."
+    return 0
+}
+
+cleanup_suspect_md_resume_state() {
+    local retry_count=${1:-}
+    local latest_idx out_file
+
+    latest_idx=$(latest_md_index "md-*.out")
+    if [[ $latest_idx -lt 0 ]]; then
+        latest_idx=$(latest_md_index "md*.out")
+    fi
+    [[ $latest_idx -ge 0 ]] || return 0
+
+    out_file=$(printf "md-%02d.out" "$latest_idx")
+    if [[ ! -e "$out_file" ]]; then
+        out_file=$(printf "md%02d.out" "$latest_idx")
+    fi
+
+    if [[ -s md-current.rst7 ]]; then
+        archive_suspect_md_restart_if_present "md-current.rst7" "$out_file" "$retry_count" || true
+    elif [[ $latest_idx -le 1 && -s md-previous.rst7 ]]; then
+        archive_suspect_md_restart_if_present "md-previous.rst7" "$out_file" "$retry_count" || true
+    fi
 }
 
 cleanup_stale_empty_md_artifacts() {
@@ -181,6 +233,7 @@ cleanup_stale_empty_md_artifacts() {
                 archive_incomplete_md_out_if_present "$f" || true
             done
         fi
+        cleanup_suspect_md_resume_state
         return 0
     fi
 
@@ -201,6 +254,7 @@ cleanup_stale_empty_md_artifacts() {
     if [[ $nullglob_was_on -eq 0 ]]; then
         shopt -u nullglob
     fi
+    cleanup_suspect_md_resume_state
 }
 
 should_skip_completed_step() {
