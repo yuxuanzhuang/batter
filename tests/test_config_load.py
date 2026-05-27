@@ -9,7 +9,14 @@ from loguru import logger
 from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
-from batter.config.run import CreateArgs, FESimArgs, RunConfig, RunSection, MDSimArgs
+from batter.config.run import (
+    CreateArgs,
+    FESimArgs,
+    MDSimArgs,
+    RBFENetworkArgs,
+    RunConfig,
+    RunSection,
+)
 from batter.config.simulation import SimulationConfig
 from batter.config.utils import coerce_yes_no
 
@@ -131,6 +138,15 @@ rbfe:
     assert cfg.rbfe.kartograf.allow_bond_breaks is True
     assert cfg.rbfe.kartograf.filter_element_changes is False
     assert cfg.rbfe.kartograf.filter_mismatched_attached_h_count is False
+
+
+def test_rbfe_kartograf_mapper_defaults() -> None:
+    cfg = RBFENetworkArgs()
+
+    assert cfg.kartograf.atom_max_distance == 0.95
+    assert cfg.kartograf.map_exact_ring_matches_only is True
+    assert cfg.kartograf.allow_partial_fused_rings is True
+    assert cfg.kartograf.allow_bond_breaks is False
 
 
 def test_run_config_rejects_rbfe_kartograf_hydrogen_mapping_options(

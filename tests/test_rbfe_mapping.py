@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from batter.rbfe import (
+    _kartograf_mapper_kwargs,
     RBFENetwork,
     konnektor_pairs,
     load_mapping_file,
@@ -47,6 +48,15 @@ def test_load_mapping_file_json_adjacency(tmp_path: Path) -> None:
 def test_rbfe_network_default_mapping() -> None:
     network = RBFENetwork.from_ligands(["A", "B", "C"])
     assert network.pairs == (("A", "B"), ("A", "C"))
+
+
+def test_kartograf_mapper_kwargs_defaults() -> None:
+    kwargs = _kartograf_mapper_kwargs(None, atom_map_hydrogens_default=False)
+
+    assert kwargs["atom_max_distance"] == 0.95
+    assert kwargs["map_exact_ring_matches_only"] is True
+    assert kwargs["allow_partial_fused_rings"] is True
+    assert kwargs["allow_bond_breaks"] is False
 
 
 def test_resolve_mapping_konnektor_requires_orchestrator() -> None:
