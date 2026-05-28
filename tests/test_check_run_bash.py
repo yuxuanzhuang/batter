@@ -296,3 +296,57 @@ def test_completed_time_ps_from_ascii_restart(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == "8.0000000E+01"
 
+
+def test_cleanup_stale_md_artifacts_strict_archives_suspect_current_restart(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
+    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-01.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
+    )
+
+    cmd = f"source '{check_run}' && cleanup_stale_empty_md_artifacts strict"
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "suspect restart md-current.rst7" in result.stdout
+    assert not (tmp_path / "md-current.rst7").exists()
+    assert not (tmp_path / "md-01.out").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-current.rst7"))
+
+
+def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_current_restart(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
+    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-01.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
+    )
+
+    cmd = f"source '{check_run}' && cleanup_stale_empty_md_artifacts relaxed"
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "md-current.rst7").exists()
+    assert (tmp_path / "md-01.out").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()

@@ -161,6 +161,41 @@ def _setup_run_equil_only_eq(work: Path) -> tuple[dict[str, str], list[str]]:
     return env, cmd
 
 
+def _rst_with_time(time_ps: float) -> str:
+    return f"restart\n    1  {time_ps:.8f}\n"
+
+
+def _setup_run_equil_production(work: Path) -> tuple[dict[str, str], list[str]]:
+    env, cmd = _setup_run_equil_only_eq(work)
+    env.pop("ONLY_EQ", None)
+
+    _write_file(
+        work / "mdin-template",
+        "! total_steps=2500\n"
+        "nstlim = 500,\n"
+        "ntwr = 100,\n"
+        "dt = 0.004,\n",
+    )
+
+    for name in [
+        "mini.rst7",
+        "mini2.rst7",
+        "eqnvt.rst7",
+        "eqnpt_pre.rst7",
+        "eqnpt00.rst7",
+        "eqnpt01.rst7",
+        "eqnpt02.rst7",
+        "eqnpt03.rst7",
+        "eqnpt04.rst7",
+        "eqnpt_eq.rst7",
+        "eqnpt_disappear.rst7",
+    ]:
+        _write_file(work / name, "rst\n")
+    _write_file(work / "eqnpt_appear.rst7", _rst_with_time(664.0))
+
+    return env, cmd
+
+
 def test_run_local_only_eq_skips_existing_steps(tmp_path: Path) -> None:
     env, cmd = _setup_run_local_only_eq(tmp_path)
     for name in ["mini.rst7", "mini2.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
@@ -301,6 +336,34 @@ def test_run_equil_auto_reruns_existing_steps_on_wrapper_retry(tmp_path: Path) -
     assert "mini2.out" in calls
     assert "eqnpt_pre.out" in calls
     assert "eqnpt00.out" in calls
+
+
+def test_run_equil_keeps_current_restart_from_incomplete_segment(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_equil_production(tmp_path)
+    _write_file(
+        tmp_path / "md-01.out",
+        "CONTROL DATA FOR THE RUN\n"
+        " NSTEP =    10000   TIME(PS) =     668.000  TEMP(K) =   298.0\n",
+    )
+    _write_file(tmp_path / "md-current.rst7", _rst_with_time(668.0))
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "Running segment 2 -> md-02.out" in result.stdout
+    assert "restart_in=md-current.rst7" in result.stdout
+    assert "md-02.out" in calls
+    assert (tmp_path / "md-previous.rst7").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
 
 
 def test_run_equil_direct_step_failure_leaves_failed_marker(

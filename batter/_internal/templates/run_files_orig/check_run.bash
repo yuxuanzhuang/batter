@@ -183,7 +183,10 @@ archive_suspect_md_restart_if_present() {
 
 cleanup_suspect_md_resume_state() {
     local retry_count=${1:-}
+    local resume_mode=${2:-strict}
     local latest_idx out_file
+
+    [[ $resume_mode == strict ]] || return 0
 
     latest_idx=$(latest_md_index "md-*.out")
     if [[ $latest_idx -lt 0 ]]; then
@@ -204,6 +207,7 @@ cleanup_suspect_md_resume_state() {
 }
 
 cleanup_stale_empty_md_artifacts() {
+    local resume_mode=${1:-strict}
     local pattern f
     local patterns=(
         "md-*.out"
@@ -233,7 +237,7 @@ cleanup_stale_empty_md_artifacts() {
                 archive_incomplete_md_out_if_present "$f" || true
             done
         fi
-        cleanup_suspect_md_resume_state
+        cleanup_suspect_md_resume_state "" "$resume_mode"
         return 0
     fi
 
@@ -254,7 +258,7 @@ cleanup_stale_empty_md_artifacts() {
     if [[ $nullglob_was_on -eq 0 ]]; then
         shopt -u nullglob
     fi
-    cleanup_suspect_md_resume_state
+    cleanup_suspect_md_resume_state "" "$resume_mode"
 }
 
 should_skip_completed_step() {

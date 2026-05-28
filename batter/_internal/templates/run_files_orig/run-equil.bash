@@ -75,7 +75,7 @@ run_penetration_check() {
 }
 
 archive_existing_log_file "$log_file"
-cleanup_stale_empty_md_artifacts
+cleanup_stale_empty_md_artifacts relaxed
 
 tmpl="mdin-template"
 mdin_current="mdin-current"
