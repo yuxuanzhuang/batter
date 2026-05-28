@@ -26,7 +26,11 @@ from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
-from batter.utils.builder_utils import find_anchor_atoms, select_receptor_anchor_atoms
+from batter.utils.builder_utils import (
+    find_anchor_atoms,
+    select_apo_receptor_anchor_atoms,
+    select_receptor_anchor_atoms,
+)
 
 _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
 _CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
@@ -1026,12 +1030,19 @@ class _SystemPrepRunner:
         lig_sdf = str(Path(ligand_paths[first_ligand_name]))
         resolved_anchor_atoms = list(anchor_atoms or [])
         if not resolved_anchor_atoms:
-            resolved_anchor_atoms = select_receptor_anchor_atoms(
-                u_prot,
-                u_lig,
-                lig_sdf,
-                protein_dssp=dssp_result.get("results"),
-            )
+            apo_only = all(is_apo_ligand_path(path) for path in ligand_paths.values())
+            if apo_only:
+                resolved_anchor_atoms = select_apo_receptor_anchor_atoms(
+                    u_prot,
+                    protein_dssp=dssp_result.get("results"),
+                )
+            else:
+                resolved_anchor_atoms = select_receptor_anchor_atoms(
+                    u_prot,
+                    u_lig,
+                    lig_sdf,
+                    protein_dssp=dssp_result.get("results"),
+                )
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
             u_prot,

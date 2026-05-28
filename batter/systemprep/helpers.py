@@ -19,6 +19,7 @@ except Exception as e:  # pragma: no cover - RDKit optional at runtime
 __all__ = [
     "find_anchor_atoms",
     "get_ligand_candidates",
+    "select_apo_receptor_anchor_atoms",
     "select_receptor_anchor_atoms",
     "select_ions_away_from_complex",
     "get_buffer_z",
@@ -188,6 +189,71 @@ def select_receptor_anchor_atoms(
     )
 
 
+def select_apo_receptor_anchor_atoms(
+    u_prot: mda.Universe,
+    *,
+    protein_dssp: Any = None,
+    min_anchor_distance: float = 8.0,
+    target_angle: float = 90.0,
+    max_candidates: int = 120,
+    max_p1_candidates: int = 30,
+) -> List[str]:
+    """
+    Automatically choose receptor P1/P2/P3 anchors without using a ligand pose.
+
+    Apo MD runs only need stable, non-degenerate receptor anchors to keep the
+    existing BATTER equilibration machinery wired. Unlike
+    :func:`select_receptor_anchor_atoms`, this selector deliberately ignores the
+    ligand position and scores protein backbone triplets around the protein core,
+    preferring the usual BATTER geometry without making it a hard requirement.
+    """
+    if min_anchor_distance <= 0:
+        raise ValueError("min_anchor_distance must be positive.")
+
+    base_candidates = _protein_backbone_anchor_candidates(u_prot)
+    if base_candidates.n_atoms < 3:
+        raise ValueError(
+            "Could not auto-select apo receptor anchors: fewer than three protein "
+            "backbone candidate atoms (CA/C/N) were found."
+        )
+
+    candidate_tiers = [
+        (
+            "DSSP stable secondary structure",
+            _dssp_filtered_candidates(base_candidates, protein_dssp),
+        ),
+        ("trimmed protein chains", _chain_trimmed_candidates(base_candidates)),
+        ("all protein backbone candidates", base_candidates),
+    ]
+    for tier_name, tier_candidates in candidate_tiers:
+        if tier_candidates.n_atoms < 3:
+            continue
+        anchors = _score_apo_anchor_triplets(
+            tier_candidates,
+            min_anchor_distance=min_anchor_distance,
+            target_angle=target_angle,
+            max_candidates=max_candidates,
+            max_p1_candidates=max_p1_candidates,
+        )
+        if anchors is None:
+            continue
+        selections = [_atom_selection(atom, u_prot) for atom in anchors]
+        logger.info(
+            "Auto-selected apo receptor anchors from {}: P1={}, P2={}, P3={}",
+            tier_name,
+            selections[0],
+            selections[1],
+            selections[2],
+        )
+        return selections
+
+    raise ValueError(
+        "Could not auto-select apo receptor anchors: fewer than three distinct, "
+        "non-degenerate protein backbone residues were usable. Provide "
+        "create.anchor_atoms manually."
+    )
+
+
 def _protein_backbone_anchor_candidates(u_prot: mda.Universe) -> mda.AtomGroup:
     name_clause = " ".join(_BACKBONE_ANCHOR_NAMES)
     candidates = u_prot.select_atoms(
@@ -196,6 +262,89 @@ def _protein_backbone_anchor_candidates(u_prot: mda.Universe) -> mda.AtomGroup:
     if candidates.n_atoms >= 3:
         return candidates
     return u_prot.select_atoms(f"protein and name {name_clause}")
+
+
+def _one_backbone_atom_per_residue(candidates: mda.AtomGroup) -> list[Any]:
+    """Pick one backbone anchor candidate per residue, preferring CA atoms."""
+    atoms: list[Any] = []
+    for residue in candidates.residues:
+        residue_candidates = candidates.intersection(residue.atoms)
+        ca_atoms = residue_candidates.select_atoms("name CA")
+        if ca_atoms.n_atoms:
+            atoms.append(ca_atoms[0])
+        elif residue_candidates.n_atoms:
+            atoms.append(residue_candidates[0])
+    return atoms
+
+
+def _score_apo_anchor_triplets(
+    candidates: mda.AtomGroup,
+    *,
+    min_anchor_distance: float,
+    target_angle: float,
+    max_candidates: int,
+    max_p1_candidates: int,
+) -> list[Any] | None:
+    atoms = _one_backbone_atom_per_residue(candidates)
+    if len(atoms) < 3:
+        return None
+
+    protein_center = candidates.universe.select_atoms("protein").center_of_geometry()
+    atom_records = [
+        {
+            "atom": atom,
+            "center_distance": float(np.linalg.norm(atom.position - protein_center)),
+        }
+        for atom in atoms
+    ]
+    atom_records.sort(key=lambda item: (item["center_distance"], item["atom"].index))
+    limited_records = atom_records[: max(3, int(max_candidates))]
+    p1_records = atom_records[: max(1, int(max_p1_candidates))]
+
+    best_score: float | None = None
+    best_atoms: list[Any] | None = None
+    for p1_record in p1_records:
+        p1 = p1_record["atom"]
+        for p2_record in limited_records:
+            p2 = p2_record["atom"]
+            if p2.residue.ix == p1.residue.ix:
+                continue
+            d12 = float(np.linalg.norm(p1.position - p2.position))
+            for p3_record in limited_records:
+                p3 = p3_record["atom"]
+                if p3.residue.ix in {p1.residue.ix, p2.residue.ix}:
+                    continue
+                d23 = float(np.linalg.norm(p2.position - p3.position))
+                angle = _angle_degrees(p1.position, p2.position, p3.position)
+                if angle is None:
+                    continue
+                distance_shortfall = max(0.0, min_anchor_distance - d12) + max(
+                    0.0,
+                    min_anchor_distance - d23,
+                )
+                score = (
+                    abs(angle - target_angle) / target_angle
+                    + 0.10 * distance_shortfall
+                    + 0.01
+                    * (
+                        p1_record["center_distance"]
+                        + p2_record["center_distance"]
+                        + p3_record["center_distance"]
+                    )
+                    + 0.01
+                    * (
+                        abs(d12 - min_anchor_distance)
+                        + abs(d23 - min_anchor_distance)
+                    )
+                    + (0.0 if p1.name == "CA" else 0.05)
+                    + (0.0 if p2.name == "CA" else 0.05)
+                    + (0.0 if p3.name == "CA" else 0.05)
+                )
+                if best_score is None or score < best_score:
+                    best_score = score
+                    best_atoms = [p1, p2, p3]
+
+    return best_atoms
 
 
 def _valid_ligand_indices(u_lig: mda.Universe, indices: Sequence[int]) -> list[int]:

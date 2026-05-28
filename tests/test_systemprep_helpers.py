@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import MDAnalysis as mda
 import pytest
 
-from batter.systemprep.helpers import find_anchor_atoms, select_receptor_anchor_atoms
+mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
+
+from batter.systemprep.helpers import (
+    find_anchor_atoms,
+    select_apo_receptor_anchor_atoms,
+    select_receptor_anchor_atoms,
+)
 
 
 def _atom_line(
@@ -122,6 +127,60 @@ def test_select_receptor_anchor_atoms_uses_ligand_pose_and_geometry(
         mda.Universe(str(ligand)),
         host_min_distance=0.0,
         host_max_distance=20.0,
+        max_candidates=10,
+        max_p1_candidates=4,
+    )
+
+    assert selections == [
+        "protein and resid 1 and name CA",
+        "protein and resid 2 and name CA",
+        "protein and resid 3 and name CA",
+    ]
+
+
+def test_select_apo_receptor_anchor_atoms_does_not_need_ligand(
+    tmp_path: Path,
+) -> None:
+    protein = tmp_path / "protein_apo_auto.pdb"
+    _write_pdb(
+        protein,
+        [
+            _atom_line(1, "CA", "ALA", "A", 1, 0.0, 0.0, 0.0, "C"),
+            _atom_line(2, "CA", "ALA", "A", 2, 0.0, 8.0, 0.0, "C"),
+            _atom_line(3, "CA", "ALA", "A", 3, 8.0, 8.0, 0.0, "C"),
+            _atom_line(4, "CA", "ALA", "A", 4, -8.0, 8.0, 0.0, "C"),
+        ],
+    )
+
+    selections = select_apo_receptor_anchor_atoms(
+        mda.Universe(str(protein)),
+        max_candidates=10,
+        max_p1_candidates=4,
+    )
+
+    assert selections == [
+        "protein and resid 1 and name CA",
+        "protein and resid 2 and name CA",
+        "protein and resid 3 and name CA",
+    ]
+
+
+def test_select_apo_receptor_anchor_atoms_relaxes_spacing_for_apo_md(
+    tmp_path: Path,
+) -> None:
+    protein = tmp_path / "protein_apo_compact.pdb"
+    _write_pdb(
+        protein,
+        [
+            _atom_line(1, "CA", "ALA", "A", 1, 0.0, 0.0, 0.0, "C"),
+            _atom_line(2, "CA", "ALA", "A", 2, 0.0, 3.0, 0.0, "C"),
+            _atom_line(3, "CA", "ALA", "A", 3, 3.0, 3.0, 0.0, "C"),
+        ],
+    )
+
+    selections = select_apo_receptor_anchor_atoms(
+        mda.Universe(str(protein)),
+        min_anchor_distance=8.0,
         max_candidates=10,
         max_p1_candidates=4,
     )
