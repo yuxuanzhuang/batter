@@ -11,7 +11,7 @@ import shutil
 import string
 from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
 
 import MDAnalysis as mda
 import numpy as np
@@ -42,6 +42,40 @@ def _as_abs(p: str | Path | None, base: Path) -> Path | None:
         return None
     p = Path(p)
     return p if p.is_absolute() else (base / p).resolve()
+
+
+def _select_anchor_reference_ligand(
+    ligand_order: Sequence[str],
+    ligand_paths: Mapping[str, Any],
+) -> tuple[str, bool]:
+    """
+    Return the ligand to use for receptor-anchor and L1 geometry setup.
+
+    Mixed MD runs can include an apo dummy plus one or more real ligands. The
+    dummy keeps downstream ligand-oriented setup code wired, but it should not
+    drive ligand-pose receptor-anchor selection when a real ligand pose exists.
+    """
+    if not ligand_paths:
+        raise ValueError("No ligands available for anchor reference selection.")
+
+    ordered_names = [name for name in ligand_order if name in ligand_paths]
+    seen_names = set(ordered_names)
+    ordered_names.extend(
+        name for name in sorted(ligand_paths, key=str) if name not in seen_names
+    )
+    for name in ordered_names:
+        if not is_apo_ligand_path(ligand_paths[name]):
+            return name, False
+    return ordered_names[0], True
+
+
+def _ligand_sdf_reference(path: Any, *, is_apo: bool) -> str | None:
+    if is_apo:
+        return None
+    p = Path(path)
+    if p.suffix.lower() != ".sdf":
+        return None
+    return str(p)
 
 
 def _copy(src: Path, dst: Path) -> None:
@@ -1018,20 +1052,31 @@ class _SystemPrepRunner:
         # Make <ligand>.pdb for each ligand by translation-only
         self._prepare_all_ligands()
 
-        # Anchors from first ligand + protein
+        # Anchors from a real ligand + protein when available, otherwise apo protein geometry.
         u_prot = mda.Universe(f"{self.output_dir}/all-ligands/reference.pdb")
-        first_ligand_name = (
-            self.ligand_order[0]
-            if self.ligand_order
-            else sorted(self.ligand_dict)[0]
+        anchor_ligand_name, anchor_ligand_is_apo = _select_anchor_reference_ligand(
+            self.ligand_order,
+            ligand_paths,
         )
-        first_ligand_path = self.ligand_dict[first_ligand_name]
-        u_lig = mda.Universe(first_ligand_path)
-        lig_sdf = str(Path(ligand_paths[first_ligand_name]))
+        if (
+            self.ligand_order
+            and anchor_ligand_name != self.ligand_order[0]
+            and not anchor_ligand_is_apo
+        ):
+            logger.info(
+                "[system_prep] Using real ligand '{}' for anchor reference instead of apo dummy '{}'.",
+                anchor_ligand_name,
+                self.ligand_order[0],
+            )
+        anchor_ligand_path = self.ligand_dict[anchor_ligand_name]
+        u_lig = mda.Universe(anchor_ligand_path)
+        lig_sdf = _ligand_sdf_reference(
+            ligand_paths[anchor_ligand_name],
+            is_apo=anchor_ligand_is_apo,
+        )
         resolved_anchor_atoms = list(anchor_atoms or [])
         if not resolved_anchor_atoms:
-            apo_only = all(is_apo_ligand_path(path) for path in ligand_paths.values())
-            if apo_only:
+            if anchor_ligand_is_apo:
                 resolved_anchor_atoms = select_apo_receptor_anchor_atoms(
                     u_prot,
                     protein_dssp=dssp_result.get("results"),

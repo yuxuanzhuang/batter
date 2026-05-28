@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import MDAnalysis as mda
 import numpy as np
 import pytest
 
+mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
+
+from batter.config.utils import apo_ligand_source_path
 from batter.exec.handlers import system_prep as system_prep_mod
 from batter.exec.handlers.system_prep import (
     _SystemPrepRunner,
     _find_min_xy_box_rotation,
+    _select_anchor_reference_ligand,
 )
 from batter.systems.core import SimSystem
 
@@ -79,6 +82,16 @@ def _make_ligand_pdb(path: Path) -> None:
         [
             _atom_line(1, "C1", "LIG", "L", 1, 0.0, 0.0, 0.0, "C"),
             _atom_line(2, "C2", "LIG", "L", 1, 1.0, 0.0, 0.0, "C"),
+        ],
+    )
+
+
+def _make_ligand_pdb_at(path: Path, x: float) -> None:
+    _write_pdb(
+        path,
+        [
+            _atom_line(1, "C1", "LIG", "L", 1, x, 0.0, 0.0, "C"),
+            _atom_line(2, "C2", "LIG", "L", 1, x + 1.0, 0.0, 0.0, "C"),
         ],
     )
 
@@ -328,6 +341,117 @@ def test_run_auto_selects_anchor_atoms_when_omitted(
         anchor_atoms=[],
     )
 
+    assert seen["protein_dssp"] == fake_dssp["results"]
+    assert seen["anchor_atoms"] == selected
+    assert manifest["anchor_atom_selections"] == selected
+
+
+def test_select_anchor_reference_ligand_prefers_real_ligand_when_apo_first(
+    tmp_path: Path,
+) -> None:
+    ligand = tmp_path / "ligand.sdf"
+    ligand.write_text("dummy\n")
+
+    name, is_apo = _select_anchor_reference_ligand(
+        ["APO", "PF06882961"],
+        {
+            "APO": apo_ligand_source_path(),
+            "PF06882961": ligand,
+        },
+    )
+
+    assert name == "PF06882961"
+    assert is_apo is False
+
+
+def test_run_uses_real_ligand_as_anchor_reference_when_apo_is_present(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+
+    protein = tmp_path / "protein.pdb"
+    real_ligand = tmp_path / "pf06882961.sdf"
+    _make_protein_pdb(protein)
+    real_ligand.write_text("dummy\n")
+
+    fake_dssp = {
+        "npy": str(system.root / "all-ligands" / "protein_input_dssp.npy"),
+        "json": str(system.root / "all-ligands" / "protein_input_dssp.json"),
+        "shape": [1, 2],
+        "results": [["H", "E"]],
+    }
+    selected = [
+        "resid 1 and name CA",
+        "resid 2 and name CA",
+        "resid 1 and name C",
+    ]
+    seen = {}
+
+    monkeypatch.setattr(
+        _SystemPrepRunner, "_run_input_protein_dssp", lambda self: fake_dssp
+    )
+    monkeypatch.setattr(_SystemPrepRunner, "_get_alignment", lambda self: None)
+
+    def _fake_process_system(self) -> None:
+        self.ligands_folder.mkdir(parents=True, exist_ok=True)
+        _make_protein_pdb(self.ligands_folder / "reference.pdb")
+        _make_protein_pdb(self.ligands_folder / f"{self.system_name}.pdb")
+
+    def _fake_prepare_all_ligands(self) -> None:
+        apo_out = self.ligands_folder / "APO.pdb"
+        real_out = self.ligands_folder / "PF06882961.pdb"
+        _make_ligand_pdb_at(apo_out, -10.0)
+        _make_ligand_pdb_at(real_out, 10.0)
+        self.ligand_dict = {
+            "APO": str(apo_out),
+            "PF06882961": str(real_out),
+        }
+
+    def _fake_select_receptor_anchor_atoms(_u_prot, u_lig, lig_sdf, **kwargs):
+        seen["lig_sdf"] = lig_sdf
+        seen["ligand_first_x"] = float(u_lig.atoms.positions[0][0])
+        seen["protein_dssp"] = kwargs.get("protein_dssp")
+        return selected
+
+    def _fake_find_anchor_atoms(_u_prot, u_lig, lig_sdf, anchor_atoms, *_args, **_kwargs):
+        seen["find_lig_sdf"] = lig_sdf
+        seen["find_ligand_first_x"] = float(u_lig.atoms.positions[0][0])
+        seen["anchor_atoms"] = anchor_atoms
+        return (1.0, 2.0, 3.0, ":1@CA", ":2@CA", ":1@C", 4.0)
+
+    monkeypatch.setattr(_SystemPrepRunner, "_process_system", _fake_process_system)
+    monkeypatch.setattr(
+        _SystemPrepRunner, "_prepare_all_ligands", _fake_prepare_all_ligands
+    )
+    monkeypatch.setattr(
+        system_prep_mod,
+        "select_receptor_anchor_atoms",
+        _fake_select_receptor_anchor_atoms,
+    )
+    monkeypatch.setattr(
+        system_prep_mod,
+        "select_apo_receptor_anchor_atoms",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("apo anchor selector should not be used")
+        ),
+    )
+    monkeypatch.setattr(system_prep_mod, "find_anchor_atoms", _fake_find_anchor_atoms)
+
+    manifest = runner.run(
+        system_name="SYS",
+        protein_input=str(protein),
+        ligand_paths={
+            "APO": str(apo_ligand_source_path()),
+            "PF06882961": str(real_ligand),
+        },
+        anchor_atoms=[],
+    )
+
+    assert seen["lig_sdf"] == str(real_ligand)
+    assert seen["find_lig_sdf"] == str(real_ligand)
+    assert seen["ligand_first_x"] == pytest.approx(10.0)
+    assert seen["find_ligand_first_x"] == pytest.approx(10.0)
     assert seen["protein_dssp"] == fake_dssp["results"]
     assert seen["anchor_atoms"] == selected
     assert manifest["anchor_atom_selections"] == selected
