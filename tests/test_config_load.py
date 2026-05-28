@@ -100,6 +100,49 @@ def test_create_args_accepts_null_apo_ligand() -> None:
     assert args.ligand_paths == {"APO": apo_ligand_source_path()}
 
 
+def test_run_config_hoists_legacy_top_level_buffer_z(tmp_path: Path) -> None:
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy\n")
+    run_yaml = tmp_path / "legacy_buffer.yaml"
+    run_yaml.write_text(
+        f"""
+protocol: abfe
+buffer_z: 12.5
+z_n_steps: 1000
+z_lambdas: [0.0, 1.0]
+run:
+  output_folder: "{tmp_path / 'work'}"
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig_file}"
+fe_sim: {{}}
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.fe_sim.buffer_z == 12.5
+    assert sim_cfg.buffer_z == 12.5
+
+
+def test_md_run_config_accepts_legacy_top_level_buffer_z() -> None:
+    cfg = RunConfig.model_validate(
+        {
+            "protocol": "md",
+            "buffer_z": 10.0,
+            "run": {"output_folder": "work"},
+            "create": {"system_name": "sys", "ligand_paths": {None: None}},
+            "fe_sim": {},
+        }
+    )
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.fe_sim.buffer_z == 10.0
+    assert sim_cfg.buffer_z == 10.0
+
+
 def test_run_config_accepts_rbfe_mapper_options(tmp_path: Path) -> None:
     lig1 = tmp_path / "lig1.sdf"
     lig2 = tmp_path / "lig2.sdf"

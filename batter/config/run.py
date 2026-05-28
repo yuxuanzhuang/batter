@@ -663,6 +663,16 @@ class MDSimArgs(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration (1 = on).",
     )
+    buffer_x: float = Field(10.0, description="Box padding along X (Å).")
+    buffer_y: float = Field(10.0, description="Box padding along Y (Å).")
+    buffer_z: float = Field(15.0, description="Box padding along Z (Å).")
+    unbound_threshold: float = Field(
+        8.0,
+        ge=0.0,
+        description=(
+            "Distance threshold (Å) used to flag ligands as unbound during system prep."
+        ),
+    )
 
     @field_validator("hmr", "enable_mcwat", mode="before")
     @classmethod
@@ -954,6 +964,48 @@ class RunConfig(BaseModel):
     rbfe: RBFENetworkArgs | None = Field(
         default=None, description="RBFE network mapping configuration."
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hoist_legacy_top_level_sim_fields(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        payload = dict(data)
+        proto = str(payload.get("protocol", "abfe")).lower()
+        target_fields = (
+            set(MDSimArgs.model_fields)
+            if proto == "md"
+            else set(FESimArgs.model_fields)
+        )
+        target_fields.update({"steps2"})
+
+        hoisted: dict[str, Any] = {}
+        for key in list(payload.keys()):
+            text_key = str(key)
+            if text_key in target_fields or re.match(
+                r"^[a-z]_(?:lambdas|n_steps|steps[12])$",
+                text_key,
+            ):
+                hoisted[text_key] = payload.pop(key)
+
+        if not hoisted:
+            return payload
+
+        current = payload.get("fe_sim") or {}
+        if isinstance(current, BaseModel):
+            fe_payload = current.model_dump()
+        elif isinstance(current, Mapping):
+            fe_payload = dict(current)
+        else:
+            raise ValueError(
+                "fe_sim must be a mapping when legacy top-level simulation keys are present."
+            )
+
+        for key, value in hoisted.items():
+            fe_payload.setdefault(key, value)
+        payload["fe_sim"] = fe_payload
+        return payload
 
     @model_validator(mode="after")
     def _coerce_fe_sim_model(self) -> "RunConfig":
