@@ -257,6 +257,7 @@ def _apply_restraintmask_length_limit(
     cache_dir: Optional[Path] = None,
     cache_tag: Optional[str] = None,
     cache_master: bool = False,
+    max_mask_chars: int = 256,
 ) -> None:
     if not mdin_path.exists():
         return
@@ -274,6 +275,9 @@ def _apply_restraintmask_length_limit(
         out_lines.append(line)
 
     if not mask:
+        return
+
+    if len(mask) <= max_mask_chars:
         return
 
     cache_path = None

@@ -630,20 +630,20 @@ def write_build_from_aligned(
     y_max = float(0.0)
     for dfile in sorted(build_dir.glob("dum[0-9]*.pdb")):
         dlines = [ln for ln in dfile.read_text().splitlines() if ln.strip()]
-        # convention: coordinates on the 2nd line (index 1)
-        if len(dlines) >= 2 and _is_atom_line(dlines[1]):
-            x = float(_field(dlines[1], 30, 38) or 0.0)
-            y = float(_field(dlines[1], 38, 46) or 0.0)
-            z = float(_field(dlines[1], 46, 54) or 0.0)
-            name = _field(dlines[1], 12, 16) or "DU"
-            resname = _field(dlines[1], 17, 20) or "DUM"
-            resid = int(float(_field(dlines[1], 22, 26) or 1))
-            chain = _field(dlines[1], 21, 22) or "A"
+        atom_line = next((ln for ln in dlines if _is_atom_line(ln)), None)
+        if atom_line is not None:
+            x = float(_field(atom_line, 30, 38) or 0.0)
+            y = float(_field(atom_line, 38, 46) or 0.0)
+            z = float(_field(atom_line, 46, 54) or 0.0)
+            name = _field(atom_line, 12, 16) or "Pb"
+            resname = _field(atom_line, 17, 20) or "DUM"
+            resid = int(float(_field(atom_line, 22, 26) or 1))
+            chain = _field(atom_line, 21, 22) or "A"
             coords_dum.append((x, y, z))
             atom_dum.append((name, resname, resid, chain))
     if not coords_dum:
         coords_dum.append((0.0, 0.0, 0.0))
-        atom_dum.append(("DU", "DUM", 1, "Z"))
+        atom_dum.append(("Pb", "DUM", 1, "Z"))
 
     dum_count = len(coords_dum)
 
@@ -793,12 +793,14 @@ def _read_ligand_anchor_names(
     if not txt.exists():
         logger.warning(f"[simprep] anchors file not found: {txt}")
         return None, None, None
-    line = _read_nonblank_lines(txt)[0]
-    parts = line.split()
-    if len(parts) < 3:
-        logger.warning(f"[simprep] anchors file malformed: '{line}'")
+    lines = _read_nonblank_lines(txt)
+    if not lines:
+        logger.warning(f"[simprep] anchors file empty: {txt}")
         return None, None, None
-    return parts[0], parts[1], parts[2]
+    line = lines[0]
+    parts = line.split()
+    padded = (parts + [None, None, None])[:3]
+    return padded[0], padded[1], padded[2]
 
 
 def _mask(resid: int, atom: Optional[str]) -> Optional[str]:

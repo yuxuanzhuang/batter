@@ -1,4 +1,2 @@
 HETATM    1 DU1  APO A   1       0.000   0.000   0.000  0.00  0.00          Pb
-HETATM    2 DU2  APO A   1       4.000   0.000   0.000  0.00  0.00          Pb
-HETATM    3 DU3  APO A   1       0.000   4.000   0.000  0.00  0.00          Pb
 END

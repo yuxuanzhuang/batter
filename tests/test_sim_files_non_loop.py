@@ -162,6 +162,22 @@ def test_restraintmask_long_mask_converts_to_legacy_group(tmp_path: Path) -> Non
     assert "ATOM 1 1" in text
 
 
+def test_restraintmask_short_mask_is_left_as_mask(tmp_path: Path) -> None:
+    mdin = tmp_path / "mdin-test.in"
+    original = (
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 5.0,\n"
+        "  restraintmask = '(@CA,C,N,P31 | :apo | :1) & !@H=',\n"
+        "/\n"
+    )
+    mdin.write_text(original)
+
+    sim_files._apply_restraintmask_length_limit(mdin, prmtop_path=None)
+
+    assert mdin.read_text() == original
+
+
 def test_write_cmass_dump_block_uses_dumpave_footer() -> None:
     handle = io.StringIO()
 

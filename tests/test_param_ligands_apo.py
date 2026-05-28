@@ -11,6 +11,15 @@ from batter.pipeline.step import Step
 from batter.systems.core import SimSystem
 
 
+def test_bundled_apo_dummy_source_has_one_atom() -> None:
+    source = apo_ligand_source_path().read_text()
+
+    assert source.count("HETATM") == 1
+    assert "DU1" in source
+    assert "DU2" not in source
+    assert "DU3" not in source
+
+
 def test_param_ligands_links_apo_dummy_params(monkeypatch, tmp_path: Path) -> None:
     pytest.importorskip("MDAnalysis", exc_type=ImportError)
     handler_mod = pytest.importorskip(
@@ -54,3 +63,16 @@ def test_param_ligands_links_apo_dummy_params(monkeypatch, tmp_path: Path) -> No
     child_params = run_root / "simulations" / "APO" / "params"
     for ext in ("mol2", "sdf", "json", "frcmod", "prmtop", "inpcrd", "lib", "pdb"):
         assert (child_params / f"apo.{ext}").exists()
+
+    mol2 = (child_params / "apo.mol2").read_text()
+    sdf = (child_params / "apo.sdf").read_text()
+    pdb = (child_params / "apo.pdb").read_text()
+    assert "    1     0     1     0     1" in mol2
+    assert "  1  0  0  0  0  0" in sdf
+    assert "DU1" in mol2
+    assert "DU1" in pdb
+    assert sdf.count(" Pb ") == 1
+    assert "DU2" not in mol2
+    assert "DU2" not in pdb
+    assert "DU3" not in mol2
+    assert "DU3" not in pdb

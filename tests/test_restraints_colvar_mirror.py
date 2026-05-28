@@ -100,6 +100,28 @@ def test_append_colvar_rst_blocks_mirrors_tagged_extra_blocks(tmp_path: Path) ->
     assert "iat=33,44," in mirrored
 
 
+def test_equil_anchor_restraint_expressions_allow_single_ligand_anchor() -> None:
+    exprs, ligand_count = restraints._equil_anchor_restraint_expressions(
+        ":10@CA",
+        ":20@CA",
+        ":30@CA",
+        ":385@DU1",
+        None,
+        None,
+    )
+
+    assert ligand_count == 3
+    assert exprs == [
+        ":10@CA :20@CA",
+        ":20@CA :30@CA",
+        ":30@CA :10@CA",
+        ":10@CA :385@DU1",
+        ":20@CA :10@CA :385@DU1",
+        ":30@CA :20@CA :10@CA :385@DU1",
+    ]
+    assert all("None" not in expr for expr in exprs)
+
+
 def test_build_restraints_y_omits_ligand_com_block(tmp_path: Path) -> None:
     windows_dir = tmp_path / "y00"
     windows_dir.mkdir()

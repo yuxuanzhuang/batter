@@ -45,14 +45,14 @@ PROTEIN_COM_ATOM_SELECTION = "protein and name CA"
 
 @dataclass(frozen=True)
 class Anchors:
-    """Atom masks that define the three protein and ligand anchor atoms."""
+    """Atom masks that define protein anchors and optional ligand anchors."""
 
     P1: str
     P2: str
     P3: str
-    L1: str
-    L2: str
-    L3: str
+    L1: str | None
+    L2: str | None
+    L3: str | None
     lig_res: str
 
 def _anchors_path(working_dir: Path) -> Path:

@@ -103,6 +103,57 @@ def test_is_apo_ligand_build_reads_param_metadata(tmp_path: Path) -> None:
     assert build_complex_mod._is_apo_ligand_build(metadata, "APO", "APO")
 
 
+def test_write_ligand_pdb_with_parameter_names_collapses_apo_dummy(
+    tmp_path: Path,
+) -> None:
+    ligand_pdb = tmp_path / "APO.pdb"
+    ligand_pdb.write_text(
+        "\n".join(
+            [
+                "HETATM    1  DU1 lig L   1       0.000   0.000   0.000  0.00  0.00      LIG PB",
+                "HETATM    2  DU2 lig L   1       4.000   0.000   0.000  0.00  0.00      LIG PB",
+                "HETATM    3  DU3 lig L   1       0.000   4.000   0.000  0.00  0.00      LIG PB",
+                "END",
+                "",
+            ]
+        )
+    )
+    parameter_mol2 = tmp_path / "apo.mol2"
+    parameter_mol2.write_text(
+        "\n".join(
+            [
+                "@<TRIPOS>MOLECULE",
+                "LIG",
+                "    1     0     1     0     1",
+                "SMALL",
+                "USER_CHARGES",
+                "@<TRIPOS>ATOM",
+                "      1 DU1       0.000000    0.000000    0.000000 Pb        1 LIG       0.0000",
+                "@<TRIPOS>BOND",
+                "@<TRIPOS>SUBSTRUCTURE",
+                "      1 LIG         1 ****               0 ****  ****",
+                "",
+            ]
+        )
+    )
+    output_pdb = tmp_path / "apo_out.pdb"
+
+    build_complex_mod._write_ligand_pdb_with_parameter_names(
+        ligand_pdb,
+        parameter_mol2,
+        output_pdb,
+        residue_name="apo",
+        ligand_label="APO",
+        apo_ligand=True,
+    )
+
+    output = output_pdb.read_text()
+    assert output.count("HETATM") == 1
+    assert "DU1" in output
+    assert "DU2" not in output
+    assert "DU3" not in output
+
+
 def test_write_apo_anchor_outputs_tags_fixed_anchor_file(tmp_path: Path) -> None:
     (tmp_path / "equil-APO.pdb").write_text("ATOM\n")
     (tmp_path / "APO-noh.pdb").write_text("ATOM\n")
@@ -114,9 +165,9 @@ def test_write_apo_anchor_outputs_tags_fixed_anchor_file(tmp_path: Path) -> None
         tmp_path,
         ligand="APO",
         mol="APO",
-        anchor_names=["DU1", "DU2", "DU3"],
+        anchor_names=["DU1"],
     )
 
     assert not (tmp_path / "anchors.txt").exists()
-    assert (tmp_path / "anchors-APO.txt").read_text() == "DU1 DU2 DU3\n"
+    assert (tmp_path / "anchors-APO.txt").read_text() == "DU1\n"
     assert (tmp_path / "dum1.pdb").exists()

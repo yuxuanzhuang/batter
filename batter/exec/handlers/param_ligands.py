@@ -25,7 +25,7 @@ from batter.systems.core import SimSystem
 from batter.utils import run_with_log, tleap
 
 LIGAND_FILES = ["mol2", "prmtop", "sdf", "json", "frcmod", "inpcrd", "lib", "pdb"]
-_APO_DUMMY_PAYLOAD = "BATTER_APO_DUMMY_V1"
+_APO_DUMMY_PAYLOAD = "BATTER_APO_DUMMY_V2_SINGLE_ATOM"
 
 
 def _write_apo_dummy_pdb(path: Path) -> None:
@@ -33,8 +33,6 @@ def _write_apo_dummy_pdb(path: Path) -> None:
         "\n".join(
             [
                 "HETATM    1 DU1  LIG A   1       0.000   0.000   0.000  0.00  0.00          Pb",
-                "HETATM    2 DU2  LIG A   1       4.000   0.000   0.000  0.00  0.00          Pb",
-                "HETATM    3 DU3  LIG A   1       0.000   4.000   0.000  0.00  0.00          Pb",
                 "END",
                 "",
             ]
@@ -49,10 +47,8 @@ def _write_apo_dummy_sdf(path: Path) -> None:
                 "LIG",
                 "  BATTER",
                 "",
-                "  3  0  0  0  0  0            999 V2000",
+                "  1  0  0  0  0  0            999 V2000",
                 "    0.0000    0.0000    0.0000 Pb  0  0  0  0  0  0  0  0  0  0  0  0",
-                "    4.0000    0.0000    0.0000 Pb  0  0  0  0  0  0  0  0  0  0  0  0",
-                "    0.0000    4.0000    0.0000 Pb  0  0  0  0  0  0  0  0  0  0  0  0",
                 "M  END",
                 "$$$$",
                 "",
@@ -67,13 +63,11 @@ def _write_apo_dummy_mol2(path: Path) -> None:
             [
                 "@<TRIPOS>MOLECULE",
                 "LIG",
-                "    3     0     1     0     1",
+                "    1     0     1     0     1",
                 "SMALL",
                 "USER_CHARGES",
                 "@<TRIPOS>ATOM",
                 "      1 DU1       0.000000    0.000000    0.000000 Pb        1 LIG       0.0000",
-                "      2 DU2       4.000000    0.000000    0.000000 Pb        1 LIG       0.0000",
-                "      3 DU3       0.000000    4.000000    0.000000 Pb        1 LIG       0.0000",
                 "@<TRIPOS>BOND",
                 "@<TRIPOS>SUBSTRUCTURE",
                 "      1 LIG         1 ****               0 ****  ****",
