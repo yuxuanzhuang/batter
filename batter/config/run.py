@@ -9,8 +9,11 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator, model_valida
 from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
 from batter.config.remd import RemdArgs
 from batter.config.utils import (
+    apo_ligand_source_path,
     coerce_yes_no,
+    coerce_apo_ligand_name,
     expand_env_vars,
+    is_apo_ligand_value,
     normalize_optional_path,
     sanitize_user_ligand_name,
 )
@@ -280,6 +283,9 @@ class CreateArgs(BaseModel):
         if isinstance(v, Mapping):
             out: dict[str, Path] = {}
             for k, p in v.items():
+                if is_apo_ligand_value(p):
+                    out[coerce_apo_ligand_name(k)] = apo_ligand_source_path()
+                    continue
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue

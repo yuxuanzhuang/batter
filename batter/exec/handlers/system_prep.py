@@ -20,6 +20,7 @@ from MDAnalysis.analysis import align
 from MDAnalysis.analysis.dssp import DSSP
 from loguru import logger
 
+from batter.config.utils import is_apo_ligand_path
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
@@ -1104,13 +1105,20 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     unbound_threshold = (
         float(threshold_val) if threshold_val is not None else None
     )
+    ligand_paths = dict(sys_params["ligand_paths"])
+    apo_only = bool(ligand_paths) and all(
+        is_apo_ligand_path(path) for path in ligand_paths.values()
+    )
+    if apo_only:
+        logger.info("[system_prep] Apo dummy ligand detected; skipping unbound check.")
+        unbound_threshold = None
 
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
         system_name=sys_params["system_name"],
         protein_input=sys_params["protein_input"],
         system_topology=sys_params.get("system_input", None),
-        ligand_paths=sys_params["ligand_paths"],
+        ligand_paths=ligand_paths,
         anchor_atoms=list(sys_params.get("anchor_atoms", [])),
         ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),
         receptor_segment=sys_params.get("receptor_segment"),

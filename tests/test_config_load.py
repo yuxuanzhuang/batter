@@ -18,7 +18,7 @@ from batter.config.run import (
     RunSection,
 )
 from batter.config.simulation import SimulationConfig
-from batter.config.utils import coerce_yes_no
+from batter.config.utils import apo_ligand_source_path, coerce_yes_no
 
 
 def test_load_run_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
@@ -92,6 +92,12 @@ fe_sim: {}
     cfg = load_run_config(run_yaml)
     assert cfg.create.protein_input == Path("reference/protein.pdb")
     assert cfg.create.ligand_input == Path("reference/ligands.json")
+
+
+def test_create_args_accepts_null_apo_ligand() -> None:
+    args = CreateArgs(system_name="sys", ligand_paths={None: None})
+
+    assert args.ligand_paths == {"APO": apo_ligand_source_path()}
 
 
 def test_run_config_accepts_rbfe_mapper_options(tmp_path: Path) -> None:

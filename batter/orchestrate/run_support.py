@@ -31,7 +31,11 @@ def normalize_for_hash(obj: Any) -> Any:
         return str(obj)
     if isinstance(obj, dict):
         drop_keys = {"output_folder"}
-        return {k: normalize_for_hash(v) for k, v in obj.items() if k not in drop_keys}
+        return {
+            str(k): normalize_for_hash(v)
+            for k, v in obj.items()
+            if k not in drop_keys
+        }
     if isinstance(obj, (list, tuple, set)):
         return [normalize_for_hash(v) for v in obj]
     return obj

@@ -8,6 +8,55 @@ from typing import Any, Mapping, Sequence
 
 _SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 _RESERVED_LIGAND_NAMES = frozenset({"TRANSFORMATIONS"})
+APO_LIGAND_NAME = "APO"
+APO_LIGAND_SOURCE_FILENAME = "apo_dummy.pdb"
+_APO_VALUE_STRINGS = {"none", "null", "~"}
+_APO_NAME_STRINGS = _APO_VALUE_STRINGS | {"apo"}
+
+
+def apo_ligand_source_path() -> Path:
+    """Return BATTER's bundled source PDB for apo/dummy ligand runs."""
+    from batter._internal.templates import BUILD_FILES_DIR
+
+    return BUILD_FILES_DIR / APO_LIGAND_SOURCE_FILENAME
+
+
+def is_apo_ligand_value(value: Any) -> bool:
+    """Return True when a ligand path value requests the apo dummy ligand."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in _APO_VALUE_STRINGS
+    return False
+
+
+def coerce_apo_ligand_name(name: Any) -> str:
+    """Normalize null-like apo ligand keys to a stable filesystem token."""
+    if name is None:
+        return APO_LIGAND_NAME
+    text = str(name).strip()
+    if text.lower() in _APO_NAME_STRINGS:
+        return APO_LIGAND_NAME
+    return sanitize_user_ligand_name(text)
+
+
+def is_apo_ligand_path(path: Any) -> bool:
+    """Return True if ``path`` is BATTER's bundled apo dummy ligand source."""
+    try:
+        candidate = Path(path)
+        source = apo_ligand_source_path()
+        if candidate.resolve() == source.resolve():
+            return True
+        if (
+            candidate.suffix.lower() == ".pdb"
+            and candidate.is_file()
+            and source.is_file()
+            and candidate.stat().st_size == source.stat().st_size
+        ):
+            return candidate.read_text() == source.read_text()
+    except Exception:
+        return False
+    return False
 
 
 def coerce_yes_no(value: Any) -> str | None:

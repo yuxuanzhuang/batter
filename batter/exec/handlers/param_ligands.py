@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Tuple
 
 from loguru import logger
 
+from batter.config.utils import is_apo_ligand_path
 from batter.orchestrate.state_registry import register_phase_state
 from batter.param.ligand import (
     _convert_mol_name_to_unique,
@@ -21,8 +22,164 @@ from batter.param.ligand import (
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
+from batter.utils import run_with_log, tleap
 
-LIGAND_FILES = ["mol2", "prmtop", "sdf", "json", "frcmod", "inpcrd", "lib"]
+LIGAND_FILES = ["mol2", "prmtop", "sdf", "json", "frcmod", "inpcrd", "lib", "pdb"]
+_APO_DUMMY_PAYLOAD = "BATTER_APO_DUMMY_V1"
+
+
+def _write_apo_dummy_pdb(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "HETATM    1 DU1  LIG A   1       0.000   0.000   0.000  0.00  0.00          Pb",
+                "HETATM    2 DU2  LIG A   1       4.000   0.000   0.000  0.00  0.00          Pb",
+                "HETATM    3 DU3  LIG A   1       0.000   4.000   0.000  0.00  0.00          Pb",
+                "END",
+                "",
+            ]
+        )
+    )
+
+
+def _write_apo_dummy_sdf(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "LIG",
+                "  BATTER",
+                "",
+                "  3  0  0  0  0  0            999 V2000",
+                "    0.0000    0.0000    0.0000 Pb  0  0  0  0  0  0  0  0  0  0  0  0",
+                "    4.0000    0.0000    0.0000 Pb  0  0  0  0  0  0  0  0  0  0  0  0",
+                "    0.0000    4.0000    0.0000 Pb  0  0  0  0  0  0  0  0  0  0  0  0",
+                "M  END",
+                "$$$$",
+                "",
+            ]
+        )
+    )
+
+
+def _write_apo_dummy_mol2(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "@<TRIPOS>MOLECULE",
+                "LIG",
+                "    3     0     1     0     1",
+                "SMALL",
+                "USER_CHARGES",
+                "@<TRIPOS>ATOM",
+                "      1 DU1       0.000000    0.000000    0.000000 Pb        1 LIG       0.0000",
+                "      2 DU2       4.000000    0.000000    0.000000 Pb        1 LIG       0.0000",
+                "      3 DU3       0.000000    4.000000    0.000000 Pb        1 LIG       0.0000",
+                "@<TRIPOS>BOND",
+                "@<TRIPOS>SUBSTRUCTURE",
+                "      1 LIG         1 ****               0 ****  ****",
+                "",
+            ]
+        )
+    )
+
+
+def _write_apo_dummy_frcmod(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                'Parameters for BATTER apo dummy "ligand" sites',
+                "MASS",
+                "Pb     210.00",
+                "",
+                "BOND",
+                "",
+                "ANGLE",
+                "",
+                "DIHE",
+                "",
+                "IMPROPER",
+                "",
+                "NONBON",
+                "  Pb       0.000     0.0000000",
+                "",
+            ]
+        )
+    )
+
+
+def _prepare_apo_dummy_params(
+    target_dir: Path,
+    *,
+    ligand_ff: str,
+    retain_lig_prot: bool,
+) -> None:
+    """Create a content-addressed parameter folder for an apo dummy ligand."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    _write_apo_dummy_mol2(target_dir / "lig.mol2")
+    _write_apo_dummy_frcmod(target_dir / "lig.frcmod")
+    _write_apo_dummy_sdf(target_dir / "lig.sdf")
+    _write_apo_dummy_pdb(target_dir / "lig.pdb")
+
+    metadata = {
+        "hash_id": target_dir.name,
+        "input_path": "BATTER_APO_DUMMY",
+        "aliases": ["APO"],
+        "canonical_smiles": _APO_DUMMY_PAYLOAD,
+        "retain_lig_prot": bool(retain_lig_prot),
+        "ligand_ff": ligand_ff,
+        "prepared_base": "APO",
+        "title": "apo dummy ligand",
+        "apo": True,
+    }
+    (target_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+    (target_dir / "lig.json").write_text(
+        json.dumps(
+            {
+                "ligand_file": "BATTER_APO_DUMMY",
+                "charge_type": "none",
+                "smiles": _APO_DUMMY_PAYLOAD,
+                "ligand_sdf_path": str(target_dir / "lig.sdf"),
+                "ligand_charge": 0.0,
+                "ligand_ff": ligand_ff,
+                "ligand_name": "lig",
+                "retain_lig_prot": bool(retain_lig_prot),
+                "apo": True,
+            },
+            indent=4,
+        )
+    )
+
+    required_topology = [
+        target_dir / f"lig.{ext}" for ext in ("prmtop", "inpcrd", "lib")
+    ]
+    if all(path.exists() for path in required_topology):
+        return
+
+    leap_ff = ligand_ff if ligand_ff in {"gaff", "gaff2"} else "gaff2"
+    tleap_script = "\n".join(
+        [
+            f"source leaprc.{leap_ff}",
+            "loadamberparams lig.frcmod",
+            "lig = loadmol2 lig.mol2",
+            'set {lig.1} name "lig"',
+            "saveoff lig lig.lib",
+            "saveamberparm lig lig.prmtop lig.inpcrd",
+            "quit",
+            "",
+        ]
+    )
+    (target_dir / "tleap_apo_dummy.in").write_text(tleap_script)
+    try:
+        run_with_log(
+            f"{tleap} -s -f tleap_apo_dummy.in > tleap_apo_dummy.log",
+            working_dir=target_dir,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to build apo dummy ligand topology with tleap. "
+            "The apo MD path still requires AmberTools for setup."
+        ) from exc
+
 
 def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str) -> None:
     """Copy ``lig.*`` artifacts into ``child_dir/params`` using ``residue_name``."""
@@ -79,15 +236,25 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     sys_params = payload.sys_params or SystemParams()
     lig_root = system.root / "simulations"
     if not lig_root.exists():
-        raise FileNotFoundError(f"[param_ligands] No 'ligands/' at {system.root}. Did staging run?")
-
+        raise FileNotFoundError(
+            f"[param_ligands] No 'ligands/' at {system.root}. Did staging run?"
+        )
 
     outdir = _resolve_outdir(sys_params["param_outdir"], system)
     charge = _require(sys_params, "charge")
     ligand_ff = _require(sys_params, "ligand_ff")
     retain = bool(_require(sys_params, "retain_lig_prot"))
 
-    lig_map = sys_params["ligand_paths"]
+    lig_map = {
+        str(name): Path(path)
+        for name, path in dict(sys_params["ligand_paths"]).items()
+    }
+    apo_lig_map = {
+        name: path for name, path in lig_map.items() if is_apo_ligand_path(path)
+    }
+    real_lig_map = {
+        name: path for name, path in lig_map.items() if name not in apo_lig_map
+    }
 
     outdir.mkdir(parents=True, exist_ok=True)
     logger.info(f"[param_ligands] {len(lig_map)} ligands")
@@ -95,6 +262,11 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         f"[param_ligands] parameterizing"
         f"(charge={charge}, ff={ligand_ff}, retain H={retain})"
     )
+    if apo_lig_map:
+        logger.info(
+            "[param_ligands] using apo dummy ligand for: {}",
+            ", ".join(sorted(apo_lig_map)),
+        )
 
     artifacts_index_dir = system.root / "artifacts" / "ligand_params"
     artifacts_index_dir.mkdir(parents=True, exist_ok=True)
@@ -106,78 +278,97 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
     elif hasattr(payload, "model_extra") and payload.model_extra:
         mode_lower = str(payload.model_extra.get("on_failure") or "").lower()
 
-    try:
-        # Run batch parametrization into content-addressed subfolders
-        # Returns (hash_ids_in_order, residue_names_in_order)
-        hashes, unique = batch_ligand_process(
-            ligand_paths=lig_map,
-            output_path=outdir,
-            retain_lig_prot=retain,
+    hashes: List[str] = []
+    unique: Dict[str, Tuple[str, str]] = {}
+
+    if real_lig_map:
+        try:
+            # Run batch parametrization into content-addressed subfolders.
+            real_hashes, unique = batch_ligand_process(
+                ligand_paths=real_lig_map,
+                output_path=outdir,
+                retain_lig_prot=retain,
+                ligand_ff=ligand_ff,
+                charge_method=charge,
+                overwrite=False,
+                run_with_slurm=False,
+                on_failure=mode_lower,
+            )
+            hashes.extend(real_hashes)
+            if not real_hashes and not apo_lig_map:
+                raise RuntimeError(
+                    "[param_ligands] No ligands processed (empty hash list)."
+                )
+        except Exception as exc:
+            # allow reuse of an existing index when present
+            if index_path.exists():
+                logger.error(
+                    f"[param_ligands] encountered error but index exists; reusing cached ligands. Error: {exc}",
+                )
+                existing_index = json.loads(index_path.read_text())
+                index_entries = existing_index.get("ligands", [])
+                # write a manifest to keep downstream in sync
+                manifest = artifacts_index_dir / "ligand_manifest.tsv"
+                with manifest.open("w") as mf:
+                    for entry in index_entries:
+                        mf.write(
+                            f"{entry.get('ligand')}\t{entry.get('hash')}\t{entry.get('residue_name')}\n"
+                        )
+                marker_rel = index_path.relative_to(system.root).as_posix()
+                register_phase_state(
+                    system.root,
+                    "param_ligands",
+                    required=[[marker_rel]],
+                    success=[[marker_rel]],
+                )
+                return ExecResult(
+                    [],
+                    {
+                        "param_store": existing_index.get("store", str(outdir)),
+                        "index_json": str(index_path),
+                        "manifest_tsv": str(manifest),
+                        "hashes": [e.get("hash") for e in index_entries],
+                    },
+                )
+
+            # Attempt to salvage cached ligands: use existing param store entries only
+            salvaged_hashes: List[str] = []
+            unique = {}
+            for name, path in real_lig_map.items():
+                try:
+                    mol = _rdkit_load(path, retain_h=retain)
+                    smi = _canonical_payload(mol)
+                    hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
+                    cache_dir = outdir / hid
+                    if (cache_dir / "lig.prmtop").exists():
+                        unique[str(path)] = (hid, smi)
+                        salvaged_hashes.append(hid)
+                except Exception:
+                    continue
+
+            if salvaged_hashes:
+                logger.error(
+                    f"[param_ligands] encountered error; salvaged {len(salvaged_hashes)} cached ligands and will skip failures.",
+                )
+                hashes.extend(salvaged_hashes)
+            elif not apo_lig_map:
+                logger.error(
+                    f"[param_ligands] encountered error and no cached ligands could be salvaged: {exc}",
+                )
+                raise
+
+    for name, path in apo_lig_map.items():
+        hid = _hash_id(_APO_DUMMY_PAYLOAD, ligand_ff=ligand_ff, retain_h=retain)
+        _prepare_apo_dummy_params(
+            outdir / hid,
             ligand_ff=ligand_ff,
-            charge_method=charge,
-            overwrite=False,
-            run_with_slurm=False,
-            on_failure=mode_lower,
+            retain_lig_prot=retain,
         )
-        if not hashes:
-            raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
-    except Exception as exc:
-        # allow reuse of an existing index when present
-        if index_path.exists():
-            logger.error(
-                f"[param_ligands] encountered error but index exists; reusing cached ligands. Error: {exc}",
-            )
-            existing_index = json.loads(index_path.read_text())
-            index_entries = existing_index.get("ligands", [])
-            # write a manifest to keep downstream in sync
-            manifest = artifacts_index_dir / "ligand_manifest.tsv"
-            with manifest.open("w") as mf:
-                for entry in index_entries:
-                    mf.write(
-                        f"{entry.get('ligand')}\t{entry.get('hash')}\t{entry.get('residue_name')}\n"
-                    )
-            marker_rel = index_path.relative_to(system.root).as_posix()
-            register_phase_state(
-                system.root,
-                "param_ligands",
-                required=[[marker_rel]],
-                success=[[marker_rel]],
-            )
-            return ExecResult(
-                [],
-                {
-                    "param_store": existing_index.get("store", str(outdir)),
-                    "index_json": str(index_path),
-                    "manifest_tsv": str(manifest),
-                    "hashes": [e.get("hash") for e in index_entries],
-                },
-            )
+        unique[str(path)] = (hid, _APO_DUMMY_PAYLOAD)
+        hashes.append(hid)
 
-        # Attempt to salvage cached ligands: use existing param store entries only
-        salvaged_hashes: List[str] = []
-        unique = {}
-        for name, path in lig_map.items():
-            try:
-                mol = _rdkit_load(path, retain_h=retain)
-                smi = _canonical_payload(mol)
-                hid = _hash_id(smi, ligand_ff=ligand_ff, retain_h=retain)
-                cache_dir = outdir / hid
-                if (cache_dir / "lig.prmtop").exists():
-                    unique[str(path)] = (hid, smi)
-                    salvaged_hashes.append(hid)
-            except Exception:
-                continue
-
-        if salvaged_hashes:
-            logger.error(
-                f"[param_ligands] encountered error; salvaged {len(salvaged_hashes)} cached ligands and will skip failures.",
-            )
-            hashes = salvaged_hashes
-        else:
-            logger.error(
-                f"[param_ligands] encountered error and no cached ligands could be salvaged: {exc}",
-            )
-            raise
+    if not hashes:
+        raise RuntimeError("[param_ligands] No ligands processed (empty hash list).")
 
     # generate unique list of resnames only for ligands we have data for
     unique_resnames: Dict[str, str] = {}
@@ -198,15 +389,19 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
 
     # Link artifacts per staged ligand and collect index rows
     index_entries: List[Dict[str, Any]] = []
-    linked: List[Tuple[str, str]] = []  # (name, hash)
+    linked: List[Tuple[str, str, str]] = []  # (name, hash, residue_name)
 
     for name, d in lig_map.items():
         if name not in unique_resnames:
-            logger.warning(f"[param_ligands] Skipping ligand {name} due to parametrization failure.")
+            logger.warning(
+                f"[param_ligands] Skipping ligand {name} due to parametrization failure."
+            )
             continue
         hid = unique.get(str(d), (None, None))[0]
         if hid is None:
-            logger.warning(f"[param_ligands] Missing hash for ligand {name}; skipping.")
+            logger.warning(
+                f"[param_ligands] Missing hash for ligand {name}; skipping."
+            )
             continue
         src_dir = outdir / hid
         meta_path = src_dir / "metadata.json"
@@ -219,7 +414,9 @@ def param_ligands(step: Step, system: SimSystem, params: Dict[str, Any]) -> Exec
         meta = json.loads(meta_path.read_text())
         residue_name = unique_resnames.get(name)
         if residue_name is None:
-            logger.warning(f"[param_ligands] Missing residue name for {name}; skipping.")
+            logger.warning(
+                f"[param_ligands] Missing residue name for {name}; skipping."
+            )
             continue
         title = meta.get("title", name)
 
