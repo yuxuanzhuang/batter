@@ -196,6 +196,133 @@ def _candidate_ligand_atom_name_string(
     return " ".join(names)
 
 
+def _is_apo_ligand_build(param_json: Path, ligand: str, mol: str) -> bool:
+    try:
+        metadata = json.loads(param_json.read_text())
+    except Exception:
+        metadata = {}
+    if bool(metadata.get("apo")):
+        return True
+    return ligand.upper() == "APO" and mol.upper() == "APO"
+
+
+def _unit_vector(vec: np.ndarray) -> np.ndarray | None:
+    norm = float(np.linalg.norm(vec))
+    if norm <= 1.0e-8:
+        return None
+    return np.asarray(vec, dtype=float) / norm
+
+
+def _perpendicular_unit_vector(vec: np.ndarray) -> np.ndarray:
+    base = np.asarray([1.0, 0.0, 0.0], dtype=float)
+    unit = _unit_vector(vec)
+    if unit is not None and abs(float(np.dot(unit, base))) > 0.9:
+        base = np.asarray([0.0, 1.0, 0.0], dtype=float)
+    if unit is None:
+        return base
+    perp = np.cross(unit, base)
+    perp_unit = _unit_vector(perp)
+    return perp_unit if perp_unit is not None else base
+
+
+def _apo_dummy_spacing(min_adis: float, max_adis: float) -> float:
+    if max_adis > min_adis:
+        return float((min_adis + max_adis) / 2.0)
+    return float(max(4.0, min_adis + 1.0))
+
+
+def _position_apo_dummy_atoms(
+    pdb_file: Path,
+    *,
+    mol: str,
+    p1_resid: int,
+    p2_resid: int,
+    h1_atom: str,
+    h2_atom: str,
+    l1_vector: np.ndarray,
+    min_adis: float,
+    max_adis: float,
+) -> list[str]:
+    """Place apo dummy atoms near the L1 reference and return anchor names."""
+    u = mda.Universe(str(pdb_file))
+    lig_atoms = u.select_atoms(f"resname {mol}")
+    if lig_atoms.n_atoms < 3:
+        raise ValueError(
+            f"Apo dummy ligand {mol} must contain at least three atoms for anchor placeholders."
+        )
+
+    p1 = u.select_atoms(
+        f"(not resname {mol}) and (resid {p1_resid} and name {h1_atom})"
+    )
+    p2 = u.select_atoms(
+        f"(not resname {mol}) and (resid {p2_resid} and name {h2_atom})"
+    )
+    if p1.n_atoms != 1 or p2.n_atoms != 1:
+        raise ValueError(
+            "Could not place apo dummy ligand: receptor P1/P2 anchors were not found "
+            f"in {pdb_file}."
+        )
+
+    p1_pos = np.asarray(p1.positions[0], dtype=float)
+    p2_pos = np.asarray(p2.positions[0], dtype=float)
+    p1_to_p2 = p2_pos - p1_pos
+    target_vec = np.asarray(l1_vector, dtype=float)
+    target_dir = _unit_vector(target_vec)
+    if target_dir is None:
+        target_dir = _perpendicular_unit_vector(p1_to_p2)
+        target_vec = target_dir * _apo_dummy_spacing(min_adis, max_adis)
+
+    spacing = _apo_dummy_spacing(min_adis, max_adis)
+    side_dir = _unit_vector(np.cross(target_dir, p1_to_p2))
+    if side_dir is None:
+        side_dir = _perpendicular_unit_vector(target_dir)
+
+    positions = np.asarray(
+        [
+            p1_pos + target_vec,
+            p1_pos + target_vec + side_dir * spacing,
+            p1_pos + target_vec + side_dir * spacing + target_dir * spacing,
+        ],
+        dtype=float,
+    )
+    lig_atoms[:3].positions = positions
+    u.atoms.write(str(pdb_file))
+    return [str(name) for name in lig_atoms[:3].names]
+
+
+def _write_apo_anchor_outputs(
+    build_dir: Path,
+    *,
+    ligand: str,
+    mol: str,
+    anchor_names: Sequence[str],
+) -> None:
+    missing = [
+        path
+        for path in (build_dir / f"equil-{mol}.pdb", build_dir / f"{mol}-noh.pdb")
+        if not path.exists()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "Apo dummy prep did not produce required build output(s): "
+            + ", ".join(str(path) for path in missing)
+        )
+
+    if len(anchor_names) < 3:
+        raise ValueError("Apo dummy anchor output requires three atom names.")
+    anchor_file = build_dir / "anchors.txt"
+    anchor_file.write_text(" ".join(anchor_names[:3]) + "\n")
+
+    tagged = build_dir / f"anchors-{ligand}.txt"
+    if tagged.exists():
+        tagged.unlink()
+    anchor_file.rename(tagged)
+
+    dum1 = build_dir / "dum1.pdb"
+    if not dum1.exists():
+        shutil.copy2(build_dir / "dum.pdb", dum1)
+
+
 def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     """
     Creates the aligned + cleaned PDBs (protein/others/lipids), finds
@@ -205,6 +332,8 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     sim = ctx.sim
     ligand = ctx.ligand
     mol = ctx.residue_name
+    param_json = ctx.working_dir.parent / "params" / f"{mol}.json"
+    apo_ligand = _is_apo_ligand_build(param_json, ligand, mol)
 
     # Pull many config knobs (renamed to locals for readability)
     H1 = sim.p1
@@ -442,15 +571,38 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     sdf_file = build_dir / f"{mol}.sdf"
     pdb_file = build_dir / "aligned_amber.pdb"
+    apo_anchor_names: list[str] | None = None
+    if apo_ligand:
+        apo_anchor_names = _position_apo_dummy_atoms(
+            pdb_file,
+            mol=mol,
+            p1_resid=p1_resid,
+            p2_resid=p2_resid,
+            h1_atom=h1_atom,
+            h2_atom=h2_atom,
+            l1_vector=np.asarray([l1_x, l1_y, l1_z], dtype=float),
+            min_adis=float(min_adis),
+            max_adis=float(max_adis),
+        )
+        logger.info(
+            "[build_complex] Placed apo dummy ligand '{}' at the anchor reference "
+            "and will use {} as ligand anchors.",
+            ligand,
+            " ".join(apo_anchor_names[:3]),
+        )
+
     u = mda.Universe(str(pdb_file))
     lig_atoms = u.select_atoms(f"resname {mol}")
     lig_names = lig_atoms.names
-    lig_name_str = _candidate_ligand_atom_name_string(
-        sdf_file,
-        lig_atoms,
-        ligand_label=ligand,
-        stage="equil",
-    )
+    if apo_anchor_names is None:
+        lig_name_str = _candidate_ligand_atom_name_string(
+            sdf_file,
+            lig_atoms,
+            ligand_label=ligand,
+            stage="equil",
+        )
+    else:
+        lig_name_str = " ".join(apo_anchor_names[:3])
 
     # Build VMD prep.tcl from template, try with candidate names first
     prep_ini = build_dir / "prep-ini.tcl"
@@ -484,6 +636,29 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
                 )
 
     _write_prep(lig_name_str)
+    if apo_ligand:
+        try:
+            run_with_log(
+                f"{vmd} -dispdev text -e prep.tcl",
+                shell=False,
+                working_dir=build_dir,
+            )
+        except RuntimeError:
+            if not (build_dir / f"equil-{mol}.pdb").exists():
+                raise
+            logger.warning(
+                "[build_complex] VMD exited while searching apo dummy anchors for {}; "
+                "continuing with fixed dummy anchors.",
+                ligand,
+            )
+        _write_apo_anchor_outputs(
+            build_dir,
+            ligand=ligand,
+            mol=mol,
+            anchor_names=apo_anchor_names or list(lig_names),
+        )
+        return True
+
     try:
         run_with_log(
             f"{vmd} -dispdev text -e prep.tcl",

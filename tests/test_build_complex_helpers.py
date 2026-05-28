@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
+
+pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import build_complex as build_complex_mod
 
@@ -89,3 +94,29 @@ def test_candidate_ligand_atom_name_string_maps_sdf_indices_to_heavy_atoms(
     )
 
     assert names == "C1 C2 C3"
+
+
+def test_is_apo_ligand_build_reads_param_metadata(tmp_path: Path) -> None:
+    metadata = tmp_path / "APO.json"
+    metadata.write_text(json.dumps({"apo": True}))
+
+    assert build_complex_mod._is_apo_ligand_build(metadata, "APO", "APO")
+
+
+def test_write_apo_anchor_outputs_tags_fixed_anchor_file(tmp_path: Path) -> None:
+    (tmp_path / "equil-APO.pdb").write_text("ATOM\n")
+    (tmp_path / "APO-noh.pdb").write_text("ATOM\n")
+    (tmp_path / "dum.pdb").write_text(
+        "ATOM      1  Pb  DUM D   1       0.000   0.000   0.000  0.00  0.00\nEND\n"
+    )
+
+    build_complex_mod._write_apo_anchor_outputs(
+        tmp_path,
+        ligand="APO",
+        mol="APO",
+        anchor_names=["DU1", "DU2", "DU3"],
+    )
+
+    assert not (tmp_path / "anchors.txt").exists()
+    assert (tmp_path / "anchors-APO.txt").read_text() == "DU1 DU2 DU3\n"
+    assert (tmp_path / "dum1.pdb").exists()
