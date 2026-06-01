@@ -46,9 +46,9 @@ def test_resolve_ligand_map_accepts_null_apo_entry_from_json(tmp_path: Path) -> 
     assert original_names == {"APO": "None"}
 
 
-def test_resolve_ligand_map_treats_any_null_json_value_as_apo(tmp_path: Path) -> None:
+def test_resolve_ligand_map_preserves_custom_null_apo_labels(tmp_path: Path) -> None:
     lig_json = tmp_path / "ligands.json"
-    lig_json.write_text(json.dumps({"custom_label": None}))
+    lig_json.write_text(json.dumps({"apo_rep1": None, "apo_rep2": None}))
 
     cfg = RunConfig.model_validate(
         {
@@ -60,8 +60,11 @@ def test_resolve_ligand_map_treats_any_null_json_value_as_apo(tmp_path: Path) ->
 
     lig_map, original_names = resolve_ligand_map(cfg, tmp_path)
 
-    assert lig_map == {"APO": apo_ligand_source_path().resolve()}
-    assert original_names == {"APO": "custom_label"}
+    assert lig_map == {
+        "APO_REP1": apo_ligand_source_path().resolve(),
+        "APO_REP2": apo_ligand_source_path().resolve(),
+    }
+    assert original_names == {"APO_REP1": "apo_rep1", "APO_REP2": "apo_rep2"}
 
 
 def test_discover_staged_ligands_skips_rbfe_transformations_dir(tmp_path: Path) -> None:
