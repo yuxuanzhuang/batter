@@ -33,6 +33,36 @@ def test_map_disulfide_pairs_to_revised_resids() -> None:
     ) == [(11, 13), (15, 16)]
 
 
+def test_merge_disulfide_pairs_deduplicates_sorted_pairs() -> None:
+    assert box._merge_disulfide_pairs(
+        [(44, 19), (35, 77)], [(19, 44), (80, 90)]
+    ) == [(19, 44), (35, 77), (80, 90)]
+
+
+def test_infer_cyx_disulfide_pairs_from_atoms(tmp_path: Path) -> None:
+    pdb = tmp_path / "cyx.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   CYX A  19       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  SG  CYX A  19       0.000   0.000   0.000  1.00  0.00           S",
+                "ATOM      3  N   CYX A  44       1.900   0.000   0.000  1.00  0.00           N",
+                "ATOM      4  SG  CYX A  44       2.000   0.000   0.000  1.00  0.00           S",
+                "ATOM      5  N   CYX A  80      10.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      6  SG  CYX A  80      10.000   0.000   0.000  1.00  0.00           S",
+                "ATOM      7  N   CYS A  81      12.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      8  SG  CYS A  81      12.000   0.000   0.000  1.00  0.00           S",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+    universe = mda.Universe(str(pdb))
+
+    assert box._infer_cyx_disulfide_pairs_from_atoms(universe.atoms) == [(19, 44)]
+
+
 def test_write_leap_disulfide_bonds() -> None:
     class Sink:
         def __init__(self) -> None:

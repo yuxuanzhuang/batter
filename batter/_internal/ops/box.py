@@ -413,6 +413,51 @@ def _map_disulfide_pairs_to_resids(
     return mapped
 
 
+def _merge_disulfide_pairs(
+    pairs: list[tuple[int, int]], extra_pairs: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for first, second in [*pairs, *extra_pairs]:
+        pair = tuple(sorted((int(first), int(second))))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        merged.append(pair)
+    return merged
+
+
+def _infer_cyx_disulfide_pairs_from_atoms(
+    atoms: mda.AtomGroup, *, max_sg_distance: float = 2.8
+) -> list[tuple[int, int]]:
+    """Infer close CYX SG-SG pairs that pdb4amber may omit from sslink."""
+    records: list[tuple[int, np.ndarray]] = []
+    for residue in atoms.select_atoms("protein and resname CYX").residues:
+        sg_atoms = residue.atoms.select_atoms("name SG")
+        if sg_atoms.n_atoms != 1:
+            continue
+        records.append(
+            (int(residue.resid), np.asarray(sg_atoms[0].position, dtype=float))
+        )
+
+    candidates: list[tuple[float, tuple[int, int]]] = []
+    for idx, (first_resid, first_pos) in enumerate(records):
+        for second_resid, second_pos in records[idx + 1 :]:
+            distance = float(np.linalg.norm(first_pos - second_pos))
+            if distance <= float(max_sg_distance):
+                candidates.append((distance, tuple(sorted((first_resid, second_resid)))))
+
+    inferred: list[tuple[int, int]] = []
+    used_resids: set[int] = set()
+    for _distance, pair in sorted(candidates, key=lambda item: item[0]):
+        first, second = pair
+        if first in used_resids or second in used_resids:
+            continue
+        used_resids.update(pair)
+        inferred.append(pair)
+    return inferred
+
+
 def _mark_disulfide_residue_names(residues, disulfide_resids: set[int]) -> None:
     """Ensure disulfide cysteines are written as CYX before LEaP loads them."""
     if not disulfide_resids:
@@ -762,6 +807,22 @@ def create_box(ctx: BuildContext) -> None:
             next_resnum, total_residues - len(revised_resids) + next_resnum
         )
         final_system.residues.resids = final_resids
+        inferred_disulfide_pairs = _infer_cyx_disulfide_pairs_from_atoms(final_system)
+        existing_disulfide_pairs = {tuple(sorted(pair)) for pair in disulfide_pairs}
+        new_disulfide_pairs = [
+            pair
+            for pair in inferred_disulfide_pairs
+            if tuple(sorted(pair)) not in existing_disulfide_pairs
+        ]
+        if new_disulfide_pairs:
+            logger.info(
+                "Inferred additional CYX disulfide pair(s) from SG distances: {}",
+                ", ".join(f"{first}-{second}" for first, second in new_disulfide_pairs),
+            )
+            disulfide_pairs = _merge_disulfide_pairs(
+                disulfide_pairs, new_disulfide_pairs
+            )
+            disulfide_resids = {resid for pair in disulfide_pairs for resid in pair}
         _mark_disulfide_residue_names(final_system.residues, disulfide_resids)
 
         # partitions
