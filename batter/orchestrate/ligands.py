@@ -63,7 +63,7 @@ def resolve_ligand_map(
         for name, value in items:
             if is_apo_ligand_value(value):
                 lig_path = apo_ligand_source_path()
-                sanitized = coerce_apo_ligand_name(name)
+                sanitized = coerce_apo_ligand_name(value)
             else:
                 lig_path = Path(value)
                 lig_path = (

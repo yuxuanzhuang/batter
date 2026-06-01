@@ -46,6 +46,24 @@ def test_resolve_ligand_map_accepts_null_apo_entry_from_json(tmp_path: Path) -> 
     assert original_names == {"APO": "None"}
 
 
+def test_resolve_ligand_map_treats_any_null_json_value_as_apo(tmp_path: Path) -> None:
+    lig_json = tmp_path / "ligands.json"
+    lig_json.write_text(json.dumps({"custom_label": None}))
+
+    cfg = RunConfig.model_validate(
+        {
+            "run": {"output_folder": str(tmp_path / "out")},
+            "create": {"system_name": "sys", "ligand_input": str(lig_json)},
+            "fe_sim": {},
+        }
+    )
+
+    lig_map, original_names = resolve_ligand_map(cfg, tmp_path)
+
+    assert lig_map == {"APO": apo_ligand_source_path().resolve()}
+    assert original_names == {"APO": "custom_label"}
+
+
 def test_discover_staged_ligands_skips_rbfe_transformations_dir(tmp_path: Path) -> None:
     run_dir = tmp_path / "exec"
     # RBFE transformations root must not be interpreted as a ligand directory.
