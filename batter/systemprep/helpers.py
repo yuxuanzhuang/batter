@@ -260,8 +260,74 @@ def _protein_backbone_anchor_candidates(u_prot: mda.Universe) -> mda.AtomGroup:
         f"protein and not resname NMA ACE and name {name_clause}"
     )
     if candidates.n_atoms >= 3:
+        return _receptor_like_anchor_candidates(candidates)
+    return _receptor_like_anchor_candidates(
+        u_prot.select_atoms(f"protein and name {name_clause}")
+    )
+
+
+def _receptor_like_anchor_candidates(
+    candidates: mda.AtomGroup,
+    *,
+    min_group_residues: int = 40,
+    min_largest_fraction: float = 0.5,
+) -> mda.AtomGroup:
+    """
+    Exclude short protein chains from automatic receptor-anchor selection.
+
+    Some inputs keep a peptide binder or other short protein chain in
+    ``protein_input`` before the receptor. Treating every protein chain as an
+    anchor source can place apo dummy ligands next to the peptide instead of the
+    receptor, inflating the staging box. Keep receptor-sized chains/fragments,
+    but leave small single-chain test systems untouched.
+    """
+    if candidates.n_atoms < 3:
         return candidates
-    return u_prot.select_atoms(f"protein and name {name_clause}")
+
+    grouped: dict[tuple[str, str], list[Any]] = {}
+    for residue in candidates.residues:
+        atoms = residue.atoms
+        segid = str(atoms.segids[0]).strip() if hasattr(atoms, "segids") else ""
+        try:
+            chain_id = str(atoms.chainIDs[0]).strip()
+        except Exception:
+            chain_id = ""
+        grouped.setdefault((segid, chain_id), []).append(residue)
+
+    if len(grouped) <= 1:
+        return candidates
+
+    max_len = max(len(residues) for residues in grouped.values())
+    threshold = max(
+        int(min_group_residues), int(np.ceil(max_len * min_largest_fraction))
+    )
+    kept_groups = {
+        key: residues for key, residues in grouped.items() if len(residues) >= threshold
+    }
+    if not kept_groups or len(kept_groups) == len(grouped):
+        return candidates
+
+    allowed_resindices = {
+        int(residue.resindex)
+        for residues in kept_groups.values()
+        for residue in residues
+    }
+    allowed_atoms = candidates.universe.residues[sorted(allowed_resindices)].atoms
+    filtered = candidates.intersection(allowed_atoms)
+    if filtered.n_atoms < 3:
+        return candidates
+
+    skipped = [
+        f"segid={segid or '?'} chain={chain_id or '?'} residues={len(residues)}"
+        for (segid, chain_id), residues in sorted(grouped.items())
+        if (segid, chain_id) not in kept_groups
+    ]
+    if skipped:
+        logger.info(
+            "Ignoring short protein chain(s) for receptor-anchor auto-selection: {}",
+            "; ".join(skipped),
+        )
+    return filtered
 
 
 def _one_backbone_atom_per_residue(candidates: mda.AtomGroup) -> list[Any]:
@@ -289,7 +355,7 @@ def _score_apo_anchor_triplets(
     if len(atoms) < 3:
         return None
 
-    protein_center = candidates.universe.select_atoms("protein").center_of_geometry()
+    protein_center = candidates.center_of_geometry()
     atom_records = [
         {
             "atom": atom,
@@ -748,6 +814,40 @@ def _atom_selection(atom: Any, universe: mda.Universe) -> str:
     return f"index {int(atom.index)}"
 
 
+def _unit_vector_or_none(vector: np.ndarray) -> np.ndarray | None:
+    norm = float(np.linalg.norm(vector))
+    if norm <= 1.0e-8:
+        return None
+    return np.asarray(vector, dtype=float) / norm
+
+
+def _synthetic_apo_l1_vector(
+    p1_position: np.ndarray,
+    p2_position: np.ndarray,
+    protein_center: np.ndarray,
+    distance: float,
+) -> np.ndarray:
+    p1_position = np.asarray(p1_position, dtype=float)
+    protein_center = np.asarray(protein_center, dtype=float)
+
+    direction = _unit_vector_or_none(p1_position - protein_center)
+    if direction is not None:
+        return direction * float(distance)
+
+    p1_to_p2 = np.asarray(p2_position, dtype=float) - p1_position
+    direction = _unit_vector_or_none(p1_to_p2)
+    if direction is None:
+        direction = np.asarray([1.0, 0.0, 0.0], dtype=float)
+
+    base = np.asarray([1.0, 0.0, 0.0], dtype=float)
+    if abs(float(np.dot(direction, base))) > 0.9:
+        base = np.asarray([0.0, 1.0, 0.0], dtype=float)
+    perpendicular = _unit_vector_or_none(np.cross(direction, base))
+    if perpendicular is None:
+        perpendicular = base
+    return perpendicular * float(distance)
+
+
 def find_anchor_atoms(
     u_prot: mda.Universe,
     u_lig: mda.Universe,
@@ -756,6 +856,8 @@ def find_anchor_atoms(
     ligand_anchor_atom: Optional[str] = None,
     unbound_threshold: Optional[float] = None,
     protein_dssp: Any = None,
+    apo_ligand: bool = False,
+    apo_ligand_distance: Optional[float] = None,
 ) -> Tuple[float, float, float, str, str, str, float]:
     """
     Identify Boresch-style anchor atoms and pocket geometry.
@@ -765,6 +867,8 @@ def find_anchor_atoms(
     (l1_x, l1_y, l1_z, p1_str, p2_str, p3_str, r_dist)
         Translation vector from P1 to ligand COM (Å), formatted protein anchor
         strings (``:RESID@NAME``), and the ligand distance magnitude + 1 Å.
+        For apo dummy ligands, the vector is synthesized near P1 instead of
+        using the dummy atom's input coordinates.
 
     Raises
     ------
@@ -852,7 +956,24 @@ def find_anchor_atoms(
                     e,
                 )
 
-    r_vect = lig_sel.center_of_mass() - P1_atom.positions  # shape (1,3)
+    if apo_ligand:
+        distance = float(
+            apo_ligand_distance if apo_ligand_distance is not None else 5.0
+        )
+        protein_atoms = u_prot.select_atoms("protein")
+        protein_center = protein_atoms.center_of_geometry()
+        r_vect = _synthetic_apo_l1_vector(
+            P1_atom.positions[0],
+            P2_atom.positions[0],
+            protein_center,
+            distance,
+        ).reshape(1, 3)
+        logger.debug(
+            "Using synthetic apo L1 vector with length {:.2f} Å instead of raw dummy coordinates.",
+            distance,
+        )
+    else:
+        r_vect = lig_sel.center_of_mass() - P1_atom.positions  # shape (1,3)
     l1_x, l1_y, l1_z = float(r_vect[0][0]), float(r_vect[0][1]), float(r_vect[0][2])
     logger.debug("l1_x={:.2f}; l1_y={:.2f}; l1_z={:.2f}", l1_x, l1_y, l1_z)
 

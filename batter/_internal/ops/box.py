@@ -21,9 +21,12 @@ from batter.utils.builder_utils import get_buffer_z
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
 from batter._internal.ops.helpers import (
+    Anchors,
     PROTEIN_COM_ATOM_SELECTION,
+    load_anchors,
     run_parmed_hmr_if_enabled,
     merge_first_n_molecules_in_prmtop,
+    save_anchors,
 )
 
 
@@ -69,6 +72,48 @@ def _hy36decode(width: int, value: str) -> int:
     raise ValueError(f"invalid hybrid-36 field: {value!r}")
 
 
+def _pdb_coordinate_fields_are_parseable(line: str) -> bool:
+    if len(line) < 54:
+        return False
+    try:
+        float(line[30:38])
+        float(line[38:46])
+        float(line[46:54])
+    except ValueError:
+        return False
+    return True
+
+
+def _normalize_decimal_resid_overflow_line(line: str) -> str | None:
+    line_body = line.rstrip("\n")
+    line_ending = line[len(line_body) :]
+    match = re.match(
+        r"(?P<resid>-?\d{5,})\s+"
+        r"(?P<x>[-+]?\d+\.\d+)\s+"
+        r"(?P<y>[-+]?\d+\.\d+)\s*"
+        r"(?P<z>[-+]?\d+\.\d+)"
+        r"(?P<rest>\s+.*)$",
+        line_body[22:],
+    )
+    if match is None:
+        return None
+
+    try:
+        resid = int(match.group("resid"))
+        x = float(match.group("x"))
+        y = float(match.group("y"))
+        z = float(match.group("z"))
+    except ValueError:
+        return None
+
+    normalized = (
+        f"{line_body[:22]}{resid % 10000:04d}    "
+        f"{x:8.3f}{y:8.3f}{z:8.3f}{match.group('rest')}"
+        f"{line_ending}"
+    )
+    return normalized if _pdb_coordinate_fields_are_parseable(normalized) else None
+
+
 def _normalize_hybrid36_resids_for_mdanalysis(pdb_path: Path) -> Path | None:
     """Return a temp PDB with hybrid-36 residue IDs converted for MDAnalysis.
 
@@ -77,8 +122,9 @@ def _normalize_hybrid36_resids_for_mdanalysis(pdb_path: Path) -> Path | None:
     residue. For MDAnalysis parsing only, convert such fields to their decimal
     residue number modulo the 4-column PDB field. MDAnalysis' existing wraparound
     logic then restores monotonically increasing residue IDs for normal Amber
-    output order. Decimal PDB and older Amber five-digit residue output are left
-    unchanged.
+    output order. Older Amber five-digit residue output is left unchanged when
+    coordinate columns remain parseable; six-digit decimal residue overflow is
+    folded back into the 4-column residue field so coordinates realign.
     """
     normalized_lines: list[str] = []
     changed = False
@@ -96,9 +142,19 @@ def _normalize_hybrid36_resids_for_mdanalysis(pdb_path: Path) -> Path | None:
                         normalized_lines.append(line)
                     else:
                         changed = True
-                        normalized_lines.append(f"{line[:22]}{resid % 10000:04d}{line[26:]}")
+                        normalized_lines.append(
+                            f"{line[:22]}{resid % 10000:04d}{line[26:]}"
+                        )
                 else:
-                    normalized_lines.append(line)
+                    if _pdb_coordinate_fields_are_parseable(line):
+                        normalized_lines.append(line)
+                        continue
+                    normalized = _normalize_decimal_resid_overflow_line(line)
+                    if normalized is None:
+                        normalized_lines.append(line)
+                        continue
+                    changed = True
+                    normalized_lines.append(normalized)
             else:
                 normalized_lines.append(line)
 
@@ -150,6 +206,143 @@ def _write_res_blocks(selection, out_pdb: Path) -> None:
                 lines += [ln for ln in f if ln.startswith("ATOM")]
             prev = res.resid
     out_pdb.write_text("".join(lines))
+
+
+_TERMINAL_AMIDE_CAP_ATOMS = {"N1": "N", "H1": "HN1", "H2": "HN2"}
+
+
+def _pdb_atom_name(line: str) -> str:
+    return line[12:16].strip()
+
+
+def _pdb_residue_key(line: str) -> tuple[str, int, str] | None:
+    if not line.startswith(("ATOM  ", "HETATM")) or len(line) < 26:
+        return None
+    try:
+        resid = int(line[22:26])
+    except ValueError:
+        return None
+    return (line[21].strip(), resid, line[17:20].strip())
+
+
+def _replace_pdb_atom_name(line: str, atom_name: str) -> str:
+    line_body = line.rstrip("\n")
+    line_ending = line[len(line_body) :]
+    if len(line_body) < 16:
+        line_body = line_body.ljust(16)
+    return f"{line_body[:12]} {atom_name:<3}{line_body[16:]}{line_ending}"
+
+
+def _replace_pdb_residue(line: str, *, resname: str, resid: int) -> str:
+    line_body = line.rstrip("\n")
+    line_ending = line[len(line_body) :]
+    if len(line_body) < 26:
+        line_body = line_body.ljust(26)
+    return f"{line_body[:17]}{resname:>3}{line_body[20:22]}{resid:4d}{line_body[26:]}{line_ending}"
+
+
+def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
+    """
+    Rewrite terminal ``N1/H1/H2`` amide atoms as Amber's ``NHE`` cap residue.
+
+    Peptide inputs can encode a C-terminal amide on the final amino-acid residue
+    itself. LEaP then treats ``N1`` as an unknown atom on ``CXXX``. Moving those
+    atoms into a following ``NHE`` residue lets the standard aminoct library type
+    the cap and bond it to the preceding residue.
+    """
+    lines = pdb_path.read_text().splitlines(True)
+    rewritten: list[str] = []
+    block: list[str] = []
+    cap_count = 0
+    used_resids = {
+        key[1]
+        for key in (_pdb_residue_key(line) for line in lines)
+        if key is not None
+    }
+    next_cap_resid = max(used_resids, default=0) + 1
+
+    def take_cap_resid() -> int:
+        nonlocal next_cap_resid
+        while next_cap_resid in used_resids and next_cap_resid <= 9999:
+            next_cap_resid += 1
+        if next_cap_resid > 9999:
+            raise ValueError(
+                f"Unable to assign a unique PDB residue ID for terminal NHE cap in {pdb_path}"
+            )
+        resid = next_cap_resid
+        used_resids.add(resid)
+        next_cap_resid += 1
+        return resid
+
+    def flush_block() -> None:
+        nonlocal cap_count
+        if not block:
+            return
+
+        atom_keys = [
+            _pdb_residue_key(line)
+            for line in block
+            if line.startswith(("ATOM  ", "HETATM"))
+        ]
+        atom_keys = [key for key in atom_keys if key is not None]
+        if not atom_keys:
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        terminal_key = atom_keys[-1]
+        terminal_atom_names = {
+            _pdb_atom_name(line)
+            for line in block
+            if _pdb_residue_key(line) == terminal_key
+        }
+        if "N1" not in terminal_atom_names:
+            rewritten.extend(block)
+            block.clear()
+            return
+
+        cap_lines: list[str] = []
+        body_lines: list[str] = []
+        has_amide_n = False
+        cap_resid = take_cap_resid()
+
+        for line in block:
+            key = _pdb_residue_key(line)
+            atom_name = _pdb_atom_name(line)
+            if key == terminal_key and atom_name in _TERMINAL_AMIDE_CAP_ATOMS:
+                has_amide_n = has_amide_n or atom_name == "N1"
+                cap_atom = _TERMINAL_AMIDE_CAP_ATOMS[atom_name]
+                cap_line = _replace_pdb_atom_name(line, cap_atom)
+                cap_line = _replace_pdb_residue(
+                    cap_line,
+                    resname="NHE",
+                    resid=cap_resid,
+                )
+                cap_lines.append(cap_line)
+                continue
+            if key == terminal_key and atom_name == "OXT":
+                continue
+            body_lines.append(line)
+
+        if has_amide_n:
+            rewritten.extend(body_lines)
+            rewritten.extend(cap_lines)
+            cap_count += 1
+        else:
+            rewritten.extend(block)
+        block.clear()
+
+    for line in lines:
+        if line.startswith("TER"):
+            flush_block()
+            rewritten.append(line)
+        else:
+            block.append(line)
+    flush_block()
+
+    if cap_count:
+        pdb_path.write_text("".join(rewritten))
+    return cap_count
 
 
 def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
@@ -260,6 +453,106 @@ def _write_leap_disulfide_bonds(
     for first, second in disulfide_pairs:
         handle.write(f"bond {unit_name}.{first}.SG {unit_name}.{second}.SG\n")
     handle.write("\n")
+
+
+def _map_disulfide_pairs_to_leap_indices(
+    disulfide_pairs: list[tuple[int, int]], pdb_path: Path
+) -> list[tuple[int, int]]:
+    """Map PDB residue IDs to the contiguous residue indices used by LEaP."""
+    if not disulfide_pairs:
+        return []
+
+    residue_order: list[tuple[str, int, str]] = []
+    seen: set[tuple[str, int, str]] = set()
+    for line in pdb_path.read_text().splitlines():
+        key = _pdb_residue_key(line)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        residue_order.append(key)
+
+    if not residue_order:
+        return disulfide_pairs
+
+    leap_index = residue_order[0][1]
+    resid_to_leap_index: dict[int, int] = {}
+    ambiguous_resids: set[int] = set()
+    for _chain, resid, _resname in residue_order:
+        if resid in resid_to_leap_index:
+            ambiguous_resids.add(resid)
+        else:
+            resid_to_leap_index[resid] = leap_index
+        leap_index += 1
+
+    mapped: list[tuple[int, int]] = []
+    for first, second in disulfide_pairs:
+        if first in ambiguous_resids or second in ambiguous_resids:
+            logger.warning(
+                f"Skipping disulfide pair {first} {second}: duplicate residue IDs in {pdb_path}"
+            )
+            continue
+        try:
+            mapped.append((resid_to_leap_index[first], resid_to_leap_index[second]))
+        except KeyError:
+            logger.warning(
+                f"Skipping disulfide pair {first} {second}: residue ID not present in {pdb_path}"
+            )
+    return mapped
+
+
+def _replace_anchor_mask_resid(mask: str | None, resid: int) -> str | None:
+    if not mask:
+        return mask
+    return re.sub(r":-?\d+(?=@)", f":{resid}", mask, count=1)
+
+
+def _find_ligand_resid_in_pdb(pdb_path: Path, ligand_resname: str) -> int | None:
+    for line in pdb_path.read_text().splitlines():
+        if not line.startswith(("ATOM  ", "HETATM")):
+            continue
+        if line[17:20].strip() != ligand_resname:
+            continue
+        key = _pdb_residue_key(line)
+        if key is not None:
+            return key[1]
+    return None
+
+
+def _sync_ligand_anchor_residue_with_pdb(
+    working_dir: Path, pdb_path: Path, ligand_resname: str
+) -> None:
+    anchors_path = working_dir / "anchors.json"
+    if not anchors_path.exists():
+        return
+
+    actual_lig_res = _find_ligand_resid_in_pdb(pdb_path, ligand_resname)
+    if actual_lig_res is None:
+        logger.warning(
+            f"Could not find ligand residue {ligand_resname!r} in {pdb_path}; leaving anchors unchanged"
+        )
+        return
+
+    anchors = load_anchors(working_dir)
+    if str(actual_lig_res) == str(anchors.lig_res):
+        return
+
+    save_anchors(
+        working_dir,
+        Anchors(
+            P1=anchors.P1,
+            P2=anchors.P2,
+            P3=anchors.P3,
+            L1=_replace_anchor_mask_resid(anchors.L1, actual_lig_res),
+            L2=_replace_anchor_mask_resid(anchors.L2, actual_lig_res),
+            L3=_replace_anchor_mask_resid(anchors.L3, actual_lig_res),
+            lig_res=str(actual_lig_res),
+        ),
+    )
+    logger.info(
+        "Updated ligand anchor residue from {} to {} after LEaP residue numbering.",
+        anchors.lig_res,
+        actual_lig_res,
+    )
 
 
 @register_create_box("z")
@@ -515,7 +808,17 @@ def create_box(ctx: BuildContext) -> None:
                     and not _is_disulfide_thiol_hydrogen_line(ln, disulfide_resids)
                 ]
             prot_lines.append("TER\n")
-        (window_dir / "solvate_pre_prot.pdb").write_text("".join(prot_lines))
+        solvate_pre_prot = window_dir / "solvate_pre_prot.pdb"
+        solvate_pre_prot.write_text("".join(prot_lines))
+        cap_count = _rewrite_terminal_amide_caps_for_leap(solvate_pre_prot)
+        if cap_count:
+            logger.info(
+                "Rewrote {} terminal protein amide cap(s) as Amber NHE residues before LEaP.",
+                cap_count,
+            )
+        leap_disulfide_pairs = _map_disulfide_pairs_to_leap_indices(
+            disulfide_pairs, solvate_pre_prot
+        )
 
         _write_res_blocks(final_system_ligs, window_dir / "solvate_pre_ligands.pdb")
 
@@ -553,7 +856,7 @@ def create_box(ctx: BuildContext) -> None:
     _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_prot.in")
     with (window_dir / "tleap_solvate_prot.in").open("a") as f:
         f.write("prot = loadpdb solvate_pre_prot.pdb\n\n")
-        _write_leap_disulfide_bonds(f, "prot", disulfide_pairs)
+        _write_leap_disulfide_bonds(f, "prot", leap_disulfide_pairs)
         f.write(
             f"set prot box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
         )
@@ -769,6 +1072,7 @@ def create_box(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+    _sync_ligand_anchor_residue_with_pdb(work, window_dir / "vac.pdb", mol)
 
     other_parts_pmd.save(str(window_dir / "other_parts.prmtop"), overwrite=True)
     other_parts_pmd.save(str(window_dir / "other_parts.inpcrd"), overwrite=True)

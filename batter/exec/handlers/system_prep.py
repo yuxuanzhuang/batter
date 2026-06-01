@@ -941,6 +941,8 @@ class _SystemPrepRunner:
         lipid_mol: List[str] = [],
         lipid_ff: str = "lipid21",
         unbound_threshold: float | None = None,
+        min_adis: float = 3.0,
+        max_adis: float = 7.0,
         overwrite: bool = False,
         verbose: bool = False,
     ) -> Dict[str, Any]:
@@ -1097,6 +1099,8 @@ class _SystemPrepRunner:
             ligand_anchor_atom,
             unbound_threshold=unbound_threshold,
             protein_dssp=dssp_result.get("results"),
+            apo_ligand=anchor_ligand_is_apo,
+            apo_ligand_distance=(float(min_adis) + float(max_adis)) / 2.0,
         )
         self.anchor_atoms = resolved_anchor_atoms
         self.ligand_anchor_atom = ligand_anchor_atom
@@ -1186,6 +1190,8 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
         lipid_mol=list(sys_params.get("lipid_mol", [])),
         lipid_ff=sys_params.get("lipid_ff", "lipid21"),
         unbound_threshold=unbound_threshold,
+        min_adis=float(sys_params.get("min_adis", 3.0)),
+        max_adis=float(sys_params.get("max_adis", 7.0)),
         overwrite=bool(sys_params.get("overwrite", False)),
         verbose=bool(sys_params.get("verbose", False)),
     )

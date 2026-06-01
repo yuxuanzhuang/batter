@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
@@ -100,6 +101,29 @@ def test_find_anchor_atoms_checks_unbound_threshold_fail(tmp_path: Path) -> None
         )
 
 
+def test_find_anchor_atoms_uses_synthetic_vector_for_apo_dummy(tmp_path: Path) -> None:
+    u_prot = _make_protein(tmp_path)
+    u_lig = _make_ligand(tmp_path, (-150.0, 25.0, -170.0))
+
+    result = find_anchor_atoms(
+        u_prot=u_prot,
+        u_lig=u_lig,
+        lig_sdf=None,
+        anchor_atoms=[
+            "resid 10 and name CA",
+            "resid 11 and name CB",
+            "resid 12 and name CG",
+        ],
+        apo_ligand=True,
+        apo_ligand_distance=5.0,
+    )
+
+    vector = np.array(result[:3])
+    assert np.linalg.norm(vector) == pytest.approx(5.0)
+    assert np.linalg.norm(vector - np.array([-150.0, 25.0, -170.0])) > 100.0
+    assert result[6] == pytest.approx(6.0)
+
+
 def test_select_receptor_anchor_atoms_uses_ligand_pose_and_geometry(
     tmp_path: Path,
 ) -> None:
@@ -190,6 +214,58 @@ def test_select_apo_receptor_anchor_atoms_relaxes_spacing_for_apo_md(
         "protein and resid 2 and name CA",
         "protein and resid 3 and name CA",
     ]
+
+
+def test_select_apo_receptor_anchor_atoms_ignores_short_peptide_chain(
+    tmp_path: Path,
+) -> None:
+    protein = tmp_path / "protein_with_peptide.pdb"
+    lines: list[str] = []
+    serial = 1
+    for idx, resid in enumerate(range(9, 40)):
+        lines.append(
+            _atom_line(
+                serial,
+                "CA",
+                "ALA",
+                "A",
+                resid,
+                -10.0,
+                idx * 1.5,
+                0.0,
+                "C",
+            )
+        )
+        serial += 1
+    for idx, resid in enumerate(range(28, 128)):
+        lines.append(
+            _atom_line(
+                serial,
+                "CA",
+                "ALA",
+                "B",
+                resid,
+                float((idx % 10) * 4),
+                float((idx // 10) * 4),
+                0.0,
+                "C",
+            )
+        )
+        serial += 1
+    _write_pdb(protein, lines)
+    universe = mda.Universe(str(protein))
+
+    selections = select_apo_receptor_anchor_atoms(
+        universe,
+        min_anchor_distance=8.0,
+        max_candidates=200,
+        max_p1_candidates=50,
+    )
+
+    selected_chains = [
+        universe.select_atoms(selection)[0].chainID for selection in selections
+    ]
+    assert selected_chains == ["B", "B", "B"]
 
 
 def test_select_receptor_anchor_atoms_prefers_salt_bridge_for_p1(
