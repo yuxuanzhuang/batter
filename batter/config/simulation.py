@@ -358,7 +358,7 @@ class SimulationConfig(BaseModel):
     unbound_threshold: float = Field(
         8.0,
         ge=0.0,
-        description="Distance (Å) between ligand COMs that classifies equilibration as unbound.",
+        description="Ligand-to-initial-binding-site distance (Å) that classifies equilibration as unbound.",
     )
     analysis_start_step: int = Field(
         0,

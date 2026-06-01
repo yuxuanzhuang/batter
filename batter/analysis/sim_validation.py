@@ -149,23 +149,55 @@ class SimValidator:
         if ligand_ag.n_atoms == 0:
             raise ValueError(f'No ligand atoms found for resname {self.ligand!r}.')
 
-        anchor_ag = self._get_protein_anchor_atoms()
-        if anchor_ag is None or anchor_ag.n_atoms != 3:
+        ligand_heavy = self._heavy_atoms_or_all(ligand_ag)
+        binding_site_ag = self._get_binding_site_atoms(ligand_heavy)
+        if binding_site_ag is None or binding_site_ag.n_atoms == 0:
+            logger.warning(
+                'Could not resolve initial binding-site atoms; falling back to protein anchors.'
+            )
+            binding_site_ag = self._get_protein_anchor_atoms()
+        if binding_site_ag is None or binding_site_ag.n_atoms == 0:
             raise ValueError(
-                f'Could not resolve three protein anchor atoms for ligand_bs in {self.workdir}.'
+                f'Could not resolve binding-site atoms for ligand_bs in {self.workdir}.'
             )
 
-        # Distance metric: minimum distance from any ligand atom to the three protein anchors.
+        # Distance metric: minimum distance from any ligand heavy atom to the
+        # protein atoms that formed the initial binding-site pocket.
         distances = []
         for _ in self.universe.trajectory:
             dist_mat = distance_array(
-                ligand_ag.positions,
-                anchor_ag.positions,
+                ligand_heavy.positions,
+                binding_site_ag.positions,
                 box=self.universe.dimensions,
             )
             distances.append(float(np.min(dist_mat)))
 
         self.results['ligand_bs'] = np.asarray(distances)
+
+    @staticmethod
+    def _heavy_atoms_or_all(atom_group: AtomGroup) -> AtomGroup:
+        heavy = atom_group.select_atoms('not name H*')
+        return heavy if heavy.n_atoms else atom_group
+
+    def _get_binding_site_atoms(self, ligand_ag: AtomGroup, cutoff: float = 6.0):
+        protein_ag = self.universe.select_atoms('protein')
+        if protein_ag.n_atoms == 0:
+            return None
+        protein_ag = self._heavy_atoms_or_all(protein_ag)
+
+        first_frame = self.universe.trajectory.frame
+        try:
+            self.universe.trajectory[0]
+            dist_mat = distance_array(
+                ligand_ag.positions,
+                protein_ag.positions,
+                box=self.universe.dimensions,
+            )
+            site_atom_indices = np.where(np.any(dist_mat <= float(cutoff), axis=0))[0]
+            binding_site_ag = protein_ag[site_atom_indices]
+        finally:
+            self.universe.trajectory[first_frame]
+        return binding_site_ag
 
     @staticmethod
     def _anchor_mask_to_selection(mask: str) -> str:

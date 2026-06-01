@@ -489,7 +489,7 @@ class FESimArgs(BaseModel):
     unbound_threshold: float = Field(
         8.0,
         ge=0.0,
-        description="Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
+        description="Ligand-to-initial-binding-site distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
     )
     analysis_start_step: int = Field(
         0,

@@ -166,6 +166,102 @@ def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
         logger.debug(f"Failed to read ligand charge from {meta_path}: {exc}")
         return None
 
+
+def _read_disulfide_pairs(sslink_path: Path) -> list[tuple[int, int]]:
+    """Read pdb4amber's 1-based residue-index disulfide pairs."""
+    if not sslink_path.exists():
+        return []
+
+    pairs: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for line_no, line in enumerate(sslink_path.read_text().splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        fields = stripped.split()
+        if len(fields) < 2:
+            logger.warning(
+                f"Skipping malformed disulfide record {sslink_path}:{line_no}: {line!r}"
+            )
+            continue
+        try:
+            first, second = int(fields[0]), int(fields[1])
+        except ValueError:
+            logger.warning(
+                f"Skipping malformed disulfide record {sslink_path}:{line_no}: {line!r}"
+            )
+            continue
+        if first <= 0 or second <= 0 or first == second:
+            logger.warning(
+                f"Skipping invalid disulfide record {sslink_path}:{line_no}: {line!r}"
+            )
+            continue
+
+        pair = tuple(sorted((first, second)))
+        if pair not in seen:
+            seen.add(pair)
+            pairs.append(pair)
+    return pairs
+
+
+def _map_disulfide_pairs_to_resids(
+    pairs: list[tuple[int, int]], revised_resids: list[int] | np.ndarray
+) -> list[tuple[int, int]]:
+    """Map pdb4amber residue indices to the residue IDs written to LEaP PDBs."""
+    revised = [int(resid) for resid in revised_resids]
+    mapped: list[tuple[int, int]] = []
+    for first, second in pairs:
+        if first > len(revised) or second > len(revised):
+            logger.warning(
+                f"Skipping disulfide pair {first} {second}: only {len(revised)} residues were mapped"
+            )
+            continue
+        mapped.append((revised[first - 1], revised[second - 1]))
+    return mapped
+
+
+def _mark_disulfide_residue_names(residues, disulfide_resids: set[int]) -> None:
+    """Ensure disulfide cysteines are written as CYX before LEaP loads them."""
+    if not disulfide_resids:
+        return
+
+    for residue in residues:
+        if (
+            int(residue.resid) in disulfide_resids
+            and residue.resname in {"CYS", "CYX"}
+        ):
+            residue.resname = "CYX"
+
+
+def _is_disulfide_thiol_hydrogen_line(line: str, disulfide_resids: set[int]) -> bool:
+    """Return True for cysteine SG hydrogen records that should not survive as CYX."""
+    if not disulfide_resids or not line.startswith(("ATOM  ", "HETATM")):
+        return False
+    atom_name = line[12:16].strip()
+    if atom_name not in {"HG", "HG1"}:
+        return False
+    resname = line[17:20].strip()
+    if resname != "CYX":
+        return False
+    try:
+        resid = int(line[22:26])
+    except ValueError:
+        return False
+    return resid in disulfide_resids
+
+
+def _write_leap_disulfide_bonds(
+    handle, unit_name: str, disulfide_pairs: list[tuple[int, int]]
+) -> None:
+    """Write explicit LEaP SG-SG bonds for pdb4amber-detected disulfides."""
+    if not disulfide_pairs:
+        return
+
+    for first, second in disulfide_pairs:
+        handle.write(f"bond {unit_name}.{first}.SG {unit_name}.{second}.SG\n")
+    handle.write("\n")
+
+
 @register_create_box("z")
 def create_box(ctx: BuildContext) -> None:
     """
@@ -315,6 +411,10 @@ def create_box(ctx: BuildContext) -> None:
         else:
             revised_resids.append(resid_counter - 1)
         prev_resid = row["old_resid"]
+    disulfide_pairs = _map_disulfide_pairs_to_resids(
+        _read_disulfide_pairs(window_dir / "build_amber_sslink"), revised_resids
+    )
+    disulfide_resids = {resid for pair in disulfide_pairs for resid in pair}
 
     # MDAnalysis universes
     with _mdanalysis_pdb_path(window_dir / "full_pre.pdb") as full_pre_pdb:
@@ -369,6 +469,7 @@ def create_box(ctx: BuildContext) -> None:
             next_resnum, total_residues - len(revised_resids) + next_resnum
         )
         final_system.residues.resids = final_resids
+        _mark_disulfide_residue_names(final_system.residues, disulfide_resids)
 
         # partitions
         final_system_dum = final_system.select_atoms("resname DUM")
@@ -407,7 +508,12 @@ def create_box(ctx: BuildContext) -> None:
             final_system.select_atoms(f"chainID {chain_name}").write(tmp.name)
             tmp.close()
             with open(tmp.name) as f:
-                prot_lines += [ln for ln in f if ln.startswith("ATOM")]
+                prot_lines += [
+                    ln
+                    for ln in f
+                    if ln.startswith("ATOM")
+                    and not _is_disulfide_thiol_hydrogen_line(ln, disulfide_resids)
+                ]
             prot_lines.append("TER\n")
         (window_dir / "solvate_pre_prot.pdb").write_text("".join(prot_lines))
 
@@ -447,6 +553,7 @@ def create_box(ctx: BuildContext) -> None:
     _cp(window_dir / "tleap.in", window_dir / "tleap_solvate_prot.in")
     with (window_dir / "tleap_solvate_prot.in").open("a") as f:
         f.write("prot = loadpdb solvate_pre_prot.pdb\n\n")
+        _write_leap_disulfide_bonds(f, "prot", disulfide_pairs)
         f.write(
             f"set prot box {{{system_dimensions[0]:.6f} {system_dimensions[1]:.6f} {system_dimensions[2]:.6f}}}\n"
         )
