@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 pytest.importorskip("parmed")
@@ -254,3 +255,328 @@ def test_rewrite_terminal_amide_caps_for_leap(tmp_path: Path) -> None:
     assert " HN1 NHE A   9" in text
     assert " HN2 NHE A   9" in text
     assert text.index(" N   NHE") < text.index("TER")
+
+
+def test_rewrite_embedded_terminal_methylamide_cap_for_leap(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   SER A   7       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  SER A   7       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   SER A   7       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  O   SER A   7       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  OXT SER A   7       2.500   1.000   0.000  1.00  0.00           O",
+                "ATOM      6  N1  SER A   7       2.000   0.500   0.000  1.00  0.00           N",
+                "ATOM      7  H1  SER A   7       2.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      8  C1  SER A   7       2.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      9  H2  SER A   7       3.000   0.500   0.000  1.00  0.00           H",
+                "ATOM     10  H3  SER A   7       3.000   1.500   0.000  1.00  0.00           H",
+                "ATOM     11  H4  SER A   7       2.500   1.000   1.000  1.00  0.00           H",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_terminal_amide_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " OXT " not in text
+    assert " N1  SER" not in text
+    assert " N   NME A   8" in text
+    assert " H   NME A   8" in text
+    assert " C   NME A   8" in text
+    assert " H1  NME A   8" in text
+    assert " H2  NME A   8" in text
+    assert " H3  NME A   8" in text
+    assert text.index(" N   NME") < text.index("TER")
+
+
+def test_rewrite_terminal_nma_residue_as_nme_for_leap(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   LYS A 163       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  LYS A 163       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   LYS A 163       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  O   LYS A 163       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  OXT LYS A 163       2.500   1.000   0.000  1.00  0.00           O",
+                "HETATM    6  N   NMA A 164       2.000   0.500   0.000  1.00  0.00           N",
+                "HETATM    7  CA  NMA A 164       2.500   1.000   0.000  1.00  0.00           C",
+                "HETATM    8  H   NMA A 164       2.500   0.000   0.000  1.00  0.00           H",
+                "HETATM    9 1HA  NMA A 164       3.000   0.500   0.000  1.00  0.00           H",
+                "HETATM   10 2HA  NMA A 164       3.000   1.500   0.000  1.00  0.00           H",
+                "HETATM   11 3HA  NMA A 164       2.500   1.000   1.000  1.00  0.00           H",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_terminal_amide_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " OXT " not in text
+    assert " NMA " not in text
+    assert " N   NME A 164" in text
+    assert " C   NME A 164" in text
+    assert " H   NME A 164" in text
+    assert " H1  NME A 164" in text
+    assert " H2  NME A 164" in text
+    assert " H3  NME A 164" in text
+
+
+def test_rewrite_terminal_nme_drops_duplicate_methyl_aliases(tmp_path: Path) -> None:
+    pdb = tmp_path / "protein.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   ARG B 426       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  ARG B 426       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   ARG B 426       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  O   ARG B 426       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  N   NME B 426       2.000   0.500   0.000  1.00  0.00           N",
+                "ATOM      6  H   NME B 426       2.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      7  C   NME B 426       2.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      8  H1  NME B 426       3.000   0.500   0.000  1.00  0.00           H",
+                "ATOM      9  H2  NME B 426       3.000   1.500   0.000  1.00  0.00           H",
+                "ATOM     10  H3  NME B 426       2.500   1.000   1.000  1.00  0.00           H",
+                "ATOM     11  CH3 NME B 426       2.510   1.010   0.010  1.00  0.00           C",
+                "ATOM     12 HH31 NME B 426       3.010   0.510   0.010  1.00  0.00           H",
+                "ATOM     13 HH32 NME B 426       3.010   1.510   0.010  1.00  0.00           H",
+                "ATOM     14 HH33 NME B 426       2.510   1.010   1.010  1.00  0.00           H",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_terminal_amide_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert text.count(" C   NME B 426") == 1
+    assert text.count(" H1  NME B 426") == 1
+    assert text.count(" H2  NME B 426") == 1
+    assert text.count(" H3  NME B 426") == 1
+    assert " CH3 NME" not in text
+    assert "HH31 NME" not in text
+
+
+def test_rewrite_terminal_amide_cap_after_high_residues_uses_chain_local_id(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "build.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   SER A   7       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  SER A   7       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   SER A   7       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  O   SER A   7       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  N1  SER A   7       2.000   0.500   0.000  1.00  0.00           N",
+                "ATOM      6  H1  SER A   7       2.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      7  H2  SER A   7       2.500   1.000   0.000  1.00  0.00           H",
+                "TER",
+                "ATOM      8  O   WAT W9999       5.000   0.000   0.000  1.00  0.00           O",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    assert box._rewrite_terminal_amide_caps_for_leap(pdb) == 1
+
+    text = pdb.read_text()
+    assert " N   NHE A   8" in text
+    assert " HN1 NHE A   8" in text
+    assert " HN2 NHE A   8" in text
+
+
+def test_chain_id_from_renum_uses_amber_residue_ids() -> None:
+    renum_df = pd.DataFrame(
+        [
+            {
+                "old_resname": "NHE",
+                "old_chain": "A",
+                "old_resid": 33,
+                "new_resname": "NHE",
+                "new_resid": 33,
+            },
+            {
+                "old_resname": "THR",
+                "old_chain": "B",
+                "old_resid": 33,
+                "new_resname": "THR",
+                "new_resid": 34,
+            },
+            {
+                "old_resname": "NME",
+                "old_chain": "B",
+                "old_resid": 426,
+                "new_resname": "NME",
+                "new_resid": 427,
+            },
+        ]
+    )
+
+    assert box._chain_id_from_renum(renum_df, resid=34, resname="THR") == "B"
+    assert box._chain_id_from_renum(renum_df, resid=427, resname="NME") == "B"
+    assert box._chain_id_from_renum(renum_df, resid=33, resname="NHE") == "A"
+
+
+def test_collapse_terminal_cap_resid_values_uses_neighbor_resids() -> None:
+    renum_df = pd.DataFrame(
+        [
+            {
+                "old_resname": "ACE",
+                "old_chain": "A",
+                "old_resid": 9,
+                "new_resname": "ACE",
+                "new_resid": 1,
+            },
+            {
+                "old_resname": "ALA",
+                "old_chain": "A",
+                "old_resid": 9,
+                "new_resname": "ALA",
+                "new_resid": 2,
+            },
+            {
+                "old_resname": "SER",
+                "old_chain": "B",
+                "old_resid": 32,
+                "new_resname": "SER",
+                "new_resid": 3,
+            },
+            {
+                "old_resname": "NHE",
+                "old_chain": "B",
+                "old_resid": 33,
+                "new_resname": "NHE",
+                "new_resid": 4,
+            },
+            {
+                "old_resname": "ARG",
+                "old_chain": "C",
+                "old_resid": 421,
+                "new_resname": "ARG",
+                "new_resid": 5,
+            },
+            {
+                "old_resname": "NME",
+                "old_chain": "C",
+                "old_resid": 422,
+                "new_resname": "NME",
+                "new_resid": 6,
+            },
+        ]
+    )
+
+    assert box._collapse_terminal_cap_resid_values(
+        renum_df, [1, 2, 3, 4, 5, 6]
+    ) == [2, 2, 3, 3, 5, 5]
+
+
+def test_restore_protein_resids_collapses_synthetic_and_mapped_caps(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "full.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  C   ACE A   1       0.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      2  CH3 ACE A   1       0.500   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  N   ALA A   2       1.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      4  CA  ALA A   2       1.500   0.000   0.000  1.00  0.00           C",
+                "ATOM      5  N   SER B   3       2.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      6  CA  SER B   3       2.500   0.000   0.000  1.00  0.00           C",
+                "ATOM      7  N   NHE B   4       3.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      8  N   ARG C   5       4.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      9  CA  ARG C   5       4.500   0.000   0.000  1.00  0.00           C",
+                "ATOM     10  N   NME C   6       5.000   0.000   0.000  1.00  0.00           N",
+                "ATOM     11  CH3 NME C   6       5.500   0.000   0.000  1.00  0.00           C",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+    universe = mda.Universe(str(pdb))
+    renum_df = pd.DataFrame(
+        [
+            {
+                "old_resname": "ACE",
+                "old_chain": "A",
+                "old_resid": 10,
+                "new_resname": "ACE",
+                "new_resid": 1,
+            },
+            {
+                "old_resname": "ALA",
+                "old_chain": "A",
+                "old_resid": 10,
+                "new_resname": "ALA",
+                "new_resid": 2,
+            },
+            {
+                "old_resname": "SER",
+                "old_chain": "B",
+                "old_resid": 32,
+                "new_resname": "SER",
+                "new_resid": 3,
+            },
+            {
+                "old_resname": "ARG",
+                "old_chain": "C",
+                "old_resid": 421,
+                "new_resname": "ARG",
+                "new_resid": 4,
+            },
+            {
+                "old_resname": "NMA",
+                "old_chain": "C",
+                "old_resid": 421,
+                "new_resname": "NMA",
+                "new_resid": 5,
+            },
+        ]
+    )
+
+    box._restore_protein_resids_from_renum(universe.atoms, renum_df)
+
+    residues = universe.select_atoms(box._PROTEIN_WITH_TERMINAL_CAPS).residues
+    assert list(residues.resnames) == ["ACE", "ALA", "SER", "NHE", "ARG", "NME"]
+    assert list(residues.resids) == [10, 10, 32, 32, 421, 421]
+
+
+def test_protein_with_terminal_caps_selection_includes_nhe(tmp_path: Path) -> None:
+    pdb = tmp_path / "full_pre.pdb"
+    pdb.write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   SER    32       0.000   0.000   0.000  1.00  0.00           N",
+                "ATOM      2  CA  SER    32       1.000   0.000   0.000  1.00  0.00           C",
+                "ATOM      3  C   SER    32       1.500   1.000   0.000  1.00  0.00           C",
+                "ATOM      4  O   SER    32       1.500   2.000   0.000  1.00  0.00           O",
+                "ATOM      5  N   NHE    33       2.000   0.500   0.000  1.00  0.00           N",
+                "ATOM      6  HN1 NHE    33       2.500   0.000   0.000  1.00  0.00           H",
+                "ATOM      7  HN2 NHE    33       2.500   1.000   0.000  1.00  0.00           H",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    universe = mda.Universe(str(pdb))
+
+    assert "NHE" not in set(universe.select_atoms("protein").residues.resnames)
+    assert "NHE" in set(
+        universe.select_atoms(box._PROTEIN_WITH_TERMINAL_CAPS).residues.resnames
+    )

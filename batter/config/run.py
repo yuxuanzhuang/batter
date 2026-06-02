@@ -232,6 +232,13 @@ class CreateArgs(BaseModel):
         "TIP3P",
         description="Water model used for solvation.",
     )
+    infer_disulfide_bonds: bool = Field(
+        True,
+        description=(
+            "Infer missing disulfide bonds from close CYX SG-SG distances during "
+            "box preparation."
+        ),
+    )
 
     l1_range: float = Field(
         6.0,

@@ -76,6 +76,34 @@ def _make_fragmented_protein_pdb(
     )
 
 
+def _make_capped_multichain_protein_pdb(path: Path) -> None:
+    lines = [
+        _atom_line(1, "N", "SER", "A", 1, 0.0, 0.0, 0.0, "N"),
+        _atom_line(2, "CA", "SER", "A", 1, 1.0, 0.0, 0.0, "C"),
+        _atom_line(3, "C", "SER", "A", 1, 1.5, 1.0, 0.0, "C"),
+        _atom_line(4, "O", "SER", "A", 1, 1.5, 2.0, 0.0, "O"),
+        "TER\n",
+        _atom_line(5, "CH3", "ACE", "B", 1, 3.0, 0.0, 0.0, "C"),
+        _atom_line(6, "C", "ACE", "B", 1, 4.0, 0.0, 0.0, "C"),
+        _atom_line(7, "O", "ACE", "B", 1, 4.5, 0.8, 0.0, "O"),
+        _atom_line(8, "N", "ALA", "B", 2, 5.0, 0.0, 0.0, "N"),
+        _atom_line(9, "CA", "ALA", "B", 2, 6.0, 0.0, 0.0, "C"),
+        _atom_line(10, "C", "ALA", "B", 2, 6.5, 1.0, 0.0, "C"),
+        _atom_line(11, "O", "ALA", "B", 2, 6.5, 2.0, 0.0, "O"),
+        _atom_line(12, "N", "ARG", "B", 3, 7.5, 1.0, 0.0, "N"),
+        _atom_line(13, "CA", "ARG", "B", 3, 8.5, 1.0, 0.0, "C"),
+        _atom_line(14, "C", "ARG", "B", 3, 9.0, 2.0, 0.0, "C"),
+        _atom_line(15, "O", "ARG", "B", 3, 9.0, 3.0, 0.0, "O"),
+        _atom_line(16, "N", "NMA", "B", 3, 10.0, 2.0, 0.0, "N"),
+        _atom_line(17, "CA", "NMA", "B", 3, 11.0, 2.0, 0.0, "C"),
+        _atom_line(18, "H", "NMA", "B", 3, 10.0, 1.2, 0.0, "H"),
+        _atom_line(19, "1HA", "NMA", "B", 3, 11.5, 1.5, 0.0, "H"),
+        _atom_line(20, "2HA", "NMA", "B", 3, 11.5, 2.5, 0.0, "H"),
+        _atom_line(21, "3HA", "NMA", "B", 3, 11.0, 2.0, 1.0, "H"),
+    ]
+    _write_pdb(path, lines)
+
+
 def _make_ligand_pdb(path: Path) -> None:
     _write_pdb(
         path,
@@ -623,6 +651,40 @@ def test_process_system_splits_protein_on_long_ca_distance(
     assert [int(residue.resid) for residue in residues] == [1, 2]
     assert [residue.atoms.chainIDs[0] for residue in residues] == ["A", "B"]
     assert any("C-alpha distance 14.5 A > 10.0 A" in warning for warning in warnings)
+
+
+def test_process_system_preserves_terminal_caps_outside_protein_selection(
+    monkeypatch, tmp_path: Path
+) -> None:
+    system = SimSystem(name="SYS", root=tmp_path / "run")
+    runner = _SystemPrepRunner(system, tmp_path)
+    runner._system_name = "SYS"
+    runner.ligands_folder.mkdir(parents=True, exist_ok=True)
+
+    protein = runner.ligands_folder / "protein_aligned.pdb"
+    system_pdb = runner.ligands_folder / "system_aligned.pdb"
+    _make_capped_multichain_protein_pdb(protein)
+    _make_capped_multichain_protein_pdb(system_pdb)
+
+    runner._protein_aligned_pdb = str(protein)
+    runner._system_aligned_pdb = str(system_pdb)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        system_prep_mod.logger,
+        "warning",
+        lambda message: warnings.append(str(message)),
+    )
+
+    runner._process_system()
+
+    reference_text = (runner.ligands_folder / "reference.pdb").read_text()
+    merged_text = (runner.ligands_folder / "SYS.pdb").read_text()
+    assert " ACE " in reference_text
+    assert " NMA " in reference_text
+    assert " ACE " in merged_text
+    assert " NMA " in merged_text
+    assert not any("resid discontinuity (3 -> 3)" in warning for warning in warnings)
 
 
 def test_process_system_splits_6hty_into_three_segments(

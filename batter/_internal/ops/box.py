@@ -209,6 +209,53 @@ def _write_res_blocks(selection, out_pdb: Path) -> None:
 
 
 _TERMINAL_AMIDE_CAP_ATOMS = {"N1": "N", "H1": "HN1", "H2": "HN2"}
+_TERMINAL_METHYLAMIDE_RESNAMES = {"NMA", "NME"}
+_N_TERMINAL_CAP_RESNAMES = {"ACE"}
+_C_TERMINAL_CAP_RESNAMES = {"NMA", "NME", "NHE"}
+_PROTEIN_TERMINAL_CAP_RESNAME_SET = (
+    _N_TERMINAL_CAP_RESNAMES | _C_TERMINAL_CAP_RESNAMES
+)
+_PROTEIN_TERMINAL_CAP_RESNAMES = "ACE NMA NME NHE"
+_PROTEIN_WITH_TERMINAL_CAPS = f"(protein or resname {_PROTEIN_TERMINAL_CAP_RESNAMES})"
+_EMBEDDED_METHYLAMIDE_CARBON_ALIASES = ("CH3", "C1", "CM", "CR")
+_SEPARATE_METHYLAMIDE_ATOM_ALIASES = {
+    "N": "N",
+    "H": "H",
+    "HNT": "H",
+    "HN": "H",
+    "HN1": "H",
+    "CH3": "C",
+    "C": "C",
+    "CA": "C",
+    "CAT": "C",
+    "C1": "C",
+    "CM": "C",
+    "CR": "C",
+    "HH31": "H1",
+    "HH32": "H2",
+    "HH33": "H3",
+    "H31": "H1",
+    "H32": "H2",
+    "H33": "H3",
+    "H31H": "H1",
+    "H32H": "H2",
+    "H33H": "H3",
+    "H1": "H1",
+    "H2": "H2",
+    "H3": "H3",
+    "1HA": "H1",
+    "2HA": "H2",
+    "3HA": "H3",
+    "HT1": "H1",
+    "HT2": "H2",
+    "HT3": "H3",
+    "HR1": "H1",
+    "HR2": "H2",
+    "HR3": "H3",
+    "HM1": "H1",
+    "HM2": "H2",
+    "HM3": "H3",
+}
 
 
 def _pdb_atom_name(line: str) -> str:
@@ -230,7 +277,8 @@ def _replace_pdb_atom_name(line: str, atom_name: str) -> str:
     line_ending = line[len(line_body) :]
     if len(line_body) < 16:
         line_body = line_body.ljust(16)
-    return f"{line_body[:12]} {atom_name:<3}{line_body[16:]}{line_ending}"
+    atom_field = atom_name[:4] if len(atom_name) >= 4 else f" {atom_name:<3}"
+    return f"{line_body[:12]}{atom_field}{line_body[16:]}{line_ending}"
 
 
 def _replace_pdb_residue(line: str, *, resname: str, resid: int) -> str:
@@ -241,36 +289,163 @@ def _replace_pdb_residue(line: str, *, resname: str, resid: int) -> str:
     return f"{line_body[:17]}{resname:>3}{line_body[20:22]}{resid:4d}{line_body[26:]}{line_ending}"
 
 
+def _residue_keys_in_order(block: list[str]) -> list[tuple[str, int, str]]:
+    keys: list[tuple[str, int, str]] = []
+    seen: set[tuple[str, int, str]] = set()
+    for line in block:
+        key = _pdb_residue_key(line)
+        if key is not None and key not in seen:
+            keys.append(key)
+            seen.add(key)
+    return keys
+
+
+def _atom_names_for_residue(
+    block: list[str], residue_key: tuple[str, int, str]
+) -> set[str]:
+    return {
+        _pdb_atom_name(line)
+        for line in block
+        if _pdb_residue_key(line) == residue_key
+    }
+
+
+def _embedded_methylamide_cap_atoms(atom_names: set[str]) -> dict[str, str] | None:
+    methyl_carbons = [
+        name for name in _EMBEDDED_METHYLAMIDE_CARBON_ALIASES if name in atom_names
+    ]
+    if not methyl_carbons:
+        return None
+
+    aliases = {"N1": "N", methyl_carbons[0]: "C"}
+    if "HN" in atom_names:
+        aliases["HN"] = "H"
+        methyl_hydrogens = ("H1", "H2", "H3")
+    elif "HN1" in atom_names:
+        aliases["HN1"] = "H"
+        methyl_hydrogens = ("H1", "H2", "H3")
+    elif "H" in atom_names:
+        aliases["H"] = "H"
+        methyl_hydrogens = ("H1", "H2", "H3")
+    else:
+        aliases["H1"] = "H"
+        methyl_hydrogens = ("H2", "H3", "H4")
+
+    for source, target in zip(methyl_hydrogens, ("H1", "H2", "H3")):
+        if source in atom_names:
+            aliases[source] = target
+    for source, target in {
+        "HH31": "H1",
+        "HH32": "H2",
+        "HH33": "H3",
+        "H31": "H1",
+        "H32": "H2",
+        "H33": "H3",
+        "H31H": "H1",
+        "H32H": "H2",
+        "H33H": "H3",
+        "HR1": "H1",
+        "HR2": "H2",
+        "HR3": "H3",
+        "HM1": "H1",
+        "HM2": "H2",
+        "HM3": "H3",
+    }.items():
+        if source in atom_names:
+            aliases[source] = target
+
+    return aliases
+
+
+def _rewrite_separate_terminal_methylamide_cap(
+    block: list[str], residue_keys: list[tuple[str, int, str]]
+) -> tuple[list[str], bool] | None:
+    if len(residue_keys) < 2:
+        return None
+
+    terminal_key = residue_keys[-1]
+    if terminal_key[2] not in _TERMINAL_METHYLAMIDE_RESNAMES:
+        return None
+
+    atom_names = _atom_names_for_residue(block, terminal_key)
+    if (
+        "N" not in atom_names
+        or "O" in atom_names
+        or not any(
+            name in atom_names
+            for name in ("CH3", "C", "CA", "CAT", "C1", "CM", "CR")
+        )
+        or not atom_names.issubset(_SEPARATE_METHYLAMIDE_ATOM_ALIASES)
+    ):
+        return None
+
+    previous_key = residue_keys[-2]
+    rewritten: list[str] = []
+    emitted_cap_atoms: set[str] = set()
+    changed = terminal_key[2] != "NME"
+    for line in block:
+        key = _pdb_residue_key(line)
+        atom_name = _pdb_atom_name(line)
+        if key == previous_key and atom_name == "OXT":
+            changed = True
+            continue
+        if key == terminal_key:
+            cap_atom = _SEPARATE_METHYLAMIDE_ATOM_ALIASES[atom_name]
+            if cap_atom in emitted_cap_atoms:
+                changed = True
+                continue
+            emitted_cap_atoms.add(cap_atom)
+            changed = changed or cap_atom != atom_name
+            cap_line = _replace_pdb_atom_name(line, cap_atom)
+            cap_line = _replace_pdb_residue(
+                cap_line,
+                resname="NME",
+                resid=terminal_key[1],
+            )
+            rewritten.append(cap_line)
+            continue
+        rewritten.append(line)
+
+    return rewritten, changed
+
+
 def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
     """
-    Rewrite terminal ``N1/H1/H2`` amide atoms as Amber's ``NHE`` cap residue.
+    Rewrite terminal amide caps into Amber residue/atom names.
 
     Peptide inputs can encode a C-terminal amide on the final amino-acid residue
-    itself. LEaP then treats ``N1`` as an unknown atom on ``CXXX``. Moving those
-    atoms into a following ``NHE`` residue lets the standard aminoct library type
-    the cap and bond it to the preceding residue.
+    itself. LEaP then treats cap atoms like ``N1`` as unknown atoms on ``CXXX``.
+    Moving those atoms into following ``NHE`` or ``NME`` residues lets the
+    standard aminoct library type the cap and bond it to the preceding residue.
     """
     lines = pdb_path.read_text().splitlines(True)
     rewritten: list[str] = []
     block: list[str] = []
     cap_count = 0
     used_resids = {
-        key[1]
+        (key[0], key[1])
         for key in (_pdb_residue_key(line) for line in lines)
         if key is not None
     }
-    next_cap_resid = max(used_resids, default=0) + 1
+    all_resids = {resid for _chain, resid in used_resids}
+    next_cap_resid = max(all_resids, default=0) + 1
 
-    def take_cap_resid() -> int:
+    def take_cap_resid(chain_id: str, after_resid: int) -> int:
         nonlocal next_cap_resid
-        while next_cap_resid in used_resids and next_cap_resid <= 9999:
+        while (chain_id, next_cap_resid) in used_resids and next_cap_resid <= 9999:
             next_cap_resid += 1
         if next_cap_resid > 9999:
+            candidate = min(max(int(after_resid) + 1, 1), 9999)
+            for offset in range(9999):
+                resid = ((candidate - 1 + offset) % 9999) + 1
+                if (chain_id, resid) not in used_resids:
+                    used_resids.add((chain_id, resid))
+                    return resid
             raise ValueError(
-                f"Unable to assign a unique PDB residue ID for terminal NHE cap in {pdb_path}"
+                f"Unable to assign a unique PDB residue ID for terminal amide cap in {pdb_path}"
             )
         resid = next_cap_resid
-        used_resids.add(resid)
+        used_resids.add((chain_id, resid))
         next_cap_resid += 1
         return resid
 
@@ -279,43 +454,53 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
         if not block:
             return
 
-        atom_keys = [
-            _pdb_residue_key(line)
-            for line in block
-            if line.startswith(("ATOM  ", "HETATM"))
-        ]
-        atom_keys = [key for key in atom_keys if key is not None]
-        if not atom_keys:
+        residue_keys = _residue_keys_in_order(block)
+        if not residue_keys:
             rewritten.extend(block)
             block.clear()
             return
 
-        terminal_key = atom_keys[-1]
-        terminal_atom_names = {
-            _pdb_atom_name(line)
-            for line in block
-            if _pdb_residue_key(line) == terminal_key
-        }
+        separate_methylamide = _rewrite_separate_terminal_methylamide_cap(
+            block, residue_keys
+        )
+        if separate_methylamide is not None:
+            methylamide_lines, changed = separate_methylamide
+            rewritten.extend(methylamide_lines)
+            if changed:
+                cap_count += 1
+            block.clear()
+            return
+
+        terminal_key = residue_keys[-1]
+        terminal_atom_names = _atom_names_for_residue(block, terminal_key)
         if "N1" not in terminal_atom_names:
             rewritten.extend(block)
             block.clear()
             return
 
+        methylamide_atoms = _embedded_methylamide_cap_atoms(terminal_atom_names)
+        if methylamide_atoms is not None:
+            cap_atom_map = methylamide_atoms
+            cap_resname = "NME"
+        else:
+            cap_atom_map = _TERMINAL_AMIDE_CAP_ATOMS
+            cap_resname = "NHE"
+
         cap_lines: list[str] = []
         body_lines: list[str] = []
         has_amide_n = False
-        cap_resid = take_cap_resid()
+        cap_resid = take_cap_resid(terminal_key[0], terminal_key[1])
 
         for line in block:
             key = _pdb_residue_key(line)
             atom_name = _pdb_atom_name(line)
-            if key == terminal_key and atom_name in _TERMINAL_AMIDE_CAP_ATOMS:
+            if key == terminal_key and atom_name in cap_atom_map:
                 has_amide_n = has_amide_n or atom_name == "N1"
-                cap_atom = _TERMINAL_AMIDE_CAP_ATOMS[atom_name]
+                cap_atom = cap_atom_map[atom_name]
                 cap_line = _replace_pdb_atom_name(line, cap_atom)
                 cap_line = _replace_pdb_residue(
                     cap_line,
-                    resname="NHE",
+                    resname=cap_resname,
                     resid=cap_resid,
                 )
                 cap_lines.append(cap_line)
@@ -343,6 +528,151 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
     if cap_count:
         pdb_path.write_text("".join(rewritten))
     return cap_count
+
+
+def _chain_id_from_renum(
+    renum_df: pd.DataFrame, *, resid: int, resname: str
+) -> str:
+    """Return the original chain ID for a residue in an Amber-renumbered PDB."""
+    candidates = renum_df.query(
+        "new_resid == @resid and new_resname == @resname"
+    )
+    if candidates.empty:
+        candidates = renum_df.query(
+            "old_resid == @resid and old_resname == @resname"
+        )
+    if candidates.empty:
+        raise ValueError(
+            f"Unable to map Amber residue {resname} {resid} back to an input chain"
+        )
+    return candidates.old_chain.values[0]
+
+
+def _renum_resname(row: pd.Series) -> str:
+    new_resname = str(row.get("new_resname", "")).strip()
+    return new_resname or str(row.get("old_resname", "")).strip()
+
+
+def _resnames_match_for_renum(residue_resname: str, row: pd.Series) -> bool:
+    residue_resname = residue_resname.strip()
+    row_resnames = {
+        str(row.get("old_resname", "")).strip(),
+        str(row.get("new_resname", "")).strip(),
+    }
+    if residue_resname in row_resnames:
+        return True
+    return (
+        residue_resname in _C_TERMINAL_CAP_RESNAMES
+        and any(name in _C_TERMINAL_CAP_RESNAMES for name in row_resnames)
+    )
+
+
+def _collapse_terminal_cap_resid_values(
+    renum_df: pd.DataFrame, resids: list[int] | np.ndarray
+) -> list[int]:
+    collapsed = [int(resid) for resid in resids]
+    rows = renum_df.reset_index(drop=True)
+    if len(rows) != len(collapsed):
+        return collapsed
+
+    for pos, row in rows.iterrows():
+        resname = _renum_resname(row)
+        if resname in _N_TERMINAL_CAP_RESNAMES:
+            search_range = range(pos + 1, len(rows))
+        elif resname in _C_TERMINAL_CAP_RESNAMES:
+            search_range = range(pos - 1, -1, -1)
+        else:
+            continue
+
+        chain = str(row["old_chain"]).strip()
+        for neighbor_pos in search_range:
+            neighbor = rows.iloc[neighbor_pos]
+            if str(neighbor["old_chain"]).strip() != chain:
+                continue
+            if _renum_resname(neighbor) in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+                continue
+            collapsed[pos] = collapsed[neighbor_pos]
+            break
+    return collapsed
+
+
+def _residue_chain_id(residue) -> str:
+    try:
+        chain_ids = residue.atoms.chainIDs
+    except Exception:
+        chain_ids = []
+    if len(chain_ids):
+        return str(chain_ids[0]).strip()
+    return str(getattr(residue, "segid", "")).strip()
+
+
+def _collapse_terminal_cap_resids_in_place(residues) -> None:
+    if len(residues) == 0:
+        return
+
+    resids = np.array(residues.resids, dtype=int)
+    chain_ids = [_residue_chain_id(residue) for residue in residues]
+    resnames = [str(residue.resname).strip() for residue in residues]
+
+    for pos, resname in enumerate(resnames):
+        if resname in _N_TERMINAL_CAP_RESNAMES:
+            search_range = range(pos + 1, len(residues))
+        elif resname in _C_TERMINAL_CAP_RESNAMES:
+            search_range = range(pos - 1, -1, -1)
+        else:
+            continue
+
+        for neighbor_pos in search_range:
+            if chain_ids[neighbor_pos] != chain_ids[pos]:
+                continue
+            if resnames[neighbor_pos] in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+                continue
+            resids[pos] = resids[neighbor_pos]
+            break
+
+    residues.resids = resids
+
+
+def _renum_old_resids_for_residues(residues, renum_df: pd.DataFrame) -> list[int]:
+    rows = renum_df.reset_index(drop=True)
+    row_pos = 0
+    old_resids: list[int] = []
+
+    for residue in residues:
+        resname = str(residue.resname).strip()
+        if resname in ["HIS", "HIE", "HIP", "HID"]:
+            resname = "HIS"
+
+        if row_pos < len(rows) and _resnames_match_for_renum(
+            resname, rows.iloc[row_pos]
+        ):
+            old_resids.append(int(rows.iloc[row_pos]["old_resid"]))
+            row_pos += 1
+            continue
+
+        if resname in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+            old_resids.append(int(residue.resid))
+            continue
+
+        while row_pos < len(rows) and _renum_resname(
+            rows.iloc[row_pos]
+        ) in _PROTEIN_TERMINAL_CAP_RESNAME_SET:
+            row_pos += 1
+        if row_pos < len(rows):
+            old_resids.append(int(rows.iloc[row_pos]["old_resid"]))
+            row_pos += 1
+        else:
+            old_resids.append(int(residue.resid))
+
+    return old_resids
+
+
+def _restore_protein_resids_from_renum(atom_group, renum_df: pd.DataFrame) -> None:
+    residues = atom_group.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS).residues
+    if len(residues) == 0:
+        return
+    residues.resids = _renum_old_resids_for_residues(residues, renum_df)
+    _collapse_terminal_cap_resids_in_place(residues)
 
 
 def _ligand_charge_from_metadata(meta_path: Path) -> int | None:
@@ -696,6 +1026,13 @@ def create_box(ctx: BuildContext) -> None:
     else:
         water_box = f"{water_model}BOX"
 
+    build_cap_count = _rewrite_terminal_amide_caps_for_leap(window_dir / "build.pdb")
+    if build_cap_count:
+        logger.info(
+            "Rewrote {} terminal protein amide cap(s) as Amber NHE/NME residues before pre-solvation LEaP.",
+            build_cap_count,
+        )
+
     # --- tleap solvate pre ---
     tleap_solv_pre = window_dir / "tleap_solvate_pre.in"
     _cp(window_dir / "tleap.in", tleap_solv_pre)
@@ -737,6 +1074,9 @@ def create_box(ctx: BuildContext) -> None:
         names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
     renum_df["old_resname"] = renum_df["old_resname"].replace(
+        ["HIS", "HIE", "HIP", "HID"], "HIS"
+    )
+    renum_df["new_resname"] = renum_df["new_resname"].replace(
         ["HIS", "HIE", "HIP", "HID"], "HIS"
     )
     revised_resids = []
@@ -807,22 +1147,26 @@ def create_box(ctx: BuildContext) -> None:
             next_resnum, total_residues - len(revised_resids) + next_resnum
         )
         final_system.residues.resids = final_resids
-        inferred_disulfide_pairs = _infer_cyx_disulfide_pairs_from_atoms(final_system)
-        existing_disulfide_pairs = {tuple(sorted(pair)) for pair in disulfide_pairs}
-        new_disulfide_pairs = [
-            pair
-            for pair in inferred_disulfide_pairs
-            if tuple(sorted(pair)) not in existing_disulfide_pairs
-        ]
-        if new_disulfide_pairs:
-            logger.info(
-                "Inferred additional CYX disulfide pair(s) from SG distances: {}",
-                ", ".join(f"{first}-{second}" for first, second in new_disulfide_pairs),
-            )
-            disulfide_pairs = _merge_disulfide_pairs(
-                disulfide_pairs, new_disulfide_pairs
-            )
-            disulfide_resids = {resid for pair in disulfide_pairs for resid in pair}
+        if bool(getattr(sim, "infer_disulfide_bonds", True)):
+            inferred_disulfide_pairs = _infer_cyx_disulfide_pairs_from_atoms(final_system)
+            existing_disulfide_pairs = {tuple(sorted(pair)) for pair in disulfide_pairs}
+            new_disulfide_pairs = [
+                pair
+                for pair in inferred_disulfide_pairs
+                if tuple(sorted(pair)) not in existing_disulfide_pairs
+            ]
+            if new_disulfide_pairs:
+                logger.info(
+                    "Inferred additional CYX disulfide pair(s) from SG distances: {}. "
+                    "Set create.infer_disulfide_bonds: false to disable this inference.",
+                    ", ".join(
+                        f"{first}-{second}" for first, second in new_disulfide_pairs
+                    ),
+                )
+                disulfide_pairs = _merge_disulfide_pairs(
+                    disulfide_pairs, new_disulfide_pairs
+                )
+                disulfide_resids = {resid for pair in disulfide_pairs for resid in pair}
         _mark_disulfide_residue_names(final_system.residues, disulfide_resids)
 
         # partitions
@@ -830,7 +1174,7 @@ def create_box(ctx: BuildContext) -> None:
         final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
         if comp == 'z':
             final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
-        final_system_prot = final_system.select_atoms("protein")
+        final_system_prot = final_system.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         final_system_others = final_system - final_system_prot - final_system_dum
         final_system_ligs = final_system.select_atoms(f"resname {mol}")
         final_system_other_mol = (
@@ -838,7 +1182,7 @@ def create_box(ctx: BuildContext) -> None:
         )
         final_system_water = final_system_others.select_atoms("resname WAT")
         final_system_water_notaround = final_system.select_atoms(
-            "byres (resname WAT and not (around 6 protein))"
+            f"byres (resname WAT and not (around 6 {_PROTEIN_WITH_TERMINAL_CAPS}))"
         )
         final_system_water_around = final_system_water - final_system_water_notaround
 
@@ -846,16 +1190,16 @@ def create_box(ctx: BuildContext) -> None:
         _write_res_blocks(final_system_dum, window_dir / "solvate_pre_dum.pdb")
 
         # set chainIDs using renum_df and write protein by chains
-        for residue in u.select_atoms("protein").residues:
-            resid_str = residue.resid
+        for residue in final_system_prot.residues:
             resid_resname = (
                 "HIS"
                 if residue.resname in ["HIS", "HIE", "HIP", "HID"]
                 else residue.resname
             )
-            residue.atoms.chainIDs = renum_df.query(
-                "old_resid == @resid_str and old_resname == @resid_resname"
-            ).old_chain.values[0]
+            residue.atoms.chainIDs = _chain_id_from_renum(
+                renum_df, resid=residue.resid, resname=resid_resname
+            )
+        _collapse_terminal_cap_resids_in_place(final_system_prot.residues)
         prot_lines = []
         for chain_name in np.unique(final_system_prot.atoms.chainIDs):
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdb")
@@ -874,7 +1218,7 @@ def create_box(ctx: BuildContext) -> None:
         cap_count = _rewrite_terminal_amide_caps_for_leap(solvate_pre_prot)
         if cap_count:
             logger.info(
-                "Rewrote {} terminal protein amide cap(s) as Amber NHE residues before LEaP.",
+                "Rewrote {} terminal protein amide cap(s) as Amber NHE/NME residues before LEaP.",
                 cap_count,
             )
         leap_disulfide_pairs = _map_disulfide_pairs_to_leap_indices(
@@ -1152,8 +1496,14 @@ def create_box(ctx: BuildContext) -> None:
         header=None,
         names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
-    u_full.select_atoms("protein").residues.resids = renum_df2["old_resid"].values
-    u_vac.select_atoms("protein").residues.resids = renum_df2["old_resid"].values
+    renum_df2["old_resname"] = renum_df2["old_resname"].replace(
+        ["HIS", "HIE", "HIP", "HID"], "HIS"
+    )
+    renum_df2["new_resname"] = renum_df2["new_resname"].replace(
+        ["HIS", "HIE", "HIP", "HID"], "HIS"
+    )
+    _restore_protein_resids_from_renum(u_full, renum_df2)
+    _restore_protein_resids_from_renum(u_vac, renum_df2)
 
     # rebuild segments by chain
     seg_txt = window_dir / "build_amber_renum.txt"
@@ -1308,7 +1658,13 @@ def create_box_x(ctx: BuildContext) -> None:
         header=None,
         names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
     )
-    u_full.select_atoms("protein").residues.resids = renum_df2["old_resid"].values
+    renum_df2["old_resname"] = renum_df2["old_resname"].replace(
+        ["HIS", "HIE", "HIP", "HID"], "HIS"
+    )
+    renum_df2["new_resname"] = renum_df2["new_resname"].replace(
+        ["HIS", "HIE", "HIP", "HID"], "HIS"
+    )
+    _restore_protein_resids_from_renum(u_full, renum_df2)
 
     # rebuild segments by chain
     seg_txt = window_dir / "build_amber_renum.txt"

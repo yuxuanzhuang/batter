@@ -35,6 +35,11 @@ from batter.utils.builder_utils import (
 _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
 _CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
 _XY_ROTATION_REFINE_DEGREES = (45.0, 15.0, 5.0, 1.0)
+_PROTEIN_TERMINAL_CAP_RESNAMES = "ACE NMA NME NHE"
+_PROTEIN_TERMINAL_CAP_RESNAME_SET = set(_PROTEIN_TERMINAL_CAP_RESNAMES.split())
+_PROTEIN_WITH_TERMINAL_CAPS = (
+    f"(protein or resname {_PROTEIN_TERMINAL_CAP_RESNAMES})"
+)
 
 
 def _as_abs(p: str | Path | None, base: Path) -> Path | None:
@@ -259,13 +264,25 @@ def _split_residues_on_breaks(
         reasons: list[str] = []
         prev_resid = int(prev_residue.resid)
         curr_resid = int(curr_residue.resid)
+        prev_is_cap = (
+            str(prev_residue.resname).strip() in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+        )
+        curr_is_cap = (
+            str(curr_residue.resname).strip() in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+        )
 
-        if curr_resid != prev_resid + 1:
+        if curr_resid != prev_resid + 1 and not (
+            curr_is_cap and curr_resid in {prev_resid, prev_resid + 1}
+        ):
             reasons.append(f"resid discontinuity ({prev_resid} -> {curr_resid})")
 
         prev_ca = _get_single_ca_position(prev_residue)
         curr_ca = _get_single_ca_position(curr_residue)
-        if prev_ca is not None and curr_ca is not None:
+        if (
+            prev_ca is not None
+            and curr_ca is not None
+            and not (prev_is_cap or curr_is_cap)
+        ):
             ca_distance = float(np.linalg.norm(curr_ca - prev_ca))
             if ca_distance > ca_distance_cutoff:
                 reasons.append(
@@ -322,7 +339,7 @@ def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], in
     except AttributeError:
         return {}, 0
 
-    protein_atoms = universe.select_atoms("protein")
+    protein_atoms = universe.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
     if protein_atoms.n_atoms == 0:
         return {}, 0
 
@@ -391,13 +408,27 @@ def _select_fragment_atoms(
     chain_id: str,
     segid: str,
 ):
+    atom_indices = [
+        int(atom.index)
+        for residue in residues
+        for atom in residue.atoms
+    ]
+    if atom_indices:
+        selection = universe.atoms[atom_indices]
+        if selection.n_residues == len(residues):
+            return selection
+
     resid_seq = " ".join(str(int(residue.resid)) for residue in residues)
     selectors: list[str] = []
     if chain_id:
-        selectors.append(f"protein and chainID {chain_id} and resid {resid_seq}")
+        selectors.append(
+            f"{_PROTEIN_WITH_TERMINAL_CAPS} and chainID {chain_id} and resid {resid_seq}"
+        )
     if segid:
-        selectors.append(f"protein and segid {segid} and resid {resid_seq}")
-    selectors.append(f"protein and resid {resid_seq}")
+        selectors.append(
+            f"{_PROTEIN_WITH_TERMINAL_CAPS} and segid {segid} and resid {resid_seq}"
+        )
+    selectors.append(f"{_PROTEIN_WITH_TERMINAL_CAPS} and resid {resid_seq}")
 
     for selector in selectors:
         selection = universe.select_atoms(selector)
@@ -697,7 +728,7 @@ class _SystemPrepRunner:
         protein_fragment_groups: list[tuple[Any, str]] = []
         fragment_chain_index = 0
         protein_source_groups = _group_residues_by_source_identity(
-            u_prot.select_atoms("protein").residues
+            u_prot.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS).residues
         )
 
         for source_group in protein_source_groups:
@@ -731,15 +762,15 @@ class _SystemPrepRunner:
 
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(
-                f"segid {self.receptor_segment} and protein"
+                f"segid {self.receptor_segment} and {_PROTEIN_WITH_TERMINAL_CAPS}"
             )
             other_protein = u_prot.select_atoms(
-                f"not segid {self.receptor_segment} and protein"
+                f"not segid {self.receptor_segment} and {_PROTEIN_WITH_TERMINAL_CAPS}"
             )
             comp_2_combined.append(protein_anchor)
             comp_2_combined.append(other_protein)
         else:
-            comp_2_combined.append(u_prot.select_atoms("protein"))
+            comp_2_combined.append(u_prot.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS))
 
         for prot_selection, new_chain_id in protein_fragment_groups:
             prot_selection.residues.segments = u_prot.add_Segment(segid=new_chain_id)
@@ -876,7 +907,7 @@ class _SystemPrepRunner:
             atom.name = new_name
 
         u_merged.atoms.write(f"{self.ligands_folder}/{self.system_name}.pdb")
-        protein_ref = u_prot.select_atoms("protein")
+        protein_ref = u_prot.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         protein_ref.write(f"{self.ligands_folder}/reference.pdb")
 
     def _align_2_system(self, mobile_atoms):
