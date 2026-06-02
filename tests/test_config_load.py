@@ -173,8 +173,10 @@ def test_md_run_config_accepts_legacy_top_level_buffer_z() -> None:
 def test_run_config_accepts_rbfe_mapper_options(tmp_path: Path) -> None:
     lig1 = tmp_path / "lig1.sdf"
     lig2 = tmp_path / "lig2.sdf"
+    atom_mapping = tmp_path / "atom_mapping.json"
     lig1.write_text("dummy\n")
     lig2.write_text("dummy\n")
+    atom_mapping.write_text("{}\n")
 
     run_yaml = tmp_path / "rbfe_mapper_options.yaml"
     run_yaml.write_text(
@@ -190,6 +192,7 @@ create:
 fe_sim: {{}}
 rbfe:
   mapping: konnektor
+  atom_mapping_file: atom_mapping.json
   atom_mapper: lomap
   lomap:
     time: 7
@@ -204,6 +207,8 @@ rbfe:
 
     cfg = load_run_config(run_yaml)
     assert cfg.rbfe is not None
+    assert cfg.rbfe.atom_mapping_file == Path("atom_mapping.json")
+    assert cfg.rbfe.resolve_paths(tmp_path).atom_mapping_file == atom_mapping.resolve()
     assert cfg.rbfe.atom_mapper == "lomap"
     assert cfg.rbfe.lomap.time == 7
     assert cfg.rbfe.lomap.max3d == 2.0
@@ -223,6 +228,7 @@ def test_rbfe_kartograf_mapper_defaults() -> None:
     assert cfg.kartograf.map_exact_ring_matches_only is True
     assert cfg.kartograf.allow_partial_fused_rings is True
     assert cfg.kartograf.allow_bond_breaks is False
+    assert cfg.add_atom_mapping_edges is False
 
 
 def test_run_config_rejects_rbfe_kartograf_hydrogen_mapping_options(

@@ -68,6 +68,11 @@ For ``protocol: rbfe``, the ``rbfe`` block controls network planning and atom ma
 
 * ``rbfe.mapping`` – mapping strategy (for example ``default`` or ``konnektor``).
 * ``rbfe.mapping_file`` – explicit pair list file; takes precedence over ``mapping``.
+* ``rbfe.atom_mapping_file`` – optional JSON/YAML atom mapping overrides for
+  selected pairs; uncovered pairs use ``rbfe.atom_mapper``.
+* ``rbfe.add_atom_mapping_edges`` – default ``false``; append valid
+  atom-mapping override pairs when neither direction was selected by network
+  planning.
 * ``rbfe.konnektor_layout`` – optional Konnektor layout when ``mapping: konnektor``.
 * ``rbfe.both_directions`` – when true, run both directions for each mapped edge.
 * ``rbfe.atom_mapper`` – atom mapper backend used for RBFE mapping:

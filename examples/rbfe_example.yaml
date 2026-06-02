@@ -65,6 +65,9 @@ rbfe:
   # atom mapper used when generating pairwise transformations
   # can be kartograf or lomap
   atom_mapper: kartograf
+  # optional JSON/YAML file with per-pair atom mapping overrides;
+  # uncovered pairs continue to use atom_mapper
+  # atom_mapping_file: reference/rbfe_atom_mappings.json
   # Konnektor network layout heuristic
   konnektor_layout: redundantminimalspanningtree
   # whether to generate both directions for each edge

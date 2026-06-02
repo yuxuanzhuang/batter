@@ -783,16 +783,38 @@ class RBFENetworkArgs(BaseModel):
         False,
         description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
     )
+    add_atom_mapping_edges: bool = Field(
+        False,
+        description=(
+            "When true, append valid pairs from rbfe.atom_mapping_file that are "
+            "not already present in the planned network in either direction."
+        ),
+    )
     mapping_file: Optional[Path] = Field(
         None,
         description="Optional path to a mapping file (JSON/YAML/text).",
+    )
+    atom_mapping_file: Optional[Path] = Field(
+        None,
+        description=(
+            "Optional path to a JSON/YAML file containing per-pair atom mapping "
+            "overrides. Uncovered ligand pairs use the configured atom mapper."
+        ),
     )
 
     def resolve_paths(self, base: Path) -> "RBFENetworkArgs":
         mf = self.mapping_file
         if mf is not None and not mf.is_absolute():
             mf = (base / mf).resolve()
-        return self.model_copy(update={"mapping_file": mf})
+        atom_mf = self.atom_mapping_file
+        if atom_mf is not None and not atom_mf.is_absolute():
+            atom_mf = (base / atom_mf).resolve()
+        return self.model_copy(
+            update={
+                "mapping_file": mf,
+                "atom_mapping_file": atom_mf,
+            }
+        )
 
     @field_validator("mapping", mode="before")
     @classmethod

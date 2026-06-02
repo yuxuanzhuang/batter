@@ -219,9 +219,17 @@ def test_build_rbfe_network_plan_writes_planned_html(
     monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
     mapping_file = tmp_path / "mapping.json"
     mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
-    cfg = RBFENetworkArgs(mapping_file=mapping_file)
+    atom_mapping_file = tmp_path / "atom_mapping.json"
+    atom_mapping_file.write_text(json.dumps({"A~B": {"0": 1, "2": 3}}))
+    cfg = RBFENetworkArgs(
+        mapping_file=mapping_file,
+        atom_mapping_file=atom_mapping_file,
+    )
+    seen: dict[str, object] = {}
 
     def _fake_mapping_artifacts(**kwargs):
+        overrides = kwargs["atom_mapping_overrides"]
+        seen["manual_A_B"] = overrides.get_b_to_a("A", "B")
         return {
             "A~B": {
                 "image_data_uri": "data:image/png;base64,ZmFrZQ==",
@@ -247,6 +255,9 @@ def test_build_rbfe_network_plan_writes_planned_html(
     )
 
     assert payload["pairs"] == [["A", "B"], ["A", "C"]]
+    assert payload["atom_mapping_file"] == str(atom_mapping_file)
+    assert payload["n_atom_mapping_overrides"] == 1
+    assert seen["manual_A_B"] == {0: 1, 2: 3}
     html_path = tmp_path / "rbfe_network.html"
     assert html_path.exists()
     html_text = html_path.read_text()
@@ -255,6 +266,119 @@ def test_build_rbfe_network_plan_writes_planned_html(
     assert "A~B" in html_text
     assert "data:image/png;base64,ZmFrZQ==" in html_text
     assert payload["mapping_artifacts_dir"] == "rbfe_mappings"
+
+
+def test_build_rbfe_network_plan_adds_atom_mapping_edges_when_requested(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"]]}))
+    atom_mapping_file = tmp_path / "atom_mapping.json"
+    atom_mapping_file.write_text(json.dumps({"B~C": {"0": 1}}))
+    seen: dict[str, object] = {}
+
+    def _fake_mapping_artifacts(**kwargs):
+        seen["pairs"] = kwargs["pairs"]
+        return {}
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(
+            mapping_file=mapping_file,
+            atom_mapping_file=atom_mapping_file,
+            add_atom_mapping_edges=True,
+        ),
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["A", "B"], ["B", "C"]]
+    assert payload["add_atom_mapping_edges"] is True
+    assert payload["added_atom_mapping_edges"] == [["B", "C"]]
+    assert seen["pairs"] == [["A", "B"], ["B", "C"]]
+
+
+def test_build_rbfe_network_plan_treats_reverse_atom_mapping_edge_as_planned(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["B", "A"]]}))
+    atom_mapping_file = tmp_path / "atom_mapping.json"
+    atom_mapping_file.write_text(json.dumps({"A~B": {"0": 1}}))
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        lambda **kwargs: {},
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+        },
+        RBFENetworkArgs(
+            mapping_file=mapping_file,
+            atom_mapping_file=atom_mapping_file,
+        ),
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["B", "A"]]
+    assert "added_atom_mapping_edges" not in payload
+
+
+def test_build_rbfe_network_plan_leaves_unplanned_atom_mapping_edges_unused_by_default(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"]]}))
+    atom_mapping_file = tmp_path / "atom_mapping.json"
+    atom_mapping_file.write_text(json.dumps({"B~C": {"0": 1}}))
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        lambda **kwargs: {},
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(
+            mapping_file=mapping_file,
+            atom_mapping_file=atom_mapping_file,
+        ),
+        tmp_path,
+    )
+
+    assert payload["pairs"] == [["A", "B"]]
+    assert payload["add_atom_mapping_edges"] is False
+    assert payload["unused_atom_mapping_overrides"] == [["B", "C"]]
 
 
 def test_prepare_rbfe_handler_writes_parent_stage_marker(

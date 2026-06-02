@@ -330,6 +330,7 @@ def _build_rbfe_network_plan(
         RBFENetwork,
         resolve_mapping_fn,
         load_mapping_file,
+        load_atom_mapping_file,
         konnektor_pairs,
         write_planned_mapping_artifacts,
     )
@@ -346,6 +347,12 @@ def _build_rbfe_network_plan(
     mapping_source: Dict[str, Any] = {}
     atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf").lower()
     mapper_options = _rbfe_mapper_options(rbfe_cfg)
+    atom_mapping_overrides = None
+    atom_mapping_file = getattr(rbfe_cfg, "atom_mapping_file", None)
+    if atom_mapping_file:
+        atom_mapping_overrides = load_atom_mapping_file(Path(atom_mapping_file))
+        mapping_source["atom_mapping_file"] = str(atom_mapping_file)
+        mapping_source["n_atom_mapping_overrides"] = len(atom_mapping_overrides)
     pairs: List[tuple[str, str]] = []
     if rbfe_cfg.mapping_file:
         pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
@@ -362,6 +369,7 @@ def _build_rbfe_network_plan(
                 atom_mapper=atom_mapper,
                 kartograf_options=mapper_options["kartograf"],
                 lomap_options=mapper_options["lomap"],
+                atom_mapping_overrides=atom_mapping_overrides,
             )
             network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
             mapping_source["mapping"] = "konnektor"
@@ -377,6 +385,7 @@ def _build_rbfe_network_plan(
                     atom_mapper=atom_mapper,
                     kartograf_options=mapper_options["kartograf"],
                     lomap_options=mapper_options["lomap"],
+                    atom_mapping_overrides=atom_mapping_overrides,
                 )
                 network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
                 mapping_source["mapping"] = mapping_name
@@ -401,6 +410,68 @@ def _build_rbfe_network_plan(
     selected_mapper_options = mapper_options.get(atom_mapper, {})
     if selected_mapper_options:
         mapping_source["atom_mapper_options"] = selected_mapper_options
+
+    if atom_mapping_overrides:
+        add_override_edges = bool(
+            getattr(rbfe_cfg, "add_atom_mapping_edges", False)
+        )
+        mapping_source["add_atom_mapping_edges"] = add_override_edges
+        planned_pairs = list(network.pairs)
+        planned_undirected = {tuple(sorted(pair)) for pair in planned_pairs}
+        available_set = set(available)
+        added_pairs: List[List[str]] = []
+        ignored_pairs: List[List[str]] = []
+        unused_pairs: List[List[str]] = []
+
+        for ref, alt in atom_mapping_overrides.mappings:
+            pair_label = f"{ref}~{alt}"
+            if ref == alt:
+                logger.warning(
+                    f"RBFE atom mapping override {pair_label} is a self-pair; ignoring."
+                )
+                ignored_pairs.append([ref, alt])
+                continue
+            missing = sorted({name for name in (ref, alt) if name not in available_set})
+            if missing:
+                logger.warning(
+                    "RBFE atom mapping override "
+                    f"{pair_label} references unknown ligand(s): {', '.join(missing)}; "
+                    "ignoring."
+                )
+                ignored_pairs.append([ref, alt])
+                continue
+
+            undirected = tuple(sorted((ref, alt)))
+            if undirected in planned_undirected:
+                continue
+
+            if not add_override_edges:
+                logger.warning(
+                    "RBFE atom mapping override "
+                    f"{pair_label} was not used because add_atom_mapping_edges=false "
+                    "and neither direction is in the planned network."
+                )
+                unused_pairs.append([ref, alt])
+                continue
+
+            logger.warning(
+                "RBFE atom mapping override "
+                f"{pair_label} is not in the planned network; adding this edge."
+            )
+            planned_pairs.append((ref, alt))
+            planned_undirected.add(undirected)
+            added_pairs.append([ref, alt])
+
+        if added_pairs:
+            network = RBFENetwork.from_ligands(
+                available,
+                mapping_fn=lambda _: planned_pairs,
+            )
+            mapping_source["added_atom_mapping_edges"] = added_pairs
+        if ignored_pairs:
+            mapping_source["ignored_atom_mapping_edges"] = ignored_pairs
+        if unused_pairs:
+            mapping_source["unused_atom_mapping_overrides"] = unused_pairs
 
     payload = network.to_mapping()
     if bool(getattr(rbfe_cfg, "both_directions", False)):
@@ -428,6 +499,7 @@ def _build_rbfe_network_plan(
         kartograf_options=mapper_options["kartograf"],
         lomap_options=mapper_options["lomap"],
         atom_mapper_options=selected_mapper_options,
+        atom_mapping_overrides=atom_mapping_overrides,
     )
     mapping_source["mapping_artifacts_dir"] = mapping_artifacts_dir.name
     payload.update(mapping_source)

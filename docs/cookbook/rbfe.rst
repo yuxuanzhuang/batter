@@ -56,6 +56,8 @@ RBFE mapping is controlled by ``rbfe`` in ``run.yaml``:
 
 * ``rbfe.mapping_file``
 * ``rbfe.mapping`` (default ``default``)
+* ``rbfe.atom_mapping_file`` for optional per-pair atom mapping overrides
+* ``rbfe.add_atom_mapping_edges`` (default ``false``)
 
 If both are provided, BATTER uses ``mapping_file``.
 
@@ -140,6 +142,54 @@ AMBER setup path relies on the previous fixed behavior: network planning uses
 ``map_hydrogens_on_hydrogens_only=True``.
 The available LoMap keys are ``time``, ``threed``, ``max3d``,
 ``element_change``, and ``shift``.
+
+Atom mapping override files
+---------------------------
+
+Set ``rbfe.atom_mapping_file`` to provide atom mappings for selected ligand
+pairs while leaving all uncovered pairs on the configured ``rbfe.atom_mapper``.
+BATTER uses the override while Konnektor scores candidate network edges and
+writes the same prepared ``mapping.json`` for later transformation setup.
+When you choose to use manual atom mappings, it is recommended to keep all
+ligand-pair atom mappings you intend to rely on in ``rbfe.atom_mapping_file`` so
+network scoring and simulation setup use the same curated mapping source.
+If an override pair is valid but neither direction appears in the planned
+network, BATTER leaves it unused by default and logs a warning. Set
+``rbfe.add_atom_mapping_edges: true`` to append those valid override pairs as
+extra planned edges.
+
+The simplest JSON/YAML format maps pair labels to atom index maps:
+
+.. code-block:: json
+
+   {
+     "LIG1~LIG2": {"0": 0, "1": 4, "2": 5}
+   }
+
+Pair maps are interpreted as ``componentB_to_componentA``:
+target/alternate atom index to reference atom index, using 0-based atom indices.
+For ``LIG1~LIG2`` above, keys are atoms in ``LIG2`` and values are atoms in
+``LIG1``. If BATTER later needs ``LIG2~LIG1``, the map is inverted
+automatically.
+
+Structured entries are also accepted:
+
+.. code-block:: yaml
+
+   pairs:
+     - pair: LIG1~LIG2
+       componentB_to_componentA:
+         0: 0
+         1: 4
+     - ref: LIG3
+       alt: LIG4
+       componentA_to_componentB:
+         2: 7
+         3: 8
+
+``componentA_to_componentB`` / ``reference_to_target`` maps are inverted during
+loading so the stored prepared artifact remains in BATTER's
+``componentB_to_componentA`` orientation.
 
 Bidirectional RBFE edges
 ------------------------

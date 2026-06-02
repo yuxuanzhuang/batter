@@ -65,6 +65,14 @@ RBFE mappings can be created in a few ways:
   See detailed tutorial in `Konnektor tutorial <https://konnektor.openfree.energy/en/latest/tutorials/basic_network_generation.html>`_.
 * **Mapping file** – provide explicit pairs via ``rbfe.mapping_file`` (JSON/YAML list or
   text file with one pair per line).
+* **Atom mapping override file** – provide selected per-pair atom maps via
+  ``rbfe.atom_mapping_file``. These maps override the mapper for covered pairs
+  during network scoring and are reused during transformation setup; uncovered
+  pairs still use ``rbfe.atom_mapper``. It is recommended to keep all ligand-pair
+  atom mappings you intend to rely on in ``rbfe.atom_mapping_file``. Valid
+  override pairs that are not selected by network planning are left unused by
+  default with a warning; set ``rbfe.add_atom_mapping_edges: true`` to append them
+  as extra edges.
 
 Set ``rbfe.both_directions: true`` if you want to run both directions for every edge.
 During ``prepare_rbfe``, BATTER writes
@@ -187,6 +195,9 @@ Generating Simulation Inputs
    - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
    - ``rbfe.mapping`` / ``rbfe.mapping_file`` – choose your network planning scheme.
    - ``rbfe.atom_mapper`` – choose RBFE atom mapper backend: ``kartograf`` (default) or ``lomap``.
+   - ``rbfe.atom_mapping_file`` – optional JSON/YAML per-pair atom mapping overrides.
+   - ``rbfe.add_atom_mapping_edges`` – default ``false``; append valid override
+     pairs not selected by network planning.
 
       The available schemes are described in :ref:`rbfe_network_planning_schemes`.
       Mapper options can be overridden under ``rbfe.kartograf`` and ``rbfe.lomap``;
