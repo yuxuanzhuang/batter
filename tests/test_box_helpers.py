@@ -132,6 +132,52 @@ def test_sync_ligand_anchor_residue_with_pdb_updates_masks(tmp_path: Path) -> No
     assert data["lig_res"] == "427"
 
 
+def test_sync_ligand_anchor_residue_updates_build_dir_after_cap_insert(
+    tmp_path: Path,
+) -> None:
+    build_dir = tmp_path / "z_build_files"
+    window_dir = tmp_path / "z-1"
+    build_dir.mkdir()
+    window_dir.mkdir()
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":351@CA",
+                "P2": ":356@CA",
+                "P3": ":111@CA",
+                "L1": ":397@C4",
+                "L2": ":397@C14",
+                "L3": ":397@C21",
+                "lig_res": "397",
+            }
+        )
+    )
+    (window_dir / "vac.pdb").write_text(
+        "\n".join(
+            [
+                "ATOM      1  N   NME   397       0.000   0.000   0.000  1.00  0.00           N",
+                "HETATM    2  C4  ooo   398       1.000   0.000   0.000  1.00  0.00           C",
+                "HETATM    3  C14 ooo   398       2.000   0.000   0.000  1.00  0.00           C",
+                "HETATM    4  C21 ooo   398       3.000   0.000   0.000  1.00  0.00           C",
+                "HETATM    5  C4  ooo   399       4.000   0.000   0.000  1.00  0.00           C",
+                "TER",
+                "END",
+            ]
+        )
+        + "\n"
+    )
+
+    box._sync_ligand_anchor_residue_with_pdb(
+        build_dir, window_dir / "vac.pdb", "ooo"
+    )
+
+    data = json.loads((build_dir / "anchors.json").read_text())
+    assert data["L1"] == ":398@C4"
+    assert data["L2"] == ":398@C14"
+    assert data["L3"] == ":398@C21"
+    assert data["lig_res"] == "398"
+
+
 def test_mark_disulfide_residue_names_and_filter_thiol_hydrogen() -> None:
     class Residue:
         def __init__(self, resid: int, resname: str) -> None:
@@ -396,6 +442,34 @@ def test_rewrite_terminal_amide_cap_after_high_residues_uses_chain_local_id(
     assert " N   NHE A   8" in text
     assert " HN1 NHE A   8" in text
     assert " HN2 NHE A   8" in text
+
+
+def test_rewrite_terminal_amide_caps_ignores_ligand_n1_atom_with_full_chain(
+    tmp_path: Path,
+) -> None:
+    pdb = tmp_path / "build.pdb"
+
+    def atom_line(serial: int, atom: str, resname: str, chain: str, resid: int) -> str:
+        return (
+            f"ATOM  {serial:5d} {atom:>4} {resname:>3} {chain}{resid:4d}"
+            "       0.000   0.000   0.000  1.00  0.00"
+        )
+
+    lines = [
+        atom_line(1, "N1", "az1", "X", 398),
+        atom_line(2, "C1", "az1", "X", 398),
+        "TER",
+    ]
+    for resid in range(1, 10000):
+        lines.extend([atom_line(resid + 2, "O", "WAT", "X", resid), "TER"])
+    lines.append("END")
+    pdb.write_text("\n".join(lines) + "\n")
+
+    assert box._rewrite_terminal_amide_caps_for_leap(pdb) == 0
+
+    text = pdb.read_text()
+    assert " N1 az1 X 398" in text
+    assert " NHE " not in text
 
 
 def test_chain_id_from_renum_uses_amber_residue_ids() -> None:

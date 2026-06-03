@@ -217,6 +217,36 @@ _PROTEIN_TERMINAL_CAP_RESNAME_SET = (
 )
 _PROTEIN_TERMINAL_CAP_RESNAMES = "ACE NMA NME NHE"
 _PROTEIN_WITH_TERMINAL_CAPS = f"(protein or resname {_PROTEIN_TERMINAL_CAP_RESNAMES})"
+_AMBER_PROTEIN_RESNAMES = {
+    "ALA",
+    "ARG",
+    "ASH",
+    "ASN",
+    "ASP",
+    "CYM",
+    "CYS",
+    "CYX",
+    "GLH",
+    "GLN",
+    "GLU",
+    "GLY",
+    "HID",
+    "HIE",
+    "HIP",
+    "HIS",
+    "ILE",
+    "LEU",
+    "LYN",
+    "LYS",
+    "MET",
+    "PHE",
+    "PRO",
+    "SER",
+    "THR",
+    "TRP",
+    "TYR",
+    "VAL",
+}
 _EMBEDDED_METHYLAMIDE_CARBON_ALIASES = ("CH3", "C1", "CM", "CR")
 _SEPARATE_METHYLAMIDE_ATOM_ALIASES = {
     "N": "N",
@@ -256,6 +286,10 @@ _SEPARATE_METHYLAMIDE_ATOM_ALIASES = {
     "HM2": "H2",
     "HM3": "H3",
 }
+
+
+def _is_amber_protein_resname(resname: str) -> bool:
+    return resname.strip().upper() in _AMBER_PROTEIN_RESNAMES
 
 
 def _pdb_atom_name(line: str) -> str:
@@ -367,6 +401,10 @@ def _rewrite_separate_terminal_methylamide_cap(
     if terminal_key[2] not in _TERMINAL_METHYLAMIDE_RESNAMES:
         return None
 
+    previous_key = residue_keys[-2]
+    if not _is_amber_protein_resname(previous_key[2]):
+        return None
+
     atom_names = _atom_names_for_residue(block, terminal_key)
     if (
         "N" not in atom_names
@@ -379,7 +417,6 @@ def _rewrite_separate_terminal_methylamide_cap(
     ):
         return None
 
-    previous_key = residue_keys[-2]
     rewritten: list[str] = []
     emitted_cap_atoms: set[str] = set()
     changed = terminal_key[2] != "NME"
@@ -473,7 +510,10 @@ def _rewrite_terminal_amide_caps_for_leap(pdb_path: Path) -> int:
 
         terminal_key = residue_keys[-1]
         terminal_atom_names = _atom_names_for_residue(block, terminal_key)
-        if "N1" not in terminal_atom_names:
+        if (
+            "N1" not in terminal_atom_names
+            or not _is_amber_protein_resname(terminal_key[2])
+        ):
             rewritten.extend(block)
             block.clear()
             return
@@ -1477,7 +1517,7 @@ def create_box(ctx: BuildContext) -> None:
     vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
     vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
     vac.save(str(window_dir / "vac.pdb"), overwrite=True)
-    _sync_ligand_anchor_residue_with_pdb(work, window_dir / "vac.pdb", mol)
+    _sync_ligand_anchor_residue_with_pdb(build_dir, window_dir / "vac.pdb", mol)
 
     other_parts_pmd.save(str(window_dir / "other_parts.prmtop"), overwrite=True)
     other_parts_pmd.save(str(window_dir / "other_parts.inpcrd"), overwrite=True)

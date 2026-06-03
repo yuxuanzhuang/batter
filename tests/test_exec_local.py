@@ -14,6 +14,12 @@ def _failing_handler(step: Step, system: SimSystem, params):
     raise RuntimeError(f"boom-{system.name}")
 
 
+def _unpicklable_failing_handler(step: Step, system: SimSystem, params):
+    exc = RuntimeError(f"unpicklable-boom-{system.name}")
+    exc.callback = lambda: None
+    raise exc
+
+
 def make_system(tmp_path, idx: int = 0) -> SimSystem:
     root = tmp_path / f"sys{idx}"
     root.mkdir()
@@ -69,3 +75,16 @@ def test_local_backend_run_parallel_error_message_names_each_failure(tmp_path):
     message = str(exc_info.value)
     assert "sys0: RuntimeError: boom-sys0" in message
     assert "sys1: RuntimeError: boom-sys1" in message
+
+
+def test_local_backend_run_parallel_process_errors_are_picklable(tmp_path):
+    backend = LocalBackend()
+    backend.register("demo", _unpicklable_failing_handler)
+
+    pipeline = Pipeline([Step(name="demo", payload={})])
+    systems = [make_system(tmp_path, 0)]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        backend.run_parallel(pipeline, systems, max_workers=2)
+
+    assert "sys0: RuntimeError: unpicklable-boom-sys0" in str(exc_info.value)
