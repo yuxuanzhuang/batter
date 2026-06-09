@@ -381,6 +381,29 @@ def test_build_rbfe_network_plan_leaves_unplanned_atom_mapping_edges_unused_by_d
     assert payload["unused_atom_mapping_overrides"] == [["B", "C"]]
 
 
+def test_rbfe_preflight_requires_atom_mapping_file(tmp_path: Path) -> None:
+    rc = SimpleNamespace(
+        protocol="rbfe",
+        rbfe=SimpleNamespace(atom_mapping_file=tmp_path / "missing.json"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="rbfe.atom_mapping_file"):
+        run_mod._preflight_rbfe_mapping_files(rc, tmp_path / "run")
+
+
+def test_rbfe_preflight_requires_network_file_when_prepare_marker_exists(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    config_dir = run_dir / "artifacts" / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "prepare_rbfe.ok").write_text("ok\n")
+    rc = SimpleNamespace(protocol="rbfe", rbfe=None)
+
+    with pytest.raises(FileNotFoundError, match="rbfe_network.json"):
+        run_mod._preflight_rbfe_mapping_files(rc, run_dir)
+
+
 def test_prepare_rbfe_handler_writes_parent_stage_marker(
     monkeypatch, tmp_path: Path
 ) -> None:

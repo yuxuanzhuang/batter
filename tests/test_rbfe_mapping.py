@@ -126,6 +126,21 @@ def test_manual_override_mapper_uses_manual_pair_and_falls_back() -> None:
     assert delegate.calls == [("A", "C")]
 
 
+def test_manual_override_mapper_to_dict_is_json_compatible() -> None:
+    overrides = ManualAtomMappingOverrides(
+        {("A", "B"): {1: 0, 3: 2}},
+        source=Path("atom_mapping.json"),
+    )
+    mapper = _wrap_atom_mapper_with_overrides("wrapped", overrides)
+
+    data = mapper._to_dict()
+    json.dumps(data)
+    restored = type(mapper)._from_dict(data)
+
+    assert restored.manual_overrides.get_b_to_a("A", "B") == {1: 0, 3: 2}
+    assert restored.manual_overrides.source == Path("atom_mapping.json")
+
+
 def test_write_pair_mapping_artifacts_uses_manual_override(tmp_path: Path) -> None:
     overrides = ManualAtomMappingOverrides({("A", "B"): {0: 1, 2: 3}})
     ligand_files = {

@@ -162,12 +162,17 @@ def _wrap_atom_mapper_with_overrides(
 
         @classmethod
         def _from_dict(cls, d):
-            return cls(d.get("wrapped_mapper"), d.get("manual_overrides"))
+            return cls(
+                d.get("wrapped_mapper"),
+                _manual_atom_mapping_overrides_from_dict(d.get("manual_overrides")),
+            )
 
         def _to_dict(self):
             return {
                 "wrapped_mapper": self.wrapped_mapper,
-                "manual_overrides": self.manual_overrides,
+                "manual_overrides": _manual_atom_mapping_overrides_to_dict(
+                    self.manual_overrides
+                ),
             }
 
     return ManualOverrideAtomMapper(delegate, overrides)
@@ -573,6 +578,41 @@ class ManualAtomMappingOverrides:
         if self.source is None:
             return direction
         return f"{self.source}:{direction}"
+
+
+def _manual_atom_mapping_overrides_to_dict(
+    overrides: ManualAtomMappingOverrides,
+) -> dict[str, Any]:
+    """Return a stable, JSON-compatible representation for GUFE tokenization."""
+    return {
+        "source": str(overrides.source) if overrides.source is not None else None,
+        "mappings": [
+            {
+                "ref": ref,
+                "alt": alt,
+                "componentB_to_componentA": {
+                    str(key): int(value) for key, value in sorted(mapping.items())
+                },
+            }
+            for (ref, alt), mapping in sorted(overrides.mappings.items())
+        ],
+    }
+
+
+def _manual_atom_mapping_overrides_from_dict(
+    data: Any | None,
+) -> ManualAtomMappingOverrides:
+    if isinstance(data, ManualAtomMappingOverrides):
+        return data
+    if data is None:
+        return ManualAtomMappingOverrides({})
+    source = None
+    if isinstance(data, Mapping):
+        raw_source = data.get("source")
+        if raw_source not in (None, ""):
+            source = Path(str(raw_source))
+    entries = _atom_mapping_entries_from_data(data)
+    return ManualAtomMappingOverrides(dict(entries), source=source)
 
 
 def _coerce_atom_mapping_overrides(

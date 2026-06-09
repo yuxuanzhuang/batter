@@ -102,6 +102,38 @@ def _rbfe_mapper_options(rbfe_cfg) -> Dict[str, Dict[str, Any]]:
     }
 
 
+def _require_file(path: Path, label: str) -> Path:
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing {label}: {path}")
+    return path
+
+
+def _preflight_rbfe_mapping_files(rc: RunConfig, run_dir: Path) -> None:
+    """Fail early on missing RBFE mapping files before execution steps start."""
+    if rc.protocol != "rbfe":
+        return
+
+    rbfe_cfg = getattr(rc, "rbfe", None)
+    atom_mapping_file = (
+        getattr(rbfe_cfg, "atom_mapping_file", None) if rbfe_cfg is not None else None
+    )
+    if atom_mapping_file:
+        _require_file(Path(atom_mapping_file), "rbfe.atom_mapping_file")
+
+    config_dir = Path(run_dir) / "artifacts" / "config"
+    rbfe_network_path = config_dir / "rbfe_network.json"
+    prepare_marker = config_dir / "prepare_rbfe.ok"
+    if prepare_marker.exists():
+        _require_file(rbfe_network_path, "prepared RBFE network file")
+
+
+def _require_rbfe_network_file(config_dir: Path) -> Path:
+    return _require_file(
+        Path(config_dir) / "rbfe_network.json",
+        "prepared RBFE network file",
+    )
+
+
 def _slurm_registry_path(run_dir: Path) -> Path:
     """Return the registry path under artifacts/slurm, migrating legacy .slurm if present."""
     new_path = run_dir / "artifacts" / "slurm" / "queue.jsonl"
@@ -743,6 +775,8 @@ def _run_from_yaml_impl(
     logger.info(f"Using run_id='{run_id}' under {run_dir}")
     _, sig_path = _stored_signature(run_dir)
 
+    _preflight_rbfe_mapping_files(rc, run_dir)
+
     _store_run_yaml_copy(run_dir, path)
 
     # Ligands
@@ -935,6 +969,7 @@ def _run_from_yaml_impl(
                     ]
                 ],
             )
+        _require_rbfe_network_file(config_dir)
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
         sim_cfg_updated = sim_cfg.model_copy(
