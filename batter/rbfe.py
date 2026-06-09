@@ -135,11 +135,17 @@ def _wrap_atom_mapper_with_overrides(
 ):
     """Return an AtomMapper that yields manual mappings before falling back."""
     try:
-        from gufe import AtomMapper
+        from gufe import AtomMapper as GufeAtomMapper
     except Exception:
-        AtomMapper = object
+        GufeAtomMapper = None
 
-    class ManualOverrideAtomMapper(AtomMapper):
+    base_mapper_cls = (
+        GufeAtomMapper
+        if GufeAtomMapper is not None and isinstance(delegate, GufeAtomMapper)
+        else object
+    )
+
+    class ManualOverrideAtomMapper(base_mapper_cls):
         def __init__(self, wrapped_mapper: Any, manual_overrides: ManualAtomMappingOverrides):
             self.wrapped_mapper = wrapped_mapper
             self.manual_overrides = manual_overrides
@@ -320,6 +326,13 @@ def _make_ligand_atom_mapping(
 ) -> Any:
     mapping_b_to_a = {int(key): int(value) for key, value in map_b_to_a.items()}
     mapping_a_to_b = _invert_atom_mapping(mapping_b_to_a)
+
+    if not (hasattr(component_a, "to_rdkit") and hasattr(component_b, "to_rdkit")):
+        return _SimpleLigandAtomMapping(
+            component_a,
+            component_b,
+            component_b_to_component_a=mapping_b_to_a,
+        )
 
     try:
         from gufe import LigandAtomMapping

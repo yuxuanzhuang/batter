@@ -180,7 +180,7 @@ def _patch_restraint_block(
                 else new_mask_component
             )
             if len(mask) > 256:
-                logger.warning(
+                logger.debug(
                     "[restraintmask] Mask exceeds 256 chars; will attempt legacy-group conversion."
                 )
             line = f'  restraintmask = "{mask}",\n'
@@ -257,8 +257,13 @@ def _apply_restraintmask_length_limit(
     cache_dir: Optional[Path] = None,
     cache_tag: Optional[str] = None,
     cache_master: bool = False,
-    max_mask_chars: int = 256,
+    max_mask_chars: Optional[int] = None,
 ) -> None:
+    """Convert restraintmask input to legacy AMBER GROUP input when possible.
+
+    By default any restraintmask is converted. Callers can pass max_mask_chars
+    to keep shorter masks in restraintmask form and only convert long masks.
+    """
     if not mdin_path.exists():
         return
     text = mdin_path.read_text()
@@ -277,7 +282,7 @@ def _apply_restraintmask_length_limit(
     if not mask:
         return
 
-    if len(mask) <= max_mask_chars:
+    if max_mask_chars is not None and len(mask) <= max_mask_chars:
         return
 
     cache_path = None
@@ -339,7 +344,7 @@ def _apply_restraintmask_length_limit(
     if cache_path is not None and cache_master:
         cache_path.write_text("# mask_sha1=" + mask_hash + "\n" + "\n".join(block) + "\n")
     logger.debug(
-        f"[restraintmask] Converted long restraintmask in {mdin_path.name} to legacy group block."
+        f"[restraintmask] Converted restraintmask in {mdin_path.name} to legacy group block."
     )
 
 
@@ -401,8 +406,11 @@ def _maybe_extra_mask(
     ctx: BuildContext, work: Path, *, resid_shift: int = 0
 ) -> tuple[Optional[str], float]:
     """
-    Build '(:a-b,c-... ) & @CA' + force constant from ctx.extra.
-    Optionally shifts mapped residue ids (Amber numbering offset).
+    Build an absolute atom-index mask from ctx.extra["extra_restraints"].
+
+    The selection is evaluated against full.pdb and converted to AMBER's
+    1-based @atom-index mask syntax. resid_shift is accepted for compatibility
+    with existing call sites but is not used for absolute atom masks.
     Returns (mask or None, force_const).
     """
     extra = ctx.extra or {}
@@ -424,45 +432,34 @@ def _maybe_extra_mask(
     force_const = float(extra.get("extra_restraint_fc", 10.0))
 
     ref_pdb = work / "full.pdb"
-    renum_txt1 = work / "build_files" / "protein_renum.txt"
-    renum_txt2 = ctx.build_dir / "protein_renum.txt"
-    renum_txt = renum_txt1 if renum_txt1.exists() else renum_txt2
 
     if not ref_pdb.exists():
         logger.warning(f"[extra_restraints] Missing reference PDB: {ref_pdb}; skip.")
         return None, force_const
-    if not renum_txt.exists():
-        logger.warning(
-            f"[extra_restraints] Missing renumber map: {renum_txt1} / {renum_txt2}; skip."
-        )
-        return None, force_const
 
     u = mda.Universe(str(ref_pdb))
-    sel = u.select_atoms(f"({extra_sel}) and name CA")
+    sel = u.select_atoms(f"({extra_sel})")
     if len(sel) == 0:
         logger.warning(
-            f"[extra_restraints] 0 atoms selected for '({extra_sel}) and name CA'; skip."
+            f"[extra_restraints] 0 atoms selected for '({extra_sel})'; skip."
         )
         return None, force_const
 
-    ren = pd.read_csv(
-        renum_txt,
-        sep=r"\s+",
-        header=None,
-        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
-    )
-    amber_resids = ren.loc[ren["old_resid"].isin(sel.residues.resids), "new_resid"]
-    if resid_shift:
-        amber_resids = amber_resids.astype(int) + int(resid_shift)
-    mask_ranges = format_ranges(amber_resids)
+    atom_indices = [int(idx) + 1 for idx in sel.indices]
+    mask_ranges = format_ranges(atom_indices)
     if not mask_ranges:
-        logger.warning("[extra_restraints] No mapped residues after renumber; skip.")
+        logger.warning("[extra_restraints] No atom indices in selected atoms; skip.")
         return None, force_const
 
-    mask = f"(:{mask_ranges}) & @CA"
+    mask = f"@{mask_ranges}"
     # save as json
     json.dump(
-        {"mask": mask, "force_const": force_const, "resid_shift": int(resid_shift)},
+        {
+            "mask": mask,
+            "force_const": force_const,
+            "selection": str(extra_sel),
+            "source": str(ref_pdb),
+        },
         (work / "extra_restraints.json").open("wt"),
     )
     logger.debug(f"[extra_restraints] Mask: {mask} (wt={force_const})")
