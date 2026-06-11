@@ -63,11 +63,9 @@ if [[ $rerun_eq_steps_after_failure == 1 ]]; then
 elif [[ $rerun_eq_steps_after_failure == auto ]]; then
     rerun_eq_steps_after_failure=0
     if [[ $prior_failed -eq 1 ]]; then
-        rerun_eq_steps_after_failure=1
+        echo "[INFO] Prior failure marker found; preserving completed equilibration stages."
     elif [[ $only_eq -eq 1 && $retry =~ ^[0-9]+$ && $retry -gt 1 ]]; then
-        prior_failed=1
-        rerun_eq_steps_after_failure=1
-        echo "[INFO] Retry attempt ${retry} detected during equilibration-only run; rerunning completed equilibration stages instead of skipping them."
+        echo "[INFO] Retry attempt ${retry} detected during equilibration-only run; preserving completed equilibration stages."
     fi
 fi
 

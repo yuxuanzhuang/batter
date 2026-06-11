@@ -244,7 +244,7 @@ def test_run_local_only_eq_explicit_rerun_flag_reruns_without_marker(tmp_path: P
     assert "eqnpt00.out" in calls
 
 
-def test_run_local_only_eq_auto_reruns_existing_steps_on_wrapper_retry(tmp_path: Path) -> None:
+def test_run_local_only_eq_auto_preserves_existing_steps_on_wrapper_retry(tmp_path: Path) -> None:
     env, cmd = _setup_run_local_only_eq(tmp_path)
     env["RETRY_COUNT"] = "2"
     for name in ["mini.rst7", "mini2.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
@@ -260,11 +260,15 @@ def test_run_local_only_eq_auto_reruns_existing_steps_on_wrapper_retry(tmp_path:
     )
 
     calls = _read_calls(tmp_path)
-    assert "Retry attempt 2 detected during equilibration-only run" in result.stdout
-    assert "mini.out" in calls
-    assert "mini2.out" in calls
-    assert "eqnpt_pre.out" in calls
-    assert "eqnpt00.out" in calls
+    assert (
+        "Retry attempt 2 detected during equilibration-only run; preserving completed equilibration stages"
+        in result.stdout
+    )
+    assert "mini.out" not in calls
+    assert "mini2.out" not in calls
+    assert "eqnpt_pre.out" not in calls
+    assert "eqnpt00.out" not in calls
+    assert "eqnpt01.out" in calls
 
 
 def test_run_equil_skips_existing_steps(tmp_path: Path) -> None:
@@ -315,7 +319,7 @@ def test_run_equil_explicit_rerun_flag_reruns_without_marker(tmp_path: Path) -> 
     assert "eqnpt00.out" in calls
 
 
-def test_run_equil_auto_reruns_existing_steps_on_wrapper_retry(tmp_path: Path) -> None:
+def test_run_equil_auto_preserves_existing_steps_on_wrapper_retry(tmp_path: Path) -> None:
     env, cmd = _setup_run_equil_only_eq(tmp_path)
     env["RETRY_COUNT"] = "2"
     for name in ["mini.rst7", "mini2.rst7", "eqnvt.rst7", "eqnpt_pre.rst7", "eqnpt00.rst7"]:
@@ -331,11 +335,45 @@ def test_run_equil_auto_reruns_existing_steps_on_wrapper_retry(tmp_path: Path) -
     )
 
     calls = _read_calls(tmp_path)
-    assert "Retry attempt 2 detected; rerunning completed equilibration stages" in result.stdout
-    assert "mini.out" in calls
-    assert "mini2.out" in calls
-    assert "eqnpt_pre.out" in calls
-    assert "eqnpt00.out" in calls
+    assert "Retry attempt 2 detected; preserving completed equilibration stages" in result.stdout
+    assert "mini.out" not in calls
+    assert "mini2.out" not in calls
+    assert "eqnpt_pre.out" not in calls
+    assert "eqnpt00.out" not in calls
+    assert "eqnpt01.out" in calls
+
+
+def test_run_equil_prior_failure_with_complete_md_marks_finished_without_rerun(
+    tmp_path: Path,
+) -> None:
+    env, cmd = _setup_run_equil_production(tmp_path)
+    env["RETRY_COUNT"] = "2"
+    _write_file(tmp_path / "ATTEMPT_FAILED", "FAILED\n")
+    _write_file(
+        tmp_path / "md-01.out",
+        "CONTROL DATA FOR THE RUN\n"
+        "|  Final Performance Info:\n"
+        " NSTEP =    2500   TIME(PS) =     674.000  TEMP(K) =   298.0\n",
+    )
+    _write_file(tmp_path / "md-01.nc", "nc\n")
+    _write_file(tmp_path / "md-current.rst7", _rst_with_time(674.0))
+
+    result = subprocess.run(
+        cmd,
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _read_calls(tmp_path)
+    assert "Prior failure marker found; preserving completed equilibration stages" in result.stdout
+    assert calls == []
+    assert (tmp_path / "FINISHED").exists()
+    assert (tmp_path / "output.pdb").exists()
+    assert (tmp_path / "md-01.nc").exists()
+    assert not (tmp_path / "ATTEMPT_FAILED").exists()
 
 
 def test_run_equil_keeps_current_restart_from_incomplete_segment(
