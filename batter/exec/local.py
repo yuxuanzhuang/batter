@@ -22,7 +22,7 @@ def _run_pipeline_task(
     pipeline: Pipeline,
     backend: "LocalBackend",
     sys: SimSystem,
-) -> Tuple[str, Mapping[str, ExecResult] | None, BaseException | None, str | None]:
+) -> Tuple[str, Mapping[str, ExecResult] | None, str | None, str | None]:
     """Execute ``pipeline`` for a single system.
 
     Parameters
@@ -36,16 +36,28 @@ def _run_pipeline_task(
 
     Returns
     -------
-    tuple of (str, Mapping[str, ExecResult] or None, BaseException or None, str or None)
+    tuple of (str, Mapping[str, ExecResult] or None, str or None, str or None)
         Tuple containing the system name, the step results if successful, the
-        raised exception otherwise, and formatted traceback text captured inside
+        exception text otherwise, and formatted traceback text captured inside
         the worker process. The structure is joblib-friendly.
     """
     try:
         results = pipeline.run(backend, sys)
         return sys.name, results, None, None
     except BaseException as exc:  # pragma: no cover - propagated to parent
-        return sys.name, None, exc, traceback.format_exc()
+        return sys.name, None, _exception_text_for_worker(exc), traceback.format_exc()
+
+
+def _exception_text_for_worker(exc: BaseException) -> str:
+    """Return a picklable exception label for worker-to-parent reporting."""
+    try:
+        text = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+    except BaseException:
+        try:
+            text = repr(exc)
+        except BaseException:
+            text = type(exc).__name__
+    return text or type(exc).__name__
 
 
 def _format_failure_detail(exc: BaseException, tb_text: str | None = None) -> str:
@@ -243,7 +255,7 @@ class LocalBackend(ExecBackend):
         )
 
         results: List[
-            Tuple[str, Mapping[str, ExecResult] | None, BaseException | None, str | None]
+            Tuple[str, Mapping[str, ExecResult] | None, str | None, str | None]
         ] = Parallel(
             n_jobs=worker_cap,
             backend=backend,
@@ -265,7 +277,7 @@ class LocalBackend(ExecBackend):
                 out[name] = res
                 logger.debug("LOCAL(parallel): finished {}", name)
             else:
-                errors[name] = err or RuntimeError("Unknown error")
+                errors[name] = RuntimeError(err or "Unknown error")
                 traces[name] = tb_text
 
         if errors:

@@ -84,6 +84,7 @@ class SimulationConfig(BaseModel):
             "cation": create.cation,
             "anion": create.anion,
             "solv_shell": float(create.solv_shell),
+            "infer_disulfide_bonds": bool(create.infer_disulfide_bonds),
             "protein_align": create.protein_align,
             "l1_range": float(l1_range),
             "min_adis": float(min_adis),
@@ -358,7 +359,7 @@ class SimulationConfig(BaseModel):
     unbound_threshold: float = Field(
         8.0,
         ge=0.0,
-        description="Distance (Å) between ligand COMs that classifies equilibration as unbound.",
+        description="Ligand-to-initial-binding-site distance (Å) that classifies equilibration as unbound.",
     )
     analysis_start_step: int = Field(
         0,
@@ -392,6 +393,10 @@ class SimulationConfig(BaseModel):
     buffer_y: float = Field(10.0, description="Box buffer Y (Å)")
     buffer_z: float = Field(15.0, description="Box buffer Z (Å)")
     lig_buffer: float = Field(10.0, description="Ligand box buffer (Å)")
+    infer_disulfide_bonds: bool = Field(
+        True,
+        description="Infer missing disulfide bonds from close CYX SG-SG distances.",
+    )
 
     # --- Ions ---
     neutralize_only: Literal["yes", "no"] = Field("no", description="Neutralize only")

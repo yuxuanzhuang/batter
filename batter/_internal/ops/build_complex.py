@@ -196,6 +196,164 @@ def _candidate_ligand_atom_name_string(
     return " ".join(names)
 
 
+def _is_apo_ligand_build(param_json: Path, ligand: str, mol: str) -> bool:
+    try:
+        metadata = json.loads(param_json.read_text())
+    except Exception:
+        metadata = {}
+    if bool(metadata.get("apo")):
+        return True
+    return ligand.upper() == "APO" and mol.upper() == "APO"
+
+
+def _write_ligand_pdb_with_parameter_names(
+    ligand_pdb: Path,
+    parameter_mol2: Path,
+    output_pdb: Path,
+    *,
+    residue_name: str,
+    ligand_label: str,
+    apo_ligand: bool = False,
+) -> None:
+    """Write a ligand PDB whose atom names/count match its parameter mol2."""
+    ante_mol = mda.Universe(str(parameter_mol2))
+    lig_u = mda.Universe(str(ligand_pdb))
+
+    if lig_u.atoms.n_atoms == ante_mol.atoms.n_atoms:
+        output_atoms = lig_u.atoms
+    elif apo_ligand and ante_mol.atoms.n_atoms == 1 and lig_u.atoms.n_atoms >= 1:
+        logger.info(
+            "[build_complex] Collapsing apo dummy ligand {} from {} source atoms "
+            "to the single parameterized dummy atom.",
+            ligand_label,
+            lig_u.atoms.n_atoms,
+        )
+        output_atoms = lig_u.atoms[:1]
+    else:
+        raise ValueError(
+            f"Ligand atom count mismatch for {ligand_label}: "
+            f"{ligand_pdb} has {lig_u.atoms.n_atoms} atom(s), but "
+            f"{parameter_mol2} has {ante_mol.atoms.n_atoms} atom(s)."
+        )
+
+    output_atoms.names = ante_mol.atoms.names
+    output_atoms.residues.resnames = residue_name
+    output_atoms.write(str(output_pdb))
+
+
+def _copy_if_distinct(src: Path, dst: Path) -> None:
+    try:
+        if src.resolve() == dst.resolve():
+            return
+    except FileNotFoundError:
+        pass
+    shutil.copy2(src, dst)
+
+
+def _unit_vector(vec: np.ndarray) -> np.ndarray | None:
+    norm = float(np.linalg.norm(vec))
+    if norm <= 1.0e-8:
+        return None
+    return np.asarray(vec, dtype=float) / norm
+
+
+def _perpendicular_unit_vector(vec: np.ndarray) -> np.ndarray:
+    base = np.asarray([1.0, 0.0, 0.0], dtype=float)
+    unit = _unit_vector(vec)
+    if unit is not None and abs(float(np.dot(unit, base))) > 0.9:
+        base = np.asarray([0.0, 1.0, 0.0], dtype=float)
+    if unit is None:
+        return base
+    perp = np.cross(unit, base)
+    perp_unit = _unit_vector(perp)
+    return perp_unit if perp_unit is not None else base
+
+
+def _apo_dummy_spacing(min_adis: float, max_adis: float) -> float:
+    if max_adis > min_adis:
+        return float((min_adis + max_adis) / 2.0)
+    return float(max(4.0, min_adis + 1.0))
+
+
+def _position_apo_dummy_atoms(
+    pdb_file: Path,
+    *,
+    mol: str,
+    p1_resid: int,
+    p2_resid: int,
+    h1_atom: str,
+    h2_atom: str,
+    l1_vector: np.ndarray,
+    min_adis: float,
+    max_adis: float,
+) -> list[str]:
+    """Place the apo dummy atom near the L1 reference and return its anchor name."""
+    u = mda.Universe(str(pdb_file))
+    lig_atoms = u.select_atoms(f"resname {mol}")
+    if lig_atoms.n_atoms < 1:
+        raise ValueError(
+            f"Apo dummy ligand {mol} must contain at least one atom for an anchor placeholder."
+        )
+
+    p1 = u.select_atoms(
+        f"(not resname {mol}) and (resid {p1_resid} and name {h1_atom})"
+    )
+    p2 = u.select_atoms(
+        f"(not resname {mol}) and (resid {p2_resid} and name {h2_atom})"
+    )
+    if p1.n_atoms != 1 or p2.n_atoms != 1:
+        raise ValueError(
+            "Could not place apo dummy ligand: receptor P1/P2 anchors were not found "
+            f"in {pdb_file}."
+        )
+
+    p1_pos = np.asarray(p1.positions[0], dtype=float)
+    p2_pos = np.asarray(p2.positions[0], dtype=float)
+    p1_to_p2 = p2_pos - p1_pos
+    target_vec = np.asarray(l1_vector, dtype=float)
+    target_dir = _unit_vector(target_vec)
+    if target_dir is None:
+        target_dir = _perpendicular_unit_vector(p1_to_p2)
+        target_vec = target_dir * _apo_dummy_spacing(min_adis, max_adis)
+
+    lig_atoms[0].position = p1_pos + target_vec
+    u.atoms.write(str(pdb_file))
+    return [str(lig_atoms[0].name)]
+
+
+def _write_apo_anchor_outputs(
+    build_dir: Path,
+    *,
+    ligand: str,
+    mol: str,
+    anchor_names: Sequence[str],
+) -> None:
+    missing = [
+        path
+        for path in (build_dir / f"equil-{mol}.pdb", build_dir / f"{mol}-noh.pdb")
+        if not path.exists()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "Apo dummy prep did not produce required build output(s): "
+            + ", ".join(str(path) for path in missing)
+        )
+
+    if len(anchor_names) < 1:
+        raise ValueError("Apo dummy anchor output requires at least one atom name.")
+    anchor_file = build_dir / "anchors.txt"
+    anchor_file.write_text(" ".join(anchor_names) + "\n")
+
+    tagged = build_dir / f"anchors-{ligand}.txt"
+    if tagged.exists():
+        tagged.unlink()
+    anchor_file.rename(tagged)
+
+    dum1 = build_dir / "dum1.pdb"
+    if not dum1.exists():
+        shutil.copy2(build_dir / "dum.pdb", dum1)
+
+
 def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     """
     Creates the aligned + cleaned PDBs (protein/others/lipids), finds
@@ -205,6 +363,8 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     sim = ctx.sim
     ligand = ctx.ligand
     mol = ctx.residue_name
+    param_json = ctx.working_dir.parent / "params" / f"{mol}.json"
+    apo_ligand = _is_apo_ligand_build(param_json, ligand, mol)
 
     # Pull many config knobs (renamed to locals for readability)
     H1 = sim.p1
@@ -258,11 +418,17 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
     shutil.copy2(work.parent / "params" / f"{mol}.mol2", build_dir / f"{mol}.mol2")
     shutil.copy2(work.parent / "params" / f"{mol}.sdf", build_dir / f"{mol}.sdf")
 
-    ante_mol = mda.Universe(str(build_dir / f"{mol}.mol2"))
-    lig_u = mda.Universe(str(build_dir / f"{ligand}.pdb"))
-    lig_u.atoms.names = ante_mol.atoms.names
-    lig_u.atoms.residues.resnames = mol
-    lig_u.atoms.write(str(build_dir / f"{mol}.pdb"))
+    _write_ligand_pdb_with_parameter_names(
+        build_dir / f"{ligand}.pdb",
+        build_dir / f"{mol}.mol2",
+        build_dir / f"{mol}.pdb",
+        residue_name=mol,
+        ligand_label=ligand,
+        apo_ligand=apo_ligand,
+    )
+    if apo_ligand:
+        _copy_if_distinct(build_dir / f"{mol}.pdb", build_dir / f"{ligand}.pdb")
+        _copy_if_distinct(build_dir / f"{mol}.pdb", work / f"{ligand}.pdb")
 
     # Prepare VMD split script
     split_ini = Path(build_dir / "split-ini.tcl")
@@ -442,15 +608,38 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
     sdf_file = build_dir / f"{mol}.sdf"
     pdb_file = build_dir / "aligned_amber.pdb"
+    apo_anchor_names: list[str] | None = None
+    if apo_ligand:
+        apo_anchor_names = _position_apo_dummy_atoms(
+            pdb_file,
+            mol=mol,
+            p1_resid=p1_resid,
+            p2_resid=p2_resid,
+            h1_atom=h1_atom,
+            h2_atom=h2_atom,
+            l1_vector=np.asarray([l1_x, l1_y, l1_z], dtype=float),
+            min_adis=float(min_adis),
+            max_adis=float(max_adis),
+        )
+        logger.info(
+            "[build_complex] Placed apo dummy ligand '{}' at the anchor reference "
+            "and will use {} as ligand anchor(s).",
+            ligand,
+            " ".join(apo_anchor_names),
+        )
+
     u = mda.Universe(str(pdb_file))
     lig_atoms = u.select_atoms(f"resname {mol}")
     lig_names = lig_atoms.names
-    lig_name_str = _candidate_ligand_atom_name_string(
-        sdf_file,
-        lig_atoms,
-        ligand_label=ligand,
-        stage="equil",
-    )
+    if apo_anchor_names is None:
+        lig_name_str = _candidate_ligand_atom_name_string(
+            sdf_file,
+            lig_atoms,
+            ligand_label=ligand,
+            stage="equil",
+        )
+    else:
+        lig_name_str = " ".join(apo_anchor_names)
 
     # Build VMD prep.tcl from template, try with candidate names first
     prep_ini = build_dir / "prep-ini.tcl"
@@ -484,6 +673,29 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
                 )
 
     _write_prep(lig_name_str)
+    if apo_ligand:
+        try:
+            run_with_log(
+                f"{vmd} -dispdev text -e prep.tcl",
+                shell=False,
+                working_dir=build_dir,
+            )
+        except RuntimeError:
+            if not (build_dir / f"equil-{mol}.pdb").exists():
+                raise
+            logger.warning(
+                "[build_complex] VMD exited while searching apo dummy anchors for {}; "
+                "continuing with fixed dummy anchors.",
+                ligand,
+            )
+        _write_apo_anchor_outputs(
+            build_dir,
+            ligand=ligand,
+            mol=mol,
+            anchor_names=apo_anchor_names or list(lig_names),
+        )
+        return True
+
     try:
         run_with_log(
             f"{vmd} -dispdev text -e prep.tcl",
@@ -771,7 +983,7 @@ def build_complex_z(ctx) -> bool:
             working_dir=workdir,
         )
     except RuntimeError:
-        logger.info(
+        logger.debug(
             f"[build_complex] Default candidates failed; retry with ALL ligand atoms for anchors in {ligand}"
         )
         lig_name_str = " ".join(str(x) for x in lig_names)
@@ -928,6 +1140,8 @@ def build_complex_lig(ctx) -> bool:
     sys_root = ctx.system_root
     all_ligand_folder = sys_root / "all-ligands"
     ff_dir = sys_root / "simulations" / ligand / "params"
+    param_json = ff_dir / f"{mol}.json"
+    apo_ligand = _is_apo_ligand_build(param_json, ligand, mol)
 
     shutil.copytree(build_files_orig, build_dir, dirs_exist_ok=True)
 
@@ -944,11 +1158,17 @@ def build_complex_lig(ctx) -> bool:
     shutil.copy2(ff_dir / f"{mol}.mol2", build_dir / f"{mol}.mol2")
     shutil.copy2(ff_dir / f"{mol}.sdf", build_dir / f"{mol}.sdf")
 
-    ante_mol = mda.Universe(str(build_dir / f"{mol}.mol2"))
-    lig_u = mda.Universe(str(build_dir / f"{ligand}.pdb"))
-    lig_u.atoms.names = ante_mol.atoms.names
-    lig_u.atoms.residues.resnames = mol
-    lig_u.atoms.write(str(build_dir / f"{mol}.pdb"))
+    _write_ligand_pdb_with_parameter_names(
+        build_dir / f"{ligand}.pdb",
+        build_dir / f"{mol}.mol2",
+        build_dir / f"{mol}.pdb",
+        residue_name=mol,
+        ligand_label=ligand,
+        apo_ligand=apo_ligand,
+    )
+    if apo_ligand:
+        _copy_if_distinct(build_dir / f"{mol}.pdb", build_dir / f"{ligand}.pdb")
+        _copy_if_distinct(build_dir / f"{mol}.pdb", work / f"{ligand}.pdb")
 
     mol = ctx.residue_name
 

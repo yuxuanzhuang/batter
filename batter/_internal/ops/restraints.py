@@ -226,6 +226,37 @@ def _write_assign_and_read_vals(work: Path, rst_exprs: List[str], prmtop: Path, 
     return [float(v) for v in vals]
 
 
+def _equil_anchor_restraint_expressions(
+    P1: str,
+    P2: str,
+    P3: str,
+    L1: Optional[str],
+    L2: Optional[str],
+    L3: Optional[str],
+) -> tuple[List[str], int]:
+    """Return equilibration anchor restraint expressions and ligand expression count."""
+    rst: List[str] = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
+    ligand_rst: List[str] = []
+    if L1:
+        ligand_rst.extend(
+            [
+                f"{P1} {L1}",
+                f"{P2} {P1} {L1}",
+                f"{P3} {P2} {P1} {L1}",
+            ]
+        )
+        if L2:
+            ligand_rst.extend(
+                [
+                    f"{P1} {L1} {L2}",
+                    f"{P2} {P1} {L1} {L2}",
+                ]
+            )
+            if L3:
+                ligand_rst.append(f"{P1} {L1} {L2} {L3}")
+    return rst + ligand_rst, len(ligand_rst)
+
+
 def _gen_cv_blocks_from_distance_restraints(work_dir: Path,
                                             restraints: Iterable[Iterable]) -> list[str]:
     """
@@ -545,16 +576,9 @@ def write_equil_restraints(ctx: BuildContext) -> None:
     ligand_atm_num  = num_to_mask(vac_lig_pdb.as_posix())
 
     # base restraint expressions
-    rst: List[str] = []
-    rst += [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]  # protein triangle
-    rst += [
-        f"{P1} {L1}",
-        f"{P2} {P1} {L1}",
-        f"{P3} {P2} {P1} {L1}",
-        f"{P1} {L1} {L2}",
-        f"{P2} {P1} {L1} {L2}",
-        f"{P1} {L1} {L2} {L3}",
-    ]
+    rst, ligand_anchor_rst_count = _equil_anchor_restraint_expressions(
+        P1, P2, P3, L1, L2, L3
+    )
 
     msk = _scan_dihedrals_from_prmtop(vac_lig_prmtop, ligand_atm_num)
     msk = [m.replace(":1", f":{lig_res}") for m in msk]
@@ -597,7 +621,10 @@ def write_equil_restraints(ctx: BuildContext) -> None:
 
     outp = work / "disang.rest"
     with outp.open("w") as df:
-        df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}  stage=equil  weight=100\n")
+        l1_label = L1 or "NA"
+        l2_label = L2 or "NA"
+        l3_label = L3 or "NA"
+        df.write(f"# Anchor atoms {P1} {P2} {P3} {l1_label} {l2_label} {l3_label}  stage=equil  weight=100\n")
         for i, expr in enumerate(full_rst):
             fields = expr.split()
             n = len(fields)
@@ -611,7 +638,7 @@ def write_equil_restraints(ctx: BuildContext) -> None:
                 continue
 
             # TR block
-            if 3 <= i < 9:
+            if 3 <= i < 3 + ligand_anchor_rst_count:
                 if n == 2:
                     iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
                     df.write(f"&rst iat={iat:<23s} ")

@@ -3,6 +3,8 @@ from .helpers import (
     get_buffer_z,
     get_ligand_candidates,
     get_sdr_dist,
+    select_apo_receptor_anchor_atoms,
+    select_receptor_anchor_atoms,
     select_ions_away_from_complex,
 )
 
@@ -11,5 +13,7 @@ __all__ = [
     "get_buffer_z",
     "get_ligand_candidates",
     "get_sdr_dist",
+    "select_apo_receptor_anchor_atoms",
+    "select_receptor_anchor_atoms",
     "select_ions_away_from_complex",
 ]

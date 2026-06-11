@@ -45,6 +45,7 @@ def test_cli_run_invokes_run_from_yaml(
             run_data = dict(default_run)
             if run:
                 run_data.update(run)
+            self.protocol = "rbfe"
             self.run = DummySection(**run_data)
 
         def model_copy(self, update: dict | None = None):
@@ -85,6 +86,7 @@ def test_cli_run_invokes_run_from_yaml(
             "test",
             "--allow-run-id-mismatch",
             "--dry-run",
+            "--only-rbfe-network",
         ],
     )
     assert result.exit_code == 0
@@ -93,6 +95,7 @@ def test_cli_run_invokes_run_from_yaml(
     assert called["kwargs"]["run_overrides"]["run_id"] == "test"
     assert called["kwargs"]["run_overrides"]["allow_run_id_mismatch"] is True
     assert called["kwargs"]["run_overrides"]["dry_run"] is True
+    assert called["kwargs"]["run_overrides"]["only_rbfe_network"] is True
 
 
 def test_cli_run_preserves_yaml_on_failure_when_flag_omitted(

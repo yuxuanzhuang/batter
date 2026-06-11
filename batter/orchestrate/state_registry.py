@@ -27,6 +27,15 @@ LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
         "success": [["artifacts/ligand_params/index.json"]],
         "failure": [],
     },
+    "prepare_rbfe": {
+        "required": [
+            ["artifacts/config/rbfe_network.json", "artifacts/config/prepare_rbfe.ok"]
+        ],
+        "success": [
+            ["artifacts/config/rbfe_network.json", "artifacts/config/prepare_rbfe.ok"]
+        ],
+        "failure": [],
+    },
     "prepare_equil": {
         "required": [
             ["equil/full.prmtop", "equil/prepare_equil.ok"],

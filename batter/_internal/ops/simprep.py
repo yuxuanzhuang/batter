@@ -37,7 +37,7 @@ from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
 
-from kartograf import SmallMoleculeComponent
+from gufe import SmallMoleculeComponent
 from kartograf.atom_aligner import align_mol_shape
 from kartograf.atom_mapper import KartografAtomMapper
 from lomap import LomapAtomMapper
@@ -235,16 +235,27 @@ def _write_build_dry_no_water(build_pdb: Path, out_dry: Path) -> None:
                 continue
             fout.write(ln)
 
-def filter_exclude_hydroge_atoms(
+def filter_exclude_hydrogen_atoms(
     molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
 ) -> dict[int, int]:
-    """Force a mapping to exclde H atoms"""
+    """Force a mapping to exclude H atoms."""
     filtered_mapping = {}
     for i, j in mapping.items():
-        if molA.GetAtomWithIdx(i).GetAtomicNum() == 1 or molB.GetAtomWithIdx(j).GetAtomicNum() == 1:
+        if (
+            molA.GetAtomWithIdx(i).GetAtomicNum() == 1
+            or molB.GetAtomWithIdx(j).GetAtomicNum() == 1
+        ):
             continue
         filtered_mapping[i] = j
     return filtered_mapping
+
+
+def filter_exclude_hydroge_atoms(
+    molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
+) -> dict[int, int]:
+    """Deprecated spelling; use filter_exclude_hydrogen_atoms."""
+    return filter_exclude_hydrogen_atoms(molA, molB, mapping)
+
 
 def filter_element_changes(
     molA: Chem.Mol, molB: Chem.Mol, mapping: dict[int, int]
@@ -349,6 +360,48 @@ def _build_current_kartograf_atom_mapper_for_simprep_x(
     )
 
 
+def _load_prepared_rbfe_mapping(
+    prepared_dir: Path | str | None,
+    dest_dir: Path,
+) -> tuple[dict[int, int], Any | None, bool]:
+    """Load and copy a mapping produced by prepare_rbfe, if present."""
+    if not prepared_dir:
+        return {}, None, False
+    source_dir = Path(prepared_dir)
+    source_json = source_dir / "mapping.json"
+    if not source_json.is_file():
+        return {}, None, False
+
+    data = json.loads(source_json.read_text())
+    if not isinstance(data, Mapping):
+        raise ValueError(f"Prepared RBFE mapping must be a JSON object: {source_json}")
+    map_b_to_a = {int(key): int(value) for key, value in data.items()}
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("mapping.json", "mapping.pkl", "mapping.png", "mapping_status.json"):
+        source = source_dir / name
+        if not source.exists():
+            continue
+        target = dest_dir / name
+        try:
+            if source.resolve() == target.resolve():
+                continue
+        except FileNotFoundError:
+            pass
+        shutil.copy2(source, target)
+
+    atom_mapping_obj = None
+    source_pkl = source_dir / "mapping.pkl"
+    if source_pkl.is_file():
+        try:
+            with source_pkl.open("rb") as fh:
+                atom_mapping_obj = pickle.load(fh)
+        except Exception as exc:
+            logger.debug(f"Could not load prepared RBFE mapping pickle: {exc}")
+
+    return map_b_to_a, atom_mapping_obj, True
+
+
 def set_mol_positions(mol: Chem.Mol, xyz: np.ndarray, conf_id: int = -1) -> Chem.Mol:
     """
     Set atomic coordinates for mol from xyz (shape: (n_atoms, 3)).
@@ -428,6 +481,13 @@ def force_mapped_coords_and_minimize(
         p = conf1.GetAtomPosition(i1)
         conf2.SetAtomPosition(i2, p)
 
+    mapped2 = sorted({i2 for _, i2 in atom_map_1to2})
+    if len(mapped2) >= lig2.GetNumAtoms():
+        logger.debug(
+            "Skipping constrained RDKit minimization because all atoms are fixed."
+        )
+        return Chem.Mol(lig2)
+
     # 3) Build force field
     lig2_ffmol = Chem.Mol(lig2)  # keep same object; just being explicit
     if ff.upper() == "MMFF":
@@ -441,7 +501,6 @@ def force_mapped_coords_and_minimize(
         raise ValueError("ff must be 'MMFF' or 'UFF'")
 
     # 4) Freeze or strongly restrain mapped atoms, then minimize
-    mapped2 = [i2 for _, i2 in atom_map_1to2]
     if restrain_instead_of_freeze:
         # Keep atoms near their exact target coords; still allows tiny relaxation
         # (maxDispl=0.0 means hard constraint in practice; you can set small >0 if needed)
@@ -571,20 +630,20 @@ def write_build_from_aligned(
     y_max = float(0.0)
     for dfile in sorted(build_dir.glob("dum[0-9]*.pdb")):
         dlines = [ln for ln in dfile.read_text().splitlines() if ln.strip()]
-        # convention: coordinates on the 2nd line (index 1)
-        if len(dlines) >= 2 and _is_atom_line(dlines[1]):
-            x = float(_field(dlines[1], 30, 38) or 0.0)
-            y = float(_field(dlines[1], 38, 46) or 0.0)
-            z = float(_field(dlines[1], 46, 54) or 0.0)
-            name = _field(dlines[1], 12, 16) or "DU"
-            resname = _field(dlines[1], 17, 20) or "DUM"
-            resid = int(float(_field(dlines[1], 22, 26) or 1))
-            chain = _field(dlines[1], 21, 22) or "A"
+        atom_line = next((ln for ln in dlines if _is_atom_line(ln)), None)
+        if atom_line is not None:
+            x = float(_field(atom_line, 30, 38) or 0.0)
+            y = float(_field(atom_line, 38, 46) or 0.0)
+            z = float(_field(atom_line, 46, 54) or 0.0)
+            name = _field(atom_line, 12, 16) or "Pb"
+            resname = _field(atom_line, 17, 20) or "DUM"
+            resid = int(float(_field(atom_line, 22, 26) or 1))
+            chain = _field(atom_line, 21, 22) or "A"
             coords_dum.append((x, y, z))
             atom_dum.append((name, resname, resid, chain))
     if not coords_dum:
         coords_dum.append((0.0, 0.0, 0.0))
-        atom_dum.append(("DU", "DUM", 1, "Z"))
+        atom_dum.append(("Pb", "DUM", 1, "Z"))
 
     dum_count = len(coords_dum)
 
@@ -734,12 +793,14 @@ def _read_ligand_anchor_names(
     if not txt.exists():
         logger.warning(f"[simprep] anchors file not found: {txt}")
         return None, None, None
-    line = _read_nonblank_lines(txt)[0]
-    parts = line.split()
-    if len(parts) < 3:
-        logger.warning(f"[simprep] anchors file malformed: '{line}'")
+    lines = _read_nonblank_lines(txt)
+    if not lines:
+        logger.warning(f"[simprep] anchors file empty: {txt}")
         return None, None, None
-    return parts[0], parts[1], parts[2]
+    line = lines[0]
+    parts = line.split()
+    padded = (parts + [None, None, None])[:3]
+    return padded[0], padded[1], padded[2]
 
 
 def _mask(resid: int, atom: Optional[str]) -> Optional[str]:
@@ -1040,30 +1101,58 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     )
     lomap_options = _mapper_options_dict(extra.get("lomap_options") or extra.get("lomap"))
 
-    mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
-    mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
-    
     atom_mapping_obj = None
-    if atom_mapper_name == "lomap":
-        mapper = LomapAtomMapper(
-            **_lomap_mapper_kwargs(atom_mapper_options or lomap_options)
-        )
-        atom_mapping_obj = next(
-            mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
-        )
-        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
-    else:
-        mol_alt_aligned = align_mol_shape(mol_alt_component, ref_mol=mol_ref_component)
+    pair_id = str(extra.get("pair_id") or f"{lig_ref}~{lig_alt}")
+    prepared_mapping_dir = extra.get("prepared_mapping_dir") or (
+        sys_root / "artifacts" / "config" / "rbfe_mappings" / pair_id
+    )
+    map_b_to_a, atom_mapping_obj, used_prepared_mapping = _load_prepared_rbfe_mapping(
+        prepared_mapping_dir,
+        dest_dir,
+    )
 
-        mapper = _build_current_kartograf_atom_mapper_for_simprep_x(
-            atom_mapper_options or kartograf_options
+    if not used_prepared_mapping:
+        mol_ref_component = SmallMoleculeComponent.from_rdkit(rdmol_ref)
+        mol_alt_component = SmallMoleculeComponent.from_rdkit(rdmol_alt)
+
+        if atom_mapper_name == "lomap":
+            mapper = LomapAtomMapper(
+                **_lomap_mapper_kwargs(atom_mapper_options or lomap_options)
+            )
+            atom_mapping_obj = next(
+                mapper.suggest_mappings(mol_ref_component, mol_alt_component), None
+            )
+            map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+        else:
+            mol_alt_aligned = align_mol_shape(
+                mol_alt_component,
+                ref_mol=mol_ref_component,
+            )
+
+            mapper = _build_current_kartograf_atom_mapper_for_simprep_x(
+                atom_mapper_options or kartograf_options
+            )
+            atom_mapping_obj = next(
+                mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
+            )
+            map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+        map_b_to_a = {int(key): int(value) for key, value in map_b_to_a.items()}
+    else:
+        logger.debug(
+            f"[simprep:x] using prepared RBFE mapping from {prepared_mapping_dir}"
         )
-        atom_mapping_obj = next(
-            mapper.suggest_mappings(mol_ref_component, mol_alt_aligned), None
+    # Keep RBFE common-core masks and coordinate restraints on heavy atoms only.
+    # Hydrogen-inclusive prepared maps can overconstrain RDKit minimization when
+    # every atom in the alternate ligand is mapped.
+    n_mapped_raw = len(map_b_to_a)
+    map_b_to_a = filter_exclude_hydrogen_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
+    if len(map_b_to_a) != n_mapped_raw:
+        logger.debug(
+            "[simprep:x] removed "
+            f"{n_mapped_raw - len(map_b_to_a)} hydrogen atom mapping(s)"
         )
-        map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
-    # need to exclude hydrogens from the atom mapping
-    # map_b_to_a = filter_exclude_hydroge_atoms(rdmol_alt, rdmol_ref, map_b_to_a)
+    with open(dest_dir / "mapping.json", "w") as f:
+        json.dump(map_b_to_a, f, indent=2, sort_keys=True)
 
     logger.debug(f"[simprep:x] mapper={atom_mapper_name} n_mapped={len(map_b_to_a)}")
     atomMap = [(probe, ref) for ref, probe in sorted(map_b_to_a.items())]
@@ -1187,19 +1276,17 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     u_alt_solvent = mda.Universe(alter_solvent_pdb.as_posix())
     u_alt = mda.Merge(u_alt_site.atoms, u_alt_solvent.atoms)
 
-    with open(dest_dir / "mapping.json", "w") as f:
-        json.dump(map_b_to_a, f)
+    if not used_prepared_mapping:
+        try:
+            with open(dest_dir / "mapping.pkl", "wb") as f:
+                pickle.dump(atom_mapping_obj, f)
+        except Exception:
+            pass
 
-    try:
-        with open(dest_dir / "mapping.pkl", "wb") as f:
-            pickle.dump(atom_mapping_obj, f)
-    except Exception:
-        pass
-
-    try:
-        atom_mapping_obj.draw_to_file(fname=dest_dir / "mapping.png")
-    except Exception:
-        pass
+        try:
+            atom_mapping_obj.draw_to_file(fname=dest_dir / "mapping.png")
+        except Exception:
+            pass
     logger.debug(f"[simprep:x] simulation directory created → {dest_dir}")
 
 

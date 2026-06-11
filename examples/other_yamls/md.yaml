@@ -24,7 +24,7 @@ create:
   # partial-charge model used during ligand parameterization
   param_charge: "openff-gnn-am1bcc-1.0.0.pt"
 
-  # three receptor anchor atoms used to define BATTER restraints
+  # optional explicit receptor anchors; omit to let BATTER auto-select them
   anchor_atoms:
     - "name CA and resid 113"
     - "name CA and resid 82"

@@ -304,6 +304,52 @@ def test_wait_loop_warning_uses_expanded_workdir_label(monkeypatch, tmp_path: Pa
     )
 
 
+def test_wait_loop_preempted_resubmits_without_retry_budget(
+    monkeypatch, tmp_path: Path
+) -> None:
+    workdir = tmp_path / "executions" / "rep1" / "simulations" / "G1I" / "fe" / "x" / "x01"
+    workdir.mkdir(parents=True)
+    (workdir / "SLURMM-run").write_text("#!/bin/bash\n")
+    (workdir / "JOBID").write_text("21949383\n")
+
+    spec = SlurmJobSpec(workdir=workdir)
+    manager = SlurmJobManager(
+        registry_file=None,
+        poll_s=0.0,
+        resubmit_backoff_s=0.0,
+        max_retries=0,
+    )
+
+    sentinel_calls = {"count": 0}
+    submit_calls: list[Path] = []
+
+    def fake_sentinel_done(_spec: SlurmJobSpec):
+        sentinel_calls["count"] += 1
+        if sentinel_calls["count"] >= 3:
+            return True, "FINISHED"
+        return False, None
+
+    def fake_submit(_spec: SlurmJobSpec) -> str:
+        submit_calls.append(_spec.workdir)
+        (workdir / "JOBID").write_text("21949384\n")
+        return "21949384"
+
+    monkeypatch.setattr(manager, "_sentinel_done", fake_sentinel_done)
+    monkeypatch.setattr(manager, "_submit", fake_submit)
+    monkeypatch.setattr("batter.exec.slurm_mgr._states_from_squeue", lambda _jobids: {})
+    monkeypatch.setattr(
+        "batter.exec.slurm_mgr._states_from_sacct",
+        lambda jobids: {jid: "PREEMPTED" for jid in jobids},
+    )
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+
+    manager._wait_loop([spec])
+
+    assert submit_calls == [workdir]
+    assert not (workdir / "FAILED").exists()
+    assert manager._retries.get(workdir, 0) == 0
+
+
 def test_wait_loop_progress_starts_from_existing_sentinels(
     monkeypatch, tmp_path: Path
 ) -> None:

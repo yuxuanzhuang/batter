@@ -9,10 +9,15 @@ from pathlib import Path
 import pytest
 
 from batter.rbfe import (
+    _kartograf_mapper_kwargs,
+    _wrap_atom_mapper_with_overrides,
+    ManualAtomMappingOverrides,
     RBFENetwork,
     konnektor_pairs,
+    load_atom_mapping_file,
     load_mapping_file,
     resolve_mapping_fn,
+    write_pair_mapping_artifacts,
 )
 
 
@@ -44,14 +49,120 @@ def test_load_mapping_file_json_adjacency(tmp_path: Path) -> None:
     assert pairs == [("A", "B"), ("A", "C")]
 
 
+def test_load_atom_mapping_file_pair_dict_and_reverse(tmp_path: Path) -> None:
+    mapping_file = tmp_path / "atom_mapping.json"
+    mapping_file.write_text(json.dumps({"LIG1~LIG2": {"0": 4, "2": 5}}))
+
+    overrides = load_atom_mapping_file(mapping_file)
+
+    assert overrides.get_b_to_a("LIG1", "LIG2") == {0: 4, 2: 5}
+    assert overrides.get_b_to_a("LIG2", "LIG1") == {4: 0, 5: 2}
+
+
+def test_load_atom_mapping_file_inverts_reference_to_target(tmp_path: Path) -> None:
+    mapping_file = tmp_path / "atom_mapping.json"
+    mapping_file.write_text(
+        json.dumps(
+            {
+                "pairs": [
+                    {
+                        "ref": "A",
+                        "alt": "B",
+                        "componentA_to_componentB": {"0": 2, "1": 3},
+                    }
+                ]
+            }
+        )
+    )
+
+    overrides = load_atom_mapping_file(mapping_file)
+
+    assert overrides.get_b_to_a("A", "B") == {2: 0, 3: 1}
+
+
 def test_rbfe_network_default_mapping() -> None:
     network = RBFENetwork.from_ligands(["A", "B", "C"])
     assert network.pairs == (("A", "B"), ("A", "C"))
 
 
+def test_kartograf_mapper_kwargs_defaults() -> None:
+    kwargs = _kartograf_mapper_kwargs(None, atom_map_hydrogens_default=False)
+
+    assert kwargs["atom_max_distance"] == 0.95
+    assert kwargs["map_exact_ring_matches_only"] is True
+    assert kwargs["allow_partial_fused_rings"] is True
+    assert kwargs["allow_bond_breaks"] is False
+
+
 def test_resolve_mapping_konnektor_requires_orchestrator() -> None:
     with pytest.raises(ValueError, match="konnektor"):
         resolve_mapping_fn("konnektor")
+
+
+def test_manual_override_mapper_uses_manual_pair_and_falls_back() -> None:
+    class Component:
+        def __init__(self, name):
+            self.name = name
+
+    class Delegate:
+        def __init__(self):
+            self.calls = []
+
+        def suggest_mappings(self, component_a, component_b):
+            self.calls.append((component_a.name, component_b.name))
+            yield object()
+
+    delegate = Delegate()
+    overrides = ManualAtomMappingOverrides({("A", "B"): {1: 0, 3: 2}})
+    mapper = _wrap_atom_mapper_with_overrides(delegate, overrides)
+
+    manual = next(mapper.suggest_mappings(Component("A"), Component("B")))
+    reverse = next(mapper.suggest_mappings(Component("B"), Component("A")))
+    fallback = next(mapper.suggest_mappings(Component("A"), Component("C")))
+
+    assert manual.componentB_to_componentA == {1: 0, 3: 2}
+    assert reverse.componentB_to_componentA == {0: 1, 2: 3}
+    assert fallback is not None
+    assert delegate.calls == [("A", "C")]
+
+
+def test_manual_override_mapper_to_dict_is_json_compatible() -> None:
+    overrides = ManualAtomMappingOverrides(
+        {("A", "B"): {1: 0, 3: 2}},
+        source=Path("atom_mapping.json"),
+    )
+    mapper = _wrap_atom_mapper_with_overrides("wrapped", overrides)
+
+    data = mapper._to_dict()
+    json.dumps(data)
+    restored = type(mapper)._from_dict(data)
+
+    assert restored.manual_overrides.get_b_to_a("A", "B") == {1: 0, 3: 2}
+    assert restored.manual_overrides.source == Path("atom_mapping.json")
+
+
+def test_write_pair_mapping_artifacts_uses_manual_override(tmp_path: Path) -> None:
+    overrides = ManualAtomMappingOverrides({("A", "B"): {0: 1, 2: 3}})
+    ligand_files = {
+        "A": tmp_path / "A.sdf",
+        "B": tmp_path / "B.sdf",
+    }
+
+    asset = write_pair_mapping_artifacts(
+        ref="A",
+        alt="B",
+        ligand_files=ligand_files,
+        out_dir=tmp_path / "mappings",
+        atom_mapping_overrides=overrides,
+    )
+
+    pair_dir = tmp_path / "mappings" / "A~B"
+    assert json.loads((pair_dir / "mapping.json").read_text()) == {"0": 1, "2": 3}
+    status = json.loads((pair_dir / "mapping_status.json").read_text())
+    assert status["mapper"] == "manual"
+    assert status["mapping_override"] is True
+    assert status["n_mapped"] == 2
+    assert asset["mapper"] == "manual"
 
 
 def test_konnektor_pairs_missing_dependency(tmp_path: Path) -> None:

@@ -130,6 +130,11 @@ def _resolve_run_dir_for_submission(
     "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
 )
 @click.option(
+    "--only-rbfe-network/--full-rbfe",
+    default=None,
+    help="For RBFE, stop after the ligand network is planned; override YAML.",
+)
+@click.option(
     "--slurm-submit/--local-run",
     default=False,
     help="Submit this run via SLURM (sbatch) instead of running locally.",
@@ -155,6 +160,7 @@ def cmd_run(
     dry_run: Optional[bool],
     clean_failures: Optional[bool],
     only_equil: Optional[bool],
+    only_rbfe_network: Optional[bool],
     slurm_submit: bool,
     slurm_manager_path: Optional[Path],
     partition: Optional[str],
@@ -175,6 +181,8 @@ def cmd_run(
         run_over["clean_failures"] = clean_failures
     if only_equil is not None:
         run_over["only_fe_preparation"] = only_equil
+    if only_rbfe_network is not None:
+        run_over["only_rbfe_network"] = only_rbfe_network
 
     # first do a basic validation of the YAML (with any CLI overrides applied)
     try:
@@ -190,6 +198,13 @@ def cmd_run(
         if run_over:
             cfg_for_validation = cfg_for_validation.model_copy(
                 update={"run": cfg_for_validation.run.model_copy(update=run_over)}
+            )
+        if (
+            bool(getattr(cfg_for_validation.run, "only_rbfe_network", False))
+            and cfg_for_validation.protocol != "rbfe"
+        ):
+            raise ValueError(
+                "run.only_rbfe_network is only valid when protocol='rbfe'."
             )
         # Force resolution so missing/invalid fields are surfaced before submitting
         cfg_for_validation.resolved_sim_config()
@@ -234,6 +249,10 @@ def cmd_run(
             ]
         if only_equil is not None:
             parts += ["--only-equil" if only_equil else "--full"]
+        if only_rbfe_network is not None:
+            parts += [
+                "--only-rbfe-network" if only_rbfe_network else "--full-rbfe"
+            ]
         if partition:
             parts += ["--partition", shlex.quote(partition)]
 
@@ -250,6 +269,9 @@ def cmd_run(
             if clean_failures is not None
             else "",
             only_equil=("1" if only_equil else "0") if only_equil is not None else "",
+            only_rbfe_network=("1" if only_rbfe_network else "0")
+            if only_rbfe_network is not None
+            else "",
             partition=partition or "",
         )
         base_path = (
@@ -316,6 +338,11 @@ def cmd_run(
     "--only-equil/--full", default=None, help="Run only equil steps; override YAML."
 )
 @click.option(
+    "--only-rbfe-network/--full-rbfe",
+    default=None,
+    help="For RBFE, stop after the ligand network is planned; override YAML.",
+)
+@click.option(
     "--slurm-submit/--local-run",
     default=False,
     help="Submit this run via SLURM (sbatch) instead of running locally.",
@@ -338,6 +365,7 @@ def cmd_run_exec(
     dry_run: Optional[bool],
     clean_failures: Optional[bool],
     only_equil: Optional[bool],
+    only_rbfe_network: Optional[bool],
     slurm_submit: bool,
     slurm_manager_path: Optional[Path],
     partition: Optional[str],
@@ -364,14 +392,29 @@ def cmd_run_exec(
         run_overrides["clean_failures"] = clean_failures
     if only_equil is not None:
         run_overrides["only_fe_preparation"] = only_equil
-    if partition:
+    if only_rbfe_network is not None:
+        run_overrides["only_rbfe_network"] = only_rbfe_network
+    base_cfg = None
+    if partition or only_rbfe_network is not None:
         base_cfg = RunConfig.load(yaml_copy)
+    if partition:
         merged_slurm = (
             base_cfg.run.slurm.model_copy(update={"partition": partition})
             if base_cfg.run.slurm
             else SlurmConfig(partition=partition)
         )
         run_overrides["slurm"] = merged_slurm
+    if only_rbfe_network is not None:
+        cfg_for_validation = base_cfg.model_copy(
+            update={"run": base_cfg.run.model_copy(update=run_overrides)}
+        )
+        if (
+            bool(getattr(cfg_for_validation.run, "only_rbfe_network", False))
+            and cfg_for_validation.protocol != "rbfe"
+        ):
+            raise click.ClickException(
+                "run.only_rbfe_network is only valid when protocol='rbfe'."
+            )
     if slurm_submit:
         manager_job_name = (
             "fep_" + (PurePosixPath(exec_dir) / "simulations" / "manager").as_posix()
@@ -390,6 +433,10 @@ def cmd_run_exec(
             ]
         if only_equil is not None:
             parts += ["--only-equil" if only_equil else "--full"]
+        if only_rbfe_network is not None:
+            parts += [
+                "--only-rbfe-network" if only_rbfe_network else "--full-rbfe"
+            ]
         if partition:
             parts += ["--partition", shlex.quote(partition)]
 
@@ -403,6 +450,9 @@ def cmd_run_exec(
             if clean_failures is not None
             else "",
             only_equil=("1" if only_equil else "0") if only_equil is not None else "",
+            only_rbfe_network=("1" if only_rbfe_network else "0")
+            if only_rbfe_network is not None
+            else "",
             partition=partition or "",
         )
         base_path = (

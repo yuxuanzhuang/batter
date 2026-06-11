@@ -18,14 +18,15 @@ Minimal RBFE configuration
    create:
      system_name: my_system
      protein_input: /path/to/protein.pdb
-     anchor_atoms:
-       - "name CA and resid 113"
-       - "name CA and resid 82"
-       - "name CA and resid 316"
      ligand_paths:
        LIG1: /path/to/lig1.sdf
        LIG2: /path/to/lig2.sdf
        LIG3: /path/to/lig3.sdf
+     # Optional: provide explicit receptor anchors to override auto-selection.
+     # anchor_atoms:
+     #   - "name CA and resid 113"
+     #   - "name CA and resid 82"
+     #   - "name CA and resid 316"
 
    rbfe:
      mapping: default
@@ -37,6 +38,27 @@ Minimal RBFE configuration
 
 If you omit ``rbfe.mapping`` (and do not provide files), BATTER uses
 ``default``.
+
+Anchor selection
+----------------
+
+``create.anchor_atoms`` is optional. When it is omitted, BATTER chooses the
+three receptor anchors heuristically during system preparation:
+
+* For ABFE/RBFE and MD runs with at least one real ligand, BATTER uses the first
+  real ligand pose as the binding-site reference. It prefers stable receptor
+  backbone atoms near the ligand, keeps P1-P2 and P2-P3 separated by the usual
+  BATTER distance guideline, and scores P1 using nearby ligand interaction
+  atoms.
+* For apo-only MD runs, BATTER uses a protein-only heuristic that chooses a
+  stable, non-degenerate receptor-anchor triplet without relying on dummy
+  ligand coordinates.
+
+Provide ``create.anchor_atoms`` manually when you want fixed anchors for a
+known binding site, when the first ligand pose is not representative, or when
+the heuristic reports that no suitable triplet was found. Resolved anchors are
+stored in ``executions/<run_id>/all-ligands/manifest.json`` under
+``anchors`` and ``anchor_atom_selections``.
 
 Default mapping algorithm
 -------------------------
@@ -56,6 +78,8 @@ RBFE mapping is controlled by ``rbfe`` in ``run.yaml``:
 
 * ``rbfe.mapping_file``
 * ``rbfe.mapping`` (default ``default``)
+* ``rbfe.atom_mapping_file`` for optional per-pair atom mapping overrides
+* ``rbfe.add_atom_mapping_edges`` (default ``false``)
 
 If both are provided, BATTER uses ``mapping_file``.
 
@@ -141,6 +165,54 @@ AMBER setup path relies on the previous fixed behavior: network planning uses
 The available LoMap keys are ``time``, ``threed``, ``max3d``,
 ``element_change``, and ``shift``.
 
+Atom mapping override files
+---------------------------
+
+Set ``rbfe.atom_mapping_file`` to provide atom mappings for selected ligand
+pairs while leaving all uncovered pairs on the configured ``rbfe.atom_mapper``.
+BATTER uses the override while Konnektor scores candidate network edges and
+writes the same prepared ``mapping.json`` for later transformation setup.
+When you choose to use manual atom mappings, it is recommended to keep all
+ligand-pair atom mappings you intend to rely on in ``rbfe.atom_mapping_file`` so
+network scoring and simulation setup use the same curated mapping source.
+If an override pair is valid but neither direction appears in the planned
+network, BATTER leaves it unused by default and logs a warning. Set
+``rbfe.add_atom_mapping_edges: true`` to append those valid override pairs as
+extra planned edges.
+
+The simplest JSON/YAML format maps pair labels to atom index maps:
+
+.. code-block:: json
+
+   {
+     "LIG1~LIG2": {"0": 0, "1": 4, "2": 5}
+   }
+
+Pair maps are interpreted as ``componentB_to_componentA``:
+target/alternate atom index to reference atom index, using 0-based atom indices.
+For ``LIG1~LIG2`` above, keys are atoms in ``LIG2`` and values are atoms in
+``LIG1``. If BATTER later needs ``LIG2~LIG1``, the map is inverted
+automatically.
+
+Structured entries are also accepted:
+
+.. code-block:: yaml
+
+   pairs:
+     - pair: LIG1~LIG2
+       componentB_to_componentA:
+         0: 0
+         1: 4
+     - ref: LIG3
+       alt: LIG4
+       componentA_to_componentB:
+         2: 7
+         3: 8
+
+``componentA_to_componentB`` / ``reference_to_target`` maps are inverted during
+loading so the stored prepared artifact remains in BATTER's
+``componentB_to_componentA`` orientation.
+
 Bidirectional RBFE edges
 ------------------------
 
@@ -190,12 +262,44 @@ Where RBFE mapping is stored
 BATTER writes the resolved network to:
 
 * ``executions/<run_id>/artifacts/config/rbfe_network.json``
+* ``executions/<run_id>/artifacts/config/rbfe_network.html``
+* ``executions/<run_id>/artifacts/config/rbfe_network.png`` when Konnektor can
+  render a static plot
+* ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.json``
+* ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.pkl``
+* ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.png``
+
+Open ``rbfe_network.html`` before production windows are submitted to inspect the
+planned ligand graph and atom-mapping images in the same interactive style as the
+Cinnabar dashboard. Use ``--only-rbfe-network`` or
+``run.only_rbfe_network: true`` if you want BATTER to stop immediately after
+writing these network artifacts.
+
+The HTML view is the primary network-review artifact:
+
+* Pan or zoom the graph with the mouse, trackpad, or the ``+`` / ``-`` /
+  ``Fit`` / ``Reset`` controls.
+* Click a ligand node to open a draggable note with the ligand label and 2D
+  structure when RDKit rendering succeeds.
+* Click an edge label or edge path to inspect transformation index, direction,
+  mapper, mapped-atom count, atom-mapping image, and scores.
+* Reverse-direction pairs are collapsed into one display edge, but each
+  directed transformation remains listed in the edge note.
+* Edges are colored by network redundancy by default. The ``Edge color``
+  selector can switch to available Kartograf mapping metrics such as RMSD
+  score, mapped-atom ratio, volume ratio, shape mismatch, and shape overlap.
+  Missing optional metrics are simply absent from the selector.
+
+During planning, BATTER omits duplicate ligands with identical molecular identity
+and removes edges whose prepared atom mapping has full atom or heavy-atom
+coverage. The skipped
+ligands and edges are recorded in ``rbfe_network.json`` as skip metadata.
 
 Transformation systems are created under:
 
 * ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/``
 
-For each transformation pair, BATTER stores atom-mapping artifacts in:
+For each transformation pair, BATTER copies the prepared atom-mapping artifacts into:
 
 * ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/fe/x/x-1/mapping.json``
 * ``executions/<run_id>/simulations/transformations/<LIG1~LIG2>/fe/x/x-1/mapping.pkl``
@@ -207,6 +311,7 @@ These generic ``mapping.*`` filenames are used for both ``kartograf`` and
 Pipeline notes
 --------------
 
-In RBFE, BATTER runs ligand-level prep/equilibration first, then builds
-transformation pairs from the resolved network and runs component ``x`` FE on
-those pairs.
+In RBFE, BATTER runs ``prepare_rbfe`` after ligand parametrization and before
+``prepare_equil``. This stage resolves the network and atom mappings once under
+``artifacts/config``. Later transformation setup copies those prepared mapping
+artifacts instead of generating new atom maps.

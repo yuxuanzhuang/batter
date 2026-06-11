@@ -52,7 +52,8 @@ Phase ordering and sentinels
 ============================
 
 Orchestration follows a fixed phase order: system_prep → param_ligands →
-prepare_equil → equil → equil_analysis → prepare_fe → fe → analysis. MD-only runs
+prepare_rbfe (RBFE only) → prepare_equil → equil → equil_analysis → prepare_fe
+→ fe → analysis. MD-only runs
 stop after equilibration analysis. Handlers drop ``FINISHED``/``FAILED`` sentinels
 in window/component folders; the job manager (local or SLURM) checks these to decide
 whether to continue, retry, or mark ligands as failed. ``RunConfig.run.on_failure``

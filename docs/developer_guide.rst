@@ -214,7 +214,8 @@ Orchestration
 3. Resolve staged ligands (supporting resume) and regenerate the system if required.
 4. Construct the ABFE/ASFE pipeline using :func:`select_pipeline
    <batter.orchestrate.pipeline_utils.select_pipeline>`.
-5. Execute parent-only steps (``system_prep``, ``param_ligands``).
+5. Execute parent-only steps (``system_prep``, ``param_ligands``, and
+   ``prepare_rbfe`` for RBFE).
 6. Clone the pipeline for per-ligand execution, injecting the SLURM job manager when needed.
 7. Run phases sequentially, enforcing skip/resume semantics via
    :mod:`batter.orchestrate.markers`.

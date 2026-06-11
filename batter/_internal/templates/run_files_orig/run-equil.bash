@@ -27,7 +27,20 @@ fi
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"
+    local errexit_was_on=0
+    case $- in
+        *e*) errexit_was_on=1 ;;
+    esac
+    SIM_COMMAND_STATUS=0
+    set +e
     eval "$@"
+    SIM_COMMAND_STATUS=$?
+    if [[ $errexit_was_on -eq 1 ]]; then
+        set -e
+    else
+        set +e
+    fi
+    return 0
 }
 
 # ---- load helpers FIRST ----
@@ -45,11 +58,9 @@ if [[ $rerun_eq_steps_after_failure == 1 ]]; then
 elif [[ $rerun_eq_steps_after_failure == auto ]]; then
     rerun_eq_steps_after_failure=0
     if [[ $prior_failed -eq 1 ]]; then
-        rerun_eq_steps_after_failure=1
+        echo "[INFO] Prior failure marker found; preserving completed equilibration stages."
     elif [[ $retry_count =~ ^[0-9]+$ && $retry_count -gt 1 ]]; then
-        prior_failed=1
-        rerun_eq_steps_after_failure=1
-        echo "[INFO] Retry attempt ${retry_count} detected; rerunning completed equilibration stages instead of skipping them."
+        echo "[INFO] Retry attempt ${retry_count} detected; preserving completed equilibration stages."
     fi
 fi
 
@@ -75,7 +86,8 @@ run_penetration_check() {
 }
 
 archive_existing_log_file "$log_file"
-cleanup_stale_empty_md_artifacts
+cleanup_stale_empty_md_artifacts relaxed
+cleanup_zero_frame_md_trajectories "$retry_count"
 
 tmpl="mdin-template"
 mdin_current="mdin-current"
@@ -92,7 +104,7 @@ apply_retry_dt_reduction "$tmpl" "$retry_count" 0.001 "production startup"
 dt_ps=$(parse_dt_ps "$tmpl")
 target_dt_ps=$(parse_target_dt_ps "$tmpl")
 total_steps=$(parse_total_steps "$tmpl")
-chunk_steps=$(parse_nstlim "$tmpl")
+chunk_steps=$(scaled_nstlim_for_dt "$tmpl" "$dt_ps")
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
@@ -109,7 +121,7 @@ if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
     else
         print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
     fi
-    check_sim_failure "Minimization 2" "$log_file" mini2.rst7
+    check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry_count"
 
     if ! check_min_energy "mini2.out" -1000; then
         echo "Minimization not passed with cuda; trying CPU"
@@ -124,7 +136,7 @@ if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
         fi
 
         check_sim_failure "Minimization" "$log_file" mini.rst7
-        check_sim_failure "Minimization 2" "$log_file" mini2.rst7
+        check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry_count"
 
         if ! check_min_energy "mini2.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
@@ -206,23 +218,21 @@ if [[ $only_eq -eq 1 ]]; then
     exit 0
 fi
 
-# ---------------- Production MD (progress = restart) ----------------
+# ---------------- Production MD (progress = elapsed production time) ----------------
 
-# current progress (ps) from restart
-current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+# current progress (ps) from rolling restart, minus the initial production restart time
+production_start_marker="production-start.ps"
+production_initial_rst="eqnpt_appear.rst7"
+start_ps=$(production_start_ps "$production_start_marker" "$production_initial_rst")
+select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry_count"
+rst_in="$SELECTED_MD_RESTART"
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
+restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+[[ -z $restart_ps ]] && restart_ps=0
+current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
 
-echo "Current completed time (from restart): $current_ps ps / $total_ps ps (dt=$dt_ps ps)"
-
-# pick previous restart: prefer current md if present, else fall back to eqnpt_appear
-rst_in="eqnpt_appear.rst7"
-if [[ -s md-current.rst7 ]]; then
-    rst_in="md-current.rst7"
-elif [[ -s md-previous.rst7 ]]; then
-    rst_in="md-previous.rst7"
-fi
-
-require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
+echo "Current completed production time: $current_ps ps / $total_ps ps (restart=$restart_ps ps, start=$start_ps ps, dt=$dt_ps ps)"
 
 last_rst="$rst_in"
 
@@ -277,10 +287,12 @@ if (( remaining_steps > 0 )); then
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref eqnpt04.rst7 >> \"$log_file\" 2>&1"
     check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry_count" "${out_tag}.out" "${out_tag}.nc"
 
-    # Update progress from restart
-    current_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    # Update production elapsed time from the rolling restart.
+    restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    [[ -z $restart_ps ]] && restart_ps=0
+    current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
     [[ -z $current_ps ]] && current_ps=0
-    echo "[INFO] Updated completed time (from restart): $current_ps ps / $total_ps ps"
+    echo "[INFO] Updated completed production time: $current_ps ps / $total_ps ps (restart=$restart_ps ps, start=$start_ps ps)"
 
     rst_in="md-current.rst7"
     last_rst="md-current.rst7"

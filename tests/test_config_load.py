@@ -9,9 +9,16 @@ from loguru import logger
 from pydantic import ValidationError
 
 from batter.config import load_run_config, load_simulation_config
-from batter.config.run import CreateArgs, FESimArgs, RunConfig, RunSection, MDSimArgs
+from batter.config.run import (
+    CreateArgs,
+    FESimArgs,
+    MDSimArgs,
+    RBFENetworkArgs,
+    RunConfig,
+    RunSection,
+)
 from batter.config.simulation import SimulationConfig
-from batter.config.utils import coerce_yes_no
+from batter.config.utils import apo_ligand_source_path, coerce_yes_no
 
 
 def test_load_run_config_roundtrip(tmp_path: Path, monkeypatch) -> None:
@@ -38,6 +45,33 @@ fe_sim: {{}}
     assert cfg.create.ligand_paths["LIG1"] == lig_file
     assert cfg.run.output_folder == tmp_path / "work"
     assert cfg.run.email_sender == "nobody@stanford.edu"
+
+
+def test_run_config_infer_disulfide_bonds_override(tmp_path: Path) -> None:
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy\n")
+    run_yaml = tmp_path / "run.yaml"
+    run_yaml.write_text(
+        f"""
+run:
+  output_folder: "{tmp_path / 'work'}"
+protocol: abfe
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig_file}"
+  infer_disulfide_bonds: false
+fe_sim:
+  z_lambdas: [0.0, 1.0]
+  z_n_steps: 300000
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.create.infer_disulfide_bonds is False
+    assert sim_cfg.infer_disulfide_bonds is False
 
 
 def test_load_simulation_config(tmp_path: Path) -> None:
@@ -87,11 +121,62 @@ fe_sim: {}
     assert cfg.create.ligand_input == Path("reference/ligands.json")
 
 
+def test_create_args_accepts_null_apo_ligand() -> None:
+    args = CreateArgs(system_name="sys", ligand_paths={None: None})
+
+    assert args.ligand_paths == {"APO": apo_ligand_source_path()}
+
+
+def test_run_config_hoists_legacy_top_level_buffer_z(tmp_path: Path) -> None:
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy\n")
+    run_yaml = tmp_path / "legacy_buffer.yaml"
+    run_yaml.write_text(
+        f"""
+protocol: abfe
+buffer_z: 12.5
+z_n_steps: 1000
+z_lambdas: [0.0, 1.0]
+run:
+  output_folder: "{tmp_path / 'work'}"
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig_file}"
+fe_sim: {{}}
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.fe_sim.buffer_z == 12.5
+    assert sim_cfg.buffer_z == 12.5
+
+
+def test_md_run_config_accepts_legacy_top_level_buffer_z() -> None:
+    cfg = RunConfig.model_validate(
+        {
+            "protocol": "md",
+            "buffer_z": 10.0,
+            "run": {"output_folder": "work"},
+            "create": {"system_name": "sys", "ligand_paths": {None: None}},
+            "fe_sim": {},
+        }
+    )
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.fe_sim.buffer_z == 10.0
+    assert sim_cfg.buffer_z == 10.0
+
+
 def test_run_config_accepts_rbfe_mapper_options(tmp_path: Path) -> None:
     lig1 = tmp_path / "lig1.sdf"
     lig2 = tmp_path / "lig2.sdf"
+    atom_mapping = tmp_path / "atom_mapping.json"
     lig1.write_text("dummy\n")
     lig2.write_text("dummy\n")
+    atom_mapping.write_text("{}\n")
 
     run_yaml = tmp_path / "rbfe_mapper_options.yaml"
     run_yaml.write_text(
@@ -99,6 +184,7 @@ def test_run_config_accepts_rbfe_mapper_options(tmp_path: Path) -> None:
 protocol: rbfe
 run:
   output_folder: "{tmp_path / 'work'}"
+  only_rbfe_network: true
 create:
   system_name: rbfe-example
   ligand_paths:
@@ -107,6 +193,7 @@ create:
 fe_sim: {{}}
 rbfe:
   mapping: konnektor
+  atom_mapping_file: atom_mapping.json
   atom_mapper: lomap
   lomap:
     time: 7
@@ -121,6 +208,9 @@ rbfe:
 
     cfg = load_run_config(run_yaml)
     assert cfg.rbfe is not None
+    assert cfg.run.only_rbfe_network is True
+    assert cfg.rbfe.atom_mapping_file == Path("atom_mapping.json")
+    assert cfg.rbfe.resolve_paths(tmp_path).atom_mapping_file == atom_mapping.resolve()
     assert cfg.rbfe.atom_mapper == "lomap"
     assert cfg.rbfe.lomap.time == 7
     assert cfg.rbfe.lomap.max3d == 2.0
@@ -131,6 +221,39 @@ rbfe:
     assert cfg.rbfe.kartograf.allow_bond_breaks is True
     assert cfg.rbfe.kartograf.filter_element_changes is False
     assert cfg.rbfe.kartograf.filter_mismatched_attached_h_count is False
+
+
+def test_run_config_rejects_only_rbfe_network_for_non_rbfe(tmp_path: Path) -> None:
+    lig1 = tmp_path / "lig1.sdf"
+    lig1.write_text("dummy\n")
+
+    run_yaml = tmp_path / "abfe_only_rbfe_network.yaml"
+    run_yaml.write_text(
+        f"""
+protocol: abfe
+run:
+  output_folder: "{tmp_path / 'work'}"
+  only_rbfe_network: true
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig1}"
+fe_sim: {{}}
+"""
+    )
+
+    with pytest.raises(ValidationError, match="only_rbfe_network"):
+        load_run_config(run_yaml)
+
+
+def test_rbfe_kartograf_mapper_defaults() -> None:
+    cfg = RBFENetworkArgs()
+
+    assert cfg.kartograf.atom_max_distance == 0.95
+    assert cfg.kartograf.map_exact_ring_matches_only is True
+    assert cfg.kartograf.allow_partial_fused_rings is True
+    assert cfg.kartograf.allow_bond_breaks is False
+    assert cfg.add_atom_mapping_edges is False
 
 
 def test_run_config_rejects_rbfe_kartograf_hydrogen_mapping_options(
@@ -311,6 +434,15 @@ def _minimal_create(tmp_path: Path, **updates) -> CreateArgs:
     }
     data.update(updates)
     return CreateArgs(**data)
+
+
+def test_sim_config_infer_disulfide_bonds_default(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(lambdas=[0.0, 1.0], n_steps={"z": 300_000})
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    assert cfg.infer_disulfide_bonds is True
 
 
 def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:

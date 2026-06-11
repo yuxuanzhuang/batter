@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import math
 from pathlib import Path
 import json
+import pickle
 from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence, Tuple, List, Any, Mapping
 from loguru import logger
@@ -81,16 +84,22 @@ def _build_konnektor_atom_mapper(
     hmr: bool = True,
     kartograf_options: Any | None = None,
     lomap_options: Any | None = None,
+    atom_mapping_overrides: Any | None = None,
 ):
     mapper_name = _normalize_atom_mapper(atom_mapper)
     if mapper_name == "lomap":
         from lomap import LomapAtomMapper
 
-        return LomapAtomMapper(**_lomap_mapper_kwargs(lomap_options))
+        mapper = LomapAtomMapper(**_lomap_mapper_kwargs(lomap_options))
+    else:
+        mapper = _build_current_kartograf_atom_mapper_for_network(
+            kartograf_options=kartograf_options
+        )
 
-    return _build_current_kartograf_atom_mapper_for_network(
-        kartograf_options=kartograf_options
-    )
+    overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
+    if overrides:
+        return _wrap_atom_mapper_with_overrides(mapper, overrides)
+    return mapper
 
 
 def _build_current_kartograf_atom_mapper_for_network(
@@ -105,6 +114,75 @@ def _build_current_kartograf_atom_mapper_for_network(
             atom_map_hydrogens_default=False,
         )
     )
+
+
+def _build_current_kartograf_atom_mapper_for_simprep_x(
+    kartograf_options: Any | None = None,
+):
+    """Return the Kartograf mapper used by RBFE x-component simprep."""
+    from kartograf.atom_mapper import KartografAtomMapper
+
+    return KartografAtomMapper(
+        **_kartograf_mapper_kwargs(
+            kartograf_options,
+            atom_map_hydrogens_default=True,
+        )
+    )
+
+
+def _wrap_atom_mapper_with_overrides(
+    delegate: Any,
+    overrides: ManualAtomMappingOverrides,
+):
+    """Return an AtomMapper that yields manual mappings before falling back."""
+    try:
+        from gufe import AtomMapper as GufeAtomMapper
+    except Exception:
+        GufeAtomMapper = None
+
+    base_mapper_cls = (
+        GufeAtomMapper
+        if GufeAtomMapper is not None and isinstance(delegate, GufeAtomMapper)
+        else object
+    )
+
+    class ManualOverrideAtomMapper(base_mapper_cls):
+        def __init__(self, wrapped_mapper: Any, manual_overrides: ManualAtomMappingOverrides):
+            self.wrapped_mapper = wrapped_mapper
+            self.manual_overrides = manual_overrides
+
+        def suggest_mappings(self, componentA: Any, componentB: Any):
+            ref = _component_name(componentA)
+            alt = _component_name(componentB)
+            manual_mapping = self.manual_overrides.get_b_to_a(ref, alt)
+            if manual_mapping is not None:
+                yield _make_ligand_atom_mapping(componentA, componentB, manual_mapping)
+                return
+            yield from self.wrapped_mapper.suggest_mappings(componentA, componentB)
+
+        @classmethod
+        def _defaults(cls):
+            try:
+                return super()._defaults()
+            except Exception:
+                return {}
+
+        @classmethod
+        def _from_dict(cls, d):
+            return cls(
+                d.get("wrapped_mapper"),
+                _manual_atom_mapping_overrides_from_dict(d.get("manual_overrides")),
+            )
+
+        def _to_dict(self):
+            return {
+                "wrapped_mapper": self.wrapped_mapper,
+                "manual_overrides": _manual_atom_mapping_overrides_to_dict(
+                    self.manual_overrides
+                ),
+            }
+
+    return ManualOverrideAtomMapper(delegate, overrides)
 
 
 def filter_element_changes(
@@ -147,6 +225,675 @@ def filter_mismatched_attached_h_count(
 
 RBFEPair = Tuple[str, str]
 RBFEMapFn = Callable[[Sequence[str]], Iterable[RBFEPair]]
+AtomIndexMapping = dict[int, int]
+
+
+def _invert_atom_mapping(mapping: Mapping[int, int]) -> AtomIndexMapping:
+    return {int(value): int(key) for key, value in mapping.items()}
+
+
+def _component_name(component: Any) -> str:
+    name = getattr(component, "name", None)
+    if name is None and hasattr(component, "_name"):
+        name = getattr(component, "_name", None)
+    return sanitize_ligand_name(str(name if name is not None else component))
+
+
+def _component_num_atoms(component: Any) -> int | None:
+    mol = None
+    if hasattr(component, "to_rdkit"):
+        try:
+            mol = component.to_rdkit()
+        except Exception:
+            mol = None
+    if mol is None:
+        mol = getattr(component, "_rdkit", None) or getattr(component, "mol", None)
+    if mol is not None and hasattr(mol, "GetNumAtoms"):
+        try:
+            return int(mol.GetNumAtoms())
+        except Exception:
+            return None
+    return None
+
+
+def _mol_num_atoms(mol: Any) -> int | None:
+    if mol is None or not hasattr(mol, "GetNumAtoms"):
+        return None
+    try:
+        return int(mol.GetNumAtoms())
+    except Exception:
+        return None
+
+
+def _mol_heavy_atom_indices(mol: Any) -> set[int] | None:
+    n_atoms = _mol_num_atoms(mol)
+    if n_atoms is None or not hasattr(mol, "GetAtomWithIdx"):
+        return None
+    heavy: set[int] = set()
+    try:
+        for idx in range(n_atoms):
+            if mol.GetAtomWithIdx(idx).GetAtomicNum() != 1:
+                heavy.add(idx)
+    except Exception:
+        return None
+    return heavy
+
+
+def _mapping_coverage_status(
+    mol_ref: Any,
+    mol_alt: Any,
+    map_b_to_a: Mapping[Any, Any],
+) -> dict[str, Any]:
+    """Return atom-count metadata for a componentB-to-componentA mapping."""
+    try:
+        alt_to_ref = {int(key): int(value) for key, value in map_b_to_a.items()}
+    except Exception:
+        return {}
+
+    n_ref_atoms = _mol_num_atoms(mol_ref)
+    n_alt_atoms = _mol_num_atoms(mol_alt)
+    if n_ref_atoms is None or n_alt_atoms is None:
+        return {}
+
+    alt_indices = set(alt_to_ref)
+    ref_indices = set(alt_to_ref.values())
+    status: dict[str, Any] = {
+        "n_ref_atoms": n_ref_atoms,
+        "n_alt_atoms": n_alt_atoms,
+        "full_atom_mapping": (
+            len(alt_to_ref) == n_alt_atoms == n_ref_atoms
+            and alt_indices == set(range(n_alt_atoms))
+            and ref_indices == set(range(n_ref_atoms))
+        ),
+    }
+
+    ref_heavy = _mol_heavy_atom_indices(mol_ref)
+    alt_heavy = _mol_heavy_atom_indices(mol_alt)
+    if ref_heavy is not None and alt_heavy is not None:
+        mapped_alt_heavy = {idx for idx in alt_indices if idx in alt_heavy}
+        mapped_ref_heavy = {idx for idx in ref_indices if idx in ref_heavy}
+        status.update(
+            {
+                "n_ref_heavy_atoms": len(ref_heavy),
+                "n_alt_heavy_atoms": len(alt_heavy),
+                "full_heavy_atom_mapping": (
+                    len(mapped_alt_heavy) == len(alt_heavy) == len(ref_heavy)
+                    and mapped_alt_heavy == alt_heavy
+                    and mapped_ref_heavy == ref_heavy
+                ),
+            }
+        )
+
+    return status
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    if not math.isfinite(out):
+        return None
+    return out
+
+
+def _mapping_metric_scores(mapping: Any) -> dict[str, float]:
+    """Compute optional Kartograf mapping metrics for network visualization.
+
+    These scores are stored in each pair's ``mapping_status.json`` and surfaced
+    by ``rbfe_network.html`` as selectable edge-color metrics. Missing optional
+    Kartograf scorer modules are ignored so mapping artifact generation can
+    continue in lean environments.
+    """
+    if mapping is None:
+        return {}
+
+    metric_calls: list[tuple[str, Any, str]] = []
+    try:
+        from kartograf.mapping_metrics.metric_mapping_rmsd import MappingRMSDScorer
+
+        scorer = MappingRMSDScorer()
+        metric_calls.append(("mapping_rmsd", scorer, "get_rmsd"))
+        metric_calls.append(("mapping_score_rmsd", scorer, "get_score"))
+    except Exception:
+        pass
+    try:
+        from kartograf.mapping_metrics.metric_volume_ratio import (
+            MappingRatioMappedAtomsScorer,
+            MappingVolumeRatioScorer,
+        )
+
+        metric_calls.append(
+            (
+                "mapping_score_ratio_mapped_atoms",
+                MappingRatioMappedAtomsScorer(),
+                "get_score",
+            )
+        )
+        metric_calls.append(
+            ("mapping_score_volume_ratio", MappingVolumeRatioScorer(), "get_score")
+        )
+    except Exception:
+        pass
+    try:
+        from kartograf.mapping_metrics.metric_shape_difference import (
+            MappingShapeMismatchScorer,
+            MappingShapeOverlapScorer,
+        )
+
+        metric_calls.append(
+            (
+                "mapping_score_shape_mismatch",
+                MappingShapeMismatchScorer(),
+                "get_score",
+            )
+        )
+        metric_calls.append(
+            (
+                "mapping_score_shape_overlap",
+                MappingShapeOverlapScorer(),
+                "get_score",
+            )
+        )
+    except Exception:
+        pass
+
+    scores: dict[str, float] = {}
+    for key, scorer, method_name in metric_calls:
+        try:
+            method = getattr(scorer, method_name)
+            value = _finite_float(method(mapping))
+        except Exception as exc:
+            logger.debug(f"Could not compute RBFE mapping metric {key}: {exc}")
+            continue
+        if value is not None:
+            scores[key] = value
+    return scores
+
+
+def ligand_identity_key(path: Path | str) -> str:
+    """Return a canonical molecule identity key for RBFE duplicate filtering."""
+    mol = _load_rdkit_mol(Path(path))
+    try:
+        identity_mol = Chem.AddHs(Chem.RemoveHs(Chem.Mol(mol)), addCoords=False)
+    except Exception:
+        identity_mol = mol
+    return Chem.MolToSmiles(identity_mol, isomericSmiles=True)
+
+
+def deduplicate_identical_ligands(
+    ligands: Sequence[str],
+    ligand_files: Mapping[str, Path | str],
+) -> tuple[list[str], dict[str, str], list[dict[str, str]]]:
+    """
+    Keep the first ligand for each exact molecular identity.
+
+    Returns kept ligand names, a skipped->kept replacement map, and metadata for
+    skipped duplicate ligands.
+    """
+    kept: list[str] = []
+    replacements: dict[str, str] = {}
+    skipped: list[dict[str, str]] = []
+    first_by_identity: dict[str, str] = {}
+
+    for ligand in ligands:
+        path = ligand_files.get(ligand)
+        if path is None:
+            kept.append(ligand)
+            continue
+        try:
+            identity = ligand_identity_key(path)
+        except Exception as exc:
+            logger.warning(
+                f"Could not determine RBFE ligand identity for {ligand} ({path}): {exc}; keeping it."
+            )
+            kept.append(ligand)
+            continue
+
+        representative = first_by_identity.get(identity)
+        if representative is None:
+            first_by_identity[identity] = ligand
+            kept.append(ligand)
+            continue
+
+        replacements[ligand] = representative
+        skipped.append(
+            {
+                "ligand": ligand,
+                "kept": representative,
+                "identity": identity,
+            }
+        )
+
+    return kept, replacements, skipped
+
+
+class _SimpleLigandAtomMapping:
+    """Fallback mapping object for environments without gufe.LigandAtomMapping."""
+
+    def __init__(
+        self,
+        component_a: Any,
+        component_b: Any,
+        *,
+        component_b_to_component_a: Mapping[int, int],
+        annotations: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._componentA = component_a
+        self._componentB = component_b
+        self._componentB_to_componentA = {
+            int(key): int(value) for key, value in component_b_to_component_a.items()
+        }
+        self._componentA_to_componentB = _invert_atom_mapping(
+            self._componentB_to_componentA
+        )
+        self.annotations = dict(annotations or {})
+
+    @property
+    def componentA(self) -> Any:
+        return self._componentA
+
+    @property
+    def componentB(self) -> Any:
+        return self._componentB
+
+    @property
+    def componentA_to_componentB(self) -> AtomIndexMapping:
+        return dict(self._componentA_to_componentB)
+
+    @property
+    def componentB_to_componentA(self) -> AtomIndexMapping:
+        return dict(self._componentB_to_componentA)
+
+    @property
+    def componentA_unique(self) -> tuple[int, ...]:
+        n_atoms = _component_num_atoms(self._componentA)
+        if n_atoms is None:
+            return ()
+        mapped = set(self._componentA_to_componentB)
+        return tuple(index for index in range(n_atoms) if index not in mapped)
+
+    @property
+    def componentB_unique(self) -> tuple[int, ...]:
+        n_atoms = _component_num_atoms(self._componentB)
+        if n_atoms is None:
+            return ()
+        mapped = set(self._componentB_to_componentA)
+        return tuple(index for index in range(n_atoms) if index not in mapped)
+
+    def with_annotations(self, annotations: Mapping[str, Any]):
+        merged = dict(self.annotations)
+        merged.update(dict(annotations))
+        return _SimpleLigandAtomMapping(
+            self._componentA,
+            self._componentB,
+            component_b_to_component_a=self._componentB_to_componentA,
+            annotations=merged,
+        )
+
+
+def _make_ligand_atom_mapping(
+    component_a: Any,
+    component_b: Any,
+    map_b_to_a: Mapping[int, int],
+) -> Any:
+    mapping_b_to_a = {int(key): int(value) for key, value in map_b_to_a.items()}
+    mapping_a_to_b = _invert_atom_mapping(mapping_b_to_a)
+
+    if not (hasattr(component_a, "to_rdkit") and hasattr(component_b, "to_rdkit")):
+        return _SimpleLigandAtomMapping(
+            component_a,
+            component_b,
+            component_b_to_component_a=mapping_b_to_a,
+        )
+
+    try:
+        from gufe import LigandAtomMapping
+    except Exception:
+        return _SimpleLigandAtomMapping(
+            component_a,
+            component_b,
+            component_b_to_component_a=mapping_b_to_a,
+        )
+
+    constructors = (
+        lambda: LigandAtomMapping(
+            component_a,
+            component_b,
+            componentB_to_componentA=mapping_b_to_a,
+        ),
+        lambda: LigandAtomMapping(
+            component_a,
+            component_b,
+            componentA_to_componentB=mapping_a_to_b,
+        ),
+        lambda: LigandAtomMapping(component_a, component_b, mapping_a_to_b),
+    )
+    for constructor in constructors:
+        try:
+            return constructor()
+        except TypeError:
+            continue
+
+    return _SimpleLigandAtomMapping(
+        component_a,
+        component_b,
+        component_b_to_component_a=mapping_b_to_a,
+    )
+
+
+def _normalize_atom_index_mapping(raw: Any, *, context: str) -> AtomIndexMapping:
+    if isinstance(raw, Mapping):
+        items = list(raw.items())
+    elif isinstance(raw, list):
+        items = []
+        for entry in raw:
+            if isinstance(entry, Mapping):
+                if {"from", "to"}.issubset(entry):
+                    items.append((entry["from"], entry["to"]))
+                elif {"source", "target"}.issubset(entry):
+                    items.append((entry["source"], entry["target"]))
+                elif {"b", "a"}.issubset(entry):
+                    items.append((entry["b"], entry["a"]))
+                else:
+                    raise ValueError(
+                        "Atom mapping entry for "
+                        f"{context} must include from/to, source/target, or b/a keys."
+                    )
+            elif isinstance(entry, (list, tuple)) and len(entry) == 2:
+                items.append((entry[0], entry[1]))
+            else:
+                raise ValueError(
+                    f"Atom mapping entry for {context} must be a 2-tuple; got {entry!r}."
+                )
+    else:
+        raise ValueError(f"Atom mapping for {context} must be a dict or list of pairs.")
+
+    mapping: AtomIndexMapping = {}
+    used_values: set[int] = set()
+    for key, value in items:
+        try:
+            src = int(key)
+            dst = int(value)
+        except Exception as exc:
+            raise ValueError(
+                f"Atom mapping indices for {context} must be integers: {key!r}->{value!r}."
+            ) from exc
+        if src < 0 or dst < 0:
+            raise ValueError(f"Atom mapping indices for {context} must be >= 0.")
+        if src in mapping:
+            raise ValueError(f"Duplicate source atom index {src} in {context}.")
+        if dst in used_values:
+            raise ValueError(f"Duplicate target atom index {dst} in {context}.")
+        mapping[src] = dst
+        used_values.add(dst)
+
+    if not mapping:
+        raise ValueError(f"Atom mapping for {context} is empty.")
+    return mapping
+
+
+_ATOM_MAPPING_B_TO_A_KEYS = (
+    "componentB_to_componentA",
+    "component_b_to_component_a",
+    "target_to_reference",
+    "alt_to_ref",
+    "b_to_a",
+    "map_b_to_a",
+    "mapping",
+    "map",
+)
+_ATOM_MAPPING_A_TO_B_KEYS = (
+    "componentA_to_componentB",
+    "component_a_to_component_b",
+    "reference_to_target",
+    "ref_to_alt",
+    "a_to_b",
+    "map_a_to_b",
+)
+_ATOM_MAPPING_PAIR_KEYS = ("pair", "edge")
+_ATOM_MAPPING_REF_KEYS = ("ref", "reference", "ligand_a", "ligandA", "componentA", "A")
+_ATOM_MAPPING_ALT_KEYS = ("alt", "target", "ligand_b", "ligandB", "componentB", "B")
+
+
+def _first_present(data: Mapping[str, Any], keys: Iterable[str]) -> Any:
+    for key in keys:
+        if key in data:
+            return data[key]
+    return None
+
+
+def _looks_like_atom_mapping_entry(data: Mapping[str, Any]) -> bool:
+    has_pair = any(key in data for key in _ATOM_MAPPING_PAIR_KEYS) or (
+        _first_present(data, _ATOM_MAPPING_REF_KEYS) is not None
+        and _first_present(data, _ATOM_MAPPING_ALT_KEYS) is not None
+    )
+    has_mapping = any(key in data for key in _ATOM_MAPPING_B_TO_A_KEYS) or any(
+        key in data for key in _ATOM_MAPPING_A_TO_B_KEYS
+    )
+    return bool(has_pair and has_mapping)
+
+
+def _atom_mapping_payload_to_b_to_a(
+    payload: Any,
+    *,
+    context: str,
+) -> AtomIndexMapping:
+    if isinstance(payload, Mapping):
+        for key in _ATOM_MAPPING_B_TO_A_KEYS:
+            if key in payload:
+                return _normalize_atom_index_mapping(payload[key], context=context)
+        for key in _ATOM_MAPPING_A_TO_B_KEYS:
+            if key in payload:
+                return _invert_atom_mapping(
+                    _normalize_atom_index_mapping(payload[key], context=context)
+                )
+    return _normalize_atom_index_mapping(payload, context=context)
+
+
+def _atom_mapping_entry_from_data(entry: Any) -> tuple[RBFEPair, AtomIndexMapping]:
+    if isinstance(entry, Mapping):
+        pair_value = _first_present(entry, _ATOM_MAPPING_PAIR_KEYS)
+        if pair_value is not None:
+            ref, alt = _normalize_pair(pair_value)
+        else:
+            ref_value = _first_present(entry, _ATOM_MAPPING_REF_KEYS)
+            alt_value = _first_present(entry, _ATOM_MAPPING_ALT_KEYS)
+            if ref_value is None or alt_value is None:
+                raise ValueError(
+                    "Atom mapping entry must include pair/edge or "
+                    f"reference/target ligands: {entry!r}."
+                )
+            ref, alt = _normalize_pair((ref_value, alt_value))
+        return (ref, alt), _atom_mapping_payload_to_b_to_a(
+            entry,
+            context=f"{ref}~{alt}",
+        )
+
+    if isinstance(entry, (list, tuple)) and len(entry) == 3:
+        ref, alt = _normalize_pair((entry[0], entry[1]))
+        return (ref, alt), _normalize_atom_index_mapping(
+            entry[2],
+            context=f"{ref}~{alt}",
+        )
+
+    raise ValueError(f"Unsupported atom mapping entry: {entry!r}.")
+
+
+def _atom_mapping_entries_from_data(data: Any) -> list[tuple[RBFEPair, AtomIndexMapping]]:
+    if isinstance(data, Mapping):
+        if _looks_like_atom_mapping_entry(data):
+            return [_atom_mapping_entry_from_data(data)]
+
+        for key in ("pairs", "edges", "mappings", "atom_mappings"):
+            if key in data:
+                return _atom_mapping_entries_from_data(data[key])
+
+        entries: list[tuple[RBFEPair, AtomIndexMapping]] = []
+        for pair_value, payload in data.items():
+            ref, alt = _normalize_pair(pair_value)
+            entries.append(
+                (
+                    (ref, alt),
+                    _atom_mapping_payload_to_b_to_a(
+                        payload,
+                        context=f"{ref}~{alt}",
+                    ),
+                )
+            )
+        return entries
+
+    if isinstance(data, list):
+        return [_atom_mapping_entry_from_data(entry) for entry in data]
+
+    raise ValueError(
+        f"Unsupported RBFE atom mapping data type: {type(data).__name__}"
+    )
+
+
+@dataclass(frozen=True)
+class ManualAtomMappingOverrides:
+    """
+    User-provided atom mappings keyed by directed ligand pair.
+
+    Mappings are stored in BATTER's prepared artifact orientation:
+    ``componentB_to_componentA`` (target/alternate atom index -> reference atom index).
+    If a requested pair is present only in the reverse direction, the mapping is
+    inverted automatically.
+    """
+
+    mappings: Mapping[RBFEPair, AtomIndexMapping]
+    source: Path | None = None
+
+    def __post_init__(self) -> None:
+        normalized: dict[RBFEPair, AtomIndexMapping] = {}
+        for pair, mapping in self.mappings.items():
+            ref, alt = _normalize_pair(pair)
+            normalized[(ref, alt)] = _normalize_atom_index_mapping(
+                mapping,
+                context=f"{ref}~{alt}",
+            )
+        object.__setattr__(self, "mappings", normalized)
+
+    def __bool__(self) -> bool:
+        return bool(self.mappings)
+
+    def __len__(self) -> int:
+        return len(self.mappings)
+
+    def get_b_to_a(self, ref: str, alt: str) -> AtomIndexMapping | None:
+        ref_name = sanitize_ligand_name(str(ref))
+        alt_name = sanitize_ligand_name(str(alt))
+        exact = self.mappings.get((ref_name, alt_name))
+        if exact is not None:
+            return dict(exact)
+        reverse = self.mappings.get((alt_name, ref_name))
+        if reverse is not None:
+            return _invert_atom_mapping(reverse)
+        return None
+
+    def source_label(self, ref: str, alt: str) -> str:
+        ref_name = sanitize_ligand_name(str(ref))
+        alt_name = sanitize_ligand_name(str(alt))
+        if (ref_name, alt_name) in self.mappings:
+            direction = f"{ref_name}~{alt_name}"
+        elif (alt_name, ref_name) in self.mappings:
+            direction = f"{alt_name}~{ref_name} (inverted)"
+        else:
+            direction = "unknown"
+        if self.source is None:
+            return direction
+        return f"{self.source}:{direction}"
+
+
+def _manual_atom_mapping_overrides_to_dict(
+    overrides: ManualAtomMappingOverrides,
+) -> dict[str, Any]:
+    """Return a stable, JSON-compatible representation for GUFE tokenization."""
+    return {
+        "source": str(overrides.source) if overrides.source is not None else None,
+        "mappings": [
+            {
+                "ref": ref,
+                "alt": alt,
+                "componentB_to_componentA": {
+                    str(key): int(value) for key, value in sorted(mapping.items())
+                },
+            }
+            for (ref, alt), mapping in sorted(overrides.mappings.items())
+        ],
+    }
+
+
+def _manual_atom_mapping_overrides_from_dict(
+    data: Any | None,
+) -> ManualAtomMappingOverrides:
+    if isinstance(data, ManualAtomMappingOverrides):
+        return data
+    if data is None:
+        return ManualAtomMappingOverrides({})
+    source = None
+    if isinstance(data, Mapping):
+        raw_source = data.get("source")
+        if raw_source not in (None, ""):
+            source = Path(str(raw_source))
+    entries = _atom_mapping_entries_from_data(data)
+    return ManualAtomMappingOverrides(dict(entries), source=source)
+
+
+def _coerce_atom_mapping_overrides(
+    overrides: Any | None,
+) -> ManualAtomMappingOverrides | None:
+    if overrides is None:
+        return None
+    if isinstance(overrides, ManualAtomMappingOverrides):
+        return overrides
+    if isinstance(overrides, (str, Path)):
+        return load_atom_mapping_file(Path(overrides))
+    entries = _atom_mapping_entries_from_data(overrides)
+    return ManualAtomMappingOverrides(dict(entries))
+
+
+def load_atom_mapping_file(path: Path) -> ManualAtomMappingOverrides:
+    """
+    Load user-provided RBFE atom mappings from JSON/YAML.
+
+    The simplest format is a mapping of pair labels to atom maps:
+    ``{"LIGA~LIGB": {"0": 0, "1": 1}}``.  Pair maps are interpreted as
+    ``componentB_to_componentA`` (target/alternate atom index -> reference atom
+    index), matching BATTER's prepared ``mapping.json`` artifact.  Structured
+    entries may also use ``componentA_to_componentB``/``reference_to_target``;
+    those are inverted during loading.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"RBFE atom mapping file not found: {path}")
+
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        data = json.loads(path.read_text())
+    elif suffix in {".yaml", ".yml"}:
+        import yaml
+
+        data = yaml.safe_load(path.read_text())
+    else:
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "RBFE atom mapping files must be JSON or YAML; "
+                f"could not parse {path} as JSON."
+            ) from exc
+
+    entries = _atom_mapping_entries_from_data(data)
+    if not entries:
+        raise ValueError(f"RBFE atom mapping file produced no mappings: {path}")
+
+    mapping_by_pair: dict[RBFEPair, AtomIndexMapping] = {}
+    for pair, mapping in entries:
+        if pair in mapping_by_pair:
+            raise ValueError(f"Duplicate RBFE atom mapping for pair {pair[0]}~{pair[1]}.")
+        mapping_by_pair[pair] = mapping
+    return ManualAtomMappingOverrides(mapping_by_pair, source=path)
 
 
 def _dedupe_pairs(pairs: Iterable[RBFEPair]) -> List[RBFEPair]:
@@ -275,6 +1022,313 @@ def _load_rdkit_mol(path: Path):
     return mol
 
 
+def _small_molecule_component(mol: Chem.Mol, name: str):
+    from gufe import SmallMoleculeComponent
+
+    if hasattr(SmallMoleculeComponent, "from_rdkit"):
+        try:
+            return SmallMoleculeComponent.from_rdkit(mol)
+        except TypeError:
+            return SmallMoleculeComponent.from_rdkit(mol, name=name)
+    return SmallMoleculeComponent(mol, name=name)
+
+
+def _mapping_png_data_uri(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]:
+    asset: dict[str, Any] = {
+        "mapping_path": (pair_dir / "mapping.json").as_posix(),
+        "mapping_dir": pair_dir.as_posix(),
+    }
+    png = pair_dir / "mapping.png"
+    if png.is_file():
+        asset["image_data_uri"] = _mapping_png_data_uri(png)
+        asset["image_alt"] = f"Atom mapping for {pair_id}"
+    status = pair_dir / "mapping_status.json"
+    if status.is_file():
+        try:
+            status_payload = json.loads(status.read_text())
+            for key in (
+                "n_mapped",
+                "mapper",
+                "n_ref_atoms",
+                "n_alt_atoms",
+                "n_ref_heavy_atoms",
+                "n_alt_heavy_atoms",
+                "full_atom_mapping",
+                "full_heavy_atom_mapping",
+                "mapping_rmsd",
+                "mapping_score_rmsd",
+                "mapping_score_ratio_mapped_atoms",
+                "mapping_score_volume_ratio",
+                "mapping_score_shape_mismatch",
+                "mapping_score_shape_overlap",
+            ):
+                if key in status_payload:
+                    asset[key] = status_payload[key]
+        except Exception:
+            pass
+    return asset
+
+
+def _serialize_atom_mapping(mapping: Mapping[Any, Any]) -> dict[int, int]:
+    return {int(k): int(v) for k, v in mapping.items()}
+
+
+def _mapping_status_was_manual(pair_dir: Path) -> bool:
+    status = pair_dir / "mapping_status.json"
+    if not status.is_file():
+        return False
+    try:
+        payload = json.loads(status.read_text())
+    except Exception:
+        return False
+    return bool(payload.get("mapping_override"))
+
+
+def _remove_optional_mapping_artifacts(pair_dir: Path) -> None:
+    for name in ("mapping.pkl", "mapping.png"):
+        path = pair_dir / name
+        if not path.exists():
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _write_manual_pair_mapping_artifacts(
+    *,
+    ref: str,
+    alt: str,
+    ligand_files: Mapping[str, Path | str],
+    pair_dir: Path,
+    map_b_to_a: Mapping[int, int],
+    source_label: str,
+) -> dict[str, Any]:
+    pair_id = f"{ref}~{alt}"
+    serialized = _serialize_atom_mapping(map_b_to_a)
+    if not serialized:
+        raise ValueError(f"Manual RBFE atom mapping for {pair_id} is empty.")
+
+    pair_dir.mkdir(parents=True, exist_ok=True)
+    _remove_optional_mapping_artifacts(pair_dir)
+    (pair_dir / "mapping.json").write_text(
+        json.dumps(serialized, indent=2, sort_keys=True)
+    )
+    coverage_status: dict[str, Any] = {}
+    metric_scores: dict[str, float] = {}
+    atom_mapping_obj = None
+    try:
+        ref_path = Path(ligand_files[ref])
+        alt_path = Path(ligand_files[alt])
+        rdmol_ref = _load_rdkit_mol(ref_path)
+        rdmol_alt = _load_rdkit_mol(alt_path)
+        coverage_status = _mapping_coverage_status(
+            rdmol_ref,
+            rdmol_alt,
+            serialized,
+        )
+        component_ref = _small_molecule_component(rdmol_ref, ref)
+        component_alt = _small_molecule_component(rdmol_alt, alt)
+        atom_mapping_obj = _make_ligand_atom_mapping(
+            component_ref,
+            component_alt,
+            serialized,
+        )
+        metric_scores = _mapping_metric_scores(atom_mapping_obj)
+    except Exception as exc:
+        logger.debug(
+            f"Could not compute manual RBFE mapping coverage for {pair_id}: {exc}"
+        )
+    status_payload = {
+        "pair_id": pair_id,
+        "reference": ref,
+        "target": alt,
+        "mapper": "manual",
+        "mapping_override": True,
+        "mapping_source": source_label,
+        "mapping_direction": "componentB_to_componentA",
+        "n_mapped": len(serialized),
+    }
+    status_payload.update(coverage_status)
+    status_payload.update(metric_scores)
+    (pair_dir / "mapping_status.json").write_text(
+        json.dumps(status_payload, indent=2, sort_keys=True)
+    )
+
+    if atom_mapping_obj is not None:
+        try:
+            with (pair_dir / "mapping.pkl").open("wb") as fh:
+                pickle.dump(atom_mapping_obj, fh)
+        except Exception as exc:
+            logger.debug(
+                f"Could not write manual RBFE atom-mapping pickle for {pair_id}: {exc}"
+            )
+        try:
+            atom_mapping_obj.draw_to_file(fname=pair_dir / "mapping.png")
+        except Exception as exc:
+            logger.debug(
+                f"Could not draw manual RBFE atom-mapping image for {pair_id}: {exc}"
+            )
+
+    return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+
+
+def write_pair_mapping_artifacts(
+    *,
+    ref: str,
+    alt: str,
+    ligand_files: Mapping[str, Path | str],
+    out_dir: Path,
+    atom_mapper: str = "kartograf",
+    kartograf_options: Any | None = None,
+    lomap_options: Any | None = None,
+    atom_mapper_options: Any | None = None,
+    atom_mapping_overrides: Any | None = None,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Generate reusable atom-mapping artifacts for one planned RBFE pair."""
+    pair_id = f"{ref}~{alt}"
+    pair_dir = Path(out_dir) / pair_id
+    mapping_json = pair_dir / "mapping.json"
+
+    overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
+    manual_map = overrides.get_b_to_a(ref, alt) if overrides else None
+    if manual_map is not None:
+        return _write_manual_pair_mapping_artifacts(
+            ref=ref,
+            alt=alt,
+            ligand_files=ligand_files,
+            pair_dir=pair_dir,
+            map_b_to_a=manual_map,
+            source_label=overrides.source_label(ref, alt) if overrides else "manual",
+        )
+
+    if mapping_json.is_file() and not overwrite:
+        if _mapping_status_was_manual(pair_dir):
+            logger.debug(
+                f"Prepared RBFE mapping for {pair_id} was manual but no current "
+                "override covers it; regenerating."
+            )
+            _remove_optional_mapping_artifacts(pair_dir)
+        else:
+            return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+
+    mapper_name = _normalize_atom_mapper(atom_mapper)
+    if overwrite:
+        _remove_optional_mapping_artifacts(pair_dir)
+    ref_path = Path(ligand_files[ref])
+    alt_path = Path(ligand_files[alt])
+    rdmol_ref = _load_rdkit_mol(ref_path)
+    rdmol_alt = _load_rdkit_mol(alt_path)
+    component_ref = _small_molecule_component(rdmol_ref, ref)
+    component_alt = _small_molecule_component(rdmol_alt, alt)
+
+    atom_mapping_obj = None
+    if mapper_name == "lomap":
+        from lomap import LomapAtomMapper
+
+        mapper = LomapAtomMapper(
+            **_lomap_mapper_kwargs(atom_mapper_options or lomap_options)
+        )
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(component_ref, component_alt), None
+        )
+    else:
+        from kartograf.atom_aligner import align_mol_shape
+
+        component_alt = align_mol_shape(component_alt, ref_mol=component_ref)
+        mapper = _build_current_kartograf_atom_mapper_for_simprep_x(
+            atom_mapper_options or kartograf_options
+        )
+        atom_mapping_obj = next(
+            mapper.suggest_mappings(component_ref, component_alt), None
+        )
+
+    map_b_to_a = getattr(atom_mapping_obj, "componentB_to_componentA", {}) or {}
+    map_b_to_a = _serialize_atom_mapping(map_b_to_a)
+    if not map_b_to_a:
+        raise ValueError(f"No atom mapping found for planned RBFE pair {pair_id}.")
+
+    pair_dir.mkdir(parents=True, exist_ok=True)
+    mapping_json.write_text(json.dumps(map_b_to_a, indent=2, sort_keys=True))
+    status_payload = {
+        "pair_id": pair_id,
+        "reference": ref,
+        "target": alt,
+        "mapper": mapper_name,
+        "n_mapped": len(map_b_to_a),
+    }
+    status_payload.update(_mapping_coverage_status(rdmol_ref, rdmol_alt, map_b_to_a))
+    status_payload.update(_mapping_metric_scores(atom_mapping_obj))
+    (pair_dir / "mapping_status.json").write_text(
+        json.dumps(status_payload, indent=2, sort_keys=True)
+    )
+    try:
+        with (pair_dir / "mapping.pkl").open("wb") as fh:
+            pickle.dump(atom_mapping_obj, fh)
+    except Exception as exc:
+        logger.debug(f"Could not write RBFE atom-mapping pickle for {pair_id}: {exc}")
+
+    try:
+        atom_mapping_obj.draw_to_file(fname=pair_dir / "mapping.png")
+    except Exception as exc:
+        logger.debug(f"Could not draw RBFE atom-mapping image for {pair_id}: {exc}")
+
+    return _edge_asset_from_mapping_dir(pair_id, pair_dir)
+
+
+def write_planned_mapping_artifacts(
+    *,
+    pairs: Sequence[Sequence[str] | tuple[str, str]],
+    ligand_files: Mapping[str, Path | str],
+    out_dir: Path,
+    atom_mapper: str = "kartograf",
+    kartograf_options: Any | None = None,
+    lomap_options: Any | None = None,
+    atom_mapper_options: Any | None = None,
+    atom_mapping_overrides: Any | None = None,
+    overwrite: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """
+    Generate reusable atom-mapping artifacts for a planned RBFE network.
+
+    Each edge gets ``mapping.json``, optional ``mapping.pkl``/``mapping.png``,
+    and ``mapping_status.json`` under ``out_dir``. The returned metadata is fed
+    directly into the interactive network HTML so users can inspect mapping
+    images, coverage, mapper identity, and metric scores before production.
+    """
+    assets: dict[str, dict[str, Any]] = {}
+    overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
+    for ref_raw, alt_raw in pairs:
+        ref = sanitize_ligand_name(str(ref_raw))
+        alt = sanitize_ligand_name(str(alt_raw))
+        missing = [name for name in (ref, alt) if name not in ligand_files]
+        if missing:
+            raise FileNotFoundError(
+                f"Missing ligand file(s) for RBFE mapping {ref}~{alt}: {missing}"
+            )
+        assets[f"{ref}~{alt}"] = write_pair_mapping_artifacts(
+            ref=ref,
+            alt=alt,
+            ligand_files=ligand_files,
+            out_dir=out_dir,
+            atom_mapper=atom_mapper,
+            kartograf_options=kartograf_options,
+            lomap_options=lomap_options,
+            atom_mapper_options=atom_mapper_options,
+            atom_mapping_overrides=overrides,
+            overwrite=overwrite,
+        )
+    return assets
+
+
 def _resolve_konnektor_generator(layout: str | None):
     try:
         from konnektor import network_planners as gen
@@ -338,9 +1392,15 @@ def konnektor_pairs(
     atom_mapper: str = "kartograf",
     kartograf_options: Any | None = None,
     lomap_options: Any | None = None,
+    atom_mapping_overrides: Any | None = None,
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
+
+    When ``plot_path`` is supplied, BATTER also asks Konnektor for a static
+    network PNG and writes ``network.graphml`` next to it. The richer
+    BATTER-authored HTML network is generated later from the resolved pair list
+    and prepared atom-mapping artifacts.
     """
     try:
         from gufe import SmallMoleculeComponent
@@ -363,6 +1423,7 @@ def konnektor_pairs(
         hmr=hmr,
         kartograf_options=kartograf_options,
         lomap_options=lomap_options,
+        atom_mapping_overrides=atom_mapping_overrides,
     )
 
     generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
@@ -408,6 +1469,7 @@ def draw_explicit_konnektor_network(
     atom_mapper: str = "kartograf",
     kartograf_options: Any | None = None,
     lomap_options: Any | None = None,
+    atom_mapping_overrides: Any | None = None,
 ) -> None:
     """Build an explicit Konnektor network from pairs and draw it."""
     mapper_name = _normalize_atom_mapper(atom_mapper)
@@ -430,6 +1492,7 @@ def draw_explicit_konnektor_network(
             hmr=hmr,
             kartograf_options=kartograf_options,
             lomap_options=lomap_options,
+            atom_mapping_overrides=atom_mapping_overrides,
         )
     except Exception:
         return

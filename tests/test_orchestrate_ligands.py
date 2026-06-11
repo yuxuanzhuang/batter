@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from batter.config.run import RunConfig
+from batter.config.utils import apo_ligand_source_path, is_apo_ligand_path
 from batter.orchestrate.ligands import discover_staged_ligands, resolve_ligand_map
 
 
@@ -27,6 +28,45 @@ def test_resolve_ligand_map_rejects_reserved_name_from_json(tmp_path: Path) -> N
         resolve_ligand_map(cfg, tmp_path)
 
 
+def test_resolve_ligand_map_accepts_null_apo_entry_from_json(tmp_path: Path) -> None:
+    lig_json = tmp_path / "ligands.json"
+    lig_json.write_text(json.dumps({"None": None}))
+
+    cfg = RunConfig.model_validate(
+        {
+            "run": {"output_folder": str(tmp_path / "out")},
+            "create": {"system_name": "sys", "ligand_input": str(lig_json)},
+            "fe_sim": {},
+        }
+    )
+
+    lig_map, original_names = resolve_ligand_map(cfg, tmp_path)
+
+    assert lig_map == {"APO": apo_ligand_source_path().resolve()}
+    assert original_names == {"APO": "None"}
+
+
+def test_resolve_ligand_map_preserves_custom_null_apo_labels(tmp_path: Path) -> None:
+    lig_json = tmp_path / "ligands.json"
+    lig_json.write_text(json.dumps({"apo_rep1": None, "apo_rep2": None}))
+
+    cfg = RunConfig.model_validate(
+        {
+            "run": {"output_folder": str(tmp_path / "out")},
+            "create": {"system_name": "sys", "ligand_input": str(lig_json)},
+            "fe_sim": {},
+        }
+    )
+
+    lig_map, original_names = resolve_ligand_map(cfg, tmp_path)
+
+    assert lig_map == {
+        "APO_REP1": apo_ligand_source_path().resolve(),
+        "APO_REP2": apo_ligand_source_path().resolve(),
+    }
+    assert original_names == {"APO_REP1": "apo_rep1", "APO_REP2": "apo_rep2"}
+
+
 def test_discover_staged_ligands_skips_rbfe_transformations_dir(tmp_path: Path) -> None:
     run_dir = tmp_path / "exec"
     # RBFE transformations root must not be interpreted as a ligand directory.
@@ -38,3 +78,14 @@ def test_discover_staged_ligands_skips_rbfe_transformations_dir(tmp_path: Path) 
     lig_map = discover_staged_ligands(run_dir)
     assert set(lig_map.keys()) == {"LIG1"}
 
+
+def test_discovered_staged_apo_ligand_is_recognized(tmp_path: Path) -> None:
+    run_dir = tmp_path / "exec"
+    lig_file = run_dir / "simulations" / "APO" / "inputs" / "ligand.pdb"
+    lig_file.parent.mkdir(parents=True)
+    lig_file.write_text(apo_ligand_source_path().read_text())
+
+    lig_map = discover_staged_ligands(run_dir)
+
+    assert set(lig_map.keys()) == {"APO"}
+    assert is_apo_ligand_path(lig_map["APO"])

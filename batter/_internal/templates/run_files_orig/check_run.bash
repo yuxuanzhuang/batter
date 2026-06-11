@@ -128,7 +128,13 @@ remove_empty_file_if_present() {
 md_out_has_amber_control_data() {
     local path=$1
     [[ -s "$path" ]] || return 1
-    grep -Eq 'CONTROL[[:space:]]+DATA[[:space:]]+FOR[[:space:]]+THE[[:space:]]+RUN' "$path"
+    grep -Eq 'CONTROL[[:space:]]+DATA[[:space:]]+FOR[[:space:]]+THE[[:space:]]+RUN|Amber[[:space:]]+[0-9]+[[:space:]]+PMEMD|File Assignments:|Here is the input file:' "$path"
+}
+
+md_out_has_completion_marker() {
+    local path=$1
+    [[ -s "$path" ]] || return 1
+    grep -Eq 'Final Performance Info|Total wall time' "$path"
 }
 
 archive_incomplete_md_out_if_present() {
@@ -151,7 +157,148 @@ archive_incomplete_md_out_if_present() {
     return 0
 }
 
+archive_suspect_md_restart_if_present() {
+    local restart_file=$1
+    local out_file=$2
+    local retry_count=${3:-}
+
+    [[ -n $restart_file && -s "$restart_file" ]] || return 1
+    [[ -n $out_file && -s "$out_file" ]] || return 1
+    md_out_has_amber_control_data "$out_file" || return 1
+    ! md_out_has_completion_marker "$out_file" || return 1
+
+    local stem
+    stem=${out_file%.out}
+    retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
+    archive_failed_job_files "$retry_count" \
+        "$out_file" \
+        "${stem}.nc" \
+        "${stem}.log" \
+        "${stem}.mden" \
+        "${stem}.mdinfo" \
+        "$restart_file"
+    echo "[INFO] Archived incomplete MD segment $out_file and suspect restart $restart_file before resume."
+    return 0
+}
+
+md_nc_frame_count() {
+    local nc_file=$1
+
+    [[ -s "$nc_file" ]] || return 1
+    command -v ncdump >/dev/null 2>&1 || return 1
+
+    ncdump -h "$nc_file" 2>/dev/null | awk '
+      /frame[[:space:]]*=[[:space:]]*UNLIMITED/ {
+        s=$0
+        sub(/^.*\(/, "", s)
+        sub(/[[:space:]]+currently\).*$/, "", s)
+        if (s ~ /^[0-9]+$/) {
+          print s
+          found=1
+          exit
+        }
+      }
+      END { if (!found) exit 1 }
+    '
+}
+
+md_nc_has_zero_frames() {
+    local nc_file=$1
+    local frames
+
+    frames=$(md_nc_frame_count "$nc_file" 2>/dev/null) || return 1
+    [[ $frames =~ ^[0-9]+$ ]] || return 1
+    (( frames == 0 ))
+}
+
+archive_zero_frame_md_trajectory_if_present() {
+    local nc_file=$1
+    local retry_count=${2:-}
+    local stem out_file
+
+    [[ -n $nc_file && -s "$nc_file" ]] || return 1
+    md_nc_has_zero_frames "$nc_file" || return 1
+
+    stem=${nc_file%.nc}
+    out_file="${stem}.out"
+    if [[ -s "$out_file" ]] && md_out_has_completion_marker "$out_file"; then
+        return 1
+    fi
+
+    retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
+    archive_failed_job_files "$retry_count" \
+        "$out_file" \
+        "$nc_file" \
+        "${stem}.log" \
+        "${stem}.mden" \
+        "${stem}.mdinfo"
+    echo "[INFO] Archived zero-frame MD trajectory $nc_file before restart."
+    return 0
+}
+
+cleanup_zero_frame_md_trajectories() {
+    local retry_count=${1:-}
+    local pattern nc_file seen_files=" "
+    local patterns=("md-*.nc" "md[0-9]*.nc")
+
+    if [[ -n ${ZSH_VERSION-} ]]; then
+        setopt local_options null_glob
+        for pattern in "${patterns[@]}"; do
+            for nc_file in ${~pattern}; do
+                case "$seen_files" in
+                    *" $nc_file "*) continue ;;
+                esac
+                seen_files="${seen_files}${nc_file} "
+                archive_zero_frame_md_trajectory_if_present "$nc_file" "$retry_count" || true
+            done
+        done
+        return 0
+    fi
+
+    local nullglob_was_on=0
+    shopt -q nullglob && nullglob_was_on=1
+    shopt -s nullglob
+    for pattern in "${patterns[@]}"; do
+        for nc_file in $pattern; do
+            case "$seen_files" in
+                *" $nc_file "*) continue ;;
+            esac
+            seen_files="${seen_files}${nc_file} "
+            archive_zero_frame_md_trajectory_if_present "$nc_file" "$retry_count" || true
+        done
+    done
+    if [[ $nullglob_was_on -eq 0 ]]; then
+        shopt -u nullglob
+    fi
+}
+
+cleanup_suspect_md_resume_state() {
+    local retry_count=${1:-}
+    local resume_mode=${2:-strict}
+    local latest_idx out_file
+
+    [[ $resume_mode == strict ]] || return 0
+
+    latest_idx=$(latest_md_index "md-*.out")
+    if [[ $latest_idx -lt 0 ]]; then
+        latest_idx=$(latest_md_index "md*.out")
+    fi
+    [[ $latest_idx -ge 0 ]] || return 0
+
+    out_file=$(printf "md-%02d.out" "$latest_idx")
+    if [[ ! -e "$out_file" ]]; then
+        out_file=$(printf "md%02d.out" "$latest_idx")
+    fi
+
+    if [[ -s md-current.rst7 ]]; then
+        archive_suspect_md_restart_if_present "md-current.rst7" "$out_file" "$retry_count" || true
+    elif [[ $latest_idx -le 1 && -s md-previous.rst7 ]]; then
+        archive_suspect_md_restart_if_present "md-previous.rst7" "$out_file" "$retry_count" || true
+    fi
+}
+
 cleanup_stale_empty_md_artifacts() {
+    local resume_mode=${1:-strict}
     local pattern f
     local patterns=(
         "md-*.out"
@@ -181,6 +328,7 @@ cleanup_stale_empty_md_artifacts() {
                 archive_incomplete_md_out_if_present "$f" || true
             done
         fi
+        cleanup_suspect_md_resume_state "" "$resume_mode"
         return 0
     fi
 
@@ -201,6 +349,7 @@ cleanup_stale_empty_md_artifacts() {
     if [[ $nullglob_was_on -eq 0 ]]; then
         shopt -u nullglob
     fi
+    cleanup_suspect_md_resume_state "" "$resume_mode"
 }
 
 should_skip_completed_step() {
@@ -233,19 +382,44 @@ check_sim_failure() {
     local rst_file=$3
     local rst_file_prev=${4:-}
     local retry_count=${5:-${RETRY_COUNT:-${RETRY:-}}}
-    local extra_files=()
+    local command_status=${SIM_COMMAND_STATUS:-0}
+    local -a extra_files=()
+    local extra_file_count=0
     if (( $# > 5 )); then
         extra_files=("${@:6}")
+        extra_file_count=${#extra_files[@]}
     fi
     retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
+    SIM_COMMAND_STATUS=0
 
     cleanup_outputs() {
-        if ((${#extra_files[@]})); then
+        if (( extra_file_count > 0 )); then
             archive_failed_job_files "$retry_count" "$log_file" "$rst_file" "${extra_files[@]}"
         else
             archive_failed_job_files "$retry_count" "$log_file" "$rst_file"
         fi
     }
+
+    remove_previous_restart() {
+        if [[ -n "$rst_file_prev" && "$rst_file_prev" != "0" ]]; then
+            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
+            rm -f "$rst_file_prev"
+        fi
+    }
+
+    if [[ $command_status =~ ^[0-9]+$ && $command_status -ne 0 ]]; then
+        echo "[ERROR] $stage simulation failed. Command exited with status $command_status."
+        if [[ -f "$log_file" ]]; then
+            tail -n 200 "$log_file" || true
+        fi
+        cleanup_outputs
+        if [[ $retry_count -ge 3 ]]; then
+            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+        fi
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
 
     # If log doesn't exist yet, don't treat as failure here
     [[ -f "$log_file" ]] || return 0
@@ -258,11 +432,7 @@ check_sim_failure() {
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
         fi
 
-        # if not the first retry attempt, remove the previous restart file to avoid repeated failure
-        if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
-            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
-            rm -f "$rst_file_prev"
-        fi
+        remove_previous_restart
         write_attempt_failed_marker
         exit 1
     fi
@@ -273,10 +443,7 @@ check_sim_failure() {
         if [[ $retry_count -ge 2 ]]; then
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count" 1
         fi
-        if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
-            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
-            rm -f "$rst_file_prev"
-        fi
+        remove_previous_restart
         write_attempt_failed_marker
         exit 1
     fi
@@ -431,6 +598,9 @@ report_progress() {
     if [[ $seg -ge 0 ]]; then
         stage="production"
         tps=$(completed_steps "mdin-template" 2>/dev/null || echo 0)
+        if [[ -s production-start.ps ]]; then
+            tps=$(production_elapsed_ps "$tps" "$(cat production-start.ps)")
+        fi
     elif ls eqnpt*.out >/dev/null 2>&1; then
         stage="equilibration"
         seg=$(highest_out_index_for_pattern "eqnpt*.out")
@@ -467,6 +637,42 @@ parse_nstlim() {
     nst=$(grep -E "^[[:space:]]*nstlim[[:space:]]*=" "$tmpl" | head -1 | sed -E 's/[^0-9]*([0-9]+).*/\1/')
     [[ -n $nst ]] || { echo "[ERROR] Could not parse nstlim from $tmpl" >&2; return 1; }
     echo "$nst"
+}
+
+scale_steps_for_dt() {
+    local steps=$1
+    local target_dt=$2
+    local current_dt=$3
+
+    awk -v steps="$steps" -v target="$target_dt" -v current="$current_dt" '
+        BEGIN {
+            if (steps <= 0 || target <= 0 || current <= 0) {
+                print steps
+                exit
+            }
+            n = steps * target / current
+            whole = int(n)
+            if (n - whole > 1e-9) {
+                whole += 1
+            }
+            if (whole < 1) {
+                whole = 1
+            }
+            print whole
+        }
+    '
+}
+
+scaled_nstlim_for_dt() {
+    local tmpl=${1:-mdin-template}
+    local current_dt=${2:-}
+    local target_dt nstlim
+
+    nstlim=$(parse_nstlim "$tmpl") || return 1
+    target_dt=$(parse_target_dt_ps "$tmpl")
+    [[ -n $current_dt ]] || current_dt=$(parse_dt_ps "$tmpl")
+
+    scale_steps_for_dt "$nstlim" "$target_dt" "$current_dt"
 }
 
 # Parse dt (ps) from template; default 0.001 ps if missing/unparsable.
@@ -776,16 +982,143 @@ completed_time_ps_from_out() {
 completed_time_ps_from_rst() {
     local rst_file=$1
     [[ -f $rst_file ]] || { echo 0; return; }
-    command -v ncdump >/dev/null 2>&1 || { echo 0; return; }
+    local tps fallback_tps
 
-    ncdump -v time "$rst_file" 2>/dev/null | awk '
+    if command -v ncdump >/dev/null 2>&1; then
+        tps=$(ncdump -v time "$rst_file" 2>/dev/null | awk '
       BEGIN{IGNORECASE=1}
       tolower($1) == "time" && $2 == "=" {
         gsub(/;/, "", $3)
         print $3
         exit
       }
+        ')
+        if [[ -n $tps && $tps != 0 && $tps != 0.0 && $tps != 0.000 && $tps != 0.0000 ]]; then
+            echo "$tps"
+            return
+        fi
+    fi
+
+    if LC_ALL=C grep -Iq . "$rst_file"; then
+        fallback_tps=$(awk '
+          BEGIN{
+            num="^[-+]?[0-9]*\\.?[0-9]+([eEdD][-+]?[0-9]+)?$"
+          }
+          /^time[[:space:]]*=/ {
+            s=$0
+            sub(/^time[[:space:]]*=[[:space:]]*/, "", s)
+            gsub(/[[:space:];]/, "", s)
+            gsub(/[dD]/, "e", s)
+            if (s ~ num) {
+              print s
+              exit
+            }
+          }
+          NR == 2 && NF >= 2 {
+            s=$2
+            gsub(/[dD]/, "e", s)
+            if (s ~ num) {
+              print s
+              exit
+            }
+          }
+        ' "$rst_file")
+    fi
+
+    if [[ -n $fallback_tps ]]; then
+        echo "$fallback_tps"
+    elif [[ -n $tps ]]; then
+        echo "$tps"
+    else
+        echo 0
+    fi
+}
+
+md_restart_is_valid_for_resume() {
+    local restart_file=$1
+    local start_ps=${2:-0}
+    local restart_ps
+
+    [[ -s "$restart_file" ]] || return 1
+    restart_ps=$(completed_time_ps_from_rst "$restart_file")
+
+    awk -v rst="$restart_ps" -v start="$start_ps" '
+      BEGIN {
+        # Valid production restarts must be parseable and ahead of the initial
+        # production restart. Files at or before start_ps cannot represent useful
+        # resumed production progress.
+        exit !(rst + 0.0 > start + 1.0e-7)
+      }
     '
+}
+
+archive_invalid_md_restart_if_present() {
+    local restart_file=$1
+    local latest_out_file=${2:-}
+    local retry_count=${3:-}
+    local start_ps=${4:-0}
+    local restart_ps
+
+    [[ -e "$restart_file" ]] || return 1
+    restart_ps=$(completed_time_ps_from_rst "$restart_file")
+
+    local files=("$restart_file")
+    if [[ -n $latest_out_file && -e "$latest_out_file" ]]; then
+        local stem
+        stem=${latest_out_file%.out}
+        files+=(
+            "$latest_out_file"
+            "${stem}.nc"
+            "${stem}.log"
+            "${stem}.mden"
+            "${stem}.mdinfo"
+        )
+    fi
+
+    archive_failed_job_files "$retry_count" "${files[@]}"
+    echo "[WARN] Archived invalid MD restart ${restart_file} before resume (restart=${restart_ps} ps, start=${start_ps} ps)."
+    return 0
+}
+
+select_valid_md_restart() {
+    local initial_restart=$1
+    local start_ps=${2:-0}
+    local retry_count=${3:-}
+    local latest_idx latest_out_file
+
+    SELECTED_MD_RESTART="$initial_restart"
+
+    latest_idx=$(latest_md_index "md-*.out")
+    if [[ $latest_idx -lt 0 ]]; then
+        latest_idx=$(latest_md_index "md*.out")
+    fi
+    latest_out_file=""
+    if [[ $latest_idx -ge 0 ]]; then
+        latest_out_file=$(printf "md-%02d.out" "$latest_idx")
+        if [[ ! -e "$latest_out_file" ]]; then
+            latest_out_file=$(printf "md%02d.out" "$latest_idx")
+        fi
+    fi
+
+    if [[ -e md-current.rst7 ]]; then
+        if md_restart_is_valid_for_resume "md-current.rst7" "$start_ps"; then
+            SELECTED_MD_RESTART="md-current.rst7"
+            return 0
+        fi
+        archive_invalid_md_restart_if_present \
+            "md-current.rst7" "$latest_out_file" "$retry_count" "$start_ps"
+    fi
+
+    if [[ -e md-previous.rst7 ]]; then
+        if md_restart_is_valid_for_resume "md-previous.rst7" "$start_ps"; then
+            SELECTED_MD_RESTART="md-previous.rst7"
+            return 0
+        fi
+        archive_invalid_md_restart_if_present \
+            "md-previous.rst7" "" "$retry_count" "$start_ps"
+    fi
+
+    return 0
 }
 
 completed_steps() {
@@ -866,6 +1199,59 @@ completed_steps() {
     fi
 
     echo "$tps"
+}
+
+production_start_ps() {
+    local marker=${1:-production-start.ps}
+    local initial_rst=${2:-eq.rst7}
+    local start_ps
+
+    if [[ -s "$marker" ]]; then
+        start_ps=$(tr -d '[:space:]' < "$marker")
+        if [[ $start_ps =~ ^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]]; then
+            echo "$start_ps"
+            return
+        fi
+    fi
+
+    start_ps=$(completed_time_ps_from_rst "$initial_rst")
+    [[ -n $start_ps ]] || start_ps=0
+
+    mkdir -p "$(dirname -- "$marker")" 2>/dev/null || true
+    printf "%s\n" "$start_ps" > "$marker" 2>/dev/null || true
+    echo "$start_ps"
+}
+
+production_elapsed_ps() {
+    local absolute_ps=${1:-0}
+    local start_ps=${2:-0}
+
+    awk -v abs="$absolute_ps" -v start="$start_ps" '
+      BEGIN {
+        elapsed = abs - start
+        if (elapsed < 0) {
+          elapsed = 0
+        }
+        s = sprintf("%.10f", elapsed)
+        sub(/\.?0+$/, "", s)
+        if (s == "") {
+          s = "0"
+        }
+        print s
+      }
+    '
+}
+
+completed_production_ps() {
+    local tmpl=${1:-mdin-template}
+    local marker=${2:-production-start.ps}
+    local initial_rst=${3:-eq.rst7}
+    local absolute_ps start_ps
+
+    absolute_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
+    [[ -n $absolute_ps ]] || absolute_ps=0
+    start_ps=$(production_start_ps "$marker" "$initial_rst")
+    production_elapsed_ps "$absolute_ps" "$start_ps"
 }
 
 

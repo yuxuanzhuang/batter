@@ -9,8 +9,11 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator, model_valida
 from batter.config.simulation import PROTOCOL_TO_FE_TYPE, SimulationConfig
 from batter.config.remd import RemdArgs
 from batter.config.utils import (
+    apo_ligand_source_path,
     coerce_yes_no,
+    coerce_apo_ligand_name,
     expand_env_vars,
+    is_apo_ligand_value,
     normalize_optional_path,
     sanitize_user_ligand_name,
 )
@@ -161,7 +164,12 @@ class CreateArgs(BaseModel):
     # Environment / anchors
     anchor_atoms: list[str] = Field(
         default_factory=list,
-        description="List of anchor atom selections used for restraint placement.",
+        description=(
+            "Optional list of three receptor anchor atom selections used for "
+            "restraint placement and binding-site geometry. If omitted, BATTER "
+            "auto-selects anchors heuristically: from the first real ligand pose "
+            "when one is available, or from protein-only geometry for apo MD."
+        ),
     )
     lipid_mol: list[str] = Field(
         default_factory=list,
@@ -226,6 +234,13 @@ class CreateArgs(BaseModel):
         "TIP3P",
         description="Water model used for solvation.",
     )
+    infer_disulfide_bonds: bool = Field(
+        True,
+        description=(
+            "Infer missing disulfide bonds from close CYX SG-SG distances during "
+            "box preparation."
+        ),
+    )
 
     l1_range: float = Field(
         6.0,
@@ -277,6 +292,9 @@ class CreateArgs(BaseModel):
         if isinstance(v, Mapping):
             out: dict[str, Path] = {}
             for k, p in v.items():
+                if is_apo_ligand_value(p):
+                    out[coerce_apo_ligand_name(k)] = apo_ligand_source_path()
+                    continue
                 path_obj = normalize_optional_path(p)
                 if path_obj is None:
                     continue
@@ -480,7 +498,7 @@ class FESimArgs(BaseModel):
     unbound_threshold: float = Field(
         8.0,
         ge=0.0,
-        description="Distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
+        description="Ligand-to-initial-binding-site distance threshold (Å) used to flag ligands as unbound during equilibration analysis.",
     )
     analysis_start_step: int = Field(
         0,
@@ -654,6 +672,16 @@ class MDSimArgs(BaseModel):
         "yes",
         description="Enable MC water exchange moves during equilibration (1 = on).",
     )
+    buffer_x: float = Field(10.0, description="Box padding along X (Å).")
+    buffer_y: float = Field(10.0, description="Box padding along Y (Å).")
+    buffer_z: float = Field(15.0, description="Box padding along Z (Å).")
+    unbound_threshold: float = Field(
+        8.0,
+        ge=0.0,
+        description=(
+            "Distance threshold (Å) used to flag ligands as unbound during system prep."
+        ),
+    )
 
     @field_validator("hmr", "enable_mcwat", mode="before")
     @classmethod
@@ -757,16 +785,38 @@ class RBFENetworkArgs(BaseModel):
         False,
         description="When true, run each mapped RBFE edge in both directions (A~B and B~A).",
     )
+    add_atom_mapping_edges: bool = Field(
+        False,
+        description=(
+            "When true, append valid pairs from rbfe.atom_mapping_file that are "
+            "not already present in the planned network in either direction."
+        ),
+    )
     mapping_file: Optional[Path] = Field(
         None,
         description="Optional path to a mapping file (JSON/YAML/text).",
+    )
+    atom_mapping_file: Optional[Path] = Field(
+        None,
+        description=(
+            "Optional path to a JSON/YAML file containing per-pair atom mapping "
+            "overrides. Uncovered ligand pairs use the configured atom mapper."
+        ),
     )
 
     def resolve_paths(self, base: Path) -> "RBFENetworkArgs":
         mf = self.mapping_file
         if mf is not None and not mf.is_absolute():
             mf = (base / mf).resolve()
-        return self.model_copy(update={"mapping_file": mf})
+        atom_mf = self.atom_mapping_file
+        if atom_mf is not None and not atom_mf.is_absolute():
+            atom_mf = (base / atom_mf).resolve()
+        return self.model_copy(
+            update={
+                "mapping_file": mf,
+                "atom_mapping_file": atom_mf,
+            }
+        )
 
     @field_validator("mapping", mode="before")
     @classmethod
@@ -810,6 +860,10 @@ class RunSection(BaseModel):
     only_fe_preparation: bool = Field(
         False,
         description="When true, stop the workflow after FE preparation.",
+    )
+    only_rbfe_network: bool = Field(
+        False,
+        description="When true for RBFE, stop after the ligand network is planned.",
     )
     on_failure: Literal["raise", "prune", "retry"] = Field(
         "raise",
@@ -946,6 +1000,48 @@ class RunConfig(BaseModel):
         default=None, description="RBFE network mapping configuration."
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _hoist_legacy_top_level_sim_fields(cls, data: Any) -> Any:
+        if not isinstance(data, Mapping):
+            return data
+
+        payload = dict(data)
+        proto = str(payload.get("protocol", "abfe")).lower()
+        target_fields = (
+            set(MDSimArgs.model_fields)
+            if proto == "md"
+            else set(FESimArgs.model_fields)
+        )
+        target_fields.update({"steps2"})
+
+        hoisted: dict[str, Any] = {}
+        for key in list(payload.keys()):
+            text_key = str(key)
+            if text_key in target_fields or re.match(
+                r"^[a-z]_(?:lambdas|n_steps|steps[12])$",
+                text_key,
+            ):
+                hoisted[text_key] = payload.pop(key)
+
+        if not hoisted:
+            return payload
+
+        current = payload.get("fe_sim") or {}
+        if isinstance(current, BaseModel):
+            fe_payload = current.model_dump()
+        elif isinstance(current, Mapping):
+            fe_payload = dict(current)
+        else:
+            raise ValueError(
+                "fe_sim must be a mapping when legacy top-level simulation keys are present."
+            )
+
+        for key, value in hoisted.items():
+            fe_payload.setdefault(key, value)
+        payload["fe_sim"] = fe_payload
+        return payload
+
     @model_validator(mode="after")
     def _coerce_fe_sim_model(self) -> "RunConfig":
         proto = getattr(self, "protocol", "abfe")
@@ -967,6 +1063,10 @@ class RunConfig(BaseModel):
     def _validate_rbfe_section(self) -> "RunConfig":
         if self.rbfe is not None and self.protocol != "rbfe":
             raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
+        if self.run.only_rbfe_network and self.protocol != "rbfe":
+            raise ValueError(
+                "run.only_rbfe_network is only valid when protocol='rbfe'."
+            )
         return self
 
     @field_validator("protocol", mode="before")

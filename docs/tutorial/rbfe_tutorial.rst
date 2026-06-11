@@ -35,6 +35,7 @@ protein binding site. The main steps are:
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **Network planning** – Build the RBFE transformation map (pair list) based on the selected scheme.
+   Use ``--only-rbfe-network`` or ``run.only_rbfe_network: true`` to stop here and inspect the generated interactive network before continuing.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
 #. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window runs as an independent local task or
@@ -65,8 +66,23 @@ RBFE mappings can be created in a few ways:
   See detailed tutorial in `Konnektor tutorial <https://konnektor.openfree.energy/en/latest/tutorials/basic_network_generation.html>`_.
 * **Mapping file** – provide explicit pairs via ``rbfe.mapping_file`` (JSON/YAML list or
   text file with one pair per line).
+* **Atom mapping override file** – provide selected per-pair atom maps via
+  ``rbfe.atom_mapping_file``. These maps override the mapper for covered pairs
+  during network scoring and are reused during transformation setup; uncovered
+  pairs still use ``rbfe.atom_mapper``. It is recommended to keep all ligand-pair
+  atom mappings you intend to rely on in ``rbfe.atom_mapping_file``. Valid
+  override pairs that are not selected by network planning are left unused by
+  default with a warning; set ``rbfe.add_atom_mapping_edges: true`` to append them
+  as extra edges.
 
 Set ``rbfe.both_directions: true`` if you want to run both directions for every edge.
+During ``prepare_rbfe``, BATTER writes
+``executions/<run_id>/artifacts/config/rbfe_network.html`` plus
+``artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.*`` so the planned graph and
+atom maps can be inspected before ligand equilibration and later transformation
+setup. The HTML network supports pan/zoom, clickable ligand and edge notes,
+collapsed reverse-direction edges, and an ``Edge color`` selector for graph
+redundancy and available Kartograf mapping metrics.
 
 Installation
 ------------
@@ -160,9 +176,11 @@ Generating Simulation Inputs
    - ``create.system_name`` – label used in reports.
    - ``create.ligand_input`` – JSON file mapping unique ligand IDs to ``.sdf`` files (see ``examples/reference/ligand_dict.json``).
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
-   - ``create.anchor_atoms`` – The three atoms that define the binding site and
-     anchor geometry used during staging and validation. Choose stable backbone
-     atoms (CA/C/N) with the guidelines below.
+   - ``create.anchor_atoms`` – Optional three atoms that define the binding site and
+     anchor geometry used during staging and validation. If omitted, BATTER
+     auto-selects stable backbone anchors from the first ligand pose with the
+     guidelines below. Apo-only MD uses a protein-only heuristic instead of the
+     dummy ligand coordinates.
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
@@ -181,6 +199,9 @@ Generating Simulation Inputs
    - ``run.max_active_jobs`` – cap on how many SLURM jobs to keep active at once (default 1000, ``0`` disables throttling).
    - ``rbfe.mapping`` / ``rbfe.mapping_file`` – choose your network planning scheme.
    - ``rbfe.atom_mapper`` – choose RBFE atom mapper backend: ``kartograf`` (default) or ``lomap``.
+   - ``rbfe.atom_mapping_file`` – optional JSON/YAML per-pair atom mapping overrides.
+   - ``rbfe.add_atom_mapping_edges`` – default ``false``; append valid override
+     pairs not selected by network planning.
 
       The available schemes are described in :ref:`rbfe_network_planning_schemes`.
       Mapper options can be overridden under ``rbfe.kartograf`` and ``rbfe.lomap``;
@@ -259,6 +280,12 @@ Handy CLI Flags
     Remove ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress caches before rerunning a previous execution.
 ``--only-equil / --full``
     Stop after shared prep/equilibration—useful for debugging system setup before FE windows.
+``--only-rbfe-network / --full-rbfe``
+    For RBFE, stop after ``artifacts/config/rbfe_network.html`` and
+    ``rbfe_network.json`` are written so the planned ligand network can be
+    reviewed before ligand equilibration and FE setup. The HTML includes
+    pan/zoom controls, clickable node/edge notes, atom-mapping images, and
+    selectable edge coloring by graph redundancy or available mapping metrics.
 ``--dry-run``
     Stage the system and prepare equilibration inputs without running any MD.
 ``--run-id`` and ``--output-folder``
@@ -347,7 +374,8 @@ chosen absolute reference level.
 ``fe list`` prints a high-level table for every stored run, while ``fe show`` opens
 the saved record for one transformation pair such as ``LIG1~LIG2``. For a file-by-file
 description of the portable repository, including the RBFE-only ``mapping.*``,
-``rbfe_network.png``, and ``Equil_ref`` / ``Equil_alt`` exports, see
+``rbfe_network.png``, ``rbfe_network.html``, and ``Equil_ref`` / ``Equil_alt``
+exports, see
 :doc:`../cookbook/results_folder`.
 
 For final error estimation, it is usually better to run three independent repeats

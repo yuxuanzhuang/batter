@@ -30,6 +30,12 @@ Options:
 ``--only-equil / --full``
    Run only equilibration preparation steps. FE preparation is still performed (up to
    ``prepare_fe_windows``), but the FE equilibration/production/analyse phases are skipped.
+``--only-rbfe-network / --full-rbfe``
+   For RBFE, stop after ``artifacts/config/rbfe_network.html`` and
+   ``rbfe_network.json`` are written so the planned ligand network can be reviewed.
+   The HTML view includes pan/zoom, clickable ligand and edge notes,
+   atom-mapping images, and selectable edge coloring by graph redundancy or
+   available mapping metrics.
 ``--slurm-submit``
    Emit an ``sbatch`` script and submit the job instead of running locally.
 ``--slurm-manager-path PATH``

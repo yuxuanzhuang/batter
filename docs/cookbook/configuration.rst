@@ -25,7 +25,7 @@ The run YAML file is divided into three sections grouped inside
     caches before rerunning an existing execution.
 ``create``
     Inputs required for system staging (protein/topology paths, ligands, force fields,
-    optional restraints). The structure maps directly to
+    optional anchors/restraints). The structure maps directly to
     :class:`batter.config.run.CreateArgs`.
 ``fe_sim``
     Overrides and controls for free-energy simulation stages. For ABFE/ASFE runs
@@ -68,6 +68,11 @@ For ``protocol: rbfe``, the ``rbfe`` block controls network planning and atom ma
 
 * ``rbfe.mapping`` – mapping strategy (for example ``default`` or ``konnektor``).
 * ``rbfe.mapping_file`` – explicit pair list file; takes precedence over ``mapping``.
+* ``rbfe.atom_mapping_file`` – optional JSON/YAML atom mapping overrides for
+  selected pairs; uncovered pairs use ``rbfe.atom_mapper``.
+* ``rbfe.add_atom_mapping_edges`` – default ``false``; append valid
+  atom-mapping override pairs when neither direction was selected by network
+  planning.
 * ``rbfe.konnektor_layout`` – optional Konnektor layout when ``mapping: konnektor``.
 * ``rbfe.both_directions`` – when true, run both directions for each mapped edge.
 * ``rbfe.atom_mapper`` – atom mapper backend used for RBFE mapping:
@@ -92,6 +97,22 @@ BATTER's previous Kartograf/LoMap defaults documented in :doc:`rbfe`.
        filter_element_changes: false
 
 See :doc:`rbfe` for RBFE-specific examples.
+
+Anchor selection
+----------------
+
+``create.anchor_atoms`` is optional. If it is omitted, BATTER resolves the
+anchor triplet during ``system_prep`` and records the selections in
+``executions/<run_id>/all-ligands/manifest.json``:
+
+* For runs with real ligands, the first available real ligand pose drives a
+  ligand-guided receptor-anchor heuristic.
+* For apo-only MD, BATTER switches to a protein-only heuristic so dummy ligand
+  coordinates do not determine the anchor geometry.
+
+Use explicit ``create.anchor_atoms`` only when you need to pin a known
+binding-site geometry or override the heuristic. The value must contain exactly
+three MDAnalysis selection strings, ordered as P1, P2, and P3.
 
 Component-Specific Inputs
 -------------------------
@@ -130,6 +151,10 @@ feed into the low-level ops documented in :doc:`../developer_guide/internal_buil
    * - ``extra_conformation_restraints``
      - Restraint ops
      - JSON specification for conformational restraints.
+   * - ``anchor_atoms``
+     - ``system_prep`` / restraint ops
+     - Optional P1/P2/P3 receptor-anchor override. Empty means BATTER selects
+       anchors heuristically and stores the resolved selections in the manifest.
    * - ``lipid_mol``
      - Build/ops helpers
      - Identifies membrane residues when trimming waters.

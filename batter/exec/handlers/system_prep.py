@@ -11,7 +11,7 @@ import shutil
 import string
 from importlib import resources
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
 
 import MDAnalysis as mda
 import numpy as np
@@ -20,16 +20,26 @@ from MDAnalysis.analysis import align
 from MDAnalysis.analysis.dssp import DSSP
 from loguru import logger
 
+from batter.config.utils import is_apo_ligand_path
 from batter._internal.templates import BUILD_FILES_DIR as build_files_orig
 from batter.orchestrate.state_registry import register_phase_state
 from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.pipeline.step import ExecResult, Step
 from batter.systems.core import SimSystem
-from batter.utils.builder_utils import find_anchor_atoms
+from batter.utils.builder_utils import (
+    find_anchor_atoms,
+    select_apo_receptor_anchor_atoms,
+    select_receptor_anchor_atoms,
+)
 
 _PROTEIN_BREAK_CA_DISTANCE_CUTOFF_A = 10.0
 _CHAIN_ID_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
 _XY_ROTATION_REFINE_DEGREES = (45.0, 15.0, 5.0, 1.0)
+_PROTEIN_TERMINAL_CAP_RESNAMES = "ACE NMA NME NHE"
+_PROTEIN_TERMINAL_CAP_RESNAME_SET = set(_PROTEIN_TERMINAL_CAP_RESNAMES.split())
+_PROTEIN_WITH_TERMINAL_CAPS = (
+    f"(protein or resname {_PROTEIN_TERMINAL_CAP_RESNAMES})"
+)
 
 
 def _as_abs(p: str | Path | None, base: Path) -> Path | None:
@@ -37,6 +47,40 @@ def _as_abs(p: str | Path | None, base: Path) -> Path | None:
         return None
     p = Path(p)
     return p if p.is_absolute() else (base / p).resolve()
+
+
+def _select_anchor_reference_ligand(
+    ligand_order: Sequence[str],
+    ligand_paths: Mapping[str, Any],
+) -> tuple[str, bool]:
+    """
+    Return the ligand to use for receptor-anchor and L1 geometry setup.
+
+    Mixed MD runs can include an apo dummy plus one or more real ligands. The
+    dummy keeps downstream ligand-oriented setup code wired, but it should not
+    drive ligand-pose receptor-anchor selection when a real ligand pose exists.
+    """
+    if not ligand_paths:
+        raise ValueError("No ligands available for anchor reference selection.")
+
+    ordered_names = [name for name in ligand_order if name in ligand_paths]
+    seen_names = set(ordered_names)
+    ordered_names.extend(
+        name for name in sorted(ligand_paths, key=str) if name not in seen_names
+    )
+    for name in ordered_names:
+        if not is_apo_ligand_path(ligand_paths[name]):
+            return name, False
+    return ordered_names[0], True
+
+
+def _ligand_sdf_reference(path: Any, *, is_apo: bool) -> str | None:
+    if is_apo:
+        return None
+    p = Path(path)
+    if p.suffix.lower() != ".sdf":
+        return None
+    return str(p)
 
 
 def _copy(src: Path, dst: Path) -> None:
@@ -220,13 +264,25 @@ def _split_residues_on_breaks(
         reasons: list[str] = []
         prev_resid = int(prev_residue.resid)
         curr_resid = int(curr_residue.resid)
+        prev_is_cap = (
+            str(prev_residue.resname).strip() in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+        )
+        curr_is_cap = (
+            str(curr_residue.resname).strip() in _PROTEIN_TERMINAL_CAP_RESNAME_SET
+        )
 
-        if curr_resid != prev_resid + 1:
+        if curr_resid != prev_resid + 1 and not (
+            curr_is_cap and curr_resid in {prev_resid, prev_resid + 1}
+        ):
             reasons.append(f"resid discontinuity ({prev_resid} -> {curr_resid})")
 
         prev_ca = _get_single_ca_position(prev_residue)
         curr_ca = _get_single_ca_position(curr_residue)
-        if prev_ca is not None and curr_ca is not None:
+        if (
+            prev_ca is not None
+            and curr_ca is not None
+            and not (prev_is_cap or curr_is_cap)
+        ):
             ca_distance = float(np.linalg.norm(curr_ca - prev_ca))
             if ca_distance > ca_distance_cutoff:
                 reasons.append(
@@ -283,7 +339,7 @@ def _protein_segid_overrides(universe: mda.Universe) -> tuple[dict[int, str], in
     except AttributeError:
         return {}, 0
 
-    protein_atoms = universe.select_atoms("protein")
+    protein_atoms = universe.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
     if protein_atoms.n_atoms == 0:
         return {}, 0
 
@@ -352,13 +408,27 @@ def _select_fragment_atoms(
     chain_id: str,
     segid: str,
 ):
+    atom_indices = [
+        int(atom.index)
+        for residue in residues
+        for atom in residue.atoms
+    ]
+    if atom_indices:
+        selection = universe.atoms[atom_indices]
+        if selection.n_residues == len(residues):
+            return selection
+
     resid_seq = " ".join(str(int(residue.resid)) for residue in residues)
     selectors: list[str] = []
     if chain_id:
-        selectors.append(f"protein and chainID {chain_id} and resid {resid_seq}")
+        selectors.append(
+            f"{_PROTEIN_WITH_TERMINAL_CAPS} and chainID {chain_id} and resid {resid_seq}"
+        )
     if segid:
-        selectors.append(f"protein and segid {segid} and resid {resid_seq}")
-    selectors.append(f"protein and resid {resid_seq}")
+        selectors.append(
+            f"{_PROTEIN_WITH_TERMINAL_CAPS} and segid {segid} and resid {resid_seq}"
+        )
+    selectors.append(f"{_PROTEIN_WITH_TERMINAL_CAPS} and resid {resid_seq}")
 
     for selector in selectors:
         selection = universe.select_atoms(selector)
@@ -435,6 +505,7 @@ class _SystemPrepRunner:
         self.verbose: bool = False
 
         self.ligand_dict: Dict[str, str] = {}
+        self.ligand_order: List[str] = []
         self.unique_mol_names: List[str] = []
         self.system_dimensions = np.zeros(3)
 
@@ -657,7 +728,7 @@ class _SystemPrepRunner:
         protein_fragment_groups: list[tuple[Any, str]] = []
         fragment_chain_index = 0
         protein_source_groups = _group_residues_by_source_identity(
-            u_prot.select_atoms("protein").residues
+            u_prot.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS).residues
         )
 
         for source_group in protein_source_groups:
@@ -691,15 +762,15 @@ class _SystemPrepRunner:
 
         if self.receptor_segment:
             protein_anchor = u_prot.select_atoms(
-                f"segid {self.receptor_segment} and protein"
+                f"segid {self.receptor_segment} and {_PROTEIN_WITH_TERMINAL_CAPS}"
             )
             other_protein = u_prot.select_atoms(
-                f"not segid {self.receptor_segment} and protein"
+                f"not segid {self.receptor_segment} and {_PROTEIN_WITH_TERMINAL_CAPS}"
             )
             comp_2_combined.append(protein_anchor)
             comp_2_combined.append(other_protein)
         else:
-            comp_2_combined.append(u_prot.select_atoms("protein"))
+            comp_2_combined.append(u_prot.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS))
 
         for prot_selection, new_chain_id in protein_fragment_groups:
             prot_selection.residues.segments = u_prot.add_Segment(segid=new_chain_id)
@@ -836,7 +907,7 @@ class _SystemPrepRunner:
             atom.name = new_name
 
         u_merged.atoms.write(f"{self.ligands_folder}/{self.system_name}.pdb")
-        protein_ref = u_prot.select_atoms("protein")
+        protein_ref = u_prot.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         protein_ref.write(f"{self.ligands_folder}/reference.pdb")
 
     def _align_2_system(self, mobile_atoms):
@@ -901,6 +972,8 @@ class _SystemPrepRunner:
         lipid_mol: List[str] = [],
         lipid_ff: str = "lipid21",
         unbound_threshold: float | None = None,
+        min_adis: float = 3.0,
+        max_adis: float = 7.0,
         overwrite: bool = False,
         verbose: bool = False,
     ) -> Dict[str, Any]:
@@ -913,7 +986,10 @@ class _SystemPrepRunner:
             else None
         )
 
-        self.ligand_dict = {k: self._resolve_input_path(v) for k, v in ligand_paths.items()}
+        self.ligand_dict = {
+            k: self._resolve_input_path(v) for k, v in ligand_paths.items()
+        }
+        self.ligand_order = list(ligand_paths.keys())
         # prefer the provided keys for naming
         self.unique_mol_names = [k.upper() for k in ligand_paths.keys()]
 
@@ -1009,21 +1085,55 @@ class _SystemPrepRunner:
         # Make <ligand>.pdb for each ligand by translation-only
         self._prepare_all_ligands()
 
-        # Anchors from first ligand + protein
+        # Anchors from a real ligand + protein when available, otherwise apo protein geometry.
         u_prot = mda.Universe(f"{self.output_dir}/all-ligands/reference.pdb")
-        first_ligand_path = sorted(self.ligand_dict.values())[0]
-        u_lig = mda.Universe(first_ligand_path)
-        lig_sdf = str(Path(ligand_paths[self.unique_mol_names[0]]))
+        anchor_ligand_name, anchor_ligand_is_apo = _select_anchor_reference_ligand(
+            self.ligand_order,
+            ligand_paths,
+        )
+        if (
+            self.ligand_order
+            and anchor_ligand_name != self.ligand_order[0]
+            and not anchor_ligand_is_apo
+        ):
+            logger.info(
+                "[system_prep] Using real ligand '{}' for anchor reference instead of apo dummy '{}'.",
+                anchor_ligand_name,
+                self.ligand_order[0],
+            )
+        anchor_ligand_path = self.ligand_dict[anchor_ligand_name]
+        u_lig = mda.Universe(anchor_ligand_path)
+        lig_sdf = _ligand_sdf_reference(
+            ligand_paths[anchor_ligand_name],
+            is_apo=anchor_ligand_is_apo,
+        )
+        resolved_anchor_atoms = list(anchor_atoms or [])
+        if not resolved_anchor_atoms:
+            if anchor_ligand_is_apo:
+                resolved_anchor_atoms = select_apo_receptor_anchor_atoms(
+                    u_prot,
+                    protein_dssp=dssp_result.get("results"),
+                )
+            else:
+                resolved_anchor_atoms = select_receptor_anchor_atoms(
+                    u_prot,
+                    u_lig,
+                    lig_sdf,
+                    protein_dssp=dssp_result.get("results"),
+                )
 
         l1_x, l1_y, l1_z, p1, p2, p3, l1_range = find_anchor_atoms(
             u_prot,
             u_lig,
             lig_sdf,
-            anchor_atoms,
+            resolved_anchor_atoms,
             ligand_anchor_atom,
             unbound_threshold=unbound_threshold,
+            protein_dssp=dssp_result.get("results"),
+            apo_ligand=anchor_ligand_is_apo,
+            apo_ligand_distance=(float(min_adis) + float(max_adis)) / 2.0,
         )
-        self.anchor_atoms = anchor_atoms
+        self.anchor_atoms = resolved_anchor_atoms
         self.ligand_anchor_atom = ligand_anchor_atom
         self.l1_x, self.l1_y, self.l1_z = l1_x, l1_y, l1_z
         self.p1, self.p2, self.p3 = p1, p2, p3
@@ -1037,6 +1147,7 @@ class _SystemPrepRunner:
             "ligands": dict(self.ligand_dict),
             "dssp": dssp_result,
             "anchors": {"p1": self.p1, "p2": self.p2, "p3": self.p3},
+            "anchor_atom_selections": list(self.anchor_atoms),
             "l1": {
                 "x": self.l1_x,
                 "y": self.l1_y,
@@ -1085,13 +1196,20 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
     unbound_threshold = (
         float(threshold_val) if threshold_val is not None else None
     )
+    ligand_paths = dict(sys_params["ligand_paths"])
+    apo_only = bool(ligand_paths) and all(
+        is_apo_ligand_path(path) for path in ligand_paths.values()
+    )
+    if apo_only:
+        logger.info("[system_prep] Apo dummy ligand detected; skipping unbound check.")
+        unbound_threshold = None
 
     runner = _SystemPrepRunner(system, yaml_dir)
     manifest = runner.run(
         system_name=sys_params["system_name"],
         protein_input=sys_params["protein_input"],
         system_topology=sys_params.get("system_input", None),
-        ligand_paths=sys_params["ligand_paths"],
+        ligand_paths=ligand_paths,
         anchor_atoms=list(sys_params.get("anchor_atoms", [])),
         ligand_anchor_atom=sys_params.get("ligand_anchor_atom"),
         receptor_segment=sys_params.get("receptor_segment"),
@@ -1103,6 +1221,8 @@ def system_prep(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRe
         lipid_mol=list(sys_params.get("lipid_mol", [])),
         lipid_ff=sys_params.get("lipid_ff", "lipid21"),
         unbound_threshold=unbound_threshold,
+        min_adis=float(sys_params.get("min_adis", 3.0)),
+        max_adis=float(sys_params.get("max_adis", 7.0)),
         overwrite=bool(sys_params.get("overwrite", False)),
         verbose=bool(sys_params.get("verbose", False)),
     )

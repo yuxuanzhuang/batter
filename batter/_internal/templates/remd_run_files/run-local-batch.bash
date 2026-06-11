@@ -106,15 +106,19 @@ for ((i = 0; i < N_WINDOWS; i++)); do
 done
 
 total_steps=$(parse_total_steps "$tmpl0")
-chunk_steps=$(parse_nstlim "$tmpl0")
 dt_ps=$(parse_dt_ps "$tmpl0")
 target_dt_ps=$(parse_target_dt_ps "$tmpl0")
+chunk_steps=$(scaled_nstlim_for_dt "$tmpl0" "$dt_ps")
 total_ps=$(awk -v s="$total_steps" -v dt="$target_dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-read current_ps last_idx < <(window_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+read restart_ps last_idx < <(window_progress "${PFOLDER}/${WIN0}" "${PFOLDER}/${WIN0}/md-*.out")
+[[ -z $restart_ps ]] && restart_ps=0
+production_start_marker="${PFOLDER}/${WIN0}/production-start.ps"
+start_ps=$(production_start_ps "$production_start_marker" "${PFOLDER}/${WIN0}/eq.rst7")
+current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
 
-echo "Current completed time (from restart): ${current_ps} ps / ${total_ps} ps (dt=${dt_ps} ps)"
+echo "Current completed production time: ${current_ps} ps / ${total_ps} ps (restart=${restart_ps} ps, start=${start_ps} ps, dt=${dt_ps} ps)"
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")

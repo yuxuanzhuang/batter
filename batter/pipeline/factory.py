@@ -169,7 +169,9 @@ def make_rbfe_pipeline(
     """
     RBFE pipeline:
 
-    Adds RBFE pre-equilibration steps before transformation prep.
+    system_prep → param_ligands → prepare_rbfe → prepare_equil → equil
+    → equil_analysis → pre_prepare_fe → pre_fe_equil → prepare_fe
+    → prepare_fe_windows → fe_equil → fe → analyze
     """
     steps: List[Step] = []
     params_model = (
@@ -197,12 +199,21 @@ def make_rbfe_pipeline(
             **(extra or {}),
         )
     )
+    steps.append(
+        _step(
+            name="prepare_rbfe",
+            requires=["param_ligands"],
+            sim=sim,
+            sys_params=params_model,
+            **(extra or {}),
+        )
+    )
 
     # Per-ligand steps
     steps.append(
         _step(
             "prepare_equil",
-            requires=["param_ligands"],
+            requires=["prepare_rbfe"],
             sim=sim,
             sys_params=params_model,
             **(extra or {}),
@@ -294,6 +305,7 @@ def make_rbfe_pipeline(
         keep = {
             "system_prep",
             "param_ligands",
+            "prepare_rbfe",
             "prepare_equil",
             "equil",
             "equil_analysis",

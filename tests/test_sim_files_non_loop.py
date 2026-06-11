@@ -162,6 +162,69 @@ def test_restraintmask_long_mask_converts_to_legacy_group(tmp_path: Path) -> Non
     assert "ATOM 1 1" in text
 
 
+def test_restraintmask_short_mask_converts_to_legacy_group(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    prmtop = repo_root / "tests" / "data" / "ligand_params" / "b74b7e78c757" / "lig.prmtop"
+    assert prmtop.exists()
+
+    mdin = tmp_path / "mdin-test.in"
+    mdin.write_text(
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 50,\n"
+        "  restraintmask = '@1',\n"
+        "/\n"
+    )
+
+    sim_files._apply_restraintmask_length_limit(mdin, prmtop)
+
+    text = mdin.read_text()
+    assert "restraintmask =" not in text
+    assert "Converted from restraintmask" in text
+    assert "50" in text
+    assert "ATOM 1 1" in text
+
+
+def test_extra_restraints_are_included_in_legacy_group_conversion(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    prmtop = repo_root / "tests" / "data" / "ligand_params" / "b74b7e78c757" / "lig.prmtop"
+    assert prmtop.exists()
+
+    mdin = tmp_path / "mdin-test.in"
+    text = (
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 5.0,\n"
+        "  restraintmask = '@1',\n"
+        "/\n"
+    )
+    mdin.write_text(sim_files._patch_restraint_block(text, "@2", 50.0))
+
+    sim_files._apply_restraintmask_length_limit(mdin, prmtop)
+
+    converted = mdin.read_text()
+    assert "restraintmask =" not in converted
+    assert "Converted from restraintmask" in converted
+    assert "50" in converted
+    assert "ATOM 1 2" in converted
+
+
+def test_restraintmask_without_prmtop_is_left_as_mask(tmp_path: Path) -> None:
+    mdin = tmp_path / "mdin-test.in"
+    original = (
+        "&cntrl\n"
+        "  ntr = 1,\n"
+        "  restraint_wt = 5.0,\n"
+        "  restraintmask = '(@CA,C,N,P31 | :apo | :1) & !@H=',\n"
+        "/\n"
+    )
+    mdin.write_text(original)
+
+    sim_files._apply_restraintmask_length_limit(mdin, prmtop_path=None)
+
+    assert mdin.read_text() == original
+
+
 def test_write_cmass_dump_block_uses_dumpave_footer() -> None:
     handle = io.StringIO()
 
@@ -229,51 +292,46 @@ def test_sim_files_source_has_no_infe_one_writes() -> None:
     assert "DUMPAVE=cmass.txt" in content
 
 
-@pytest.mark.parametrize(
-    ("resid_shift", "expected_mask"),
-    [
-        (1, "(:2-3) & @CA"),
-        (2, "(:3-4) & @CA"),
-    ],
-)
-def test_maybe_extra_mask_applies_residue_shift(
-    tmp_path: Path, resid_shift: int, expected_mask: str
+def test_maybe_extra_mask_uses_absolute_indices_for_all_selected_atoms(
+    tmp_path: Path,
 ) -> None:
     work = tmp_path / "work"
     build_dir = tmp_path / "build"
-    (work / "build_files").mkdir(parents=True, exist_ok=True)
+    work.mkdir(parents=True, exist_ok=True)
     build_dir.mkdir(parents=True, exist_ok=True)
 
     (work / "full.pdb").write_text(
         "ATOM      1  CA  ALA A  10       0.000   0.000   0.000  1.00  0.00           C\n"
-        "ATOM      2  CA  ALA A  11       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  CB  ALA A  10       1.000   0.000   0.000  1.00  0.00           C\n"
+        "HETATM    3  C1  LIG B 900       2.000   0.000   0.000  1.00  0.00           C\n"
+        "HETATM    4  H1  LIG B 900       3.000   0.000   0.000  1.00  0.00           H\n"
         "TER\nEND\n"
-    )
-    (work / "build_files" / "protein_renum.txt").write_text(
-        "ALA A 10 ALA 1\n"
-        "ALA A 11 ALA 2\n"
     )
 
     ctx = SimpleNamespace(
-        extra={"extra_restraints": "resid 10:11", "extra_restraint_fc": 12.5},
+        extra={
+            "extra_restraints": "name CB or resname LIG",
+            "extra_restraint_fc": 12.5,
+        },
         win=-1,
         equil_dir=work,
         build_dir=build_dir,
     )
 
-    mask, force_const = sim_files._maybe_extra_mask(ctx, work, resid_shift=resid_shift)
+    mask, force_const = sim_files._maybe_extra_mask(ctx, work, resid_shift=2)
 
-    assert mask == expected_mask
+    assert mask == "@2-4"
     assert force_const == pytest.approx(12.5)
     saved = json.loads((work / "extra_restraints.json").read_text())
-    assert saved["resid_shift"] == resid_shift
+    assert saved["mask"] == "@2-4"
+    assert saved["selection"] == "name CB or resname LIG"
 
 
 def test_maybe_extra_mask_reuses_equil_json_for_non_minus_one_windows(tmp_path: Path) -> None:
     equil_dir = tmp_path / "equil"
     equil_dir.mkdir(parents=True, exist_ok=True)
     (equil_dir / "extra_restraints.json").write_text(
-        json.dumps({"mask": "(:9) & @CA", "force_const": 9.0})
+        json.dumps({"mask": "@9", "force_const": 9.0})
     )
 
     ctx = SimpleNamespace(
@@ -285,7 +343,7 @@ def test_maybe_extra_mask_reuses_equil_json_for_non_minus_one_windows(tmp_path: 
     mask, force_const = sim_files._maybe_extra_mask(
         ctx, tmp_path / "unused", resid_shift=2
     )
-    assert mask == "(:9) & @CA"
+    assert mask == "@9"
     assert force_const == pytest.approx(9.0)
 
 

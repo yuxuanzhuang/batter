@@ -6,7 +6,12 @@ import json
 from pathlib import Path
 from typing import Dict, Tuple
 
-from batter.config.utils import sanitize_user_ligand_name
+from batter.config.utils import (
+    apo_ligand_source_path,
+    coerce_apo_ligand_name,
+    is_apo_ligand_value,
+    sanitize_user_ligand_name,
+)
 
 
 def resolve_ligand_map(
@@ -24,9 +29,13 @@ def resolve_ligand_map(
 
     paths = getattr(run_cfg.create, "ligand_paths", None) or dict()
     for name, value in paths.items():
-        lig_path = Path(value)
-        lig_path = lig_path if lig_path.is_absolute() else (yaml_dir / lig_path)
-        sanitized = sanitize_user_ligand_name(str(name))
+        if is_apo_ligand_value(value):
+            lig_path = apo_ligand_source_path()
+            sanitized = coerce_apo_ligand_name(name)
+        else:
+            lig_path = Path(value)
+            lig_path = lig_path if lig_path.is_absolute() else (yaml_dir / lig_path)
+            sanitized = sanitize_user_ligand_name(str(name))
         lig_map[sanitized] = lig_path.resolve()
         original_names[sanitized] = str(name)
 
@@ -39,14 +48,28 @@ def resolve_ligand_map(
         if isinstance(data, dict):
             items = data.items()
         elif isinstance(data, list):
-            items = ((Path(p).stem, p) for p in data)
+            items = (
+                (
+                    coerce_apo_ligand_name(p)
+                    if is_apo_ligand_value(p)
+                    else Path(p).stem,
+                    p,
+                )
+                for p in data
+            )
         else:
             raise TypeError(f"{jpath} must be a dict or list, got {type(data).__name__}")
 
         for name, value in items:
-            lig_path = Path(value)
-            lig_path = lig_path if lig_path.is_absolute() else (jpath.parent / lig_path)
-            sanitized = sanitize_user_ligand_name(str(name))
+            if is_apo_ligand_value(value):
+                lig_path = apo_ligand_source_path()
+                sanitized = coerce_apo_ligand_name(name)
+            else:
+                lig_path = Path(value)
+                lig_path = (
+                    lig_path if lig_path.is_absolute() else (jpath.parent / lig_path)
+                )
+                sanitized = sanitize_user_ligand_name(str(name))
             lig_map[sanitized] = lig_path.resolve()
             original_names[sanitized] = str(name)
 
