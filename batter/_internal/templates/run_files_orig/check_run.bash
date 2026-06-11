@@ -382,6 +382,7 @@ check_sim_failure() {
     local rst_file=$3
     local rst_file_prev=${4:-}
     local retry_count=${5:-${RETRY_COUNT:-${RETRY:-}}}
+    local command_status=${SIM_COMMAND_STATUS:-0}
     local -a extra_files=()
     local extra_file_count=0
     if (( $# > 5 )); then
@@ -389,6 +390,7 @@ check_sim_failure() {
         extra_file_count=${#extra_files[@]}
     fi
     retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
+    SIM_COMMAND_STATUS=0
 
     cleanup_outputs() {
         if (( extra_file_count > 0 )); then
@@ -397,6 +399,27 @@ check_sim_failure() {
             archive_failed_job_files "$retry_count" "$log_file" "$rst_file"
         fi
     }
+
+    remove_previous_restart() {
+        if [[ -n "$rst_file_prev" && "$rst_file_prev" != "0" ]]; then
+            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
+            rm -f "$rst_file_prev"
+        fi
+    }
+
+    if [[ $command_status =~ ^[0-9]+$ && $command_status -ne 0 ]]; then
+        echo "[ERROR] $stage simulation failed. Command exited with status $command_status."
+        if [[ -f "$log_file" ]]; then
+            tail -n 200 "$log_file" || true
+        fi
+        cleanup_outputs
+        if [[ $retry_count -ge 3 ]]; then
+            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+        fi
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
 
     # If log doesn't exist yet, don't treat as failure here
     [[ -f "$log_file" ]] || return 0
@@ -409,11 +432,7 @@ check_sim_failure() {
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
         fi
 
-        # if not the first retry attempt, remove the previous restart file to avoid repeated failure
-        if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
-            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
-            rm -f "$rst_file_prev"
-        fi
+        remove_previous_restart
         write_attempt_failed_marker
         exit 1
     fi
@@ -424,10 +443,7 @@ check_sim_failure() {
         if [[ $retry_count -ge 2 ]]; then
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count" 1
         fi
-        if [[ -n "$rst_file_prev" && $retry_count -gt 0 ]]; then
-            echo "[INFO] Removing previous restart file $rst_file_prev before retrying."
-            rm -f "$rst_file_prev"
-        fi
+        remove_previous_restart
         write_attempt_failed_marker
         exit 1
     fi

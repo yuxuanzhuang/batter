@@ -37,7 +37,7 @@ from rdkit import Chem
 from rdkit.Geometry import Point3D
 from rdkit.Chem import rdMolAlign, AllChem
 
-from kartograf import SmallMoleculeComponent
+from gufe import SmallMoleculeComponent
 from kartograf.atom_aligner import align_mol_shape
 from kartograf.atom_mapper import KartografAtomMapper
 from lomap import LomapAtomMapper

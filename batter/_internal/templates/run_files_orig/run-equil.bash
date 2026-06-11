@@ -27,7 +27,20 @@ fi
 # Echo commands before executing them so the full invocation is visible
 print_and_run() {
     echo "$@"
+    local errexit_was_on=0
+    case $- in
+        *e*) errexit_was_on=1 ;;
+    esac
+    SIM_COMMAND_STATUS=0
+    set +e
     eval "$@"
+    SIM_COMMAND_STATUS=$?
+    if [[ $errexit_was_on -eq 1 ]]; then
+        set -e
+    else
+        set +e
+    fi
+    return 0
 }
 
 # ---- load helpers FIRST ----

@@ -31,6 +31,9 @@ if [[ -n "${CALL_LOG:-}" && -n "$out" ]]; then
 fi
 if [[ -n "${FAIL_OUT:-}" && "$out" == "$FAIL_OUT" ]]; then
   printf "segmentation fault\\n"
+  fail_status=${FAIL_EXIT_STATUS:-0}
+else
+  fail_status=0
 fi
 if [[ -n "$out" ]]; then
   if [[ "$out" == mini* ]]; then
@@ -41,7 +44,7 @@ if [[ -n "$out" ]]; then
 fi
 [[ -n "$rst" ]] && printf "rst\\n" > "$rst"
 [[ -n "$nc" ]] && printf "nc\\n" > "$nc"
-exit 0
+exit "$fail_status"
 """,
         executable=True,
     )
@@ -471,8 +474,9 @@ def test_run_local_only_eq_reruns_minimization_after_mini2_failure(
     tmp_path: Path,
 ) -> None:
     env, cmd = _setup_run_local_only_eq(tmp_path)
-    env["RETRY_COUNT"] = "2"
+    env["RETRY_COUNT"] = "0"
     env["FAIL_OUT"] = "mini2.out"
+    env["FAIL_EXIT_STATUS"] = "139"
 
     failed_run = subprocess.run(
         cmd,
@@ -490,6 +494,7 @@ def test_run_local_only_eq_reruns_minimization_after_mini2_failure(
 
     (tmp_path / "call.log").unlink(missing_ok=True)
     env.pop("FAIL_OUT")
+    env.pop("FAIL_EXIT_STATUS")
 
     rerun = subprocess.run(
         cmd,
@@ -511,8 +516,9 @@ def test_run_equil_reruns_minimization_after_mini2_failure(
     tmp_path: Path,
 ) -> None:
     env, cmd = _setup_run_equil_only_eq(tmp_path)
-    env["RETRY_COUNT"] = "2"
+    env["RETRY_COUNT"] = "0"
     env["FAIL_OUT"] = "mini2.out"
+    env["FAIL_EXIT_STATUS"] = "139"
 
     failed_run = subprocess.run(
         cmd,
@@ -530,6 +536,7 @@ def test_run_equil_reruns_minimization_after_mini2_failure(
 
     (tmp_path / "call.log").unlink(missing_ok=True)
     env.pop("FAIL_OUT")
+    env.pop("FAIL_EXIT_STATUS")
 
     rerun = subprocess.run(
         cmd,

@@ -1023,7 +1023,7 @@ def _load_rdkit_mol(path: Path):
 
 
 def _small_molecule_component(mol: Chem.Mol, name: str):
-    from kartograf import SmallMoleculeComponent
+    from gufe import SmallMoleculeComponent
 
     if hasattr(SmallMoleculeComponent, "from_rdkit"):
         try:
