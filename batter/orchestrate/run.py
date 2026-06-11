@@ -399,6 +399,14 @@ def _build_rbfe_network_plan(
     rbfe_cfg,
     config_dir: Path,
 ) -> dict:
+    """
+    Resolve and persist the RBFE ligand network before equilibration.
+
+    This phase deduplicates identical ligands, resolves explicit or generated
+    transformation pairs, prepares per-edge atom-mapping artifacts, filters
+    full-coverage mappings, and writes ``rbfe_network.json`` plus the
+    interactive ``rbfe_network.html`` review page under ``config_dir``.
+    """
     from batter.rbfe import (
         RBFENetwork,
         resolve_mapping_fn,

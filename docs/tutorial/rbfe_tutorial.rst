@@ -35,7 +35,7 @@ protein binding site. The main steps are:
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **Network planning** – Build the RBFE transformation map (pair list) based on the selected scheme.
-   Use ``--only-rbfe-network`` or ``run.only_rbfe_network: true`` to stop here and inspect the generated network before continuing.
+   Use ``--only-rbfe-network`` or ``run.only_rbfe_network: true`` to stop here and inspect the generated interactive network before continuing.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
 #. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window runs as an independent local task or
@@ -80,7 +80,9 @@ During ``prepare_rbfe``, BATTER writes
 ``executions/<run_id>/artifacts/config/rbfe_network.html`` plus
 ``artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.*`` so the planned graph and
 atom maps can be inspected before ligand equilibration and later transformation
-setup.
+setup. The HTML network supports pan/zoom, clickable ligand and edge notes,
+collapsed reverse-direction edges, and an ``Edge color`` selector for graph
+redundancy and available Kartograf mapping metrics.
 
 Installation
 ------------
@@ -177,7 +179,8 @@ Generating Simulation Inputs
    - ``create.anchor_atoms`` – Optional three atoms that define the binding site and
      anchor geometry used during staging and validation. If omitted, BATTER
      auto-selects stable backbone anchors from the first ligand pose with the
-     guidelines below.
+     guidelines below. Apo-only MD uses a protein-only heuristic instead of the
+     dummy ligand coordinates.
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
@@ -280,7 +283,9 @@ Handy CLI Flags
 ``--only-rbfe-network / --full-rbfe``
     For RBFE, stop after ``artifacts/config/rbfe_network.html`` and
     ``rbfe_network.json`` are written so the planned ligand network can be
-    reviewed before ligand equilibration and FE setup.
+    reviewed before ligand equilibration and FE setup. The HTML includes
+    pan/zoom controls, clickable node/edge notes, atom-mapping images, and
+    selectable edge coloring by graph redundancy or available mapping metrics.
 ``--dry-run``
     Stage the system and prepare equilibration inputs without running any MD.
 ``--run-id`` and ``--output-folder``

@@ -38,6 +38,14 @@ RBFE Helpers
    :members:
    :undoc-members:
 
+System Preparation Helpers
+--------------------------
+
+.. automodule:: batter.systemprep.helpers
+   :noindex:
+   :members:
+   :undoc-members:
+
 Orchestrator Modules
 --------------------
 
@@ -210,6 +218,12 @@ Analysis Modules
    :show-inheritance:
 
 .. automodule:: batter.analysis.cycle_closure
+   :noindex:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: batter.analysis.network
    :noindex:
    :members:
    :undoc-members:

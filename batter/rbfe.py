@@ -338,7 +338,13 @@ def _finite_float(value: Any) -> float | None:
 
 
 def _mapping_metric_scores(mapping: Any) -> dict[str, float]:
-    """Compute optional Kartograf mapping metrics for visualization."""
+    """Compute optional Kartograf mapping metrics for network visualization.
+
+    These scores are stored in each pair's ``mapping_status.json`` and surfaced
+    by ``rbfe_network.html`` as selectable edge-color metrics. Missing optional
+    Kartograf scorer modules are ignored so mapping artifact generation can
+    continue in lean environments.
+    """
     if mapping is None:
         return {}
 
@@ -1290,7 +1296,14 @@ def write_planned_mapping_artifacts(
     atom_mapping_overrides: Any | None = None,
     overwrite: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Generate reusable atom-mapping artifacts for a planned RBFE network."""
+    """
+    Generate reusable atom-mapping artifacts for a planned RBFE network.
+
+    Each edge gets ``mapping.json``, optional ``mapping.pkl``/``mapping.png``,
+    and ``mapping_status.json`` under ``out_dir``. The returned metadata is fed
+    directly into the interactive network HTML so users can inspect mapping
+    images, coverage, mapper identity, and metric scores before production.
+    """
     assets: dict[str, dict[str, Any]] = {}
     overrides = _coerce_atom_mapping_overrides(atom_mapping_overrides)
     for ref_raw, alt_raw in pairs:
@@ -1383,6 +1396,11 @@ def konnektor_pairs(
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
+
+    When ``plot_path`` is supplied, BATTER also asks Konnektor for a static
+    network PNG and writes ``network.graphml`` next to it. The richer
+    BATTER-authored HTML network is generated later from the resolved pair list
+    and prepared atom-mapping artifacts.
     """
     try:
         from gufe import SmallMoleculeComponent

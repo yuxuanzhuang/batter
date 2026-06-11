@@ -166,8 +166,10 @@ RBFE records use the same top-level pattern, but the payload is slightly differe
 ``Results/rbfe_network.html``
    Copy of the planned RBFE network dashboard from
    ``executions/<run_id>/artifacts/config/rbfe_network.html``. The dashboard is
-   generated during ``prepare_rbfe`` and includes the prepared atom-mapping images
-   when drawing succeeds.
+   generated during ``prepare_rbfe`` and includes pan/zoom controls, clickable
+   ligand and edge notes, collapsed reverse-direction edges, prepared
+   atom-mapping images when drawing succeeds, and selectable edge coloring by
+   graph redundancy or available mapping metrics.
 
 ``Results/mapping.*``
    Atom-mapping artifacts copied into the transformation setup directory from

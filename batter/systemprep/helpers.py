@@ -98,12 +98,37 @@ def select_receptor_anchor_atoms(
     max_p1_candidates: int = 30,
 ) -> List[str]:
     """
-    Automatically choose receptor P1/P2/P3 anchor selections.
+    Heuristically choose receptor P1/P2/P3 anchor selections.
 
     The workflow mirrors the restraint-search heuristics used in OpenFE in a
     static BATTER setup context: prefer stable backbone atoms, search near the
     first ligand, enforce the tutorial's P1-P2/P2-P3 distance and angle rules,
     and use the residue closest to ligand interaction atoms as the P1 anchor.
+    BATTER calls this automatically when ``create.anchor_atoms`` is omitted and
+    at least one real ligand pose is available.
+
+    Parameters
+    ----------
+    u_prot
+        Receptor universe after BATTER alignment/staging.
+    u_lig
+        Ligand universe used as the binding-site reference pose.
+    lig_sdf
+        Optional ligand SDF path used to identify chemically useful ligand
+        interaction atoms for P1 scoring.
+    protein_dssp
+        Optional DSSP result used to prefer stable secondary-structure anchors.
+    host_min_distance, host_max_distance
+        Ligand-to-host distance window for candidate receptor atoms.
+    min_anchor_distance
+        Minimum P1-P2 and P2-P3 spacing in Å.
+    target_angle
+        Preferred P1-P2-P3 angle in degrees.
+
+    Returns
+    -------
+    list[str]
+        Three MDAnalysis selection strings for P1, P2, and P3.
 
     Reference: OpenFE's Boresch restraint host-anchor workflow in
     ``openfe/protocols/restraint_utils/geometry/boresch/geometry.py`` and
@@ -199,13 +224,31 @@ def select_apo_receptor_anchor_atoms(
     max_p1_candidates: int = 30,
 ) -> List[str]:
     """
-    Automatically choose receptor P1/P2/P3 anchors without using a ligand pose.
+    Heuristically choose receptor P1/P2/P3 anchors without a ligand pose.
 
     Apo MD runs only need stable, non-degenerate receptor anchors to keep the
     existing BATTER equilibration machinery wired. Unlike
     :func:`select_receptor_anchor_atoms`, this selector deliberately ignores the
     ligand position and scores protein backbone triplets around the protein core,
     preferring the usual BATTER geometry without making it a hard requirement.
+    BATTER calls this automatically for apo-only MD runs when
+    ``create.anchor_atoms`` is omitted.
+
+    Parameters
+    ----------
+    u_prot
+        Receptor universe after BATTER alignment/staging.
+    protein_dssp
+        Optional DSSP result used to prefer stable secondary-structure anchors.
+    min_anchor_distance
+        Preferred minimum P1-P2 and P2-P3 spacing in Å.
+    target_angle
+        Preferred P1-P2-P3 angle in degrees.
+
+    Returns
+    -------
+    list[str]
+        Three MDAnalysis selection strings for P1, P2, and P3.
     """
     if min_anchor_distance <= 0:
         raise ValueError("min_anchor_distance must be positive.")
@@ -861,6 +904,32 @@ def find_anchor_atoms(
 ) -> Tuple[float, float, float, str, str, str, float]:
     """
     Identify Boresch-style anchor atoms and pocket geometry.
+
+    ``anchor_atoms`` may be an empty sequence. In that case BATTER selects a
+    receptor anchor triplet with :func:`select_receptor_anchor_atoms` before
+    resolving the formatted P1/P2/P3 strings and L1 vector. The orchestration
+    layer resolves apo-only MD anchors earlier with
+    :func:`select_apo_receptor_anchor_atoms`.
+
+    Parameters
+    ----------
+    u_prot
+        Receptor universe after BATTER alignment/staging.
+    u_lig
+        Ligand universe used to define the L1 vector and, when needed, the
+        ligand-guided receptor-anchor heuristic.
+    lig_sdf
+        Optional SDF path for ligand candidate and interaction-atom detection.
+    anchor_atoms
+        Zero or three MDAnalysis selection strings. Empty means auto-select
+        receptor anchors; three strings are used as explicit P1/P2/P3.
+    ligand_anchor_atom
+        Optional ligand atom selection used for the ligand COM calculation.
+    unbound_threshold
+        Optional ligand-to-anchor distance threshold in Å for setup validation.
+    apo_ligand
+        If true, synthesize the L1 vector instead of using dummy-ligand
+        coordinates.
 
     Returns
     -------

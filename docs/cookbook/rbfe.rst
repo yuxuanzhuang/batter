@@ -18,14 +18,15 @@ Minimal RBFE configuration
    create:
      system_name: my_system
      protein_input: /path/to/protein.pdb
-     anchor_atoms:
-       - "name CA and resid 113"
-       - "name CA and resid 82"
-       - "name CA and resid 316"
      ligand_paths:
        LIG1: /path/to/lig1.sdf
        LIG2: /path/to/lig2.sdf
        LIG3: /path/to/lig3.sdf
+     # Optional: provide explicit receptor anchors to override auto-selection.
+     # anchor_atoms:
+     #   - "name CA and resid 113"
+     #   - "name CA and resid 82"
+     #   - "name CA and resid 316"
 
    rbfe:
      mapping: default
@@ -37,6 +38,27 @@ Minimal RBFE configuration
 
 If you omit ``rbfe.mapping`` (and do not provide files), BATTER uses
 ``default``.
+
+Anchor selection
+----------------
+
+``create.anchor_atoms`` is optional. When it is omitted, BATTER chooses the
+three receptor anchors heuristically during system preparation:
+
+* For ABFE/RBFE and MD runs with at least one real ligand, BATTER uses the first
+  real ligand pose as the binding-site reference. It prefers stable receptor
+  backbone atoms near the ligand, keeps P1-P2 and P2-P3 separated by the usual
+  BATTER distance guideline, and scores P1 using nearby ligand interaction
+  atoms.
+* For apo-only MD runs, BATTER uses a protein-only heuristic that chooses a
+  stable, non-degenerate receptor-anchor triplet without relying on dummy
+  ligand coordinates.
+
+Provide ``create.anchor_atoms`` manually when you want fixed anchors for a
+known binding site, when the first ligand pose is not representative, or when
+the heuristic reports that no suitable triplet was found. Resolved anchors are
+stored in ``executions/<run_id>/all-ligands/manifest.json`` under
+``anchors`` and ``anchor_atom_selections``.
 
 Default mapping algorithm
 -------------------------
@@ -241,6 +263,8 @@ BATTER writes the resolved network to:
 
 * ``executions/<run_id>/artifacts/config/rbfe_network.json``
 * ``executions/<run_id>/artifacts/config/rbfe_network.html``
+* ``executions/<run_id>/artifacts/config/rbfe_network.png`` when Konnektor can
+  render a static plot
 * ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.json``
 * ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.pkl``
 * ``executions/<run_id>/artifacts/config/rbfe_mappings/<LIG1~LIG2>/mapping.png``
@@ -250,9 +274,21 @@ planned ligand graph and atom-mapping images in the same interactive style as th
 Cinnabar dashboard. Use ``--only-rbfe-network`` or
 ``run.only_rbfe_network: true`` if you want BATTER to stop immediately after
 writing these network artifacts.
-The HTML view colors edges by network redundancy by default and includes an edge
-color selector for available Kartograf mapping metrics such as RMSD score,
-mapped-atom ratio, volume ratio, and shape scores.
+
+The HTML view is the primary network-review artifact:
+
+* Pan or zoom the graph with the mouse, trackpad, or the ``+`` / ``-`` /
+  ``Fit`` / ``Reset`` controls.
+* Click a ligand node to open a draggable note with the ligand label and 2D
+  structure when RDKit rendering succeeds.
+* Click an edge label or edge path to inspect transformation index, direction,
+  mapper, mapped-atom count, atom-mapping image, and scores.
+* Reverse-direction pairs are collapsed into one display edge, but each
+  directed transformation remains listed in the edge note.
+* Edges are colored by network redundancy by default. The ``Edge color``
+  selector can switch to available Kartograf mapping metrics such as RMSD
+  score, mapped-atom ratio, volume ratio, shape mismatch, and shape overlap.
+  Missing optional metrics are simply absent from the selector.
 
 During planning, BATTER omits duplicate ligands with identical molecular identity
 and removes edges whose prepared atom mapping has full atom or heavy-atom

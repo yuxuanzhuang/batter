@@ -84,7 +84,7 @@ Use ``examples/mabfe_example.yaml`` as the starting configuration. Each field is
 Required Files
 ~~~~~~~~~~~~~~
 
-1. **Protein structure** – ``protein_input.pdb``  
+1. **Protein structure** – ``protein_input.pdb``
    It can be prepared in Maestro or equivalent software. Protonation states are
    inferred from residue names using AMBER conventions (for example, ASH denotes
    protonated ASP). When explicit hydrogens are present, BATTER also uses them to
@@ -132,7 +132,8 @@ Generating Simulation Inputs
    - ``create.*`` paths – point at your receptor, system, membrane, and restraint files.
    - ``create.anchor_atoms`` – Optional three atoms that define the binding site and
      restraint geometry. If omitted, BATTER auto-selects stable backbone anchors
-     from the first ligand pose with the guidelines below.
+     from the first ligand pose with the guidelines below. Apo-only MD uses a
+     protein-only heuristic instead of dummy ligand coordinates.
 
      Anchors (P1, P2, P3) should avoid loop regions, keep P1–P2 and P2–P3 ≥ 8 Å, and target
      ∠(P1–P2–P3) near 90°.
