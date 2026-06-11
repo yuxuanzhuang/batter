@@ -34,6 +34,7 @@ consume_prior_failure_marker >/dev/null
 
 archive_existing_log_file "$log_file"
 cleanup_stale_empty_md_artifacts relaxed
+cleanup_zero_frame_md_trajectories "$retry"
 
 # ------------------------- only_eq mode -------------------------
 if [[ $only_eq -eq 1 ]]; then

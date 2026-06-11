@@ -181,6 +181,97 @@ archive_suspect_md_restart_if_present() {
     return 0
 }
 
+md_nc_frame_count() {
+    local nc_file=$1
+
+    [[ -s "$nc_file" ]] || return 1
+    command -v ncdump >/dev/null 2>&1 || return 1
+
+    ncdump -h "$nc_file" 2>/dev/null | awk '
+      /frame[[:space:]]*=[[:space:]]*UNLIMITED/ {
+        s=$0
+        sub(/^.*\(/, "", s)
+        sub(/[[:space:]]+currently\).*$/, "", s)
+        if (s ~ /^[0-9]+$/) {
+          print s
+          found=1
+          exit
+        }
+      }
+      END { if (!found) exit 1 }
+    '
+}
+
+md_nc_has_zero_frames() {
+    local nc_file=$1
+    local frames
+
+    frames=$(md_nc_frame_count "$nc_file" 2>/dev/null) || return 1
+    [[ $frames =~ ^[0-9]+$ ]] || return 1
+    (( frames == 0 ))
+}
+
+archive_zero_frame_md_trajectory_if_present() {
+    local nc_file=$1
+    local retry_count=${2:-}
+    local stem out_file
+
+    [[ -n $nc_file && -s "$nc_file" ]] || return 1
+    md_nc_has_zero_frames "$nc_file" || return 1
+
+    stem=${nc_file%.nc}
+    out_file="${stem}.out"
+    if [[ -s "$out_file" ]] && md_out_has_completion_marker "$out_file"; then
+        return 1
+    fi
+
+    retry_count=$(retry_count_for_template "mdin-template" "$retry_count")
+    archive_failed_job_files "$retry_count" \
+        "$out_file" \
+        "$nc_file" \
+        "${stem}.log" \
+        "${stem}.mden" \
+        "${stem}.mdinfo"
+    echo "[INFO] Archived zero-frame MD trajectory $nc_file before restart."
+    return 0
+}
+
+cleanup_zero_frame_md_trajectories() {
+    local retry_count=${1:-}
+    local pattern nc_file seen_files=" "
+    local patterns=("md-*.nc" "md[0-9]*.nc")
+
+    if [[ -n ${ZSH_VERSION-} ]]; then
+        setopt local_options null_glob
+        for pattern in "${patterns[@]}"; do
+            for nc_file in ${~pattern}; do
+                case "$seen_files" in
+                    *" $nc_file "*) continue ;;
+                esac
+                seen_files="${seen_files}${nc_file} "
+                archive_zero_frame_md_trajectory_if_present "$nc_file" "$retry_count" || true
+            done
+        done
+        return 0
+    fi
+
+    local nullglob_was_on=0
+    shopt -q nullglob && nullglob_was_on=1
+    shopt -s nullglob
+    for pattern in "${patterns[@]}"; do
+        for nc_file in $pattern; do
+            case "$seen_files" in
+                *" $nc_file "*) continue ;;
+            esac
+            seen_files="${seen_files}${nc_file} "
+            archive_zero_frame_md_trajectory_if_present "$nc_file" "$retry_count" || true
+        done
+    done
+    if [[ $nullglob_was_on -eq 0 ]]; then
+        shopt -u nullglob
+    fi
+}
+
 cleanup_suspect_md_resume_state() {
     local retry_count=${1:-}
     local resume_mode=${2:-strict}

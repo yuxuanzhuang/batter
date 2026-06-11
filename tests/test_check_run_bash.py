@@ -352,6 +352,65 @@ def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_current_restart(
     assert not (tmp_path / "WRONG_FAIL").exists()
 
 
+def test_cleanup_zero_frame_md_trajectories_archives_only_incomplete_segments(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    ncdump = tmp_path / "ncdump"
+    ncdump.write_text(
+        """#!/usr/bin/env bash
+target="${@: -1}"
+case "$(basename "$target")" in
+  md-01.nc) frames=10 ;;
+  md-02.nc|md03.nc) frames=0 ;;
+  *) exit 1 ;;
+esac
+cat <<EOF
+netcdf trajectory {
+dimensions:
+    frame = UNLIMITED ; // (${frames} currently)
+}
+EOF
+"""
+    )
+    ncdump.chmod(0o755)
+
+    (tmp_path / "md-01.out").write_text("CONTROL DATA FOR THE RUN\n")
+    (tmp_path / "md-01.nc").write_text("nc\n")
+    (tmp_path / "md-02.out").write_text("CONTROL DATA FOR THE RUN\n")
+    (tmp_path / "md-02.nc").write_text("nc\n")
+    (tmp_path / "md03.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        "|  Final Performance Info:\n"
+    )
+    (tmp_path / "md03.nc").write_text("nc\n")
+
+    cmd = (
+        f"PATH='{tmp_path}':$PATH "
+        f"&& source '{check_run}' "
+        "&& cleanup_zero_frame_md_trajectories 7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Archived zero-frame MD trajectory md-02.nc" in result.stdout
+    assert (tmp_path / "md-01.out").exists()
+    assert (tmp_path / "md-01.nc").exists()
+    assert not (tmp_path / "md-02.out").exists()
+    assert not (tmp_path / "md-02.nc").exists()
+    assert (tmp_path / "md03.out").exists()
+    assert (tmp_path / "md03.nc").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-02.out"))
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-02.nc"))
+
+
 def test_select_valid_md_restart_keeps_current_restart(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"

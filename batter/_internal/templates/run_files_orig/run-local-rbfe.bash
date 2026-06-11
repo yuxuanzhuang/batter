@@ -60,6 +60,7 @@ should_skip_eq_step() {
 
 archive_existing_log_file "$log_file"
 cleanup_stale_empty_md_artifacts relaxed
+cleanup_zero_frame_md_trajectories "$retry"
 
 report_progress
 

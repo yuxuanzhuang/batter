@@ -74,6 +74,7 @@ run_penetration_check() {
 
 archive_existing_log_file "$log_file"
 cleanup_stale_empty_md_artifacts relaxed
+cleanup_zero_frame_md_trajectories "$retry_count"
 
 tmpl="mdin-template"
 mdin_current="mdin-current"
@@ -107,7 +108,7 @@ if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
     else
         print_and_run "$PMEMD_CPU_EXEC -O -i mini.in -p $PRMTOP -c mini.rst7 -o mini2.out -r mini2.rst7 -x mini2.nc -ref $INPCRD >> \"$log_file\" 2>&1"
     fi
-    check_sim_failure "Minimization 2" "$log_file" mini2.rst7
+    check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry_count"
 
     if ! check_min_energy "mini2.out" -1000; then
         echo "Minimization not passed with cuda; trying CPU"
@@ -122,7 +123,7 @@ if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then
         fi
 
         check_sim_failure "Minimization" "$log_file" mini.rst7
-        check_sim_failure "Minimization 2" "$log_file" mini2.rst7
+        check_sim_failure "Minimization 2" "$log_file" mini2.rst7 mini.rst7 "$retry_count"
 
         if ! check_min_energy "mini2.out" -1000; then
             echo "Minimization with CPU also failed, exiting."
