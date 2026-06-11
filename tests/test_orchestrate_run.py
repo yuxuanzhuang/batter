@@ -1113,6 +1113,37 @@ def test_notify_run_completion_includes_summary_table(
     assert summary_table in sent["message"]
 
 
+def test_notify_no_fe_record_completion_sends_only_equil_email(
+    tmp_path: Path, monkeypatch
+) -> None:
+    sent: dict[str, str | list[str]] = {}
+
+    monkeypatch.setattr(run_mod.smtplib, "SMTP", lambda host: _dummy_smtp(sent)(host))
+
+    rc = _make_rc(tmp_path, email_sender="config@example.com")
+    child = SimSystem(
+        name="sys:LIG:run1",
+        root=tmp_path / "simulations" / "LIG",
+        meta=SystemMeta(ligand="LIG"),
+    )
+
+    run_mod._notify_no_fe_record_completion(
+        rc,
+        "run1",
+        tmp_path / "executions" / "run1",
+        [child],
+        "FE production skipped (--only-equil)",
+    )
+
+    assert sent["sender"] == "config@example.com"
+    assert sent["recipients"] == ["dest@example.com"]
+    assert "Subject: BATTER run 'run1' of sys completed" in sent["message"]
+    assert "FE records were not exported." in sent["message"]
+    assert "FE production skipped (--only-equil)" in sent["message"]
+    assert "FE records stored under" not in sent["message"]
+    assert "- LIG (unbound): UNBOUND detected during equilibration" in sent["message"]
+
+
 def test_notify_run_completion_skips_when_sender_missing(
     tmp_path: Path, monkeypatch
 ) -> None:

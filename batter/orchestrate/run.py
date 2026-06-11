@@ -1619,8 +1619,14 @@ def _run_from_yaml_impl(
     # FE record save
     # --------------------
     if not has_fe_phase:
-        logger.info(
-            "FE production skipped (--only-equil); ending run without FE record export."
+        no_fe_reason = (
+            "FE production skipped (--only-equil)"
+            if rc.run.only_fe_preparation
+            else "FE production not included for this protocol"
+        )
+        logger.info(f"{no_fe_reason}; ending run without FE record export.")
+        _notify_no_fe_record_completion(
+            rc, run_id, run_dir, unbound_children, no_fe_reason
         )
         return
 
@@ -1704,6 +1710,8 @@ def _notify_run_completion(
     run_dir: Path,
     failures: list[tuple[str, str, str]],
     summary_table: str | None = None,
+    fe_records_exported: bool = True,
+    completion_note: str | None = None,
 ) -> None:
     _notify_run_status(
         rc,
@@ -1712,7 +1720,48 @@ def _notify_run_completion(
         run_dir=run_dir,
         failures=failures,
         summary_table=summary_table,
+        fe_records_exported=fe_records_exported,
+        completion_note=completion_note,
     )
+
+
+def _notify_no_fe_record_completion(
+    rc: RunConfig,
+    run_id: str,
+    run_dir: Path,
+    unbound_children: Sequence[SimSystem],
+    reason: str,
+) -> None:
+    failures = _unbound_completion_failures(unbound_children)
+    if failures:
+        failed = ", ".join(
+            [
+                f"{n} ({status}: {failure_reason})"
+                for n, status, failure_reason in failures
+            ]
+        )
+        logger.warning(f"{len(failures)} ligand(s) had post-run issues: {failed}")
+    _notify_run_completion(
+        rc,
+        run_id,
+        run_dir,
+        failures,
+        fe_records_exported=False,
+        completion_note=f"{reason}; no FE records were exported.",
+    )
+
+
+def _unbound_completion_failures(
+    unbound_children: Sequence[SimSystem],
+) -> list[tuple[str, str, str]]:
+    return [
+        (
+            str(child.meta.get("ligand", child.name)),
+            "unbound",
+            "UNBOUND detected during equilibration",
+        )
+        for child in unbound_children
+    ]
 
 
 def _notify_run_failure(
@@ -1738,6 +1787,8 @@ def _notify_run_status(
     failures: list[tuple[str, str, str]] | None = None,
     error: Exception | None = None,
     summary_table: str | None = None,
+    fe_records_exported: bool = True,
+    completion_note: str | None = None,
 ) -> None:
     recipient = rc.run.email_on_completion
     if not recipient:
@@ -1777,10 +1828,15 @@ def _notify_run_status(
                 f"Your BATTER run '{rc.create.system_name}' (run_id='{display_run_id}') completed at {timestamp} UTC.",
                 f"Protocol: {rc.protocol}",
                 f"Output folder: {run_dir}",
-                f"FE records stored under: {results_path}",
-                "",
             ]
         )
+        if fe_records_exported:
+            body_lines.append(f"FE records stored under: {results_path}")
+        else:
+            body_lines.append("FE records were not exported.")
+        if completion_note:
+            body_lines.append(completion_note)
+        body_lines.append("")
         if failures:
             body_lines.append(
                 "The following ligand(s) had post-run issues (see logs for additional context):"

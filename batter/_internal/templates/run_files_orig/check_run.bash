@@ -927,6 +927,93 @@ completed_time_ps_from_rst() {
     fi
 }
 
+md_restart_is_valid_for_resume() {
+    local restart_file=$1
+    local start_ps=${2:-0}
+    local restart_ps
+
+    [[ -s "$restart_file" ]] || return 1
+    restart_ps=$(completed_time_ps_from_rst "$restart_file")
+
+    awk -v rst="$restart_ps" -v start="$start_ps" '
+      BEGIN {
+        # Valid production restarts must be parseable and ahead of the initial
+        # production restart. Files at or before start_ps cannot represent useful
+        # resumed production progress.
+        exit !(rst + 0.0 > start + 1.0e-7)
+      }
+    '
+}
+
+archive_invalid_md_restart_if_present() {
+    local restart_file=$1
+    local latest_out_file=${2:-}
+    local retry_count=${3:-}
+    local start_ps=${4:-0}
+    local restart_ps
+
+    [[ -e "$restart_file" ]] || return 1
+    restart_ps=$(completed_time_ps_from_rst "$restart_file")
+
+    local files=("$restart_file")
+    if [[ -n $latest_out_file && -e "$latest_out_file" ]]; then
+        local stem
+        stem=${latest_out_file%.out}
+        files+=(
+            "$latest_out_file"
+            "${stem}.nc"
+            "${stem}.log"
+            "${stem}.mden"
+            "${stem}.mdinfo"
+        )
+    fi
+
+    archive_failed_job_files "$retry_count" "${files[@]}"
+    echo "[WARN] Archived invalid MD restart ${restart_file} before resume (restart=${restart_ps} ps, start=${start_ps} ps)."
+    return 0
+}
+
+select_valid_md_restart() {
+    local initial_restart=$1
+    local start_ps=${2:-0}
+    local retry_count=${3:-}
+    local latest_idx latest_out_file
+
+    SELECTED_MD_RESTART="$initial_restart"
+
+    latest_idx=$(latest_md_index "md-*.out")
+    if [[ $latest_idx -lt 0 ]]; then
+        latest_idx=$(latest_md_index "md*.out")
+    fi
+    latest_out_file=""
+    if [[ $latest_idx -ge 0 ]]; then
+        latest_out_file=$(printf "md-%02d.out" "$latest_idx")
+        if [[ ! -e "$latest_out_file" ]]; then
+            latest_out_file=$(printf "md%02d.out" "$latest_idx")
+        fi
+    fi
+
+    if [[ -e md-current.rst7 ]]; then
+        if md_restart_is_valid_for_resume "md-current.rst7" "$start_ps"; then
+            SELECTED_MD_RESTART="md-current.rst7"
+            return 0
+        fi
+        archive_invalid_md_restart_if_present \
+            "md-current.rst7" "$latest_out_file" "$retry_count" "$start_ps"
+    fi
+
+    if [[ -e md-previous.rst7 ]]; then
+        if md_restart_is_valid_for_resume "md-previous.rst7" "$start_ps"; then
+            SELECTED_MD_RESTART="md-previous.rst7"
+            return 0
+        fi
+        archive_invalid_md_restart_if_present \
+            "md-previous.rst7" "" "$retry_count" "$start_ps"
+    fi
+
+    return 0
+}
+
 completed_steps() {
     local tmpl=${1:-mdin-template}
     local tps prev_tps

@@ -350,3 +350,70 @@ def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_current_restart(
     assert (tmp_path / "md-current.rst7").exists()
     assert (tmp_path / "md-01.out").exists()
     assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_select_valid_md_restart_keeps_current_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-01.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& select_valid_md_restart eq.rst7 20 1 "
+        '&& printf "selected=%s\\n" "$SELECTED_MD_RESTART"'
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "selected=md-current.rst7" in result.stdout
+    assert (tmp_path / "md-current.rst7").exists()
+    assert not (tmp_path / "WRONG_FAIL").exists()
+
+
+def test_select_valid_md_restart_archives_invalid_current_and_uses_previous(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    (tmp_path / "md-current.rst7").write_text("not a restart\n")
+    (tmp_path / "md-previous.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-02.out").write_text(
+        "CONTROL DATA FOR THE RUN\n"
+        " NSTEP =    10000   TIME(PS) =      60.000  TEMP(K) =   298.0\n"
+    )
+    (tmp_path / "md-02.nc").write_text("partial trajectory\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& select_valid_md_restart eq.rst7 20 3 "
+        '&& printf "selected=%s\\n" "$SELECTED_MD_RESTART"'
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Archived invalid MD restart md-current.rst7" in result.stdout
+    assert "selected=md-previous.rst7" in result.stdout
+    assert not (tmp_path / "md-current.rst7").exists()
+    assert not (tmp_path / "md-02.out").exists()
+    assert not (tmp_path / "md-02.nc").exists()
+    assert (tmp_path / "md-previous.rst7").exists()
+    archived = list((tmp_path / "WRONG_FAIL").glob("*/md-current.rst7"))
+    assert len(archived) == 1
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-02.out"))
+    assert list((tmp_path / "WRONG_FAIL").glob("*/md-02.nc"))

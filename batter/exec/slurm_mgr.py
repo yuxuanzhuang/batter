@@ -371,7 +371,9 @@ class SlurmJobManager:
     poll_s : float, optional
         Poll interval (seconds) between status checks.
     max_retries : int, optional
-        Maximum automatic resubmissions per workdir (excluding TIMEOUT and COMPLETED-without-sentinel).
+        Maximum automatic resubmissions per workdir. Scheduler interruptions
+        such as TIMEOUT, PREEMPTED, and COMPLETED-without-sentinel do not count
+        against this budget.
     resubmit_backoff_s : float, optional
         Sleep before resubmitting a job after detecting termination/missing state.
     registry_file : pathlib.Path, optional
@@ -911,13 +913,19 @@ class SlurmJobManager:
                     continue
 
                 # ended or missing => resubmit / fail-out
-                timeout_state = state == "TIMEOUT"
+                scheduler_interrupt_state = state in {"TIMEOUT", "PREEMPTED"}
                 completed_state = state == "COMPLETED"
                 resub_reason = state or "MISSING"
 
-                # retry budget: TIMEOUT and COMPLETED-without-sentinel are unlimited (per prior behavior)
+                # Retry budget covers suspected simulation/job failures. Scheduler
+                # interruptions are unlimited because they are outside the window's
+                # control and can resume from rolling restart files.
                 r = retries.get(wd, 0)
-                if (not timeout_state and not completed_state) and r >= self.max_retries:
+                if (
+                    not scheduler_interrupt_state
+                    and not completed_state
+                    and r >= self.max_retries
+                ):
                     logger.error(
                         f"[SLURM] {wd_label}: exceeded max_retries={self.max_retries} "
                         f"(state={resub_reason}); marking FAILED"
@@ -931,10 +939,10 @@ class SlurmJobManager:
 
                 # resubmit
                 resub_cnt += 1
-                if timeout_state:
+                if scheduler_interrupt_state:
                     logger.debug(
                         f"[SLURM] {wd_label}: job{(' ' + jid) if jid else ''} "
-                        f"state=TIMEOUT; resubmitting"
+                        f"state={resub_reason}; resubmitting"
                     )
                 elif completed_state:
                     logger.debug(
@@ -951,7 +959,7 @@ class SlurmJobManager:
                 time.sleep(self.resubmit_backoff_s)
                 try:
                     self._submit(sp)
-                    if not timeout_state and not completed_state:
+                    if not scheduler_interrupt_state and not completed_state:
                         retries[wd] = r + 1
                         self._retries[wd] = retries[wd]
                 except Exception as e:

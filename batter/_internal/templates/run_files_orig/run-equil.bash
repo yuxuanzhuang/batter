@@ -210,22 +210,15 @@ fi
 production_start_marker="production-start.ps"
 production_initial_rst="eqnpt_appear.rst7"
 start_ps=$(production_start_ps "$production_start_marker" "$production_initial_rst")
+select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry_count"
+rst_in="$SELECTED_MD_RESTART"
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
 [[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
 [[ -z $current_ps ]] && current_ps=0
 
 echo "Current completed production time: $current_ps ps / $total_ps ps (restart=$restart_ps ps, start=$start_ps ps, dt=$dt_ps ps)"
-
-# pick previous restart: prefer current md if present, else fall back to eqnpt_appear
-rst_in="eqnpt_appear.rst7"
-if [[ -s md-current.rst7 ]]; then
-    rst_in="md-current.rst7"
-elif [[ -s md-previous.rst7 ]]; then
-    rst_in="md-previous.rst7"
-fi
-
-require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="$rst_in"
 

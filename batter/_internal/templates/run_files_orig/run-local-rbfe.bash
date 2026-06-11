@@ -59,7 +59,7 @@ should_skip_eq_step() {
 }
 
 archive_existing_log_file "$log_file"
-cleanup_stale_empty_md_artifacts
+cleanup_stale_empty_md_artifacts relaxed
 
 report_progress
 
@@ -191,6 +191,9 @@ chunk_ps=$(awk -v s="$chunk_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}'
 production_start_marker="production-start.ps"
 production_initial_rst="eq.rst7"
 start_ps=$(production_start_ps "$production_start_marker" "$production_initial_rst")
+select_valid_md_restart "$production_initial_rst" "$start_ps" "$retry"
+rst_in="$SELECTED_MD_RESTART"
+require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)
 [[ -z $restart_ps ]] && restart_ps=0
 current_ps=$(production_elapsed_ps "$restart_ps" "$start_ps")
@@ -203,16 +206,6 @@ seg_idx=$(latest_md_index "md-*.out")
 if [[ $seg_idx -lt 0 ]]; then
     seg_idx=0
 fi
-
-# Choose restart input (needed to run; NOT used for progress)
-rst_in="eq.rst7"
-if [[ -s md-current.rst7 ]]; then
-    rst_in="md-current.rst7"
-elif [[ -s md-previous.rst7 ]]; then
-    rst_in="md-previous.rst7"
-fi
-
-require_nonempty_file_or_attempt_fail "$rst_in" "[ERROR] Missing restart file $rst_in; cannot continue."
 
 last_rst="md-current.rst7"
 win_00=../COMPONENT00
