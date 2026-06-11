@@ -35,6 +35,7 @@ protein binding site. The main steps are:
 #. **Equilibrium analysis** - Find a representative frame from the equilibrated trajectory
    to start the FE windows from. RMSD analysis is also performed and saved in the equil folder. Adjust the bound/unbound cutoff via ``fe_sim.unbound_threshold`` if your system requires a different distance threshold.
 #. **Network planning** – Build the RBFE transformation map (pair list) based on the selected scheme.
+   Use ``--only-rbfe-network`` or ``run.only_rbfe_network: true`` to stop here and inspect the generated network before continuing.
 #. **FE window generation and submission** – λ windows are created based on the configuration.
 #. **FE equilibration** - very short equilibration runs to allow water relaxation. If flag ``--only-equil`` is provided, the workflow stops after this step.
 #. **FE production runs** – Each window runs as an independent local task or
@@ -276,6 +277,10 @@ Handy CLI Flags
     Remove ``FAILED`` sentinels, ``job_attempt.txt`` retry counters, and progress caches before rerunning a previous execution.
 ``--only-equil / --full``
     Stop after shared prep/equilibration—useful for debugging system setup before FE windows.
+``--only-rbfe-network / --full-rbfe``
+    For RBFE, stop after ``artifacts/config/rbfe_network.html`` and
+    ``rbfe_network.json`` are written so the planned ligand network can be
+    reviewed before ligand equilibration and FE setup.
 ``--dry-run``
     Stage the system and prepare equilibration inputs without running any MD.
 ``--run-id`` and ``--output-folder``

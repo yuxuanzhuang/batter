@@ -38,6 +38,20 @@ def _make_sim_cfg() -> SimulationConfig:
     )
 
 
+def test_rbfe_network_review_note_mentions_artifacts(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run1"
+
+    note = run_mod._rbfe_network_review_note(run_dir)
+
+    assert str(run_dir / "artifacts" / "config" / "rbfe_network.html") in note
+    assert str(run_dir / "artifacts" / "config" / "rbfe_network.json") in note
+    assert "edit rbfe_network.json" in note
+    assert "reloads its pairs field" in note
+    assert "fall back to the configured atom mapper" in note
+    assert "run.only_rbfe_network" in note
+    assert "--full-rbfe" in note
+
+
 @pytest.mark.parametrize("has_results", [False])
 def test_save_fe_records_failure(tmp_path: Path, has_results: bool) -> None:
     run_dir = tmp_path / "run1"
@@ -266,6 +280,37 @@ def test_build_rbfe_network_plan_writes_planned_html(
     assert "A~B" in html_text
     assert "data:image/png;base64,ZmFrZQ==" in html_text
     assert payload["mapping_artifacts_dir"] == "rbfe_mappings"
+
+
+def test_planned_rbfe_network_html_collapses_bidirectional_edges(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("networkx")
+    from batter.analysis.network import write_planned_rbfe_network_html
+
+    html_path = tmp_path / "rbfe_network.html"
+    written = write_planned_rbfe_network_html(
+        ligands=["A", "B", "C", "D"],
+        pairs=[
+            ["A", "B"],
+            ["B", "A"],
+            ["B", "C"],
+            ["C", "A"],
+            ["C", "D"],
+        ],
+        out_path=html_path,
+        metadata={"both_directions": True},
+    )
+
+    assert written
+    html_text = html_path.read_text()
+    assert html_text.count('class="edge-path"') == 4
+    assert "displayed edges" in html_text
+    assert '"pair_indexes": [1, 2]' in html_text
+    assert "A &lt;-&gt; B" in html_text or "A <-> B" in html_text
+    assert "connectivity_score" in html_text
+    assert "#dc2626" in html_text
+    assert "#f59e0b" in html_text
 
 
 def test_build_rbfe_network_plan_adds_atom_mapping_edges_when_requested(

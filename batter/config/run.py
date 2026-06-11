@@ -859,6 +859,10 @@ class RunSection(BaseModel):
         False,
         description="When true, stop the workflow after FE preparation.",
     )
+    only_rbfe_network: bool = Field(
+        False,
+        description="When true for RBFE, stop after the ligand network is planned.",
+    )
     on_failure: Literal["raise", "prune", "retry"] = Field(
         "raise",
         description="Behavior on ligand failure: 'raise', 'prune', or 'retry' (clear FAILED sentinels and rerun once).",
@@ -1057,6 +1061,10 @@ class RunConfig(BaseModel):
     def _validate_rbfe_section(self) -> "RunConfig":
         if self.rbfe is not None and self.protocol != "rbfe":
             raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
+        if self.run.only_rbfe_network and self.protocol != "rbfe":
+            raise ValueError(
+                "run.only_rbfe_network is only valid when protocol='rbfe'."
+            )
         return self
 
     @field_validator("protocol", mode="before")

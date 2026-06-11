@@ -247,7 +247,9 @@ BATTER writes the resolved network to:
 
 Open ``rbfe_network.html`` before production windows are submitted to inspect the
 planned ligand graph and atom-mapping images in the same interactive style as the
-Cinnabar dashboard.
+Cinnabar dashboard. Use ``--only-rbfe-network`` or
+``run.only_rbfe_network: true`` if you want BATTER to stop immediately after
+writing these network artifacts.
 
 Transformation systems are created under:
 

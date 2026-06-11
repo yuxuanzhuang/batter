@@ -134,6 +134,32 @@ def _require_rbfe_network_file(config_dir: Path) -> Path:
     )
 
 
+def _rbfe_network_review_note(run_dir: Path) -> str:
+    config_dir = Path(run_dir) / "artifacts" / "config"
+    network_html = config_dir / "rbfe_network.html"
+    network_json = config_dir / "rbfe_network.json"
+    return (
+        "RBFE ligand network planning complete. Review the planned network before "
+        "continuing:\n"
+        f"  HTML: {network_html}\n"
+        f"  JSON: {network_json}\n"
+        "You may edit rbfe_network.json before continuing; BATTER reloads its "
+        "pairs field for RBFE transformation setup. Newly added pairs without "
+        "prepared mapping artifacts fall back to the configured atom mapper.\n"
+        "If the network looks correct, set run.only_rbfe_network: false or rerun "
+        "with --full-rbfe to continue."
+    )
+
+
+def _log_rbfe_network_review_note(run_dir: Path) -> None:
+    logger.info(_rbfe_network_review_note(run_dir))
+
+
+def _validate_only_rbfe_network(rc: RunConfig) -> None:
+    if bool(getattr(rc.run, "only_rbfe_network", False)) and rc.protocol != "rbfe":
+        raise ValueError("run.only_rbfe_network is only valid when protocol='rbfe'.")
+
+
 def _slurm_registry_path(run_dir: Path) -> Path:
     """Return the registry path under artifacts/slurm, migrating legacy .slurm if present."""
     new_path = run_dir / "artifacts" / "slurm" / "queue.jsonl"
@@ -709,6 +735,7 @@ def _run_from_yaml_impl(
         rc = rc.model_copy(update={"run": rc.run.model_copy(update=run_overrides)})
     if on_failure:
         rc.run.on_failure = on_failure
+    _validate_only_rbfe_network(rc)
 
     logger.info(
     "Run configuration:\n{}",
@@ -970,6 +997,9 @@ def _run_from_yaml_impl(
                 ],
             )
         _require_rbfe_network_file(config_dir)
+        if bool(getattr(rc.run, "only_rbfe_network", False)):
+            _log_rbfe_network_review_note(run_dir)
+            return
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
         sim_cfg_updated = sim_cfg.model_copy(

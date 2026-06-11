@@ -41,9 +41,53 @@ def _as_pair_list(pairs: Sequence[Sequence[str] | tuple[str, str]]) -> list[tupl
     return out
 
 
+def _display_edges_from_pairs(
+    pairs: Sequence[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """Collapse reverse-direction transformations into one display edge."""
+    display_edges: list[dict[str, Any]] = []
+    by_undirected_pair: dict[tuple[str, str], dict[str, Any]] = {}
+    for pair_index, (ref, alt) in enumerate(pairs, start=1):
+        ref = str(ref)
+        alt = str(alt)
+        edge_key = f"{ref}~{alt}"
+        undirected_key = tuple(sorted((ref, alt)))
+        edge = by_undirected_pair.get(undirected_key)
+        if edge is None:
+            edge = {
+                "ref": ref,
+                "alt": alt,
+                "edge_key": edge_key,
+                "pair_indexes": [],
+                "directions": [],
+            }
+            by_undirected_pair[undirected_key] = edge
+            display_edges.append(edge)
+        edge["pair_indexes"].append(pair_index)
+        edge["directions"].append(
+            {
+                "ref": ref,
+                "alt": alt,
+                "edge_key": edge_key,
+                "pair_index": pair_index,
+            }
+        )
+    return display_edges
+
+
+def _display_edge_label(pair_indexes: Sequence[int]) -> str:
+    if not pair_indexes:
+        return "T?"
+    if len(pair_indexes) == 1:
+        return f"T{pair_indexes[0]}"
+    if len(pair_indexes) == 2:
+        return f"T{pair_indexes[0]}/T{pair_indexes[1]}"
+    return f"T{pair_indexes[0]}+{len(pair_indexes) - 1}"
+
+
 def _planned_graph_with_layout(
     ligands: Sequence[str],
-    pairs: Sequence[tuple[str, str]],
+    display_edges: Sequence[Mapping[str, Any]],
 ) -> tuple[Any, dict[str, np.ndarray]]:
     from batter.analysis.cinnabar import (
         _ensure_node_spacing,
@@ -54,16 +98,23 @@ def _planned_graph_with_layout(
     )
 
     nx = _import_networkx()
-    graph = nx.DiGraph()
+    graph = nx.Graph()
     graph.add_nodes_from(str(ligand) for ligand in ligands)
-    for index, (ref, alt) in enumerate(pairs, start=1):
-        graph.add_edge(str(ref), str(alt), pair_index=index)
+    for display_index, edge in enumerate(display_edges, start=1):
+        graph.add_edge(
+            str(edge["ref"]),
+            str(edge["alt"]),
+            display_index=display_index,
+            edge_key=str(edge["edge_key"]),
+            pair_indexes=list(edge["pair_indexes"]),
+            directions=list(edge["directions"]),
+        )
 
     if graph.number_of_nodes() == 0:
         return graph, {}
 
     component_layouts: list[tuple[dict[str, np.ndarray], dict[str, float]]] = []
-    for component_nodes in nx.connected_components(graph.to_undirected()):
+    for component_nodes in nx.connected_components(graph):
         subgraph = graph.subgraph(component_nodes).copy()
         radii = _layout_node_radii(subgraph)
         positions = _initial_component_layout(subgraph)
@@ -75,6 +126,55 @@ def _planned_graph_with_layout(
         )
         component_layouts.append((positions, radii))
     return graph, _pack_component_layouts(component_layouts)
+
+
+def _edge_connectivity_metadata(graph: Any) -> dict[tuple[str, str], dict[str, Any]]:
+    """Score each edge by alternate edge-disjoint paths after edge removal."""
+    try:
+        from batter.analysis.cinnabar import _import_networkx
+
+        nx = _import_networkx()
+    except Exception:
+        return {}
+
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for node_a, node_b in graph.edges:
+        node_a = str(node_a)
+        node_b = str(node_b)
+        key = tuple(sorted((node_a, node_b)))
+        test_graph = graph.copy()
+        if test_graph.has_edge(node_a, node_b):
+            test_graph.remove_edge(node_a, node_b)
+        score = 0
+        path_length: int | None = None
+        if node_a != node_b and nx.has_path(test_graph, node_a, node_b):
+            try:
+                score = int(nx.edge_connectivity(test_graph, node_a, node_b))
+            except Exception:
+                score = 1
+            try:
+                path_length = int(nx.shortest_path_length(test_graph, node_a, node_b))
+            except Exception:
+                path_length = None
+        if score <= 0:
+            label = "bridge: no alternate path"
+            color = "#dc2626"
+        elif score == 1:
+            label = "1 alternate edge-disjoint path"
+            color = "#f59e0b"
+        elif score == 2:
+            label = "2 alternate edge-disjoint paths"
+            color = "#16a34a"
+        else:
+            label = f"{score} alternate edge-disjoint paths"
+            color = "#0f766e"
+        out[key] = {
+            "connectivity_score": score,
+            "connectivity_label": label,
+            "alternate_path_length": path_length,
+            "edge_color": color,
+        }
+    return out
 
 
 def _planned_ligand_assets(
@@ -186,8 +286,9 @@ def write_planned_rbfe_network_html(
 ) -> bool:
     """Write an interactive HTML visualization for a planned RBFE network."""
     pair_list = _as_pair_list(pairs)
+    display_edges = _display_edges_from_pairs(pair_list)
     ligand_list = [str(ligand) for ligand in ligands]
-    if not ligand_list or not pair_list:
+    if not ligand_list or not pair_list or not display_edges:
         return False
 
     try:
@@ -201,9 +302,10 @@ def write_planned_rbfe_network_html(
     except Exception:
         return False
 
-    graph, pos = _planned_graph_with_layout(ligand_list, pair_list)
+    graph, pos = _planned_graph_with_layout(ligand_list, display_edges)
     if not pos:
         return False
+    edge_connectivity = _edge_connectivity_metadata(graph)
 
     color_meta = _node_color_mapping(graph, None)
     node_values = color_meta["values"]
@@ -229,11 +331,8 @@ def write_planned_rbfe_network_html(
         return x, y
 
     def _edge_curvature(node_a: str, node_b: str) -> float:
-        if graph.has_edge(node_b, node_a) and node_a != node_b:
-            return 0.24
         return 0.0
 
-    edge_color = "#7c3aed"
     node_degree = dict(graph.degree())
     node_radius = {node: 26.0 + 2.0 * node_degree[node] for node in graph.nodes}
     node_fill: dict[str, str] = {}
@@ -250,19 +349,65 @@ def write_planned_rbfe_network_html(
     for node_a, node_b, data in graph.edges(data=True):
         node_a = str(node_a)
         node_b = str(node_b)
-        edge_key = f"{node_a}~{node_b}"
-        pair_index = int(data.get("pair_index", len(planned_edges) + 1))
+        edge_key = str(data.get("edge_key") or f"{node_a}~{node_b}")
+        pair_indexes = [int(value) for value in data.get("pair_indexes", [])]
+        directions = list(data.get("directions", []))
+        direction_payloads: list[dict[str, Any]] = []
+        for direction in directions:
+            direction_payload = dict(direction)
+            direction_key = str(direction_payload.get("edge_key") or "")
+            if edge_assets and direction_key in edge_assets:
+                direction_payload.update(dict(edge_assets[direction_key]))
+            direction_payloads.append(direction_payload)
+
+        primary_payload = next(
+            (
+                payload
+                for payload in direction_payloads
+                if payload.get("image_data_uri") or payload.get("image_src")
+            ),
+            direction_payloads[0] if direction_payloads else {},
+        )
+        direction_count = len(direction_payloads) or 1
+        connectivity = edge_connectivity.get(
+            tuple(sorted((node_a, node_b))),
+            {
+                "connectivity_score": 0,
+                "connectivity_label": "bridge: no alternate path",
+                "alternate_path_length": None,
+                "edge_color": "#dc2626",
+            },
+        )
+        display_title = (
+            f"{node_a} <-> {node_b}"
+            if direction_count > 1
+            else f"{node_a} -> {node_b}"
+        )
         planned_edges[edge_key] = {
             "edge_key": edge_key,
-            "display_title": f"{node_a} -> {node_b}",
-            "pair_index": pair_index,
+            "display_title": display_title,
+            "pair_index": pair_indexes[0] if pair_indexes else len(planned_edges) + 1,
+            "pair_indexes": pair_indexes,
             "ref": node_a,
             "alt": node_b,
+            "direction_count": direction_count,
+            "directions": direction_payloads,
+            **connectivity,
         }
-        if edge_assets and edge_key in edge_assets:
-            planned_edges[edge_key].update(dict(edge_assets[edge_key]))
+        for key in (
+            "image_data_uri",
+            "image_src",
+            "image_alt",
+            "mapping_path",
+            "mapping_dir",
+            "mapper",
+            "n_mapped",
+        ):
+            if key in primary_payload:
+                planned_edges[edge_key][key] = primary_payload[key]
 
         curvature = _edge_curvature(node_a, node_b)
+        edge_color = str(connectivity.get("edge_color") or "#7c3aed")
         start = np.asarray(_to_xy(pos[node_a]), dtype=float)
         end = np.asarray(_to_xy(pos[node_b]), dtype=float)
         direction = end - start
@@ -302,7 +447,7 @@ def write_planned_rbfe_network_html(
         text_pos = 0.25 * start2 + 0.5 * control + 0.25 * tip
         text_pos = text_pos + perp * curvature * span * 0.18
         label_specs.append({"base": text_pos, "tangent": unit_dir, "normal": perp})
-        label_payloads.append((edge_key, f"T{pair_index}"))
+        label_payloads.append((edge_key, _display_edge_label(pair_indexes)))
 
     label_svg: list[str] = []
     resolved_label_positions = _resolve_label_positions(label_specs, box_size=(44.0, 26.0))
@@ -333,6 +478,11 @@ def write_planned_rbfe_network_html(
     summary_items = [
         ("ligands", str(len(ligand_list))),
         ("planned transformations", str(len(pair_list))),
+        *(
+            [("displayed edges", str(len(display_edges)))]
+            if len(display_edges) != len(pair_list)
+            else []
+        ),
         *_planned_metadata_items(metadata),
     ]
     summary_html = "".join(
@@ -341,7 +491,9 @@ def write_planned_rbfe_network_html(
     )
     notes = [
         "Planned transformations are labeled T1, T2, ... in the order stored in rbfe_network.json.",
+        "Reverse-direction pairs are collapsed to one visual edge in this HTML view.",
         "Node colors reflect graph degree at planning time.",
+        "Edge colors reflect alternate edge-disjoint paths after removing the edge: red is a bridge, green is more redundant.",
     ]
 
     html_text = f"""<!DOCTYPE html>
@@ -495,14 +647,29 @@ def write_planned_rbfe_network_html(
       const edge = plannedEdges[edgeKey] || {{}};
       const ref = edge.ref || '';
       const alt = edge.alt || '';
-      const index = edge.pair_index ? `T${{edge.pair_index}}` : edgeKey;
+      const pairIndexes = Array.isArray(edge.pair_indexes) && edge.pair_indexes.length
+        ? edge.pair_indexes
+        : (edge.pair_index ? [edge.pair_index] : []);
+      const index = pairIndexes.length ? pairIndexes.map((value) => `T${{value}}`).join(', ') : edgeKey;
       const imgSrc = edge.image_data_uri || edge.image_src || '';
       const image = imgSrc
         ? `<img class="mapping-image" src="${{imgSrc}}" alt="${{edge.image_alt || 'Atom mapping'}}" />`
         : '';
       const nMapped = edge.n_mapped ? `<br />mapped atoms: ${{edge.n_mapped}}` : '';
       const mapper = edge.mapper ? `<br />mapper: ${{edge.mapper}}` : '';
-      return `<div class="sticky-body">${{image}}<div class="sticky-meta">transformation: ${{index}}<br />reference: ${{ref}}<br />target: ${{alt}}${{mapper}}${{nMapped}}</div></div>`;
+      const directions = Array.isArray(edge.directions) && edge.directions.length > 1
+        ? `<br />directions: ${{edge.directions.map((direction) => {{
+            const dIndex = direction.pair_index ? `T${{direction.pair_index}}` : direction.edge_key;
+            return `${{dIndex}} ${{direction.ref}} -> ${{direction.alt}}`;
+          }}).join('; ')}}`
+        : '';
+      const connectivity = edge.connectivity_label
+        ? `<br />connectivity: ${{edge.connectivity_label}}`
+        : '';
+      const alternateLength = Number.isInteger(edge.alternate_path_length)
+        ? `<br />alternate path length: ${{edge.alternate_path_length}}`
+        : '';
+      return `<div class="sticky-body">${{image}}<div class="sticky-meta">transformation: ${{index}}<br />reference: ${{ref}}<br />target: ${{alt}}${{directions}}${{connectivity}}${{alternateLength}}${{mapper}}${{nMapped}}</div></div>`;
     }}
 
     function openSticky(kind, key, event) {{
