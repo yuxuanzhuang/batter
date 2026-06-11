@@ -48,6 +48,7 @@ def test_rbfe_network_review_note_mentions_artifacts(tmp_path: Path) -> None:
     assert "edit rbfe_network.json" in note
     assert "reloads its pairs field" in note
     assert "fall back to the configured atom mapper" in note
+    assert "Identical duplicate ligands and full-map edges are omitted" in note
     assert "run.only_rbfe_network" in note
     assert "--full-rbfe" in note
 
@@ -300,6 +301,11 @@ def test_planned_rbfe_network_html_collapses_bidirectional_edges(
         ],
         out_path=html_path,
         metadata={"both_directions": True},
+        edge_assets={
+            "A~B": {"mapping_score_rmsd": 0.91, "mapping_rmsd": 0.18},
+            "B~A": {"mapping_score_rmsd": 0.89, "mapping_rmsd": 0.21},
+            "B~C": {"mapping_score_ratio_mapped_atoms": 0.72},
+        },
     )
 
     assert written
@@ -309,6 +315,11 @@ def test_planned_rbfe_network_html_collapses_bidirectional_edges(
     assert '"pair_indexes": [1, 2]' in html_text
     assert "A &lt;-&gt; B" in html_text or "A <-> B" in html_text
     assert "connectivity_score" in html_text
+    assert "edge-metric-select" in html_text
+    assert "edgeMetricDefinitions" in html_text
+    assert "Kartograf RMSD score" in html_text
+    assert "mapping_score_rmsd" in html_text
+    assert '"mapping_score_rmsd": 0.9' in html_text
     assert "#dc2626" in html_text
     assert "#f59e0b" in html_text
 
@@ -354,6 +365,150 @@ def test_build_rbfe_network_plan_adds_atom_mapping_edges_when_requested(
     assert payload["add_atom_mapping_edges"] is True
     assert payload["added_atom_mapping_edges"] == [["B", "C"]]
     assert seen["pairs"] == [["A", "B"], ["B", "C"]]
+
+
+def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    monkeypatch.setattr(
+        "batter.rbfe.ligand_identity_key",
+        lambda path: "same" if Path(path).stem in {"A", "B"} else Path(path).stem,
+    )
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["B", "C"]]}))
+    seen: dict[str, object] = {}
+
+    def _fake_mapping_artifacts(**kwargs):
+        seen["pairs"] = kwargs["pairs"]
+        seen["ligand_files"] = kwargs["ligand_files"]
+        return {}
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+    )
+
+    assert payload["ligands"] == ["A", "C"]
+    assert payload["pairs"] == [["A", "C"]]
+    assert payload["skipped_identical_ligands"] == [
+        {"ligand": "B", "kept": "A", "identity": "same"}
+    ]
+    assert payload["dropped_identical_ligand_pairs"] == [
+        {"pair": ["A", "B"], "kept": "A", "reason": "identical_ligands"}
+    ]
+    assert payload["remapped_identical_ligand_pairs"] == [
+        {"from": ["B", "C"], "to": ["A", "C"], "reason": "identical_ligands"}
+    ]
+    assert seen["pairs"] == [["A", "C"]]
+    assert set(seen["ligand_files"]) == {"A", "C"}
+
+
+def test_build_rbfe_network_plan_all_identical_ligands_writes_empty_network(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    monkeypatch.setattr("batter.rbfe.ligand_identity_key", lambda path: "same")
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+        },
+        RBFENetworkArgs(mapping="default"),
+        tmp_path,
+    )
+
+    assert payload["ligands"] == ["A"]
+    assert payload["pairs"] == []
+    assert payload["skipped_identical_ligands"] == [
+        {"ligand": "B", "kept": "A", "identity": "same"}
+    ]
+    assert json.loads((tmp_path / "rbfe_network.json").read_text())["pairs"] == []
+
+
+def test_build_rbfe_network_plan_skips_full_map_edges(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    monkeypatch.setattr(
+        "batter.rbfe.ligand_identity_key",
+        lambda path: Path(path).stem,
+    )
+    mapping_file = tmp_path / "mapping.json"
+    mapping_file.write_text(json.dumps({"pairs": [["A", "B"], ["A", "C"]]}))
+    seen: dict[str, object] = {}
+
+    def _fake_mapping_artifacts(**kwargs):
+        seen["pairs"] = kwargs["pairs"]
+        return {
+            "A~B": {
+                "full_atom_mapping": False,
+                "full_heavy_atom_mapping": True,
+                "n_mapped": 6,
+                "n_ref_atoms": 8,
+                "n_alt_atoms": 8,
+                "n_ref_heavy_atoms": 6,
+                "n_alt_heavy_atoms": 6,
+            },
+            "A~C": {
+                "full_atom_mapping": False,
+                "n_mapped": 4,
+                "n_ref_atoms": 6,
+                "n_alt_atoms": 7,
+            },
+        }
+
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B", "C"],
+        {
+            "A": str(tmp_path / "A.sdf"),
+            "B": str(tmp_path / "B.sdf"),
+            "C": str(tmp_path / "C.sdf"),
+        },
+        RBFENetworkArgs(mapping_file=mapping_file),
+        tmp_path,
+    )
+
+    assert seen["pairs"] == [["A", "B"], ["A", "C"]]
+    assert payload["pairs"] == [["A", "C"]]
+    assert payload["skipped_full_atom_map_edges"] == [
+        {
+            "pair": ["A", "B"],
+            "n_mapped": 6,
+            "n_ref_atoms": 8,
+            "n_alt_atoms": 8,
+            "n_ref_heavy_atoms": 6,
+            "n_alt_heavy_atoms": 6,
+            "reason": "full_heavy_atom_mapping",
+        }
+    ]
 
 
 def test_build_rbfe_network_plan_treats_reverse_atom_mapping_edge_as_planned(
@@ -447,6 +602,17 @@ def test_rbfe_preflight_requires_network_file_when_prepare_marker_exists(
 
     with pytest.raises(FileNotFoundError, match="rbfe_network.json"):
         run_mod._preflight_rbfe_mapping_files(rc, run_dir)
+
+
+def test_rbfe_network_pair_guard_rejects_empty_network(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "rbfe_network.json").write_text(
+        json.dumps({"ligands": ["A", "B"], "pairs": []})
+    )
+
+    with pytest.raises(RuntimeError, match="no ligand pairs"):
+        run_mod._require_rbfe_network_has_pairs(config_dir)
 
 
 def test_prepare_rbfe_handler_writes_parent_stage_marker(

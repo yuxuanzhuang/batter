@@ -1068,7 +1068,7 @@ def create_box(ctx: BuildContext) -> None:
 
     build_cap_count = _rewrite_terminal_amide_caps_for_leap(window_dir / "build.pdb")
     if build_cap_count:
-        logger.info(
+        logger.debug(
             "Rewrote {} terminal protein amide cap(s) as Amber NHE/NME residues before pre-solvation LEaP.",
             build_cap_count,
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import math
 from pathlib import Path
 import json
 import pickle
@@ -253,6 +254,212 @@ def _component_num_atoms(component: Any) -> int | None:
         except Exception:
             return None
     return None
+
+
+def _mol_num_atoms(mol: Any) -> int | None:
+    if mol is None or not hasattr(mol, "GetNumAtoms"):
+        return None
+    try:
+        return int(mol.GetNumAtoms())
+    except Exception:
+        return None
+
+
+def _mol_heavy_atom_indices(mol: Any) -> set[int] | None:
+    n_atoms = _mol_num_atoms(mol)
+    if n_atoms is None or not hasattr(mol, "GetAtomWithIdx"):
+        return None
+    heavy: set[int] = set()
+    try:
+        for idx in range(n_atoms):
+            if mol.GetAtomWithIdx(idx).GetAtomicNum() != 1:
+                heavy.add(idx)
+    except Exception:
+        return None
+    return heavy
+
+
+def _mapping_coverage_status(
+    mol_ref: Any,
+    mol_alt: Any,
+    map_b_to_a: Mapping[Any, Any],
+) -> dict[str, Any]:
+    """Return atom-count metadata for a componentB-to-componentA mapping."""
+    try:
+        alt_to_ref = {int(key): int(value) for key, value in map_b_to_a.items()}
+    except Exception:
+        return {}
+
+    n_ref_atoms = _mol_num_atoms(mol_ref)
+    n_alt_atoms = _mol_num_atoms(mol_alt)
+    if n_ref_atoms is None or n_alt_atoms is None:
+        return {}
+
+    alt_indices = set(alt_to_ref)
+    ref_indices = set(alt_to_ref.values())
+    status: dict[str, Any] = {
+        "n_ref_atoms": n_ref_atoms,
+        "n_alt_atoms": n_alt_atoms,
+        "full_atom_mapping": (
+            len(alt_to_ref) == n_alt_atoms == n_ref_atoms
+            and alt_indices == set(range(n_alt_atoms))
+            and ref_indices == set(range(n_ref_atoms))
+        ),
+    }
+
+    ref_heavy = _mol_heavy_atom_indices(mol_ref)
+    alt_heavy = _mol_heavy_atom_indices(mol_alt)
+    if ref_heavy is not None and alt_heavy is not None:
+        mapped_alt_heavy = {idx for idx in alt_indices if idx in alt_heavy}
+        mapped_ref_heavy = {idx for idx in ref_indices if idx in ref_heavy}
+        status.update(
+            {
+                "n_ref_heavy_atoms": len(ref_heavy),
+                "n_alt_heavy_atoms": len(alt_heavy),
+                "full_heavy_atom_mapping": (
+                    len(mapped_alt_heavy) == len(alt_heavy) == len(ref_heavy)
+                    and mapped_alt_heavy == alt_heavy
+                    and mapped_ref_heavy == ref_heavy
+                ),
+            }
+        )
+
+    return status
+
+
+def _finite_float(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    if not math.isfinite(out):
+        return None
+    return out
+
+
+def _mapping_metric_scores(mapping: Any) -> dict[str, float]:
+    """Compute optional Kartograf mapping metrics for visualization."""
+    if mapping is None:
+        return {}
+
+    metric_calls: list[tuple[str, Any, str]] = []
+    try:
+        from kartograf.mapping_metrics.metric_mapping_rmsd import MappingRMSDScorer
+
+        scorer = MappingRMSDScorer()
+        metric_calls.append(("mapping_rmsd", scorer, "get_rmsd"))
+        metric_calls.append(("mapping_score_rmsd", scorer, "get_score"))
+    except Exception:
+        pass
+    try:
+        from kartograf.mapping_metrics.metric_volume_ratio import (
+            MappingRatioMappedAtomsScorer,
+            MappingVolumeRatioScorer,
+        )
+
+        metric_calls.append(
+            (
+                "mapping_score_ratio_mapped_atoms",
+                MappingRatioMappedAtomsScorer(),
+                "get_score",
+            )
+        )
+        metric_calls.append(
+            ("mapping_score_volume_ratio", MappingVolumeRatioScorer(), "get_score")
+        )
+    except Exception:
+        pass
+    try:
+        from kartograf.mapping_metrics.metric_shape_difference import (
+            MappingShapeMismatchScorer,
+            MappingShapeOverlapScorer,
+        )
+
+        metric_calls.append(
+            (
+                "mapping_score_shape_mismatch",
+                MappingShapeMismatchScorer(),
+                "get_score",
+            )
+        )
+        metric_calls.append(
+            (
+                "mapping_score_shape_overlap",
+                MappingShapeOverlapScorer(),
+                "get_score",
+            )
+        )
+    except Exception:
+        pass
+
+    scores: dict[str, float] = {}
+    for key, scorer, method_name in metric_calls:
+        try:
+            method = getattr(scorer, method_name)
+            value = _finite_float(method(mapping))
+        except Exception as exc:
+            logger.debug(f"Could not compute RBFE mapping metric {key}: {exc}")
+            continue
+        if value is not None:
+            scores[key] = value
+    return scores
+
+
+def ligand_identity_key(path: Path | str) -> str:
+    """Return a canonical molecule identity key for RBFE duplicate filtering."""
+    mol = _load_rdkit_mol(Path(path))
+    try:
+        identity_mol = Chem.AddHs(Chem.RemoveHs(Chem.Mol(mol)), addCoords=False)
+    except Exception:
+        identity_mol = mol
+    return Chem.MolToSmiles(identity_mol, isomericSmiles=True)
+
+
+def deduplicate_identical_ligands(
+    ligands: Sequence[str],
+    ligand_files: Mapping[str, Path | str],
+) -> tuple[list[str], dict[str, str], list[dict[str, str]]]:
+    """
+    Keep the first ligand for each exact molecular identity.
+
+    Returns kept ligand names, a skipped->kept replacement map, and metadata for
+    skipped duplicate ligands.
+    """
+    kept: list[str] = []
+    replacements: dict[str, str] = {}
+    skipped: list[dict[str, str]] = []
+    first_by_identity: dict[str, str] = {}
+
+    for ligand in ligands:
+        path = ligand_files.get(ligand)
+        if path is None:
+            kept.append(ligand)
+            continue
+        try:
+            identity = ligand_identity_key(path)
+        except Exception as exc:
+            logger.warning(
+                f"Could not determine RBFE ligand identity for {ligand} ({path}): {exc}; keeping it."
+            )
+            kept.append(ligand)
+            continue
+
+        representative = first_by_identity.get(identity)
+        if representative is None:
+            first_by_identity[identity] = ligand
+            kept.append(ligand)
+            continue
+
+        replacements[ligand] = representative
+        skipped.append(
+            {
+                "ligand": ligand,
+                "kept": representative,
+                "identity": identity,
+            }
+        )
+
+    return kept, replacements, skipped
 
 
 class _SimpleLigandAtomMapping:
@@ -840,10 +1047,24 @@ def _edge_asset_from_mapping_dir(pair_id: str, pair_dir: Path) -> dict[str, Any]
     if status.is_file():
         try:
             status_payload = json.loads(status.read_text())
-            if "n_mapped" in status_payload:
-                asset["n_mapped"] = status_payload["n_mapped"]
-            if "mapper" in status_payload:
-                asset["mapper"] = status_payload["mapper"]
+            for key in (
+                "n_mapped",
+                "mapper",
+                "n_ref_atoms",
+                "n_alt_atoms",
+                "n_ref_heavy_atoms",
+                "n_alt_heavy_atoms",
+                "full_atom_mapping",
+                "full_heavy_atom_mapping",
+                "mapping_rmsd",
+                "mapping_score_rmsd",
+                "mapping_score_ratio_mapped_atoms",
+                "mapping_score_volume_ratio",
+                "mapping_score_shape_mismatch",
+                "mapping_score_shape_overlap",
+            ):
+                if key in status_payload:
+                    asset[key] = status_payload[key]
         except Exception:
             pass
     return asset
@@ -894,6 +1115,31 @@ def _write_manual_pair_mapping_artifacts(
     (pair_dir / "mapping.json").write_text(
         json.dumps(serialized, indent=2, sort_keys=True)
     )
+    coverage_status: dict[str, Any] = {}
+    metric_scores: dict[str, float] = {}
+    atom_mapping_obj = None
+    try:
+        ref_path = Path(ligand_files[ref])
+        alt_path = Path(ligand_files[alt])
+        rdmol_ref = _load_rdkit_mol(ref_path)
+        rdmol_alt = _load_rdkit_mol(alt_path)
+        coverage_status = _mapping_coverage_status(
+            rdmol_ref,
+            rdmol_alt,
+            serialized,
+        )
+        component_ref = _small_molecule_component(rdmol_ref, ref)
+        component_alt = _small_molecule_component(rdmol_alt, alt)
+        atom_mapping_obj = _make_ligand_atom_mapping(
+            component_ref,
+            component_alt,
+            serialized,
+        )
+        metric_scores = _mapping_metric_scores(atom_mapping_obj)
+    except Exception as exc:
+        logger.debug(
+            f"Could not compute manual RBFE mapping coverage for {pair_id}: {exc}"
+        )
     status_payload = {
         "pair_id": pair_id,
         "reference": ref,
@@ -904,22 +1150,13 @@ def _write_manual_pair_mapping_artifacts(
         "mapping_direction": "componentB_to_componentA",
         "n_mapped": len(serialized),
     }
+    status_payload.update(coverage_status)
+    status_payload.update(metric_scores)
     (pair_dir / "mapping_status.json").write_text(
         json.dumps(status_payload, indent=2, sort_keys=True)
     )
 
-    try:
-        ref_path = Path(ligand_files[ref])
-        alt_path = Path(ligand_files[alt])
-        rdmol_ref = _load_rdkit_mol(ref_path)
-        rdmol_alt = _load_rdkit_mol(alt_path)
-        component_ref = _small_molecule_component(rdmol_ref, ref)
-        component_alt = _small_molecule_component(rdmol_alt, alt)
-        atom_mapping_obj = _make_ligand_atom_mapping(
-            component_ref,
-            component_alt,
-            serialized,
-        )
+    if atom_mapping_obj is not None:
         try:
             with (pair_dir / "mapping.pkl").open("wb") as fh:
                 pickle.dump(atom_mapping_obj, fh)
@@ -933,10 +1170,6 @@ def _write_manual_pair_mapping_artifacts(
             logger.debug(
                 f"Could not draw manual RBFE atom-mapping image for {pair_id}: {exc}"
             )
-    except Exception as exc:
-        logger.debug(
-            f"Could not build optional manual RBFE mapping object for {pair_id}: {exc}"
-        )
 
     return _edge_asset_from_mapping_dir(pair_id, pair_dir)
 
@@ -1026,6 +1259,8 @@ def write_pair_mapping_artifacts(
         "mapper": mapper_name,
         "n_mapped": len(map_b_to_a),
     }
+    status_payload.update(_mapping_coverage_status(rdmol_ref, rdmol_alt, map_b_to_a))
+    status_payload.update(_mapping_metric_scores(atom_mapping_obj))
     (pair_dir / "mapping_status.json").write_text(
         json.dumps(status_payload, indent=2, sort_keys=True)
     )

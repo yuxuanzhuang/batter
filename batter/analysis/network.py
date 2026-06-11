@@ -177,6 +177,96 @@ def _edge_connectivity_metadata(graph: Any) -> dict[tuple[str, str], dict[str, A
     return out
 
 
+_EDGE_SCORE_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "connectivity_score": {
+        "label": "Network redundancy",
+        "higher_better": True,
+        "normalized": False,
+        "description": "Alternate edge-disjoint paths after removing this edge.",
+    },
+    "mapping_score_rmsd": {
+        "label": "Kartograf RMSD score",
+        "higher_better": True,
+        "normalized": True,
+        "description": "Kartograf MappingRMSDScorer normalized score.",
+    },
+    "mapping_rmsd": {
+        "label": "Mapping RMSD",
+        "higher_better": False,
+        "normalized": False,
+        "description": "RMSD between mapped atoms; lower is better.",
+    },
+    "mapping_score_ratio_mapped_atoms": {
+        "label": "Mapped atom ratio",
+        "higher_better": True,
+        "normalized": True,
+        "description": "Mapped atoms divided by atoms in the larger molecule.",
+    },
+    "mapping_score_volume_ratio": {
+        "label": "Volume ratio score",
+        "higher_better": False,
+        "normalized": True,
+        "description": "Kartograf volume ratio score; lower is better.",
+    },
+    "mapping_score_shape_mismatch": {
+        "label": "Shape mismatch score",
+        "higher_better": False,
+        "normalized": True,
+        "description": "Kartograf shape mismatch score; lower is better.",
+    },
+    "mapping_score_shape_overlap": {
+        "label": "Shape overlap score",
+        "higher_better": True,
+        "normalized": True,
+        "description": "Kartograf shape overlap score; higher is better.",
+    },
+}
+
+
+def _finite_number(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except Exception:
+        return None
+    if not np.isfinite(out):
+        return None
+    return out
+
+
+def _edge_score_values(
+    direction_payloads: Sequence[Mapping[str, Any]],
+    connectivity: Mapping[str, Any],
+) -> dict[str, float]:
+    scores: dict[str, float] = {}
+    connectivity_score = _finite_number(connectivity.get("connectivity_score"))
+    if connectivity_score is not None:
+        scores["connectivity_score"] = connectivity_score
+
+    for key in _EDGE_SCORE_DEFINITIONS:
+        if key == "connectivity_score":
+            continue
+        values = [
+            value
+            for value in (
+                _finite_number(payload.get(key)) for payload in direction_payloads
+            )
+            if value is not None
+        ]
+        if values:
+            scores[key] = float(sum(values) / len(values))
+    return scores
+
+
+def _edge_metric_definitions_for_edges(
+    planned_edges: Mapping[str, Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    available: dict[str, dict[str, Any]] = {}
+    for key, definition in _EDGE_SCORE_DEFINITIONS.items():
+        if any(key in (edge.get("scores") or {}) for edge in planned_edges.values()):
+            available[key] = definition
+    return available
+
+
 def _planned_ligand_assets(
     ligands: Sequence[str],
     pairs: Sequence[tuple[str, str]],
@@ -378,6 +468,7 @@ def write_planned_rbfe_network_html(
                 "edge_color": "#dc2626",
             },
         )
+        edge_scores = _edge_score_values(direction_payloads, connectivity)
         display_title = (
             f"{node_a} <-> {node_b}"
             if direction_count > 1
@@ -392,6 +483,7 @@ def write_planned_rbfe_network_html(
             "alt": node_b,
             "direction_count": direction_count,
             "directions": direction_payloads,
+            "scores": edge_scores,
             **connectivity,
         }
         for key in (
@@ -402,6 +494,12 @@ def write_planned_rbfe_network_html(
             "mapping_dir",
             "mapper",
             "n_mapped",
+            "mapping_rmsd",
+            "mapping_score_rmsd",
+            "mapping_score_ratio_mapped_atoms",
+            "mapping_score_volume_ratio",
+            "mapping_score_shape_mismatch",
+            "mapping_score_shape_overlap",
         ):
             if key in primary_payload:
                 planned_edges[edge_key][key] = primary_payload[key]
@@ -436,9 +534,9 @@ def write_planned_rbfe_network_html(
             f"<g class=\"edge-path\" data-edge=\"{html.escape(edge_key)}\">"
             f"<path d=\"{path_d}\" fill=\"none\" stroke=\"transparent\" stroke-width=\"16\" "
             "stroke-linecap=\"round\" pointer-events=\"stroke\" />"
-            f"<path d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
+            f"<path class=\"edge-stroke\" d=\"{path_d}\" fill=\"none\" stroke=\"{edge_color}\" "
             f"stroke-width=\"{stroke_width:.2f}\" stroke-linecap=\"round\" stroke-opacity=\"0.94\" />"
-            f"<polygon points=\"{tip[0]:.2f},{tip[1]:.2f} {arrow_left[0]:.2f},{arrow_left[1]:.2f} "
+            f"<polygon class=\"edge-head\" points=\"{tip[0]:.2f},{tip[1]:.2f} {arrow_left[0]:.2f},{arrow_left[1]:.2f} "
             f"{arrow_right[0]:.2f},{arrow_right[1]:.2f}\" fill=\"{edge_color}\" stroke=\"{edge_color}\" "
             "stroke-linejoin=\"round\" stroke-linecap=\"round\" />"
             "</g>"
@@ -489,11 +587,17 @@ def write_planned_rbfe_network_html(
         f"<span class=\"summary-chip\"><strong>{html.escape(key)}</strong>{html.escape(value)}</span>"
         for key, value in summary_items
     )
+    edge_metric_definitions = _edge_metric_definitions_for_edges(planned_edges)
+    default_edge_metric = (
+        "connectivity_score"
+        if "connectivity_score" in edge_metric_definitions
+        else next(iter(edge_metric_definitions), "")
+    )
     notes = [
         "Planned transformations are labeled T1, T2, ... in the order stored in rbfe_network.json.",
         "Reverse-direction pairs are collapsed to one visual edge in this HTML view.",
         "Node colors reflect graph degree at planning time.",
-        "Edge colors reflect alternate edge-disjoint paths after removing the edge: red is a bridge, green is more redundant.",
+        "Use the edge color selector to switch between graph redundancy and available Kartograf mapping metrics.",
     ]
 
     html_text = f"""<!DOCTYPE html>
@@ -509,7 +613,10 @@ def write_planned_rbfe_network_html(
     .summary-chip {{ display: inline-flex; align-items: center; gap: 7px; border: 1px solid #cbd2d9; background: white; color: #334e68; border-radius: 8px; padding: 7px 11px; font-size: 13px; }}
     .summary-chip strong {{ color: #102a43; font-weight: 700; }}
     .panel {{ background: white; border: 1px solid #d9e2ec; border-radius: 8px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08); overflow: hidden; }}
-    .network-toolbar {{ display: flex; justify-content: flex-end; gap: 8px; padding: 12px 14px 0; }}
+    .network-toolbar {{ display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 14px 0; }}
+    .metric-control {{ display: inline-flex; align-items: center; gap: 7px; color: #334e68; font-size: 13px; }}
+    .metric-control select {{ border: 1px solid #cbd2d9; background: white; color: #243b53; border-radius: 8px; padding: 6px 9px; font-size: 13px; }}
+    .metric-note {{ min-width: 230px; color: #52606d; font-size: 12px; }}
     .zoom-btn {{ border: 1px solid #cbd2d9; background: white; color: #334e68; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }}
     .zoom-btn:hover {{ border-color: #9fb3c8; background: #f8fafc; }}
     svg {{ width: 100%; height: auto; display: block; background: #f6f7fb; touch-action: none; user-select: none; }}
@@ -527,6 +634,7 @@ def write_planned_rbfe_network_html(
     .sticky-body .empty {{ font-size: 12px; color: #7b8794; }}
     .sticky-body .mapping-image {{ display: block; width: 100%; max-height: 220px; object-fit: contain; border: 1px solid #cbd2d9; border-radius: 6px; background: white; margin: 6px 0 8px; }}
     .sticky-meta {{ margin-top: 8px; font-size: 12px; color: #52606d; line-height: 1.45; }}
+    .score-list {{ margin-top: 8px; padding-top: 7px; border-top: 1px solid #cbd2d9; }}
   </style>
 </head>
 <body>
@@ -535,6 +643,10 @@ def write_planned_rbfe_network_html(
     <div class="summarybar">{summary_html}</div>
     <div class="panel">
       <div class="network-toolbar">
+        <label class="metric-control">Edge color
+          <select id="edge-metric-select" aria-label="Edge color metric"></select>
+        </label>
+        <span id="edge-metric-note" class="metric-note"></span>
         <button class="zoom-btn" id="network-zoom-in" type="button">+</button>
         <button class="zoom-btn" id="network-zoom-out" type="button">-</button>
         <button class="zoom-btn" id="network-fit" type="button">Fit</button>
@@ -555,6 +667,8 @@ def write_planned_rbfe_network_html(
   <script>
     const ligandAssets = {json.dumps(ligand_assets)};
     const plannedEdges = {json.dumps(planned_edges)};
+    const edgeMetricDefinitions = {json.dumps(edge_metric_definitions)};
+    const defaultEdgeMetric = {json.dumps(default_edge_metric)};
     const stickyRoot = document.getElementById('stickies');
     const networkSvg = document.getElementById('network-svg');
     const networkViewport = document.getElementById('network-viewport');
@@ -643,6 +757,112 @@ def write_planned_rbfe_network_html(
       return `<div class="sticky-body">${{svg}}${{smiles}}</div>`;
     }}
 
+    function finiteScore(value) {{
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    }}
+
+    function formatScore(value) {{
+      const num = finiteScore(value);
+      if (num === null) return 'n/a';
+      if (Math.abs(num) >= 100) return num.toFixed(1);
+      if (Math.abs(num) >= 10) return num.toFixed(2);
+      return num.toFixed(3);
+    }}
+
+    function edgeMetricRange(metricKey) {{
+      const values = Object.values(plannedEdges)
+        .map((edge) => finiteScore(edge.scores && edge.scores[metricKey]))
+        .filter((value) => value !== null);
+      if (!values.length) return {{ min: 0, max: 1 }};
+      return {{
+        min: Math.min(...values),
+        max: Math.max(...values),
+      }};
+    }}
+
+    function normalizedMetricScore(metricKey, value) {{
+      const def = edgeMetricDefinitions[metricKey] || {{}};
+      const num = finiteScore(value);
+      if (num === null) return null;
+      let score;
+      if (def.normalized && num >= 0 && num <= 1) {{
+        score = def.higher_better === false ? 1 - num : num;
+      }} else {{
+        const range = edgeMetricRange(metricKey);
+        if (range.max > range.min) {{
+          score = (num - range.min) / (range.max - range.min);
+          if (def.higher_better === false) score = 1 - score;
+        }} else {{
+          score = 0.65;
+        }}
+      }}
+      return Math.max(0, Math.min(1, score));
+    }}
+
+    function edgeColorForMetric(metricKey, edge) {{
+      const scores = edge.scores || {{}};
+      const value = finiteScore(scores[metricKey]);
+      if (value === null) return '#9fb3c8';
+      if (metricKey === 'connectivity_score') {{
+        if (value <= 0) return '#dc2626';
+        if (value === 1) return '#f59e0b';
+        if (value === 2) return '#16a34a';
+        return '#0f766e';
+      }}
+      const score = normalizedMetricScore(metricKey, value);
+      if (score === null) return '#9fb3c8';
+      if (score < 0.35) return '#dc2626';
+      if (score < 0.65) return '#f59e0b';
+      if (score < 0.85) return '#16a34a';
+      return '#0f766e';
+    }}
+
+    function applyEdgeMetric(metricKey) {{
+      const def = edgeMetricDefinitions[metricKey] || {{}};
+      Object.entries(plannedEdges).forEach(([edgeKey, edge]) => {{
+        const color = edgeColorForMetric(metricKey, edge);
+        document.querySelectorAll(`.edge-path[data-edge="${{CSS.escape(edgeKey)}}"] .edge-stroke`).forEach((element) => {{
+          element.setAttribute('stroke', color);
+        }});
+        document.querySelectorAll(`.edge-path[data-edge="${{CSS.escape(edgeKey)}}"] .edge-head`).forEach((element) => {{
+          element.setAttribute('fill', color);
+          element.setAttribute('stroke', color);
+        }});
+      }});
+      const note = document.getElementById('edge-metric-note');
+      if (note) {{
+        const direction = def.higher_better === false ? 'lower is better' : 'higher is better';
+        note.textContent = def.description ? `${{def.description}} (${{direction}})` : direction;
+      }}
+    }}
+
+    function populateEdgeMetricSelector() {{
+      const select = document.getElementById('edge-metric-select');
+      if (!select) return;
+      Object.entries(edgeMetricDefinitions).forEach(([key, def]) => {{
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = def.label || key;
+        select.appendChild(option);
+      }});
+      if (defaultEdgeMetric && edgeMetricDefinitions[defaultEdgeMetric]) {{
+        select.value = defaultEdgeMetric;
+        applyEdgeMetric(defaultEdgeMetric);
+      }} else {{
+        select.disabled = true;
+      }}
+      select.addEventListener('change', () => applyEdgeMetric(select.value));
+    }}
+
+    function edgeScoresHtml(edge) {{
+      const scores = edge.scores || {{}};
+      const rows = Object.entries(edgeMetricDefinitions)
+        .filter(([key]) => finiteScore(scores[key]) !== null)
+        .map(([key, def]) => `${{def.label || key}}: ${{formatScore(scores[key])}}`);
+      return rows.length ? `<div class="score-list">${{rows.join('<br />')}}</div>` : '';
+    }}
+
     function edgeBodyHtml(edgeKey) {{
       const edge = plannedEdges[edgeKey] || {{}};
       const ref = edge.ref || '';
@@ -669,7 +889,7 @@ def write_planned_rbfe_network_html(
       const alternateLength = Number.isInteger(edge.alternate_path_length)
         ? `<br />alternate path length: ${{edge.alternate_path_length}}`
         : '';
-      return `<div class="sticky-body">${{image}}<div class="sticky-meta">transformation: ${{index}}<br />reference: ${{ref}}<br />target: ${{alt}}${{directions}}${{connectivity}}${{alternateLength}}${{mapper}}${{nMapped}}</div></div>`;
+      return `<div class="sticky-body">${{image}}<div class="sticky-meta">transformation: ${{index}}<br />reference: ${{ref}}<br />target: ${{alt}}${{directions}}${{connectivity}}${{alternateLength}}${{mapper}}${{nMapped}}${{edgeScoresHtml(edge)}}</div></div>`;
     }}
 
     function openSticky(kind, key, event) {{
@@ -762,6 +982,7 @@ def write_planned_rbfe_network_html(
     networkSvg.addEventListener('pointerup', endNetworkDrag);
     networkSvg.addEventListener('pointercancel', endNetworkDrag);
     networkSvg.addEventListener('pointerleave', endNetworkDrag);
+    populateEdgeMetricSelector();
     fitNetworkViewport(0.96);
   </script>
 </body>

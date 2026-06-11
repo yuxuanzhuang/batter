@@ -16,7 +16,7 @@ import json
 import smtplib
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Sequence
 from smtplib import SMTPException
 import pandas as pd
 import yaml
@@ -134,6 +134,19 @@ def _require_rbfe_network_file(config_dir: Path) -> Path:
     )
 
 
+def _require_rbfe_network_has_pairs(config_dir: Path) -> None:
+    network_path = _require_rbfe_network_file(config_dir)
+    try:
+        payload = json.loads(network_path.read_text())
+    except Exception as exc:
+        raise RuntimeError(f"Could not parse prepared RBFE network file: {network_path}") from exc
+    if not payload.get("pairs"):
+        raise RuntimeError(
+            "Prepared RBFE network contains no ligand pairs after removing identical "
+            "ligands and full-atom-map edges."
+        )
+
+
 def _rbfe_network_review_note(run_dir: Path) -> str:
     config_dir = Path(run_dir) / "artifacts" / "config"
     network_html = config_dir / "rbfe_network.html"
@@ -146,6 +159,8 @@ def _rbfe_network_review_note(run_dir: Path) -> str:
         "You may edit rbfe_network.json before continuing; BATTER reloads its "
         "pairs field for RBFE transformation setup. Newly added pairs without "
         "prepared mapping artifacts fall back to the configured atom mapper.\n"
+        "Identical duplicate ligands and full-map edges are omitted from "
+        "pairs and recorded in the JSON skip metadata when detected.\n"
         "If the network looks correct, set run.only_rbfe_network: false or rerun "
         "with --full-rbfe to continue."
     )
@@ -391,6 +406,7 @@ def _build_rbfe_network_plan(
         load_atom_mapping_file,
         konnektor_pairs,
         write_planned_mapping_artifacts,
+        deduplicate_identical_ligands,
     )
     try:
         import konnektor
@@ -403,6 +419,87 @@ def _build_rbfe_network_plan(
         raise RuntimeError("RBFE requires at least two ligands.")
 
     mapping_source: Dict[str, Any] = {}
+    ligand_files_all = {
+        name: Path(lig_map[name])
+        for name in available
+        if name in lig_map
+    }
+    available, identical_replacements, skipped_identical_ligands = (
+        deduplicate_identical_ligands(available, ligand_files_all)
+    )
+    if skipped_identical_ligands:
+        mapping_source["skipped_identical_ligands"] = skipped_identical_ligands
+        logger.warning(
+            "RBFE skipped {} identical duplicate ligand(s): {}",
+            len(skipped_identical_ligands),
+            ", ".join(
+                f"{entry['ligand']} -> {entry['kept']}"
+                for entry in skipped_identical_ligands
+            ),
+        )
+    if len(available) < 2:
+        mapping_artifacts_dir = config_dir / "rbfe_mappings"
+        mapping_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        mapping_source["mapping_artifacts_dir"] = mapping_artifacts_dir.name
+        payload = {"ligands": available, "pairs": []}
+        payload.update(mapping_source)
+        rbfe_network_path = config_dir / "rbfe_network.json"
+        rbfe_network_path.write_text(json.dumps(payload, indent=2))
+        try:
+            from batter.analysis.network import write_planned_rbfe_network_html
+
+            html_path = config_dir / "rbfe_network.html"
+            rendered_html = write_planned_rbfe_network_html(
+                ligands=payload.get("ligands", []),
+                pairs=payload.get("pairs", []),
+                out_path=html_path,
+                ligand_files=ligand_files_all,
+                title="BATTER planned RBFE network",
+                metadata=mapping_source,
+                edge_assets={},
+            )
+            if rendered_html:
+                logger.info(f"RBFE planned network HTML written: {html_path}")
+        except Exception as exc:
+            logger.debug(f"RBFE planned network HTML rendering skipped: {exc}")
+        logger.warning(
+            "RBFE network contains no ligand pairs after skipping identical duplicate ligands."
+        )
+        return payload
+
+    def _remap_identical_ligand_pairs(
+        raw_pairs: Sequence[Sequence[str] | tuple[str, str]],
+    ) -> tuple[List[tuple[str, str]], List[dict[str, Any]], List[dict[str, Any]]]:
+        remapped_pairs: List[tuple[str, str]] = []
+        remapped: List[dict[str, Any]] = []
+        dropped: List[dict[str, Any]] = []
+        for pair in raw_pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                raise ValueError(f"RBFE mapping entries must be 2-tuples; got {pair!r}.")
+            ref = sanitize_ligand_name(str(pair[0]))
+            alt = sanitize_ligand_name(str(pair[1]))
+            new_ref = identical_replacements.get(ref, ref)
+            new_alt = identical_replacements.get(alt, alt)
+            if new_ref == new_alt:
+                dropped.append(
+                    {
+                        "pair": [ref, alt],
+                        "kept": new_ref,
+                        "reason": "identical_ligands",
+                    }
+                )
+                continue
+            if (new_ref, new_alt) != (ref, alt):
+                remapped.append(
+                    {
+                        "from": [ref, alt],
+                        "to": [new_ref, new_alt],
+                        "reason": "identical_ligands",
+                    }
+                )
+            remapped_pairs.append((new_ref, new_alt))
+        return remapped_pairs, remapped, dropped
+
     atom_mapper = str(getattr(rbfe_cfg, "atom_mapper", "kartograf") or "kartograf").lower()
     mapper_options = _rbfe_mapper_options(rbfe_cfg)
     atom_mapping_overrides = None
@@ -414,7 +511,15 @@ def _build_rbfe_network_plan(
     pairs: List[tuple[str, str]] = []
     if rbfe_cfg.mapping_file:
         pairs = load_mapping_file(Path(rbfe_cfg.mapping_file))
-        network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+        pairs, remapped_pairs, dropped_pairs = _remap_identical_ligand_pairs(pairs)
+        if remapped_pairs:
+            mapping_source["remapped_identical_ligand_pairs"] = remapped_pairs
+        if dropped_pairs:
+            mapping_source["dropped_identical_ligand_pairs"] = dropped_pairs
+        if pairs:
+            network = RBFENetwork.from_ligands(available, mapping_fn=lambda _: pairs)
+        else:
+            network = RBFENetwork(ligands=tuple(available), pairs=tuple())
         mapping_source["mapping_file"] = str(rbfe_cfg.mapping_file)
     else:
         mapping_name = rbfe_cfg.mapping or "default"
@@ -559,6 +664,39 @@ def _build_rbfe_network_plan(
         atom_mapper_options=selected_mapper_options,
         atom_mapping_overrides=atom_mapping_overrides,
     )
+    skipped_full_atom_map_edges: List[dict[str, Any]] = []
+    filtered_pairs: List[List[str]] = []
+    for ref, alt in payload.get("pairs", []):
+        pair_id = f"{ref}~{alt}"
+        asset = edge_assets.get(pair_id, {})
+        skip_reason = None
+        if bool(asset.get("full_atom_mapping")):
+            skip_reason = "full_atom_mapping"
+        elif bool(asset.get("full_heavy_atom_mapping")):
+            skip_reason = "full_heavy_atom_mapping"
+        if skip_reason is not None:
+            skip_record = {
+                "pair": [ref, alt],
+                "n_mapped": asset.get("n_mapped"),
+                "n_ref_atoms": asset.get("n_ref_atoms"),
+                "n_alt_atoms": asset.get("n_alt_atoms"),
+                "n_ref_heavy_atoms": asset.get("n_ref_heavy_atoms"),
+                "n_alt_heavy_atoms": asset.get("n_alt_heavy_atoms"),
+                "reason": skip_reason,
+            }
+            skipped_full_atom_map_edges.append(
+                {key: value for key, value in skip_record.items() if value is not None}
+            )
+            logger.warning(
+                "RBFE skipped edge {} because its atom map is full coverage ({}).",
+                pair_id,
+                skip_reason,
+            )
+            continue
+        filtered_pairs.append([ref, alt])
+    if skipped_full_atom_map_edges:
+        payload["pairs"] = filtered_pairs
+        mapping_source["skipped_full_atom_map_edges"] = skipped_full_atom_map_edges
     mapping_source["mapping_artifacts_dir"] = mapping_artifacts_dir.name
     payload.update(mapping_source)
     rbfe_network_path = config_dir / "rbfe_network.json"
@@ -581,7 +719,8 @@ def _build_rbfe_network_plan(
     except Exception as exc:
         logger.debug(f"RBFE planned network HTML rendering skipped: {exc}")
     logger.info(
-        f"RBFE network planned: {len(network.ligands)} ligands, {len(network.pairs)} pairs with both directions={mapping_source.get('both_directions', False)}"
+        f"RBFE network planned: {len(payload.get('ligands') or [])} ligands, "
+        f"{len(payload.get('pairs') or [])} pairs with both directions={mapping_source.get('both_directions', False)}"
     )
     return payload
 
@@ -1000,6 +1139,7 @@ def _run_from_yaml_impl(
         if bool(getattr(rc.run, "only_rbfe_network", False)):
             _log_rbfe_network_review_note(run_dir)
             return
+        _require_rbfe_network_has_pairs(config_dir)
     if overrides_path.exists():
         upd = json.loads(overrides_path.read_text()) or {}
         sim_cfg_updated = sim_cfg.model_copy(

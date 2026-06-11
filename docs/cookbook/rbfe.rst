@@ -250,6 +250,14 @@ planned ligand graph and atom-mapping images in the same interactive style as th
 Cinnabar dashboard. Use ``--only-rbfe-network`` or
 ``run.only_rbfe_network: true`` if you want BATTER to stop immediately after
 writing these network artifacts.
+The HTML view colors edges by network redundancy by default and includes an edge
+color selector for available Kartograf mapping metrics such as RMSD score,
+mapped-atom ratio, volume ratio, and shape scores.
+
+During planning, BATTER omits duplicate ligands with identical molecular identity
+and removes edges whose prepared atom mapping has full atom or heavy-atom
+coverage. The skipped
+ligands and edges are recorded in ``rbfe_network.json`` as skip metadata.
 
 Transformation systems are created under:
 
