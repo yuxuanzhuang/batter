@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import sys
+import hashlib
+import json
 import re
-from pathlib import Path
+import shlex
+import subprocess
+from pathlib import Path, PurePosixPath
 
 import click
 import pandas as pd
@@ -19,8 +23,15 @@ from batter.analysis.cinnabar import (
 )
 from batter.api import list_fe_runs, load_fe_run, run_analysis_from_execution
 from batter.cli.root import cli
+from batter.cli.shared import (
+    _batter_path_export_block,
+    _upsert_sbatch_option,
+    _which_batter,
+)
+from batter.data import job_manager
 from batter.runtime.fe_repo import FEResultsRepository
 from batter.runtime.portable import ArtifactStore
+from batter.utils.slurm_templates import render_slurm_with_header_body
 
 
 @cli.group("fe")
@@ -655,6 +666,105 @@ def fe_cinnabar(
         raise click.ClickException(str(exc)) from exc
 
 
+def _hash_fe_analyze_submission(**options: object) -> str:
+    payload = json.dumps(options, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _submit_fe_analyze_slurm(
+    *,
+    work_dir: Path,
+    run_id: str | None,
+    ligand: str | None,
+    workers: int | None,
+    raise_on_error: bool,
+    analysis_start_step: int | None,
+    n_bootstraps: int | None,
+    overwrite: bool,
+    log_level: str,
+    slurm_manager_path: Path | None,
+    partition: str | None,
+) -> None:
+    work_dir_abs = work_dir.resolve()
+    target = run_id or "all"
+    manager_job_name = (
+        "fep_"
+        + (PurePosixPath(work_dir_abs) / "fe_analyze" / target).as_posix()
+    )
+    log_base = f"fe-analyze-{target}"
+
+    batter_cmd = _which_batter()
+    parts = [batter_cmd, "fe", "analyze", shlex.quote(str(work_dir_abs))]
+    if run_id:
+        parts.append(shlex.quote(run_id))
+    if ligand:
+        parts += ["--ligand", shlex.quote(ligand)]
+    if workers is not None:
+        parts += ["--workers", str(workers)]
+    parts.append("--raise-on-error" if raise_on_error else "--no-raise-on-error")
+    if analysis_start_step is not None:
+        parts += ["--analysis-start-step", str(analysis_start_step)]
+    if n_bootstraps is not None:
+        parts += ["--n-bootstrap", str(n_bootstraps)]
+    if overwrite:
+        parts.append("--overwrite")
+    parts += ["--log-level", shlex.quote(log_level.upper())]
+    parts.append("--local-run")
+    run_cmd = " ".join(parts)
+
+    run_hash = _hash_fe_analyze_submission(
+        command="fe analyze",
+        work_dir=str(work_dir_abs),
+        run_id=run_id or "",
+        ligand=ligand or "",
+        workers=workers if workers is not None else "",
+        raise_on_error=raise_on_error,
+        analysis_start_step=analysis_start_step
+        if analysis_start_step is not None
+        else "",
+        n_bootstraps=n_bootstraps if n_bootstraps is not None else "",
+        overwrite=overwrite,
+        log_level=log_level.upper(),
+        partition=partition or "",
+    )
+
+    base_path = Path(slurm_manager_path) if slurm_manager_path else Path(job_manager)
+    tpl_header = base_path.with_suffix(".header")
+    tpl_body = base_path.with_suffix(".body")
+    manager_code = render_slurm_with_header_body(
+        "job_manager.header",
+        tpl_header,
+        tpl_body,
+        {
+            "__JOB_NAME__": manager_job_name,
+            "__JOB_LOG_BASE__": log_base,
+        },
+    )
+    manager_code = _upsert_sbatch_option(manager_code, "job-name", manager_job_name)
+    if partition:
+        manager_code = _upsert_sbatch_option(manager_code, "partition", partition)
+
+    script_name = f"{run_hash}_job_manager.sbatch"
+    with open(script_name, "w") as f:
+        f.write(manager_code)
+        f.write("\n")
+        f.write(_batter_path_export_block())
+        f.write(run_cmd)
+        f.write("\n")
+        f.write("echo 'Job completed.'\n")
+        f.write("\n")
+
+    result = subprocess.run(
+        ["sbatch", script_name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    click.echo(f"Submitted jobscript: {script_name}")
+    click.echo(f"STDOUT: {result.stdout}")
+    click.echo(f"STDERR: {result.stderr}")
+
+
 @fe.command("analyze")
 @click.argument(
     "work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path)
@@ -676,8 +786,8 @@ def fe_cinnabar(
 )
 @click.option(
     "--raise-on-error/--no-raise-on-error",
-    default=True,
-    help="Whether analysis failures should raise (default) or be logged and skipped.",
+    default=False,
+    help="Whether analysis failures should raise or be logged and skipped (default).",
 )
 @click.option(
     "--analysis-start-step",
@@ -706,6 +816,23 @@ def fe_cinnabar(
     default="INFO",
     help="Logging level for analysis stage.",
 )
+@click.option(
+    "--slurm-submit/--local-run",
+    default=False,
+    help="Submit this FE analysis via SLURM (sbatch) instead of running locally.",
+)
+@click.option(
+    "--slurm-manager-path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional path to a SLURM manager header/template to prepend to the generated script.",
+)
+@click.option(
+    "--partition",
+    "-p",
+    default=None,
+    help="Override the SLURM partition in the generated manager script.",
+)
 def fe_analyze(
     work_dir: Path,
     run_id: str | None,
@@ -716,6 +843,9 @@ def fe_analyze(
     n_bootstraps: int | None,
     overwrite: bool,
     log_level: str = "INFO",
+    slurm_submit: bool = False,
+    slurm_manager_path: Path | None = None,
+    partition: str | None = None,
 ) -> None:
     """
     Re-run the FE analysis stage for stored execution(s).
@@ -733,6 +863,29 @@ def fe_analyze(
     if run_id is None and work_dir.parent.name == "executions":
         run_id = work_dir.name
         work_dir = work_dir.parent.parent
+
+    if slurm_submit and run_id is None:
+        runs_root = work_dir / "executions"
+        if not runs_root.is_dir():
+            raise click.ClickException(f"No executions found under {work_dir}.")
+        if not any(p.is_dir() for p in runs_root.iterdir()):
+            raise click.ClickException(f"No executions found under {work_dir}.")
+
+    if slurm_submit:
+        _submit_fe_analyze_slurm(
+            work_dir=work_dir,
+            run_id=run_id,
+            ligand=ligand,
+            workers=workers,
+            raise_on_error=raise_on_error,
+            analysis_start_step=analysis_start_step,
+            n_bootstraps=n_bootstraps,
+            overwrite=overwrite,
+            log_level=log_level,
+            slurm_manager_path=slurm_manager_path,
+            partition=partition,
+        )
+        return
 
     if run_id:
         run_ids = [run_id]

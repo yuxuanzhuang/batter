@@ -116,7 +116,16 @@ To analyze every run under ``work/adrb2/executions`` (instead of one run), omit
 Use ``--workers`` to control parallelism and ``--analysis-start-step`` to skip early
 production steps in each window. By default existing analysis outputs are preserved;
 pass ``--overwrite`` to regenerate them. Pass ``--n-bootstrap`` to request MBAR
-bootstrap resamples and ``--no-raise-on-error`` to continue if one ligand fails.
+bootstrap resamples. Analysis failures are logged and skipped by default; pass
+``--raise-on-error`` to stop at the first failure.
+
+To submit the analysis itself as a SLURM manager job, use ``--slurm-submit``::
+
+   batter fe analyze work/adrb2 run-20240101 --slurm-submit
+
+The generated script uses ``job_manager.header``/``job_manager.body`` in the same
+way as ``batter run --slurm-submit``. Use ``--partition`` or
+``--slurm-manager-path`` to override the generated manager script.
 
 For RBFE runs, ``batter fe analyze`` also writes a per-run Cinnabar bundle under
 ``work/adrb2/results/cinnabar/<run_id>/`` by default. When the work directory

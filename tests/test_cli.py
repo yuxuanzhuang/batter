@@ -399,7 +399,99 @@ def test_cli_fe_analyze_invokes_api(
     assert called["analysis_start_step"] == 2500
     assert called["n_bootstraps"] == 64
     assert called["overwrite"] is False
-    assert called["raise_on_error"] is True
+    assert called["raise_on_error"] is False
+
+
+def test_cli_fe_analyze_slurm_submit_uses_job_manager(
+    monkeypatch, tmp_path: Path, runner: CliRunner
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    fake_batter = tmp_path / "env" / "bin" / "batter"
+    fake_batter.parent.mkdir(parents=True)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(fake_batter) if name == "batter" else None,
+    )
+
+    rendered = {}
+
+    def fake_render(name, header_path, body_path, replacements, header_root=None):
+        rendered["name"] = name
+        rendered["header_path"] = header_path
+        rendered["body_path"] = body_path
+        rendered["replacements"] = replacements
+        rendered["header_root"] = header_root
+        return (
+            "#!/usr/bin/env bash\n"
+            "#SBATCH --job-name=old\n"
+            "#SBATCH --partition=old\n"
+        )
+
+    monkeypatch.setattr(
+        "batter.cli.fe_cmds.render_slurm_with_header_body", fake_render
+    )
+
+    class DummyProc:
+        returncode = 0
+        stdout = "Submitted batch job 456"
+        stderr = ""
+
+    calls = {}
+
+    def fake_run(cmd, stdout=None, stderr=None, text=None):
+        calls["cmd"] = cmd
+        return DummyProc()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        cli,
+        [
+            "fe",
+            "analyze",
+            str(work_dir),
+            "rep1",
+            "--ligand",
+            "LIG1",
+            "--workers",
+            "3",
+            "--analysis-start-step",
+            "2500",
+            "--n-bootstrap",
+            "64",
+            "--overwrite",
+            "--slurm-submit",
+            "--partition",
+            "gpu",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert rendered["name"] == "job_manager.header"
+    assert rendered["header_root"] is None
+    scripts = list(tmp_path.glob("*_job_manager.sbatch"))
+    assert len(scripts) == 1
+    script_text = scripts[0].read_text()
+    assert "#SBATCH --job-name=fep_" in script_text
+    assert "/fe_analyze/rep1" in script_text
+    assert "#SBATCH --partition=gpu" in script_text
+    assert "# BATTER environment captured at submit time" in script_text
+    assert f"BATTER_ENV_BIN={fake_batter.parent}" in script_text
+    assert "fe analyze" in script_text
+    assert str(work_dir.resolve()) in script_text
+    assert "rep1" in script_text
+    assert "--ligand LIG1" in script_text
+    assert "--workers 3" in script_text
+    assert "--analysis-start-step 2500" in script_text
+    assert "--n-bootstrap 64" in script_text
+    assert "--overwrite" in script_text
+    assert "--no-raise-on-error" in script_text
+    assert "--local-run" in script_text
+    assert "--slurm-submit" not in script_text
+    assert scripts[0].name in calls["cmd"]
 
 
 def test_cli_fe_analyze_accepts_execution_dir(
@@ -531,13 +623,12 @@ def test_cli_fe_analyze_on_finished_run(
     monkeypatch.setattr("batter.api.run_analysis_from_execution", fake_run)
     monkeypatch.setattr("batter.cli.fe_cmds.run_analysis_from_execution", fake_run)
 
-    result = runner.invoke(cli, ["fe", "analyze", str(work_dir), "rep1"])
+    result = runner.invoke(
+        cli, ["fe", "analyze", str(work_dir), "rep1", "--raise-on-error"]
+    )
     assert result.exit_code == 1
 
-    result = runner.invoke(
-        cli,
-        ["fe", "analyze", str(work_dir), "rep1", "--no-raise-on-error"],
-    )
+    result = runner.invoke(cli, ["fe", "analyze", str(work_dir), "rep1"])
     assert result.exit_code == 0
     assert called == [True, False]
 
