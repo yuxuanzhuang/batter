@@ -58,6 +58,19 @@ def _make_validator(
     return validator
 
 
+class _DummyTrajectory:
+    def __init__(self, n_frames: int) -> None:
+        self.n_frames = n_frames
+
+    def __len__(self) -> int:
+        return self.n_frames
+
+
+class _DummyUniverse:
+    def __init__(self, n_frames: int) -> None:
+        self.trajectory = _DummyTrajectory(n_frames)
+
+
 def test_ligand_bs_uses_initial_binding_site_atoms(tmp_path: Path) -> None:
     u = _make_test_universe(tmp_path)
     validator = _make_validator(u, tmp_path, [":61@CA", ":257@CA", ":61@CA"])
@@ -80,3 +93,31 @@ def test_ligand_bs_requires_site_or_anchor_atoms(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="binding-site atoms"):
         validator._ligand_bs()
+
+
+def test_representative_snapshot_uses_last_quarter_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    validator = _make_validator(_DummyUniverse(8), tmp_path)
+    called = {}
+
+    def fake_ligand_dihedral(start_frame: int = 0) -> None:
+        called["start_frame"] = start_frame
+        validator.results["ligand_dihedrals"] = np.array(
+            [
+                [90.0, -90.0],
+                [90.0, -90.0],
+            ]
+        )
+        validator.results["ligand_dihedral_frame_indices"] = np.array([6, 7])
+
+    monkeypatch.setattr(validator, "_ligand_dihedral", fake_ligand_dihedral)
+
+    rep_idx = validator.find_representative_snapshot(
+        savefig=True, output_filename="tail_dihed_hist.png"
+    )
+
+    assert called["start_frame"] == 6
+    assert rep_idx == 6
+    assert validator.results["representative_frame_index"] == 6
+    assert validator.results["representative_analysis_start_frame"] == 6

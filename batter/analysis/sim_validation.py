@@ -234,8 +234,17 @@ class SimValidator:
             atoms.append(ag[0])
 
         return mda.AtomGroup(atoms)
-    
-    def _ligand_dihedral(self):
+
+    def _trailing_analysis_start_frame(self, tail_fraction: float = 0.25) -> int:
+        if not 0 < tail_fraction <= 1:
+            raise ValueError("tail_fraction must be in the interval (0, 1].")
+        n_frames = len(self.universe.trajectory)
+        if n_frames <= 1:
+            return 0
+        start_frame = int(np.floor(n_frames * (1.0 - tail_fraction)))
+        return min(max(start_frame, 0), n_frames - 1)
+
+    def _ligand_dihedral(self, start_frame: int = 0):
         logger.debug('Calculating ligand dihedral')
         dihed_ligands_file = self.workdir / 'assign.in'
         if not os.path.exists(dihed_ligands_file):
@@ -266,15 +275,25 @@ class SimValidator:
                 # an issue with Cl and CL naming
                 pass
         
+        n_frames = len(self.universe.trajectory)
+        if n_frames == 0:
+            self.results['ligand_dihedrals'] = np.empty((0, len(ag_lists)))
+            self.results['ligand_dihedral_frame_indices'] = np.array([], dtype=int)
+            return
+        start_frame = min(max(int(start_frame), 0), n_frames - 1)
+
         diheds = []
-        for ts in self.universe.trajectory:
+        frame_indices = []
+        for ts in self.universe.trajectory[start_frame:n_frames]:
             dihed = []
             for ag in ag_lists:
                 dihed.append(ag.dihedral.value())
             diheds.append(dihed)
+            frame_indices.append(ts.frame)
         diheds = np.array(diheds)
 
         self.results['ligand_dihedrals'] = diheds
+        self.results['ligand_dihedral_frame_indices'] = np.asarray(frame_indices, dtype=int)
 
     def _membrane(self):
         raise NotImplementedError('Membrane properties are not implemented yet')
@@ -382,13 +401,26 @@ class SimValidator:
         plt.close(fig)
     
     # get the mode value of the dihedral
-    def find_representative_snapshot(self, savefig=True, output_filename='dihed_hist.png'):
+    def find_representative_snapshot(
+        self,
+        savefig=True,
+        output_filename='dihed_hist.png',
+        tail_fraction: float = 0.25,
+    ):
         """
-        Find the representative snapshot based on the mode dihedral values.
+        Find the representative snapshot based on tail-window mode dihedral values.
         """
         # convert to sin and cos values
-        self._ligand_dihedral()
+        start_frame = self._trailing_analysis_start_frame(tail_fraction=tail_fraction)
+        self._ligand_dihedral(start_frame=start_frame)
         dihed = self.results['ligand_dihedrals']
+        frame_indices = np.asarray(
+            self.results.get(
+                'ligand_dihedral_frame_indices',
+                np.arange(start_frame, start_frame + len(dihed)),
+            ),
+            dtype=int,
+        )
         dihed_rad = np.deg2rad(dihed)
         sin_dihed = np.sin(dihed_rad)
         cos_dihed = np.cos(dihed_rad)
@@ -404,15 +436,17 @@ class SimValidator:
         abs_diff = np.abs(feat_dihed - mode_dihed)
         
         # Find the index of the snapshot with the smallest absolute difference
-        representative_index = np.argmin(np.sum(abs_diff, axis=1))
+        representative_local_index = np.argmin(np.sum(abs_diff, axis=1))
+        representative_index = int(frame_indices[representative_local_index])
         
         # plot 
         fig, ax = plt.subplots(1, n_dihed, figsize=(20, 5), sharex=True, sharey=True,
                                 gridspec_kw={'hspace': 0, 'wspace': 0})
+        ax = np.atleast_1d(ax)
         for i in range(n_dihed):
             ax[i].hist(dihed[:, i], bins=100, density=True, alpha=0.5, range=(-180, 180))
             ax[i].set_title(f"{i}")
-            ax[i].vlines(dihed[representative_index, i], ymin=0, ymax=0.05,
+            ax[i].vlines(dihed[representative_local_index, i], ymin=0, ymax=0.05,
                         color='r', linestyle='--', label='Representative')
         plt.tight_layout()
         if savefig:
@@ -422,6 +456,7 @@ class SimValidator:
         plt.close(fig)
 
         self.results['representative_frame_index'] = representative_index
+        self.results['representative_analysis_start_frame'] = start_frame
         return representative_index
 
     def dump_results(self, filename='equilibration_analysis_results.npz'):
