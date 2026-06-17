@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import types
@@ -52,6 +53,101 @@ def test_mbar_extract_window_does_not_remove_global_logger(
     )
 
     assert not out.empty
+
+
+def test_component_results_json_includes_backward_and_convergence_data(
+    tmp_path: Path,
+) -> None:
+    class DummyAnalysis(analysis_mod.FEAnalysisBase):
+        def run_analysis(self):
+            pass
+
+        def plot_convergence(self, ax=None, **kwargs):
+            pass
+
+    ana = DummyAnalysis()
+    ana.results["fe"] = 1.5
+    ana.results["fe_error"] = 0.2
+    ana.results["fe_timeseries"] = np.array([[1.0, 0.1], [1.5, 0.2]])
+    ana.results["fe_timeseries_backward"] = np.array([[2.0, 0.3], [1.5, 0.2]])
+    ana.results["convergence"]["time_convergence"] = pd.DataFrame(
+        {
+            "Forward": [1.0, 1.5],
+            "Forward_Error": [0.1, 0.2],
+            "Backward": [2.0, 1.5],
+            "Backward_Error": [0.3, 0.2],
+        },
+        index=pd.Index([0.5, 1.0], name="data_fraction"),
+    )
+    ana.results["convergence"]["block_convergence"] = pd.DataFrame(
+        {"FE": [1.4, 1.6], "FE_Error": [0.2, 0.25]},
+        index=pd.Index([1, 2], name="block"),
+    )
+    ana.results["convergence"]["block_timeseries"] = pd.DataFrame(
+        {"FE": [1.4, 1.6], "FE_Error": [0.2, 0.25]},
+        index=pd.Index([0.5, 1.0], name="fraction"),
+    )
+    ana.results["convergence"]["overlap_matrix"] = np.array([[1.0, 0.2], [0.2, 1.0]])
+
+    out = tmp_path / "z_results.json"
+    ana.dump(out)
+
+    payload = json.loads(out.read_text())
+    assert payload["fe_timeseries"] == [[1.0, 0.1], [1.5, 0.2]]
+    assert payload["fe_timeseries_backward"] == [[2.0, 0.3], [1.5, 0.2]]
+    assert payload["convergence"]["time_convergence"]["columns"] == [
+        "data_fraction",
+        "Forward",
+        "Forward_Error",
+        "Backward",
+        "Backward_Error",
+    ]
+    assert payload["convergence"]["time_convergence"]["records"][0]["Backward"] == 2.0
+    assert payload["convergence"]["block_convergence"]["records"][1]["FE"] == 1.6
+    assert payload["convergence"]["overlap_matrix"] == [[1.0, 0.2], [0.2, 1.0]]
+
+
+def test_analyze_lig_task_writes_backward_fe_timeseries(
+    tmp_path: Path, monkeypatch
+) -> None:
+    lig_path = tmp_path / "lig"
+    (lig_path / "x").mkdir(parents=True)
+
+    class FakeMBARAnalysis:
+        def __init__(self, **kwargs):
+            self.results = {}
+
+        def run_analysis(self):
+            self.results = {
+                "fe": 4.0,
+                "fe_error": 0.4,
+                "fe_timeseries": np.array([[1.0, 0.1], [2.0, 0.2]]),
+                "fe_timeseries_backward": np.array([[3.0, 0.3], [4.0, 0.4]]),
+            }
+
+        def plot_convergence(self, save_path=None, title=None):
+            if save_path:
+                Path(save_path).write_bytes(b"png")
+
+    monkeypatch.setattr(analysis_mod, "MBARAnalysis", FakeMBARAnalysis)
+
+    analysis_mod.analyze_lig_task(
+        lig_path=str(lig_path / "fe"),
+        lig="LIG",
+        components=["x"],
+        rest=(0.0, 0.0, 0.0, 0.0, 0.0),
+        temperature=300.0,
+        water_model="TIP3P",
+        component_windows_dict={"x": [0, 1]},
+        raise_on_error=True,
+        dt=0.004,
+    )
+
+    payload = json.loads((lig_path / "fe" / "Results" / "fe_timeseries.json").read_text())
+    assert payload["fe_value"][:2] == [1.0, 2.0]
+    assert payload["fe_std"][:2] == [0.1, 0.2]
+    assert payload["backward_fe_value"][:2] == [3.0, 4.0]
+    assert payload["backward_fe_std"][:2] == [0.3, 0.4]
 
 
 def test_mbar_extract_window_skips_incomplete_mdout(tmp_path: Path, monkeypatch) -> None:

@@ -93,6 +93,46 @@ def _is_incomplete_amber_out_error(exc: ValueError) -> bool:
     return any(marker in msg for marker in incomplete_markers)
 
 
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating, float)):
+        value = float(value)
+        return value if math.isfinite(value) else None
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if pd.isna(value):
+        return None
+    return value
+
+
+def _dataframe_to_json_records(df: pd.DataFrame) -> dict:
+    frame = df.reset_index()
+    frame.columns = [str(col) for col in frame.columns]
+    return {
+        "columns": frame.columns.tolist(),
+        "records": _json_safe(frame.to_dict(orient="records")),
+    }
+
+
+def _convergence_to_json(convergence: dict) -> dict:
+    payload: dict = {}
+    for key in ("time_convergence", "block_convergence", "block_timeseries"):
+        value = convergence.get(key)
+        if isinstance(value, pd.DataFrame):
+            payload[key] = _dataframe_to_json_records(value)
+    overlap = convergence.get("overlap_matrix")
+    if overlap is not None:
+        payload["overlap_matrix"] = _json_safe(overlap)
+    return payload
+
+
 class FEAnalysisBase(ABC):
     """
     Minimal interface shared across component analysis routines.
@@ -110,6 +150,7 @@ class FEAnalysisBase(ABC):
             "fe_error": None,  # scalar (same unit)
             "convergence": {},  # dict of dataframes/arrays
             "fe_timeseries": None,  # Nx2 array: [FE, FE_err] across progress fractions
+            "fe_timeseries_backward": None,  # Nx2 array from backward convergence
         }
 
     @abstractmethod
@@ -134,15 +175,24 @@ class FEAnalysisBase(ABC):
         return self.results["fe_timeseries"]
 
     def dump(self, filename="results.json"):
-        """Store results to JSON (omit heavy convergence tables)."""
+        """Store scalar, timeseries, and plottable convergence data to JSON."""
         fe = float(self.fe) if self.fe is not None else None
         fe_err = float(self.fe_error) if self.fe_error is not None else None
         fets = self.fe_timeseries
         fets_list = fets.tolist() if isinstance(fets, np.ndarray) else fets
+        fets_back = self.results.get("fe_timeseries_backward")
+        fets_back_list = (
+            fets_back.tolist() if isinstance(fets_back, np.ndarray) else fets_back
+        )
+        payload = {
+            "fe": fe,
+            "fe_error": fe_err,
+            "fe_timeseries": fets_list,
+            "fe_timeseries_backward": fets_back_list,
+            "convergence": _convergence_to_json(self.convergence),
+        }
         with open(filename, "w") as f:
-            json.dump(
-                {"fe": fe, "fe_error": fe_err, "fe_timeseries": fets_list}, f, indent=2
-            )
+            json.dump(_json_safe(payload), f, indent=2)
 
 
 class MBARAnalysis(FEAnalysisBase):
@@ -316,6 +366,9 @@ class MBARAnalysis(FEAnalysisBase):
             # fe_timeseries: N x 2 array (value, stderr)
             self.results["fe_timeseries"] = np.column_stack(
                 [forward_FE, forward_FE_err]
+            )
+            self.results["fe_timeseries_backward"] = np.column_stack(
+                [backward_FE, backward_FE_err]
             )
 
             # block average (10 blocks)
@@ -1033,6 +1086,7 @@ def analyze_lig_task(
         fe_values: List[float] = []
         fe_stds: List[float] = []
         fe_timeseries: Dict[str, np.ndarray] = {}
+        fe_timeseries_backward: Dict[str, np.ndarray] = {}
 
         # Analytical Boresch (if present)
         if "v" in components:
@@ -1053,6 +1107,7 @@ def analyze_lig_task(
             fe_values.append(COMPONENT_DIRECTION_DICT["Boresch"] * bor.results["fe"])
             fe_stds.append(bor.results["fe_error"])
             fe_timeseries["Boresch"] = np.asarray([bor.results["fe"], 0.0])
+            fe_timeseries_backward["Boresch"] = np.asarray([bor.results["fe"], 0.0])
             results_entries.append(
                 f"Boresch\t{COMPONENT_DIRECTION_DICT['Boresch'] * bor.results['fe']:.2f}\t{bor.results['fe_error']:.2f}"
             )
@@ -1092,6 +1147,9 @@ def analyze_lig_task(
                 fe_values.append(COMPONENT_DIRECTION_DICT[comp] * ana.results["fe"])
                 fe_stds.append(ana.results["fe_error"])
                 fe_timeseries[comp] = ana.results["fe_timeseries"]
+                fe_timeseries_backward[comp] = ana.results.get(
+                    "fe_timeseries_backward", ana.results["fe_timeseries"]
+                )
                 results_entries.append(
                     f"{comp}\t{COMPONENT_DIRECTION_DICT[comp]*ana.results['fe']:.2f}\t{ana.results['fe_error']:.2f}"
                 )
@@ -1117,6 +1175,9 @@ def analyze_lig_task(
                 fe_values.append(COMPONENT_DIRECTION_DICT[comp] * ana.results["fe"])
                 fe_stds.append(ana.results["fe_error"])
                 fe_timeseries[comp] = ana.results["fe_timeseries"]
+                fe_timeseries_backward[comp] = ana.results.get(
+                    "fe_timeseries_backward", ana.results["fe_timeseries"]
+                )
                 results_entries.append(
                     f"{comp}\t{COMPONENT_DIRECTION_DICT[comp]*ana.results['fe']:.2f}\t{ana.results['fe_error']:.2f}"
                 )
@@ -1143,6 +1204,18 @@ def analyze_lig_task(
                 fe_ts_err2[:n] += ts[:n, 1] ** 2
         fe_ts_err = np.sqrt(fe_ts_err2)
 
+        fe_ts_backward_val = np.zeros(LEN_FE_TIMESERIES, dtype=float)
+        fe_ts_backward_err2 = np.zeros(LEN_FE_TIMESERIES, dtype=float)
+        for comp, ts in fe_timeseries_backward.items():
+            direction = COMPONENT_DIRECTION_DICT.get(comp, +1)
+            if ts.ndim == 1:
+                fe_ts_backward_val += float(ts[0]) * direction
+            else:
+                n = min(LEN_FE_TIMESERIES, ts.shape[0])
+                fe_ts_backward_val[:n] += ts[:n, 0] * direction
+                fe_ts_backward_err2[:n] += ts[:n, 1] ** 2
+        fe_ts_backward_err = np.sqrt(fe_ts_backward_err2)
+
     except Exception as e:
         logger.error(f"Error during FE analysis for {lig}: {e}")
         if raise_on_error:
@@ -1151,6 +1224,8 @@ def analyze_lig_task(
         fe_std = float("nan")
         fe_ts_val = np.zeros(LEN_FE_TIMESERIES) * np.nan
         fe_ts_err = np.zeros(LEN_FE_TIMESERIES) * np.nan
+        fe_ts_backward_val = np.zeros(LEN_FE_TIMESERIES) * np.nan
+        fe_ts_backward_err = np.zeros(LEN_FE_TIMESERIES) * np.nan
 
     # Optional Rocklin correction (component 'y')
     if rocklin_correction and "y" in components:
@@ -1189,6 +1264,7 @@ def analyze_lig_task(
             fe_value += corr
             results_entries.append(f"Rocklin\t{corr:.2f}\t0.00")
             fe_ts_val += corr
+            fe_ts_backward_val += corr
 
     results_entries.append(f"Total\t{fe_value:.2f}\t{fe_std:.2f}")
     with open(f"{lig_path}/Results/Results.dat", "w") as f:
@@ -1196,7 +1272,14 @@ def analyze_lig_task(
 
     with open(f"{lig_path}/Results/fe_timeseries.json", "w") as f:
         json.dump(
-            {"fe_value": fe_ts_val.tolist(), "fe_std": fe_ts_err.tolist()}, f, indent=2
+            {
+                "fe_value": fe_ts_val.tolist(),
+                "fe_std": fe_ts_err.tolist(),
+                "backward_fe_value": fe_ts_backward_val.tolist(),
+                "backward_fe_std": fe_ts_backward_err.tolist(),
+            },
+            f,
+            indent=2,
         )
 
     sns.set(style="whitegrid")

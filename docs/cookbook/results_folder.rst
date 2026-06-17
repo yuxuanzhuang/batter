@@ -78,15 +78,19 @@ For a successful result, BATTER writes::
 
 ``fe_timeseries.json`` and ``fe_timeseries.png``
    Overall progress diagnostic for the assembled FE estimate. The JSON file stores
-   the cumulative FE value and uncertainty arrays across increasing fractions of the
-   trajectory. The PNG plots those values against simulation progress, adds error
-   bars, and overlays the final FE estimate as a dashed reference line with a
-   shaded ``±1 kcal/mol`` band.
+   the cumulative forward FE value and uncertainty arrays across increasing
+   fractions of the trajectory, plus ``backward_fe_value`` and
+   ``backward_fe_std`` arrays from the backward convergence direction. The PNG
+   plots the forward values against simulation progress, adds error bars, and
+   overlays the final FE estimate as a dashed reference line with a shaded
+   ``±1 kcal/mol`` band.
 
 ``<component>_results.json``
    Per-component scalar summary written by the MBAR analysis stage. It stores the
-   final FE value, its uncertainty, and the component-level FE timeseries used to
-   build the overall summary.
+   final FE value, its uncertainty, forward/backward component-level FE
+   timeseries, and a ``convergence`` block with the raw time-convergence,
+   block-convergence, and overlap-matrix data used to create
+   ``<component>_convergence.png``.
 
 ``<component>_convergence.png``
    Three-panel convergence diagnostic for one FE component. BATTER plots:
