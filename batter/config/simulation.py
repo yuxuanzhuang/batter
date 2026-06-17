@@ -85,6 +85,8 @@ class SimulationConfig(BaseModel):
             "anion": create.anion,
             "solv_shell": float(create.solv_shell),
             "infer_disulfide_bonds": bool(create.infer_disulfide_bonds),
+            "fix_ring_penetration": bool(create.fix_ring_penetration),
+            "ring_penetration_fix_mode": create.ring_penetration_fix_mode,
             "protein_align": create.protein_align,
             "l1_range": float(l1_range),
             "min_adis": float(min_adis),
@@ -397,6 +399,14 @@ class SimulationConfig(BaseModel):
         True,
         description="Infer missing disulfide bonds from close CYX SG-SG distances.",
     )
+    fix_ring_penetration: bool = Field(
+        True,
+        description="Attempt local prepare_equil repair for detected ring penetration.",
+    )
+    ring_penetration_fix_mode: Literal["protein_sidechain", "ligand"] = Field(
+        "protein_sidechain",
+        description="Movable group for local ring-penetration repair.",
+    )
 
     # --- Ions ---
     neutralize_only: Literal["yes", "no"] = Field("no", description="Neutralize only")
@@ -479,6 +489,24 @@ class SimulationConfig(BaseModel):
     @classmethod
     def _lower_enums(cls, v: Any) -> Any:
         return v if v is None else str(v).lower()
+
+    @field_validator("ring_penetration_fix_mode", mode="before")
+    @classmethod
+    def _normalize_ring_penetration_fix_mode(cls, value: Any) -> str:
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "protein": "protein_sidechain",
+            "sidechain": "protein_sidechain",
+            "protein_side_chain": "protein_sidechain",
+            "protein_sidechain": "protein_sidechain",
+            "lig": "ligand",
+            "ligand": "ligand",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "ring_penetration_fix_mode must be 'protein_sidechain' or 'ligand'."
+            )
+        return aliases[text]
 
     @field_validator(
         "neutralize_only",

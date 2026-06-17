@@ -28,6 +28,9 @@ from batter._internal.ops.helpers import (
     merge_first_n_molecules_in_prmtop,
     save_anchors,
 )
+from batter._internal.ops.ring_repair import (
+    repair_ring_penetrations,
+)
 
 
 
@@ -1509,6 +1512,24 @@ def create_box(ctx: BuildContext) -> None:
         other_parts_pmd = other_parts[0] + other_parts[1] + other_parts[2]
     else:
         raise ValueError(f"Unsupported number of other_parts: {len(other_parts)}")
+
+    if comp == "q" and bool(getattr(sim, "fix_ring_penetration", True)):
+        repair_result = repair_ring_penetrations(
+            vac,
+            fix_mode=getattr(sim, "ring_penetration_fix_mode", "protein_sidechain"),
+            ligand_resname=mol,
+            ligand_label=ligand,
+        )
+        if repair_result.initial_penetrations:
+            (window_dir / "ring_penetration_repair.json").write_text(
+                json.dumps(repair_result.to_dict(), indent=2, sort_keys=True)
+            )
+        if repair_result.repaired:
+            combined_coordinates = np.asarray(combined.coordinates, dtype=float).copy()
+            combined_coordinates[: len(vac.atoms)] = np.asarray(
+                vac.coordinates, dtype=float
+            )
+            combined.coordinates = combined_coordinates
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)

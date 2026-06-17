@@ -74,6 +74,36 @@ fe_sim:
     assert sim_cfg.infer_disulfide_bonds is False
 
 
+def test_run_config_ring_penetration_repair_options(tmp_path: Path) -> None:
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy\n")
+    run_yaml = tmp_path / "run.yaml"
+    run_yaml.write_text(
+        f"""
+run:
+  output_folder: "{tmp_path / 'work'}"
+protocol: abfe
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig_file}"
+  fix_ring_penetration: false
+  ring_penetration_fix_mode: ligand
+fe_sim:
+  z_lambdas: [0.0, 1.0]
+  z_n_steps: 300000
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.create.fix_ring_penetration is False
+    assert cfg.create.ring_penetration_fix_mode == "ligand"
+    assert sim_cfg.fix_ring_penetration is False
+    assert sim_cfg.ring_penetration_fix_mode == "ligand"
+
+
 def test_load_simulation_config(tmp_path: Path) -> None:
     sim_yaml = tmp_path / "sim.yaml"
     sim_yaml.write_text(
@@ -443,6 +473,16 @@ def test_sim_config_infer_disulfide_bonds_default(tmp_path: Path) -> None:
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
 
     assert cfg.infer_disulfide_bonds is True
+
+
+def test_sim_config_ring_penetration_repair_defaults(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(lambdas=[0.0, 1.0], n_steps={"z": 300_000})
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    assert cfg.fix_ring_penetration is True
+    assert cfg.ring_penetration_fix_mode == "protein_sidechain"
 
 
 def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:

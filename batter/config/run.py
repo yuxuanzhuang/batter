@@ -241,6 +241,20 @@ class CreateArgs(BaseModel):
             "box preparation."
         ),
     )
+    fix_ring_penetration: bool = Field(
+        True,
+        description=(
+            "Attempt a local coordinate repair when ring penetration is detected "
+            "during prepare_equil box preparation."
+        ),
+    )
+    ring_penetration_fix_mode: Literal["protein_sidechain", "ligand"] = Field(
+        "protein_sidechain",
+        description=(
+            "Movable group used for local ring-penetration repair: rotate a nearby "
+            "protein aromatic sidechain, or rotate a local ligand torsion."
+        ),
+    )
 
     l1_range: float = Field(
         6.0,
@@ -315,6 +329,24 @@ class CreateArgs(BaseModel):
     @classmethod
     def _coerce_create_yes_no(cls, v):
         return coerce_yes_no(v)
+
+    @field_validator("ring_penetration_fix_mode", mode="before")
+    @classmethod
+    def _normalize_ring_penetration_fix_mode(cls, value):
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "protein": "protein_sidechain",
+            "sidechain": "protein_sidechain",
+            "protein_side_chain": "protein_sidechain",
+            "protein_sidechain": "protein_sidechain",
+            "lig": "ligand",
+            "ligand": "ligand",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "ring_penetration_fix_mode must be 'protein_sidechain' or 'ligand'."
+            )
+        return aliases[text]
 
     @field_validator("ligand_input", mode="before")
     @classmethod
