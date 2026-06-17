@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -10,6 +11,70 @@ pytest.importorskip("parmed")
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import box
+
+
+def test_save_pre_ring_repair_snapshots_writes_unrepaired_coordinates(
+    tmp_path: Path,
+) -> None:
+    class DummyStructure:
+        def __init__(self, coordinates) -> None:
+            self.coordinates = np.asarray(coordinates, dtype=float)
+            self.saved = []
+
+        def save(
+            self,
+            path: str,
+            *,
+            format: str | None = None,
+            overwrite: bool = False,
+        ) -> None:
+            self.saved.append(
+                {
+                    "name": Path(path).name,
+                    "format": format,
+                    "overwrite": overwrite,
+                    "coordinates": np.asarray(self.coordinates, dtype=float).copy(),
+                }
+            )
+
+    vac_pre = np.asarray([[1.0, 2.0, 3.0]])
+    vac_repaired = np.asarray([[4.0, 5.0, 6.0]])
+    full_pre = np.asarray([[1.0, 2.0, 3.0], [7.0, 8.0, 9.0]])
+    full_repaired = np.asarray([[4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    vac = DummyStructure(vac_repaired)
+    full = DummyStructure(full_repaired)
+
+    files = box._save_pre_ring_repair_snapshots(
+        tmp_path,
+        vac=vac,
+        vac_coordinates=vac_pre,
+        combined=full,
+        combined_coordinates=full_pre,
+    )
+
+    assert files == {
+        "full_inpcrd": "full.inpcrd.pre_ring_repair",
+        "full_pdb": "full.pdb.pre_ring_repair",
+        "vac_inpcrd": "vac.inpcrd.pre_ring_repair",
+        "vac_pdb": "vac.pdb.pre_ring_repair",
+    }
+    assert [item["name"] for item in vac.saved] == [
+        "vac.inpcrd.pre_ring_repair",
+        "vac.pdb.pre_ring_repair",
+    ]
+    assert [item["name"] for item in full.saved] == [
+        "full.inpcrd.pre_ring_repair",
+        "full.pdb.pre_ring_repair",
+    ]
+    assert [item["format"] for item in vac.saved] == ["rst7", "pdb"]
+    assert [item["format"] for item in full.saved] == ["rst7", "pdb"]
+    assert all(item["overwrite"] for item in [*vac.saved, *full.saved])
+    for item in vac.saved:
+        np.testing.assert_allclose(item["coordinates"], vac_pre)
+    for item in full.saved:
+        np.testing.assert_allclose(item["coordinates"], full_pre)
+    np.testing.assert_allclose(vac.coordinates, vac_repaired)
+    np.testing.assert_allclose(full.coordinates, full_repaired)
 
 
 def test_ligand_charge_from_metadata_rounds_and_handles_missing(tmp_path: Path) -> None:

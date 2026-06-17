@@ -482,7 +482,7 @@ def test_sim_config_ring_penetration_repair_defaults(tmp_path: Path) -> None:
     cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
 
     assert cfg.fix_ring_penetration is True
-    assert cfg.ring_penetration_fix_mode == "protein_sidechain"
+    assert cfg.ring_penetration_fix_mode == "auto"
 
 
 def test_sim_config_infe_flag_and_barostat(tmp_path: Path) -> None:

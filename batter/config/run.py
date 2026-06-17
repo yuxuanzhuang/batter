@@ -248,11 +248,11 @@ class CreateArgs(BaseModel):
             "during prepare_equil box preparation."
         ),
     )
-    ring_penetration_fix_mode: Literal["protein_sidechain", "ligand"] = Field(
-        "protein_sidechain",
+    ring_penetration_fix_mode: Literal["auto", "protein_sidechain", "ligand"] = Field(
+        "auto",
         description=(
-            "Movable group used for local ring-penetration repair: rotate a nearby "
-            "protein aromatic sidechain, or rotate a local ligand torsion."
+            "Movable group used for local ring-penetration repair: auto tries "
+            "protein sidechains first, then local ligand atom perturbations."
         ),
     )
 
@@ -335,6 +335,7 @@ class CreateArgs(BaseModel):
     def _normalize_ring_penetration_fix_mode(cls, value):
         text = str(value).strip().lower().replace("-", "_")
         aliases = {
+            "auto": "auto",
             "protein": "protein_sidechain",
             "sidechain": "protein_sidechain",
             "protein_side_chain": "protein_sidechain",
@@ -344,7 +345,8 @@ class CreateArgs(BaseModel):
         }
         if text not in aliases:
             raise ValueError(
-                "ring_penetration_fix_mode must be 'protein_sidechain' or 'ligand'."
+                "ring_penetration_fix_mode must be 'auto', 'protein_sidechain', "
+                "or 'ligand'."
             )
         return aliases[text]
 

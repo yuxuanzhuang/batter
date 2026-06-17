@@ -817,7 +817,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
             min_adis=float(min_adis),
             max_adis=float(max_adis),
         )
-        logger.info(
+        logger.debug(
             "[build_complex] Placed apo dummy ligand '{}' at the anchor reference "
             "and will use {} as ligand anchor(s).",
             ligand,

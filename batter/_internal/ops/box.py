@@ -35,6 +35,53 @@ from batter._internal.ops.ring_repair import (
 
 
 
+_PRE_RING_REPAIR_FILES = {
+    "full_inpcrd": "full.inpcrd.pre_ring_repair",
+    "full_pdb": "full.pdb.pre_ring_repair",
+    "vac_inpcrd": "vac.inpcrd.pre_ring_repair",
+    "vac_pdb": "vac.pdb.pre_ring_repair",
+}
+
+
+def _save_coordinate_snapshot(
+    structure: pmd.Structure,
+    coordinates: np.ndarray,
+    *,
+    inpcrd_path: Path,
+    pdb_path: Path,
+) -> None:
+    current_coordinates = np.asarray(structure.coordinates, dtype=float).copy()
+    try:
+        structure.coordinates = np.asarray(coordinates, dtype=float).copy()
+        structure.save(str(inpcrd_path), format="rst7", overwrite=True)
+        structure.save(str(pdb_path), format="pdb", overwrite=True)
+    finally:
+        structure.coordinates = current_coordinates
+
+
+def _save_pre_ring_repair_snapshots(
+    window_dir: Path,
+    *,
+    vac: pmd.Structure,
+    vac_coordinates: np.ndarray,
+    combined: pmd.Structure,
+    combined_coordinates: np.ndarray,
+) -> dict[str, str]:
+    _save_coordinate_snapshot(
+        vac,
+        vac_coordinates,
+        inpcrd_path=window_dir / _PRE_RING_REPAIR_FILES["vac_inpcrd"],
+        pdb_path=window_dir / _PRE_RING_REPAIR_FILES["vac_pdb"],
+    )
+    _save_coordinate_snapshot(
+        combined,
+        combined_coordinates,
+        inpcrd_path=window_dir / _PRE_RING_REPAIR_FILES["full_inpcrd"],
+        pdb_path=window_dir / _PRE_RING_REPAIR_FILES["full_pdb"],
+    )
+    return dict(_PRE_RING_REPAIR_FILES)
+
+
 _HY36_DIGITS_UPPER = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _HY36_DIGITS_LOWER = "0123456789abcdefghijklmnopqrstuvwxyz"
 
@@ -1514,15 +1561,28 @@ def create_box(ctx: BuildContext) -> None:
         raise ValueError(f"Unsupported number of other_parts: {len(other_parts)}")
 
     if comp == "q" and bool(getattr(sim, "fix_ring_penetration", True)):
+        pre_repair_vac_coordinates = np.asarray(vac.coordinates, dtype=float).copy()
+        pre_repair_combined_coordinates = np.asarray(
+            combined.coordinates, dtype=float
+        ).copy()
         repair_result = repair_ring_penetrations(
             vac,
-            fix_mode=getattr(sim, "ring_penetration_fix_mode", "protein_sidechain"),
+            fix_mode=getattr(sim, "ring_penetration_fix_mode", "auto"),
             ligand_resname=mol,
             ligand_label=ligand,
         )
         if repair_result.initial_penetrations:
+            pre_repair_files = _save_pre_ring_repair_snapshots(
+                window_dir,
+                vac=vac,
+                vac_coordinates=pre_repair_vac_coordinates,
+                combined=combined,
+                combined_coordinates=pre_repair_combined_coordinates,
+            )
+            repair_metadata = repair_result.to_dict()
+            repair_metadata["pre_repair_files"] = pre_repair_files
             (window_dir / "ring_penetration_repair.json").write_text(
-                json.dumps(repair_result.to_dict(), indent=2, sort_keys=True)
+                json.dumps(repair_metadata, indent=2, sort_keys=True)
             )
         if repair_result.repaired:
             combined_coordinates = np.asarray(combined.coordinates, dtype=float).copy()
