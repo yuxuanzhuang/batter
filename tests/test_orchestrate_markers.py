@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import List
 from pathlib import Path
@@ -110,6 +111,33 @@ def test_filter_needing_phase_and_is_done(tmp_path):
     assert markers.is_done(done_sys, phase) is True
     remaining = markers.filter_needing_phase([done_sys, todo_sys], phase)
     assert [s.name for s in remaining] == ["todo"]
+
+
+def test_equil_analysis_requires_current_stable_distance_for_auto_anchor(tmp_path):
+    root = tmp_path / "lig"
+    equil = root / "equil"
+    equil.mkdir(parents=True)
+    (equil / "representative.pdb").write_text("MODEL\nENDMDL\n")
+    stable_path = equil / "stable_boresch_distance.json"
+    stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
+
+    auto_anchor_system = _make_system(root)
+    assert markers.is_done(auto_anchor_system, "equil_analysis") is False
+
+    stable_path.write_text(
+        json.dumps({"schema_version": 2, "usable": False, "reason": "no pair"})
+        + "\n"
+    )
+    assert markers.is_done(auto_anchor_system, "equil_analysis") is True
+
+    stable_path.write_text(json.dumps({"schema_version": 1}) + "\n")
+    explicit_anchor_system = SimSystem(
+        name=root.name,
+        root=root,
+        anchors=("resid 10 and name CA",),
+        meta={"ligand": root.name},
+    )
+    assert markers.is_done(explicit_anchor_system, "equil_analysis") is True
 
 
 @dataclass

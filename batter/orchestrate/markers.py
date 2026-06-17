@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import List, Tuple, Dict
 
@@ -12,6 +13,8 @@ from batter.pipeline.pipeline import Pipeline
 from batter.pipeline.step import Step
 from batter.utils import components_under
 from batter.orchestrate.state_registry import get_phase_state, PhaseState
+
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 2
 
 
 def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple[List[SimSystem], List[SimSystem]]:
@@ -340,9 +343,31 @@ def is_done(system: SimSystem, phase_name: str) -> bool:
     bool
         ``True`` if the system meets the success specification, ``False`` otherwise.
     """
+    if phase_name == "equil_analysis" and not system.anchors:
+        unbound = system.root / "equil" / "UNBOUND"
+        stable_path = system.root / "equil" / "stable_boresch_distance.json"
+        if not unbound.exists() and not _stable_boresch_distance_current(stable_path):
+            return False
+
     spec = _phase_spec(system.root, phase_name)
     required_spec = spec.required or spec.success
     return _spec_satisfied(system.root, required_spec, phase_name)
+
+
+def _stable_boresch_distance_current(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    try:
+        schema_version = int(data.get("schema_version", 0))
+    except Exception:
+        return False
+    return schema_version >= _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION
 
 
 def _phase_spec(root: Path, phase: str) -> PhaseState:

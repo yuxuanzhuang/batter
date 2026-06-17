@@ -9,6 +9,7 @@ Maybe in the future: the membrane properties
 """
 import numpy as np
 from pathlib import Path
+from typing import Any, Sequence
 
 import scipy.stats
 import MDAnalysis as mda
@@ -26,6 +27,11 @@ import itertools
 #import lipyphilic as lpp
 
 from MDAnalysis.analysis.results import Results
+
+STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 2
+_VMD_FIRST_ANCHOR_ANGLE_TARGET = 90.0
+_VMD_FIRST_ANCHOR_ANGLE_TOLERANCE = 70.0
+
 
 class SimValidator:
     """
@@ -234,6 +240,394 @@ class SimValidator:
             atoms.append(ag[0])
 
         return mda.AtomGroup(atoms)
+
+    def _stable_distance_anchor_context(self) -> dict[str, Any] | None:
+        if len(self.protein_anchor_masks) != 3:
+            return None
+
+        anchors = self._get_protein_anchor_atoms()
+        if anchors is None or anchors.n_atoms != 3:
+            return None
+
+        def _nonempty_values(attr_name: str) -> set[str]:
+            values = set()
+            for atom in anchors:
+                value = str(getattr(atom, attr_name, "")).strip()
+                if value:
+                    values.add(value)
+            return values
+
+        return {
+            "anchors": anchors,
+            "p1": anchors[0],
+            "p2": anchors[1],
+            "p3": anchors[2],
+            "segids": _nonempty_values("segid"),
+            "chainIDs": _nonempty_values("chainID"),
+            "exclude_indices": {int(anchors[1].index), int(anchors[2].index)},
+        }
+
+    @staticmethod
+    def _atom_group_from_atoms(
+        atoms: Sequence[Any],
+        fallback_group: AtomGroup,
+    ) -> AtomGroup:
+        if atoms:
+            return mda.AtomGroup(list(atoms))
+        return fallback_group[:0]
+
+    def _filter_stable_candidates_to_anchor_context(
+        self,
+        candidates: AtomGroup,
+        anchor_context: dict[str, Any] | None,
+    ) -> AtomGroup:
+        if anchor_context is None or candidates.n_atoms == 0:
+            return candidates
+
+        filtered = candidates
+        for attr_name, context_key in (("segid", "segids"), ("chainID", "chainIDs")):
+            allowed = {
+                str(value).strip()
+                for value in anchor_context.get(context_key, set())
+                if str(value).strip()
+            }
+            if not allowed:
+                continue
+            matches = [
+                atom
+                for atom in filtered
+                if str(getattr(atom, attr_name, "")).strip() in allowed
+            ]
+            if matches:
+                filtered = mda.AtomGroup(matches)
+
+        excluded = set(anchor_context.get("exclude_indices") or set())
+        if excluded:
+            filtered = self._atom_group_from_atoms(
+                [atom for atom in filtered if int(atom.index) not in excluded],
+                filtered,
+            )
+        return filtered
+
+    def _stable_distance_protein_candidates(
+        self,
+        anchor_context: dict[str, Any] | None = None,
+    ) -> AtomGroup:
+        candidates = self.universe.select_atoms(
+            'protein and not resname NMA ACE and name CA C N'
+        )
+        if candidates.n_atoms == 0:
+            candidates = self.universe.select_atoms('protein and name CA C N')
+        if candidates.n_atoms == 0:
+            candidates = self._heavy_atoms_or_all(self.universe.select_atoms('protein'))
+        candidates = self._filter_stable_candidates_to_anchor_context(
+            candidates, anchor_context
+        )
+        return candidates
+
+    def _stable_distance_ligand_candidates(
+        self,
+        ligand_atom_names: Sequence[str] | None = None,
+    ) -> AtomGroup:
+        ligand_ag = self.universe.select_atoms(f'resname {self.ligand}')
+        if ligand_ag.n_atoms == 0:
+            raise ValueError(f'No ligand atoms found for resname {self.ligand!r}.')
+
+        ligand_ag = self._heavy_atoms_or_all(ligand_ag)
+        requested = {
+            str(name).strip()
+            for name in ligand_atom_names or []
+            if str(name).strip()
+        }
+        if not requested:
+            return ligand_ag
+
+        atoms = [atom for atom in ligand_ag if str(atom.name) in requested]
+        if not atoms:
+            logger.warning(
+                'No ligand atoms matched the requested Boresch candidate names {}; '
+                'using all ligand heavy atoms for stable-distance search.',
+                sorted(requested),
+            )
+            return ligand_ag
+        return mda.AtomGroup(atoms)
+
+    @staticmethod
+    def _atom_metadata(atom: Any) -> dict[str, Any]:
+        try:
+            atom_id = int(atom.id)
+        except Exception:
+            atom_id = None
+        try:
+            chain_id = str(atom.chainID).strip()
+        except Exception:
+            chain_id = ""
+        segid = str(getattr(atom, "segid", "")).strip()
+        resid = int(atom.resid)
+        name = str(atom.name)
+        return {
+            "index": int(atom.index),
+            "id": atom_id,
+            "resid": resid,
+            "resname": str(atom.resname),
+            "name": name,
+            "segid": segid,
+            "chainID": chain_id,
+            "mask": f":{resid}@{name}",
+        }
+
+    @staticmethod
+    def _angle_matrix_degrees(
+        protein_positions: np.ndarray,
+        p2_position: np.ndarray,
+        ligand_positions: np.ndarray,
+    ) -> np.ndarray:
+        p1_to_p2 = np.asarray(p2_position, dtype=float).reshape(1, 3) - np.asarray(
+            protein_positions, dtype=float
+        )
+        p1_to_ligand = (
+            np.asarray(ligand_positions, dtype=float).reshape(1, -1, 3)
+            - np.asarray(protein_positions, dtype=float).reshape(-1, 1, 3)
+        )
+        dot = np.sum(p1_to_p2.reshape(-1, 1, 3) * p1_to_ligand, axis=2)
+        norms = np.linalg.norm(p1_to_p2, axis=1).reshape(-1, 1) * np.linalg.norm(
+            p1_to_ligand, axis=2
+        )
+        cosang = np.divide(
+            dot,
+            norms,
+            out=np.full(dot.shape, np.nan, dtype=float),
+            where=norms > 1.0e-8,
+        )
+        return np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0)))
+
+    def find_stable_boresch_distance(
+        self,
+        *,
+        tail_fraction: float = 0.25,
+        min_distance: float = 3.0,
+        max_distance: float = 7.0,
+        ligand_atom_names: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Pick a stable protein-ligand atom pair from the equilibration tail.
+
+        Protein candidates follow BATTER's receptor-anchor atom class (backbone
+        CA/C/N, with heavy-atom fallback). Ligand candidates can be restricted
+        to names produced by the ligand-anchor candidate heuristic. The selected
+        pair must have a mean distance in ``[min_distance, max_distance]`` over
+        the trailing analysis window. When the original receptor anchors are
+        available, the P2-P1-L1 angle must also satisfy the relaxed VMD first
+        anchor tolerance.
+        """
+        if min_distance < 0 or max_distance <= min_distance:
+            raise ValueError("min_distance must be >= 0 and below max_distance.")
+
+        anchor_context = self._stable_distance_anchor_context()
+        protein_candidates = self._stable_distance_protein_candidates(anchor_context)
+        ligand_candidates = self._stable_distance_ligand_candidates(ligand_atom_names)
+        if protein_candidates.n_atoms == 0:
+            raise ValueError("No protein atoms available for stable-distance search.")
+        if ligand_candidates.n_atoms == 0:
+            raise ValueError("No ligand atoms available for stable-distance search.")
+
+        n_frames = len(self.universe.trajectory)
+        if n_frames == 0:
+            raise ValueError(
+                "No trajectory frames available for stable-distance search."
+            )
+        start_frame = self._trailing_analysis_start_frame(tail_fraction=tail_fraction)
+
+        n_pairs = protein_candidates.n_atoms * ligand_candidates.n_atoms
+        sum_dist = np.zeros(n_pairs, dtype=float)
+        sum_sq_dist = np.zeros(n_pairs, dtype=float)
+        sum_angle = np.zeros(n_pairs, dtype=float)
+        sum_sq_angle = np.zeros(n_pairs, dtype=float)
+        angle_counts = np.zeros(n_pairs, dtype=float)
+        frame_indices: list[int] = []
+        p2_atom = anchor_context.get("p2") if anchor_context is not None else None
+
+        for ts in self.universe.trajectory[start_frame:n_frames]:
+            dist_mat = distance_array(
+                protein_candidates.positions,
+                ligand_candidates.positions,
+                box=self.universe.dimensions,
+            )
+            flat = dist_mat.reshape(-1)
+            sum_dist += flat
+            sum_sq_dist += flat * flat
+            if p2_atom is not None:
+                angle_mat = self._angle_matrix_degrees(
+                    protein_candidates.positions,
+                    np.asarray(p2_atom.position, dtype=float),
+                    ligand_candidates.positions,
+                )
+                flat_angle = angle_mat.reshape(-1)
+                finite_angle = np.isfinite(flat_angle)
+                sum_angle[finite_angle] += flat_angle[finite_angle]
+                sum_sq_angle[finite_angle] += (
+                    flat_angle[finite_angle] * flat_angle[finite_angle]
+                )
+                angle_counts[finite_angle] += 1.0
+            frame_indices.append(int(ts.frame))
+
+        if not frame_indices:
+            raise ValueError("No tail frames available for stable-distance search.")
+
+        count = float(len(frame_indices))
+        mean_dist = sum_dist / count
+        var_dist = np.maximum((sum_sq_dist / count) - (mean_dist * mean_dist), 0.0)
+        std_dist = np.sqrt(var_dist)
+        finite = np.isfinite(mean_dist) & np.isfinite(std_dist)
+        in_window = (
+            finite
+            & (mean_dist >= float(min_distance))
+            & (mean_dist <= float(max_distance))
+        )
+        mean_angle = np.full(n_pairs, np.nan, dtype=float)
+        std_angle = np.full(n_pairs, np.nan, dtype=float)
+        angle_valid = np.ones(n_pairs, dtype=bool)
+        if p2_atom is not None:
+            with np.errstate(invalid="ignore", divide="ignore"):
+                mean_angle = np.divide(
+                    sum_angle,
+                    angle_counts,
+                    out=np.full(n_pairs, np.nan, dtype=float),
+                    where=angle_counts > 0.0,
+                )
+                var_angle = np.divide(
+                    sum_sq_angle,
+                    angle_counts,
+                    out=np.full(n_pairs, np.nan, dtype=float),
+                    where=angle_counts > 0.0,
+                ) - (mean_angle * mean_angle)
+            std_angle = np.sqrt(np.maximum(var_angle, 0.0))
+            angle_valid = (
+                np.isfinite(mean_angle)
+                & (angle_counts == float(len(frame_indices)))
+                & (
+                    np.abs(mean_angle - _VMD_FIRST_ANCHOR_ANGLE_TARGET)
+                    <= _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE
+                )
+            )
+        in_window &= angle_valid
+        valid_indices = np.where(in_window)[0]
+        if valid_indices.size == 0:
+            angle_note = (
+                " and a VMD-compatible P2-P1-L1 mean angle"
+                if p2_atom is not None
+                else ""
+            )
+            raise ValueError(
+                "No protein-ligand candidate pair had a tail-window mean distance "
+                f"between {min_distance:.2f} and {max_distance:.2f} Å{angle_note}."
+            )
+
+        mid_distance = (float(min_distance) + float(max_distance)) / 2.0
+        best_flat = min(
+            (int(idx) for idx in valid_indices),
+            key=lambda idx: (
+                float(std_dist[idx]),
+                float(std_angle[idx]) if np.isfinite(std_angle[idx]) else 0.0,
+                abs(float(mean_angle[idx]) - _VMD_FIRST_ANCHOR_ANGLE_TARGET)
+                if np.isfinite(mean_angle[idx])
+                else 0.0,
+                abs(float(mean_dist[idx]) - mid_distance),
+                int(idx // ligand_candidates.n_atoms),
+                int(idx % ligand_candidates.n_atoms),
+            ),
+        )
+        protein_idx = best_flat // ligand_candidates.n_atoms
+        ligand_idx = best_flat % ligand_candidates.n_atoms
+        protein_atom = protein_candidates[int(protein_idx)]
+        ligand_atom = ligand_candidates[int(ligand_idx)]
+
+        distances: list[float] = []
+        vectors: list[np.ndarray] = []
+        angles: list[float] = []
+        for _ in self.universe.trajectory[start_frame:n_frames]:
+            vector = np.asarray(
+                ligand_atom.position - protein_atom.position, dtype=float
+            )
+            dist = distance_array(
+                np.asarray(protein_atom.position, dtype=float).reshape(1, 3),
+                np.asarray(ligand_atom.position, dtype=float).reshape(1, 3),
+                box=self.universe.dimensions,
+            )[0, 0]
+            vectors.append(vector.copy())
+            distances.append(float(dist))
+            if p2_atom is not None:
+                angle = self._angle_matrix_degrees(
+                    np.asarray(protein_atom.position, dtype=float).reshape(1, 3),
+                    np.asarray(p2_atom.position, dtype=float),
+                    np.asarray(ligand_atom.position, dtype=float).reshape(1, 3),
+                )[0, 0]
+                angles.append(float(angle))
+
+        vector_array = np.asarray(vectors, dtype=float)
+        distance_array_values = np.asarray(distances, dtype=float)
+        angle_array_values = np.asarray(angles, dtype=float)
+        vector_mean = vector_array.mean(axis=0)
+        vector_std = vector_array.std(axis=0)
+        selected_mean = float(distance_array_values.mean())
+        selected_std = float(distance_array_values.std())
+        angle_record = None
+        if p2_atom is not None and angle_array_values.size:
+            angle_record = {
+                "p2_anchor": self._atom_metadata(p2_atom),
+                "target": _VMD_FIRST_ANCHOR_ANGLE_TARGET,
+                "tolerance": _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE,
+                "mean": float(angle_array_values.mean()),
+                "std": float(angle_array_values.std()),
+                "min": float(angle_array_values.min()),
+                "max": float(angle_array_values.max()),
+                "last": float(angle_array_values[-1]),
+            }
+
+        self.results['stable_boresch_distance'] = distance_array_values
+        self.results['stable_boresch_frame_indices'] = np.asarray(
+            frame_indices, dtype=int
+        )
+        if angle_array_values.size:
+            self.results['stable_boresch_angle'] = angle_array_values
+
+        return {
+            "schema_version": STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+            "source": "equil_analysis",
+            "tail_fraction": float(tail_fraction),
+            "analysis_start_frame": int(start_frame),
+            "n_frames": int(len(frame_indices)),
+            "criteria": {
+                "protein_atom_names": ["CA", "C", "N"],
+                "ligand_atom_names": [
+                    str(name).strip()
+                    for name in ligand_atom_names or []
+                    if str(name).strip()
+                ],
+                "min_distance": float(min_distance),
+                "max_distance": float(max_distance),
+                "first_anchor_angle_target": _VMD_FIRST_ANCHOR_ANGLE_TARGET,
+                "first_anchor_angle_tolerance": _VMD_FIRST_ANCHOR_ANGLE_TOLERANCE,
+            },
+            "protein": self._atom_metadata(protein_atom),
+            "ligand": self._atom_metadata(ligand_atom),
+            "distance": {
+                "mean": selected_mean,
+                "std": selected_std,
+                "cv": selected_std / selected_mean if selected_mean else None,
+                "min": float(distance_array_values.min()),
+                "max": float(distance_array_values.max()),
+                "last": float(distance_array_values[-1]),
+            },
+            "vector": {
+                "mean": [float(x) for x in vector_mean],
+                "std": [float(x) for x in vector_std],
+            },
+            "angle": angle_record,
+            "frame_indices": [int(x) for x in frame_indices],
+            "distances": [float(x) for x in distance_array_values],
+            "angles": [float(x) for x in angle_array_values],
+        }
 
     def _trailing_analysis_start_frame(self, tail_fraction: float = 0.25) -> int:
         if not 0 < tail_fraction <= 1:

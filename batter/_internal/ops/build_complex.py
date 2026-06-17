@@ -250,6 +250,202 @@ def _copy_if_distinct(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
 
 
+_STABLE_BORESCH_DISTANCE_JSON = "stable_boresch_distance.json"
+_STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 2
+
+
+def _user_anchor_atoms_were_provided(extra: dict | None) -> bool:
+    if not extra:
+        return False
+    anchors = extra.get("user_anchor_atoms") or ()
+    return any(str(anchor).strip() for anchor in anchors)
+
+
+def _load_stable_boresch_distance(equil_dir: Path) -> dict | None:
+    path = equil_dir / _STABLE_BORESCH_DISTANCE_JSON
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        logger.warning(
+            "[build_complex_z] Ignoring unreadable stable Boresch distance {}: {}",
+            path,
+            exc,
+        )
+        return None
+    if not isinstance(data, dict):
+        logger.warning(
+            "[build_complex_z] Ignoring malformed stable Boresch distance {}", path
+        )
+        return None
+    try:
+        schema_version = int(data.get("schema_version", 0))
+    except Exception:
+        schema_version = 0
+    if schema_version < _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION:
+        logger.warning(
+            "[build_complex_z] Ignoring stale stable Boresch distance {} "
+            "(schema_version={}, expected >= {}).",
+            path,
+            schema_version,
+            _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION,
+        )
+        return None
+    if data.get("usable") is False:
+        logger.debug(
+            "[build_complex_z] Stable Boresch distance {} is marked unusable: {}",
+            path,
+            data.get("reason", "no reason recorded"),
+        )
+        return None
+    return data
+
+
+def _renumber_stable_protein_residue(
+    *,
+    renum_data: pd.DataFrame | None,
+    stable_resid: int,
+    stable_resname: str,
+    stable_chain: str,
+) -> int:
+    if renum_data is None:
+        return int(stable_resid)
+
+    matches = renum_data.query("old_resid == @stable_resid")
+    if matches.empty:
+        return int(stable_resid)
+
+    chain = str(stable_chain).strip()
+    if chain:
+        chain_matches = matches.query("old_chain == @chain")
+        if not chain_matches.empty:
+            matches = chain_matches
+
+    resname = str(stable_resname).strip()
+    if resname:
+        resname_matches = matches.query(
+            "old_resname == @resname or new_resname == @resname"
+        )
+        if not resname_matches.empty:
+            matches = resname_matches
+
+    # +1 matches the receptor numbering written into equil-<mol>.pdb because
+    # the dummy atom occupies residue 1 in the VMD prep system.
+    return int(matches["new_resid"].values[0]) + 1
+
+
+def _apply_stable_boresch_distance_preference(
+    *,
+    u: mda.Universe,
+    mol: str,
+    stable_record: dict,
+    P1: str,
+    P2: str,
+    P3: str,
+    lig_name_str: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    renum_data: pd.DataFrame | None = None,
+) -> dict | None:
+    protein = stable_record.get("protein") or {}
+    ligand = stable_record.get("ligand") or {}
+    if not isinstance(protein, dict) or not isinstance(ligand, dict):
+        return None
+
+    try:
+        stable_original_resid = int(protein["resid"])
+        stable_resname = str(protein.get("resname", "")).strip()
+        stable_protein_name = str(protein["name"]).strip()
+        stable_ligand_name = str(ligand["name"]).strip()
+    except Exception:
+        logger.warning(
+            "[build_complex_z] Stable Boresch distance JSON lacks atom metadata."
+        )
+        return None
+    if not stable_protein_name or not stable_ligand_name:
+        return None
+
+    stable_chain = str(protein.get("segid") or protein.get("chainID") or "").strip()
+    stable_resid = _renumber_stable_protein_residue(
+        renum_data=renum_data,
+        stable_resid=stable_original_resid,
+        stable_resname=stable_resname,
+        stable_chain=stable_chain,
+    )
+
+    candidate_names = [name for name in lig_name_str.split() if name]
+    if stable_ligand_name not in candidate_names:
+        logger.warning(
+            "[build_complex_z] Stable ligand atom {} is not in the current Boresch "
+            "candidate set {}; keeping default ligand-anchor search.",
+            stable_ligand_name,
+            " ".join(candidate_names),
+        )
+        return None
+
+    selection = (
+        f"(not resname {mol}) and resid {stable_resid} and name {stable_protein_name}"
+    )
+    stable_protein = u.select_atoms(selection)
+    if stable_protein.n_atoms != 1:
+        stable_protein = u.select_atoms(
+            f"protein and resid {stable_resid} and name {stable_protein_name}"
+        )
+    if stable_protein.n_atoms != 1:
+        logger.warning(
+            "[build_complex_z] Stable protein atom selection {} matched {} atom(s); "
+            "keeping default receptor P1.",
+            selection,
+            stable_protein.n_atoms,
+        )
+        return None
+
+    atom = stable_protein[0]
+    stable_P1 = f":{int(atom.resid)}@{atom.name}"
+    if stable_P1 in {P2, P3}:
+        logger.warning(
+            "[build_complex_z] Stable protein atom {} duplicates P2/P3; "
+            "keeping default receptor anchors.",
+            stable_P1,
+        )
+        return None
+
+    vector = stable_record.get("vector") or {}
+    try:
+        vector_mean = [float(x) for x in vector.get("mean", [])]
+        if len(vector_mean) != 3:
+            raise ValueError
+        l1_x_new, l1_y_new, l1_z_new = vector_mean
+    except Exception:
+        l1_x_new, l1_y_new, l1_z_new = float(l1_x), float(l1_y), float(l1_z)
+
+    try:
+        distance_std = float((stable_record.get("distance") or {}).get("std", 0.0))
+    except Exception:
+        distance_std = 0.0
+    l1_range_new = max(float(l1_range), 2.0 + 3.0 * max(distance_std, 0.0))
+
+    preferred_names = [stable_ligand_name] + [
+        name for name in candidate_names if name != stable_ligand_name
+    ]
+    return {
+        "P1": stable_P1,
+        "stable_original_P1": f":{stable_original_resid}@{stable_protein_name}",
+        "p1_resid": str(int(atom.resid)),
+        "p1_atom": str(atom.name),
+        "p1_vmd": str(int(atom.resid)),
+        "lig_name_str": " ".join(preferred_names),
+        "l1_x": l1_x_new,
+        "l1_y": l1_y_new,
+        "l1_z": l1_z_new,
+        "l1_range": l1_range_new,
+        "stable_ligand_name": stable_ligand_name,
+    }
+
+
 def _unit_vector(vec: np.ndarray) -> np.ndarray | None:
     norm = float(np.linalg.norm(vec))
     if norm <= 1.0e-8:
@@ -902,6 +1098,12 @@ def build_complex_z(ctx) -> bool:
     p2_resid = P2.split("@")[0][1:]
     p2_atom = P2.split("@")[1]
     p2_vmd = p2_resid
+    renum_data = pd.read_csv(
+        _p("protein_renum.txt"),
+        sep=r"\s+",
+        header=None,
+        names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+    )
 
     # 8) SDR distance
     if buffer_z <= 20:
@@ -949,44 +1151,76 @@ def build_complex_z(ctx) -> bool:
         ligand_label=ligand,
         stage="fe-z",
     )
+    default_anchor_state = {
+        "P1": P1,
+        "p1_resid": p1_resid,
+        "p1_atom": p1_atom,
+        "p1_vmd": p1_vmd,
+        "lig_name_str": lig_name_str,
+        "l1_x": l1_x,
+        "l1_y": l1_y,
+        "l1_z": l1_z,
+        "l1_range": l1_range,
+    }
+    stable_preference_applied = False
+
+    extra = dict(ctx.extra or {})
+    if _user_anchor_atoms_were_provided(extra):
+        logger.debug(
+            "[build_complex_z] Explicit create.anchor_atoms were provided; "
+            "stable equilibration distance will not modify receptor anchors."
+        )
+    else:
+        stable_record = _load_stable_boresch_distance(equil_dir)
+        if stable_record is not None:
+            stable_preference = _apply_stable_boresch_distance_preference(
+                u=u,
+                mol=mol,
+                stable_record=stable_record,
+                P1=P1,
+                P2=P2,
+                P3=P3,
+                lig_name_str=lig_name_str,
+                l1_x=float(l1_x),
+                l1_y=float(l1_y),
+                l1_z=float(l1_z),
+                l1_range=float(l1_range),
+                renum_data=renum_data,
+            )
+            if stable_preference is not None:
+                P1 = stable_preference["P1"]
+                p1_resid = stable_preference["p1_resid"]
+                p1_atom = stable_preference["p1_atom"]
+                p1_vmd = stable_preference["p1_vmd"]
+                lig_name_str = stable_preference["lig_name_str"]
+                l1_x = stable_preference["l1_x"]
+                l1_y = stable_preference["l1_y"]
+                l1_z = stable_preference["l1_z"]
+                l1_range = stable_preference["l1_range"]
+                stable_preference_applied = True
+                logger.info(
+                    "[build_complex_z] Using stable equilibration distance to prefer "
+                    "P1={} (from {}) and ligand L1 candidate {} for {}.",
+                    P1,
+                    stable_preference["stable_original_P1"],
+                    stable_preference["stable_ligand_name"],
+                    ligand,
+                )
 
     # 11) prep.tcl
-    with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
-        for line in fin:
-            fout.write(
-                line.replace("MMM", mol)
-                .replace("mmm", mol)
-                .replace("NN", p1_atom)
-                .replace("N2A", p2_atom)
-                .replace("P1A", p1_vmd)
-                .replace("P2A", p2_vmd)
-                .replace("FIRST", "2")
-                .replace("LAST", str(rec_res))
-                .replace("STAGE", "fe")
-                .replace("XDIS", f"{l1_x:4.2f}")
-                .replace("YDIS", f"{l1_y:4.2f}")
-                .replace("ZDIS", f"{l1_z:4.2f}")
-                .replace("RANG", f"{l1_range:4.2f}")
-                .replace("DMAX", f"{max_adis:4.2f}")
-                .replace("DMIN", f"{min_adis:4.2f}")
-                .replace("SDRD", f"{sdr_dist:4.2f}")
-                .replace("LIGSITE", "0")  # no FB for ligand now
-                .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
-                .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
-                .replace("LIGANDNAME", lig_name_str)
-            )
-    try:
-        run_with_log(
-            f"{vmd} -dispdev text -e prep.tcl",
-            error_match="anchor not found",
-            shell=False,
-            working_dir=workdir,
-        )
-    except RuntimeError:
-        logger.debug(
-            f"[build_complex] Default candidates failed; retry with ALL ligand atoms for anchors in {ligand}"
-        )
-        lig_name_str = " ".join(str(x) for x in lig_names)
+    def _restore_anchor_state(state: dict) -> None:
+        nonlocal P1, p1_resid, p1_atom, p1_vmd, lig_name_str, l1_x, l1_y, l1_z, l1_range
+        P1 = state["P1"]
+        p1_resid = state["p1_resid"]
+        p1_atom = state["p1_atom"]
+        p1_vmd = state["p1_vmd"]
+        lig_name_str = state["lig_name_str"]
+        l1_x = state["l1_x"]
+        l1_y = state["l1_y"]
+        l1_z = state["l1_z"]
+        l1_range = state["l1_range"]
+
+    def _write_prep(ligand_name_str: str) -> None:
         with open(_p("prep-ini.tcl"), "rt") as fin, open(_p("prep.tcl"), "wt") as fout:
             for line in fin:
                 fout.write(
@@ -1009,14 +1243,45 @@ def build_complex_z(ctx) -> bool:
                     .replace("LIGSITE", "0")  # no FB for ligand now
                     .replace("OTHRS", " ".join(other_mol) if other_mol else "XXX")
                     .replace("LIPIDS", " ".join(lipid_mol) if lipid_mol else "XXX")
-                    .replace("LIGANDNAME", lig_name_str)
+                    .replace("LIGANDNAME", ligand_name_str)
                 )
+
+    def _run_prep(ligand_name_str: str) -> None:
+        _write_prep(ligand_name_str)
         run_with_log(
             f"{vmd} -dispdev text -e prep.tcl",
             error_match="anchor not found",
             shell=False,
             working_dir=workdir,
         )
+
+    try:
+        _run_prep(lig_name_str)
+    except RuntimeError:
+        logger.debug(
+            "[build_complex_z] Candidate ligand anchors failed for {}; "
+            "retrying with all ligand atoms.",
+            ligand,
+        )
+        all_lig_name_str = " ".join(str(x) for x in lig_names)
+        try:
+            _run_prep(all_lig_name_str)
+            lig_name_str = all_lig_name_str
+        except RuntimeError:
+            if not stable_preference_applied:
+                raise
+            logger.warning(
+                "[build_complex_z] Stable-distance preferred geometry failed for {}; "
+                "retrying original receptor anchor geometry.",
+                ligand,
+            )
+            _restore_anchor_state(default_anchor_state)
+            try:
+                _run_prep(lig_name_str)
+            except RuntimeError:
+                all_lig_name_str = " ".join(str(x) for x in lig_names)
+                _run_prep(all_lig_name_str)
+                lig_name_str = all_lig_name_str
 
     # 12) anchors.txt -> validate, rename with ligand tag, write header into fe-<mol>.pdb
     anchors_txt = _p("anchors.txt")

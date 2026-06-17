@@ -6,7 +6,7 @@ from batter.config.run import CreateArgs, FESimArgs
 from batter.config.simulation import SimulationConfig
 from batter.exec.handlers import prepare_fe as prepare_fe_mod
 from batter.pipeline.step import Step
-from batter.pipeline.payloads import StepPayload
+from batter.pipeline.payloads import StepPayload, SystemParams
 from batter.systems.core import SimSystem
 
 
@@ -68,3 +68,56 @@ def test_prepare_fe_windows_always_writes_remd(monkeypatch, tmp_path: Path) -> N
     assert n_windows == 1
     # ensure dummy builder created window dirs
     assert (lig_root / "fe" / "z" / "z00").exists()
+
+
+def test_prepare_fe_forwards_initial_anchor_atoms(monkeypatch, tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    lig_root = run_root / "simulations" / "LIG"
+    (run_root / "artifacts" / "ligand_params").mkdir(parents=True, exist_ok=True)
+    (run_root / "artifacts" / "ligand_params" / "index.json").write_text(
+        '{"ligands": [{"residue_name": "LIG", "store_dir": "params/LIG"}]}'
+    )
+
+    captured = []
+
+    class DummyBuilder:
+        def __init__(self, *, extra, **_kwargs):
+            captured.append(extra)
+
+        def build(self):
+            return None
+
+    monkeypatch.setattr(prepare_fe_mod, "AlchemicalFEBuilder", DummyBuilder)
+
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy")
+    create = CreateArgs(
+        system_name="sys",
+        ligand_paths={"LIG": lig_file},
+        anchor_atoms=[
+            "resid 10 and name CA",
+            "resid 20 and name CA",
+            "resid 30 and name CA",
+        ],
+    )
+    fe_args = FESimArgs(
+        lambdas=[0.0],
+        eq_steps=100,
+        n_steps={"z": 1000},
+    )
+    sim_cfg = SimulationConfig.from_sections(create, fe_args, protocol="abfe")
+
+    payload = StepPayload(
+        sim=sim_cfg,
+        sys_params=SystemParams(anchor_atoms=tuple(create.anchor_atoms)),
+    )
+    system = SimSystem(
+        name="sys",
+        root=lig_root,
+        meta={"ligand": "LIG", "residue_name": "LIG"},
+    )
+
+    prepare_fe_mod.prepare_fe_handler(Step(name="prepare_fe"), system, payload)
+
+    assert captured
+    assert captured[0]["user_anchor_atoms"] == create.anchor_atoms

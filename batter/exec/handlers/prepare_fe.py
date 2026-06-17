@@ -88,6 +88,7 @@ def prepare_fe_handler(
 
     comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
     sys_params = payload.sys_params or SystemParams()
+    user_anchor_atoms = list(sys_params.get("anchor_atoms", []) or [])
     extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
     extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get(
@@ -154,6 +155,7 @@ def prepare_fe_handler(
                 "extra_restraints": extra_restraints,
                 "extra_restraint_fc": extra_restraint_fc,
                 "extra_conformation_restraints": extra_conformation_restraints,
+                "user_anchor_atoms": user_anchor_atoms,
                 "partition": partition,
                 **pair_meta,
             },
@@ -218,6 +220,7 @@ def prepare_fe_windows_handler(
 
     comp_windows: dict = payload.get("component_lambdas") or sim.component_lambdas  # type: ignore[attr-defined]
     sys_params = payload.sys_params or SystemParams()
+    user_anchor_atoms = list(sys_params.get("anchor_atoms", []) or [])
     extra_restraints: Optional[str] = sys_params.get("extra_restraints", None)
     extra_restraint_fc = float(sys_params.get("extra_restraint_fc", 10.0))
     extra_conformation_restraints: Optional[Path] = sys_params.get(
@@ -279,6 +282,7 @@ def prepare_fe_windows_handler(
                     "extra_restraints": extra_restraints,
                     "extra_restraint_fc": extra_restraint_fc,
                     "extra_conformation_restraints": extra_conformation_restraints,
+                    "user_anchor_atoms": user_anchor_atoms,
                     "partition": partition,
                     **pair_meta,
                 },
