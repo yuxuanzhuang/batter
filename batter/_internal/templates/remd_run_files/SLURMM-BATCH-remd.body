@@ -11,6 +11,28 @@ RETRY_COUNT=$(cat "$ATTEMPT_FILE")
 echo "Current attempt: $RETRY_COUNT"
 MAX_ATTEMPTS=10
 
+failure_outputs_have_titan_xp() {
+    local retry_count=${1:-}
+    local out_file archive_dir
+    while IFS= read -r -d '' out_file; do
+        if grep -Fq "TITAN Xp" "$out_file"; then
+            echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+            return 0
+        fi
+    done < <(find . -maxdepth 3 -type f -name '*.out' ! -path './WRONG_FAIL/*' ! -path '*/WRONG_FAIL/*' -print0 2>/dev/null)
+
+    for archive_dir in WRONG_FAIL/*_job_attempt_${retry_count} */WRONG_FAIL/*_job_attempt_${retry_count}; do
+        [[ -d "$archive_dir" ]] || continue
+        while IFS= read -r -d '' out_file; do
+            if grep -Fq "TITAN Xp" "$out_file"; then
+                echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
+                return 0
+            fi
+        done < <(find "$archive_dir" -maxdepth 1 -type f -name '*.out' -print0 2>/dev/null)
+    done
+    return 1
+}
+
 echo "Attempt $RETRY_COUNT to run simulations..."
 RETRY=$RETRY_COUNT bash ./run-local-remd.bash
 error_code=$?
@@ -20,14 +42,19 @@ if [ $error_code -eq 0 ]; then
 else
     echo "Simulation failed with error code $error_code on attempt $RETRY_COUNT."
 
+    if failure_outputs_have_titan_xp "$RETRY_COUNT"; then
+        echo "Requeuing the job for attempt $RETRY_COUNT without incrementing job_attempt.txt because TITAN Xp was used."
+        sleep 60
+        scontrol requeue "$SLURM_JOB_ID"
+        exit 0
+    fi
+
     if [ $RETRY_COUNT -lt $MAX_ATTEMPTS ]; then
         NEXT_RETRY=$((RETRY_COUNT + 1))
         echo "$NEXT_RETRY" > "$ATTEMPT_FILE"
         echo "Requeuing the job for attempt $NEXT_RETRY..."
         sleep 60
         scontrol requeue "$SLURM_JOB_ID"
-        fi
-        
         exit 0
     else
         echo "FAILED" > "${PFOLDER}/FAILED"
