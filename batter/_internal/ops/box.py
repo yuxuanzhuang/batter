@@ -41,6 +41,7 @@ _PRE_RING_REPAIR_FILES = {
     "vac_inpcrd": "vac.inpcrd.pre_ring_repair",
     "vac_pdb": "vac.pdb.pre_ring_repair",
 }
+_MIN_SDR_SOLVATION_BUFFER_Z = 3.0
 
 
 def _save_coordinate_snapshot(
@@ -1067,6 +1068,15 @@ def create_box(ctx: BuildContext) -> None:
 
     if comp != "q":
         sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
+        if buffer_z_left < _MIN_SDR_SOLVATION_BUFFER_Z:
+            logger.debug(
+                "[create_box:{}] SDR solvation z buffer {:.3f} Å is below {:.1f} Å; using {:.1f} Å.",
+                comp,
+                buffer_z_left,
+                _MIN_SDR_SOLVATION_BUFFER_Z,
+                _MIN_SDR_SOLVATION_BUFFER_Z,
+            )
+            buffer_z_left = _MIN_SDR_SOLVATION_BUFFER_Z
     else:
         buffer_z_left = buffer_z
 
