@@ -116,6 +116,75 @@ require_nonempty_file_or_attempt_fail() {
     mark_failed_and_exit "$message"
 }
 
+is_amber_restart_path() {
+    case "$1" in
+        *.inpcrd|*.rst7|*.restrt) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+amber_restart_validation_status() {
+    local restart_path=$1
+
+    if [[ -z $restart_path || ! -s $restart_path ]]; then
+        echo "missing or empty"
+        return 0
+    fi
+
+    awk '
+        BEGIN {
+            count = 0
+            status = ""
+        }
+        NR == 2 {
+            natom_raw = $1
+            if (natom_raw !~ /^[0-9]+$/ || natom_raw + 0 <= 0) {
+                print "invalid atom count in restart header"
+                status = "bad"
+                exit
+            }
+            natom = natom_raw + 0
+            coord = natom * 3
+            coord_box = coord + 6
+            vel = natom * 6
+            vel_box = vel + 6
+            next
+        }
+        NR > 2 {
+            for (i = 1; i <= NF; i++) {
+                if ($i !~ /^[-+]?(([0-9]+([.][0-9]*)?)|([.][0-9]+))([EeDd][-+]?[0-9]+)?$/) {
+                    printf "non-numeric restart payload on line %d", NR
+                    status = "bad"
+                    exit
+                }
+                count++
+            }
+        }
+        END {
+            if (status != "") {
+                exit
+            }
+            if (NR < 2) {
+                print "missing restart header"
+                exit
+            }
+            if (count == coord || count == coord_box || count == vel || count == vel_box) {
+                print "ok"
+                exit
+            }
+            printf "expected %d/%d coordinate or %d/%d coordinate+velocity fields, found %d", coord, coord_box, vel, vel_box, count
+        }
+    ' "$restart_path"
+}
+
+amber_restart_is_complete() {
+    local restart_path=$1
+    local status
+
+    status=$(amber_restart_validation_status "$restart_path")
+    [[ $status == "ok" ]]
+}
+
 remove_empty_file_if_present() {
     local path=$1
 
@@ -367,6 +436,11 @@ should_skip_completed_step() {
         return 1
     fi
 
+    if is_amber_restart_path "$artifact" && ! amber_restart_is_complete "$artifact"; then
+        echo "[INFO] Existing artifact ${artifact} is not a complete Amber restart ($(amber_restart_validation_status "$artifact")); rerunning ${stage}."
+        return 1
+    fi
+
     if [[ $prior_failed -eq 1 && $rerun_after_failure -eq 1 ]]; then
         echo "[INFO] Prior failure marker found; rerunning ${stage} despite existing artifact ${artifact}."
         return 1
@@ -439,6 +513,17 @@ check_sim_failure() {
 
     if [[ -n "$rst_file" && (! -f "$rst_file" || ! -s "$rst_file") ]]; then
         echo "[ERROR] $stage simulation failed. Restart file missing or empty: $rst_file"
+        cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count" 1
+        fi
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
+
+    if [[ -n "$rst_file" ]] && is_amber_restart_path "$rst_file" && ! amber_restart_is_complete "$rst_file"; then
+        echo "[ERROR] $stage simulation failed. Restart file is incomplete or malformed: $rst_file ($(amber_restart_validation_status "$rst_file"))"
         cleanup_outputs
         if [[ $retry_count -ge 2 ]]; then
             reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count" 1

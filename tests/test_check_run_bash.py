@@ -4,6 +4,14 @@ from pathlib import Path
 import subprocess
 
 
+def _write_ascii_restart(path: Path, natom: int, payload_fields: int) -> None:
+    values = [f"{idx + 1:.7f}" for idx in range(payload_fields)]
+    lines = ["test restart\n", f"{natom}  1.0000000E+00\n"]
+    for i in range(0, len(values), 6):
+        lines.append(" ".join(f"{value:>12}" for value in values[i : i + 6]) + "\n")
+    path.write_text("".join(lines))
+
+
 def _run_check_min_energy(output_file: Path) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[1]
     cmd = (
@@ -25,6 +33,48 @@ def test_check_min_energy_prefers_eamber():
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "EAMBER: -64851.9795 kcal/mol" in result.stdout
+
+
+def test_amber_restart_validation_accepts_complete_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt04.rst7"
+    _write_ascii_restart(restart, natom=4, payload_fields=18)
+
+    cmd = f"source '{check_run}' && amber_restart_validation_status '{restart}'"
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_should_skip_completed_step_rejects_truncated_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt_eq.rst7"
+    _write_ascii_restart(restart, natom=4, payload_fields=5)
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& should_skip_completed_step 'Long equilibration' 'eqnpt_eq.rst7' 0 0 0"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "not a complete Amber restart" in result.stdout
+    assert "rerunning Long equilibration" in result.stdout
 
 
 def test_archive_existing_log_file_moves_log(tmp_path: Path) -> None:
