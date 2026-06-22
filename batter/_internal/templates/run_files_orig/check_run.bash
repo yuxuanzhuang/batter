@@ -123,11 +123,108 @@ is_amber_restart_path() {
     esac
 }
 
+has_netcdf_magic() {
+    local restart_path=$1
+    local magic
+
+    magic=$(dd if="$restart_path" bs=1 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')
+    case "$magic" in
+        43444601|43444602|43444605|89484446*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+netcdf_restart_validation_status() {
+    local restart_path=$1
+    local size
+
+    if ! command -v ncdump >/dev/null 2>&1; then
+        if has_netcdf_magic "$restart_path"; then
+            echo "ok"
+            return 0
+        fi
+        echo "ncdump unavailable for binary restart"
+        return 0
+    fi
+
+    if ! ncdump -h "$restart_path" >/dev/null 2>&1; then
+        echo "invalid NetCDF restart header"
+        return 0
+    fi
+
+    size=$(wc -c < "$restart_path" | tr -d ' ')
+    ncdump -h "$restart_path" 2>/dev/null | awk -v file_size="$size" '
+        BEGIN {
+            atom = 0
+            spatial = 0
+            has_coords = 0
+            coord_bytes = 0
+            vel_bytes = 0
+            conventions = 0
+        }
+        /^[[:space:]]*atom[[:space:]]*=/ {
+            atom = $3 + 0
+        }
+        /^[[:space:]]*spatial[[:space:]]*=/ {
+            spatial = $3 + 0
+        }
+        /^[[:space:]]*(float|double)[[:space:]]+coordinates\(atom,[[:space:]]*spatial\)/ {
+            has_coords = 1
+            coord_bytes = ($1 == "double" ? 8 : 4)
+        }
+        /^[[:space:]]*(float|double)[[:space:]]+velocities\(atom,[[:space:]]*spatial\)/ {
+            vel_bytes = ($1 == "double" ? 8 : 4)
+        }
+        /:Conventions[[:space:]]*=[[:space:]]*"AMBERRESTART"/ {
+            conventions = 1
+        }
+        END {
+            if (atom <= 0) {
+                print "NetCDF restart missing atom dimension"
+                exit
+            }
+            if (spatial <= 0) {
+                print "NetCDF restart missing spatial dimension"
+                exit
+            }
+            if (!has_coords) {
+                print "NetCDF restart missing coordinates variable"
+                exit
+            }
+            if (!conventions) {
+                print "NetCDF file is not marked AMBERRESTART"
+                exit
+            }
+
+            expected = atom * spatial * (coord_bytes + vel_bytes)
+            if (file_size + 0 < expected) {
+                printf "NetCDF restart shorter than expected payload (%d < %d bytes)", file_size, expected
+                exit
+            }
+            print "ok"
+        }
+    '
+}
+
 amber_restart_validation_status() {
     local restart_path=$1
 
     if [[ -z $restart_path || ! -s $restart_path ]]; then
         echo "missing or empty"
+        return 0
+    fi
+
+    if command -v ncdump >/dev/null 2>&1 && ncdump -h "$restart_path" >/dev/null 2>&1; then
+        netcdf_restart_validation_status "$restart_path"
+        return 0
+    fi
+
+    if ! LC_ALL=C grep -Iq . "$restart_path"; then
+        if has_netcdf_magic "$restart_path"; then
+            netcdf_restart_validation_status "$restart_path"
+        else
+            echo "binary restart is not readable as NetCDF"
+        fi
         return 0
     fi
 

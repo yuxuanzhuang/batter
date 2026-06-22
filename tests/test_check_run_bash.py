@@ -54,6 +54,90 @@ def test_amber_restart_validation_accepts_complete_restart(tmp_path: Path) -> No
     assert result.stdout.strip() == "ok"
 
 
+def test_amber_restart_validation_accepts_netcdf_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt_disappear.rst7"
+    restart.write_bytes(b"CDF\x02" + b"\0" * 200)
+    ncdump = tmp_path / "ncdump"
+    ncdump.write_text(
+        """#!/usr/bin/env bash
+cat <<'EOF'
+netcdf eqnpt_disappear {
+dimensions:
+    spatial = 3 ;
+    atom = 2 ;
+variables:
+    double time ;
+    double coordinates(atom, spatial) ;
+    double velocities(atom, spatial) ;
+// global attributes:
+        :Conventions = "AMBERRESTART" ;
+}
+EOF
+"""
+    )
+    ncdump.chmod(0o755)
+
+    cmd = (
+        f"PATH='{tmp_path}':$PATH "
+        f"&& source '{check_run}' "
+        f"&& amber_restart_validation_status '{restart}'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "ok"
+
+
+def test_amber_restart_validation_rejects_truncated_netcdf_restart(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    restart = tmp_path / "eqnpt_disappear.rst7"
+    restart.write_bytes(b"CDF\x02")
+    ncdump = tmp_path / "ncdump"
+    ncdump.write_text(
+        """#!/usr/bin/env bash
+cat <<'EOF'
+netcdf eqnpt_disappear {
+dimensions:
+    spatial = 3 ;
+    atom = 2 ;
+variables:
+    double time ;
+    double coordinates(atom, spatial) ;
+    double velocities(atom, spatial) ;
+// global attributes:
+        :Conventions = "AMBERRESTART" ;
+}
+EOF
+"""
+    )
+    ncdump.chmod(0o755)
+
+    cmd = (
+        f"PATH='{tmp_path}':$PATH "
+        f"&& source '{check_run}' "
+        f"&& amber_restart_validation_status '{restart}'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "shorter than expected payload" in result.stdout
+
+
 def test_should_skip_completed_step_rejects_truncated_restart(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
