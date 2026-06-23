@@ -1198,7 +1198,7 @@ def build_complex_z(ctx) -> bool:
                 l1_z = stable_preference["l1_z"]
                 l1_range = stable_preference["l1_range"]
                 stable_preference_applied = True
-                logger.info(
+                logger.debug(
                     "[build_complex_z] Using stable equilibration distance to prefer "
                     "P1={} (from {}) and ligand L1 candidate {} for {}.",
                     P1,
@@ -1270,7 +1270,7 @@ def build_complex_z(ctx) -> bool:
         except RuntimeError:
             if not stable_preference_applied:
                 raise
-            logger.warning(
+            logger.debug(
                 "[build_complex_z] Stable-distance preferred geometry failed for {}; "
                 "retrying original receptor anchor geometry.",
                 ligand,
