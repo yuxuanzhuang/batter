@@ -372,6 +372,13 @@ def _first_residue_atom_mask(
     return f"@{int(atom.index) + 1}"
 
 
+def _solvent_ligand_restraint_mask(pdb_path: Path, *, resid: int, comp: str) -> str:
+    """Return the non-lambda restraintmask component for the solvent ligand."""
+    if comp == "d":
+        return f":{int(resid)}"
+    return _first_residue_atom_mask(pdb_path, resid=int(resid))
+
+
 def _first_absolute_atom_mask(atom_indices: Sequence[int | str]) -> str:
     """Return an AMBER mask for the smallest 1-based absolute atom index."""
     tokens = sorted(
@@ -675,8 +682,9 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
     logger.debug(f"[Equil] Simulation input files written under {work}")
 
 
-# ------------------------- FE component: z ------------------------- #
+# ------------------------- FE components: z / d ------------------------- #
 
+@register_sim_files("d")
 @register_sim_files("z")
 def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     """
@@ -738,7 +746,11 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     ref_resid = ligand_resids[0]
     bulk_resid = ligand_resids[1] if len(ligand_resids) > 1 else ref_resid
     ref_lig_in_site_mask = f':{int(ref_resid)}'
-    ligand_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(bulk_resid))
+    solvent_ligand_restraint_mask = _solvent_ligand_restraint_mask(
+        vac_pdb,
+        resid=int(bulk_resid),
+        comp=comp,
+    )
 
     amber_dir = ctx.amber_dir
     prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
@@ -831,7 +843,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             out_path,
             prmtop_for_masks,
             cache_dir=cache_dir,
-            cache_tag="z-eq.in",
+            cache_tag=f"{comp}-eq.in",
             cache_master=cache_master,
         )
 
@@ -847,7 +859,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                     line = (
                         "restraintmask = "
-                        f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                        f"'{_mask_with_added_component(rm, solvent_ligand_restraint_mask)}',\n"
                     )
                 line = (
                     line.replace("_temperature_", str(temperature))
@@ -883,7 +895,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             out_path,
             prmtop_for_masks,
             cache_dir=cache_dir,
-            cache_tag="z-mdin-template",
+            cache_tag=f"{comp}-mdin-template",
             cache_master=cache_master,
         )
 
@@ -963,7 +975,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             eq_path,
             prmtop_for_masks,
             cache_dir=cache_dir,
-            cache_tag="z-eq.in",
+            cache_tag=f"{comp}-eq.in",
             cache_master=cache_master,
         )
 
@@ -982,7 +994,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                     )
                     line = (
                         "restraintmask = "
-                        f"'{_mask_with_added_component(rm, ligand_first_atom_mask)}',\n"
+                        f"'{_mask_with_added_component(rm, solvent_ligand_restraint_mask)}',\n"
                     )
                 line = (
                     line.replace("_temperature_", str(temperature))
@@ -1016,7 +1028,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             out_path,
             prmtop_for_masks,
             cache_dir=cache_dir,
-            cache_tag="z-mdin-template",
+            cache_tag=f"{comp}-mdin-template",
             cache_master=cache_master,
         )
 
@@ -1088,7 +1100,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     )
 
     logger.debug(
-        f"[sim_files_z] wrote mdin/mini/eq inputs in {windows_dir} for comp='z', win={win}, weight={weight:0.5f}"
+        f"[sim_files_z] wrote mdin/mini/eq inputs in {windows_dir} for comp='{comp}', win={win}, weight={weight:0.5f}"
     )
 
 

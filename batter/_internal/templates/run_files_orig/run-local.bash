@@ -104,6 +104,26 @@ if [[ $only_eq -eq 1 ]]; then
     if ! should_skip_eq_step "Minimization" "mini.rst7"; then
         print_and_run "$PMEMD_DPFP_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
         check_sim_failure "Minimization" "$log_file" mini.rst7
+
+        if ! check_min_energy "mini.out" -1000; then
+            echo "Initial minimization not passed with cuda; try CPU"
+            archive_failed_job_files "$retry" "$log_file" mini.rst7
+            rm -f "$log_file"
+            rm -f mini.rst7 mini.nc mini.out
+            if [[ ${SLURM_JOB_CPUS_PER_NODE:-1} -gt 1 ]]; then
+                print_and_run "$MPI_LAUNCH $PMEMD_CPU_MPI_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+            else
+                print_and_run "$PMEMD_CPU_EXEC -O -i mini_eq.in -p $PRMTOP -c $INPCRD -o mini.out -r mini.rst7 -x mini.nc -ref $INPCRD >> \"$log_file\" 2>&1"
+            fi
+            check_sim_failure "Minimization" "$log_file" mini.rst7
+
+            if ! check_min_energy "mini.out" -1000; then
+                echo "Initial minimization with CPU also failed, exiting."
+                archive_failed_job_files "$retry" "$log_file" mini.rst7
+                rm -f mini.rst7 mini.nc mini.out
+                mark_failed_and_exit
+            fi
+        fi
     fi
 
     if ! should_skip_eq_step "Minimization 2" "mini2.rst7"; then

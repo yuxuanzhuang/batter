@@ -25,6 +25,7 @@ COMPONENTS_LAMBDA_DICT = {
     "x": "lambdas",
     "o": "lambdas",
     "z": "lambdas",
+    "d": "lambdas",
     "s": "lambdas",
     "y": "lambdas",
     "a": "attach_rest",
@@ -46,6 +47,7 @@ COMPONENTS_FOLDER_DICT = {
     "x": "sdr",
     "o": "sdr",
     "z": "sdr",
+    "d": "sdr",
     "s": "sdr",
     "y": "sdr",
     "a": "rest",
@@ -59,7 +61,7 @@ COMPONENTS_FOLDER_DICT = {
 
 COMPONENTS_DICT = {
     "rest": ["a", "l", "t", "c", "r", "n"],
-    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "y", "m"],
+    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "d", "y", "m"],
 }
 
 

@@ -899,6 +899,7 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
 
 
 # ---------------------- create_simulation_dir: Z ----------------------
+@register_create_simulation("d")
 @register_create_simulation("z")
 def create_simulation_dir_z(ctx: BuildContext) -> None:
     """

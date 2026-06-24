@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from math import ceil
 import json
 import re
 import MDAnalysis as mda
+import numpy as np
 from loguru import logger
 
 from batter._internal.builders.interfaces import BuildContext
@@ -22,6 +23,13 @@ from batter.utils import run_with_log, cpptraj
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}  # NA/CL appear in some pdbs too
 COM_RESTRAINT_ANCHORS = (0.0, 0.0, 0.0, 999.0)
+ABFE_DIFF_POSE_RADIUS = 8.0
+ABFE_DIFF_POSE_MAX_ANCHORS = 8
+ABFE_DIFF_POSE_MIN_ANCHORS = 4
+ABFE_DIFF_POSE_WIDTH = 0.5
+ABFE_DIFF_POSE_LOCAL_ANCHORS = 3
+ABFE_DIFF_POSE_LIGAND_ATOMS = 6
+_ANCHOR_MASK_RE = re.compile(r"^:(-?\d+)@(.+)$")
 
 def _stride_atom_serials(
     atoms: Sequence[str | int],
@@ -71,6 +79,262 @@ def _collect_calpha_and_lig(
     )
 
     return protein_calpha_serials, ligand_heavy_atom_serials
+
+
+def _select_bound_ligand_heavy_atoms(
+    universe: mda.Universe,
+    residue_name: str,
+) -> mda.AtomGroup:
+    """Return heavy atoms from the first ligand residue in the bound pose."""
+    lig_atoms = universe.select_atoms(f"resname {residue_name}")
+    if lig_atoms.n_atoms == 0:
+        raise ValueError(
+            f"[restraints:d] No residues with resname {residue_name!r} found in vac.pdb"
+        )
+
+    ligand_resids = sorted({int(resid) for resid in lig_atoms.resids})
+    bound_resid = ligand_resids[0]
+    bound_atoms = universe.select_atoms(f"resid {bound_resid}")
+    heavy = bound_atoms[
+        [
+            not _is_hydrogen_atom(atom)
+            for atom in bound_atoms
+        ]
+    ]
+    if heavy.n_atoms == 0:
+        raise ValueError(
+            f"[restraints:d] Found zero heavy atoms for bound ligand residue {bound_resid}"
+        )
+    return heavy
+
+
+def _is_hydrogen_atom(atom) -> bool:
+    """Return True for hydrogen atoms using element, type, or PDB atom name."""
+    element = str(getattr(atom, "element", "") or "").strip().upper()
+    if element == "H":
+        return True
+    atom_type = str(getattr(atom, "type", "") or "").strip().upper()
+    if atom_type == "H":
+        return True
+    name = str(getattr(atom, "name", "") or "").strip().upper()
+    return bool(re.match(r"^\d*H", name))
+
+
+def _select_binding_site_calpha_atoms(
+    universe: mda.Universe,
+    ligand_heavy: mda.AtomGroup,
+    *,
+    radius: float = ABFE_DIFF_POSE_RADIUS,
+    min_atoms: int = ABFE_DIFF_POSE_MIN_ANCHORS,
+    max_atoms: int = ABFE_DIFF_POSE_MAX_ANCHORS,
+) -> list:
+    """Choose nearby receptor C-alpha atoms for relative ligand-pose restraints."""
+    ca_atoms = universe.select_atoms("protein and name CA")
+    if ca_atoms.n_atoms == 0:
+        ca_atoms = universe.select_atoms("name CA")
+    if ca_atoms.n_atoms == 0:
+        raise ValueError(
+            "[restraints:d] Cannot build relative pose restraints without receptor CA atoms"
+        )
+
+    deltas = ca_atoms.positions[:, None, :] - ligand_heavy.positions[None, :, :]
+    nearest = np.linalg.norm(deltas, axis=2).min(axis=1)
+    order = np.argsort(nearest)
+    within = [int(idx) for idx in order if nearest[int(idx)] <= radius]
+    selected = within[:max_atoms]
+    if len(selected) < min_atoms:
+        selected = [int(idx) for idx in order[: min(max_atoms, ca_atoms.n_atoms)]]
+    return [ca_atoms[idx] for idx in selected]
+
+
+def _flat_bottom_distance_anchors(target: float, width: float) -> tuple[float, float, float, float]:
+    """Return AMBER r1-r4 anchors for a symmetric flat-bottom distance well."""
+    return (0.0, max(0.0, target - width), target + width, 999.0)
+
+
+def _adjust_receptor_anchor_mask(mask: str, dec_method: str | None) -> str:
+    """Return the receptor anchor mask matching SDR-renumbered FE PDBs."""
+    if str(dec_method or "").lower() != "sdr":
+        return mask
+    match = _ANCHOR_MASK_RE.match(mask.strip())
+    if not match:
+        return mask
+    return f":{int(match.group(1)) + 1}@{match.group(2)}"
+
+
+def _resolve_anchor_atom_from_mask(
+    universe: mda.Universe,
+    atm_num: Sequence[str],
+    mask: str,
+) -> object | None:
+    """Resolve an Amber-style atom mask to an MDAnalysis atom from ``vac.pdb``."""
+    try:
+        serial = atm_num.index(mask)
+    except ValueError:
+        return None
+    if serial <= 0 or serial > universe.atoms.n_atoms:
+        return None
+    return universe.atoms[serial - 1]
+
+
+def _load_abfe_diff_saved_anchors(ctx: BuildContext):
+    work_dir = getattr(ctx, "working_dir", None)
+    comp = getattr(ctx, "comp", "d")
+    if work_dir is None:
+        return None
+    try:
+        return load_anchors(Path(work_dir) / f"{comp}_build_files")
+    except Exception as exc:
+        logger.debug(f"[restraints:{comp}] could not load saved anchors: {exc}")
+        return None
+
+
+def _select_abfe_diff_receptor_anchors(
+    ctx: BuildContext,
+    universe: mda.Universe,
+    vac_pdb: Path,
+    ligand_heavy: mda.AtomGroup,
+    *,
+    count: int,
+    radius: float,
+) -> list:
+    """Choose the receptor atoms defining the ABFE_diff ligand-pose frame."""
+    comp = getattr(ctx, "comp", "d")
+    count = max(ABFE_DIFF_POSE_LOCAL_ANCHORS, int(count))
+    anchors = _load_abfe_diff_saved_anchors(ctx)
+    selected: list = []
+
+    if anchors is not None:
+        atm_num = num_to_mask(vac_pdb.as_posix())
+        dec_method = getattr(getattr(ctx, "sim", None), "dec_method", None)
+        seen_indices: set[int] = set()
+        for raw_mask in (anchors.P1, anchors.P2, anchors.P3):
+            mask = _adjust_receptor_anchor_mask(str(raw_mask), dec_method)
+            atom = _resolve_anchor_atom_from_mask(universe, atm_num, mask)
+            if atom is None:
+                logger.debug(
+                    f"[restraints:{comp}] saved receptor anchor {mask!r} not found in {vac_pdb.name}"
+                )
+                continue
+            if int(atom.index) in seen_indices:
+                continue
+            selected.append(atom)
+            seen_indices.add(int(atom.index))
+            if len(selected) >= count:
+                return selected
+
+    fallback = _select_binding_site_calpha_atoms(
+        universe,
+        ligand_heavy,
+        radius=radius,
+        min_atoms=ABFE_DIFF_POSE_LOCAL_ANCHORS,
+        max_atoms=count,
+    )
+    seen = {int(atom.index) for atom in selected}
+    selected.extend(atom for atom in fallback if int(atom.index) not in seen)
+    if len(selected) < ABFE_DIFF_POSE_LOCAL_ANCHORS:
+        raise ValueError(
+            f"[restraints:{comp}] ABFE_diff local-frame restraints require at least "
+            f"{ABFE_DIFF_POSE_LOCAL_ANCHORS} receptor anchors; found {len(selected)}"
+        )
+    return selected[:count]
+
+
+def _preferred_ligand_anchor_atoms(
+    ctx: BuildContext,
+    universe: mda.Universe,
+    vac_pdb: Path,
+    ligand_heavy: mda.AtomGroup,
+) -> list:
+    """Return saved ligand anchor atoms when they are available in ``vac.pdb``."""
+    anchors = _load_abfe_diff_saved_anchors(ctx)
+    if anchors is None:
+        return []
+    atm_num = num_to_mask(vac_pdb.as_posix())
+    ligand_indices = {int(atom.index) for atom in ligand_heavy}
+    selected: list = []
+    seen_indices: set[int] = set()
+    for raw_mask in (anchors.L1, anchors.L2, anchors.L3):
+        if not raw_mask:
+            continue
+        atom = _resolve_anchor_atom_from_mask(universe, atm_num, str(raw_mask))
+        if atom is None or int(atom.index) not in ligand_indices:
+            continue
+        if int(atom.index) in seen_indices:
+            continue
+        selected.append(atom)
+        seen_indices.add(int(atom.index))
+    return selected
+
+
+def _select_ligand_pose_atoms(
+    ligand_heavy: mda.AtomGroup,
+    *,
+    count: int,
+    preferred_atoms: Sequence[object] = (),
+) -> list:
+    """Choose a compact, spatially spread ligand scaffold for pose restraints."""
+    count = max(3, int(count))
+    heavy_atoms = list(ligand_heavy)
+    if len(heavy_atoms) <= count:
+        return heavy_atoms
+
+    heavy_by_index = {int(atom.index): atom for atom in heavy_atoms}
+    selected_indices: list[int] = []
+    for atom in preferred_atoms:
+        idx = int(atom.index)
+        if idx in heavy_by_index and idx not in selected_indices:
+            selected_indices.append(idx)
+        if len(selected_indices) >= count:
+            return [heavy_by_index[idx] for idx in selected_indices]
+
+    positions = np.asarray([atom.position for atom in heavy_atoms], dtype=float)
+    atom_indices = [int(atom.index) for atom in heavy_atoms]
+    centroid = positions.mean(axis=0)
+
+    while len(selected_indices) < count:
+        candidate_scores: list[tuple[float, int]] = []
+        selected_set = set(selected_indices)
+        for i, atom_index in enumerate(atom_indices):
+            if atom_index in selected_set:
+                continue
+            if selected_indices:
+                selected_positions = np.asarray(
+                    [heavy_by_index[idx].position for idx in selected_indices],
+                    dtype=float,
+                )
+                score = float(
+                    np.linalg.norm(positions[i] - selected_positions, axis=1).min()
+                )
+            else:
+                score = float(np.linalg.norm(positions[i] - centroid))
+            candidate_scores.append((score, atom_index))
+        if not candidate_scores:
+            break
+        _, chosen_index = max(candidate_scores, key=lambda item: (item[0], -item[1]))
+        selected_indices.append(chosen_index)
+
+    return [heavy_by_index[idx] for idx in selected_indices]
+
+
+def _write_distance_restraint_block(
+    handle,
+    atom1: object,
+    atom2: object,
+    *,
+    width: float,
+    force_const: float,
+) -> float:
+    """Write one flat-bottom atom-atom distance restraint and return its target."""
+    target = float(np.linalg.norm(atom1.position - atom2.position))
+    _write_group_colvar_block(
+        handle,
+        anchor_atom=str(int(atom1.index) + 1),
+        group_atoms=[str(int(atom2.index) + 1)],
+        anchors=_flat_bottom_distance_anchors(target, width),
+        strengths=(force_const, force_const),
+    )
+    return target
 
 
 def _load_common_core_indices(mapping_path: Path) -> tuple[list[int], list[int]]:
@@ -845,6 +1109,179 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
 
 
 # ───────────────────────────── registrations ─────────────────────────────
+
+@register_restraints("d")
+def _build_restraints_d(builder, ctx: BuildContext) -> None:
+    """
+    ABFE_diff bound-state restraints.
+
+    The default ``local_frame`` mode pins a small ligand scaffold to a three-
+    anchor receptor frame and optionally restrains the ligand scaffold internally.
+    This keeps the bound dummy near its initial pose without the receptor-wide
+    spring cage produced by the original dense C-alpha/heavy-atom network.
+    """
+    windows_dir = ctx.window_dir
+    comp = ctx.comp
+    vac_pdb = windows_dir / "vac.pdb"
+    if not vac_pdb.exists():
+        raise FileNotFoundError(f"[restraints:{comp}] missing required file: {vac_pdb}")
+
+    universe = mda.Universe(vac_pdb.as_posix())
+    ligand_heavy = _select_bound_ligand_heavy_atoms(universe, ctx.residue_name)
+
+    force_const = float(getattr(ctx.sim, "lig_distance_force", 5.0) or 5.0)
+    width = float(
+        getattr(ctx.sim, "abfe_diff_pose_width", ABFE_DIFF_POSE_WIDTH)
+        or ABFE_DIFF_POSE_WIDTH
+    )
+    mode = str(
+        getattr(ctx.sim, "abfe_diff_pose_restraint_type", "local_frame")
+        or "local_frame"
+    ).lower().replace("-", "_")
+    anchor_radius = float(
+        getattr(ctx.sim, "abfe_diff_pose_anchor_radius", ABFE_DIFF_POSE_RADIUS)
+        or ABFE_DIFF_POSE_RADIUS
+    )
+
+    if mode == "dense":
+        anchor_atoms = _select_binding_site_calpha_atoms(
+            universe,
+            ligand_heavy,
+            radius=anchor_radius,
+            min_atoms=ABFE_DIFF_POSE_MIN_ANCHORS,
+            max_atoms=ABFE_DIFF_POSE_MAX_ANCHORS,
+        )
+        ligand_pose_atoms = list(ligand_heavy)
+        include_internal = False
+    elif mode == "local_frame":
+        anchor_atoms = _select_abfe_diff_receptor_anchors(
+            ctx,
+            universe,
+            vac_pdb,
+            ligand_heavy,
+            count=int(
+                getattr(
+                    ctx.sim,
+                    "abfe_diff_pose_anchor_count",
+                    ABFE_DIFF_POSE_LOCAL_ANCHORS,
+                )
+                or ABFE_DIFF_POSE_LOCAL_ANCHORS
+            ),
+            radius=anchor_radius,
+        )
+        ligand_pose_atoms = _select_ligand_pose_atoms(
+            ligand_heavy,
+            count=int(
+                getattr(
+                    ctx.sim,
+                    "abfe_diff_pose_ligand_atom_count",
+                    ABFE_DIFF_POSE_LIGAND_ATOMS,
+                )
+                or ABFE_DIFF_POSE_LIGAND_ATOMS
+            ),
+            preferred_atoms=_preferred_ligand_anchor_atoms(
+                ctx, universe, vac_pdb, ligand_heavy
+            ),
+        )
+        include_internal = (
+            str(getattr(ctx.sim, "abfe_diff_pose_internal_restraints", "yes")).lower()
+            == "yes"
+        )
+    else:
+        raise ValueError(
+            f"[restraints:{comp}] unsupported ABFE_diff pose restraint mode: {mode!r}"
+        )
+
+    cv_in = windows_dir / "cv.in"
+    metadata: list[dict[str, float | int | str]] = []
+    with cv_in.open("w") as cvf:
+        cvf.write("cv_file\n")
+        for anchor in anchor_atoms:
+            for lig_atom in ligand_pose_atoms:
+                target = _write_distance_restraint_block(
+                    cvf,
+                    anchor,
+                    lig_atom,
+                    width=width,
+                    force_const=force_const,
+                )
+                metadata.append(
+                    {
+                        "kind": "external_pose",
+                        "anchor_atom_serial": int(anchor.index + 1),
+                        "anchor_resid": int(anchor.resid),
+                        "anchor_name": str(anchor.name),
+                        "ligand_atom_serial": int(lig_atom.index + 1),
+                        "ligand_atom_name": str(lig_atom.name),
+                        "target_distance": target,
+                        "flat_bottom_width": width,
+                        "force_constant": force_const,
+                    }
+                )
+        if include_internal:
+            for i, atom1 in enumerate(ligand_pose_atoms):
+                for atom2 in ligand_pose_atoms[i + 1 :]:
+                    target = _write_distance_restraint_block(
+                        cvf,
+                        atom1,
+                        atom2,
+                        width=width,
+                        force_const=force_const,
+                    )
+                    metadata.append(
+                        {
+                            "kind": "ligand_internal",
+                            "ligand_atom_serial": int(atom1.index + 1),
+                            "ligand_atom_name": str(atom1.name),
+                            "ligand_atom2_serial": int(atom2.index + 1),
+                            "ligand_atom2_name": str(atom2.name),
+                            "target_distance": target,
+                            "flat_bottom_width": width,
+                            "force_constant": force_const,
+                        }
+                    )
+
+    _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=comp)
+
+    disang = windows_dir / "disang.rest"
+    disang.write_text(
+        f"# ABFE_diff {mode} bound-pose restraints; no Boresch ligand TR terms\n"
+    )
+    _append_colvar_rst_blocks(cv_in, disang)
+
+    (windows_dir / "abfe_diff_pose_restraints.json").write_text(
+        json.dumps(
+            {
+                "mode": mode,
+                "ligand_heavy_atom_serials": [
+                    int(atom.index + 1) for atom in ligand_heavy
+                ],
+                "ligand_pose_atom_serials": [
+                    int(atom.index + 1) for atom in ligand_pose_atoms
+                ],
+                "anchor_atom_serials": [
+                    int(atom.index + 1) for atom in anchor_atoms
+                ],
+                "restraints": metadata,
+            },
+            indent=2,
+        )
+    )
+
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write(
+            f"# ABFE_diff {mode} pose restraints; no Boresch ligand TR metrics\n"
+            "noexitonerror\n"
+            "parm vac.prmtop\n"
+        )
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+
+    logger.debug(
+        f"[restraints:{comp}] wrote ABFE_diff {mode} pose cv.in, disang.rest, and restraints.in in {windows_dir}"
+    )
+
 
 @register_restraints("v", "o", "z")
 def _build_restraints_v_o_z(builder, ctx: BuildContext) -> None:

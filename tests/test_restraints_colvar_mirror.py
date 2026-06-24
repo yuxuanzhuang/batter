@@ -140,6 +140,131 @@ def test_build_restraints_y_omits_ligand_com_block(tmp_path: Path) -> None:
     assert not (windows_dir / "disang.rest").read_text().strip()
 
 
+def test_build_restraints_d_uses_local_frame_pose_restraints(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "d00"
+    windows_dir.mkdir()
+    build_dir = tmp_path / "d_build_files"
+    build_dir.mkdir()
+    (build_dir / "anchors.json").write_text(
+        json.dumps(
+            {
+                "P1": ":1@CA",
+                "P2": ":2@CA",
+                "P3": ":3@CA",
+                "L1": ":10@C1",
+                "L2": ":10@C2",
+                "L3": ":10@O1",
+                "lig_res": "10",
+            }
+        )
+    )
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       0.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  CA  ALA A   4       2.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      5  C1  LIG A  10       1.000   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      6  C2  LIG A  10       1.500   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      7  O1  LIG A  10       1.000   1.500   0.000  1.00  0.00           O\n",
+                "ATOM      8  H1  LIG A  10       1.000   1.000   0.500  1.00  0.00           H\n",
+                "ATOM      9  C1  LIG A  11      20.000  20.000   0.000  1.00  0.00           C\n",
+                "END\n",
+            ]
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        working_dir=tmp_path,
+        window_dir=windows_dir,
+        comp="d",
+        residue_name="LIG",
+        sim=types.SimpleNamespace(lig_distance_force=7.5, dec_method="dd"),
+        extra={},
+        win=0,
+    )
+
+    restraints._build_restraints_d(None, ctx)
+
+    cv_text = (windows_dir / "cv.in").read_text()
+    assert cv_text.count("&colvar") == 12
+    assert "cv_type = 'DISTANCE'" in cv_text
+    assert "cv_type = 'COM_DISTANCE'" not in cv_text
+    assert "cv_i = 1,5," in cv_text
+    assert "cv_i = 1,6," in cv_text
+    assert "cv_i = 1,7," in cv_text
+    assert "cv_i = 5,6," in cv_text
+    assert "cv_i = 5,7," in cv_text
+    assert "cv_i = 6,7," in cv_text
+    assert ",8," not in cv_text
+
+    disang_text = (windows_dir / "disang.rest").read_text()
+    assert "ABFE_diff local_frame bound-pose restraints" in disang_text
+    assert "#Lig_TR" not in disang_text
+    assert disang_text.count("&rst") == cv_text.count("&colvar")
+    assert "iat=1,5," in disang_text
+    assert "iat=1,6," in disang_text
+    assert "iat=1,7," in disang_text
+    assert "iat=5,6," in disang_text
+    assert "igr2=" not in disang_text
+    assert "rk2=7.5, rk3=7.5" in disang_text
+
+    metadata = json.loads((windows_dir / "abfe_diff_pose_restraints.json").read_text())
+    assert metadata["mode"] == "local_frame"
+    assert metadata["ligand_heavy_atom_serials"] == [5, 6, 7]
+    assert metadata["ligand_pose_atom_serials"] == [5, 6, 7]
+    assert metadata["anchor_atom_serials"] == [1, 2, 3]
+    assert len(metadata["restraints"]) == 12
+    assert sum(1 for item in metadata["restraints"] if item["kind"] == "external_pose") == 9
+    assert sum(1 for item in metadata["restraints"] if item["kind"] == "ligand_internal") == 3
+
+
+def test_build_restraints_d_can_use_dense_pose_restraints(tmp_path: Path) -> None:
+    windows_dir = tmp_path / "d00"
+    windows_dir.mkdir()
+    (windows_dir / "vac.pdb").write_text(
+        "".join(
+            [
+                "ATOM      1  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  CA  ALA A   2       2.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  CA  ALA A   3       0.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  CA  ALA A   4       2.000   2.000   0.000  1.00  0.00           C\n",
+                "ATOM      5  C1  LIG A  10       1.000   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      6  C2  LIG A  10       1.500   1.000   0.000  1.00  0.00           C\n",
+                "ATOM      7  O1  LIG A  10       1.000   1.500   0.000  1.00  0.00           O\n",
+                "END\n",
+            ]
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        window_dir=windows_dir,
+        comp="d",
+        residue_name="LIG",
+        sim=types.SimpleNamespace(
+            lig_distance_force=7.5,
+            abfe_diff_pose_restraint_type="dense",
+        ),
+        extra={},
+        win=0,
+    )
+
+    restraints._build_restraints_d(None, ctx)
+
+    cv_text = (windows_dir / "cv.in").read_text()
+    assert cv_text.count("&colvar") == 12
+    assert "cv_i = 1,5," in cv_text
+    assert "cv_i = 4,7," in cv_text
+    assert "cv_i = 5,6," not in cv_text
+
+    metadata = json.loads((windows_dir / "abfe_diff_pose_restraints.json").read_text())
+    assert metadata["mode"] == "dense"
+    assert sorted(metadata["anchor_atom_serials"]) == [1, 2, 3, 4]
+    assert len(metadata["restraints"]) == 12
+    assert all(item["kind"] == "external_pose" for item in metadata["restraints"])
+
+
 def test_build_restraints_x_keeps_only_protein_com_block(tmp_path: Path) -> None:
     work_dir = tmp_path
     windows_dir = work_dir / "x00"

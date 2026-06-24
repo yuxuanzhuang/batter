@@ -498,6 +498,38 @@ class FESimArgs(BaseModel):
         10.0,
         description="Ligand COM restraint spring constant (kcal/mol/Å^2).",
     )
+    abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
+        "local_frame",
+        description=(
+            "ABFE_diff bound-dummy pose restraint style. local_frame uses a sparse "
+            "receptor-anchor frame plus ligand scaffold restraints; dense restores "
+            "the all-selected-CA to all-ligand-heavy-atom distance network."
+        ),
+    )
+    abfe_diff_pose_anchor_count: int = Field(
+        3,
+        ge=3,
+        description="Number of receptor C-alpha anchors used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_ligand_atom_count: int = Field(
+        6,
+        ge=3,
+        description="Number of ligand heavy atoms used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_width: float = Field(
+        0.5,
+        gt=0.0,
+        description="Flat-bottom half-width for ABFE_diff pose distance restraints (Å).",
+    )
+    abfe_diff_pose_anchor_radius: float = Field(
+        8.0,
+        gt=0.0,
+        description="Nearby C-alpha search radius used when ABFE_diff anchors must be inferred.",
+    )
+    abfe_diff_pose_internal_restraints: Literal["yes", "no"] = Field(
+        "yes",
+        description="Add ligand-internal scaffold distance restraints for ABFE_diff.",
+    )
 
     # Box padding (used by some builders)
     buffer_x: float = Field(20.0, description="Box padding along X (Å).")
@@ -545,10 +577,34 @@ class FESimArgs(BaseModel):
         description="Number of MBAR bootstrap resamples used during FE analysis.",
     )
 
-    @field_validator("rocklin_correction", "hmr", "enable_mcwat", mode="before")
+    @field_validator(
+        "rocklin_correction",
+        "hmr",
+        "enable_mcwat",
+        "abfe_diff_pose_internal_restraints",
+        mode="before",
+    )
     @classmethod
     def _coerce_fe_yes_no(cls, v):
         return coerce_yes_no(v)
+
+    @field_validator("abfe_diff_pose_restraint_type", mode="before")
+    @classmethod
+    def _normalize_abfe_diff_pose_restraint_type(cls, value: Any) -> str:
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "local": "local_frame",
+            "local_frame": "local_frame",
+            "frame": "local_frame",
+            "sparse": "local_frame",
+            "dense": "dense",
+            "cage": "dense",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "abfe_diff_pose_restraint_type must be 'local_frame' or 'dense'."
+            )
+        return aliases[text]
 
     @field_validator("remd", mode="before")
     @classmethod
@@ -1016,7 +1072,7 @@ class RunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(1, description="Schema version of the run configuration.")
-    protocol: Literal["abfe", "rbfe", "asfe", "md"] = Field(
+    protocol: Literal["abfe", "abfe_diff", "rbfe", "asfe", "md"] = Field(
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(
@@ -1041,7 +1097,7 @@ class RunConfig(BaseModel):
             return data
 
         payload = dict(data)
-        proto = str(payload.get("protocol", "abfe")).lower()
+        proto = str(payload.get("protocol", "abfe")).lower().replace("-", "_")
         target_fields = (
             set(MDSimArgs.model_fields)
             if proto == "md"
@@ -1106,7 +1162,7 @@ class RunConfig(BaseModel):
     @field_validator("protocol", mode="before")
     @classmethod
     def _lower_protocol(cls, v):
-        return str(v).lower() if v else v
+        return str(v).lower().replace("-", "_") if v else v
 
     @field_validator("backend", mode="before")
     @classmethod

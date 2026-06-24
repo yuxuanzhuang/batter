@@ -38,7 +38,7 @@ from batter.analysis.utils import exclude_outliers
 
 COMPONENTS_DICT = {
     "rest": ["a", "l", "t", "c", "r", "m", "n"],
-    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "y", "m"],
+    "dd": ["e", "v", "f", "w", "x", "o", "s", "z", "d", "y", "m"],
 }
 
 # sign that determines direction of contribution to total FE
@@ -49,6 +49,7 @@ COMPONENT_DIRECTION_DICT = {
     "v": -1,
     "o": -1,
     "z": -1,
+    "d": -1,
     "y": +1,
     "m": -1,
     "x": +1,

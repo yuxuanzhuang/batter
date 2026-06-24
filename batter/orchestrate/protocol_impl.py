@@ -13,7 +13,7 @@ class ABFE(FEProtocol):
 
     def validate(self, ctx: ProtocolContext) -> None:
         sim = ctx.sim
-        if sim.fe_type not in {"uno_rest", "rest", "dd", "sdr", "dd-rest", "sdr-rest", "uno_dd"}:
+        if sim.fe_type not in {"uno_rest", "uno_rest_diff", "rest", "dd", "sdr", "dd-rest", "sdr-rest", "uno_dd"}:
             raise ValueError(f"ABFE expects absolute protocols; got fe_type={sim.fe_type}")
         if not sim.components:
             # your SimulationConfig exposes read-only tuple via property
@@ -28,6 +28,10 @@ class ABFE(FEProtocol):
 
     def outputs(self) -> List[str]:
         return ["fe/index", "fe/<run_id>/record", "fe/<run_id>/windows"]
+
+
+class ABFEDiff(ABFE):
+    name = "abfe_diff"
 
 
 class ASFE(FEProtocol):
@@ -71,5 +75,6 @@ class RBFE(FEProtocol):
 # One-time registration
 from .protocols import register_protocol
 register_protocol(ABFE())
+register_protocol(ABFEDiff())
 register_protocol(ASFE())
 register_protocol(RBFE())

@@ -1021,6 +1021,7 @@ def _sync_ligand_anchor_residue_with_pdb(
     )
 
 
+@register_create_box("d")
 @register_create_box("z")
 def create_box(ctx: BuildContext) -> None:
     """
@@ -1227,7 +1228,7 @@ def create_box(ctx: BuildContext) -> None:
             )
             final_system = final_system - outside_wat
 
-        if comp in ["e", "v", "o", "z"]:
+        if comp in ["e", "v", "o", "z", "d"]:
             min_pos = final_system.positions[:, 2].min()
             system_dimensions[2] = abs_z
 
@@ -1524,7 +1525,7 @@ def create_box(ctx: BuildContext) -> None:
     if dec_method == "dd" or comp == "q":
         ligands_p = ligand_p_1
         ligands_p.coordinates = lig_inp
-    elif comp in ["z", "o", "s", "v"] and dec_method == "sdr":
+    elif comp in ["z", "d", "o", "s", "v"] and dec_method == "sdr":
         ligands_p = ligand_p_1 + ligand_p_1
         ligands_p.coordinates = lig_inp
     elif comp in ["e"] and dec_method == "sdr":

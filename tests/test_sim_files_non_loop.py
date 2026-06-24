@@ -107,6 +107,24 @@ def test_non_loop_mask_from_dssp_assignments_filters_short_runs() -> None:
     assert got == "1-4,9-13"
 
 
+def test_solvent_ligand_restraint_mask_abfe_diff_uses_full_residue(tmp_path: Path) -> None:
+    pdb = tmp_path / "vac.pdb"
+    pdb.write_text(
+        "".join(
+            [
+                "ATOM      1  C1  LIG A   5       0.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      2  C2  LIG A   5       1.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      3  C1  LIG A   6       5.000   0.000   0.000  1.00  0.00           C\n",
+                "ATOM      4  C2  LIG A   6       6.000   0.000   0.000  1.00  0.00           C\n",
+                "END\n",
+            ]
+        )
+    )
+
+    assert sim_files._solvent_ligand_restraint_mask(pdb, resid=6, comp="z") == "@3"
+    assert sim_files._solvent_ligand_restraint_mask(pdb, resid=6, comp="d") == ":6"
+
+
 def test_write_sim_files_replaces_non_loop_from_dssp_manifest(tmp_path: Path) -> None:
     dssp = [["-", "H", "H", "H", "H", "-", "E", "E", "E", "E", "-", "-"]]
     ctx = _ctx(tmp_path, with_manifest=True, dssp_results=dssp)

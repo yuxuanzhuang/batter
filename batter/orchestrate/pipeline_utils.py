@@ -28,7 +28,7 @@ def select_pipeline(
     Parameters
     ----------
     protocol : str
-        Name of the requested protocol (``"abfe"``, ``"rbfe"``, ``"asfe"``, or ``"md"``).
+        Name of the requested protocol (``"abfe"``, ``"abfe_diff"``, ``"rbfe"``, ``"asfe"``, or ``"md"``).
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
@@ -46,7 +46,7 @@ def select_pipeline(
     ValueError
         If the protocol name is not recognised.
     """
-    name = (protocol or "abfe").lower()
+    name = (protocol or "abfe").lower().replace("-", "_")
     params_model = (
         sys_params
         if isinstance(sys_params, SystemParams)
@@ -54,7 +54,7 @@ def select_pipeline(
     )
     extra = {"partition": partition} if partition else {}
 
-    if name == "abfe":
+    if name in {"abfe", "abfe_diff"}:
         return make_abfe_pipeline(
             sim_cfg,
             sys_params=params_model,

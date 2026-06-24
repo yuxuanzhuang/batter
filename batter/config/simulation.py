@@ -27,6 +27,7 @@ MEMBRANE_EXEMPT_COMPONENTS = {"y", "m"}
 
 PROTOCOL_TO_FE_TYPE = {
     "abfe": "uno_rest",
+    "abfe_diff": "uno_rest_diff",
     "rbfe": "relative",
     "asfe": "asfe",
     "md": "md",
@@ -102,13 +103,15 @@ class SimulationConfig(BaseModel):
 
         resolved_fe_type = fe_type
         if resolved_fe_type is None and protocol:
-            resolved_fe_type = PROTOCOL_TO_FE_TYPE.get(protocol.lower())
+            resolved_fe_type = PROTOCOL_TO_FE_TYPE.get(
+                protocol.lower().replace("-", "_")
+            )
         if resolved_fe_type is None:
             resolved_fe_type = _fe_attr("fe_type", lambda: None)
         if resolved_fe_type is None:
             resolved_fe_type = "md"
 
-        proto_key = (protocol or "").lower()
+        proto_key = (protocol or "").lower().replace("-", "_")
 
         def _coerce_step_dict(name: str, mapping: Mapping[str, Any]) -> dict[str, int]:
             out: dict[str, int] = {}
@@ -165,6 +168,7 @@ class SimulationConfig(BaseModel):
 
         required_components = {
             "abfe": ["z"],
+            "abfe_diff": ["d"],
             "asfe": ["y", "m"],
             "rbfe": ["x"],
         }.get(proto_key, [])
@@ -245,6 +249,24 @@ class SimulationConfig(BaseModel):
             "lig_dihcf_force": float(_fe_attr("lig_dihcf_force", lambda: 0.0)),
             "rec_com_force": float(_fe_attr("rec_com_force", lambda: 10.0)),
             "lig_com_force": float(_fe_attr("lig_com_force", lambda: 10.0)),
+            "abfe_diff_pose_restraint_type": _fe_attr(
+                "abfe_diff_pose_restraint_type", lambda: "local_frame"
+            ),
+            "abfe_diff_pose_anchor_count": int(
+                _fe_attr("abfe_diff_pose_anchor_count", lambda: 3)
+            ),
+            "abfe_diff_pose_ligand_atom_count": int(
+                _fe_attr("abfe_diff_pose_ligand_atom_count", lambda: 6)
+            ),
+            "abfe_diff_pose_width": float(
+                _fe_attr("abfe_diff_pose_width", lambda: 0.5)
+            ),
+            "abfe_diff_pose_anchor_radius": float(
+                _fe_attr("abfe_diff_pose_anchor_radius", lambda: 8.0)
+            ),
+            "abfe_diff_pose_internal_restraints": coerce_yes_no(
+                _fe_attr("abfe_diff_pose_internal_restraints", lambda: "yes")
+            ),
             "buffer_x": float(_fe_attr("buffer_x", lambda: 10.0)),
             "buffer_y": float(_fe_attr("buffer_y", lambda: 10.0)),
             "buffer_z": float(_fe_attr("buffer_z", lambda: 15.0)),
@@ -300,6 +322,7 @@ class SimulationConfig(BaseModel):
         "uno",
         "uno_com",
         "uno_rest",
+        "uno_rest_diff",
         "self",
         "uno_dd",
         "dd-rest",
@@ -386,6 +409,34 @@ class SimulationConfig(BaseModel):
     )
     rec_com_force: float = Field(0.0, description="Protein COM spring")
     lig_com_force: float = Field(0.0, description="Ligand COM spring")
+    abfe_diff_pose_restraint_type: Literal["local_frame", "dense"] = Field(
+        "local_frame",
+        description="ABFE_diff bound-dummy pose restraint style.",
+    )
+    abfe_diff_pose_anchor_count: int = Field(
+        3,
+        ge=3,
+        description="Number of receptor anchors used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_ligand_atom_count: int = Field(
+        6,
+        ge=3,
+        description="Number of ligand heavy atoms used for ABFE_diff pose restraints.",
+    )
+    abfe_diff_pose_width: float = Field(
+        0.5,
+        gt=0.0,
+        description="Flat-bottom half-width for ABFE_diff pose restraints (Å).",
+    )
+    abfe_diff_pose_anchor_radius: float = Field(
+        8.0,
+        gt=0.0,
+        description="Nearby C-alpha search radius for inferred ABFE_diff anchors.",
+    )
+    abfe_diff_pose_internal_restraints: Literal["yes", "no"] = Field(
+        "yes",
+        description="Add ligand-internal scaffold distance restraints for ABFE_diff.",
+    )
 
     # --- Solvent / box ---
     water_model: Literal["SPCE", "TIP4PEW", "TIP3P", "TIP3PF", "OPC"] = Field(
@@ -519,6 +570,7 @@ class SimulationConfig(BaseModel):
         "rocklin_correction",
         "enable_mcwat",
         "remd",
+        "abfe_diff_pose_internal_restraints",
         mode="before",
     )
     @classmethod
@@ -538,6 +590,24 @@ class SimulationConfig(BaseModel):
             if s in {"false", "f", "0"}:
                 return "no"
         raise ValueError(f"Invalid yes/no: {v!r}")
+
+    @field_validator("abfe_diff_pose_restraint_type", mode="before")
+    @classmethod
+    def _normalize_abfe_diff_pose_restraint_type(cls, value: Any) -> str:
+        text = str(value).strip().lower().replace("-", "_")
+        aliases = {
+            "local": "local_frame",
+            "local_frame": "local_frame",
+            "frame": "local_frame",
+            "sparse": "local_frame",
+            "dense": "dense",
+            "cage": "dense",
+        }
+        if text not in aliases:
+            raise ValueError(
+                "abfe_diff_pose_restraint_type must be 'local_frame' or 'dense'."
+            )
+        return aliases[text]
 
     @field_validator("lambdas", mode="before")
     @classmethod
@@ -655,6 +725,8 @@ class SimulationConfig(BaseModel):
                 self.components, self.dec_method = ["m", "n", "o"], "sdr"
             case "uno_rest":
                 self.components, self.dec_method = ["z"], "sdr"
+            case "uno_rest_diff":
+                self.components, self.dec_method = ["d"], "sdr"
             case "uno_com":
                 self.components, self.dec_method = ["o"], "sdr"
             case "self":

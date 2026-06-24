@@ -592,6 +592,51 @@ def test_component_lambdas_override_from_sections(tmp_path: Path) -> None:
     assert cfg.component_lambdas["z"] == [0.0, 0.2, 0.4, 1.0]
 
 
+def test_abfe_diff_uses_d_component_from_sections(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        component_lambdas={"d": [0.0, 0.25, 0.5, 1.0]},
+        n_steps={"d": 300_000},
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="ABFE_diff")
+
+    assert cfg.fe_type == "uno_rest_diff"
+    assert cfg.components == ["d"]
+    assert cfg.dec_method == "sdr"
+    assert cfg.component_lambdas["d"] == [0.0, 0.25, 0.5, 1.0]
+
+
+def test_run_config_abfe_diff_accepts_legacy_d_fields(tmp_path: Path) -> None:
+    lig_file = tmp_path / "lig.sdf"
+    lig_file.write_text("dummy\n")
+    run_yaml = tmp_path / "abfe_diff.yaml"
+    run_yaml.write_text(
+        f"""
+protocol: ABFE-diff
+run:
+  output_folder: "{tmp_path / 'work'}"
+create:
+  system_name: example
+  ligand_paths:
+    lig1: "{lig_file}"
+fe_sim:
+  d_lambdas: [0.0, 0.5, 1.0]
+  d_n_steps: 300000
+"""
+    )
+
+    cfg = load_run_config(run_yaml)
+    sim_cfg = cfg.resolved_sim_config()
+
+    assert cfg.protocol == "abfe_diff"
+    assert sim_cfg.fe_type == "uno_rest_diff"
+    assert sim_cfg.components == ["d"]
+    assert sim_cfg.component_lambdas["d"] == [0.0, 0.5, 1.0]
+
+
 def test_sim_config_from_sections_preserves_slurm_header_dir(tmp_path: Path) -> None:
     create = _minimal_create(tmp_path)
     fe_args = FESimArgs(
@@ -612,8 +657,11 @@ def test_sim_config_from_sections_preserves_slurm_header_dir(tmp_path: Path) -> 
 
 def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     create = _minimal_create(tmp_path)
-    if protocol == "abfe":
+    normalized_protocol = protocol.lower().replace("-", "_")
+    if normalized_protocol == "abfe":
         n_steps = {"z": 300_000}
+    elif normalized_protocol == "abfe_diff":
+        n_steps = {"d": 300_000}
     else:
         n_steps = {"y": 300_000, "m": 300_000}
     payload = {
@@ -635,6 +683,7 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
     [
         ("asfe", "asfe"),
         ("abfe", "uno_rest"),
+        ("ABFE_diff", "uno_rest_diff"),
     ],
 )
 def test_resolved_sim_config_sets_fe_type(
