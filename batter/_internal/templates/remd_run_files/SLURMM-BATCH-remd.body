@@ -11,11 +11,21 @@ RETRY_COUNT=$(cat "$ATTEMPT_FILE")
 echo "Current attempt: $RETRY_COUNT"
 MAX_ATTEMPTS=10
 
+is_titan_xp_retry_exempt_output() {
+    local out_file=$1
+    local basename=${out_file##*/}
+
+    case "$basename" in
+        eqnpt_eq.out|md-*.out) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 failure_outputs_have_titan_xp() {
     local retry_count=${1:-}
     local out_file archive_dir
     while IFS= read -r -d '' out_file; do
-        if grep -Fq "TITAN Xp" "$out_file"; then
+        if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
             echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
             return 0
         fi
@@ -24,7 +34,7 @@ failure_outputs_have_titan_xp() {
     for archive_dir in WRONG_FAIL/*_job_attempt_${retry_count} */WRONG_FAIL/*_job_attempt_${retry_count}; do
         [[ -d "$archive_dir" ]] || continue
         while IFS= read -r -d '' out_file; do
-            if grep -Fq "TITAN Xp" "$out_file"; then
+            if is_titan_xp_retry_exempt_output "$out_file" && grep -Fq "TITAN Xp" "$out_file"; then
                 echo "[INFO] Detected TITAN Xp in ${out_file#./}; not incrementing failure count."
                 return 0
             fi
