@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Sequence
 
 from loguru import logger
 
@@ -17,7 +17,47 @@ from batter.orchestrate.state_registry import get_phase_state, PhaseState
 _STABLE_BORESCH_DISTANCE_SCHEMA_VERSION = 2
 
 
-def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple[List[SimSystem], List[SimSystem]]:
+def _components_under_pattern(root: Path, pattern: str) -> list[str]:
+    if not pattern.startswith("pre_fe/"):
+        return components_under(root)
+    fe_root = root / "pre_fe"
+    if not fe_root.exists():
+        return []
+    return sorted(
+        [
+            p.name
+            for p in fe_root.iterdir()
+            if p.is_dir()
+        ]
+    )
+
+
+def components_for_phase(phase: Pipeline) -> List[str] | None:
+    """Return explicit component filters carried by a phase payload, if any."""
+
+    components: list[str] = []
+    for step in phase.ordered_steps():
+        payload = step.payload
+        if payload is None:
+            continue
+        try:
+            value = payload.get("components")
+        except Exception:
+            value = getattr(payload, "components", None)
+        if not value:
+            continue
+        components.extend(str(comp) for comp in value if str(comp))
+    if not components:
+        return None
+    return sorted(set(components))
+
+
+def partition_children_by_status(
+    children: List[SimSystem],
+    phase: str,
+    *,
+    components: Sequence[str] | None = None,
+) -> Tuple[List[SimSystem], List[SimSystem]]:
     """Split systems into success and failure buckets for a given phase.
 
     Parameters
@@ -37,21 +77,31 @@ def partition_children_by_status(children: List[SimSystem], phase: str) -> Tuple
     for child in children:
         spec = _phase_spec(child.root, phase)
         success_spec = spec.success or spec.required
-        is_success = _spec_satisfied(child.root, success_spec, phase)
+        is_success = _spec_satisfied(
+            child.root, success_spec, phase, components=components
+        )
         if is_success:
             ok.append(child)
             continue
-        is_failure = _spec_satisfied(child.root, spec.failure, phase)
+        is_failure = _spec_satisfied(
+            child.root, spec.failure, phase, components=components
+        )
         if is_failure or not is_success:
             bad.append(child)
     return ok, bad
 
 
-def _remove_patterns(root: Path, spec: List[List[str]]) -> bool:
+def _remove_patterns(
+    root: Path,
+    spec: List[List[str]],
+    *,
+    components: Sequence[str] | None = None,
+) -> bool:
     removed = False
+    comp_cache = list(components) if components is not None else None
     for group in spec:
         for pattern in group:
-            for p in _expand_pattern(root, pattern):
+            for p in _expand_pattern(root, pattern, comp_cache=comp_cache):
                 if not p.exists():
                     continue
                 try:
@@ -68,10 +118,16 @@ def _remove_patterns(root: Path, spec: List[List[str]]) -> bool:
     return removed
 
 
-def _remove_phase_jobids(root: Path, phase_name: str, spec: PhaseState) -> bool:
+def _remove_phase_jobids(
+    root: Path,
+    phase_name: str,
+    spec: PhaseState,
+    *,
+    components: Sequence[str] | None = None,
+) -> bool:
     """Remove stale ``JOBID`` files for workdirs associated with ``phase_name``."""
     removed = False
-    comp_cache = components_under(root)
+    comp_cache = list(components) if components is not None else None
     win_cache: dict[str, List[int]] = {}
     candidate_dirs: set[Path] = set()
 
@@ -93,7 +149,13 @@ def _remove_phase_jobids(root: Path, phase_name: str, spec: PhaseState) -> bool:
     return removed
 
 
-def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str) -> List[SimSystem]:
+def handle_phase_failures(
+    children: List[SimSystem],
+    phase_name: str,
+    mode: str,
+    *,
+    components: Sequence[str] | None = None,
+) -> List[SimSystem]:
     """Post-process phase results, pruning/retrying/raising on failure.
 
     Parameters
@@ -118,7 +180,9 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
         If failures occur and ``mode`` is not ``"prune"``.
     """
     mode_lower = (mode or "").lower()
-    ok, bad = partition_children_by_status(children, phase_name)
+    ok, bad = partition_children_by_status(
+        children, phase_name, components=components
+    )
     if bad:
         bad_names = ", ".join(c.meta.get("ligand", c.name) for c in bad)
         if mode_lower == "prune":
@@ -128,9 +192,15 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
             retried = []
             for c in bad:
                 spec = _phase_spec(c.root, phase_name)
-                removed_failure = _remove_patterns(c.root, spec.failure)
-                removed_success = _remove_patterns(c.root, spec.success)
-                removed_jobid = _remove_phase_jobids(c.root, phase_name, spec)
+                removed_failure = _remove_patterns(
+                    c.root, spec.failure, components=components
+                )
+                removed_success = _remove_patterns(
+                    c.root, spec.success, components=components
+                )
+                removed_jobid = _remove_phase_jobids(
+                    c.root, phase_name, spec, components=components
+                )
                 if removed_failure or removed_success or removed_jobid:
                     retried.append(c)
                 else:
@@ -156,7 +226,12 @@ def handle_phase_failures(children: List[SimSystem], phase_name: str, mode: str)
     return children
 
 
-def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[SimSystem]:
+def filter_needing_phase(
+    children: List[SimSystem],
+    phase_name: str,
+    *,
+    components: Sequence[str] | None = None,
+) -> List[SimSystem]:
     """Return only systems that still require work for the given phase.
 
     Parameters
@@ -172,11 +247,13 @@ def filter_needing_phase(children: List[SimSystem], phase_name: str) -> List[Sim
         Subset of systems lacking the necessary success sentinels.
     """
     if children:
-        _maybe_invalidate_progress_for_phase(children, phase_name)
+        _maybe_invalidate_progress_for_phase(
+            children, phase_name, components=components
+        )
 
     need, done = [], []
     for child in children:
-        if is_done(child, phase_name):
+        if is_done(child, phase_name, components=components):
             done.append(child)
         else:
             need.append(child)
@@ -198,8 +275,10 @@ def _phase_ok_patterns(phase_name: str) -> List[str]:
     if phase_name == "prepare_fe_windows":
         return ["fe/prepare_fe_windows.ok"]
     if phase_name == "pre_prepare_fe":
-        return ["fe/pre_prepare_fe.ok"]
-    if phase_name in {"pre_fe_equil", "fe_equil"}:
+        return ["pre_fe/pre_prepare_fe.ok"]
+    if phase_name == "pre_fe_equil":
+        return ["pre_fe/{comp}/{comp}-1/EQ_FINISHED"]
+    if phase_name == "fe_equil":
         return ["fe/{comp}/{comp}-1/EQ_FINISHED"]
     if phase_name == "fe":
         return ["fe/{comp}/{comp}{win:02d}/FINISHED"]
@@ -209,7 +288,10 @@ def _phase_ok_patterns(phase_name: str) -> List[str]:
 
 
 def _maybe_invalidate_progress_for_phase(
-    children: List[SimSystem], phase_name: str
+    children: List[SimSystem],
+    phase_name: str,
+    *,
+    components: Sequence[str] | None = None,
 ) -> None:
     if phase_name not in {
         "prepare_rbfe",
@@ -232,7 +314,7 @@ def _maybe_invalidate_progress_for_phase(
         ok_patterns = _phase_ok_patterns(phase_name)
         if not ok_patterns:
             continue
-        comp_cache = components_under(child.root)
+        comp_cache = list(components) if components is not None else None
         ok = True
         for pattern in ok_patterns:
             expanded = _expand_pattern(child.root, pattern, comp_cache, {})
@@ -304,7 +386,8 @@ def run_phase_skipping_done(
         ``True`` if all systems were already complete (phase skipped),
         ``False`` otherwise.
     """
-    todo = filter_needing_phase(children, phase_name)
+    components = components_for_phase(phase)
+    todo = filter_needing_phase(children, phase_name, components=components)
     if not todo:
         logger.info(f"[skip] {phase_name}: all ligands already complete.")
         return True
@@ -328,7 +411,12 @@ def run_phase_skipping_done(
     return False
 
 
-def is_done(system: SimSystem, phase_name: str) -> bool:
+def is_done(
+    system: SimSystem,
+    phase_name: str,
+    *,
+    components: Sequence[str] | None = None,
+) -> bool:
     """Return ``True`` if a system satisfies the success criteria for a phase.
 
     Parameters
@@ -351,7 +439,9 @@ def is_done(system: SimSystem, phase_name: str) -> bool:
 
     spec = _phase_spec(system.root, phase_name)
     required_spec = spec.required or spec.success
-    return _spec_satisfied(system.root, required_spec, phase_name)
+    return _spec_satisfied(
+        system.root, required_spec, phase_name, components=components
+    )
 
 
 def _stable_boresch_distance_current(path: Path) -> bool:
@@ -376,14 +466,20 @@ def _phase_spec(root: Path, phase: str) -> PhaseState:
     return get_phase_state(root, phase)
 
 
-def _spec_satisfied(root: Path, spec: List[List[str]], phase: str) -> bool:
+def _spec_satisfied(
+    root: Path,
+    spec: List[List[str]],
+    phase: str,
+    *,
+    components: Sequence[str] | None = None,
+) -> bool:
     """Evaluate whether any clause in the DNF spec is satisfied on disk."""
 
     if not spec:
         return False
     progress = _load_progress(root, phase)
     updates: Dict[str, str] = {}
-    comp_cache = components_under(root)
+    comp_cache = list(components) if components is not None else None
     win_cache: dict[str, List[int]] = {}
     for group in spec:
         paths: List[Path] = []
@@ -412,7 +508,7 @@ def _expand_pattern(
     if "{comp" not in pattern and "{win" not in pattern:
         return [root / pattern]
 
-    comps = comp_cache if comp_cache is not None else components_under(root)
+    comps = comp_cache if comp_cache is not None else _components_under_pattern(root, pattern)
     if not comps:
         return []
 
@@ -497,6 +593,7 @@ def _load_progress(root: Path, phase: str) -> Dict[str, str]:
     legacy_paths = [root / "artifacts" / "progress" / f"{phase}.csv"]
     if phase.startswith(("fe", "prepare_fe", "pre_fe", "pre_prepare_fe")):
         legacy_paths.append(root / "fe" / "artifacts" / "progress" / f"{phase}.csv")
+        legacy_paths.append(root / "pre_fe" / "artifacts" / "progress" / f"{phase}.csv")
     legacy = next((p for p in legacy_paths if p.exists()), None)
     if not legacy:
         return out

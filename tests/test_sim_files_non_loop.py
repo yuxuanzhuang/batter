@@ -30,6 +30,7 @@ def _load_internal_module(module_name: str):
 
 
 sim_files = _load_internal_module("batter._internal.ops.sim_files")
+runfiles = importlib.import_module("batter._internal.ops.runfiles")
 
 
 def _write_minimal_equil_templates(amber_dir: Path) -> None:
@@ -442,6 +443,7 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
         "  irest = 1,\n"
         "  ntwx = _ntwx_,\n"
         "  ntwprt = _num-atoms_,\n"
+        "  nstlim = _num-steps_,\n"
         "  dt = _step_,\n"
         "  restraint_wt = 50.0,\n"
         "  restraintmask = ':1-2',\n"
@@ -494,6 +496,172 @@ def test_sim_files_z_applies_first_atom_position_restraint_only_in_mdin_template
 
     assert ":LIG" in mini_text
     assert "@3" not in mini_text
+
+
+def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
+    tmp_path: Path,
+) -> None:
+    windows_dir = tmp_path / "d-1"
+    amber_dir = tmp_path / "amber"
+    windows_dir.mkdir(parents=True)
+    amber_dir.mkdir(parents=True)
+
+    (windows_dir / "vac.pdb").write_text(
+        "ATOM      1  C1  LIG A  10       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C2  LIG A  10       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C1  LIG A  30       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A  30       3.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      5  C1  LIG A  20       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      6  C2  LIG A  20       3.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    (amber_dir / "mdin-diff-sdr").write_text(
+        "&cntrl\n"
+        "  ntx = 5,\n"
+        "  irest = 1,\n"
+        "  ntwx = _ntwx_,\n"
+        "  ntwprt = _num-atoms_,\n"
+        "  nstlim = _num-steps_,\n"
+        "  dt = _step_,\n"
+        "  nmropt = 1,\n"
+        "  restraint_wt = 50.0,\n"
+        "  restraintmask = ':1-2',\n"
+        "  icfe = 1,\n"
+        "  clambda = lbd_val,\n"
+        "  timask1 = ':mk1',\n"
+        "  timask2 = ':mk2',\n"
+        "  scmask1=':mk1',\n"
+        "  scmask2=':mk2',\n"
+        "  crgmask = ':mk3',\n"
+        "  gti_bat_sc      = 1,\n"
+        "/\n"
+    )
+    (amber_dir / "mini-diff-sdr").write_text(
+        "&cntrl\n"
+        "  restraintmask = ':_lig_name_',\n"
+        "  timask1 = ':mk1',\n"
+        "  timask2 = ':mk2',\n"
+        "  crgmask = ':mk3',\n"
+        "  gti_bat_sc      = 1,\n"
+        "/\n"
+    )
+    (amber_dir / "eqnpt0-uno.in").write_text(
+        "&cntrl\n"
+        "  nmropt = 0,\n"
+        "  temp0 = _temperature_,\n"
+        "  ntp = 3,\n"
+        "  csurften = 3,\n"
+        "  restraintmask = ':_lig_name_',\n"
+        "  mcwat = 1,\n"
+        "/\n"
+    )
+    (amber_dir / "eqnpt-uno.in").write_text(
+        "&cntrl\n"
+        "  nmropt = 0,\n"
+        "  temp0 = _temperature_,\n"
+        "  ntp = 3,\n"
+        "  csurften = 3,\n"
+        "  restraintmask = ':_lig_name_',\n"
+        "  mcwat = 1,\n"
+        "/\n"
+    )
+    (amber_dir / "eqnpt-uno-eq.in").write_text(
+        "&cntrl\n"
+        "  nmropt = 0,\n"
+        "  temp0 = _temperature_,\n"
+        "  ntp = 3,\n"
+        "  csurften = 3,\n"
+        "  restraintmask = '((@CA & _non_loop_) | :_lig_name_) & !@H=',\n"
+        "  mcwat = 1,\n"
+        "/\n"
+    )
+
+    ctx = SimpleNamespace(
+        working_dir=tmp_path / "work_unused",
+        window_dir=windows_dir,
+        amber_dir=amber_dir,
+        system_root=tmp_path / "system_unused",
+        build_dir=tmp_path / "build_unused",
+        residue_name="LIG",
+        comp="d",
+        win=-1,
+        extra={"infe": 0},
+        sim=SimpleNamespace(
+            temperature=300.0,
+            dic_n_steps={"d": 4000},
+            ntwx=250,
+            all_atoms="no",
+            dec_method="sdr",
+        ),
+    )
+
+    original_resolve = sim_files._resolve_non_loop_mask
+    try:
+        sim_files._resolve_non_loop_mask = lambda *args, **kwargs: ":1"
+        sim_files.sim_files_z(ctx, [0.0, 0.5, 1.0])
+    finally:
+        sim_files._resolve_non_loop_mask = original_resolve
+
+    template_text = (windows_dir / "mdin-template").read_text()
+    mini_text = (windows_dir / "mini.in").read_text()
+    eq_text = (windows_dir / "eq.in").read_text()
+    eqnpt0_text = (windows_dir / "eqnpt0.in").read_text()
+    eqnpt_text = (windows_dir / "eqnpt.in").read_text()
+
+    assert "timask1 = ':10'" in template_text
+    assert "timask2 = ':30'" in template_text
+    assert "crgmask = ':20'" in template_text
+    assert "gti_bat_sc      = 1" in template_text
+    assert "ti_vdw_mask" not in template_text
+    assert "restraintmask = '((@CA & :1) | :30,20) & !@H='" in template_text
+    assert "nmropt = 1" in template_text
+    assert ":LIG" not in template_text
+
+    assert "timask1 = ':10'" in mini_text
+    assert "timask2 = ':30'" in mini_text
+    assert "crgmask = ':20'" in mini_text
+    assert "gti_bat_sc      = 1" in mini_text
+    assert "ti_vdw_mask" not in mini_text
+    assert "restraintmask = '(@CA,C,N,P31 | :30,20) & !@H='" in mini_text
+    assert ":LIG" not in mini_text
+
+    assert "mcwat" not in eq_text
+    assert "mcwatmask" not in eq_text
+    assert "nmropt = 1" in eq_text
+    assert "gti_bat_sc      = 1" in eq_text
+    assert "restraintmask = '((@CA & :1) | :30,20) & !@H='" in eq_text
+    assert ":LIG" not in eq_text
+    assert "ntp = 1" in eqnpt0_text
+    assert "csurften = 0" in eqnpt0_text
+    assert "nmropt = 1" in eqnpt0_text
+    assert "restraintmask = '(@CA,C,N,P31 | :30,20) & !@H='" in eqnpt0_text
+    assert "ntp = 1" in eqnpt_text
+    assert "csurften = 0" in eqnpt_text
+    assert "nmropt = 1" in eqnpt_text
+    assert "restraintmask = '(@CA,C,N,P31 | :30,20) & !@H='" in eqnpt_text
+    assert "timask1 = ':10'" in eqnpt_text
+    assert "crgmask = ':20'" in eqnpt_text
+    assert "gti_bat_sc      = 1" in eqnpt_text
+    assert "nstlim = 30000" in eq_text
+    assert "dynlmb = 0.5" in eq_text
+    assert "mbar_states = 03" in eq_text
+
+
+def test_abfe_diff_d_run_file_uses_dense_seed_lambda_list(tmp_path: Path) -> None:
+    window_dir = tmp_path / "d-1"
+    ctx = SimpleNamespace(
+        window_dir=window_dir,
+        ligand="lig",
+        comp="d",
+        win=-1,
+        sim=SimpleNamespace(hmr="yes", system_name="sys", fe_type="uno_rest_diff"),
+    )
+
+    runfiles.write_fe_run_file(ctx, [0.0, 0.5, 1.0])
+
+    run_local = (window_dir / "run-local.bash").read_text()
+    assert "lambda_eq_list=(0.0000 0.5000 1.0000)" in run_local
+    assert "lambda_set_list=(0.0000 0.5000 1.0000)" in run_local
 
 
 def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(

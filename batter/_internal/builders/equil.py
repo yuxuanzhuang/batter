@@ -6,16 +6,6 @@ from typing import Any, Dict, Optional
 
 from batter.config.simulation import SimulationConfig
 from batter._internal.builders.base import BaseBuilder
-from batter._internal.ops import (
-    build_complex,
-    restraints,
-    runfiles,
-    box,
-    amber,
-    simprep,
-    sim_files,
-)
-
 
 class PrepareEquilBuilder(BaseBuilder):
     """
@@ -71,11 +61,14 @@ class PrepareEquilBuilder(BaseBuilder):
 
     def _build_complex(self) -> bool:
         """Align receptor–ligand complex and detect anchors."""
+        from batter._internal.ops import build_complex
+
         logger.debug(f"[prepare_equil] Building complex for {self.ctx.ligand}")
         return build_complex.build_complex(self.ctx, infe=self.infe)
 
     def _create_amber_files(self) -> None:
         """Render AMBER templates for the system."""
+        from batter._internal.ops import amber
 
         work = self.ctx.working_dir
         amber.write_amber_templates(
@@ -88,25 +81,34 @@ class PrepareEquilBuilder(BaseBuilder):
 
     def _create_simulation_dir(self) -> None:
         """Create the simulation directory."""
+        from batter._internal.ops import simprep
+
         simprep.create_simulation_dir_eq(self.ctx)
 
     def _create_box(self) -> None:
         """Render AMBER templates and build solvated/ionized system."""
+        from batter._internal.ops import box
 
         box.create_box(self.ctx)
         logger.debug(f"[prepare_equil] Created box for {self.ctx.ligand}")
 
     def _restraints(self) -> None:
         """Write equilibrium restraints (disang.rest, cv.in)."""
+        from batter._internal.ops import restraints
+
         restraints.write_equil_restraints(self.ctx)
         logger.debug(f"[prepare_equil] Wrote restraints for {self.ctx.ligand}")
 
     def _sim_files(self) -> None:
         """Write equilibration input decks: mini.in, eqnvt.in, eqnpt*.in, etc."""
+        from batter._internal.ops import sim_files
+
         sim_files.write_sim_files(self.ctx, infe=self.infe)
         logger.debug(f"[prepare_equil] Wrote sim files for {self.ctx.ligand}")
 
     def _run_files(self) -> None:
         """Emit run scripts for the next `equil` step."""
+        from batter._internal.ops import runfiles
+
         runfiles.write_equil_run_files(self.ctx, stage=self.stage)
         logger.debug(f"[prepare_equil] Wrote run files for {self.ctx.ligand}")

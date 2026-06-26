@@ -1241,8 +1241,6 @@ def _build_restraints_d(builder, ctx: BuildContext) -> None:
                         }
                     )
 
-    _maybe_append_extra_conf_blocks(ctx, work_dir=windows_dir, cv_file=cv_in, comp=comp)
-
     disang = windows_dir / "disang.rest"
     disang.write_text(
         f"# ABFE_diff {mode} bound-pose restraints; no Boresch ligand TR terms\n"

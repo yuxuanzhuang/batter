@@ -21,9 +21,29 @@ from textwrap import dedent
 from batter._internal.templates import RUN_FILES_DIR as RUN_FILES_ORIG
 
 
-def _equil_window_dir(root: Path, comp: str) -> Path:
+def _phase_fe_root(root: Path, phase_name: str) -> Path:
+    """Return the FE-like root for a phase."""
+    return root / ("pre_fe" if phase_name == "pre_fe_equil" else "fe")
+
+
+def _components_under_phase(root: Path, phase_name: str) -> list[str]:
+    if phase_name != "pre_fe_equil":
+        return components_under(root)
+    fe_root = _phase_fe_root(root, phase_name)
+    if not fe_root.exists():
+        return []
+    return sorted(
+        [
+            p.name
+            for p in fe_root.iterdir()
+            if p.is_dir()
+        ]
+    )
+
+
+def _equil_window_dir(root: Path, comp: str, *, phase_name: str = "fe_equil") -> Path:
     """Return the equilibration window directory for ``comp``."""
-    return root / "fe" / comp / f"{comp}-1"
+    return _phase_fe_root(root, phase_name) / comp / f"{comp}-1"
 
 
 def _production_window_dirs(root: Path, comp: str) -> List[Path]:
@@ -42,6 +62,39 @@ def _production_window_dirs(root: Path, comp: str) -> List[Path]:
             if tail and tail.lstrip("-").isdigit():
                 out.append(p)
     return out
+
+
+def _components_for_phase(
+    system: SimSystem,
+    payload: StepPayload,
+    *,
+    phase_name: str,
+) -> List[str]:
+    """Return FE component folders relevant to this phase."""
+    existing = _components_under_phase(system.root, phase_name)
+    if not existing:
+        return []
+
+    if phase_name == "pre_fe_equil":
+        requested = list(payload.get("components") or [])
+    else:
+        sim = payload.get("sim")
+        requested = list(payload.get("components") or getattr(sim, "components", []) or [])
+
+    if not requested:
+        return existing
+
+    requested_set = {str(comp) for comp in requested}
+    selected = [comp for comp in existing if comp in requested_set]
+    if selected:
+        return selected
+
+    logger.warning(
+        f"[{phase_name}:{system.meta.get('ligand', system.name)}] "
+        f"configured components {sorted(requested_set)} do not match existing "
+        f"component folders {existing}; falling back to existing folders."
+    )
+    return existing
 
 
 def _spec_from_dir(
@@ -105,10 +158,10 @@ def fe_equil_handler(
             "[fe_equil] payload['job_mgr'] must be an instance of SlurmJobManager."
         )
 
-    comps = components_under(system.root)
+    comps = _components_for_phase(system, payload, phase_name=phase_name)
     if not comps:
         raise FileNotFoundError(
-            f"[fe_equil:{lig}] No components found under {system.root/'fe'}"
+            f"[fe_equil:{lig}] No components found under {_phase_fe_root(system.root, phase_name)}"
         )
 
     # quota enforced inside the job manager before each add
@@ -117,16 +170,30 @@ def fe_equil_handler(
         system.root,
         phase_name,
         required=[
-            ["fe/{comp}/{comp}-1/EQ_FINISHED"],
-            ["fe/{comp}/{comp}-1/FAILED"],
+            [
+                f"{_phase_fe_root(system.root, phase_name).name}/{comp}/{comp}-1/EQ_FINISHED"
+                for comp in comps
+            ],
+            *[
+                [f"{_phase_fe_root(system.root, phase_name).name}/{comp}/{comp}-1/FAILED"]
+                for comp in comps
+            ],
         ],
-        success=[["fe/{comp}/{comp}-1/EQ_FINISHED"]],
-        failure=[["fe/{comp}/{comp}-1/FAILED"]],
+        success=[
+            [
+                f"{_phase_fe_root(system.root, phase_name).name}/{comp}/{comp}-1/EQ_FINISHED"
+                for comp in comps
+            ]
+        ],
+        failure=[
+            [f"{_phase_fe_root(system.root, phase_name).name}/{comp}/{comp}-1/FAILED"]
+            for comp in comps
+        ],
     )
 
     count = 0
     for comp in comps:
-        wd = _equil_window_dir(system.root, comp)
+        wd = _equil_window_dir(system.root, comp, phase_name=phase_name)
         if not wd.exists():
             logger.warning(
                 f"[fe_equil:{lig}] missing equil window dir: {wd} — skipping"
@@ -180,6 +247,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
     lig = system.meta.get("ligand", system.name)
     max_jobs = int(payload.get("max_active_jobs", 500))
     stage = payload.get("job_stage") or "fe"
+    phase_name = payload.get("phase_name") or "fe"
     remd_enabled = False
     if payload.sim is not None:
         remd_enabled = str(getattr(payload.sim, "remd", "no")).lower() == "yes"
@@ -191,30 +259,45 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             "[fe] payload['job_mgr'] must be an instance of SlurmJobManager."
         )
 
-    comps = components_under(system.root)
+    comps = _components_for_phase(system, payload, phase_name=phase_name)
     if not comps:
         raise FileNotFoundError(
             f"[fe:{lig}] No components found under {system.root/'fe'}"
         )
 
+    production_windows = {
+        comp: _production_window_dirs(system.root, comp)
+        for comp in comps
+    }
+
     if remd_enabled:
         register_phase_state(
             system.root,
-            "fe",
-            required=[["fe/{comp}/FINISHED"], ["fe/{comp}/FAILED"]],
-            success=[["fe/{comp}/FINISHED"]],
-            failure=[["fe/{comp}/FAILED"]],
+            phase_name,
+            required=[
+                [f"fe/{comp}/FINISHED" for comp in comps],
+                *[[f"fe/{comp}/FAILED"] for comp in comps],
+            ],
+            success=[[f"fe/{comp}/FINISHED" for comp in comps]],
+            failure=[[f"fe/{comp}/FAILED"] for comp in comps],
         )
     else:
+        success_paths = [
+            f"fe/{comp}/{wd.name}/FINISHED"
+            for comp, windows in production_windows.items()
+            for wd in windows
+        ]
+        failure_paths = [
+            [f"fe/{comp}/{wd.name}/FAILED"]
+            for comp, windows in production_windows.items()
+            for wd in windows
+        ]
         register_phase_state(
             system.root,
-            "fe",
-            required=[
-                ["fe/{comp}/{comp}{win:02d}/FINISHED"],
-                ["fe/{comp}/{comp}{win:02d}/FAILED"],
-            ],
-            success=[["fe/{comp}/{comp}{win:02d}/FINISHED"]],
-            failure=[["fe/{comp}/{comp}{win:02d}/FAILED"]],
+            phase_name,
+            required=[success_paths, *failure_paths] if success_paths else failure_paths,
+            success=[success_paths] if success_paths else [],
+            failure=failure_paths,
         )
 
     count = 0
@@ -289,7 +372,7 @@ def fe_handler(step: Step, system: SimSystem, params: Dict[str, Any]) -> ExecRes
             count += 1
             continue
 
-        for wd in _production_window_dirs(system.root, comp):
+        for wd in production_windows.get(comp, []):
             env = {"INPCRD": f"../{comp}-1/eqnpt04.rst7"}
             job_name = f"fep_{os.path.abspath(system.root)}_{comp}_{wd.name}_fe"
             batch_script = None

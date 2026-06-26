@@ -7,6 +7,7 @@ from typing import Optional
 from batter.pipeline.pipeline import Pipeline
 from batter.config.simulation import SimulationConfig
 from batter.pipeline.factory import (
+    make_abfe_diff_pipeline,
     make_abfe_pipeline,
     make_asfe_pipeline,
     make_md_pipeline,
@@ -54,8 +55,15 @@ def select_pipeline(
     )
     extra = {"partition": partition} if partition else {}
 
-    if name in {"abfe", "abfe_diff"}:
+    if name == "abfe":
         return make_abfe_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+            extra=extra,
+        )
+    if name == "abfe_diff":
+        return make_abfe_diff_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,

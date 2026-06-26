@@ -477,6 +477,96 @@ def build_dyna_steps_run_per_lambda(n_steps_run_per_lambda = 10000, n_lambdas = 
     n_steps_run = int(n_steps_run_per_lambda * n_lambdas)
     return n_steps_run_per_lambda, n_lambdas, dynlmb, n_steps_run
 
+
+def _replace_d_sdr_tokens(
+    text: str,
+    *,
+    mk1: int,
+    mk2: int,
+    mk3: int,
+    weight: float,
+) -> str:
+    return (
+        text.replace("lbd_val", f"{float(weight):6.5f}")
+        .replace("mk1", str(mk1))
+        .replace("mk2", str(mk2))
+        .replace("mk3", str(mk3))
+    )
+
+
+def _d_sdr_ti_block(
+    *,
+    mk1: int,
+    mk2: int,
+    mk3: int,
+    weight: float,
+) -> str:
+    return (
+        f"  icfe = 1, clambda = {float(weight):6.5f},\n"
+        f"  timask1 = ':{mk1}',\n"
+        f"  timask2 = ':{mk2}',\n"
+        "  ifsc=1,\n"
+        f"  scmask1=':{mk1}',\n"
+        f"  scmask2=':{mk2}',\n"
+        f"  crgmask = ':{mk3}',\n"
+        "  gti_cut   = 1,\n"
+        "  gti_output = 1,\n"
+        "  gti_add_sc = 25,\n"
+        "  gti_scale_beta  = 1,\n"
+        "  gti_lam_sch = 1,\n"
+        "  gti_ele_sc  = 1,\n"
+        "  gti_vdw_sc  = 1,\n"
+        "  gti_cut_sc  = 2,\n"
+        "  scalpha = 0.5,\n"
+        "  scbeta = 1.0,\n"
+        "  gti_cut_sc_on   = 7,\n"
+        "  gti_cut_sc_off  = 9,\n"
+        "  gti_ele_exp     = 2,\n"
+        "  gti_vdw_exp     = 2,\n"
+        "  gti_chg_keep    = 1,\n"
+        "  gti_bat_sc      = 1,\n"
+    )
+
+
+def _write_d_sdr_equil_input(
+    *,
+    src: Path,
+    dst: Path,
+    replacements: dict[str, str],
+    mk1: int,
+    mk2: int,
+    mk3: int,
+    weight: float,
+    restraint_mask: str,
+) -> None:
+    inserted_ti = False
+    with src.open("rt") as fin, dst.open("wt") as fout:
+        for line in fin:
+            if line.lstrip().startswith("/") and not inserted_ti:
+                fout.write(
+                    _d_sdr_ti_block(
+                        mk1=mk1,
+                        mk2=mk2,
+                        mk3=mk3,
+                        weight=weight,
+                    )
+                )
+                inserted_ti = True
+            if "mcwat" in line:
+                line = "  mcwat = 0,\n"
+            elif re.search(r"\bnmropt\s*=", line):
+                line = "  nmropt = 1,\n"
+            elif re.search(r"\brestraintmask\s*=", line):
+                line = f"  restraintmask = '{restraint_mask}',\n"
+            elif re.search(r"\bntp\s*=", line):
+                line = "  ntp = 1,\n"
+            elif re.search(r"\bcsurften\s*=", line):
+                line = "  csurften = 0,\n"
+            for key, value in replacements.items():
+                line = line.replace(key, value)
+            fout.write(line)
+
+
 def _sub_write(src: Path, dst: Path, repl: dict[str, str]) -> None:
     text = Path(src).read_text()
     for k, v in repl.items():
@@ -684,6 +774,236 @@ def write_sim_files(ctx: BuildContext, *, infe: bool) -> None:
 
 # ------------------------- FE components: z / d ------------------------- #
 
+
+def _sim_files_d_sdr_charge_transfer(
+    ctx: BuildContext,
+    lambdas: Sequence[float],
+    *,
+    vac_atoms: int,
+    vac_pdb: Path,
+    ligand_resids: Sequence[int],
+    non_loop_mask: str,
+    prmtop_for_masks: Optional[Path],
+    cache_dir: Path,
+    cache_master: bool,
+    extra_mask: Optional[str],
+    extra_fc: float,
+) -> None:
+    """Write ABFE_diff d-component inputs with charge-balanced SDR bookkeeping."""
+    if len(ligand_resids) < 3:
+        raise ValueError(
+            "ABFE_diff d-component SDR charge-transfer requires three ligand "
+            f"residues in {vac_pdb}: bound ligand, solvent alchemical "
+            "charge-transfer copy, and solvent neutral charge-mask copy."
+        )
+
+    sim = ctx.sim
+    comp = ctx.comp
+    mol = ctx.residue_name
+    win = ctx.win
+    windows_dir = ctx.window_dir
+    amber_dir = ctx.amber_dir
+    temperature = sim.temperature
+    steps2 = sim.dic_n_steps[comp]
+    ntwx = sim.ntwx
+    weight = lambdas[win if win != -1 else 0]
+
+    mk1, mk2, mk3 = [int(resid) for resid in ligand_resids[:3]]
+    solvent_ligand_restraint_mask = f":{mk2},{mk3}"
+    receptor_solvent_restraint_mask = (
+        f"((@CA & {non_loop_mask}) | {solvent_ligand_restraint_mask}) & !@H="
+    )
+    initial_equil_restraint_mask = (
+        f"(@CA,C,N,P31 | {solvent_ligand_restraint_mask}) & !@H="
+    )
+    template_mdin = amber_dir / "mdin-diff-sdr"
+    template_mini = amber_dir / "mini-diff-sdr"
+
+    if not template_mdin.exists() or not template_mini.exists():
+        missing = [
+            path.name
+            for path in (template_mdin, template_mini)
+            if not path.exists()
+        ]
+        raise FileNotFoundError(
+            "Missing ABFE_diff d-component template(s): " + ", ".join(missing)
+        )
+
+    n_steps_run_per_lambda, _n_lambdas, dynlmb, n_steps_run = (
+        build_dyna_steps_run_per_lambda(
+            n_lambdas=len(lambdas) if len(lambdas) > 1 else 5
+        )
+    )
+    if win != -1:
+        n_steps_run = 10000
+        n_steps_run_per_lambda = 10000
+
+    eq_path = windows_dir / "eq.in"
+    with template_mdin.open("rt") as fin, eq_path.open("wt") as fout:
+        for line in fin:
+            if "ntx = 5" in line:
+                line = "ntx = 1,\n"
+            elif "ntwx = " in line:
+                line = f"ntwx = {n_steps_run_per_lambda},\n"
+            elif "ntwprt = " in line:
+                line = "\n"
+            elif "irest" in line:
+                line = "irest = 0,\n"
+            elif "dt = " in line:
+                line = "dt = 0.002,\n"
+            elif "nmropt = " in line:
+                line = "nmropt = 1,\n"
+            elif "restraint_wt = " in line:
+                line = "restraint_wt = 10,\n"
+            elif "restraintmask" in line:
+                line = f"restraintmask = '{receptor_solvent_restraint_mask}',\n"
+            elif "gti_bat_sc" in line:
+                line = "  gti_bat_sc      = 1,\n"
+
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-atoms_", str(vac_atoms))
+                .replace("_num-steps_", str(n_steps_run))
+            )
+            line = _replace_d_sdr_tokens(
+                line,
+                mk1=mk1,
+                mk2=mk2,
+                mk3=mk3,
+                weight=weight,
+            )
+            fout.write(line)
+
+    with eq_path.open("a") as mdin:
+        mdin.write(" ntwv = -1,\n")
+        if win == -1:
+            mdin.write(f" dynlmb = {dynlmb},\n")
+            mdin.write(f" ntave = {n_steps_run_per_lambda},\n")
+        mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
+        mdin.write("  mbar_lambda =")
+        for lam in lambdas:
+            mdin.write(f" {lam:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 0,\n")
+        mdin.write(" /\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
+    _apply_restraintmask_length_limit(
+        eq_path,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag=f"{comp}-eq.in",
+        cache_master=cache_master,
+    )
+
+    mdin_template = windows_dir / "mdin-template"
+    with template_mdin.open("rt") as fin, mdin_template.open("wt") as fout:
+        fout.write(f"! total_steps={steps2}\n")
+        for line in fin:
+            if "restraintmask" in line:
+                line = f"restraintmask = '{receptor_solvent_restraint_mask}',\n"
+            elif "gti_bat_sc" in line:
+                line = "  gti_bat_sc      = 1,\n"
+            line = (
+                line.replace("_temperature_", str(temperature))
+                .replace("_num-atoms_", str(vac_atoms))
+                .replace("_num-steps_", str(steps2))
+            )
+            line = _replace_d_sdr_tokens(
+                line,
+                mk1=mk1,
+                mk2=mk2,
+                mk3=mk3,
+                weight=weight,
+            )
+            fout.write(line)
+
+    with mdin_template.open("a") as mdin:
+        mdin.write(f" \n mbar_states = {len(lambdas):02d}\n")
+        mdin.write("  mbar_lambda =")
+        for lam in lambdas:
+            mdin.write(f" {lam:6.5f},")
+        mdin.write("\n")
+        mdin.write("  infe = 0,\n")
+        mdin.write(" /\n")
+        _write_cmass_dump_block(mdin, istep1=int(ntwx))
+
+    if extra_mask:
+        try:
+            content = mdin_template.read_text()
+            content = _patch_restraint_block(content, extra_mask, extra_fc)
+            mdin_template.write_text(content)
+        except Exception as e:
+            logger.warning(f"[extra_restraints] Could not patch mdin-template: {e}")
+    _apply_restraintmask_length_limit(
+        mdin_template,
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag=f"{comp}-mdin-template",
+        cache_master=cache_master,
+    )
+
+    for out_name in ("mini.in", "mini_eq.in"):
+        with template_mini.open("rt") as fin, (windows_dir / out_name).open("wt") as fout:
+            for line in fin:
+                if "restraintmask" in line:
+                    line = f"  restraintmask = '{initial_equil_restraint_mask}',\n"
+                elif "gti_bat_sc" in line:
+                    line = "  gti_bat_sc      = 1,\n"
+                line = (
+                    line.replace("_temperature_", str(temperature))
+                    .replace("lbd_val", f"{float(weight):6.5f}")
+                    .replace("_lig_name_", mol)
+                    .replace("mk1", str(mk1))
+                    .replace("mk2", str(mk2))
+                    .replace("mk3", str(mk3))
+                )
+                fout.write(line)
+
+    _write_d_sdr_equil_input(
+        src=amber_dir / "eqnpt0-uno.in",
+        dst=windows_dir / "eqnpt0.in",
+        replacements={"_temperature_": str(temperature), "_lig_name_": mol},
+        mk1=mk1,
+        mk2=mk2,
+        mk3=mk3,
+        weight=weight,
+        restraint_mask=initial_equil_restraint_mask,
+    )
+    _write_d_sdr_equil_input(
+        src=amber_dir / "eqnpt-uno.in",
+        dst=windows_dir / "eqnpt.in",
+        replacements={"_temperature_": str(temperature), "_lig_name_": mol},
+        mk1=mk1,
+        mk2=mk2,
+        mk3=mk3,
+        weight=weight,
+        restraint_mask=initial_equil_restraint_mask,
+    )
+    _write_d_sdr_equil_input(
+        src=amber_dir / "eqnpt-uno-eq.in",
+        dst=windows_dir / "eqnpt_eq.in",
+        replacements={
+            "_temperature_": str(temperature),
+            "_lig_name_": mol,
+            "_non_loop_": non_loop_mask,
+        },
+        mk1=mk1,
+        mk2=mk2,
+        mk3=mk3,
+        weight=weight,
+        restraint_mask=receptor_solvent_restraint_mask,
+    )
+
+    (windows_dir / "lambda.sch").write_text(
+        "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"
+    )
+
+    logger.debug(
+        f"[sim_files_d] wrote charge-balanced SDR inputs in {windows_dir} "
+        f"for win={win}, weight={weight:0.5f}, masks=:{mk1}/{mk2}/{mk3}"
+    )
+
+
 @register_sim_files("d")
 @register_sim_files("z")
 def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
@@ -740,7 +1060,8 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     u = mda.Universe(vac_pdb.as_posix())
     mol_ref_ag = u.select_atoms(f'resname {mol}')
-    ligand_resids = sorted({int(resid) for resid in mol_ref_ag.resids})
+    ligand_resids_ordered = [int(res.resid) for res in mol_ref_ag.residues]
+    ligand_resids = sorted(set(ligand_resids_ordered))
     if not ligand_resids:
         raise ValueError(f"No residues with resname {mol!r} found in {vac_pdb}")
     ref_resid = ligand_resids[0]
@@ -763,6 +1084,22 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     # compute extra mask once for this window root; applied to mdin-XX only
     extra_mask, extra_fc = _maybe_extra_mask(ctx, windows_dir, resid_shift=2)
+
+    if comp == "d" and dec_method == "sdr":
+        _sim_files_d_sdr_charge_transfer(
+            ctx,
+            lambdas,
+            vac_atoms=vac_atoms,
+            vac_pdb=vac_pdb,
+            ligand_resids=ligand_resids_ordered,
+            non_loop_mask=non_loop_mask,
+            prmtop_for_masks=prmtop_for_masks,
+            cache_dir=cache_dir,
+            cache_master=cache_master,
+            extra_mask=extra_mask,
+            extra_fc=extra_fc,
+        )
+        return
 
     if dec_method == "sdr":
         mk1 = ref_resid

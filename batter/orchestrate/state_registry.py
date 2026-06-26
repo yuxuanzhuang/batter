@@ -60,14 +60,14 @@ LEGACY_DEFAULTS: Dict[str, Dict[str, List[List[str]]]] = {
         "failure": [],
     },
     "pre_prepare_fe": {
-        "required": [["fe/pre_prepare_fe.ok"]],
-        "success": [["fe/pre_prepare_fe.ok"]],
+        "required": [["pre_fe/pre_prepare_fe.ok"]],
+        "success": [["pre_fe/pre_prepare_fe.ok"]],
         "failure": [],
     },
     "pre_fe_equil": {
-        "required": [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
-        "success": [["fe/{comp}/{comp}-1/EQ_FINISHED"]],
-        "failure": [["fe/{comp}/{comp}-1/FAILED"]],
+        "required": [["pre_fe/{comp}/{comp}-1/EQ_FINISHED"]],
+        "success": [["pre_fe/{comp}/{comp}-1/EQ_FINISHED"]],
+        "failure": [["pre_fe/{comp}/{comp}-1/FAILED"]],
     },
     "fe_equil": {
         "required": [["fe/{comp}/{comp}-1/EQ_FINISHED"]],

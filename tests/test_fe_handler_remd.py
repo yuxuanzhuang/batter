@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from batter.exec.handlers.fe import fe_handler
+from batter.exec.handlers.fe import fe_equil_handler, fe_handler
 from batter.exec.slurm_mgr import SlurmJobManager
 from batter.pipeline.payloads import StepPayload
 from batter.pipeline.step import Step
@@ -50,3 +50,71 @@ def test_fe_handler_remd_submits_per_component(remd_system):
     assert spec.script_rel == "SLURMM-BATCH-remd"
     assert spec.finished_name == "FINISHED"
     assert spec.failed_name == "FAILED"
+
+
+def test_fe_equil_filters_pre_component_from_final_components(tmp_path):
+    root = tmp_path / "work"
+    (root / "fe" / "z" / "z-1").mkdir(parents=True)
+    (root / "fe" / "d" / "d-1").mkdir(parents=True)
+
+    sim_cfg = SimulationConfig(
+        system_name="sys",
+        fe_type="uno_rest",
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        buffer_x=15.0,
+        buffer_y=15.0,
+        buffer_z=15.0,
+    )
+    sim_cfg.components = ["d"]
+
+    mgr = DummyJobMgr()
+    system = SimSystem(name="sys:lig", root=root, meta={"ligand": "lig"})
+
+    fe_equil_handler(
+        Step(name="fe_equil"),
+        system,
+        {
+            "job_mgr": mgr,
+            "sim": sim_cfg,
+            "phase_name": "fe_equil",
+            "components": ["d"],
+        },
+    )
+
+    assert len(mgr.add_calls) == 1
+    assert mgr.add_calls[0].workdir == root / "fe" / "d" / "d-1"
+
+
+def test_pre_fe_equil_uses_explicit_pre_component_when_final_exists(tmp_path):
+    root = tmp_path / "work"
+    (root / "pre_fe" / "z" / "z-1").mkdir(parents=True)
+    (root / "fe" / "d" / "d-1").mkdir(parents=True)
+
+    sim_cfg = SimulationConfig(
+        system_name="sys",
+        fe_type="uno_rest",
+        lambdas=[0.0, 1.0],
+        eq_steps=1000,
+        buffer_x=15.0,
+        buffer_y=15.0,
+        buffer_z=15.0,
+    )
+    sim_cfg.components = ["d"]
+
+    mgr = DummyJobMgr()
+    system = SimSystem(name="sys:lig", root=root, meta={"ligand": "lig"})
+
+    fe_equil_handler(
+        Step(name="pre_fe_equil"),
+        system,
+        {
+            "job_mgr": mgr,
+            "sim": sim_cfg,
+            "phase_name": "pre_fe_equil",
+            "components": ["z"],
+        },
+    )
+
+    assert len(mgr.add_calls) == 1
+    assert mgr.add_calls[0].workdir == root / "pre_fe" / "z" / "z-1"

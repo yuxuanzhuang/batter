@@ -145,6 +145,22 @@ def test_build_restraints_d_uses_local_frame_pose_restraints(tmp_path: Path) -> 
     windows_dir.mkdir()
     build_dir = tmp_path / "d_build_files"
     build_dir.mkdir()
+    equil_dir = tmp_path / "equil"
+    equil_dir.mkdir()
+    (equil_dir / "extra_conf_restraints.json").write_text(
+        json.dumps(
+            {
+                "blocks": [
+                    "&colvar\n"
+                    " cv_type = 'DISTANCE'\n"
+                    " cv_ni = 2, cv_i = 1,2\n"
+                    " anchor_position = 0.0, 0.0, 3.0, 3.3\n"
+                    " anchor_strength = 10.0, 10.0\n"
+                    "/\n"
+                ]
+            }
+        )
+    )
     (build_dir / "anchors.json").write_text(
         json.dumps(
             {
@@ -178,10 +194,11 @@ def test_build_restraints_d_uses_local_frame_pose_restraints(tmp_path: Path) -> 
     ctx = types.SimpleNamespace(
         working_dir=tmp_path,
         window_dir=windows_dir,
+        equil_dir=equil_dir,
         comp="d",
         residue_name="LIG",
         sim=types.SimpleNamespace(lig_distance_force=7.5, dec_method="dd"),
-        extra={},
+        extra={"extra_conformation_restraints": "unused.json"},
         win=0,
     )
 
@@ -189,6 +206,7 @@ def test_build_restraints_d_uses_local_frame_pose_restraints(tmp_path: Path) -> 
 
     cv_text = (windows_dir / "cv.in").read_text()
     assert cv_text.count("&colvar") == 12
+    assert "EXTRA_CONFORMATIONAL_REST" not in cv_text
     assert "cv_type = 'DISTANCE'" in cv_text
     assert "cv_type = 'COM_DISTANCE'" not in cv_text
     assert "cv_i = 1,5," in cv_text
@@ -202,6 +220,7 @@ def test_build_restraints_d_uses_local_frame_pose_restraints(tmp_path: Path) -> 
     disang_text = (windows_dir / "disang.rest").read_text()
     assert "ABFE_diff local_frame bound-pose restraints" in disang_text
     assert "#Lig_TR" not in disang_text
+    assert "EXTRA_CONFORMATIONAL_REST" not in disang_text
     assert disang_text.count("&rst") == cv_text.count("&colvar")
     assert "iat=1,5," in disang_text
     assert "iat=1,6," in disang_text

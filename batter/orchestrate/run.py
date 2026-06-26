@@ -43,6 +43,7 @@ from batter.orchestrate.ligands import (
     resolve_ligand_map,
 )
 from batter.orchestrate.markers import (
+    components_for_phase,
     handle_phase_failures,
     partition_children_by_status,
     run_phase_skipping_done,
@@ -351,6 +352,7 @@ def _run_phase_with_failure_policy(
     mode = (on_failure or "").lower()
     current_children = children
     used_retry = False
+    components = components_for_phase(phase)
 
     while True:
         finished = run_phase_skipping_done(
@@ -371,7 +373,9 @@ def _run_phase_with_failure_policy(
                 )
                 return current_children, True
 
-        _ok, bad = partition_children_by_status(current_children, phase_name)
+        _ok, bad = partition_children_by_status(
+            current_children, phase_name, components=components
+        )
         if not bad:
             return current_children, False
 
@@ -381,14 +385,14 @@ def _run_phase_with_failure_policy(
                 f"[{phase_name}] Retrying {len(bad)} ligand(s) once in this run: {names}"
             )
             current_children = handle_phase_failures(
-                current_children, phase_name, "retry"
+                current_children, phase_name, "retry", components=components
             )
             used_retry = True
             continue
 
         final_mode = "prune" if mode == "retry" else on_failure
         current_children = handle_phase_failures(
-            current_children, phase_name, final_mode
+            current_children, phase_name, final_mode, components=components
         )
         return current_children, False
 
@@ -1356,7 +1360,11 @@ def _run_from_yaml_impl(
     phase_pre_fe_equil = _inject_mgr(
         phase_pre_fe_equil,
         "pre_fe_equil",
-        extra_payload={"phase_name": "pre_fe_equil", "extra_env": {"SKIP_WINDOW_EQ": "1"}},
+        extra_payload={
+            "components": ["z"],
+            "phase_name": "pre_fe_equil",
+            "extra_env": {"SKIP_WINDOW_EQ": "1"},
+        },
     )
     if phase_pre_fe_equil.ordered_steps():
         children, should_exit = _run_phase_with_failure_policy(
@@ -1548,7 +1556,12 @@ def _run_from_yaml_impl(
     # --------------------
     # PHASE 4: fe_equil → must COMPLETE for all ligands
     # --------------------
-    phase_fe_equil = _inject_mgr(phase_fe_equil, "fe_equil")
+    final_components = list(getattr(sim_cfg_updated, "components", []) or [])
+    phase_fe_equil = _inject_mgr(
+        phase_fe_equil,
+        "fe_equil",
+        extra_payload={"components": final_components},
+    )
     if phase_fe_equil.ordered_steps():
         children, should_exit = _run_phase_with_failure_policy(
             phase_fe_equil,
@@ -1569,7 +1582,11 @@ def _run_from_yaml_impl(
     # --------------------
     # PHASE 5: fe → must COMPLETE for all ligands
     # --------------------
-    phase_fe = _inject_mgr(phase_fe, "fe")
+    phase_fe = _inject_mgr(
+        phase_fe,
+        "fe",
+        extra_payload={"components": final_components},
+    )
     has_fe_phase = bool(phase_fe.ordered_steps())
     if has_fe_phase:
         children, should_exit = _run_phase_with_failure_policy(

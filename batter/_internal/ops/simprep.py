@@ -43,6 +43,7 @@ from kartograf.atom_mapper import KartografAtomMapper
 from lomap import LomapAtomMapper
 
 ION_NAMES = {"Na+", "K+", "Cl-", "NA", "CL", "K"}
+ABFE_DIFF_BULK_COPY_SEPARATION = 10.0
 
 
 # ---------------------- small utils ----------------------
@@ -82,6 +83,96 @@ def _fmt_atom_line(
         f"{x:8.3f}{y:8.3f}{z:8.3f}"
         f"{0.00:6.2f}{0.00:6.2f}"
     )
+
+
+LigandBlock = List[Tuple[str, str, int, str, float, float, float]]
+
+
+def _read_first_ligand_template_block(pdb_path: Path, lig: str) -> LigandBlock:
+    """Read the first ligand residue from a template PDB.
+
+    Prefer records already named like ``lig``. If the template is a ligand-only
+    PDB with a generic residue name, use its first atom-containing residue.
+    """
+    atom_records: LigandBlock = []
+    matched_records: LigandBlock = []
+    first_key: tuple[str, int, str] | None = None
+    match_key: tuple[str, int, str] | None = None
+
+    for ln in pdb_path.read_text().splitlines():
+        if not _is_atom_line(ln):
+            continue
+        resname = _field(ln, 17, 21)
+        chain = _field(ln, 21, 22)
+        resid = int(_field(ln, 22, 26) or 0)
+        name = _field(ln, 12, 16)
+        x = float(_field(ln, 30, 38) or 0.0)
+        y = float(_field(ln, 38, 46) or 0.0)
+        z = float(_field(ln, 46, 54) or 0.0)
+        record = (name, resname, resid, chain, x, y, z)
+        atom_records.append(record)
+        if resname == lig:
+            if match_key is None:
+                match_key = (chain, resid, resname)
+            if (chain, resid, resname) == match_key:
+                matched_records.append(record)
+        if first_key is None:
+            first_key = (chain, resid, resname)
+
+    if matched_records:
+        return matched_records
+    if first_key is None:
+        raise ValueError(f"No atom records found in ligand template PDB: {pdb_path}")
+
+    chain0, resid0, resname0 = first_key
+    return [
+        record
+        for record in atom_records
+        if record[1] == resname0 and record[2] == resid0 and record[3] == chain0
+    ]
+
+
+def _coords_from_ligand_block(block: LigandBlock) -> np.ndarray:
+    return np.asarray([(x, y, z) for *_rest, x, y, z in block], dtype=float)
+
+
+def _split_ligand_residue_blocks(block: LigandBlock) -> list[LigandBlock]:
+    """Split a ligand atom block into residue-contiguous ligand copies."""
+    out: list[LigandBlock] = []
+    current: LigandBlock = []
+    current_key: tuple[str, int, str] | None = None
+    for record in block:
+        _name, resname, resid, chain, *_coords = record
+        key = (chain, resid, resname)
+        if current and key != current_key:
+            out.append(current)
+            current = []
+        current.append(record)
+        current_key = key
+    if current:
+        out.append(current)
+    return out
+
+
+def _validated_extra_ligand_template(
+    source_pdb: Path | None,
+    *,
+    lig: str,
+    bound_ligand_block: LigandBlock,
+) -> LigandBlock | None:
+    if source_pdb is None:
+        return None
+
+    template = _read_first_ligand_template_block(source_pdb, lig)
+    bound_names = [name for name, *_ in bound_ligand_block]
+    template_names = [name for name, *_ in template]
+    if bound_names != template_names:
+        raise ValueError(
+            "Shifted ligand template atom names do not match the bound ligand "
+            f"for {lig}. Source={source_pdb}; bound names={bound_names}; "
+            f"template names={template_names}."
+        )
+    return template
 
 
 def _append_ligand_to_build(build_pdb: Path, lig_pdb: Path, *, resname: str) -> None:
@@ -611,6 +702,10 @@ def write_build_from_aligned(
     start_off_set: int = 0,
     use_ter_markers: bool = False,
     ter_atoms: Optional[Set[int]] = None,
+    extra_ligand_source_pdb: Path | None = None,
+    extra_ligand_source_pdbs: Sequence[Path | None] | None = None,
+    extra_ligand_offsets: Sequence[Tuple[float, float, float] | None] | None = None,
+    extra_ligand_target_indices: Sequence[int] | None = None,
 ) -> int:
     """
     Write build.pdb and build-dry.pdb from an aligned system PDB file,
@@ -681,6 +776,48 @@ def write_build_from_aligned(
         else:
             oth_block.append((name, resname, resid - start_off_set, chain, x, y, z))
 
+    lig_residue_blocks = _split_ligand_residue_blocks(lig_block)
+    bound_ligand_block = lig_residue_blocks[0] if lig_residue_blocks else lig_block
+
+    extra_ligand_template = _validated_extra_ligand_template(
+        extra_ligand_source_pdb,
+        lig=lig,
+        bound_ligand_block=bound_ligand_block,
+    )
+    if (
+        extra_ligand_source_pdbs is not None
+        and len(extra_ligand_source_pdbs) != len(extra_ligand_shift)
+    ):
+        raise ValueError(
+            "extra_ligand_source_pdbs must have the same length as "
+            "extra_ligand_shift."
+        )
+    if (
+        extra_ligand_offsets is not None
+        and len(extra_ligand_offsets) != len(extra_ligand_shift)
+    ):
+        raise ValueError(
+            "extra_ligand_offsets must have the same length as extra_ligand_shift."
+        )
+    if (
+        extra_ligand_target_indices is not None
+        and len(extra_ligand_target_indices) != len(extra_ligand_shift)
+    ):
+        raise ValueError(
+            "extra_ligand_target_indices must have the same length as "
+            "extra_ligand_shift."
+        )
+    per_copy_templates: list[LigandBlock | None] | None = None
+    if extra_ligand_source_pdbs is not None:
+        per_copy_templates = [
+            _validated_extra_ligand_template(
+                source_pdb,
+                lig=lig,
+                bound_ligand_block=bound_ligand_block,
+            )
+            for source_pdb in extra_ligand_source_pdbs
+        ]
+
     # ---- write build.pdb
     out_build = window_dir / "build.pdb"
     out_build.parent.mkdir(parents=True, exist_ok=True)
@@ -731,19 +868,64 @@ def write_build_from_aligned(
         # Optional shifted ligand copy (+sdr_dist along z) for z/v/o with SDR/EXCHANGE
         # extra_ligand_shift is a list of whether to shift the ligand or not
         for i, shift in enumerate(extra_ligand_shift, start=1):
-            
             shift_sdr_dist = sdr_dist if shift else 0.0
-            for name, _, __, chain, x, y, z in lig_block:
+            if extra_ligand_target_indices is not None:
+                target_idx = int(extra_ligand_target_indices[i - 1])
+                try:
+                    target_block = lig_residue_blocks[target_idx]
+                except IndexError as exc:
+                    raise ValueError(
+                        f"extra_ligand_target_indices[{i - 1}]={target_idx} "
+                        f"does not exist; found {len(lig_residue_blocks)} ligand "
+                        "residue block(s)."
+                    ) from exc
+            else:
+                target_block = bound_ligand_block
+            source_block = (
+                per_copy_templates[i - 1]
+                if per_copy_templates is not None
+                else extra_ligand_template
+            ) or target_block
+            if (
+                extra_ligand_offsets is not None
+                and extra_ligand_offsets[i - 1] is not None
+            ):
+                offset = np.asarray(extra_ligand_offsets[i - 1], dtype=float)
+            else:
+                offset = np.asarray(
+                    [
+                        x_max + (i - 1) * ABFE_DIFF_BULK_COPY_SEPARATION,
+                        y_max,
+                        float(shift_sdr_dist),
+                    ],
+                    dtype=float,
+                )
+            target_coords = _coords_from_ligand_block(target_block) + offset
+            source_coords = _coords_from_ligand_block(source_block)
+            if source_coords.shape != target_coords.shape:
+                raise ValueError(
+                    "Shifted ligand source and target atom counts differ: "
+                    f"source={source_coords.shape[0]}, target={target_coords.shape[0]}."
+                )
+            translation = target_coords.mean(axis=0) - source_coords.mean(axis=0)
+            chain = lig_block[0][3] if lig_block else "S"
+            base_resid = (
+                lig_block[-1][2] + dum_count
+                if lig_block
+                else recep_last_resid
+            )
+            for atom_idx, (name, _, __, _chain, x, y, z) in enumerate(source_block):
+                px, py, pz = source_coords[atom_idx] + translation
                 fout.write(
                     _fmt_atom_line(
                         serial,
                         name,
                         lig,
                         chain,
-                        resid + i,
-                        x + x_max,
-                        y + y_max,
-                        z + float(shift_sdr_dist),
+                        base_resid + i,
+                        float(px),
+                        float(py),
+                        float(pz),
                     )
                     + "\n"
                 )
@@ -899,6 +1081,43 @@ def create_simulation_dir_eq(ctx: BuildContext) -> None:
 
 
 # ---------------------- create_simulation_dir: Z ----------------------
+def _write_pre_fe_equil_reference_pdb(
+    *,
+    sys_root: Path,
+    ligand: str,
+    dest_pdb: Path,
+) -> bool:
+    """Write a water-free PDB from the pre-equilibrated SDR z-1 system."""
+    pre_fe = sys_root / "simulations" / ligand / "pre_fe" / "z" / "z-1"
+    ref_pdb = pre_fe / "full.pdb"
+    ref_coord = pre_fe / "eq_output.pdb"
+    if not ref_pdb.exists() or not ref_coord.exists():
+        return False
+
+    try:
+        u_ref = mda.Universe(ref_pdb.as_posix(), ref_coord.as_posix())
+        ion_names = " ".join(sorted(ION_NAMES))
+        try:
+            sel = u_ref.select_atoms(f"not resname WAT {ion_names} DUM")
+        except Exception:
+            sel = u_ref.select_atoms("not resname WAT DUM")
+        if sel.n_atoms == 0:
+            raise ValueError("pre_fe_equil reference selection is empty")
+        dest_pdb.parent.mkdir(parents=True, exist_ok=True)
+        sel.write(dest_pdb.as_posix())
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to build pre_fe_equil reference PDB from {ref_pdb} "
+            f"and {ref_coord}: {exc}"
+        ) from exc
+
+    logger.info(
+        f"[ABFE_diff] Using pre_fe_equil z-1 coordinates as d-component "
+        f"reference: {ref_coord}"
+    )
+    return True
+
+
 @register_create_simulation("d")
 @register_create_simulation("z")
 def create_simulation_dir_z(ctx: BuildContext) -> None:
@@ -969,6 +1188,44 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     # open sdr_info to read SDR distance
     sdr_dist, abs_z, buffer_z_left = map(float, open(dest_dir / "sdr_info.txt").read().split())
 
+    using_pre_fe_reference = False
+    if comp == "d" and sim.dec_method == "sdr":
+        using_pre_fe_reference = _write_pre_fe_equil_reference_pdb(
+            sys_root=sys_root,
+            ligand=ligand,
+            dest_pdb=dest_dir / "build-ini.pdb",
+        )
+
+    initial_ligand_template: Path | None = None
+    if comp == "d":
+        initial_ligand_template = (
+            sys_root / "simulations" / ligand / "equil" / "q_build_files" / f"{mol}.pdb"
+        )
+        if not initial_ligand_template.exists():
+            initial_ligand_template = build_dir / f"{ligand}.pdb"
+        if not initial_ligand_template.exists():
+            initial_ligand_template = None
+
+    if comp == "d" and sim.dec_method == "sdr":
+        if using_pre_fe_reference:
+            extra_ligand_shift = [False]
+            extra_ligand_offsets = [(ABFE_DIFF_BULK_COPY_SEPARATION, 0.0, 0.0)]
+            extra_ligand_source_pdbs = None
+            extra_ligand_target_indices = [1]
+        else:
+            extra_ligand_shift = [True, True]
+            extra_ligand_offsets = None
+            extra_ligand_source_pdbs = [
+                initial_ligand_template,
+                initial_ligand_template,
+            ]
+            extra_ligand_target_indices = None
+    else:
+        extra_ligand_shift = [True]
+        extra_ligand_offsets = None
+        extra_ligand_source_pdbs = None
+        extra_ligand_target_indices = None
+
     # write build files for z
     write_build_from_aligned(
         lig=mol,
@@ -978,11 +1235,15 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
         other_mol=ctx.sim.other_mol,
         lipid_mol=ctx.sim.lipid_mol,
         ion_mol=ION_NAMES,
-        extra_ligand_shift=[True],  # SDR copy
+        extra_ligand_shift=extra_ligand_shift,  # SDR copy/copies
         sdr_dist=sdr_dist,
         start_off_set=1,  # equil offset
         use_ter_markers=True,
         ter_atoms=set(ter_atoms),
+        extra_ligand_source_pdb=None,
+        extra_ligand_source_pdbs=extra_ligand_source_pdbs,
+        extra_ligand_offsets=extra_ligand_offsets,
+        extra_ligand_target_indices=extra_ligand_target_indices,
     )
 
     logger.debug(f"[simprep:z] simulation directory created → {dest_dir}")
@@ -1021,8 +1282,8 @@ def create_simulation_dir_x(ctx: BuildContext) -> None:
     protein_align = sim.protein_align
     ref_equil_dir = sys_root / "simulations" / str(lig_ref) / "equil"
     alt_equil_dir = sys_root / "simulations" / str(lig_alt) / "equil"
-    ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "fe" / "z" / "z-1"
-    alt_pre_fe = sys_root / "simulations" / str(lig_alt) / "fe" / "z" / "z-1"
+    ref_pre_fe = sys_root / "simulations" / str(lig_ref) / "pre_fe" / "z" / "z-1"
+    alt_pre_fe = sys_root / "simulations" / str(lig_alt) / "pre_fe" / "z" / "z-1"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 

@@ -1273,8 +1273,9 @@ def create_box(ctx: BuildContext) -> None:
         # partitions
         final_system_dum = final_system.select_atoms("resname DUM")
         final_system_dum[0].position = final_system.select_atoms(PROTEIN_COM_ATOM_SELECTION).center_of_mass()
-        if comp == 'z':
-            final_system_dum[1].position = final_system.select_atoms(f"resname {mol}").residues[1].atoms.center_of_mass()
+        ligand_residues = final_system.select_atoms(f"resname {mol}").residues
+        if comp in {"z", "d"} and len(ligand_residues) > 1:
+            final_system_dum[1].position = ligand_residues[1].atoms.center_of_mass()
         final_system_prot = final_system.select_atoms(_PROTEIN_WITH_TERMINAL_CAPS)
         final_system_others = final_system - final_system_prot - final_system_dum
         final_system_ligs = final_system.select_atoms(f"resname {mol}")
@@ -1525,8 +1526,11 @@ def create_box(ctx: BuildContext) -> None:
     if dec_method == "dd" or comp == "q":
         ligands_p = ligand_p_1
         ligands_p.coordinates = lig_inp
-    elif comp in ["z", "d", "o", "s", "v"] and dec_method == "sdr":
+    elif comp in ["z", "o", "s", "v"] and dec_method == "sdr":
         ligands_p = ligand_p_1 + ligand_p_1
+        ligands_p.coordinates = lig_inp
+    elif comp == "d" and dec_method == "sdr":
+        ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1
         ligands_p.coordinates = lig_inp
     elif comp in ["e"] and dec_method == "sdr":
         ligands_p = ligand_p_1 + ligand_p_1 + ligand_p_1 + ligand_p_1
@@ -1655,8 +1659,11 @@ def create_box(ctx: BuildContext) -> None:
 
     run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
     full_prmtop = str(window_dir / "full.prmtop") if not sim.hmr else str(window_dir / "full.hmr.prmtop")
-    # merge DUM + DUM + PROT + LIG1 + LIG2 
-    merge_first_n_molecules_in_prmtop(full_prmtop, 5, str(window_dir / "full_merged.prmtop"))
+    # merge DUM + DUM + PROT plus all ligand copies before applying AMBER masks.
+    merge_molecule_count = 6 if comp == "d" and dec_method == "sdr" else 5
+    merge_first_n_molecules_in_prmtop(
+        full_prmtop, merge_molecule_count, str(window_dir / "full_merged.prmtop")
+    )
     return
 
 

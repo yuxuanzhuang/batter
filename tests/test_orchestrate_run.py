@@ -677,6 +677,24 @@ def test_rbfe_pipeline_prepares_network_before_equil() -> None:
     assert pipeline.dependencies("prepare_equil") == ["prepare_rbfe"]
 
 
+def test_abfe_diff_pipeline_uses_pre_fe_equil_before_final_fe() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "abfe_diff",
+        _make_sim_cfg(),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" in names
+    assert "pre_fe_equil" in names
+    assert names.index("pre_fe_equil") < names.index("prepare_fe")
+    assert pipeline.dependencies("pre_fe_equil") == ["pre_prepare_fe"]
+    assert pipeline.dependencies("prepare_fe") == ["pre_fe_equil"]
+
+
 def test_save_fe_records_copies_rbfe_mapping_artifacts(
     tmp_path: Path,
 ) -> None:

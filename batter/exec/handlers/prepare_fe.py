@@ -114,6 +114,7 @@ def prepare_fe_handler(
     }
 
     infe = bool(sim.infe)
+    fe_root = child_root / ("pre_fe" if phase_name == "pre_prepare_fe" else "fe")
 
     artifacts: Dict[str, Any] = {}
     logger.debug(
@@ -136,7 +137,7 @@ def prepare_fe_handler(
 
     # Build per component (scaffold / templates only; win=-1)
     for comp in components:
-        workdir = child_root / "fe" / comp
+        workdir = fe_root / comp
         workdir.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"[{phase_name}] building component '{comp}' in {workdir}")
@@ -157,6 +158,7 @@ def prepare_fe_handler(
                 "extra_conformation_restraints": extra_conformation_restraints,
                 "user_anchor_atoms": user_anchor_atoms,
                 "partition": partition,
+                "phase_name": phase_name,
                 **pair_meta,
             },
         )
@@ -165,7 +167,7 @@ def prepare_fe_handler(
         artifacts[f"{comp}_workdir"] = str(workdir)
 
     # emit the common OK marker used by the orchestrator
-    marker = child_root / "fe" / f"{phase_name}.ok"
+    marker = fe_root / f"{phase_name}.ok"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("ok\n")
 
