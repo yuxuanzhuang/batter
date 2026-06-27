@@ -658,7 +658,9 @@ class RESTMBARAnalysis(MBARAnalysis):
         def _tag_matches(tag: str) -> bool:
             if component == "t":
                 return tag == "#Lig_TR"
-            if component in ("l", "c"):
+            if component == "l":
+                return tag in ("#Lig_TR", "#Lig_C", "#Lig_D")
+            if component == "c":
                 return tag in ("#Lig_C", "#Lig_D")
             if component in ("a", "r"):
                 return tag in ("#Rec_C", "#Rec_D")

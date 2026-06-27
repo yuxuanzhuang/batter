@@ -1256,9 +1256,22 @@ def _reference_dihedral_values_from_input(
     )
 
 
+def _ligand_boresch_expressions(P1: str, P2: str, P3: str, L1: str, L2: str, L3: str) -> list[str]:
+    if not all([P1, P2, P3, L1, L2, L3]):
+        raise ValueError("[restraints:l] Boresch restraints require P1/P2/P3 and L1/L2/L3 anchors")
+    return [
+        f"{P1} {L1}",
+        f"{P2} {P1} {L1}",
+        f"{P3} {P2} {P1} {L1}",
+        f"{P1} {L1} {L2}",
+        f"{P2} {P1} {L1} {L2}",
+        f"{P1} {L1} {L2} {L3}",
+    ]
+
+
 def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
     """
-    Write only ligand conformational dihedral restraints for component ``l``.
+    Write lambda-scaled Boresch and ligand conformational restraints for component ``l``.
 
     ``l-1`` carries full-strength targets so ``eq.in`` can ramp the global
     NMR restraint scale with ``&wt type='REST'``. Production windows carry the
@@ -1281,7 +1294,11 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
             raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
 
     anchors = load_anchors(ctx.build_dir)
+    P1, P2, P3 = anchors.P1, anchors.P2, anchors.P3
+    L1, L2, L3 = anchors.L1, anchors.L2, anchors.L3
     lig_res = anchors.lig_res
+    boresch_exprs = _ligand_boresch_expressions(P1, P2, P3, L1, L2, L3)
+    boresch_vals = _write_assign_and_read_vals(windows_dir, boresch_exprs, full_prmtop, full_inpcrd)
 
     atm_num = num_to_mask(vac_pdb.as_posix())
     vac_lig_pdb = windows_dir / "vac_ligand.pdb"
@@ -1323,6 +1340,10 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
     window_weight = _lambda_weight_for_window(ctx)
     force_scale = 1.0 if ctx.win < 0 else window_weight
     force_const = base_force * force_scale
+    base_distance_force = float(getattr(ctx.sim, "lig_distance_force", 0.0) or 0.0)
+    base_angle_force = float(getattr(ctx.sim, "lig_angle_force", 0.0) or 0.0)
+    distance_force = base_distance_force * force_scale
+    angle_force = base_angle_force * force_scale
     if base_force <= 0.0:
         logger.warning(
             "[restraints:l] lig_dihcf_force is <= 0; component l will not restrain ligand conformations."
@@ -1332,14 +1353,58 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
     cv_in.write_text("cv_file\n")
 
     restraint_records: list[dict[str, object]] = []
+    boresch_records: list[dict[str, object]] = []
     used_msks: list[str] = []
     disang = windows_dir / "disang.rest"
     with disang.open("w") as df:
         df.write(
-            f"# Ligand conformational dihedral restraints comp={comp} "
-            f"base_force={base_force:.8g} lambda={window_weight:.8g} "
+            f"# Ligand Boresch and conformational restraints comp={comp} "
+            f"base_distance_force={base_distance_force:.8g} "
+            f"base_angle_force={base_angle_force:.8g} "
+            f"base_dihedral_force={base_force:.8g} lambda={window_weight:.8g} "
             f"force_scale={force_scale:.8g} reference={reference_source}\n"
         )
+        df.write(f"# Anchor atoms {P1} {P2} {P3} {L1} {L2} {L3}\n")
+        for idx, (expr, val) in enumerate(zip(boresch_exprs, boresch_vals)):
+            fields = expr.split()
+            n = len(fields)
+            try:
+                iat = ",".join(str(atm_num.index(field)) for field in fields) + ","
+            except ValueError as exc:
+                raise ValueError(f"[restraints:{comp}] could not map Boresch restraint: {expr}") from exc
+            df.write(f"&rst iat={iat:<23s} ")
+            if n == 2:
+                rk = distance_force
+                r1, r2, r3, r4 = 0.0, float(val), float(val), 999.0
+                kind = "distance"
+            elif n == 3:
+                rk = angle_force
+                r1, r2, r3, r4 = 0.0, float(val), float(val), 180.0
+                kind = "angle"
+            elif n == 4:
+                rk = angle_force
+                r1, r2, r3, r4 = float(val) - 180.0, float(val), float(val), float(val) + 180.0
+                kind = "dihedral"
+            else:
+                raise ValueError(f"[restraints:{comp}] invalid Boresch restraint: {expr}")
+            df.write(
+                "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, "
+                "rk2=%11.7f, rk3=%11.7f, &end #Lig_TR\n"
+                % (r1, r2, r3, r4, rk, rk)
+            )
+            boresch_records.append(
+                {
+                    "index": idx,
+                    "kind": kind,
+                    "mask": expr,
+                    "reference": float(val),
+                    "base_distance_force_constant": base_distance_force,
+                    "base_angle_force_constant": base_angle_force,
+                    "lambda": window_weight,
+                    "force_scale": force_scale,
+                    "force_constant": rk,
+                }
+            )
         for idx, (expr, val) in enumerate(zip(lig_msks, vals)):
             fields = expr.split()
             if len(fields) != 4:
@@ -1388,6 +1453,9 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
             {
                 "component": comp,
                 "window": ctx.win,
+                "boresch_restraints": boresch_records,
+                "base_distance_force_constant": base_distance_force,
+                "base_angle_force_constant": base_angle_force,
                 "base_force_constant": base_force,
                 "lambda": window_weight,
                 "force_scale": force_scale,
@@ -1401,15 +1469,19 @@ def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
 
     rest_in = windows_dir / "restraints.in"
     with rest_in.open("w") as fh:
-        fh.write(f"# comp={comp} ligand conformational dihedral restraints\n")
+        fh.write(f"# comp={comp} ligand Boresch and conformational restraints\n")
         fh.write("noexitonerror\nparm vac.prmtop\n")
         for k in range(2, 11):
             fh.write(f"trajin md{k:02d}.nc\n")
+        for idx, expr in enumerate(boresch_exprs):
+            arr = expr.split()
+            tag = "distance" if len(arr) == 2 else ("angle" if len(arr) == 3 else "dihedral")
+            fh.write(f"{tag} tr{idx} {expr} out restraints.dat\n")
         for idx, expr in enumerate(used_msks):
             fh.write(f"dihedral r{idx} {expr} out restraints.dat\n")
 
     logger.debug(
-        f"[restraints:{comp}] wrote {len(restraint_records)} ligand dihedral restraints in {windows_dir}"
+        f"[restraints:{comp}] wrote {len(boresch_records)} Boresch and {len(restraint_records)} ligand dihedral restraints in {windows_dir}"
     )
 
 

@@ -154,12 +154,21 @@ def test_ligand_rest_component_direction_registered() -> None:
     assert analysis_mod.COMPONENT_DIRECTION_DICT["l"] == 1
 
 
-def test_rest_mbar_extracts_keyed_ligand_dihedral_restraints(tmp_path: Path) -> None:
+def test_rest_mbar_extracts_keyed_ligand_restraints(tmp_path: Path) -> None:
     comp_dir = tmp_path / "l"
     for win, force in [(0, 0.0), (1, 10.0)]:
         win_dir = comp_dir / f"l{win:02d}"
         win_dir.mkdir(parents=True)
         win_dir.joinpath("disang.rest").write_text(
+            "&rst iat=101,202,              "
+            "r1=     0.0000, r2=    2.5000, r3=    2.5000, r4=  999.0000, "
+            f"rk2= {force:10.7f}, rk3= {force:10.7f}, &end #Lig_TR\n"
+            "&rst iat=301,101,202,          "
+            "r1=     0.0000, r2=   90.0000, r3=   90.0000, r4=  180.0000, "
+            f"rk2= {force:10.7f}, rk3= {force:10.7f}, &end #Lig_TR\n"
+            "&rst iat=401,301,101,202,      "
+            "r1= -120.0000, r2=   60.0000, r3=   60.0000, r4=  240.0000, "
+            f"rk2= {force:10.7f}, rk3= {force:10.7f}, &end #Lig_TR\n"
             "&rst iat=4363,4364,4365,4366,    "
             "r1= -179.5156, r2=    0.4844, r3=    0.4844, r4=  180.4844, "
             f"rk2= {force:10.7f}, rk3= {force:10.7f}, &end #Lig_D\n"
@@ -176,11 +185,17 @@ def test_rest_mbar_extracts_keyed_ligand_dihedral_restraints(tmp_path: Path) -> 
 
     rfc, req, rty, num_rest = ana._extract_restraints_from_windows()
 
-    assert num_rest == 1
-    assert rty == ["t"]
-    assert np.allclose(req[:, 0], [0.4844, 0.4844])
-    assert np.isclose(rfc[0, 0], 0.0)
-    assert np.isclose(rfc[1, 0], 10.0 * (np.pi / 180.0) ** 2)
+    assert num_rest == 4
+    assert rty == ["d", "a", "t", "t"]
+    assert np.allclose(req[:, 0], [2.5, 2.5])
+    assert np.allclose(req[:, 1], [90.0, 90.0])
+    assert np.allclose(req[:, 2], [60.0, 60.0])
+    assert np.allclose(req[:, 3], [0.4844, 0.4844])
+    assert np.allclose(rfc[0], np.zeros(4))
+    assert np.isclose(rfc[1, 0], 10.0)
+    assert np.isclose(rfc[1, 1], 10.0 * (np.pi / 180.0) ** 2)
+    assert np.isclose(rfc[1, 2], 10.0 * (np.pi / 180.0) ** 2)
+    assert np.isclose(rfc[1, 3], 10.0 * (np.pi / 180.0) ** 2)
 
 
 def test_mbar_extract_window_skips_incomplete_mdout(tmp_path: Path, monkeypatch) -> None:
