@@ -188,6 +188,7 @@ def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]
     mapping: Dict[str, tuple[Type[SystemBuilder], str]] = {
         "abfe": (MABFEBuilder, "MABFE"),
         "abfe_diff": (MABFEBuilder, "MABFE"),
+        "ligand_rest": (MABFEBuilder, "MABFE"),
         "rbfe": (MABFEBuilder, "MABFE"),
         "md": (MABFEBuilder, "MABFE"),
         "asfe": (MASFEBuilder, "MASFE"),

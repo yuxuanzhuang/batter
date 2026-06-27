@@ -933,6 +933,7 @@ def build_complex(ctx: BuildContext, *, infe: bool = False) -> bool:
 
 
 @register_build_complex("d")
+@register_build_complex("l")
 @register_build_complex("z")
 def build_complex_z(ctx) -> bool:
     """

@@ -1249,6 +1249,84 @@ def create_simulation_dir_z(ctx: BuildContext) -> None:
     logger.debug(f"[simprep:z] simulation directory created → {dest_dir}")
 
 
+@register_create_simulation("l")
+def create_simulation_dir_l(ctx: BuildContext) -> None:
+    """
+    Create the initial simulation directory for the ligand conformational
+    restraint component. This is a normal complex with one bound ligand copy.
+    """
+    ligand = ctx.ligand
+    mol = ctx.residue_name
+
+    sys_root = ctx.system_root
+    build_dir = ctx.build_dir
+    amber_dir = ctx.amber_dir
+    dest_dir = ctx.equil_dir
+    ff_dir = sys_root / "simulations" / ligand / "params"
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    _rel_symlink(amber_dir, dest_dir / "amber_files")
+
+    for p in build_dir.glob("vac_ligand*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    for s, d in [
+        (build_dir / f"{mol}.pdb", dest_dir / f"{mol}.pdb"),
+        (build_dir / f"fe-{mol}.pdb", dest_dir / "build-ini.pdb"),
+        (build_dir / f"fe-{mol}.pdb", dest_dir / f"fe-{mol}.pdb"),
+        (build_dir / f"anchors-{ligand}.txt", dest_dir / f"anchors-{ligand}.txt"),
+        (build_dir / "sdr_info.txt", dest_dir / "sdr_info.txt"),
+        (build_dir / "equil-reference.pdb", dest_dir / "equil-reference.pdb"),
+        (build_dir / "dum.inpcrd", dest_dir / "dum.inpcrd"),
+        (build_dir / "dum.prmtop", dest_dir / "dum.prmtop"),
+        (build_dir / "rec_file.pdb", dest_dir / "rec_file.pdb"),
+    ]:
+        _copy_if_exists(s, d)
+
+    for p in ff_dir.glob(f"{mol}.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+    for p in build_dir.glob("dum.*"):
+        _copy_if_exists(p, dest_dir / p.name)
+
+    rec_clean = dest_dir / "rec_file-clean.pdb"
+    rec_amber = dest_dir / "rec_amber.pdb"
+    with (dest_dir / "rec_file.pdb").open() as fin, rec_clean.open("w") as fout:
+        for ln in fin:
+            if len(ln) >= 22 and ln[17:20] != "WAT":
+                fout.write(ln)
+
+    run_with_log(f"pdb4amber -i {rec_clean} -o {rec_amber} -y")
+    ter_atoms: List[int] = []
+    with rec_amber.open() as f:
+        for ln in f:
+            if ln.startswith("TER"):
+                try:
+                    ter_atoms.append(int(ln[6:11].strip()))
+                except Exception:
+                    pass
+
+    sdr_dist, _abs_z, _buffer_z_left = map(
+        float, open(dest_dir / "sdr_info.txt").read().split()
+    )
+
+    write_build_from_aligned(
+        lig=mol,
+        window_dir=dest_dir,
+        build_dir=build_dir,
+        aligned_pdb=dest_dir / "build-ini.pdb",
+        other_mol=ctx.sim.other_mol,
+        lipid_mol=ctx.sim.lipid_mol,
+        ion_mol=ION_NAMES,
+        extra_ligand_shift=[],
+        sdr_dist=sdr_dist,
+        start_off_set=1,
+        use_ter_markers=True,
+        ter_atoms=set(ter_atoms),
+    )
+
+    logger.debug(f"[simprep:l] simulation directory created → {dest_dir}")
+
+
 @register_create_simulation("x")
 def create_simulation_dir_x(ctx: BuildContext) -> None:
     """

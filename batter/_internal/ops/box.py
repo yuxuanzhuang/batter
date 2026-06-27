@@ -1022,6 +1022,7 @@ def _sync_ligand_anchor_residue_with_pdb(
 
 
 @register_create_box("d")
+@register_create_box("l")
 @register_create_box("z")
 def create_box(ctx: BuildContext) -> None:
     """
@@ -1067,7 +1068,9 @@ def create_box(ctx: BuildContext) -> None:
             buffer_z = max(0.0, buffer_z - solv_shell)
 
 
-    if comp != "q":
+    if comp == "l":
+        buffer_z_left = buffer_z
+    elif comp != "q":
         sdr_dist, abs_z, buffer_z_left = map(float, open(window_dir / "sdr_info.txt").read().split())
         if buffer_z_left < _MIN_SDR_SOLVATION_BUFFER_Z:
             logger.debug(
@@ -1523,7 +1526,7 @@ def create_box(ctx: BuildContext) -> None:
     ligand_p_1 = pmd.load_file(str(window_dir / f"{mol}.prmtop"))
 
     lig_inp = pmd.load_file(str(window_dir / "solvate_ligands.inpcrd")).coordinates
-    if dec_method == "dd" or comp == "q":
+    if dec_method == "dd" or comp in {"q", "l"}:
         ligands_p = ligand_p_1
         ligands_p.coordinates = lig_inp
     elif comp in ["z", "o", "s", "v"] and dec_method == "sdr":

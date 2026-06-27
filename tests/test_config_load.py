@@ -609,6 +609,59 @@ def test_abfe_diff_uses_d_component_from_sections(tmp_path: Path) -> None:
     assert cfg.component_lambdas["d"] == [0.0, 0.25, 0.5, 1.0]
 
 
+def test_abfe_diff_can_add_ligand_conformational_component(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        component_lambdas={
+            "d": [0.0, 0.5, 1.0],
+            "l": [0.0, 0.25, 0.5, 0.75, 1.0],
+        },
+        n_steps={"d": 300_000, "l": 100_000},
+        lig_dihcf_force=10.0,
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="ABFE_diff")
+
+    assert cfg.components == ["d", "l"]
+    assert cfg.dec_method == "sdr"
+    assert cfg.component_lambdas["l"] == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert cfg.dic_n_steps["l"] == 100_000
+    assert cfg.lig_dihcf_force == 10.0
+
+
+def test_ligand_rest_uses_l_component_from_sections(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        component_lambdas={"l": [0.0, 0.25, 0.5, 1.0]},
+        n_steps={"l": 100_000},
+        lig_dihcf_force=10.0,
+    )
+
+    cfg = SimulationConfig.from_sections(create, fe_args, protocol="ligand-rest")
+
+    assert cfg.fe_type == "ligand_rest"
+    assert cfg.components == ["l"]
+    assert cfg.dec_method == "sdr"
+    assert cfg.component_lambdas["l"] == [0.0, 0.25, 0.5, 1.0]
+    assert cfg.dic_n_steps["l"] == 100_000
+
+
+def test_ligand_rest_requires_positive_dihedral_force(tmp_path: Path) -> None:
+    create = _minimal_create(tmp_path)
+    fe_args = FESimArgs(
+        lambdas=[0.0, 1.0],
+        eq_steps=100,
+        n_steps={"l": 100_000},
+    )
+
+    with pytest.raises(ValueError, match="ligand_rest requires positive lig_dihcf_force"):
+        SimulationConfig.from_sections(create, fe_args, protocol="ligand_rest")
+
+
 def test_run_config_abfe_diff_accepts_legacy_d_fields(tmp_path: Path) -> None:
     lig_file = tmp_path / "lig.sdf"
     lig_file.write_text("dummy\n")
@@ -662,8 +715,13 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
         n_steps = {"z": 300_000}
     elif normalized_protocol == "abfe_diff":
         n_steps = {"d": 300_000}
+    elif normalized_protocol == "ligand_rest":
+        n_steps = {"l": 100_000}
     else:
         n_steps = {"y": 300_000, "m": 300_000}
+    extra_fe = {}
+    if normalized_protocol == "ligand_rest":
+        extra_fe["lig_dihcf_force"] = 10.0
     payload = {
         "protocol": protocol,
         "backend": "local",
@@ -673,6 +731,7 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
             "lambdas": [0.0, 1.0],
             "eq_steps": 1000,
             "n_steps": n_steps,
+            **extra_fe,
         },
     }
     return RunConfig.model_validate(payload)
@@ -684,6 +743,7 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
         ("asfe", "asfe"),
         ("abfe", "uno_rest"),
         ("ABFE_diff", "uno_rest_diff"),
+        ("ligand-rest", "ligand_rest"),
     ],
 )
 def test_resolved_sim_config_sets_fe_type(

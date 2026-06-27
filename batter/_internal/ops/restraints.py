@@ -1108,6 +1108,311 @@ def _write_component_restraints(ctx: BuildContext, *, skip_lig_tr: bool = False,
     logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
 
 
+def _lambda_weight_for_window(ctx: BuildContext) -> float:
+    lambdas = list(getattr(ctx.sim, "component_lambdas", {}).get(ctx.comp, []) or [])
+    if not lambdas:
+        lambdas = list(getattr(ctx.sim, "lambdas", []) or [])
+    if not lambdas:
+        return 0.0
+    if ctx.win < 0:
+        return float(lambdas[0])
+    if ctx.win >= len(lambdas):
+        raise IndexError(
+            f"[restraints:{ctx.comp}] window {ctx.win} outside lambda schedule of length {len(lambdas)}"
+        )
+    return float(lambdas[ctx.win])
+
+
+def _ligand_atom_masks_from_vac_pdb(vac_pdb: Path, mol: str, lig_res: str) -> list[str]:
+    universe = mda.Universe(vac_pdb.as_posix())
+    ligand_atoms = universe.select_atoms(f"resname {mol} and resid {int(lig_res)}")
+    if ligand_atoms.n_atoms == 0:
+        ligand_atoms = universe.select_atoms(f"resname {mol}").residues[0].atoms
+    masks = ["0"]
+    for atom in ligand_atoms:
+        masks.append(f":{int(atom.resid)}@{atom.name}")
+    return masks
+
+
+def _ligand_reference_candidates(ctx: BuildContext, windows_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+
+    def _add(path_like) -> None:
+        if not path_like:
+            return
+        path = Path(str(path_like)).expanduser()
+        if path.exists() and path not in candidates:
+            candidates.append(path)
+
+    index_path = ctx.system_root / "artifacts" / "ligand_params" / "index.json"
+    if index_path.exists():
+        try:
+            index_data = json.loads(index_path.read_text())
+            for entry in index_data.get("ligands", []):
+                if str(entry.get("ligand")) != str(ctx.ligand):
+                    continue
+                meta_path = Path(str(entry.get("store_dir", ""))) / "metadata.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                    input_path = meta.get("input_path")
+                    if input_path and not str(input_path).startswith("BATTER_APO_DUMMY"):
+                        _add(input_path)
+        except Exception as exc:
+            logger.warning(f"[restraints:l] could not read ligand input metadata: {exc}")
+
+    params_dir = ctx.system_root / "simulations" / ctx.ligand / "params"
+    for meta_name in ("metadata.json", f"{ctx.residue_name}.metadata.json"):
+        meta_path = params_dir / meta_name
+        if meta_path.exists():
+            try:
+                input_path = json.loads(meta_path.read_text()).get("input_path")
+                if input_path and not str(input_path).startswith("BATTER_APO_DUMMY"):
+                    _add(input_path)
+            except Exception:
+                pass
+
+    for base in (params_dir, windows_dir):
+        for ext in ("sdf", "pdb", "mol2"):
+            _add(base / f"{ctx.residue_name}.{ext}")
+            _add(base / f"{ctx.ligand}.{ext}")
+
+    return candidates
+
+
+def _load_reference_positions(path: Path) -> np.ndarray:
+    suffix = path.suffix.lower()
+    try:
+        from rdkit import Chem
+
+        mol = None
+        if suffix in {".sdf", ".sd"}:
+            supplier = Chem.SDMolSupplier(path.as_posix(), removeHs=False, sanitize=False)
+            mol = supplier[0] if len(supplier) else None
+        elif suffix == ".pdb":
+            mol = Chem.MolFromPDBFile(path.as_posix(), removeHs=False, sanitize=False)
+        elif suffix == ".mol2":
+            mol = Chem.MolFromMol2File(
+                path.as_posix(),
+                removeHs=False,
+                sanitize=False,
+                cleanupSubstructures=False,
+            )
+        if mol is not None and mol.GetNumConformers() > 0:
+            conf = mol.GetConformer()
+            coords = np.array(
+                [
+                    [conf.GetAtomPosition(i).x, conf.GetAtomPosition(i).y, conf.GetAtomPosition(i).z]
+                    for i in range(mol.GetNumAtoms())
+                ],
+                dtype=float,
+            )
+            return coords
+    except Exception as exc:
+        logger.debug(f"[restraints:l] RDKit could not read {path}: {exc}")
+
+    universe = mda.Universe(path.as_posix())
+    return np.asarray(universe.atoms.positions, dtype=float)
+
+
+def _dihedral_degrees(coords: np.ndarray, indices_1based: Sequence[int]) -> float:
+    i, j, k, l = [int(x) - 1 for x in indices_1based]
+    p0, p1, p2, p3 = coords[[i, j, k, l]]
+    b0 = -(p1 - p0)
+    b1 = p2 - p1
+    b2 = p3 - p2
+    norm = np.linalg.norm(b1)
+    if norm == 0.0:
+        raise ValueError("zero-length central bond in dihedral reference")
+    b1 /= norm
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    x = np.dot(v, w)
+    y = np.dot(np.cross(b1, v), w)
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def _reference_dihedral_values_from_input(
+    ctx: BuildContext,
+    windows_dir: Path,
+    relative_dihedrals: Sequence[Sequence[int]],
+) -> tuple[list[float], Path]:
+    required_atoms = max(max(dihedral) for dihedral in relative_dihedrals)
+    failures: list[str] = []
+    for candidate in _ligand_reference_candidates(ctx, windows_dir):
+        try:
+            coords = _load_reference_positions(candidate)
+            if coords.shape[0] < required_atoms:
+                failures.append(
+                    f"{candidate} has {coords.shape[0]} atoms, needs {required_atoms}"
+                )
+                continue
+            vals = [_dihedral_degrees(coords, dihedral) for dihedral in relative_dihedrals]
+            return vals, candidate
+        except Exception as exc:
+            failures.append(f"{candidate}: {exc}")
+    raise FileNotFoundError(
+        "[restraints:l] could not compute ligand dihedral targets from input/parameter conformer. "
+        + "; ".join(failures)
+    )
+
+
+def _write_ligand_dihedral_restraints(ctx: BuildContext) -> None:
+    """
+    Write only ligand conformational dihedral restraints for component ``l``.
+
+    ``l-1`` carries full-strength targets so ``eq.in`` can ramp the global
+    NMR restraint scale with ``&wt type='REST'``. Production windows carry the
+    fixed force constant scaled by their lambda value.
+    """
+    windows_dir = ctx.window_dir
+    lig = ctx.ligand
+    mol = ctx.residue_name
+    comp = ctx.comp
+
+    vac_pdb = windows_dir / "vac.pdb"
+    vac_lig_prmtop = windows_dir / "vac_ligand.prmtop"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
+    full_inpcrd = windows_dir / "full.inpcrd"
+    lig_mol2 = windows_dir / f"{mol}.mol2"
+
+    for p in (vac_pdb, vac_lig_prmtop, full_prmtop, full_inpcrd):
+        if not p.exists():
+            raise FileNotFoundError(f"[restraints:{comp}] missing required file: {p}")
+
+    anchors = load_anchors(ctx.build_dir)
+    lig_res = anchors.lig_res
+
+    atm_num = num_to_mask(vac_pdb.as_posix())
+    vac_lig_pdb = windows_dir / "vac_ligand.pdb"
+    if not vac_lig_pdb.exists():
+        vac_lig_pdb = windows_dir / f"{lig}.pdb"
+    if not vac_lig_pdb.exists():
+        vac_lig_pdb = windows_dir / f"{mol}.pdb"
+    if vac_lig_pdb.exists():
+        ligand_atm_num = num_to_mask(vac_lig_pdb.as_posix())
+    else:
+        ligand_atm_num = _ligand_atom_masks_from_vac_pdb(vac_pdb, mol, lig_res)
+    raw_lig_msks = _scan_dihedrals_from_prmtop(vac_lig_prmtop, ligand_atm_num)
+    if lig_mol2.exists():
+        raw_lig_msks = _filter_sp_carbons(raw_lig_msks, lig_mol2)
+    relative_dihedrals: list[tuple[int, int, int, int]] = []
+    for expr in raw_lig_msks:
+        fields = expr.split()
+        if len(fields) != 4:
+            continue
+        try:
+            relative_dihedrals.append(tuple(ligand_atm_num.index(field) for field in fields))
+        except ValueError:
+            logger.warning(f"[restraints:{comp}] skipping ligand dihedral without source atom map: {expr}")
+    lig_msks = [m.replace(":1", f":{lig_res}") for m in raw_lig_msks]
+    if not lig_msks:
+        raise ValueError(f"[restraints:{comp}] no ligand heavy-atom dihedrals found for {lig}")
+    if len(relative_dihedrals) != len(lig_msks):
+        raise ValueError(
+            f"[restraints:{comp}] could not map all ligand dihedrals to input conformer atom order"
+        )
+
+    vals, reference_source = _reference_dihedral_values_from_input(
+        ctx,
+        windows_dir,
+        relative_dihedrals,
+    )
+
+    base_force = float(getattr(ctx.sim, "lig_dihcf_force", 0.0) or 0.0)
+    window_weight = _lambda_weight_for_window(ctx)
+    force_scale = 1.0 if ctx.win < 0 else window_weight
+    force_const = base_force * force_scale
+    if base_force <= 0.0:
+        logger.warning(
+            "[restraints:l] lig_dihcf_force is <= 0; component l will not restrain ligand conformations."
+        )
+
+    cv_in = windows_dir / "cv.in"
+    cv_in.write_text("cv_file\n")
+
+    restraint_records: list[dict[str, object]] = []
+    used_msks: list[str] = []
+    disang = windows_dir / "disang.rest"
+    with disang.open("w") as df:
+        df.write(
+            f"# Ligand conformational dihedral restraints comp={comp} "
+            f"base_force={base_force:.8g} lambda={window_weight:.8g} "
+            f"force_scale={force_scale:.8g} reference={reference_source}\n"
+        )
+        for idx, (expr, val) in enumerate(zip(lig_msks, vals)):
+            fields = expr.split()
+            if len(fields) != 4:
+                continue
+            try:
+                iat = (
+                    f"{atm_num.index(fields[0])},"
+                    f"{atm_num.index(fields[1])},"
+                    f"{atm_num.index(fields[2])},"
+                    f"{atm_num.index(fields[3])},"
+                )
+            except ValueError:
+                logger.warning(f"[restraints:{comp}] skipping unmapped ligand dihedral: {expr}")
+                continue
+            df.write(f"&rst iat={iat:<23s} ")
+            df.write(
+                "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, "
+                "rk2=%11.7f, rk3=%11.7f, &end #Lig_D\n"
+                % (
+                    float(val) - 180.0,
+                    float(val),
+                    float(val),
+                    float(val) + 180.0,
+                    force_const,
+                    force_const,
+                )
+            )
+            used_msks.append(expr)
+            restraint_records.append(
+                {
+                    "index": idx,
+                    "mask": expr,
+                    "reference_degrees": float(val),
+                    "base_force_constant": base_force,
+                    "lambda": window_weight,
+                    "force_scale": force_scale,
+                    "force_constant": force_const,
+                }
+            )
+
+    if not used_msks:
+        raise ValueError(f"[restraints:{comp}] no ligand dihedrals could be mapped into vac.pdb")
+
+    (windows_dir / "ligand_dihedral_restraints.json").write_text(
+        json.dumps(
+            {
+                "component": comp,
+                "window": ctx.win,
+                "base_force_constant": base_force,
+                "lambda": window_weight,
+                "force_scale": force_scale,
+                "restraints": restraint_records,
+                "reference_source": reference_source.as_posix(),
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write(f"# comp={comp} ligand conformational dihedral restraints\n")
+        fh.write("noexitonerror\nparm vac.prmtop\n")
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+        for idx, expr in enumerate(used_msks):
+            fh.write(f"dihedral r{idx} {expr} out restraints.dat\n")
+
+    logger.debug(
+        f"[restraints:{comp}] wrote {len(restraint_records)} ligand dihedral restraints in {windows_dir}"
+    )
+
+
 # ───────────────────────────── registrations ─────────────────────────────
 
 @register_restraints("d")
@@ -1284,6 +1589,11 @@ def _build_restraints_d(builder, ctx: BuildContext) -> None:
 @register_restraints("v", "o", "z")
 def _build_restraints_v_o_z(builder, ctx: BuildContext) -> None:
     _write_component_restraints(ctx, skip_lig_tr=False, lig_only=False)
+
+
+@register_restraints("l")
+def _build_restraints_l(builder, ctx: BuildContext) -> None:
+    _write_ligand_dihedral_restraints(ctx)
 
 
 @register_restraints("y")

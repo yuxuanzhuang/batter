@@ -193,6 +193,16 @@ def copy_ligand_params(src_dir: Path, child_dir: Path, residue_name: str) -> Non
         except Exception as e:
             logger.warning(f"Failed to copy {src} to {dst}: {e}")
 
+    meta_src = src_dir / "metadata.json"
+    if meta_src.exists():
+        for dst in (child_params / "metadata.json", child_params / f"{residue_name}.metadata.json"):
+            if dst.exists():
+                continue
+            try:
+                shutil.copy2(meta_src, dst)
+            except Exception as e:
+                logger.warning(f"Failed to copy {meta_src} to {dst}: {e}")
+
 
 def _resolve_outdir(template: str | Path, system: SimSystem) -> Path:
     """Resolve ``{WORK}`` placeholders against ``system.root``."""

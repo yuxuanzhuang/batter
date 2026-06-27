@@ -45,6 +45,7 @@ COMPONENTS_DICT = {
 COMPONENT_DIRECTION_DICT = {
     "m": -1,
     "n": +1,
+    "l": +1,
     "e": -1,
     "v": -1,
     "o": -1,
@@ -55,6 +56,56 @@ COMPONENT_DIRECTION_DICT = {
     "x": +1,
     "Boresch": -1,
 }
+
+
+def _parse_amber_rst_line(line: str) -> dict[str, str]:
+    """Parse an Amber &rst line into keyword fields without assuming spacing."""
+    fields: dict[str, str] = {}
+    keys = {"iat", "r1", "r2", "r3", "r4", "rk2", "rk3"}
+    key: str | None = None
+    values: list[str] = []
+
+    for raw in line.replace("&rst", " ").replace("&end", " ").split():
+        token = raw.strip()
+        if not token or token.startswith("#"):
+            break
+        if "=" in token:
+            candidate, first_value = token.split("=", 1)
+            candidate = candidate.strip().strip(",").lower()
+            if candidate in keys:
+                if key is not None:
+                    fields[key] = " ".join(values).strip().strip(",")
+                key = candidate
+                values = [first_value] if first_value else []
+                continue
+        if key is not None:
+            values.append(token)
+
+    if key is not None:
+        fields[key] = " ".join(values).strip().strip(",")
+    return fields
+
+
+def _parse_amber_rst_float(fields: dict[str, str], key: str, line: str) -> float:
+    value = fields.get(key)
+    if value is None:
+        raise ValueError(f"Missing {key}= in restraint line: {line.rstrip()}")
+    try:
+        return float(value.split(",")[0].strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Could not parse {key}= value from restraint line: {line.rstrip()}"
+        ) from exc
+
+
+def _parse_amber_rst_natoms(fields: dict[str, str], line: str) -> int:
+    iat = fields.get("iat")
+    if iat is None:
+        raise ValueError(f"Missing iat= in restraint line: {line.rstrip()}")
+    atoms = [atom.strip() for atom in iat.split(",") if atom.strip()]
+    if not atoms:
+        raise ValueError(f"No atoms in iat= field for restraint line: {line.rstrip()}")
+    return len(atoms)
 
 
 class SilenceAlchemlybOnly:
@@ -603,6 +654,24 @@ class RESTMBARAnalysis(MBARAnalysis):
     def _extract_restraints_from_windows(self):
         num_win = len(self.windows)
         component = self.component
+
+        def _tag_matches(tag: str) -> bool:
+            if component == "t":
+                return tag == "#Lig_TR"
+            if component in ("l", "c"):
+                return tag in ("#Lig_C", "#Lig_D")
+            if component in ("a", "r"):
+                return tag in ("#Rec_C", "#Rec_D")
+            if component in ("m", "n"):
+                return tag in (
+                    "#Rec_C",
+                    "#Rec_D",
+                    "#Lig_TR",
+                    "#Lig_C",
+                    "#Lig_D",
+                )
+            return False
+
         disang_file = f"{self.comp_folder}/{component}00/disang.rest"
         with open(disang_file, "r") as f:
             disang = f.readlines()
@@ -613,19 +682,7 @@ class RESTMBARAnalysis(MBARAnalysis):
             if not cols:
                 continue
             tag = cols[-1]
-            if component == "t" and tag == "#Lig_TR":
-                num_rest += 1
-            elif component in ("l", "c") and tag in ("#Lig_C", "#Lig_D"):
-                num_rest += 1
-            elif component in ("a", "r") and tag in ("#Rec_C", "#Rec_D"):
-                num_rest += 1
-            elif component in ("m", "n") and tag in (
-                "#Rec_C",
-                "#Rec_D",
-                "#Lig_TR",
-                "#Lig_C",
-                "#Lig_D",
-            ):
+            if _tag_matches(tag):
                 num_rest += 1
 
         rty = ["d"] * num_rest
@@ -642,92 +699,30 @@ class RESTMBARAnalysis(MBARAnalysis):
                 if not cols:
                     continue
                 tag = cols[-1]
+                if not _tag_matches(tag):
+                    continue
 
-                def _natms() -> int:
-                    return len(cols[2].split(",")) - 1
-
-                if component == "t" and tag == "#Lig_TR":
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
-                elif component in ("l", "c") and tag in ("#Lig_C", "#Lig_D"):
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
-                elif component in ("a", "r") and tag in ("#Rec_C", "#Rec_D"):
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
-                elif component in ("m", "n") and tag in (
-                    "#Rec_C",
-                    "#Rec_D",
-                    "#Lig_TR",
-                    "#Lig_C",
-                    "#Lig_D",
-                ):
-                    req[win, r] = float(cols[6].replace(",", ""))
-                    nat = _natms()
-                    if nat == 2:
-                        rty[r] = "d"
-                        rfc[win, r] = float(cols[12].replace(",", ""))
-                    elif nat == 3:
-                        rty[r] = "a"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    elif nat == 4:
-                        rty[r] = "t"
-                        rfc[win, r] = (
-                            float(cols[12].replace(",", "")) * (np.pi / 180.0) ** 2
-                        )
-                    else:
-                        raise ValueError("Unknown restraint natoms")
-                    r += 1
+                fields = _parse_amber_rst_line(line)
+                req[win, r] = _parse_amber_rst_float(fields, "r2", line)
+                force = _parse_amber_rst_float(fields, "rk2", line)
+                nat = _parse_amber_rst_natoms(fields, line)
+                if nat == 2:
+                    rty[r] = "d"
+                    rfc[win, r] = force
+                elif nat == 3:
+                    rty[r] = "a"
+                    rfc[win, r] = force * (np.pi / 180.0) ** 2
+                elif nat == 4:
+                    rty[r] = "t"
+                    rfc[win, r] = force * (np.pi / 180.0) ** 2
+                else:
+                    raise ValueError("Unknown restraint natoms")
+                r += 1
+            if r != num_rest:
+                raise ValueError(
+                    f"Window {component}{win:02d} has {r} matching restraints; "
+                    f"expected {num_rest}"
+                )
 
         return rfc, req, rty, num_rest
 

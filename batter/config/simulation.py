@@ -30,6 +30,7 @@ PROTOCOL_TO_FE_TYPE = {
     "abfe_diff": "uno_rest_diff",
     "rbfe": "relative",
     "asfe": "asfe",
+    "ligand_rest": "ligand_rest",
     "md": "md",
 }
 
@@ -170,6 +171,7 @@ class SimulationConfig(BaseModel):
             "abfe": ["z"],
             "abfe_diff": ["d"],
             "asfe": ["y", "m"],
+            "ligand_rest": ["l"],
             "rbfe": ["x"],
         }.get(proto_key, [])
         for comp in required_components:
@@ -323,6 +325,7 @@ class SimulationConfig(BaseModel):
         "uno_com",
         "uno_rest",
         "uno_rest_diff",
+        "ligand_rest",
         "self",
         "uno_dd",
         "dd-rest",
@@ -727,6 +730,14 @@ class SimulationConfig(BaseModel):
                 self.components, self.dec_method = ["z"], "sdr"
             case "uno_rest_diff":
                 self.components, self.dec_method = ["d"], "sdr"
+                if self.dic_n_steps.get("l", 0) > 0 or self.component_windows.get("l"):
+                    self.components.append("l")
+            case "ligand_rest":
+                self.components, self.dec_method = ["l"], "sdr"
+                if self.lig_dihcf_force <= 0.0:
+                    raise ValueError(
+                        "ligand_rest requires positive lig_dihcf_force for ligand dihedral restraints."
+                    )
             case "uno_com":
                 self.components, self.dec_method = ["o"], "sdr"
             case "self":

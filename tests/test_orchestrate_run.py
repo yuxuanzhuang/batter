@@ -695,6 +695,31 @@ def test_abfe_diff_pipeline_uses_pre_fe_equil_before_final_fe() -> None:
     assert pipeline.dependencies("prepare_fe") == ["pre_fe_equil"]
 
 
+def test_ligand_rest_pipeline_uses_normal_single_ligand_fe_flow() -> None:
+    from batter.orchestrate.pipeline_utils import select_pipeline
+
+    pipeline = select_pipeline(
+        "ligand-rest",
+        _make_sim_cfg().model_copy(
+            update={
+                "fe_type": "ligand_rest",
+                "components": ["l"],
+                "component_lambdas": {"l": [0.0, 1.0]},
+                "dic_n_steps": {"l": 100_000},
+                "lig_dihcf_force": 10.0,
+            }
+        ),
+        only_fe_prep=False,
+        sys_params={},
+    )
+    names = [step.name for step in pipeline.ordered_steps()]
+
+    assert "pre_prepare_fe" not in names
+    assert "pre_fe_equil" not in names
+    assert names[names.index("equil_analysis") + 1] == "prepare_fe"
+    assert pipeline.dependencies("prepare_fe") == ["equil_analysis"]
+
+
 def test_save_fe_records_copies_rbfe_mapping_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -912,6 +937,8 @@ def test_select_system_builder_validates_system_type() -> None:
     assert builder is not None
     abfe_diff_builder = rs.select_system_builder("ABFE-diff", system_type=None)
     assert abfe_diff_builder is not None
+    ligand_rest_builder = rs.select_system_builder("ligand-rest", system_type=None)
+    assert ligand_rest_builder is not None
     with pytest.raises(ValueError):
         rs.select_system_builder("abfe", system_type="MASFE")
 
@@ -987,11 +1014,11 @@ def test_run_phase_with_failure_policy_retries_once_then_prunes(
         run_calls.append(kwargs.get("on_failure") or "")
         return False
 
-    def fake_partition(children, phase_name):
+    def fake_partition(children, phase_name, **kwargs):
         status_calls["count"] += 1
         return ([], [child])
 
-    def fake_handle(children, phase_name, mode):
+    def fake_handle(children, phase_name, mode, **kwargs):
         handle_calls.append(mode)
         if mode == "retry":
             return [child]

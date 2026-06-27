@@ -10,6 +10,7 @@ from batter.pipeline.factory import (
     make_abfe_diff_pipeline,
     make_abfe_pipeline,
     make_asfe_pipeline,
+    make_ligand_rest_pipeline,
     make_md_pipeline,
     make_rbfe_pipeline,
 )
@@ -29,7 +30,7 @@ def select_pipeline(
     Parameters
     ----------
     protocol : str
-        Name of the requested protocol (``"abfe"``, ``"abfe_diff"``, ``"rbfe"``, ``"asfe"``, or ``"md"``).
+        Name of the requested protocol (``"abfe"``, ``"abfe_diff"``, ``"ligand_rest"``, ``"rbfe"``, ``"asfe"``, or ``"md"``).
     sim_cfg : SimulationConfig
         Validated simulation configuration produced by :class:`RunConfig`.
     only_fe_prep : bool
@@ -71,6 +72,13 @@ def select_pipeline(
         )
     if name == "asfe":
         return make_asfe_pipeline(
+            sim_cfg,
+            sys_params=params_model,
+            only_fe_preparation=only_fe_prep,
+            extra=extra,
+        )
+    if name == "ligand_rest":
+        return make_ligand_rest_pipeline(
             sim_cfg,
             sys_params=params_model,
             only_fe_preparation=only_fe_prep,

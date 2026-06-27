@@ -12,6 +12,7 @@ __all__ = [
     "make_abfe_pipeline",
     "make_abfe_diff_pipeline",
     "make_asfe_pipeline",
+    "make_ligand_rest_pipeline",
     "make_rbfe_pipeline",
     "make_md_pipeline",
 ]
@@ -310,6 +311,29 @@ def make_abfe_diff_pipeline(
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
+
+
+def make_ligand_rest_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """
+    Ligand conformational-restraint pipeline:
+
+    system_prep → param_ligands → prepare_equil → equil → equil_analysis
+    → prepare_fe → prepare_fe_windows → fe_equil → fe → analyze
+
+    The FE leg contains only component ``l``.
+    """
+    return make_abfe_pipeline(
+        sim,
+        sys_params=sys_params,
+        only_fe_preparation=only_fe_preparation,
+        extra=extra,
+    )
 
 
 def make_rbfe_pipeline(

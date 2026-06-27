@@ -27,6 +27,69 @@ def _load_internal_module(module_name: str):
 restraints = _load_internal_module("batter._internal.ops.restraints")
 
 
+def _write_four_atom_pdb(path: Path, coords: list[tuple[float, float, float]]) -> None:
+    lines = []
+    for idx, (x, y, z) in enumerate(coords, start=1):
+        lines.append(
+            f"HETATM{idx:5d}  C{idx:<2d} LIG A   1    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           C\n"
+        )
+    lines.append("END\n")
+    path.write_text("".join(lines))
+
+
+def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) -> None:
+    input_pdb = tmp_path / "input_pose.pdb"
+    fallback_pdb = tmp_path / "l00" / "LIG.pdb"
+    fallback_pdb.parent.mkdir()
+    _write_four_atom_pdb(
+        input_pdb,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, 1.0),
+        ],
+    )
+    _write_four_atom_pdb(
+        fallback_pdb,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, -1.0),
+        ],
+    )
+
+    store_dir = tmp_path / "artifacts" / "ligand_params" / "LIG"
+    store_dir.mkdir(parents=True)
+    (store_dir / "metadata.json").write_text(
+        json.dumps({"input_path": input_pdb.as_posix()})
+    )
+    (tmp_path / "artifacts" / "ligand_params" / "index.json").write_text(
+        json.dumps({"ligands": [{"ligand": "LigandA", "store_dir": store_dir.as_posix()}]})
+    )
+
+    ctx = types.SimpleNamespace(
+        system_root=tmp_path,
+        ligand="LigandA",
+        residue_name="LIG",
+    )
+
+    values, source = restraints._reference_dihedral_values_from_input(
+        ctx,
+        fallback_pdb.parent,
+        [(1, 2, 3, 4)],
+    )
+
+    expected = restraints._dihedral_degrees(
+        restraints._load_reference_positions(input_pdb),
+        (1, 2, 3, 4),
+    )
+    assert source == input_pdb
+    assert abs(values[0] - expected) < 1e-6
+
+
 def test_colvar_block_to_rst_translates_com_distance() -> None:
     block = """&colvar
  cv_type = 'COM_DISTANCE'

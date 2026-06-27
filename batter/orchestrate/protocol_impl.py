@@ -34,6 +34,17 @@ class ABFEDiff(ABFE):
     name = "abfe_diff"
 
 
+class LigandRest(ABFE):
+    name = "ligand_rest"
+
+    def validate(self, ctx: ProtocolContext) -> None:
+        sim = ctx.sim
+        if sim.fe_type != "ligand_rest":
+            raise ValueError("LigandRest expects fe_type='ligand_rest'.")
+        if list(sim.components) != ["l"]:
+            raise ValueError("LigandRest requires exactly component 'l'.")
+
+
 class ASFE(FEProtocol):
     name = "asfe"
 
@@ -76,5 +87,6 @@ class RBFE(FEProtocol):
 from .protocols import register_protocol
 register_protocol(ABFE())
 register_protocol(ABFEDiff())
+register_protocol(LigandRest())
 register_protocol(ASFE())
 register_protocol(RBFE())

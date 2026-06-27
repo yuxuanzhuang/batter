@@ -1441,6 +1441,201 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     )
 
 
+# ------------------------- FE component: l ------------------------- #
+
+
+def _write_l_mdin_from_equil_template(
+    *,
+    src: Path,
+    dst: Path,
+    mol: str,
+    replacements: dict[str, str],
+    total_steps: int,
+    ntwx: int,
+    eq_seed: bool,
+    rest_ramp: tuple[float, float] | None = None,
+) -> None:
+    inserted_rest_weight = False
+    with src.open("rt") as fin, dst.open("wt") as fout:
+        if not eq_seed:
+            fout.write(f"! total_steps={total_steps}\n")
+        for line in fin:
+            if eq_seed:
+                if re.search(r"\bntx\s*=", line):
+                    line = "  ntx = 1,\n"
+                elif re.search(r"\birest\s*=", line):
+                    line = "  irest = 0,\n"
+                elif re.search(r"\bntwx\s*=", line):
+                    line = f"  ntwx = {int(ntwx)},\n"
+                elif re.search(r"\bntwr\s*=", line):
+                    line = f"  ntwr = {int(ntwx)},\n"
+                elif re.search(r"\bdt\s*=", line):
+                    line = "  dt = 0.002,\n"
+            if re.search(r"\bmcwat\s*=", line):
+                line = "  mcwat = 0,\n"
+            elif re.search(r"\bnstlim\s*=", line):
+                line = f"  nstlim = {int(total_steps)},\n"
+            elif re.search(r"\binfe\s*=", line):
+                line = "  infe = 0,\n"
+            if rest_ramp is not None and "type='DUMPFREQ'" in line and not inserted_rest_weight:
+                fout.write(
+                    " &wt type='REST', istep1=0, "
+                    f"istep2={int(total_steps)}, value1={float(rest_ramp[0]):.8g}, "
+                    f"value2={float(rest_ramp[1]):.8g}, /\n"
+                )
+                inserted_rest_weight = True
+            line = (
+                line.replace("_num-steps_", str(int(total_steps)))
+                .replace("_lig_name_", mol)
+                .replace("disang_file", "disang")
+            )
+            for key, value in replacements.items():
+                line = line.replace(key, value)
+            fout.write(line)
+
+
+@register_sim_files("l")
+def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
+    """
+    Ligand conformational-restraint component.
+
+    No alchemical masks are used. AMBER reads ligand torsion restraints through
+    ``nmropt=1``/``DISANG``; RESTMBARAnalysis later evaluates the fixed-window
+    restraint Hamiltonians from the generated cpptraj traces.
+    """
+    sim = ctx.sim
+    mol = ctx.residue_name
+    comp = ctx.comp
+    win = ctx.win
+    windows_dir = ctx.window_dir
+    amber_dir = ctx.amber_dir
+    temperature = sim.temperature
+    n_steps = int(sim.dic_n_steps[comp])
+    ntwx = int(sim.ntwx)
+    lambdas = list(lambdas)
+    if not lambdas:
+        raise ValueError("[sim_files:l] component l requires a lambda schedule.")
+    weight = float(lambdas[win if win != -1 else 0])
+    mdin_replacements = {
+        "_temperature_": str(temperature),
+        "_cutoff_": str(sim.cut),
+        "_gamma_ln_": str(sim.gamma_ln),
+        "_p_coupling_": "3" if sim.membrane_simulation else "1",
+        "_c_surften_": "3" if sim.membrane_simulation else "0",
+        "_barostat_": str(sim.barostat),
+        "_step_": str(sim.dt),
+        "_ntpr_": str(sim.ntpr),
+        "_ntwr_": str(sim.ntwr),
+        "_ntwe_": str(sim.ntwe),
+        "_ntwx_": str(ntwx),
+        "_enable_mcwat_": "0",
+        "_enable_infe_": "0",
+    }
+
+    prmtop_for_masks = _find_prmtop_for_masks(windows_dir)
+    cache_dir = windows_dir.parent / ".restraintmask_cache"
+    cache_master = win == -1
+
+    # Generic equilibration/minimization stages keep nmropt=0; the seed ramp is
+    # applied only in eq.in after the usual density/relaxation stages.
+    _sub_write(amber_dir / "mini.in", windows_dir / "mini_eq.in", {"_lig_name_": mol})
+    _sub_write(amber_dir / "mini.in", windows_dir / "mini.in", {"_lig_name_": mol})
+
+    eqnpt0_src = amber_dir / (
+        "eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in"
+    )
+    eqnpt_src = amber_dir / (
+        "eqnpt.in" if sim.membrane_simulation else "eqnpt-water.in"
+    )
+    eqnpt_eq_src = amber_dir / (
+        "eqnpt-eq.in" if sim.membrane_simulation else "eqnpt-water-eq.in"
+    )
+    non_loop_mask = _resolve_non_loop_mask(ctx, shift=2)
+    _sub_write(
+        eqnpt0_src,
+        windows_dir / "eqnpt0.in",
+        {"_temperature_": str(temperature), "_lig_name_": mol},
+    )
+    _sub_write(
+        eqnpt_src,
+        windows_dir / "eqnpt.in",
+        {"_temperature_": str(temperature), "_lig_name_": mol},
+    )
+    _sub_write(
+        eqnpt_eq_src,
+        windows_dir / "eqnpt_eq.in",
+        {
+            "_temperature_": str(temperature),
+            "_lig_name_": mol,
+            "_non_loop_": non_loop_mask,
+        },
+    )
+
+    n_lambdas = max(2, len(lambdas))
+    n_steps_run_per_lambda, _, _, n_steps_run = build_dyna_steps_run_per_lambda(
+        n_lambdas=n_lambdas
+    )
+    if win != -1:
+        n_steps_run_per_lambda = 10000
+        n_steps_run = 10000
+
+    _write_l_mdin_from_equil_template(
+        src=amber_dir / "mdin-equil",
+        dst=windows_dir / "eq.in",
+        mol=mol,
+        replacements=mdin_replacements,
+        total_steps=n_steps_run,
+        ntwx=n_steps_run_per_lambda,
+        eq_seed=True,
+        rest_ramp=(0.0, 1.0) if win == -1 else None,
+    )
+    _apply_restraintmask_length_limit(
+        windows_dir / "eq.in",
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="l-eq.in",
+        cache_master=cache_master,
+    )
+
+    _write_l_mdin_from_equil_template(
+        src=amber_dir / "mdin-equil",
+        dst=windows_dir / "mdin-template",
+        mol=mol,
+        replacements=mdin_replacements,
+        total_steps=n_steps,
+        ntwx=ntwx,
+        eq_seed=False,
+    )
+    _apply_restraintmask_length_limit(
+        windows_dir / "mdin-template",
+        prmtop_for_masks,
+        cache_dir=cache_dir,
+        cache_tag="l-mdin-template",
+        cache_master=cache_master,
+    )
+
+    (windows_dir / "ligand_dihedral_schedule.json").write_text(
+        json.dumps(
+            {
+                "component": "l",
+                "window": win,
+                "lambda": weight,
+                "lambdas": [float(x) for x in lambdas],
+                "lig_dihcf_force": float(getattr(sim, "lig_dihcf_force", 0.0) or 0.0),
+                "amber_mbar": False,
+                "analysis": "RESTMBARAnalysis evaluates restraint energies from restraints.in/cpptraj traces.",
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    logger.debug(
+        f"[sim_files_l] wrote ligand-dihedral restraint inputs in {windows_dir} "
+        f"for win={win}, weight={weight:0.5f}"
+    )
+
+
 # ------------------------- FE component: x ------------------------- #
 
 
