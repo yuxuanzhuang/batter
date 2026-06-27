@@ -26,6 +26,76 @@ def _normalize_atom_mapper(atom_mapper: str | None) -> str:
     return mapper
 
 
+def _normalize_protocol(protocol: str | None) -> str:
+    return str(protocol or "").strip().lower().replace("-", "_")
+
+
+def resolve_network_scorer_name(
+    network_scorer: str | None = None,
+    *,
+    protocol: str | None = None,
+) -> str:
+    scorer = str(network_scorer or "auto").strip().lower().replace("-", "_")
+    if scorer in {"", "auto", "default"}:
+        return (
+            "shape_difference"
+            if _normalize_protocol(protocol) == "rbfe_septop"
+            else "lomap"
+        )
+    if scorer in {"lomap", "default_lomap"}:
+        return "lomap"
+    if scorer in {
+        "shape",
+        "shape_difference",
+        "shape_mismatch",
+        "kartograf_shape",
+        "kartograf_shape_difference",
+    }:
+        return "shape_difference"
+    raise ValueError(
+        f"Unknown RBFE network scorer '{network_scorer}'. "
+        "Available: auto, lomap, shape_difference"
+    )
+
+
+def _shape_difference_network_score(mapping) -> float:
+    """High-is-good score that minimizes Kartograf shape mismatch distance."""
+    try:
+        from kartograf.mapping_metrics.metric_shape_difference import (
+            MappingShapeMismatchScorer,
+        )
+
+        scorer = MappingShapeMismatchScorer(ignore_hs=True)
+        mol_shape_dist = scorer.get_rdmol_shape_distance(
+            mapping.componentA.to_rdkit(),
+            mapping.componentB.to_rdkit(),
+        )
+        mapped_shape_dist = scorer.get_mapped_structure_shape_distance(mapping)
+        if not math.isfinite(float(mapped_shape_dist)):
+            return 0.0
+        distance = (float(mapped_shape_dist) + 2.0 * float(mol_shape_dist)) / 3.0
+        if not math.isfinite(distance):
+            return 0.0
+        return max(0.0, min(1.0, 1.0 - distance))
+    except Exception as exc:
+        logger.debug(f"[rbfe] shape-difference network score failed: {exc}")
+        return 0.0
+
+
+def _network_scorer_callable(
+    network_scorer: str | None = None,
+    *,
+    protocol: str | None = None,
+):
+    scorer_name = resolve_network_scorer_name(network_scorer, protocol=protocol)
+    if scorer_name == "shape_difference":
+        return _shape_difference_network_score
+
+    from lomap.gufe_bindings.scorers import default_lomap_score
+
+    return default_lomap_score
+
+
 def _mapper_options_dict(options: Any | None) -> dict[str, Any]:
     if options is None:
         return {}
@@ -1393,6 +1463,8 @@ def konnektor_pairs(
     kartograf_options: Any | None = None,
     lomap_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
+    network_scorer: str | None = None,
+    protocol: str | None = None,
 ) -> List[RBFEPair]:
     """
     Build RBFE pairs using Konnektor network planners.
@@ -1404,11 +1476,10 @@ def konnektor_pairs(
     """
     try:
         from gufe import SmallMoleculeComponent
-        from lomap.gufe_bindings.scorers import default_lomap_score
 
     except ImportError as exc:
         raise RuntimeError(
-            "Konnektor mapping requires 'gufe' and 'lomap' dependencies."
+            "Konnektor mapping requires 'gufe' to be installed."
         ) from exc
 
 
@@ -1425,8 +1496,9 @@ def konnektor_pairs(
         lomap_options=lomap_options,
         atom_mapping_overrides=atom_mapping_overrides,
     )
+    scorer = _network_scorer_callable(network_scorer, protocol=protocol)
 
-    generator = generator_cls(mappers=mapper, scorer=default_lomap_score)
+    generator = generator_cls(mappers=mapper, scorer=scorer)
 
     components: List[SmallMoleculeComponent] = []
     for lig in ligands:
@@ -1470,6 +1542,8 @@ def draw_explicit_konnektor_network(
     kartograf_options: Any | None = None,
     lomap_options: Any | None = None,
     atom_mapping_overrides: Any | None = None,
+    network_scorer: str | None = None,
+    protocol: str | None = None,
 ) -> None:
     """Build an explicit Konnektor network from pairs and draw it."""
     mapper_name = _normalize_atom_mapper(atom_mapper)
@@ -1477,7 +1551,6 @@ def draw_explicit_konnektor_network(
         from konnektor.network_planners import ExplicitNetworkGenerator
         from konnektor.visualization import draw_ligand_network
         from gufe import SmallMoleculeComponent
-        from lomap.gufe_bindings.scorers import default_lomap_score
         align_mol_shape = None
         if mapper_name == "kartograf":
             from kartograf.atom_aligner import align_mol_shape as _align_mol_shape
@@ -1527,7 +1600,11 @@ def draw_explicit_konnektor_network(
         return
 
     nodes = list(nodes_by_name.values())
-    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=default_lomap_score)
+    try:
+        scorer = _network_scorer_callable(network_scorer, protocol=protocol)
+    except Exception:
+        return
+    generator = ExplicitNetworkGenerator(mappers=mapper, scorer=scorer)
 
     try:
         network = generator.generate_ligand_network(edges=edges, nodes=nodes)

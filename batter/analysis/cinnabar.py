@@ -112,7 +112,7 @@ def _rbfe_run_ids_for_replicate_note(
         .astype(str)
         .str.lower()
     )
-    rbfe_df = df.loc[protocol_series.eq("rbfe")].copy()
+    rbfe_df = df.loc[protocol_series.isin({"rbfe", "rbfe_septop"})].copy()
     if rbfe_df.empty:
         return []
 
@@ -933,7 +933,7 @@ def load_batter_rbfe_results(
         .fillna("")
         .astype(str)
         .str.lower()
-        .eq("rbfe")
+        .isin({"rbfe", "rbfe_septop"})
     )
 
     work = df.loc[ligand_mask | original_mask | protocol_mask].copy()

@@ -50,6 +50,7 @@ def prepare_rbfe_handler(
         lig_map,
         rbfe_cfg,
         config_dir,
+        protocol=sys_params.get("protocol", None),
     )
 
     marker = config_dir / "prepare_rbfe.ok"

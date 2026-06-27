@@ -1746,6 +1746,230 @@ def _build_restraints_m(builder, ctx: BuildContext) -> None:
 
     logger.debug(f"[restraints:y] wrote cv.in (ligand COM only), empty disang.rest, restraints.in in {windows_dir}")
 
+
+def _atom_name_from_anchor_mask(mask: str | None) -> str:
+    if not mask:
+        raise ValueError("[restraints:x] Missing ligand anchor atom mask.")
+    match = _ANCHOR_MASK_RE.match(str(mask).strip())
+    if match:
+        return match.group(2)
+    if "@" in str(mask):
+        return str(mask).rsplit("@", 1)[1].strip()
+    return str(mask).strip()
+
+
+def _first_residue_with_resname(universe: mda.Universe, resname: str, *, label: str):
+    atoms = universe.select_atoms(f"resname {resname}")
+    if atoms.n_atoms == 0:
+        raise ValueError(
+            f"[restraints:x] No {label} residue with resname {resname!r} in vac.pdb"
+        )
+    return atoms.residues[0]
+
+
+def _heavy_atom_names_from_residue(residue) -> list[str]:
+    names: list[str] = []
+    for atom in residue.atoms:
+        name = str(atom.name).strip()
+        if name and not _is_hydrogen_atom(atom) and name not in names:
+            names.append(name)
+    return names
+
+
+def _resolve_ref_boresch_atom_names(ref_residue, anchor_names: Sequence[str]) -> list[str]:
+    heavy_names = _heavy_atom_names_from_residue(ref_residue)
+    selected: list[str] = []
+    for name in anchor_names:
+        if name in heavy_names and name not in selected:
+            selected.append(name)
+    for name in heavy_names:
+        if len(selected) >= 3:
+            break
+        if name not in selected:
+            selected.append(name)
+    if len(selected) < 3:
+        raise ValueError(
+            f"[restraints:x] Need at least 3 reference heavy atoms for SEPTOP Boresch restraints; got {selected}"
+        )
+    return selected[:3]
+
+
+def _resolve_alt_boresch_atom_names(
+    *,
+    ref_residue,
+    alt_residue,
+    ref_names: Sequence[str],
+    mapping_path: Path,
+) -> list[str]:
+    selected: list[str] = []
+
+    def _append_alt_index(alt_idx: int) -> None:
+        if alt_idx < 0 or alt_idx >= alt_residue.atoms.n_atoms:
+            return
+        atom = alt_residue.atoms[int(alt_idx)]
+        name = str(atom.name).strip()
+        if name and not _is_hydrogen_atom(atom) and name not in selected:
+            selected.append(name)
+
+    if mapping_path.exists():
+        mapping_raw = json.loads(mapping_path.read_text())
+        alt_to_ref = {int(k): int(v) for k, v in mapping_raw.items()}
+        ref_to_alt = {ref_idx: alt_idx for alt_idx, ref_idx in alt_to_ref.items()}
+        ref_name_to_index: dict[str, int] = {}
+        for idx, atom in enumerate(ref_residue.atoms):
+            name = str(atom.name).strip()
+            if name and name not in ref_name_to_index:
+                ref_name_to_index[name] = int(idx)
+
+        for ref_name in ref_names:
+            ref_idx = ref_name_to_index.get(str(ref_name).strip())
+            if ref_idx is not None and ref_idx in ref_to_alt:
+                _append_alt_index(ref_to_alt[ref_idx])
+
+        for alt_idx in sorted(alt_to_ref):
+            if len(selected) >= 3:
+                break
+            _append_alt_index(alt_idx)
+
+    for name in _heavy_atom_names_from_residue(alt_residue):
+        if len(selected) >= 3:
+            break
+        if name not in selected:
+            selected.append(name)
+
+    if len(selected) < 3:
+        raise ValueError(
+            f"[restraints:x] Need at least 3 alternate heavy atoms for SEPTOP Boresch restraints; got {selected}"
+        )
+    return selected[:3]
+
+
+def _boresch_tr_expressions(
+    P1: str,
+    P2: str,
+    P3: str,
+    L1: str,
+    L2: str,
+    L3: str,
+) -> list[str]:
+    return [
+        f"{P1} {L1}",
+        f"{P2} {P1} {L1}",
+        f"{P3} {P2} {P1} {L1}",
+        f"{P1} {L1} {L2}",
+        f"{P2} {P1} {L1} {L2}",
+        f"{P1} {L1} {L2} {L3}",
+    ]
+
+
+def _append_x_septop_boresch_restraints(ctx: BuildContext, disang: Path) -> list[str]:
+    """Append lambda-dependent Boresch restraints for both site ligands."""
+    windows_dir = ctx.window_dir
+    extra = ctx.extra or {}
+    mol_ref = extra.get("residue_ref") or ctx.residue_name
+    mol_alt = extra.get("residue_alt")
+    if not mol_alt:
+        raise ValueError("[restraints:x] SEPTOP RBFE requires residue_alt metadata.")
+
+    vac_pdb = windows_dir / "vac.pdb"
+    hmr = str(ctx.sim.hmr).lower() == "yes"
+    full_prmtop = windows_dir / ("full.hmr.prmtop" if hmr else "full.prmtop")
+    full_inpcrd = windows_dir / "full.inpcrd"
+    for path in (vac_pdb, full_prmtop, full_inpcrd):
+        if not path.exists():
+            raise FileNotFoundError(f"[restraints:x] missing required file: {path}")
+
+    anchors = load_anchors(ctx.build_dir)
+    P1 = _adjust_receptor_anchor_mask(anchors.P1, ctx.sim.dec_method)
+    P2 = _adjust_receptor_anchor_mask(anchors.P2, ctx.sim.dec_method)
+    P3 = _adjust_receptor_anchor_mask(anchors.P3, ctx.sim.dec_method)
+
+    universe = mda.Universe(vac_pdb.as_posix())
+    ref_residue = _first_residue_with_resname(universe, str(mol_ref), label="reference ligand")
+    alt_residue = _first_residue_with_resname(universe, str(mol_alt), label="alternate ligand")
+
+    anchor_names = [
+        _atom_name_from_anchor_mask(anchors.L1),
+        _atom_name_from_anchor_mask(anchors.L2),
+        _atom_name_from_anchor_mask(anchors.L3),
+    ]
+    ref_names = _resolve_ref_boresch_atom_names(ref_residue, anchor_names)
+    alt_names = _resolve_alt_boresch_atom_names(
+        ref_residue=ref_residue,
+        alt_residue=alt_residue,
+        ref_names=ref_names,
+        mapping_path=windows_dir / "mapping.json",
+    )
+
+    ref_lig_masks = [f":{int(ref_residue.resid)}@{name}" for name in ref_names]
+    alt_lig_masks = [f":{int(alt_residue.resid)}@{name}" for name in alt_names]
+    receptor_exprs = [f"{P1} {P2}", f"{P2} {P3}", f"{P3} {P1}"]
+    ref_exprs = _boresch_tr_expressions(P1, P2, P3, *ref_lig_masks)
+    alt_exprs = _boresch_tr_expressions(P1, P2, P3, *alt_lig_masks)
+    rst_full = receptor_exprs + ref_exprs + alt_exprs
+
+    vals = _write_assign_and_read_vals(windows_dir, rst_full, full_prmtop, full_inpcrd)
+    atm_num = num_to_mask(vac_pdb.as_posix())
+    _rdhf, rdsf, ldf, laf, _ldhf, _rcom, _lcom = ctx.sim.rest
+
+    existing = disang.read_text() if disang.exists() else ""
+    with disang.open("a") as df:
+        if existing and not existing.endswith("\n"):
+            df.write("\n")
+        df.write(
+            "# SEPTOP lambda-dependent Boresch restraints "
+            f"ref={mol_ref}:{int(ref_residue.resid)} alt={mol_alt}:{int(alt_residue.resid)}\n"
+        )
+        for i, expr in enumerate(rst_full):
+            fields = expr.split()
+            n = len(fields)
+            tag = "Rec_C" if i < 3 else ("Lig_TR_REF" if i < 9 else "Lig_TR_ALT")
+            if i < 3 and n == 2:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (0.0, float(vals[i]), float(vals[i]), 999.0, rdsf, rdsf, tag)
+                )
+                continue
+            if n == 2:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (0.0, float(vals[i]), float(vals[i]), 999.0, ldf, ldf, tag)
+                )
+            elif n == 3:
+                iat = f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},{atm_num.index(fields[2])},"
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (0.0, float(vals[i]), float(vals[i]), 180.0, laf, laf, tag)
+                )
+            elif n == 4:
+                iat = (
+                    f"{atm_num.index(fields[0])},{atm_num.index(fields[1])},"
+                    f"{atm_num.index(fields[2])},{atm_num.index(fields[3])},"
+                )
+                df.write(f"&rst iat={iat:<23s} ")
+                df.write(
+                    "r1=%10.4f, r2=%10.4f, r3=%10.4f, r4=%10.4f, rk2=%11.7f, rk3=%11.7f, &end #%s\n"
+                    % (
+                        float(vals[i]) - 180.0,
+                        float(vals[i]),
+                        float(vals[i]),
+                        float(vals[i]) + 180.0,
+                        laf,
+                        laf,
+                        tag,
+                    )
+                )
+
+    logger.debug(
+        f"[restraints:x] SEPTOP Boresch anchors ref={ref_lig_masks} alt={alt_lig_masks} written to {disang}"
+    )
+    return ref_exprs + alt_exprs
+
 @register_restraints("x")
 def _build_restraints_x(builder, ctx: BuildContext) -> None:
     """
@@ -1754,6 +1978,7 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     work = ctx.working_dir
     windows_dir = ctx.window_dir
     lig = ctx.ligand
+    septop = str(getattr(ctx.sim, "fe_type", "")).lower() == "relative_septop"
     extra = ctx.extra or {}
     mol_ref = extra.get("residue_ref") or ctx.residue_name
     mol_alt = extra.get("residue_alt")
@@ -1811,7 +2036,21 @@ def _build_restraints_x(builder, ctx: BuildContext) -> None:
     
     disang = windows_dir / "disang.rest"
     disang.write_text("")
+    septop_exprs: list[str] = []
+    if septop:
+        septop_exprs = _append_x_septop_boresch_restraints(ctx, disang)
     _append_colvar_rst_blocks(cv_in, disang)
+
+    # analysis driver
+    rest_in = windows_dir / "restraints.in"
+    with rest_in.open("w") as fh:
+        fh.write(f"# comp={comp}\nnoexitonerror\nparm vac.prmtop\n")
+        for k in range(2, 11):
+            fh.write(f"trajin md{k:02d}.nc\n")
+        for i, expr in enumerate(septop_exprs):
+            arr = expr.split()
+            tag = "distance" if len(arr) == 2 else ("angle" if len(arr) == 3 else "dihedral")
+            fh.write(f"{tag} r{i} {expr} out restraints.dat\n")
 
     logger.debug(f"[restraints:{comp}] wrote cv.in (with extras if set), disang.rest, restraints.in in {windows_dir}")
 

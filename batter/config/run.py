@@ -859,6 +859,14 @@ class RBFENetworkArgs(BaseModel):
         "kartograf",
         description="Atom mapper backend for RBFE pair mapping ('kartograf' or 'lomap').",
     )
+    network_scorer: str = Field(
+        "auto",
+        description=(
+            "Konnektor edge scorer: 'auto', 'lomap', or 'shape_difference'. "
+            "The 'auto' default uses Lomap for RBFE and Kartograf shape-difference "
+            "scoring for rbfe_septop."
+        ),
+    )
     kartograf: KartografMapperArgs = Field(
         default_factory=KartografMapperArgs,
         description="KartografAtomMapper option overrides.",
@@ -922,6 +930,29 @@ class RBFENetworkArgs(BaseModel):
         if v is None:
             return "kartograf"
         return str(v).strip().lower()
+
+    @field_validator("network_scorer", mode="before")
+    @classmethod
+    def _lower_network_scorer(cls, v):
+        if v is None:
+            return "auto"
+        text = str(v).strip().lower().replace("-", "_")
+        allowed = {
+            "auto",
+            "default",
+            "lomap",
+            "default_lomap",
+            "shape",
+            "shape_difference",
+            "shape_mismatch",
+            "kartograf_shape",
+            "kartograf_shape_difference",
+        }
+        if text not in allowed:
+            raise ValueError(
+                "rbfe.network_scorer must be one of: auto, lomap, shape_difference"
+            )
+        return text
 
     @model_validator(mode="after")
     def _validate_mapping(self) -> "RBFENetworkArgs":
@@ -1072,7 +1103,7 @@ class RunConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(1, description="Schema version of the run configuration.")
-    protocol: Literal["abfe", "abfe_diff", "rbfe", "asfe", "ligand_rest", "md"] = Field(
+    protocol: Literal["abfe", "abfe_diff", "rbfe", "rbfe_septop", "asfe", "ligand_rest", "md"] = Field(
         "abfe", description="High-level protocol to execute."
     )
     backend: Literal["local", "slurm"] = Field(
@@ -1151,11 +1182,12 @@ class RunConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_rbfe_section(self) -> "RunConfig":
-        if self.rbfe is not None and self.protocol != "rbfe":
-            raise ValueError("The 'rbfe' section is only valid when protocol='rbfe'.")
-        if self.run.only_rbfe_network and self.protocol != "rbfe":
+        rbfe_protocols = {"rbfe", "rbfe_septop"}
+        if self.rbfe is not None and self.protocol not in rbfe_protocols:
+            raise ValueError("The 'rbfe' section is only valid for RBFE protocols.")
+        if self.run.only_rbfe_network and self.protocol not in rbfe_protocols:
             raise ValueError(
-                "run.only_rbfe_network is only valid when protocol='rbfe'."
+                "run.only_rbfe_network is only valid for RBFE protocols."
             )
         return self
 

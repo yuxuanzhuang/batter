@@ -1650,6 +1650,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     sim = ctx.sim
     comp = ctx.comp
     mol_ref = ctx.residue_name
+    septop = str(getattr(sim, "fe_type", "")).lower() == "relative_septop"
     extra = ctx.extra or {}
     mol_alt = extra.get("residue_alt")
     non_loop_mask = _resolve_non_loop_mask(ctx, shift=3)
@@ -1694,30 +1695,65 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
     mk2 = f':{int(ref_resid)+1},{int(ref_resid)+2}'
     # load scmask.json for scmk1, scmk2
     scmk_dict = json.loads((windows_dir.parent / "x-1" / "scmask.json").read_text())
-    ligand_cc_solvent_indices = scmk_dict["scmk1_cc_solvent_indices"]
-    if ligand_cc_solvent_indices:
-        ligand_cc_first_atom_mask = _first_absolute_atom_mask(ligand_cc_solvent_indices)
+    scmk1_cc_solvent_indices = scmk_dict["scmk1_cc_solvent_indices"]
+    scmk2_cc_solvent_indices = scmk_dict["scmk2_cc_solvent_indices"]
+    if septop:
+        scmk1_cc_solvent_first_atom_mask = _first_residue_atom_mask(
+            vac_pdb, resid=int(ref_resid) + 3
+        )
+        scmk2_cc_solvent_first_atom_mask = _first_residue_atom_mask(
+            vac_pdb, resid=int(ref_resid) + 1
+        )
     else:
-        ligand_cc_first_atom_mask = _first_residue_atom_mask(vac_pdb, resid=int(ref_resid) + 3)
+        if scmk1_cc_solvent_indices:
+            scmk1_cc_solvent_first_atom_mask = _first_absolute_atom_mask(
+                scmk1_cc_solvent_indices
+            )
+        else:
+            scmk1_cc_solvent_first_atom_mask = _first_residue_atom_mask(
+                vac_pdb, resid=int(ref_resid) + 3
+            )
+        if scmk2_cc_solvent_indices:
+            scmk2_cc_solvent_first_atom_mask = _first_absolute_atom_mask(
+                scmk2_cc_solvent_indices
+            )
+        else:
+            scmk2_cc_solvent_first_atom_mask = _first_residue_atom_mask(
+                vac_pdb, resid=int(ref_resid) + 1
+            )
+    ligand_cc_solvent_first_atom_mask = (
+        f"{scmk1_cc_solvent_first_atom_mask} | {scmk2_cc_solvent_first_atom_mask}"
+    )
     scmk1_all_indice = scmk_dict['scmk1_all_indices']
-    scmk1_exclude_indice = np.concatenate([
-                    scmk_dict['scmk1_cc_solvent_indices'],
-                    scmk_dict['scmk1_cc_site_indices']
-    ])
     scmk2_all_indice = scmk_dict['scmk2_all_indices']
-    scmk2_exclude_indice = np.concatenate([
-        scmk_dict['scmk2_cc_solvent_indices'],
-        scmk_dict['scmk2_cc_site_indices']
-    ])
     scmk1_all_indice = indices_to_selection(scmk1_all_indice)
-    scmk1_exclude_indice = indices_to_selection(scmk1_exclude_indice)
     scmk2_all_indice = indices_to_selection(scmk2_all_indice)
-    scmk2_exclude_indice = indices_to_selection(scmk2_exclude_indice)
 
     #scmk1 = f'{scmk1_all_indice} & (!{scmk1_exclude_indice} | @H=)'
     #scmk2 = f'{scmk2_all_indice} & (!{scmk2_exclude_indice} | @H=)'
-    scmk1 = f'{scmk1_all_indice} & !{scmk1_exclude_indice}'
-    scmk2 = f'{scmk2_all_indice} & !{scmk2_exclude_indice}'
+    if septop:
+        scmk1 = scmk1_all_indice
+        scmk2 = scmk2_all_indice
+        eq_ligand_restraint_mask = ligand_cc_solvent_first_atom_mask
+    else:
+        scmk1_exclude_indice = np.concatenate([
+                        scmk1_cc_solvent_indices,
+                        scmk_dict['scmk1_cc_site_indices']
+        ])
+        scmk2_exclude_indice = np.concatenate([
+            scmk2_cc_solvent_indices,
+            scmk_dict['scmk2_cc_site_indices']
+        ])
+        scmk_common_core_indice = np.concatenate([
+            scmk1_exclude_indice,
+            scmk2_exclude_indice,
+        ])
+        scmk1_exclude_indice = indices_to_selection(scmk1_exclude_indice)
+        scmk2_exclude_indice = indices_to_selection(scmk2_exclude_indice)
+        scmk_common_core_indice = indices_to_selection(scmk_common_core_indice)
+        scmk1 = f'{scmk1_all_indice} & !{scmk1_exclude_indice}'
+        scmk2 = f'{scmk2_all_indice} & !{scmk2_exclude_indice}'
+        eq_ligand_restraint_mask = scmk_common_core_indice
 
     noshakemk = f':{int(ref_resid)},{int(ref_resid)+1},{int(ref_resid)+2},{int(ref_resid)+3}'
 
@@ -1756,18 +1792,18 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             elif "restraint_wt = " in line:
                 line = f"  restraint_wt = 5,\n"
             elif "nmropt = " in line:
-                line = "  nmropt = 0,\n"
+                line = "  nmropt = 1,\n" if septop else "  nmropt = 0,\n"
             elif "restraintmask" in line:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 if rm == "":
-                    # restraining 1) non loop C-alpha 2) common core of ligands
-                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) ) & !@H='\n"
+                    # restraining 1) non-loop C-alpha 2) ligand stabilizing masks/anchors
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({eq_ligand_restraint_mask}) ) & !@H='\n"
                     #line = (
                     #    "restraintmask = "
                     #    f"'(@CA | ({scmk1_exclude_indice}) ) & !@H=',\n"
                     #)
                 else:
-                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({scmk1_exclude_indice}) | {rm} ) & !@H='\n"
+                    line = f"restraintmask = '((@CA & {non_loop_mask}) | ({eq_ligand_restraint_mask}) | {rm} ) & !@H='\n"
                     #line = (
                     #    "restraintmask = "
                     #    f"'(@CA | ({scmk1_exclude_indice}) | {rm} ) & !@H=',\n"
@@ -1788,6 +1824,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("noshakemk", noshakemk)
             )
             fout.write(line)
+            if septop and re.search(r"\bgti_vdw_exp\b", line):
+                fout.write("  gti_bat_sc      = 1\n")
     with eq_path.open("a") as mdin:
         # also write velocity info
         mdin.write(f" ntwv = -1,\n")
@@ -1829,7 +1867,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 rm = line.split("=", 1)[1].strip().rstrip(",").replace("'", "")
                 line = (
                     "restraintmask = "
-                    f"'{_mask_with_added_component(rm, ligand_cc_first_atom_mask)}',\n"
+                    f"'{_mask_with_added_component(rm, ligand_cc_solvent_first_atom_mask)}',\n"
                 )
             line = (
                 line.replace("_temperature_", str(temperature))
@@ -1843,6 +1881,8 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
                 .replace("noshakemk", noshakemk)
             )
             fout.write(line)
+            if septop and re.search(r"\bgti_vdw_exp\b", line):
+                fout.write("  gti_bat_sc      = 1\n")
     with out_path.open("a") as mdin:
         mdin.write(f" \n  mbar_states = {len(lambdas):02d}\n")
         mdin.write("  mbar_lambda =")
@@ -1875,25 +1915,42 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         "wt"
     ) as fout:
         for line in fin:
-            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_",  mol_alt).replace("timk1", mk1)
+            line = (
+                line.replace("_lig1_name_", mol_ref)
+                .replace("_lig2_name_", mol_alt)
+                .replace("timk1", mk1)
                 .replace("timk2", mk2)
                 .replace("scmk1", scmk1)
                 .replace("scmk2", scmk2)
                 .replace("noshakemk", noshakemk)
                 .replace('lbd_val', f"{float(weight):6.5f}")
             )
+            fout.write(line)
+            if septop and re.search(r"\bgti_vdw_exp\b", line):
+                fout.write("  gti_bat_sc      = 1\n")
 
     with (amber_dir / "mini-ex").open("rt") as fin, (windows_dir / "mini_eq.in").open(
         "wt"
     ) as fout:
         for line in fin:
-            fout.write(line.replace("_lig1_name_", mol_ref).replace("_lig2_name_", mol_alt).replace("timk1", str(mk1))
+            line = (
+                line.replace("_lig1_name_", mol_ref)
+                .replace("_lig2_name_", mol_alt)
+                .replace("timk1", str(mk1))
                 .replace("timk2", str(mk2))
                 .replace("scmk1", scmk1)
                 .replace("scmk2", scmk2)
                 .replace("noshakemk", noshakemk)
                 .replace('lbd_val', f"{float(weight):6.5f}")
             )
+            fout.write(line)
+            if septop and re.search(r"\bgti_vdw_exp\b", line):
+                fout.write("  gti_bat_sc      = 1\n")
+
+    if septop:
+        (windows_dir / "lambda.sch").write_text(
+            "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"
+        )
 
     logger.debug(
         f"[sim_files_x] wrote mdin/mini/eq inputs in {windows_dir} "

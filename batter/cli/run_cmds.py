@@ -201,10 +201,10 @@ def cmd_run(
             )
         if (
             bool(getattr(cfg_for_validation.run, "only_rbfe_network", False))
-            and cfg_for_validation.protocol != "rbfe"
+            and cfg_for_validation.protocol not in {"rbfe", "rbfe_septop"}
         ):
             raise ValueError(
-                "run.only_rbfe_network is only valid when protocol='rbfe'."
+                "run.only_rbfe_network is only valid for RBFE protocols."
             )
         # Force resolution so missing/invalid fields are surfaced before submitting
         cfg_for_validation.resolved_sim_config()
@@ -410,10 +410,10 @@ def cmd_run_exec(
         )
         if (
             bool(getattr(cfg_for_validation.run, "only_rbfe_network", False))
-            and cfg_for_validation.protocol != "rbfe"
+            and cfg_for_validation.protocol not in {"rbfe", "rbfe_septop"}
         ):
             raise click.ClickException(
-                "run.only_rbfe_network is only valid when protocol='rbfe'."
+                "run.only_rbfe_network is only valid for RBFE protocols."
             )
     if slurm_submit:
         manager_job_name = (

@@ -16,6 +16,7 @@ from batter.rbfe import (
     konnektor_pairs,
     load_atom_mapping_file,
     load_mapping_file,
+    resolve_network_scorer_name,
     resolve_mapping_fn,
     write_pair_mapping_artifacts,
 )
@@ -265,6 +266,49 @@ def test_konnektor_pairs_layout_resolution(monkeypatch, tmp_path: Path) -> None:
         layout="star",
     )
     assert pairs == [("L1", "L2")]
+
+
+def test_network_scorer_auto_defaults_to_shape_for_septop() -> None:
+    assert resolve_network_scorer_name("auto", protocol="rbfe") == "lomap"
+    assert (
+        resolve_network_scorer_name("auto", protocol="rbfe_septop")
+        == "shape_difference"
+    )
+    assert (
+        resolve_network_scorer_name("shape-mismatch", protocol="rbfe")
+        == "shape_difference"
+    )
+
+
+def test_konnektor_pairs_septop_auto_uses_shape_difference_scorer(
+    monkeypatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    class StarNetworkGenerator:
+        def __init__(self, *args, **kwargs):
+            seen["scorer"] = kwargs.get("scorer")
+
+        def generate_ligand_network(self, components):
+            class Network:
+                def __init__(self, comps):
+                    self.edges = [(comps[0], comps[1])]
+
+            return Network(components)
+
+    _install_fake_konnektor(monkeypatch, {"StarNetworkGenerator": StarNetworkGenerator})
+    monkeypatch.setattr("batter.rbfe._load_rdkit_mol", lambda path: object())
+
+    pairs = konnektor_pairs(
+        ["L1", "L2"],
+        {"L1": tmp_path / "l1.sdf", "L2": tmp_path / "l2.sdf"},
+        layout="star",
+        protocol="rbfe_septop",
+    )
+
+    assert pairs == [("L1", "L2")]
+    assert callable(seen["scorer"])
+    assert getattr(seen["scorer"], "__name__", "") == "_shape_difference_network_score"
 
 
 def test_konnektor_pairs_unknown_layout(monkeypatch, tmp_path: Path) -> None:

@@ -190,6 +190,7 @@ def _builder_info_for_protocol(protocol: str) -> tuple[Type[SystemBuilder], str]
         "abfe_diff": (MABFEBuilder, "MABFE"),
         "ligand_rest": (MABFEBuilder, "MABFE"),
         "rbfe": (MABFEBuilder, "MABFE"),
+        "rbfe_septop": (MABFEBuilder, "MABFE"),
         "md": (MABFEBuilder, "MABFE"),
         "asfe": (MASFEBuilder, "MASFE"),
     }

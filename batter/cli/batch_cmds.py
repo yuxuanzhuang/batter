@@ -96,7 +96,7 @@ def _is_rbfe_execution(exec_root: Path) -> bool:
             data = json.loads(path.read_text())
         except Exception:
             continue
-        if str(data.get("protocol", "")).lower() == "rbfe":
+        if str(data.get("protocol", "")).lower().replace("-", "_") in {"rbfe", "rbfe_septop"}:
             return True
 
     for name in ("run_config.yaml", "sim.resolved.yaml"):
@@ -107,7 +107,7 @@ def _is_rbfe_execution(exec_root: Path) -> bool:
             text = path.read_text()
         except Exception:
             continue
-        if re.search(r"(?im)^\s*protocol\s*:\s*['\"]?rbfe['\"]?\s*$", text):
+        if re.search(r"(?im)^\s*protocol\s*:\s*['\"]?rbfe(?:_septop|-septop)?['\"]?\s*$", text):
             return True
 
     return False

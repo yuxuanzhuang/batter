@@ -335,6 +335,54 @@ class MBARAnalysis(FEAnalysisBase):
     def data_list(self) -> List[pd.DataFrame]:
         return self._data_list
 
+    def _set_convergence_fallback(self, reason: str, n_points: int = 10) -> None:
+        """Use the final MBAR estimate as a constant series for short runs."""
+        fe = float(self.results["fe"])
+        fe_error = float(self.results["fe_error"])
+        if self.energy_unit == "kcal/mol":
+            fe_kT = fe / self.kT
+            fe_error_kT = fe_error / self.kT
+        elif self.energy_unit == "kJ/mol":
+            fe_kT = fe / (self.kT * 4.184)
+            fe_error_kT = fe_error / (self.kT * 4.184)
+        else:
+            fe_kT = fe
+            fe_error_kT = fe_error
+
+        fractions = np.linspace(0.1, 1.0, n_points)
+        result_series = np.column_stack(
+            [np.full(n_points, fe), np.full(n_points, fe_error)]
+        )
+        kt_series = np.column_stack(
+            [np.full(n_points, fe_kT), np.full(n_points, fe_error_kT)]
+        )
+
+        self.results["fe_timeseries"] = result_series
+        self.results["fe_timeseries_backward"] = result_series.copy()
+        time_convergence = pd.DataFrame(
+            {
+                "Forward": kt_series[:, 0],
+                "Forward_Error": kt_series[:, 1],
+                "Backward": kt_series[:, 0],
+                "Backward_Error": kt_series[:, 1],
+            },
+            index=pd.Index(fractions, name="data_fraction"),
+        )
+        block_convergence = pd.DataFrame(
+            {"FE": kt_series[:, 0], "FE_Error": kt_series[:, 1]},
+            index=pd.Index(np.arange(1, n_points + 1), name="block"),
+        )
+        for frame in (time_convergence, block_convergence):
+            frame.attrs["temperature"] = self.temperature
+            frame.attrs["energy_unit"] = "kT"
+        self.results["convergence"]["time_convergence"] = time_convergence
+        self.results["convergence"]["block_convergence"] = block_convergence
+        self.results["convergence"]["block_timeseries"] = pd.DataFrame(
+            {"FE": result_series[:, 0], "FE_Error": result_series[:, 1]},
+            index=pd.Index(fractions, name="fraction"),
+        )
+        self.results["convergence"]["diagnostic_warning"] = reason
+
     def get_mbar_data(self) -> None:
         """
         Parse and cache the not reduced potentials for all lambda windows.
@@ -402,43 +450,51 @@ class MBARAnalysis(FEAnalysisBase):
         plt.savefig(f"{self.result_folder}/{self.component}_mbar_delta_f.png", dpi=200)
         plt.close(fig)
 
-        # Convergence summaries
-        with SilenceAlchemlybOnly():
-            tc = forward_backward_convergence(
-                self.data_list, "MBAR", error_tol=100, method="default"
-            )
-            self.results["convergence"]["time_convergence"] = tc
+        self.results["convergence"]["overlap_matrix"] = mbar.overlap_matrix
+        self.results["convergence"]["mbar"] = mbar
 
-            # forward/backward times (MultiIndex) + FE arrays (in kcal/mol)
-            forward_FE = tc.Forward.values * self.kT
-            forward_FE_err = tc.Forward_Error.values * self.kT
-            backward_FE = tc.Backward.values * self.kT
-            backward_FE_err = tc.Backward_Error.values * self.kT
+        # Convergence summaries are diagnostic; short smoke tests may not have
+        # enough frames for alchemlyb's forward/backward slices.
+        try:
+            with SilenceAlchemlybOnly():
+                tc = forward_backward_convergence(
+                    self.data_list, "MBAR", error_tol=100, method="default"
+                )
+                self.results["convergence"]["time_convergence"] = tc
 
-            # fe_timeseries: N x 2 array (value, stderr)
-            self.results["fe_timeseries"] = np.column_stack(
-                [forward_FE, forward_FE_err]
-            )
-            self.results["fe_timeseries_backward"] = np.column_stack(
-                [backward_FE, backward_FE_err]
-            )
+                # forward/backward times (MultiIndex) + FE arrays (in kcal/mol)
+                forward_FE = tc.Forward.values * self.kT
+                forward_FE_err = tc.Forward_Error.values * self.kT
+                backward_FE = tc.Backward.values * self.kT
+                backward_FE_err = tc.Backward_Error.values * self.kT
 
-            # block average (10 blocks)
-            ba = block_average(
-                self.data_list, estimator="MBAR", num=10, method="default"
-            )
-            self.results["convergence"]["block_convergence"] = ba
+                # fe_timeseries: N x 2 array (value, stderr)
+                self.results["fe_timeseries"] = np.column_stack(
+                    [forward_FE, forward_FE_err]
+                )
+                self.results["fe_timeseries_backward"] = np.column_stack(
+                    [backward_FE, backward_FE_err]
+                )
 
-            block_FE = ba.FE.values * self.kT
-            block_FE_err = ba.FE_Error.values * self.kT
-            # pack in a simple dataframe with sequential fraction labels
-            self.results["convergence"]["block_timeseries"] = pd.DataFrame(
-                {"FE": block_FE, "FE_Error": block_FE_err},
-                index=np.linspace(0.1, 1.0, len(block_FE)),
-            )
+                # block average (10 blocks)
+                ba = block_average(
+                    self.data_list, estimator="MBAR", num=10, method="default"
+                )
+                self.results["convergence"]["block_convergence"] = ba
 
-            self.results["convergence"]["overlap_matrix"] = mbar.overlap_matrix
-            self.results["convergence"]["mbar"] = mbar
+                block_FE = ba.FE.values * self.kT
+                block_FE_err = ba.FE_Error.values * self.kT
+                # pack in a simple dataframe with sequential fraction labels
+                self.results["convergence"]["block_timeseries"] = pd.DataFrame(
+                    {"FE": block_FE, "FE_Error": block_FE_err},
+                    index=np.linspace(0.1, 1.0, len(block_FE)),
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[MBARAnalysis] Skipping convergence diagnostics for "
+                f"{self.component}: {exc}"
+            )
+            self._set_convergence_fallback(str(exc))
 
         # persist
         with open(f"{self.result_folder}/{self.component}_results.pickle", "wb") as f:
@@ -651,6 +707,105 @@ class RESTMBARAnalysis(MBARAnalysis):
     MBAR analysis variant for restraint components that require cpptraj traces.
     """
 
+    @staticmethod
+    def _window_nc_list(win_dir: Path) -> List[str]:
+        """Return production NetCDF segments for one REST window."""
+
+        def _traj_sort_key(path: Path) -> tuple[int, str]:
+            match = re.search(r"(\d+)$", path.stem) or re.search(
+                r"(\d+)", path.stem
+            )
+            idx = int(match.group(1)) if match else -1
+            return idx, path.name
+
+        nc_list: List[str] = []
+        seen: set[str] = set()
+        for pattern in ("mdin-*.nc", "md-*.nc", "md[0-9]*.nc"):
+            for path in sorted(win_dir.glob(pattern), key=_traj_sort_key):
+                if not path.is_file() or path.name in seen:
+                    continue
+                seen.add(path.name)
+                nc_list.append(path.name)
+        return nc_list
+
+    @staticmethod
+    def _cmass_trace_list(win_dir: Path) -> List[Path]:
+        """Return Amber DUMPAVE traces for one REST window."""
+
+        def _trace_sort_key(path: Path) -> tuple[int, str]:
+            match = re.search(r"(\d+)$", path.stem) or re.search(
+                r"(\d+)", path.stem
+            )
+            idx = int(match.group(1)) if match else -1
+            return idx, path.name
+
+        segment_paths = [
+            path
+            for path in sorted(win_dir.glob("cmass-*.txt"), key=_trace_sort_key)
+            if path.is_file() and path.stat().st_size > 0
+        ]
+        if segment_paths:
+            return segment_paths
+
+        legacy = win_dir / "cmass.txt"
+        if legacy.is_file() and legacy.stat().st_size > 0:
+            return [legacy]
+        return []
+
+    @staticmethod
+    def _read_cmass_values(
+        win_dir: Path,
+        num_rest: int,
+        analysis_start_step: int,
+        ntwx: int,
+    ) -> Optional[np.ndarray]:
+        cmass_paths = RESTMBARAnalysis._cmass_trace_list(win_dir)
+        if not cmass_paths:
+            return None
+
+        rows: list[list[float]] = []
+        frame_idx = 0
+        for cmass_path in cmass_paths:
+            with open(cmass_path, "r") as fin:
+                for line in fin:
+                    cols = line.split()
+                    if not cols or cols[0].startswith("#"):
+                        continue
+                    if len(cols) < num_rest + 1:
+                        logger.warning(
+                            f"[RESTMBAR] Ignoring malformed cmass row in "
+                            f"{cmass_path}: expected at least {num_rest + 1} "
+                            f"columns, found {len(cols)}"
+                        )
+                        return None
+
+                    try:
+                        raw_step = float(cols[0])
+                        values = [float(col) for col in cols[1 : num_rest + 1]]
+                    except ValueError:
+                        logger.warning(
+                            f"[RESTMBAR] Ignoring non-numeric cmass row in {cmass_path}"
+                        )
+                        return None
+
+                    # Amber DUMPAVE writes one or more initial step-0 rows that
+                    # are not present in the NetCDF trajectory.
+                    if raw_step <= 0:
+                        continue
+
+                    frame_idx += 1
+                    frame_step = frame_idx * ntwx if ntwx > 0 else raw_step
+                    if frame_step <= analysis_start_step:
+                        continue
+                    rows.append(values)
+
+        if not rows:
+            raise ValueError(
+                f"No cmass frames remain in {win_dir} after "
+                f"analysis_start_step={analysis_start_step}"
+            )
+        return np.asarray(rows, dtype=float)
+
     def _extract_restraints_from_windows(self):
         num_win = len(self.windows)
         component = self.component
@@ -776,24 +931,15 @@ class RESTMBARAnalysis(MBARAnalysis):
     ) -> pd.DataFrame:
         """Compute reduced potentials for REST components from restraint traces."""
         kT = 0.0019872041 * temperature
-        win_dir = Path(f"{comp_folder}/{component}{win_i:02d}")
-        cwd0 = Path.cwd()
-        try:
-            os.chdir(win_dir)
+        win_dir = Path(f"{comp_folder}/{component}{win_i:02d}").resolve()
 
-            # enumerate mdin-XX.nc (or fallback md01.nc..)
-            nc_list: List[str] = []
-            nsims = len(glob.glob("mdin-*.nc"))
-            for i in range(nsims):
-                fn = f"mdin-{i:02d}.nc"
-                if os.path.exists(fn):
-                    nc_list.append(fn)
-
+        val = RESTMBARAnalysis._read_cmass_values(
+            win_dir, num_rest, analysis_start_step, ntwx
+        )
+        if val is None:
+            nc_list = RESTMBARAnalysis._window_nc_list(win_dir)
             if not nc_list:
-                fallback = ["md01.nc", "md02.nc", "md03.nc", "md04.nc"]
-                nc_list = [f for f in fallback if os.path.exists(f)]
-            if not nc_list:
-                raise FileNotFoundError("No NetCDF trajs for REST window")
+                raise FileNotFoundError("No cmass traces or NetCDF trajs for REST window")
 
             logger.debug(
                 f"[RESTMBAR] {component}{win_i:02d} using {len(nc_list)} nc files"
@@ -801,83 +947,83 @@ class RESTMBARAnalysis(MBARAnalysis):
 
             # generate restraint traces via cpptraj using current topology choice
             def _gen(top_choice: str):
-                generate_results_rest(nc_list, component, blocks=5, top=top_choice)
+                generate_results_rest(
+                    nc_list, component, blocks=5, top=top_choice, workdir=win_dir
+                )
 
             try:
                 _gen("full")
             except Exception:
                 _gen("vac")
 
-            with open("restraints.dat", "r") as fin:
+            with open(win_dir / "restraints.dat", "r") as fin:
                 lines = [ln for ln in fin if (ln and ln[0] not in "#@")]
             val = np.zeros((len(lines), num_rest), dtype=float)
             for n, line in enumerate(lines):
                 cols = line.split()
                 for r in range(num_rest):
-                    if rty[r] == "t":
-                        tmp = float(cols[r + 1])
-                        if tmp < req[win_i, r] - 180.0:
-                            tmp += 360.0
-                        elif tmp > req[win_i, r] + 180.0:
-                            tmp -= 360.0
-                        val[n, r] = tmp
-                    else:
-                        val[n, r] = float(cols[r + 1])
-
-            # reduced potential at this window
-            if component != "u":
-                if rfc[win_i, 0] == 0:  # guard tiny zeros
-                    tmp = np.ones((num_rest,), np.float64) * 1e-3
-                    u = np.sum(tmp * (val - req[win_i]) ** 2 / kT, axis=1)
-                else:
-                    u = np.sum(rfc[win_i] * (val - req[win_i]) ** 2 / kT, axis=1)
-            else:
-                u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
+                    val[n, r] = float(cols[r + 1])
 
             # Drop early frames if requested (convert steps -> frame index)
             start_idx = max(0, int(analysis_start_step))
             if analysis_start_step > 0 and ntwx > 0:
-                # frames recorded every ntwx steps; dt cancels but kept for clarity
-                start_idx = max(0, int(math.ceil(analysis_start_step / float(ntwx))))
-            if start_idx > 0:
-                logger.debug(
-                    f"[RESTMBAR] {component}{win_i:02d} dropping first {start_idx} frames "
-                    f"(analysis_start_step={analysis_start_step}, ntwx={ntwx})"
+                start_idx = max(
+                    0, int(math.ceil(analysis_start_step / float(ntwx)))
                 )
             if start_idx > 0:
-                u = u[start_idx:]
+                logger.debug(
+                    f"[RESTMBAR] {component}{win_i:02d} dropping first "
+                    f"{start_idx} frames (analysis_start_step="
+                    f"{analysis_start_step}, ntwx={ntwx})"
+                )
                 val = val[start_idx:]
 
-            t0 = 0
-            if truncate:
-                with SilenceAlchemlybOnly():
-                    t0, _, _ = detect_equilibration(u, nskip=10)
-                u = u[t0:]
-                val = val[t0:]
+        for r in range(num_rest):
+            if rty[r] != "t":
+                continue
+            low = val[:, r] < req[win_i, r] - 180.0
+            high = val[:, r] > req[win_i, r] + 180.0
+            val[low, r] += 360.0
+            val[high, r] -= 360.0
 
-            Upot = np.zeros((num_win, len(u)), np.float64)
-            for w in range(num_win):
-                if component != "u":
-                    Upot[w] = np.sum(rfc[w] * (val - req[w]) ** 2 / kT, axis=1)
-                else:
-                    Upot[w] = (rfc[w, 0] * (val[:, 0] - req[w, 0]) ** 2) / kT
+        # reduced potential at this window
+        if component != "u":
+            if rfc[win_i, 0] == 0:  # guard tiny zeros
+                tmp = np.ones((num_rest,), np.float64) * 1e-3
+                u = np.sum(tmp * (val - req[win_i]) ** 2 / kT, axis=1)
+            else:
+                u = np.sum(rfc[win_i] * (val - req[win_i]) ** 2 / kT, axis=1)
+        else:
+            u = (rfc[win_i, 0] * (val[:, 0] - req[win_i, 0]) ** 2) / kT
 
-            # Pack like alchemlyb (time,lambdas) MultiIndex
-            win_i_list = np.arange(num_win, dtype=np.float64)
-            mbar_time = np.arange(len(u), dtype=np.float64)
-            clambda = float(win_i)
+        t0 = 0
+        if truncate:
+            with SilenceAlchemlybOnly():
+                t0, _, _ = detect_equilibration(u, nskip=10)
+            u = u[t0:]
+            val = val[t0:]
 
-            mbar_df = pd.DataFrame(
-                Upot,
-                index=np.array(win_i_list, dtype=np.float64),
-                columns=pd.MultiIndex.from_arrays(
-                    [mbar_time, np.repeat(clambda, len(mbar_time))],
-                    names=["time", "lambdas"],
-                ),
-            ).T
-            return mbar_df
-        finally:
-            os.chdir(cwd0)
+        Upot = np.zeros((num_win, len(u)), np.float64)
+        for w in range(num_win):
+            if component != "u":
+                Upot[w] = np.sum(rfc[w] * (val - req[w]) ** 2 / kT, axis=1)
+            else:
+                Upot[w] = (rfc[w, 0] * (val[:, 0] - req[w, 0]) ** 2) / kT
+
+        # Pack like alchemlyb (time,lambdas) MultiIndex
+        win_i_list = np.arange(num_win, dtype=np.float64)
+        mbar_time = np.arange(len(u), dtype=np.float64)
+        clambda = float(win_i)
+
+        mbar_df = pd.DataFrame(
+            Upot,
+            index=np.array(win_i_list, dtype=np.float64),
+            columns=pd.MultiIndex.from_arrays(
+                [mbar_time, np.repeat(clambda, len(mbar_time))],
+                names=["time", "lambdas"],
+            ),
+        ).T
+        return mbar_df
 
 
 class BoreschAnalysis(FEAnalysisBase):
@@ -1016,13 +1162,18 @@ class BoreschAnalysis(FEAnalysisBase):
 
 
 def generate_results_rest(
-    md_sim_files: List[str], comp: str, blocks: int = 5, top: str = "full"
+    md_sim_files: List[str],
+    comp: str,
+    blocks: int = 5,
+    top: str = "full",
+    workdir: str | Path | None = None,
 ) -> None:
     """
     Build a cpptraj input on the fly using 'restraints.in' template in cwd,
     swapping the topology to ../{comp}-1/{top}.prmtop and appending trajins.
     """
-    with open("restraints.in", "r") as f:
+    work_path = Path.cwd() if workdir is None else Path(workdir)
+    with open(work_path / "restraints.in", "r") as f:
         lines = f.readlines()
 
     # drop any existing trajin lines
@@ -1041,15 +1192,16 @@ def generate_results_rest(
         r"parm\s+(\S+)", f"parm ../{comp}-1/{top}.prmtop", lines[parm_idx]
     )
 
-    with open("restraints_curr.in", "w") as f:
+    with open(work_path / "restraints_curr.in", "w") as f:
         f.writelines(lines[: parm_idx + 1])
         for mdin in md_sim_files:
             f.write(f"trajin {mdin}\n")
         f.writelines(lines[parm_idx + 1 :])
 
-    rc = run_with_log(f"{cpptraj} -i restraints_curr.in > restraints.log 2>&1")
-    if rc != 0:
-        raise RuntimeError("cpptraj failed; see restraints.log")
+    run_with_log(
+        f"{cpptraj} -i restraints_curr.in > restraints.log 2>&1",
+        working_dir=work_path,
+    )
 
 
 # ---- lig wrapper ------------------------------------------------------------

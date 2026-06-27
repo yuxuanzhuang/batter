@@ -83,6 +83,23 @@ class RBFE(FEProtocol):
         return ["fe/index", "fe/<run_id>/record", "fe/<run_id>/windows"]
 
 
+class RBFESeptop(RBFE):
+    name = "rbfe_septop"
+
+    def validate(self, ctx: ProtocolContext) -> None:
+        if ctx.sim.fe_type != "relative_septop":
+            raise ValueError("RBFESeptop expects fe_type='relative_septop'.")
+        if not ctx.sim.components:
+            raise ValueError("RBFESeptop requires non-empty components (derived from fe_type).")
+
+    def plan(self, ctx: ProtocolContext) -> Pipeline:
+        sim = ctx.sim
+        steps = [step_prepare_fe(sim)]
+        if not ctx.only_fe_preparation:
+            steps += [step_equil(sim), step_windows(sim, list(sim.components)), step_analysis(sim, "rbfe_septop")]
+        return Pipeline(steps=steps)
+
+
 # One-time registration
 from .protocols import register_protocol
 register_protocol(ABFE())
@@ -90,3 +107,4 @@ register_protocol(ABFEDiff())
 register_protocol(LigandRest())
 register_protocol(ASFE())
 register_protocol(RBFE())
+register_protocol(RBFESeptop())

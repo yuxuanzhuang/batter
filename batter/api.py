@@ -286,10 +286,10 @@ def run_analysis_from_execution(
     }
 
     requested = (ligand or "").strip() or None
-    protocol_lower = str(protocol).lower()
+    protocol_lower = str(protocol).lower().replace("-", "_")
     children: list[SimSystem] = []
 
-    if protocol_lower == "rbfe":
+    if protocol_lower in {"rbfe", "rbfe_septop"}:
         trans_root = run_dir / "simulations" / "transformations"
         if not trans_root.is_dir():
             raise FileNotFoundError(
@@ -466,7 +466,7 @@ def run_analysis_from_execution(
             [f"{name} ({status}: {reason})" for name, status, reason in failures]
         )
         logger.warning(f"Analysis recorded issues for run '{run_id}': {failed}")
-    if protocol_lower == "rbfe":
+    if protocol_lower in {"rbfe", "rbfe_septop"}:
         try:
             from batter.analysis.cinnabar import auto_write_rbfe_cinnabar_for_run
 

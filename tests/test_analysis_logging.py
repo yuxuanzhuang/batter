@@ -107,6 +107,33 @@ def test_component_results_json_includes_backward_and_convergence_data(
     assert payload["convergence"]["overlap_matrix"] == [[1.0, 0.2], [0.2, 1.0]]
 
 
+def test_mbar_convergence_fallback_repeats_final_estimate(tmp_path: Path) -> None:
+    (tmp_path / "z").mkdir()
+    ana = analysis_mod.MBARAnalysis(
+        lig_folder=str(tmp_path),
+        component="z",
+        windows=[0, 1],
+        temperature=300.0,
+        detect_equil=False,
+        dt=0.004,
+    )
+    ana.results["fe"] = 1.25
+    ana.results["fe_error"] = 0.5
+
+    ana._set_convergence_fallback("too few frames", n_points=3)
+
+    assert ana.results["fe_timeseries"].shape == (3, 2)
+    assert ana.results["fe_timeseries_backward"].shape == (3, 2)
+    assert np.allclose(ana.results["fe_timeseries"][:, 0], 1.25)
+    assert np.allclose(ana.results["fe_timeseries"][:, 1], 0.5)
+    assert list(ana.results["convergence"]["time_convergence"].columns) == [
+        "Forward",
+        "Forward_Error",
+        "Backward",
+        "Backward_Error",
+    ]
+
+
 def test_analyze_lig_task_writes_backward_fe_timeseries(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -243,13 +270,17 @@ def test_rest_mbar_extract_window_does_not_remove_global_logger(
 ) -> None:
     win_dir = tmp_path / "a00"
     win_dir.mkdir()
-    (win_dir / "mdin-00.nc").write_text("")
+    (win_dir / "md-01.nc").write_text("")
+    seen_nc_lists: list[list[str]] = []
 
     def _fail_remove(*args, **kwargs):
         raise AssertionError("logger.remove should not be called during FE analysis")
 
-    def _fake_generate_results_rest(nc_list, component, blocks=5, top="full"):
-        Path("restraints.dat").write_text("0 1.0\n1 1.5\n")
+    def _fake_generate_results_rest(
+        nc_list, component, blocks=5, top="full", workdir=None
+    ):
+        seen_nc_lists.append(list(nc_list))
+        Path(workdir).joinpath("restraints.dat").write_text("0 1.0\n1 1.5\n")
 
     monkeypatch.setattr(analysis_mod.logger, "remove", _fail_remove)
     monkeypatch.setattr(analysis_mod.logger, "debug", lambda *a, **k: None)
@@ -272,6 +303,86 @@ def test_rest_mbar_extract_window_does_not_remove_global_logger(
     )
 
     assert not out.empty
+    assert seen_nc_lists == [["md-01.nc"]]
+
+
+def test_rest_mbar_extract_window_reads_segmented_cmass_without_cpptraj(
+    tmp_path: Path, monkeypatch
+) -> None:
+    win_dir = tmp_path / "l00"
+    win_dir.mkdir()
+    (win_dir / "cmass.txt").write_text("100 99.0 99.0\n")
+    (win_dir / "cmass-02.txt").write_text(
+        "# step r1 r2\n"
+        "0 19.0 29.0\n"
+        "100 2.0 3.0\n"
+        "200 2.5 3.5\n"
+    )
+    (win_dir / "cmass-01.txt").write_text(
+        "# step r1 r2\n"
+        "0 9.0 9.0\n"
+        "0 9.1 9.1\n"
+        "100 1.0 1.0\n"
+        "200 1.5 1.5\n"
+    )
+
+    def _fail_generate_results_rest(*args, **kwargs):
+        raise AssertionError("segmented cmass traces should avoid cpptraj extraction")
+
+    monkeypatch.setattr(analysis_mod, "generate_results_rest", _fail_generate_results_rest)
+
+    kT = 0.0019872041 * 300.0
+    out = analysis_mod.RESTMBARAnalysis._extract_all_for_window(
+        win_i=0,
+        comp_folder=str(tmp_path),
+        component="l",
+        temperature=300.0,
+        analysis_start_step=200,
+        rfc=np.array([[1.0, 1.0], [1.0, 1.0]]),
+        req=np.array([[2.0, 3.0], [2.5, 3.5]]),
+        rty=["d", "d"],
+        num_rest=2,
+        num_win=2,
+        truncate=False,
+        dt=0.004,
+        ntwx=100,
+    )
+
+    assert len(out) == 2
+    assert list(out.columns) == [0.0, 1.0]
+    np.testing.assert_allclose(out[0.0].to_numpy(), [0.0, 0.5 / kT])
+    np.testing.assert_allclose(out[1.0].to_numpy(), [0.5 / kT, 0.0])
+
+
+def test_generate_results_rest_accepts_successful_run_with_log(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "restraints.in").write_text(
+        "parm vac.prmtop\n"
+        "trajin md02.nc\n"
+        "distance d0 :1@C :2@C out restraints.dat\n"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    calls: list[str] = []
+
+    def _fake_run_with_log(command: str, working_dir=None):
+        calls.append(command)
+        assert Path(working_dir) == tmp_path
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(analysis_mod, "run_with_log", _fake_run_with_log)
+
+    analysis_mod.generate_results_rest(["md-01.nc"], "l", top="full")
+
+    assert calls == [
+        f"{analysis_mod.cpptraj} -i restraints_curr.in > restraints.log 2>&1"
+    ]
+    assert (tmp_path / "restraints_curr.in").read_text().splitlines() == [
+        "parm ../l-1/full.prmtop",
+        "trajin md-01.nc",
+        "distance d0 :1@C :2@C out restraints.dat",
+    ]
 
 
 def test_allow_loguru_record_suppresses_alchemlyb_info() -> None:

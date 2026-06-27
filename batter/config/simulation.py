@@ -29,6 +29,7 @@ PROTOCOL_TO_FE_TYPE = {
     "abfe": "uno_rest",
     "abfe_diff": "uno_rest_diff",
     "rbfe": "relative",
+    "rbfe_septop": "relative_septop",
     "asfe": "asfe",
     "ligand_rest": "ligand_rest",
     "md": "md",
@@ -151,7 +152,7 @@ class SimulationConfig(BaseModel):
             "n_steps",
             dict(_fe_attr("n_steps", lambda: {"x": 300_000, "y": 300_000}) or {}),
         )
-        if proto_key == "rbfe" and "x" not in n_steps:
+        if proto_key in {"rbfe", "rbfe_septop"} and "x" not in n_steps:
             n_steps["x"] = 300_000
 
         base_lambdas = _coerce_lambda_list("lambdas", _fe_attr("lambdas", list) or [])
@@ -173,6 +174,7 @@ class SimulationConfig(BaseModel):
             "asfe": ["y", "m"],
             "ligand_rest": ["l"],
             "rbfe": ["x"],
+            "rbfe_septop": ["x"],
         }.get(proto_key, [])
         for comp in required_components:
             if comp not in n_steps:
@@ -321,6 +323,7 @@ class SimulationConfig(BaseModel):
         "sdr-rest",
         "express",
         "relative",
+        "relative_septop",
         "uno",
         "uno_com",
         "uno_rest",
@@ -724,6 +727,8 @@ class SimulationConfig(BaseModel):
                 ], "dd"
             case "relative":
                 self.components, self.dec_method = ["x"], "exchange"
+            case "relative_septop":
+                self.components, self.dec_method = ["x"], "exchange"
             case "uno":
                 self.components, self.dec_method = ["m", "n", "o"], "sdr"
             case "uno_rest":
@@ -768,7 +773,7 @@ class SimulationConfig(BaseModel):
             if not lambdas:
                 lambdas = self.lambdas
                 if not lambdas:
-                    if self.fe_type == "relative" and comp == "x":
+                    if self.fe_type in {"relative", "relative_septop"} and comp == "x":
                         raise ValueError(
                             "RBFE requires a lambda schedule for component 'x'. "
                             "Set fe_sim.lambdas (or fe_sim.component_lambdas.x / x_lambdas)."

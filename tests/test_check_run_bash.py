@@ -12,6 +12,14 @@ def _write_ascii_restart(path: Path, natom: int, payload_fields: int) -> None:
     path.write_text("".join(lines))
 
 
+def _restart_text(time_ps: str) -> str:
+    return (
+        "Stub Amber restart\n"
+        f"1  {time_ps}\n"
+        "  0.0  0.0  0.0\n"
+    )
+
+
 def _run_check_min_energy(output_file: Path) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[1]
     cmd = (
@@ -194,6 +202,9 @@ def test_reduce_dt_on_failure_updates_template_and_current(tmp_path: Path) -> No
 
     tmpl.write_text("nstlim = 10,\ndt = 0.004,\n")
     current.write_text("nstlim = 8,\ndt = 0.004,\n")
+    (tmp_path / "md-01.out").write_text("stale md\n")
+    (tmp_path / "cmass.txt").write_text("stale legacy cmass\n")
+    (tmp_path / "cmass-01.txt").write_text("stale segmented cmass\n")
 
     cmd = (
         f"source '{check_run}' "
@@ -211,6 +222,9 @@ def test_reduce_dt_on_failure_updates_template_and_current(tmp_path: Path) -> No
     assert "dt=0.003000" in tmpl.read_text()
     assert "dt=0.003000" in current.read_text()
     assert "! target_dt=0.004" in tmpl.read_text()
+    assert not (tmp_path / "md-01.out").exists()
+    assert not (tmp_path / "cmass.txt").exists()
+    assert not (tmp_path / "cmass-01.txt").exists()
 
 
 def test_target_dt_and_remaining_steps_use_reduced_dt(tmp_path: Path) -> None:
@@ -350,6 +364,84 @@ def test_write_mdin_current_uses_job_attempt_dt(tmp_path: Path) -> None:
     rendered_text = rendered.read_text()
     assert "nstlim = 8," in rendered_text
     assert "dt=0.003000" in rendered_text
+    assert "irest = 1," in rendered_text
+    assert "ntx = 5," in rendered_text
+
+
+def test_write_mdin_current_fresh_start_uses_coordinate_restart_mode(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    rendered = tmp_path / "rendered-current"
+
+    tmpl.write_text(
+        "&cntrl\n"
+        "  irest = 1,\n"
+        "  ntx = 5,\n"
+        "  nstlim = 10,\n"
+        "  dt = 0.004,\n"
+        "  temp0 = 298.15,\n"
+        "/\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current 'mdin-template' 8 1 'mdin-current' '' 20 > 'rendered-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered_text = rendered.read_text()
+    assert "irest = 0," in rendered_text
+    assert "ntx = 1," in rendered_text
+    assert "nstlim = 8," in rendered_text
+    assert "t = 20," in rendered_text
+    assert "tempi = 298.15," in rendered_text
+
+
+def test_write_mdin_current_rewrites_dumpave_to_segment_cmass(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    rendered = tmp_path / "rendered-current"
+
+    tmpl.write_text(
+        "&cntrl\n"
+        "  irest = 1,\n"
+        "  ntx = 5,\n"
+        "  nstlim = 10,\n"
+        "  dt = 0.004,\n"
+        "/\n"
+        "DISANG=disang.rest\n"
+        "DUMPAVE=cmass.txt\n"
+        "LISTIN=POUT\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current "
+        "'mdin-template' 8 0 'mdin-current' '' '' 'cmass-02.txt' "
+        "> 'rendered-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered_text = rendered.read_text()
+    assert "nstlim = 8," in rendered_text
+    assert "DUMPAVE=cmass-02.txt" in rendered_text
+    assert "DUMPAVE=cmass.txt" not in rendered_text
 
 
 def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_path: Path) -> None:
@@ -437,7 +529,7 @@ def test_cleanup_stale_md_artifacts_strict_archives_suspect_current_restart(
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
-    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -465,7 +557,7 @@ def test_cleanup_stale_md_artifacts_relaxed_keeps_interrupted_current_restart(
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "mdin-template").write_text("nstlim = 10,\ndt = 0.004,\n")
-    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -548,7 +640,7 @@ EOF
 def test_select_valid_md_restart_keeps_current_restart(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
-    (tmp_path / "md-current.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-current.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-01.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      50.000  TEMP(K) =   298.0\n"
@@ -579,7 +671,7 @@ def test_select_valid_md_restart_archives_invalid_current_and_uses_previous(
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
     (tmp_path / "md-current.rst7").write_text("not a restart\n")
-    (tmp_path / "md-previous.rst7").write_text("time=50.0000000000\n")
+    (tmp_path / "md-previous.rst7").write_text(_restart_text("50.0000000000"))
     (tmp_path / "md-02.out").write_text(
         "CONTROL DATA FOR THE RUN\n"
         " NSTEP =    10000   TIME(PS) =      60.000  TEMP(K) =   298.0\n"

@@ -367,6 +367,43 @@ def test_build_rbfe_network_plan_adds_atom_mapping_edges_when_requested(
     assert seen["pairs"] == [["A", "B"], ["B", "C"]]
 
 
+def test_build_rbfe_network_plan_defaults_septop_to_shape_scorer(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from batter.config.run import RBFENetworkArgs
+
+    monkeypatch.setitem(sys.modules, "konnektor", types.ModuleType("konnektor"))
+    seen: dict[str, object] = {}
+
+    def _fake_konnektor_pairs(*args, **kwargs):
+        seen["network_scorer"] = kwargs["network_scorer"]
+        seen["protocol"] = kwargs["protocol"]
+        return [("A", "B")]
+
+    def _fake_mapping_artifacts(**kwargs):
+        return {}
+
+    monkeypatch.setattr("batter.rbfe.konnektor_pairs", _fake_konnektor_pairs)
+    monkeypatch.setattr(
+        "batter.rbfe.write_planned_mapping_artifacts",
+        _fake_mapping_artifacts,
+    )
+
+    payload = run_mod._build_rbfe_network_plan(
+        ["A", "B"],
+        {"A": str(tmp_path / "A.sdf"), "B": str(tmp_path / "B.sdf")},
+        RBFENetworkArgs(mapping="default"),
+        tmp_path,
+        protocol="rbfe_septop",
+    )
+
+    assert payload["pairs"] == [["A", "B"]]
+    assert payload["network_scorer"] == "shape_difference"
+    assert seen["network_scorer"] == "auto"
+    assert seen["protocol"] == "rbfe_septop"
+
+
 def test_build_rbfe_network_plan_skips_identical_duplicate_ligands(
     monkeypatch,
     tmp_path: Path,
@@ -625,7 +662,7 @@ def test_prepare_rbfe_handler_writes_parent_stage_marker(
 
     called: dict[str, object] = {}
 
-    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir):
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir, **kwargs):
         called["ligands"] = list(ligands)
         called["lig_map"] = dict(lig_map)
         called["config_dir"] = config_dir
@@ -804,7 +841,7 @@ def test_maybe_regenerate_rbfe_network_after_pruning_triggers_rebuild(
     }
     called: dict[str, object] = {}
 
-    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir):
+    def _fake_build(ligands, lig_map, rbfe_cfg, config_dir, **kwargs):
         called["ligands"] = list(ligands)
         called["lig_map"] = dict(lig_map)
         called["config_dir"] = config_dir

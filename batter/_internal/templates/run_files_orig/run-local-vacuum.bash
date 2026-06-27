@@ -125,16 +125,16 @@ if (( remaining_steps > 0 )); then
     fi
     run_ps=$(awk -v s="$run_steps" -v dt="$dt_ps" 'BEGIN{printf "%.6f\n", s*dt}')
 
-    # first_run if no md-*.out exists yet
     first_run=0
-    if [[ $(latest_md_index "md-*.out") -lt 0 ]]; then
+    if [[ "$rst_in" == "$production_initial_rst" ]]; then
         first_run=1
     fi
 
     out_tag=$(printf "md-%02d" $((seg_idx + 1)))
+    cmass_file=$(printf "cmass-%02d.txt" $((seg_idx + 1)))
     echo "[INFO] Running segment $((seg_idx + 1)) -> ${out_tag}.out for ${run_steps} steps (${run_ps} ps); restart_in=$rst_in"
 
-    write_mdin_current "$tmpl" "$run_steps" "$first_run" "$mdin_current" > "$mdin_current"
+    write_mdin_current "$tmpl" "$run_steps" "$first_run" "$mdin_current" "$retry" "$start_ps" "$cmass_file" > "$mdin_current"
 
     # Preflight: ensure output directory writable (avoids Fortran OPEN errors)
     : > .write_test.$$ 2>/dev/null || {
@@ -154,7 +154,7 @@ if (( remaining_steps > 0 )); then
     fi
 
     print_and_run "$PMEMD_EXEC -O -i $mdin_current -p $PRMTOP -c $rst_in -o ${out_tag}.out -r md-current.rst7 -x ${out_tag}.nc -ref mini.in.rst7 -AllowSmallBox >> \"$log_file\" 2>&1"
-    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc"
+    check_sim_failure "MD segment $((seg_idx + 1))" "$log_file" "md-current.rst7" "" "$retry" "${out_tag}.out" "${out_tag}.nc" "$cmass_file"
 
     # Update production elapsed time from the rolling restart.
     restart_ps=$(completed_steps "$tmpl" 2>/dev/null | tail -n 1)

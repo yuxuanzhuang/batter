@@ -14,6 +14,7 @@ __all__ = [
     "make_asfe_pipeline",
     "make_ligand_rest_pipeline",
     "make_rbfe_pipeline",
+    "make_rbfe_septop_pipeline",
     "make_md_pipeline",
 ]
 
@@ -495,6 +496,27 @@ def make_rbfe_pipeline(
         steps = [s for s in steps if s.name in keep]
 
     return Pipeline(steps)
+
+
+def make_rbfe_septop_pipeline(
+    sim: SimulationConfig,
+    sys_params: SystemParams | dict | None,
+    only_fe_preparation: bool = False,
+    *,
+    extra: dict | None = None,
+) -> Pipeline:
+    """SEPTOP RBFE uses the standard RBFE system-preparation graph."""
+    params_model = (
+        sys_params
+        if isinstance(sys_params, SystemParams)
+        else SystemParams.model_validate(sys_params or {})
+    ).copy_with(protocol="rbfe_septop")
+    return make_rbfe_pipeline(
+        sim,
+        sys_params=params_model,
+        only_fe_preparation=only_fe_preparation,
+        extra=extra,
+    )
 
 
 def make_asfe_pipeline(

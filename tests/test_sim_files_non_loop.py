@@ -755,11 +755,10 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     mini_text = (windows_dir / "mini.in").read_text()
     mini_eq_text = (windows_dir / "mini_eq.in").read_text()
 
-    assert "((@CA & :1) | (@10-11) | :1-2 ) & !@H=" in eq_text
+    assert "((@CA & :1) | (@10-11,20-21) | :1-2 ) & !@H=" in eq_text
     assert re.search(r"\|\s*@10\s*\|", eq_text) is None
 
-    assert "(:1-2 | @10) & !@H=" in template_text
-    assert re.search(r"(^|[^0-9])@20([^0-9]|$)", template_text) is None
+    assert "(:1-2 | @10 | @20) & !@H=" in template_text
 
     assert ":REF" in mini_text
     assert ":ALT" in mini_text
@@ -768,3 +767,99 @@ def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
     assert ":REF" in mini_eq_text
     assert ":ALT" in mini_eq_text
     assert re.search(r"\|\s*@10\s*\|", mini_eq_text) is None
+
+
+def test_sim_files_x_septop_enables_lambda_dependent_boresch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(sim_files, "_resolve_non_loop_mask", lambda *args, **kwargs: ":1")
+
+    work_dir = tmp_path / "work"
+    windows_dir = work_dir / "x00"
+    amber_dir = tmp_path / "amber"
+    equil_dir = work_dir / "x-1"
+    windows_dir.mkdir(parents=True)
+    amber_dir.mkdir(parents=True)
+    equil_dir.mkdir(parents=True)
+
+    (equil_dir / "scmask.json").write_text(
+        json.dumps(
+            {
+                "scmk1_all_indices": [10, 11, 12],
+                "scmk1_cc_solvent_indices": [],
+                "scmk1_cc_site_indices": [],
+                "scmk2_all_indices": [20, 21, 22],
+                "scmk2_cc_solvent_indices": [],
+                "scmk2_cc_site_indices": [],
+            }
+        )
+    )
+    (windows_dir / "vac.pdb").write_text(
+        "ATOM      1  C1  REF A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C1  REF A   2       1.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      3  C1  ALT A   3       2.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      4  C1  ALT A   4       3.000   0.000   0.000  1.00  0.00           C\n"
+        "END\n"
+    )
+    (amber_dir / "mdin-ex").write_text(
+        "&cntrl\n"
+        "  ntx = 5,\n"
+        "  irest = 1,\n"
+        "  ntwx = 100,\n"
+        "  ntwprt = 10,\n"
+        "  dt = _step_,\n"
+        "  nmropt = 1,\n"
+        "  restraint_wt = 50.0,\n"
+        "  restraintmask = ':1-2',\n"
+        "  timask1 = 'timk1',\n"
+        "  timask2 = 'timk2',\n"
+        "  scmask1='scmk1',\n"
+        "  scmask2='scmk2',\n"
+        "  gti_vdw_exp     = 2\n"
+        "/\n"
+    )
+    (amber_dir / "mini-ex").write_text(
+        "&cntrl\n"
+        "  nmropt = 1,\n"
+        "  restraintmask = ':_lig1_name_ | :_lig2_name_',\n"
+        "  gti_vdw_exp     = 2\n"
+        "/\n"
+    )
+
+    ctx = SimpleNamespace(
+        comp="x",
+        residue_name="REF",
+        extra={"residue_alt": "ALT"},
+        working_dir=work_dir,
+        window_dir=windows_dir,
+        amber_dir=amber_dir,
+        win=0,
+        build_dir=tmp_path / "build_unused",
+        system_root=tmp_path / "system_unused",
+        sim=SimpleNamespace(
+            fe_type="relative_septop",
+            temperature=300.0,
+            dic_n_steps={"x": 4000},
+            ntwx=250,
+            all_atoms="no",
+        ),
+    )
+
+    sim_files.sim_files_x(ctx, [0.0, 1.0])
+
+    eq_text = (windows_dir / "eq.in").read_text()
+    template_text = (windows_dir / "mdin-template").read_text()
+
+    assert "nmropt = 1" in eq_text
+    assert "gti_bat_sc      = 1" in eq_text
+    assert "gti_bat_sc      = 1" in template_text
+    assert "gti_bat_sc      = 1" in (windows_dir / "mini.in").read_text()
+    assert "scmask1='@10-12'" in eq_text
+    assert "scmask2='@20-22'" in eq_text
+    assert "scmask1='@10-12'" in template_text
+    assert "scmask2='@20-22'" in template_text
+    assert "((@CA & :1) | (@4 | @2) | :1-2 ) & !@H=" in eq_text
+    assert "(:1-2 | @4 | @2) & !@H=" in template_text
+    assert (windows_dir / "lambda.sch").read_text() == (
+        "TypeRestBA, smooth_step2, symmetric, 1.0, 0.0\n"
+    )

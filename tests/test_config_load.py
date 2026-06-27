@@ -223,6 +223,7 @@ create:
 fe_sim: {{}}
 rbfe:
   mapping: konnektor
+  network_scorer: shape-difference
   atom_mapping_file: atom_mapping.json
   atom_mapper: lomap
   lomap:
@@ -242,6 +243,7 @@ rbfe:
     assert cfg.rbfe.atom_mapping_file == Path("atom_mapping.json")
     assert cfg.rbfe.resolve_paths(tmp_path).atom_mapping_file == atom_mapping.resolve()
     assert cfg.rbfe.atom_mapper == "lomap"
+    assert cfg.rbfe.network_scorer == "shape_difference"
     assert cfg.rbfe.lomap.time == 7
     assert cfg.rbfe.lomap.max3d == 2.0
     assert cfg.rbfe.lomap.shift is False
@@ -283,6 +285,7 @@ def test_rbfe_kartograf_mapper_defaults() -> None:
     assert cfg.kartograf.map_exact_ring_matches_only is True
     assert cfg.kartograf.allow_partial_fused_rings is True
     assert cfg.kartograf.allow_bond_breaks is False
+    assert cfg.network_scorer == "auto"
     assert cfg.add_atom_mapping_edges is False
 
 
@@ -717,6 +720,8 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
         n_steps = {"d": 300_000}
     elif normalized_protocol == "ligand_rest":
         n_steps = {"l": 100_000}
+    elif normalized_protocol in {"rbfe", "rbfe_septop"}:
+        n_steps = {"x": 300_000}
     else:
         n_steps = {"y": 300_000, "m": 300_000}
     extra_fe = {}
@@ -744,6 +749,7 @@ def _minimal_run_config(tmp_path: Path, protocol: str) -> RunConfig:
         ("abfe", "uno_rest"),
         ("ABFE_diff", "uno_rest_diff"),
         ("ligand-rest", "ligand_rest"),
+        ("rbfe-septop", "relative_septop"),
     ],
 )
 def test_resolved_sim_config_sets_fe_type(

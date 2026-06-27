@@ -214,7 +214,9 @@ amber_restart_validation_status() {
         return 0
     fi
 
-    if command -v ncdump >/dev/null 2>&1 && ncdump -h "$restart_path" >/dev/null 2>&1; then
+    if has_netcdf_magic "$restart_path" \
+        && command -v ncdump >/dev/null 2>&1 \
+        && ncdump -h "$restart_path" >/dev/null 2>&1; then
         netcdf_restart_validation_status "$restart_path"
         return 0
     fi
@@ -303,6 +305,16 @@ md_out_has_completion_marker() {
     grep -Eq 'Final Performance Info|Total wall time' "$path"
 }
 
+cmass_file_for_md_stem() {
+    local stem=$1
+    local n
+
+    if [[ $stem =~ ^md-?([0-9]+)$ ]]; then
+        n=${BASH_REMATCH[1]}
+        printf "cmass-%02d.txt\n" "$((10#$n))"
+    fi
+}
+
 archive_incomplete_md_out_if_present() {
     local path=$1
     local retry_count=${2:-}
@@ -318,7 +330,8 @@ archive_incomplete_md_out_if_present() {
         "${stem}.nc" \
         "${stem}.log" \
         "${stem}.mden" \
-        "${stem}.mdinfo"
+        "${stem}.mdinfo" \
+        "$(cmass_file_for_md_stem "$stem")"
     echo "[INFO] Archived incomplete MD output $path before restart."
     return 0
 }
@@ -342,6 +355,7 @@ archive_suspect_md_restart_if_present() {
         "${stem}.log" \
         "${stem}.mden" \
         "${stem}.mdinfo" \
+        "$(cmass_file_for_md_stem "$stem")" \
         "$restart_file"
     echo "[INFO] Archived incomplete MD segment $out_file and suspect restart $restart_file before resume."
     return 0
@@ -397,7 +411,8 @@ archive_zero_frame_md_trajectory_if_present() {
         "$nc_file" \
         "${stem}.log" \
         "${stem}.mden" \
-        "${stem}.mdinfo"
+        "${stem}.mdinfo" \
+        "$(cmass_file_for_md_stem "$stem")"
     echo "[INFO] Archived zero-frame MD trajectory $nc_file before restart."
     return 0
 }
@@ -480,6 +495,7 @@ cleanup_stale_empty_md_artifacts() {
         "md-current.rst7"
         "md-previous.rst7"
         "cmass.txt"
+        "cmass-*.txt"
     )
 
     if [[ -n ${ZSH_VERSION-} ]]; then
@@ -1141,7 +1157,7 @@ reduce_dt_on_failure() {
     fi
 
     # remove old sims if there's any.
-    rm -f md-*
+    rm -f md-* cmass.txt cmass-*.txt
     echo "[INFO] Reduced dt in $tmpl after ${stage} failure (attempt ${retry_count}): ${dt} -> ${new_dt}"
 }
 
@@ -1437,12 +1453,88 @@ completed_production_ps() {
 }
 
 
+mdin_set_cntrl_value() {
+    local key=$1
+    local value=$2
+
+    awk -v key="$key" -v value="$value" '
+        BEGIN {
+            in_cntrl = 0
+            inserted = 0
+            key_pattern = "^[[:space:]]*" tolower(key) "[[:space:]]*="
+        }
+        {
+            line = $0
+            lower = tolower(line)
+            if (lower ~ /^[[:space:]]*&cntrl/) {
+                in_cntrl = 1
+            }
+            if (lower ~ key_pattern) {
+                print "  " key " = " value ","
+                inserted = 1
+                next
+            }
+            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/ && inserted == 0) {
+                print "  " key " = " value ","
+                inserted = 1
+            }
+            print line
+            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/) {
+                in_cntrl = 0
+            }
+        }
+    '
+}
+
+mdin_get_cntrl_value() {
+    local key=$1
+
+    awk -v key="$key" '
+        BEGIN {
+            key_pattern = "^[[:space:]]*" tolower(key) "[[:space:]]*="
+        }
+        {
+            line = $0
+            lower = tolower(line)
+            if (lower ~ key_pattern) {
+                sub(/^[^=]*=/, "", line)
+                sub(/,.*/, "", line)
+                gsub(/[[:space:]]/, "", line)
+                print line
+                exit
+            }
+        }
+    '
+}
+
+mdin_has_cntrl_value() {
+    local key=$1
+
+    awk -v key="$key" '
+        BEGIN {
+            key_pattern = "^[[:space:]]*" tolower(key) "[[:space:]]*="
+            found = 0
+        }
+        {
+            if (tolower($0) ~ key_pattern) {
+                found = 1
+                exit
+            }
+        }
+        END {
+            exit !found
+        }
+    '
+}
+
 write_mdin_current() {
     local tmpl=${1:-mdin-template}
     local nstlim_value=$2
     local first_run=$3
     local current_mdin=${4:-mdin-current}
     local retry_count=${5:-}
+    local initial_time_ps=${6:-}
+    local dumpave_file=${7:-}
 
     [[ -f $tmpl ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
 
@@ -1467,10 +1559,34 @@ write_mdin_current() {
         ')
     fi
 
-    text=$(echo "$text" \
-        | sed -E 's/^[[:space:]]*irest[[:space:]]*=.*/  irest = 1,/' \
-        | sed -E 's/^[[:space:]]*ntx[[:space:]]*=.*/  ntx   = 5,/')
+    if [[ $first_run == 1 ]]; then
+        local temp0_value
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "0")
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "1")
+        if [[ $initial_time_ps =~ ^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]]; then
+            text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "t" "$initial_time_ps")
+        fi
+        if ! printf "%s\n" "$text" | mdin_has_cntrl_value "tempi"; then
+            temp0_value=$(printf "%s\n" "$text" | mdin_get_cntrl_value "temp0")
+            if [[ -n $temp0_value ]]; then
+                text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "tempi" "$temp0_value")
+            fi
+        fi
+    else
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "irest" "1")
+        text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "ntx" "5")
+    fi
 
-    text=$(echo "$text" | sed -E "s/^[[:space:]]*nstlim[[:space:]]*=.*/  nstlim = ${nstlim_value},/")
+    text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "nstlim" "$nstlim_value")
+    if [[ -n $dumpave_file ]]; then
+        text=$(printf "%s\n" "$text" | awk -v dumpave="$dumpave_file" '
+            BEGIN{IGNORECASE=1}
+            /^[[:space:]]*DUMPAVE[[:space:]]*=/ {
+                print "DUMPAVE=" dumpave
+                next
+            }
+            { print }
+        ')
+    fi
     echo "$text"
 }
