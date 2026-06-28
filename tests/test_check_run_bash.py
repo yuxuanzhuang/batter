@@ -450,8 +450,21 @@ def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_
     tmpl = tmp_path / "mdin-template"
     current = tmp_path / "mdin-current"
 
-    tmpl.write_text("! target_dt=0.004\nirest = 1,\nntx = 5,\nnstlim = 10,\ndt = 0.001,\n")
-    current.write_text("irest = 1,\nntx = 5,\nnstlim = 8,\ndt = 0.001,\n")
+    tmpl.write_text(
+        "! target_dt=0.004\n"
+        "irest = 1,\n"
+        "ntx = 5,\n"
+        "nstlim = 10,\n"
+        "dt = 0.001,\n"
+        "DUMPAVE=cmass.txt\n"
+    )
+    current.write_text(
+        "irest = 1,\n"
+        "ntx = 5,\n"
+        "nstlim = 8,\n"
+        "dt = 0.001,\n"
+        "DUMPAVE=cmass-03.txt\n"
+    )
     (tmp_path / "job_attempt.txt").write_text("4\n")
 
     cmd = (
@@ -471,6 +484,8 @@ def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_
     current_text = current.read_text()
     assert "nstlim = 8," in current_text
     assert "dt=0.003000" in current_text
+    assert "DUMPAVE=cmass-03.txt" in current_text
+    assert "DUMPAVE=cmass.txt" not in current_text
 
 
 def test_write_mdin_current_same_file_redirect_keeps_template_dt(tmp_path: Path) -> None:

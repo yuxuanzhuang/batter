@@ -104,7 +104,9 @@ def write_fe_run_file(
     tpl_check = src_dir / "check_run.bash"
     if comp == "m":
         tpl_local = src_dir / "run-local-vacuum.bash"
-    elif comp == "x":
+    elif comp == "x" or (
+        comp == "d" and getattr(ctx.sim, "fe_type", None) == "uno_rest_diff"
+    ):
         tpl_local = src_dir / "run-local-rbfe.bash"
     else:
         tpl_local = src_dir / "run-local.bash"

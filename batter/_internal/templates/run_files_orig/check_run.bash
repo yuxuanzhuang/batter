@@ -769,14 +769,16 @@ cleanup_failed_md_segment() {
         return
     fi
 
-    local out_tag win
+    local out_tag cmass_tag win
     out_tag=$(printf "md-%02d" "$seg_idx")
+    cmass_tag=$(cmass_file_for_md_stem "$out_tag")
     for ((i = 0; i < n_windows; i++)); do
         win=$(printf "%s%02d" "$comp" "$i")
         rm -f "${pfolder}/${win}/${out_tag}.out" \
               "${pfolder}/${win}/${out_tag}.nc" \
               "${pfolder}/${win}/${out_tag}.log" \
               "${pfolder}/${win}/${out_tag}.mden" \
+              "${pfolder}/${win}/${cmass_tag}" \
               "${pfolder}/${win}/md-current.rst7"
     done
 }
@@ -997,15 +999,23 @@ sync_current_mdin_from_template() {
 
     [[ -n "$current_mdin" && -f "$current_mdin" ]] || return 0
 
-    local nstlim_value tmp
+    local nstlim_value tmp dumpave_file
     if [[ $(basename -- "$current_mdin") == "mdin-remd-current" ]]; then
         rewrite_mdin_dt_file "$current_mdin" "$(parse_dt_ps "$tmpl")"
         return 0
     fi
 
     nstlim_value=$(parse_nstlim "$current_mdin" 2>/dev/null || parse_nstlim "$tmpl" 2>/dev/null) || return 0
+    dumpave_file=$(awk '
+        BEGIN{IGNORECASE=1}
+        /^[[:space:]]*DUMPAVE[[:space:]]*=/ {
+            sub(/^[[:space:]]*DUMPAVE[[:space:]]*=[[:space:]]*/, "")
+            print
+            exit
+        }
+    ' "$current_mdin")
     tmp="${current_mdin}.tmp"
-    write_mdin_current "$tmpl" "$nstlim_value" 0 "$current_mdin" "$retry_count" > "$tmp" && mv "$tmp" "$current_mdin"
+    write_mdin_current "$tmpl" "$nstlim_value" 0 "$current_mdin" "$retry_count" "" "$dumpave_file" > "$tmp" && mv "$tmp" "$current_mdin"
 }
 
 ensure_target_dt_marker() {

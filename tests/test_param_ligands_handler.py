@@ -9,9 +9,13 @@ import pytest
 
 pytest.importorskip("openff.toolkit")
 
-# Stub minimal gufe module to satisfy imports when dependency is absent
-sys.modules.setdefault("gufe", ModuleType("gufe"))
-sys.modules["gufe"].SmallMoleculeComponent = object  # type: ignore[attr-defined]
+# Stub minimal gufe module to satisfy imports only when dependency is absent.
+try:
+    import gufe  # noqa: F401
+except ImportError:
+    sys.modules.setdefault("gufe", ModuleType("gufe"))
+    sys.modules["gufe"].SmallMoleculeComponent = object  # type: ignore[attr-defined]
+    sys.modules["gufe"].ProteinComponent = object  # type: ignore[attr-defined]
 
 import batter.exec.handlers.param_ligands as handler
 
@@ -59,4 +63,37 @@ def test_param_ligands_uses_string_paths_for_unique_map(monkeypatch, tmp_path: P
     index_json = json.loads((root / "artifacts" / "ligand_params" / "index.json").read_text())
     assert index_json["ligands"][0]["ligand"] == "Lig1"
     assert index_json["ligands"][0]["hash"] == hash_id
+    assert index_json["ligands"][0]["input_path"] == str(lig_file.resolve())
     assert result.artifacts["hashes"] == [hash_id]
+
+
+def test_copy_ligand_params_overrides_child_metadata_input_path(tmp_path: Path) -> None:
+    src = tmp_path / "store" / "HASH"
+    child = tmp_path / "run" / "simulations" / "LigA"
+    src.mkdir(parents=True)
+    (src / "lig.prmtop").write_text("ok")
+    (src / "metadata.json").write_text(
+        json.dumps(
+            {
+                "input_path": "/cached/representative.sdf",
+                "aliases": ["Representative"],
+            }
+        )
+    )
+    staged_input = tmp_path / "inputs" / "LigA.sdf"
+    staged_input.parent.mkdir()
+    staged_input.write_text("fake")
+
+    handler.copy_ligand_params(
+        src,
+        child,
+        "LIG",
+        ligand_name="LigA",
+        input_path=staged_input,
+    )
+
+    meta = json.loads((child / "params" / "metadata.json").read_text())
+    assert meta["input_path"] == str(staged_input.resolve())
+    assert meta["parameter_input_path"] == "/cached/representative.sdf"
+    assert "LigA" in meta["aliases"]
+    assert meta["title"] == "LigA"

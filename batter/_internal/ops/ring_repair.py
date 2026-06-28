@@ -5,10 +5,12 @@ from typing import Any
 
 import networkx as nx
 import numpy as np
-import parmed as pmd
 from loguru import logger
 
+from batter._internal.parmed_compat import import_parmed
 from batter.analysis.sim_validation import check_ring_penetration, lsqp
+
+pmd = import_parmed()
 
 
 _WATER_RESNAMES = {"HOH", "TIP3", "WAT"}

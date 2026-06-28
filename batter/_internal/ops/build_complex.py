@@ -64,6 +64,390 @@ def _atom_is_hydrogen(atom) -> bool:
     return name.startswith("H") or (len(name) > 1 and name[0].isdigit() and name[1] == "H")
 
 
+def _executable_available(command: str) -> bool:
+    return shutil.which(command) is not None
+
+
+def _run_pdb4amber_or_copy(input_pdb: Path, output_pdb: Path, *, working_dir: Path) -> None:
+    if _executable_available("pdb4amber"):
+        run_with_log(
+            f"pdb4amber -i {input_pdb.name} -o {output_pdb.name} -y",
+            working_dir=working_dir,
+        )
+        return
+    logger.warning(
+        "pdb4amber was not found; copying {} to {} without additional cleanup.",
+        input_pdb,
+        output_pdb,
+    )
+    shutil.copy2(input_pdb, output_pdb)
+
+
+def _empty_atomgroup(u: mda.Universe):
+    return u.atoms[[]]
+
+
+def _write_atomgroup_pdb(ag, path: Path) -> None:
+    if ag.n_atoms == 0:
+        path.write_text("END\n")
+        return
+    ag.write(str(path))
+
+
+def _unique_atomgroup(u: mda.Universe, *groups):
+    atom_indices: list[int] = []
+    for group in groups:
+        if group is not None and group.n_atoms:
+            atom_indices.extend(int(idx) for idx in group.ix)
+    if not atom_indices:
+        return _empty_atomgroup(u)
+    return u.atoms[np.asarray(sorted(set(atom_indices)), dtype=int)]
+
+
+def _center_of_atoms(ag, *, mass_weighted: bool = True) -> np.ndarray:
+    if ag.n_atoms == 0:
+        raise ValueError("Cannot compute center of an empty atom selection.")
+    positions = np.asarray(ag.positions, dtype=float)
+    if not mass_weighted:
+        return positions.mean(axis=0)
+    try:
+        masses = np.asarray(ag.masses, dtype=float)
+        if np.all(np.isfinite(masses)) and float(masses.sum()) > 0.0:
+            return np.average(positions, axis=0, weights=masses)
+    except Exception:
+        pass
+    return positions.mean(axis=0)
+
+
+def _angle_degrees(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    v1 = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    v2 = np.asarray(c, dtype=float) - np.asarray(b, dtype=float)
+    n1 = float(np.linalg.norm(v1))
+    n2 = float(np.linalg.norm(v2))
+    if n1 == 0.0 or n2 == 0.0:
+        return float("nan")
+    cosang = float(np.dot(v1, v2) / (n1 * n2))
+    cosang = max(-1.0, min(1.0, cosang))
+    return float(np.degrees(np.arccos(cosang)))
+
+
+def _kabsch_transform(mobile: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mobile_center = mobile.mean(axis=0)
+    reference_center = reference.mean(axis=0)
+    mobile_c = mobile - mobile_center
+    reference_c = reference - reference_center
+    covariance = mobile_c.T @ reference_c
+    u, _s, vt = np.linalg.svd(covariance)
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0:
+        vt[-1, :] *= -1
+        rotation = vt.T @ u.T
+    translation = reference_center - mobile_center @ rotation
+    return rotation, translation
+
+
+def _resname_group(u: mda.Universe, names: Sequence[str]):
+    names_set = {str(name) for name in names if str(name)}
+    if not names_set:
+        return _empty_atomgroup(u)
+    mask = np.asarray([str(resname) in names_set for resname in u.atoms.resnames])
+    return u.atoms[mask]
+
+
+def _python_split_rec_file(
+    *,
+    workdir: Path,
+    mol: str,
+    solv_shell: float,
+    other_mol: Sequence[str],
+    lipid_mol: Sequence[str],
+) -> None:
+    """Python fallback for split-ini.tcl when VMD is unavailable."""
+    rec_file = workdir / "rec_file.pdb"
+    u = mda.Universe(str(rec_file))
+    core_sel = f"(protein or resname ACE NMA NME NHE or resname {mol})"
+    dum = u.select_atoms("resname DUM")
+    prot = u.select_atoms(f"(protein or resname ACE NMA NME NHE) and not resname {mol}")
+    lipid = _resname_group(u, lipid_mol)
+    lig = u.select_atoms(f"resname {mol}")
+
+    if other_mol:
+        other_names = " ".join(str(name) for name in other_mol)
+        othrs = u.select_atoms(
+            f"resname {other_names} and not water and same residue as "
+            f"(around {float(solv_shell):.6g} {core_sel})"
+        )
+    else:
+        othrs = _empty_atomgroup(u)
+
+    near_terms = [core_sel]
+    if other_mol:
+        near_terms.append(f"resname {' '.join(str(name) for name in other_mol)}")
+    if lipid_mol:
+        near_terms.append(f"resname {' '.join(str(name) for name in lipid_mol)}")
+    near_sel = "(" + " or ".join(near_terms) + ")"
+    wat = u.select_atoms(
+        f"water and same residue as (around {float(solv_shell):.6g} {near_sel})"
+    )
+    if wat.n_atoms:
+        wat.residues.resnames = "WAT"
+
+    ion = u.select_atoms(
+        "resname Na+ Cl- K+ and same residue as "
+        "(around 5 (protein or resname ACE NMA NME NHE))"
+    )
+
+    _write_atomgroup_pdb(dum, workdir / "dummy.pdb")
+    _write_atomgroup_pdb(prot, workdir / "protein.pdb")
+    _write_atomgroup_pdb(ion, workdir / "others.pdb")
+    if othrs.n_atoms:
+        combined = _unique_atomgroup(u, ion, othrs)
+        _write_atomgroup_pdb(combined, workdir / "others.pdb")
+    _write_atomgroup_pdb(lipid, workdir / "lipids.pdb")
+    _write_atomgroup_pdb(wat, workdir / "crystalwat.pdb")
+    _write_atomgroup_pdb(lig, workdir / f"{mol}.pdb")
+
+
+def _python_measure_fit(
+    *,
+    workdir: Path,
+    reference_pdb: str = "aligned-nc.pdb",
+    mobile_pdb: str = "complex.pdb",
+    output_pdb: str = "aligned.pdb",
+) -> None:
+    """Python fallback for measure-fit.tcl when VMD is unavailable."""
+    ref = mda.Universe(str(workdir / reference_pdb))
+    mob = mda.Universe(str(workdir / mobile_pdb))
+    ref_sel = ref.select_atoms("protein and backbone")
+    mob_sel = mob.select_atoms("protein and backbone")
+    if ref_sel.n_atoms == 0 or mob_sel.n_atoms == 0:
+        raise RuntimeError("Cannot align complex: empty protein backbone selection.")
+    if ref_sel.n_atoms != mob_sel.n_atoms:
+        n = min(ref_sel.n_atoms, mob_sel.n_atoms)
+        logger.warning(
+            "Backbone atom counts differ during Python fit (reference={}, mobile={}); "
+            "using first {} atoms.",
+            ref_sel.n_atoms,
+            mob_sel.n_atoms,
+            n,
+        )
+        ref_pos = ref_sel.positions[:n]
+        mob_pos = mob_sel.positions[:n]
+    else:
+        ref_pos = ref_sel.positions
+        mob_pos = mob_sel.positions
+    rotation, translation = _kabsch_transform(np.asarray(mob_pos), np.asarray(ref_pos))
+    mob.atoms.positions = np.asarray(mob.atoms.positions) @ rotation + translation
+    mob.atoms.write(str(workdir / output_pdb))
+
+
+def _write_python_prep_script_marker(workdir: Path) -> None:
+    (workdir / "prep.tcl").write_text(
+        "# VMD unavailable; BATTER used Python fallback for prep-ini.tcl.\n"
+    )
+
+
+def _ligand_atom_by_name(u: mda.Universe, mol: str, atom_name: str):
+    return u.select_atoms(f"resname {mol} and name {atom_name}")
+
+
+def _receptor_atom_by_resid_name(u: mda.Universe, mol: str, resid: str, atom_name: str):
+    return u.select_atoms(f"(not resname {mol}) and resid {resid} and name {atom_name}")
+
+
+def _pick_ligand_anchor_names(
+    *,
+    u: mda.Universe,
+    mol: str,
+    ligand_names: Sequence[str],
+    p1_resid: str,
+    p1_atom: str,
+    p2_resid: str,
+    p2_atom: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    min_adis: float,
+    max_adis: float,
+) -> list[str]:
+    p1 = _receptor_atom_by_resid_name(u, mol, p1_resid, p1_atom)
+    p2 = _receptor_atom_by_resid_name(u, mol, p2_resid, p2_atom)
+    if p1.n_atoms == 0 or p2.n_atoms == 0:
+        raise RuntimeError("anchor not found")
+    p1_center = _center_of_atoms(p1)
+    p2_center = _center_of_atoms(p2)
+    target = p1_center + np.asarray([l1_x, l1_y, l1_z], dtype=float)
+
+    candidates: dict[str, np.ndarray] = {}
+    for name in ligand_names:
+        atoms = _ligand_atom_by_name(u, mol, str(name))
+        if atoms.n_atoms == 0:
+            continue
+        center = _center_of_atoms(atoms)
+        dist = float(np.linalg.norm(center - target))
+        if dist >= float(l1_range):
+            continue
+        angle = _angle_degrees(p2_center, p1_center, center)
+        if np.isfinite(angle):
+            candidates[str(name)] = center
+
+    aa1: str | None = None
+    for tolerance in (15.0, 70.0):
+        best_diff = float("inf")
+        for name, center in candidates.items():
+            angle = _angle_degrees(p2_center, p1_center, center)
+            if not np.isfinite(angle) or abs(angle - 90.0) > tolerance:
+                continue
+            diff = float(np.linalg.norm(center - target))
+            if diff < best_diff:
+                best_diff = diff
+                aa1 = name
+        if aa1 is not None:
+            break
+    if aa1 is None:
+        raise RuntimeError("anchor not found")
+
+    aa1_center = candidates[aa1]
+    aa2: str | None = None
+    best_angle_diff = float("inf")
+    for name, center in candidates.items():
+        if name == aa1:
+            continue
+        distance = float(np.linalg.norm(center - aa1_center))
+        if not (float(min_adis) < distance < float(max_adis)):
+            continue
+        angle = _angle_degrees(p1_center, aa1_center, center)
+        if not np.isfinite(angle):
+            continue
+        angle_diff = abs(angle - 90.0)
+        if angle_diff < best_angle_diff:
+            best_angle_diff = angle_diff
+            aa2 = name
+    if aa2 is None:
+        raise RuntimeError("anchor not found")
+
+    aa2_center = candidates[aa2]
+    aa3: str | None = None
+    best_angle_diff = float("inf")
+    for name, center in candidates.items():
+        if name in {aa1, aa2}:
+            continue
+        distance = float(np.linalg.norm(center - aa2_center))
+        if not (float(min_adis) < distance < float(max_adis)):
+            continue
+        angle = _angle_degrees(aa1_center, aa2_center, center)
+        if not np.isfinite(angle):
+            continue
+        angle_diff = abs(angle - 90.0)
+        if angle_diff < best_angle_diff:
+            best_angle_diff = angle_diff
+            aa3 = name
+    if aa3 is None:
+        raise RuntimeError("anchor not found")
+    return [aa1, aa2, aa3]
+
+
+def _python_prep_complex(
+    *,
+    workdir: Path,
+    mol: str,
+    p1_atom: str,
+    p1_vmd: str,
+    p2_atom: str,
+    p2_vmd: str,
+    first_resid: str,
+    last_resid: str,
+    stage: str,
+    l1_x: float,
+    l1_y: float,
+    l1_z: float,
+    l1_range: float,
+    min_adis: float,
+    max_adis: float,
+    sdr_dist: float,
+    ligand_names: Sequence[str],
+    other_mol: Sequence[str],
+    lipid_mol: Sequence[str],
+) -> None:
+    """Python fallback for prep-ini.tcl when VMD is unavailable."""
+    _write_python_prep_script_marker(workdir)
+    u = mda.Universe(str(workdir / "aligned_amber.pdb"))
+    receptor_backbone = u.select_atoms(
+        f"(not resname {mol}) and resid {first_resid} to {last_resid} and name CA C N O"
+    )
+    if receptor_backbone.n_atoms == 0:
+        raise RuntimeError("anchor not found")
+
+    core = u.select_atoms(
+        f"resid {first_resid} to {last_resid} and not water and not resname {mol} and not name H*"
+    )
+    lig = u.select_atoms(f"resname {mol}")
+    water = u.select_atoms("resname WAT")
+    others = _resname_group(u, other_mol)
+    lipids = _resname_group(u, lipid_mol)
+    ions = u.select_atoms("resname Na+ Cl- K+")
+    all_atoms = _unique_atomgroup(u, core, lig, others, water, lipids, ions)
+    shift = -_center_of_atoms(receptor_backbone)
+    all_atoms.positions = all_atoms.positions + shift
+    filini = workdir / f"{stage}-{mol}-ini.pdb"
+    filpdb = workdir / f"{stage}-{mol}.pdb"
+    _write_atomgroup_pdb(all_atoms, filini)
+    shutil.copy2(filini, filpdb)
+
+    prep_u = mda.Universe(str(filpdb))
+    lig = prep_u.select_atoms(f"resname {mol}")
+    if lig.n_atoms == 0:
+        raise RuntimeError("anchor not found")
+    lig.chainIDs = "S"
+    lig.residues.resids = 1
+    _write_atomgroup_pdb(lig, workdir / f"{mol}.pdb")
+    lig_noh = lig.select_atoms("not name H*")
+    _write_atomgroup_pdb(lig_noh, workdir / f"{mol}-noh.pdb")
+    prep_u.atoms.write(str(filpdb))
+
+    anchors = _pick_ligand_anchor_names(
+        u=prep_u,
+        mol=mol,
+        ligand_names=ligand_names,
+        p1_resid=p1_vmd,
+        p1_atom=p1_atom,
+        p2_resid=p2_vmd,
+        p2_atom=p2_atom,
+        l1_x=float(l1_x),
+        l1_y=float(l1_y),
+        l1_z=float(l1_z),
+        l1_range=float(l1_range),
+        min_adis=float(min_adis),
+        max_adis=float(max_adis),
+    )
+    (workdir / "anchors.txt").write_text(" ".join(anchors) + "\n")
+
+    dum = mda.Universe(str(workdir / "dum.pdb"))
+    dum_atoms = dum.atoms
+    dummy_center = _center_of_atoms(dum_atoms)
+    receptor_center = _center_of_atoms(
+        prep_u.select_atoms(
+            f"(not resname {mol}) and resid {first_resid} to {last_resid} and name CA C N O"
+        )
+    )
+    dum_atoms.positions = dum_atoms.positions + (receptor_center - dummy_center)
+    _write_atomgroup_pdb(dum_atoms, workdir / "dum1.pdb")
+
+    if float(sdr_dist) != 0.0:
+        dum2 = mda.Universe(str(workdir / "dum.pdb"))
+        dum2_atoms = dum2.atoms
+        shifted_ligand_center = _center_of_atoms(lig_noh) + np.asarray(
+            [0.0, 0.0, float(sdr_dist)],
+            dtype=float,
+        )
+        dum2_atoms.positions = dum2_atoms.positions + (
+            shifted_ligand_center - _center_of_atoms(dum2_atoms)
+        )
+        dum2_atoms.residues.resids = 2
+        _write_atomgroup_pdb(dum2_atoms, workdir / "dum2.pdb")
+
+
 def _sdf_heavy_atom_ordinals(sdf_file: str | Path) -> tuple[int | None, dict[int, int]]:
     """Build a heavy-atom ordinal map for an SDF molecule.
 
@@ -960,6 +1344,13 @@ def build_complex_z(ctx) -> bool:
 
     workdir = ctx.build_dir
     workdir.mkdir(parents=True, exist_ok=True)
+    vmd_available = _executable_available(vmd)
+    if not vmd_available:
+        logger.warning(
+            "VMD executable {!r} was not found; using Python fallbacks for build-complex "
+            "split/fit/prep steps.",
+            vmd,
+        )
     child_root = ctx.working_dir  # .../simulations/<LIG>/fe/...
     sys_root = ctx.system_root  # .../work/<system>
     equil_dir = (
@@ -1063,7 +1454,16 @@ def build_complex_z(ctx) -> bool:
                 .replace("mmm", mol)
                 .replace("MMM", mol)
             )
-    run_with_log(f"{vmd} -dispdev text -e split.tcl", shell=False, working_dir=workdir)
+    if vmd_available:
+        run_with_log(f"{vmd} -dispdev text -e split.tcl", shell=False, working_dir=workdir)
+    else:
+        _python_split_rec_file(
+            workdir=workdir,
+            mol=mol,
+            solv_shell=float(solv_shell),
+            other_mol=other_mol,
+            lipid_mol=lipid_mol,
+        )
 
     # 6) merge -> complex.pdb (strip headers/CRYST1/CONECT/END)
     pieces = [
@@ -1123,15 +1523,20 @@ def build_complex_z(ctx) -> bool:
     logger.debug(f"[build_complex_z] SDR distance: {sdr_dist:.2f} Å, abs_z: {abs_z:.2f} Å, buffer_z_left: {buffer_z_left:.2f} Å")
 
     # 9) align & pdb4amber
-    run_with_log(
-        f"{vmd} -dispdev text -e measure-fit.tcl", shell=False, working_dir=workdir
-    )
+    if vmd_available:
+        run_with_log(
+            f"{vmd} -dispdev text -e measure-fit.tcl", shell=False, working_dir=workdir
+        )
+    else:
+        _python_measure_fit(workdir=workdir)
     with open(_p("aligned.pdb")) as fin, open(_p("aligned-clean.pdb"), "wt") as fout:
         for ln in fin:
             if len(ln.split()) > 3:
                 fout.write(ln)
-    run_with_log(
-        f"pdb4amber -i aligned-clean.pdb -o aligned_amber.pdb -y", working_dir=workdir
+    _run_pdb4amber_or_copy(
+        _p("aligned-clean.pdb"),
+        _p("aligned_amber.pdb"),
+        working_dir=workdir,
     )
     u = mda.Universe(str(_p("aligned_amber.pdb")))
 
@@ -1250,12 +1655,35 @@ def build_complex_z(ctx) -> bool:
 
     def _run_prep(ligand_name_str: str) -> None:
         _write_prep(ligand_name_str)
-        run_with_log(
-            f"{vmd} -dispdev text -e prep.tcl",
-            error_match="anchor not found",
-            shell=False,
-            working_dir=workdir,
-        )
+        if vmd_available:
+            run_with_log(
+                f"{vmd} -dispdev text -e prep.tcl",
+                error_match="anchor not found",
+                shell=False,
+                working_dir=workdir,
+            )
+        else:
+            _python_prep_complex(
+                workdir=workdir,
+                mol=mol,
+                p1_atom=p1_atom,
+                p1_vmd=p1_vmd,
+                p2_atom=p2_atom,
+                p2_vmd=p2_vmd,
+                first_resid="2",
+                last_resid=str(rec_res),
+                stage="fe",
+                l1_x=float(l1_x),
+                l1_y=float(l1_y),
+                l1_z=float(l1_z),
+                l1_range=float(l1_range),
+                min_adis=float(min_adis),
+                max_adis=float(max_adis),
+                sdr_dist=float(sdr_dist),
+                ligand_names=str(ligand_name_str).split(),
+                other_mol=other_mol,
+                lipid_mol=lipid_mol,
+            )
 
     try:
         _run_prep(lig_name_str)

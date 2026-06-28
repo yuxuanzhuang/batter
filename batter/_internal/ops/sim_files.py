@@ -13,14 +13,16 @@ from loguru import logger
 import os
 import json
 import shutil
-import parmed as pmd
-from parmed.amber.mask import AmberMask
 
 
+from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_sim_files
 from batter._internal.ops.helpers import format_ranges
 from batter._internal.ops.remd import patch_mdin_file
+
+pmd = import_parmed()
+from parmed.amber.mask import AmberMask
 
 
 # ----------------------------- helpers ----------------------------- #
@@ -486,6 +488,16 @@ def _replace_d_sdr_tokens(
     mk3: int,
     weight: float,
 ) -> str:
+    if re.search(r"\btimask1\s*=", text):
+        return f"  timask1 = ':{mk1},{mk3}',\n"
+    if re.search(r"\btimask2\s*=", text):
+        return f"  timask2 = ':{mk2}',\n"
+    if re.search(r"\bscmask1\s*=", text):
+        return f"  scmask1=':{mk1}',\n"
+    if re.search(r"\bscmask2\s*=", text):
+        return "  scmask2='',\n"
+    if re.search(r"\bcrgmask\s*=", text):
+        return f"  crgmask = ':{mk3}',\n"
     return (
         text.replace("lbd_val", f"{float(weight):6.5f}")
         .replace("mk1", str(mk1))
@@ -503,11 +515,11 @@ def _d_sdr_ti_block(
 ) -> str:
     return (
         f"  icfe = 1, clambda = {float(weight):6.5f},\n"
-        f"  timask1 = ':{mk1}',\n"
+        f"  timask1 = ':{mk1},{mk3}',\n"
         f"  timask2 = ':{mk2}',\n"
         "  ifsc=1,\n"
         f"  scmask1=':{mk1}',\n"
-        f"  scmask2=':{mk2}',\n"
+        "  scmask2='',\n"
         f"  crgmask = ':{mk3}',\n"
         "  gti_cut   = 1,\n"
         "  gti_output = 1,\n"
@@ -564,6 +576,13 @@ def _write_d_sdr_equil_input(
                 line = "  csurften = 0,\n"
             for key, value in replacements.items():
                 line = line.replace(key, value)
+            line = _replace_d_sdr_tokens(
+                line,
+                mk1=mk1,
+                mk2=mk2,
+                mk3=mk3,
+                weight=weight,
+            )
             fout.write(line)
 
 
@@ -635,6 +654,10 @@ def _write_cmass_dump_block(handle, *, istep1: int | str, disang: str = "disang.
     handle.write("LISTIN=POUT\n")
     handle.write("LISTOUT=POUT\n")
 
+
+def _component_l_cmass_dumpfreq(ntwx: int) -> int:
+    """Use denser restraint-energy traces for component l than trajectory output."""
+    return max(1, min(int(ntwx), 1000))
 
 
 # ------------------------- generic equil files ------------------------- #
@@ -813,6 +836,7 @@ def _sim_files_d_sdr_charge_transfer(
     receptor_solvent_restraint_mask = (
         f"((@CA & {non_loop_mask}) | {solvent_ligand_restraint_mask}) & !@H="
     )
+    production_restraint_mask = f"({solvent_ligand_restraint_mask}) & !@H="
     initial_equil_restraint_mask = (
         f"(@CA,C,N,P31 | {solvent_ligand_restraint_mask}) & !@H="
     )
@@ -900,7 +924,7 @@ def _sim_files_d_sdr_charge_transfer(
         fout.write(f"! total_steps={steps2}\n")
         for line in fin:
             if "restraintmask" in line:
-                line = f"restraintmask = '{receptor_solvent_restraint_mask}',\n"
+                line = f"restraintmask = '{production_restraint_mask}',\n"
             elif "gti_bat_sc" in line:
                 line = "  gti_bat_sc      = 1,\n"
             line = (
@@ -953,9 +977,13 @@ def _sim_files_d_sdr_charge_transfer(
                     line.replace("_temperature_", str(temperature))
                     .replace("lbd_val", f"{float(weight):6.5f}")
                     .replace("_lig_name_", mol)
-                    .replace("mk1", str(mk1))
-                    .replace("mk2", str(mk2))
-                    .replace("mk3", str(mk3))
+                )
+                line = _replace_d_sdr_tokens(
+                    line,
+                    mk1=mk1,
+                    mk2=mk2,
+                    mk3=mk3,
+                    weight=weight,
                 )
                 fout.write(line)
 
@@ -1454,6 +1482,7 @@ def _write_l_mdin_from_equil_template(
     ntwx: int,
     eq_seed: bool,
     rest_ramp: tuple[float, float] | None = None,
+    cmass_dumpfreq: int | None = None,
 ) -> None:
     inserted_rest_weight = False
     with src.open("rt") as fin, dst.open("wt") as fout:
@@ -1484,6 +1513,12 @@ def _write_l_mdin_from_equil_template(
                     f"value2={float(rest_ramp[1]):.8g}, /\n"
                 )
                 inserted_rest_weight = True
+            if cmass_dumpfreq is not None and "type='DUMPFREQ'" in line:
+                line = re.sub(
+                    r"istep1\s*=\s*[^,/\s]+",
+                    f"istep1={_component_l_cmass_dumpfreq(int(cmass_dumpfreq))}",
+                    line,
+                )
             line = (
                 line.replace("_num-steps_", str(int(total_steps)))
                 .replace("_lig_name_", mol)
@@ -1588,6 +1623,7 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         ntwx=n_steps_run_per_lambda,
         eq_seed=True,
         rest_ramp=(0.0, 1.0) if win == -1 else None,
+        cmass_dumpfreq=n_steps_run_per_lambda,
     )
     _apply_restraintmask_length_limit(
         windows_dir / "eq.in",
@@ -1605,6 +1641,7 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         total_steps=n_steps,
         ntwx=ntwx,
         eq_seed=False,
+        cmass_dumpfreq=ntwx,
     )
     _apply_restraintmask_length_limit(
         windows_dir / "mdin-template",

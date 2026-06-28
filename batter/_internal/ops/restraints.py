@@ -1151,6 +1151,9 @@ def _ligand_reference_candidates(ctx: BuildContext, windows_dir: Path) -> list[P
             for entry in index_data.get("ligands", []):
                 if str(entry.get("ligand")) != str(ctx.ligand):
                     continue
+                input_path = entry.get("input_path")
+                if input_path and not str(input_path).startswith("BATTER_APO_DUMMY"):
+                    _add(input_path)
                 meta_path = Path(str(entry.get("store_dir", ""))) / "metadata.json"
                 if meta_path.exists():
                     meta = json.loads(meta_path.read_text())

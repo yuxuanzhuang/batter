@@ -63,6 +63,11 @@ def _prepare_component(
         f"  dt = {dt:.3f},\n"
         "  ntwr = 10,\n"
         "/\n"
+        " &wt type='DUMPFREQ', istep1=10, /\n"
+        " &wt type='END', /\n"
+        "DUMPAVE=cmass.txt\n"
+        "LISTIN=POUT\n"
+        "LISTOUT=POUT\n"
     )
     (win0 / "eq.rst7").write_text("rst\n")
     return comp_dir, win0, tmpl
@@ -76,6 +81,28 @@ def _extract_dt(template_path: Path) -> float:
     )
     assert match is not None, template_path.read_text()
     return float(match.group(1).replace("D", "e").replace("d", "e"))
+
+
+def _write_success_pmemd_stub(path: Path) -> None:
+    _write_exe(
+        path,
+        "#!/usr/bin/env bash\n"
+        "groupfile=\n"
+        "while [[ $# -gt 0 ]]; do\n"
+        "  if [[ $1 == -groupfile ]]; then groupfile=$2; shift 2; else shift; fi\n"
+        "done\n"
+        "[[ -f $groupfile ]] || exit 2\n"
+        "while IFS= read -r line; do\n"
+        "  set -- $line\n"
+        "  while [[ $# -gt 0 ]]; do\n"
+        "    case $1 in\n"
+        "      -o|-x|-l|-e|-r) mkdir -p \"$(dirname \"$2\")\"; echo ok > \"$2\"; shift 2 ;;\n"
+        "      *) shift ;;\n"
+        "    esac\n"
+        "  done\n"
+        "done < \"$groupfile\"\n"
+        "exit 0\n",
+    )
 
 
 @pytest.mark.parametrize(
@@ -121,7 +148,7 @@ def test_remd_run_templates_zero_step_finish(
 def test_remd_run_templates_reduce_dt_after_retry_failure(
     tmp_path: Path, script_name: str, template_name: str
 ) -> None:
-    comp_dir, _win0, tmpl = _prepare_component(
+    comp_dir, win0, tmpl = _prepare_component(
         tmp_path,
         script_name=script_name,
         template_name=template_name,
@@ -129,6 +156,7 @@ def test_remd_run_templates_reduce_dt_after_retry_failure(
         dt=0.004,
         nstlim=10,
     )
+    (win0 / "cmass-01.txt").write_text("stale\n")
 
     fail_stub = tmp_path / "pmemd-fail.sh"
     _write_exe(
@@ -154,3 +182,48 @@ def test_remd_run_templates_reduce_dt_after_retry_failure(
 
     assert result.returncode != 0
     assert _extract_dt(tmpl) == pytest.approx(0.003)
+    assert not (win0 / "cmass-01.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("script_name", "template_name", "current_name"),
+    [
+        ("run-local-remd.bash", "mdin-remd-template", "mdin-remd-current"),
+        ("run-local-batch.bash", "mdin-batch-template", "mdin-current"),
+    ],
+)
+def test_remd_run_templates_write_segmented_cmass_dumpave(
+    tmp_path: Path,
+    script_name: str,
+    template_name: str,
+    current_name: str,
+) -> None:
+    comp_dir, win0, _ = _prepare_component(
+        tmp_path,
+        script_name=script_name,
+        template_name=template_name,
+        total_steps=10,
+        nstlim=10,
+    )
+
+    pmemd_stub = tmp_path / "pmemd-success.sh"
+    _write_success_pmemd_stub(pmemd_stub)
+
+    env = os.environ.copy()
+    env["PMEMD_MPI_EXEC"] = str(pmemd_stub)
+    env["MPI_EXEC"] = "/bin/bash"
+    env["MPI_FLAGS"] = " "
+
+    result = subprocess.run(
+        ["bash", f"./{script_name}"],
+        cwd=comp_dir,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    text = (win0 / current_name).read_text()
+    assert "DUMPAVE=z00/cmass-01.txt" in text
+    assert "DUMPAVE=cmass.txt" not in text

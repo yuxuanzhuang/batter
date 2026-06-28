@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -7,10 +8,45 @@ import numpy as np
 import pandas as pd
 import pytest
 
-pytest.importorskip("parmed")
+pmd = pytest.importorskip("parmed")
 mda = pytest.importorskip("MDAnalysis", exc_type=ImportError)
 
 from batter._internal.ops import box
+
+
+def test_repair_parmed_molecule_table_handles_bad_standalone_ligand() -> None:
+    data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
+    parm = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
+    parm.parm_data["SOLVENT_POINTERS"] = [0, 0, 0]
+    parm.parm_data["ATOMS_PER_MOLECULE"] = [0]
+
+    repaired = box._repair_parmed_molecule_table_for_combine(parm)
+
+    assert repaired is parm
+    assert parm.parm_data["SOLVENT_POINTERS"] == [1, 1, 2]
+    assert parm.parm_data["ATOMS_PER_MOLECULE"] == [len(parm.atoms)]
+    assert len(copy.copy(parm).atoms) == len(parm.atoms)
+
+
+def test_abfe_diff_charge_ligand_uses_second_pre_fe_ligand(tmp_path: Path) -> None:
+    (tmp_path / "ref_vac.pdb").write_text(
+        "ATOM      1  C1  LIG A   1       0.000   0.000   0.000  1.00  0.00           C\n"
+        "ATOM      2  C2  LIG A   1       1.000   0.000   0.000  1.00  0.00           C\n"
+        "TER\n"
+        "ATOM      3  C1  LIG A   2      10.000  20.000  30.000  1.00  0.00           C\n"
+        "ATOM      4  C2  LIG A   2      11.000  21.000  31.000  1.00  0.00           C\n"
+        "TER\n"
+        "END\n"
+    )
+
+    out = box._write_abfe_diff_charge_ligand_from_ref_vac(tmp_path, "LIG")
+
+    u = mda.Universe(out.as_posix())
+    np.testing.assert_allclose(
+        u.atoms.positions,
+        np.asarray([[10.0, 20.0, 30.0], [11.0, 21.0, 31.0]], dtype=float),
+        atol=1.0e-3,
+    )
 
 
 def test_save_pre_ring_repair_snapshots_writes_unrepaired_coordinates(

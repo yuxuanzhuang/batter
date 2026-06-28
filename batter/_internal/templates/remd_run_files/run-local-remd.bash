@@ -35,6 +35,7 @@ write_mdin_remd_current() {
     local nstlim_value=$2
     local numexchg_value=$3
     local first_run=$4
+    local dumpave_file=${5:-}
     if [[ ! -f $tmpl ]]; then
         echo "[ERROR] Missing template $tmpl" >&2
         return 1
@@ -52,14 +53,26 @@ write_mdin_remd_current() {
     else
         text=$(echo "$text" | awk -v val="$numexchg_value" '
             BEGIN { in_cntrl=0; inserted=0 }
-            { line=$0 }
-            tolower(line) ~ /^&cntrl/ { in_cntrl=1 }
-            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/ && inserted==0) {
-                print "  numexchg = " val ","
-                inserted=1
+            {
+                line=$0
+                if (tolower(line) ~ /^&cntrl/) { in_cntrl=1 }
+                if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/ && inserted==0) {
+                    print "  numexchg = " val ","
+                    inserted=1
+                }
+                print line
+                if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/) { in_cntrl=0 }
             }
-            print line
-            if (in_cntrl && line ~ /^[[:space:]]*\/[[:space:]]*$/) { in_cntrl=0 }
+        ')
+    fi
+    if [[ -n $dumpave_file ]]; then
+        text=$(echo "$text" | awk -v dumpave="$dumpave_file" '
+            BEGIN{IGNORECASE=1}
+            /^[[:space:]]*DUMPAVE[[:space:]]*=/ {
+                print "DUMPAVE=" dumpave
+                next
+            }
+            { print }
         ')
     fi
     echo "$text"
@@ -196,7 +209,9 @@ if (( remaining_steps > 0 )); then
             exit 1
         }
         current_mdin="${PFOLDER}/${win}/mdin-remd-current"
-        write_mdin_remd_current "$tmpl" "$chunk_steps" "$run_exchg" "$first_run" > "$current_mdin"
+        cmass_file=$(printf "cmass-%02d.txt" "$seg_idx")
+        dumpave_file="${win}/${cmass_file}"
+        write_mdin_remd_current "$tmpl" "$chunk_steps" "$run_exchg" "$first_run" "$dumpave_file" > "$current_mdin"
 
         # Determine restart input per window (prefer rolling restarts, else eq.rst7)
         rst_in="eq.rst7"

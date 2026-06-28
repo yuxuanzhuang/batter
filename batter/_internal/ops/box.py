@@ -14,10 +14,10 @@ import numpy as np
 import pandas as pd
 import MDAnalysis as mda
 from loguru import logger
-import parmed as pmd
 
 from batter.utils import run_with_log, tleap
 from batter.utils.builder_utils import get_buffer_z
+from batter._internal.parmed_compat import import_parmed
 from batter._internal.builders.interfaces import BuildContext
 from batter._internal.builders.fe_registry import register_create_box
 from batter._internal.ops.helpers import (
@@ -32,6 +32,7 @@ from batter._internal.ops.ring_repair import (
     repair_ring_penetrations,
 )
 
+pmd = import_parmed()
 
 
 
@@ -42,6 +43,51 @@ _PRE_RING_REPAIR_FILES = {
     "vac_pdb": "vac.pdb.pre_ring_repair",
 }
 _MIN_SDR_SOLVATION_BUFFER_Z = 3.0
+
+
+def _repair_parmed_molecule_table_for_combine(structure: pmd.Structure) -> pmd.Structure:
+    """Repair stale Amber molecule metadata before ParmEd Structure addition."""
+    parm_data = getattr(structure, "parm_data", None)
+    if parm_data is None or not hasattr(structure, "rediscover_molecules"):
+        return structure
+
+    def _table_is_valid() -> bool:
+        solvent_pointers = parm_data.get("SOLVENT_POINTERS")
+        atoms_per_molecule = parm_data.get("ATOMS_PER_MOLECULE")
+        if (
+            solvent_pointers is None
+            or atoms_per_molecule is None
+            or len(solvent_pointers) < 2
+        ):
+            return True
+        expected_molecules = int(solvent_pointers[1])
+        atom_count = len(getattr(structure, "atoms", []))
+        return (
+            len(atoms_per_molecule) == expected_molecules
+            and sum(atoms_per_molecule) == atom_count
+        )
+
+    solvent_pointers = parm_data.get("SOLVENT_POINTERS")
+    atoms_per_molecule = parm_data.get("ATOMS_PER_MOLECULE")
+    if solvent_pointers is None or atoms_per_molecule is None or len(solvent_pointers) < 2:
+        return structure
+
+    if not _table_is_valid():
+        structure.rediscover_molecules()
+    if not _table_is_valid():
+        from parmed.utils import tag_molecules
+
+        molecule_atom_counts = [len(molecule) for molecule in tag_molecules(structure)]
+        atom_count = len(getattr(structure, "atoms", []))
+        if not molecule_atom_counts or sum(molecule_atom_counts) != atom_count:
+            molecule_atom_counts = [atom_count] if atom_count else []
+        parm_data["SOLVENT_POINTERS"] = [
+            len(getattr(structure, "residues", [])),
+            len(molecule_atom_counts),
+            len(molecule_atom_counts) + 1,
+        ]
+        parm_data["ATOMS_PER_MOLECULE"] = molecule_atom_counts
+    return structure
 
 
 def _save_coordinate_snapshot(
@@ -1021,6 +1067,144 @@ def _sync_ligand_anchor_residue_with_pdb(
     )
 
 
+def _write_abfe_diff_charge_ligand_from_ref_vac(
+    window_dir: Path,
+    ligand_resname: str,
+) -> Path:
+    """Write a one-ligand PDB copied from the equilibrated pre_fe bulk ligand."""
+    ref_vac_pdb = window_dir / "ref_vac.pdb"
+    u_ref_vac = mda.Universe(ref_vac_pdb.as_posix())
+    ligands = u_ref_vac.select_atoms(f"resname {ligand_resname}").residues
+    if len(ligands) < 2:
+        raise ValueError(
+            f"ABFE_diff d construction requires two pre_fe ligand residues in "
+            f"{ref_vac_pdb}; found {len(ligands)} for resname {ligand_resname!r}."
+        )
+    out_pdb = window_dir / "charge_ligand_aligned_solvent.pdb"
+    ligands[1].atoms.write(out_pdb.as_posix())
+    return out_pdb
+
+
+def _rename_parmed_residues(
+    structure: pmd.Structure,
+    residue_indices: list[int] | tuple[int, ...],
+    residue_name: str,
+) -> None:
+    """Rename residues in both ParmEd objects and AmberParm metadata."""
+    labels = getattr(structure, "parm_data", {}).get("RESIDUE_LABEL")
+    for index in residue_indices:
+        if index < 0 or index >= len(structure.residues):
+            continue
+        residue = structure.residues[index]
+        residue.name = residue_name
+        for atom in residue.atoms:
+            atom.residue.name = residue_name
+        if labels is not None and index < len(labels):
+            labels[index] = residue_name
+
+
+def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
+    """
+    Build ABFE_diff d by reusing pre_fe topology pieces and appending one
+    charge-balancing ligand copy, analogous to the x-component ParmEd combine.
+    """
+    sim = ctx.sim
+    build_dir = ctx.build_dir
+    window_dir = ctx.window_dir
+    amber_dir = ctx.amber_dir
+    mol = ctx.residue_name
+
+    required = [
+        window_dir / "ref_vac.prmtop",
+        window_dir / "ref_vac.pdb",
+        window_dir / "other_parts.prmtop",
+        window_dir / "other_parts.pdb",
+        window_dir / f"{mol}.prmtop",
+    ]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "ABFE_diff d x-style topology construction is missing required "
+            "pre_fe piece(s): " + ", ".join(missing)
+        )
+
+    charge_ligand_pdb = _write_abfe_diff_charge_ligand_from_ref_vac(window_dir, mol)
+
+    vac_p = pmd.load_file(
+        str(window_dir / "ref_vac.prmtop"),
+        str(window_dir / "ref_vac.pdb"),
+    )
+    other_part_p = pmd.load_file(
+        str(window_dir / "other_parts.prmtop"),
+        str(window_dir / "other_parts.pdb"),
+    )
+    charge_ligand_p = pmd.load_file(
+        str(window_dir / f"{mol}.prmtop"),
+        str(charge_ligand_pdb),
+    )
+    _rename_parmed_residues(charge_ligand_p, [0], mol)
+    _repair_parmed_molecule_table_for_combine(charge_ligand_p)
+
+    charge_ligand_index = len(vac_p.residues)
+    combined = vac_p + charge_ligand_p + other_part_p
+    vac = vac_p + charge_ligand_p
+    _rename_parmed_residues(combined, [charge_ligand_index], mol)
+    _rename_parmed_residues(vac, [charge_ligand_index], mol)
+
+    combined.save(str(window_dir / "full.prmtop"), overwrite=True)
+    combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
+    combined.save(str(window_dir / "full.pdb"), overwrite=True)
+    combined.save(str(window_dir / "full_pre.pdb"), overwrite=True)
+
+    vac.save(str(window_dir / "vac.prmtop"), overwrite=True)
+    vac.save(str(window_dir / "vac.inpcrd"), overwrite=True)
+    vac.save(str(window_dir / "vac.pdb"), overwrite=True)
+    _sync_ligand_anchor_residue_with_pdb(build_dir, window_dir / "vac.pdb", mol)
+
+    u_full = mda.Universe(str(window_dir / "full.pdb"))
+    u_vac = mda.Universe(str(window_dir / "vac.pdb"))
+
+    renum_txt = build_dir / "protein_renum.txt"
+    if not renum_txt.exists():
+        renum_txt = build_dir.parent / build_dir.name / "protein_renum.txt"
+    if renum_txt.exists():
+        renum_df2 = pd.read_csv(
+            renum_txt,
+            sep=r"\s+",
+            header=None,
+            names=["old_resname", "old_chain", "old_resid", "new_resname", "new_resid"],
+        )
+        renum_df2["old_resname"] = renum_df2["old_resname"].replace(
+            ["HIS", "HIE", "HIP", "HID"], "HIS"
+        )
+        renum_df2["new_resname"] = renum_df2["new_resname"].replace(
+            ["HIS", "HIE", "HIP", "HID"], "HIS"
+        )
+        _restore_protein_resids_from_renum(u_full, renum_df2)
+        _restore_protein_resids_from_renum(u_vac, renum_df2)
+
+        chain_list = renum_df2.old_chain.values
+        chain_segments = {ch: u_full.add_Segment(segid=ch) for ch in chain_list}
+        for res, ch in zip(u_full.residues[: len(chain_list)], chain_list):
+            res.segment = chain_segments[ch]
+
+    u_full.atoms.write(str(window_dir / "full.pdb"))
+    u_vac.atoms.write(str(window_dir / "vac_orig.pdb"))
+
+    run_parmed_hmr_if_enabled(sim.hmr, amber_dir, window_dir)
+    hmr_enabled = str(getattr(sim, "hmr", "no")).lower() == "yes"
+    full_prmtop = (
+        str(window_dir / "full.hmr.prmtop")
+        if hmr_enabled
+        else str(window_dir / "full.prmtop")
+    )
+    merge_first_n_molecules_in_prmtop(
+        full_prmtop,
+        6,
+        str(window_dir / "full_merged.prmtop"),
+    )
+
+
 @register_create_box("d")
 @register_create_box("l")
 @register_create_box("z")
@@ -1099,6 +1283,14 @@ def create_box(ctx: BuildContext) -> None:
     if not hasattr(sim, "dec_method"):
         raise AttributeError("SimulationConfig missing 'dec_method'.")
     dec_method = str(sim.dec_method)
+
+    if (
+        comp == "d"
+        and dec_method == "sdr"
+        and getattr(sim, "fe_type", None) == "uno_rest_diff"
+    ):
+        _create_box_d_abfe_diff_from_pre_fe(ctx)
+        return
 
     # ---- copy FF artifacts (resolve ff/ relative to window_dir: ../../param) ----
     for ext in ("frcmod", "lib", "prmtop", "inpcrd", "mol2", "sdf", "json"):
@@ -1752,10 +1944,12 @@ def create_box_x(ctx: BuildContext) -> None:
         str(window_dir / f"{res_alt}.prmtop"),
         str(window_dir / "alter_ligand_aligned_site.pdb"),
     )
+    _repair_parmed_molecule_table_for_combine(alter_ligands_p_site)
     alter_ligands_p_solvent = pmd.load_file(
         str(window_dir / f"{res_alt}.prmtop"),
         str(window_dir / "alter_ligand_aligned_solvent.pdb"),
     )
+    _repair_parmed_molecule_table_for_combine(alter_ligands_p_solvent)
     combined = vac_p + alter_ligands_p_site + alter_ligands_p_solvent + other_part_p
 
     # build the ion prmtop if exists

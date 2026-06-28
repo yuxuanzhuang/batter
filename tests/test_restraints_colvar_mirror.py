@@ -90,6 +90,69 @@ def test_ligand_dihedral_reference_uses_original_input_metadata(tmp_path: Path) 
     assert abs(values[0] - expected) < 1e-6
 
 
+def test_ligand_dihedral_reference_prefers_staged_input_over_cached_metadata(
+    tmp_path: Path,
+) -> None:
+    staged_input = tmp_path / "staged_pose.pdb"
+    cached_input = tmp_path / "cached_pose.pdb"
+    _write_four_atom_pdb(
+        staged_input,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, 1.0),
+        ],
+    )
+    _write_four_atom_pdb(
+        cached_input,
+        [
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            (0.0, 1.0, -1.0),
+        ],
+    )
+
+    store_dir = tmp_path / "artifacts" / "ligand_params" / "SHARED_HASH"
+    store_dir.mkdir(parents=True)
+    (store_dir / "metadata.json").write_text(
+        json.dumps({"input_path": cached_input.as_posix()})
+    )
+    (tmp_path / "artifacts" / "ligand_params" / "index.json").write_text(
+        json.dumps(
+            {
+                "ligands": [
+                    {
+                        "ligand": "LigandA",
+                        "store_dir": store_dir.as_posix(),
+                        "input_path": staged_input.as_posix(),
+                    }
+                ]
+            }
+        )
+    )
+
+    ctx = types.SimpleNamespace(
+        system_root=tmp_path,
+        ligand="LigandA",
+        residue_name="LIG",
+    )
+
+    values, source = restraints._reference_dihedral_values_from_input(
+        ctx,
+        tmp_path / "window",
+        [(1, 2, 3, 4)],
+    )
+
+    expected = restraints._dihedral_degrees(
+        restraints._load_reference_positions(staged_input),
+        (1, 2, 3, 4),
+    )
+    assert source == staged_input
+    assert abs(values[0] - expected) < 1e-6
+
+
 def test_colvar_block_to_rst_translates_com_distance() -> None:
     block = """&colvar
  cv_type = 'COM_DISTANCE'

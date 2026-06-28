@@ -152,7 +152,7 @@ def test_write_build_from_aligned_can_use_template_for_shifted_ligand(tmp_path):
     )
 
 
-def test_write_build_from_aligned_separates_two_template_solvent_copies(tmp_path):
+def test_write_build_from_aligned_can_duplicate_two_template_solvent_copies(tmp_path):
     window_dir = tmp_path / "window"
     build_dir = tmp_path / "q_build_files"
     window_dir.mkdir()
@@ -186,6 +186,7 @@ def test_write_build_from_aligned_separates_two_template_solvent_copies(tmp_path
         extra_ligand_shift=[True, True],
         sdr_dist=10.0,
         extra_ligand_source_pdbs=[template_pdb, template_pdb],
+        extra_ligand_duplicate_coordinates=True,
     )
 
     ligand_groups = []
@@ -209,8 +210,7 @@ def test_write_build_from_aligned_separates_two_template_solvent_copies(tmp_path
     bound, solvent_charge, solvent_neutral = ligand_groups
     assert math.dist(bound[0], bound[1]) == 2.0
     assert math.dist(solvent_charge[0], solvent_charge[1]) == 3.0
-    assert solvent_charge != solvent_neutral
-    assert math.dist(solvent_charge[0], solvent_neutral[0]) == 10.0
+    assert solvent_charge == solvent_neutral
 
 
 def test_write_build_from_aligned_can_copy_existing_solvent_ligand(tmp_path):

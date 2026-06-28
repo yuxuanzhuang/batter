@@ -259,6 +259,52 @@ def test_write_cmass_dump_block_uses_dumpave_footer() -> None:
     )
 
 
+def test_component_l_cmass_dumpfreq_is_capped() -> None:
+    assert sim_files._component_l_cmass_dumpfreq(25000) == 1000
+    assert sim_files._component_l_cmass_dumpfreq(500) == 500
+    assert sim_files._component_l_cmass_dumpfreq(0) == 1
+
+
+def test_write_l_mdin_uses_dense_cmass_dumpfreq_without_changing_ntwx(tmp_path: Path) -> None:
+    src = tmp_path / "mdin-equil"
+    dst = tmp_path / "mdin-template"
+    src.write_text(
+        "&cntrl\n"
+        "  ntx = 5,\n"
+        "  irest = 1,\n"
+        "  ntwx = _ntwx_,\n"
+        "  ntwr = _ntwr_,\n"
+        "  nstlim = _num-steps_,\n"
+        "  infe = _enable_infe_,\n"
+        "/\n"
+        " &wt type='DUMPFREQ', istep1=_ntwx_, /\n"
+        " &wt type='END', /\n"
+        "DISANG=disang_file.rest\n"
+        "DUMPAVE=cmass.txt\n"
+    )
+
+    sim_files._write_l_mdin_from_equil_template(
+        src=src,
+        dst=dst,
+        mol="LIG",
+        replacements={
+            "_ntwx_": "25000",
+            "_ntwr_": "25000",
+            "_enable_infe_": "0",
+        },
+        total_steps=250000,
+        ntwx=25000,
+        eq_seed=False,
+        cmass_dumpfreq=25000,
+    )
+
+    text = dst.read_text()
+    assert "ntwx = 25000" in text
+    assert "ntwr = 25000" in text
+    assert "nstlim = 250000" in text
+    assert "type='DUMPFREQ', istep1=1000" in text
+
+
 def test_modern_fe_templates_do_not_enable_infe() -> None:
     template_dir = Path(sim_files.__file__).resolve().parents[1] / "templates" / "amber_files_orig"
 
@@ -541,6 +587,8 @@ def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
         "  restraintmask = ':_lig_name_',\n"
         "  timask1 = ':mk1',\n"
         "  timask2 = ':mk2',\n"
+        "  scmask1=':mk1',\n"
+        "  scmask2=':mk2',\n"
         "  crgmask = ':mk3',\n"
         "  gti_bat_sc      = 1,\n"
         "/\n"
@@ -608,17 +656,22 @@ def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
     eqnpt0_text = (windows_dir / "eqnpt0.in").read_text()
     eqnpt_text = (windows_dir / "eqnpt.in").read_text()
 
-    assert "timask1 = ':10'" in template_text
+    assert "timask1 = ':10,20'" in template_text
     assert "timask2 = ':30'" in template_text
+    assert "scmask1=':10'" in template_text
+    assert "scmask2=''" in template_text
     assert "crgmask = ':20'" in template_text
     assert "gti_bat_sc      = 1" in template_text
     assert "ti_vdw_mask" not in template_text
-    assert "restraintmask = '((@CA & :1) | :30,20) & !@H='" in template_text
+    assert "restraintmask = '(:30,20) & !@H='" in template_text
+    assert "@CA" not in template_text
     assert "nmropt = 1" in template_text
     assert ":LIG" not in template_text
 
-    assert "timask1 = ':10'" in mini_text
+    assert "timask1 = ':10,20'" in mini_text
     assert "timask2 = ':30'" in mini_text
+    assert "scmask1=':10'" in mini_text
+    assert "scmask2=''" in mini_text
     assert "crgmask = ':20'" in mini_text
     assert "gti_bat_sc      = 1" in mini_text
     assert "ti_vdw_mask" not in mini_text
@@ -639,7 +692,10 @@ def test_sim_files_d_sdr_uses_three_copy_charge_balanced_masks(
     assert "csurften = 0" in eqnpt_text
     assert "nmropt = 1" in eqnpt_text
     assert "restraintmask = '(@CA,C,N,P31 | :30,20) & !@H='" in eqnpt_text
-    assert "timask1 = ':10'" in eqnpt_text
+    assert "timask1 = ':10,20'" in eqnpt_text
+    assert "timask2 = ':30'" in eqnpt_text
+    assert "scmask1=':10'" in eqnpt_text
+    assert "scmask2=''" in eqnpt_text
     assert "crgmask = ':20'" in eqnpt_text
     assert "gti_bat_sc      = 1" in eqnpt_text
     assert "nstlim = 30000" in eq_text
@@ -662,6 +718,10 @@ def test_abfe_diff_d_run_file_uses_dense_seed_lambda_list(tmp_path: Path) -> Non
     run_local = (window_dir / "run-local.bash").read_text()
     assert "lambda_eq_list=(0.0000 0.5000 1.0000)" in run_local
     assert "lambda_set_list=(0.0000 0.5000 1.0000)" in run_local
+    assert "RBFE minimization seed" in run_local
+    assert "eq_init.rst7" in run_local
+    assert "cd ../d-1" in run_local
+    assert "Equilibration stage 0" not in run_local
 
 
 def test_sim_files_x_uses_first_atoms_for_solvent_ligand_position_restraints(
