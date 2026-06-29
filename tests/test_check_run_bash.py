@@ -169,6 +169,42 @@ def test_should_skip_completed_step_rejects_truncated_restart(tmp_path: Path) ->
     assert "rerunning Long equilibration" in result.stdout
 
 
+def test_check_sim_failure_rejects_numeric_failure_in_derived_output(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    _write_ascii_restart(tmp_path / "eq.rst7", natom=1, payload_fields=6)
+    (tmp_path / "eq.in").write_text("nstlim = 10000,\ndt = 0.002,\n")
+    (tmp_path / "mdin-template").write_text("nstlim = 1000000,\ndt = 0.004,\n")
+    (tmp_path / "eq.out").write_text(
+        " NSTEP =     9900   TIME(PS) =      19.800  TEMP(K) =      NaN\n"
+        " Etot   =            NaN  EKtot   =            NaN\n"
+    )
+    (tmp_path / "run.log").write_text("pmemd returned zero\n")
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& RETRY_COUNT=2 check_sim_failure 'Equilibration seed' run.log eq.rst7"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Numeric failure detected in eq.out" in result.stdout
+    assert (tmp_path / "ATTEMPT_FAILED").read_text() == "FAILED\n"
+    assert not (tmp_path / "eq.rst7").exists()
+    assert not (tmp_path / "eq.out").exists()
+    assert list((tmp_path / "WRONG_FAIL").glob("*/eq.out"))
+    assert "dt=0.001000" in (tmp_path / "eq.in").read_text()
+    assert "dt = 0.004" in (tmp_path / "mdin-template").read_text()
+
+
 def test_archive_existing_log_file_moves_log(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
@@ -442,6 +478,76 @@ def test_write_mdin_current_rewrites_dumpave_to_segment_cmass(tmp_path: Path) ->
     assert "nstlim = 8," in rendered_text
     assert "DUMPAVE=cmass-02.txt" in rendered_text
     assert "DUMPAVE=cmass.txt" not in rendered_text
+
+
+def test_write_mdin_current_caps_output_frequencies_to_segment_steps(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+    tmpl = tmp_path / "mdin-template"
+    rendered = tmp_path / "rendered-current"
+
+    tmpl.write_text(
+        "&cntrl\n"
+        "  irest = 1,\n"
+        "  ntx = 5,\n"
+        "  ntpr = 100,\n"
+        "  ntwr = 2500,\n"
+        "  ntwe = 0,\n"
+        "  ntwx = 25000,\n"
+        "  nstlim = 25000,\n"
+        "  dt = 0.001,\n"
+        "/\n"
+        " &wt type='DUMPFREQ', istep1=1000, /\n"
+        "DUMPAVE=cmass.txt\n"
+    )
+
+    cmd = (
+        f"source '{check_run}' "
+        "&& write_mdin_current "
+        "'mdin-template' 80 0 'mdin-current' '' '' 'cmass-01.txt' "
+        "> 'rendered-current'"
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    rendered_text = rendered.read_text()
+    assert "nstlim = 80," in rendered_text
+    assert "ntpr = 80," in rendered_text
+    assert "ntwr = 80," in rendered_text
+    assert "ntwx = 80," in rendered_text
+    assert "ntwe = 0," in rendered_text
+    assert "istep1=80" in rendered_text
+    assert "DUMPAVE=cmass-01.txt" in rendered_text
+
+
+def test_short_tail_skip_requires_prior_production_progress(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    check_run = repo_root / "batter" / "_internal" / "templates" / "run_files_orig" / "check_run.bash"
+
+    cmd = (
+        f"source '{check_run}'; "
+        "can_skip_short_final_tail 100 0 100; "
+        "status_no_progress=$?; "
+        "can_skip_short_final_tail 4000 3900 100; "
+        "status_tail=$?; "
+        "printf '%s %s\\n' \"$status_no_progress\" \"$status_tail\""
+    )
+    result = subprocess.run(
+        ["bash", "-lc", cmd],
+        cwd=tmp_path,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == "1 0"
 
 
 def test_apply_retry_dt_reduction_corrects_template_and_regenerates_current(tmp_path: Path) -> None:

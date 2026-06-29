@@ -314,6 +314,33 @@ def test_modern_fe_templates_do_not_enable_infe() -> None:
         assert "  infe = 0," in content
 
 
+def test_fe_mini_writer_forces_shake_constraints_without_changing_equil_copy(
+    tmp_path: Path,
+) -> None:
+    src = tmp_path / "mini.in"
+    fe_dst = tmp_path / "fe-mini.in"
+    fe_eq_dst = tmp_path / "fe-mini-eq.in"
+    eq_dst = tmp_path / "eq-mini.in"
+    src.write_text(
+        "&cntrl\n"
+        "  ntf = 1,\n"
+        "  ntc = 1,\n"
+        "  restraintmask = ':_lig_name_',\n"
+        "/\n"
+    )
+
+    sim_files._sub_write_fe_mini(src, fe_dst, {"_lig_name_": "LIG"})
+    sim_files._sub_write_fe_mini(src, fe_eq_dst, {"_lig_name_": "LIG"})
+    sim_files._sub_write(src, eq_dst, {"_lig_name_": "LIG"})
+
+    assert "  ntf = 2," in fe_dst.read_text()
+    assert "  ntc = 2," in fe_dst.read_text()
+    assert "  ntf = 2," in fe_eq_dst.read_text()
+    assert "  ntc = 2," in fe_eq_dst.read_text()
+    assert "  ntf = 1," in eq_dst.read_text()
+    assert "  ntc = 1," in eq_dst.read_text()
+
+
 def test_modern_templates_use_dumpave_not_pmd() -> None:
     template_dir = Path(sim_files.__file__).resolve().parents[1] / "templates" / "amber_files_orig"
     template_names = (

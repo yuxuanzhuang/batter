@@ -30,6 +30,8 @@ fi
 
 source check_run.bash
 
+rm -f FAILED
+
 consume_prior_failure_marker >/dev/null
 
 archive_existing_log_file "$log_file"
@@ -113,7 +115,7 @@ last_rst="md-current.rst7"
 
 remaining_ps=$(awk -v tot="$total_ps" -v cur="$current_ps" 'BEGIN{printf "%.6f\n", tot-cur}')
 remaining_steps=$(remaining_steps_from_time "$total_ps" "$current_ps" "$dt_ps")
-if awk -v tot="$total_ps" -v rem="$remaining_ps" 'BEGIN{exit !(tot>=100 && rem<=100)}'; then
+if can_skip_short_final_tail "$total_ps" "$current_ps" "$remaining_ps"; then
     remaining_steps=0
     current_ps="$total_ps"
 fi
@@ -168,6 +170,7 @@ if (( remaining_steps > 0 )); then
 fi
 
 if awk -v cur="$current_ps" -v tot="$total_ps" 'BEGIN{exit !(cur >= tot)}'; then
+    require_nonempty_file_or_attempt_fail "$last_rst" "[ERROR] Production is marked complete but restart $last_rst is missing."
     print_and_run "$CPPTRAJ_EXEC -i /dev/stdin >> \"$log_file\" 2>&1 <<'EOF'
 parm $PRMTOP
 trajin ${last_rst}

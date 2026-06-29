@@ -572,6 +572,7 @@ check_sim_failure() {
     local command_status=${SIM_COMMAND_STATUS:-0}
     local -a extra_files=()
     local extra_file_count=0
+    local _seen_numeric_failure_files=""
     if (( $# > 5 )); then
         extra_files=("${@:6}")
         extra_file_count=${#extra_files[@]}
@@ -594,6 +595,66 @@ check_sim_failure() {
         fi
     }
 
+    amber_output_has_numeric_failure() {
+        local output_file=$1
+        [[ -f "$output_file" && -s "$output_file" ]] || return 1
+
+        if grep -Eiq '(^|[^[:alpha:]])(NaN|nan|NAN|Infinity|inf)([^[:alpha:]]|$)' "$output_file"; then
+            return 0
+        fi
+
+        if grep -Eq '^[[:space:]]*(Etot|BOND|ANGLE|DIHED|1-4 NB|1-4 EEL|VDWAALS|EAMBER|SC_|Energy at|lambda =).*\*{6,}' "$output_file"; then
+            return 0
+        fi
+
+        return 1
+    }
+
+    numeric_failure_file() {
+        local -a candidates=()
+        local f stem seen
+
+        if [[ -n "$rst_file" && "$rst_file" == *.rst7 ]]; then
+            stem=${rst_file%.rst7}
+            candidates+=("${stem}.out")
+        fi
+        candidates+=("$log_file")
+        if (( extra_file_count > 0 )); then
+            for f in "${extra_files[@]}"; do
+                case "$f" in
+                    *.out|*.log|*.mdinfo|mdinfo) candidates+=("$f") ;;
+                esac
+            done
+        fi
+
+        for f in "${candidates[@]}"; do
+            [[ -n "$f" ]] || continue
+            seen=" ${_seen_numeric_failure_files:-} "
+            [[ "$seen" == *" $f "* ]] && continue
+            _seen_numeric_failure_files="${_seen_numeric_failure_files:-} $f"
+            if amber_output_has_numeric_failure "$f"; then
+                printf '%s\n' "$f"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    dt_reduction_template_for_failure() {
+        if [[ "$rst_file" == "eq.rst7" && -f eq.in ]]; then
+            printf '%s\n' "eq.in"
+        else
+            printf '%s\n' "mdin-template"
+        fi
+    }
+
+    reduce_dt_for_failed_stage() {
+        local reduction_start=${1:-2}
+        local tmpl
+        tmpl=$(dt_reduction_template_for_failure)
+        reduce_dt_on_failure "$tmpl" 0.001 "$stage" "$retry_count" "$reduction_start"
+    }
+
     if [[ $command_status =~ ^[0-9]+$ && $command_status -ne 0 ]]; then
         echo "[ERROR] $stage simulation failed. Command exited with status $command_status."
         if [[ -f "$log_file" ]]; then
@@ -601,7 +662,7 @@ check_sim_failure() {
         fi
         cleanup_outputs
         if [[ $retry_count -ge 3 ]]; then
-            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+            reduce_dt_for_failed_stage 3
         fi
         remove_previous_restart
         write_attempt_failed_marker
@@ -616,7 +677,7 @@ check_sim_failure() {
         tail -n 200 "$log_file" || true
         cleanup_outputs
         if [[ $retry_count -ge 3 ]]; then
-            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count"
+            reduce_dt_for_failed_stage 3
         fi
 
         remove_previous_restart
@@ -628,7 +689,7 @@ check_sim_failure() {
         echo "[ERROR] $stage simulation failed. Restart file missing or empty: $rst_file"
         cleanup_outputs
         if [[ $retry_count -ge 2 ]]; then
-            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count" 1
+            reduce_dt_for_failed_stage 1
         fi
         remove_previous_restart
         write_attempt_failed_marker
@@ -639,7 +700,20 @@ check_sim_failure() {
         echo "[ERROR] $stage simulation failed. Restart file is incomplete or malformed: $rst_file ($(amber_restart_validation_status "$rst_file"))"
         cleanup_outputs
         if [[ $retry_count -ge 2 ]]; then
-            reduce_dt_on_failure "mdin-template" 0.001 "$stage" "$retry_count" 1
+            reduce_dt_for_failed_stage 1
+        fi
+        remove_previous_restart
+        write_attempt_failed_marker
+        exit 1
+    fi
+
+    local bad_output_file
+    if bad_output_file=$(numeric_failure_file); then
+        echo "[ERROR] $stage simulation failed. Numeric failure detected in ${bad_output_file}:"
+        tail -n 200 "$bad_output_file" || true
+        cleanup_outputs
+        if [[ $retry_count -ge 2 ]]; then
+            reduce_dt_for_failed_stage 1
         fi
         remove_previous_restart
         write_attempt_failed_marker
@@ -971,12 +1045,14 @@ retry_adjusted_dt_ps() {
     fi
 
     desired_dt="$target_dt"
-    if [[ $retry_count -ge 9 ]]; then
-        desired_dt=0.001
-    elif [[ $retry_count -ge 6 ]]; then
-        desired_dt=0.002
-    elif [[ $retry_count -ge 3 ]]; then
-        desired_dt=0.003
+    if [[ $retry_count -ge $_reduction_start ]]; then
+        if [[ $retry_count -ge $((_reduction_start + 6)) ]]; then
+            desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" 'BEGIN{v=target-3*dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
+        elif [[ $retry_count -ge $((_reduction_start + 3)) ]]; then
+            desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" 'BEGIN{v=target-2*dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
+        else
+            desired_dt=$(awk -v target="$target_dt" -v dec="$_dec" 'BEGIN{v=target-dec; if (v<0.001) v=0.001; printf "%.6f\n", v}')
+        fi
     fi
 
     awk -v target="$target_dt" -v desired="$desired_dt" -v current="$current_dt" '
@@ -1537,6 +1613,61 @@ mdin_has_cntrl_value() {
     '
 }
 
+mdin_cap_cntrl_frequency_to_nstlim() {
+    local key=$1
+    local nstlim_value=$2
+    local input current_value
+
+    [[ $nstlim_value =~ ^[0-9]+$ && $nstlim_value -gt 0 ]] || { cat; return; }
+
+    input=$(cat)
+    current_value=$(printf "%s\n" "$input" | mdin_get_cntrl_value "$key")
+    if [[ $current_value =~ ^[0-9]+$ && $current_value -gt 0 && $current_value -gt $nstlim_value ]]; then
+        printf "%s\n" "$input" | mdin_set_cntrl_value "$key" "$nstlim_value"
+    else
+        printf "%s\n" "$input"
+    fi
+}
+
+mdin_cap_dumpfreq_to_nstlim() {
+    local nstlim_value=$1
+
+    [[ $nstlim_value =~ ^[0-9]+$ && $nstlim_value -gt 0 ]] || { cat; return; }
+
+    awk -v nstlim="$nstlim_value" '
+        BEGIN { IGNORECASE = 1 }
+        {
+            line = $0
+            if (line ~ /DUMPFREQ/ && match(line, /istep1[[:space:]]*=[[:space:]]*[0-9]+/)) {
+                token = substr(line, RSTART, RLENGTH)
+                value = token
+                sub(/.*=/, "", value)
+                gsub(/[[:space:]]/, "", value)
+                if (value + 0 > nstlim + 0) {
+                    line = substr(line, 1, RSTART - 1) "istep1=" int(nstlim) substr(line, RSTART + RLENGTH)
+                }
+            }
+            print line
+        }
+    '
+}
+
+can_skip_short_final_tail() {
+    local total_ps=$1
+    local current_ps=$2
+    local remaining_ps=$3
+
+    awk -v tot="$total_ps" -v cur="$current_ps" -v rem="$remaining_ps" '
+        BEGIN {
+            if (tot <= 0 || cur <= 0 || rem <= 0) {
+                exit 1
+            }
+            frac = rem / tot
+            exit !(tot >= 100 && rem <= 100 && frac <= 0.025)
+        }
+    '
+}
+
 write_mdin_current() {
     local tmpl=${1:-mdin-template}
     local nstlim_value=$2
@@ -1548,7 +1679,7 @@ write_mdin_current() {
 
     [[ -f $tmpl ]] || { echo "[ERROR] Missing template $tmpl" >&2; return 1; }
 
-    local text
+    local text freq_key
     text=$(<"$tmpl")
 
     local template_dt effective_dt
@@ -1588,6 +1719,10 @@ write_mdin_current() {
     fi
 
     text=$(printf "%s\n" "$text" | mdin_set_cntrl_value "nstlim" "$nstlim_value")
+    for freq_key in ntpr ntwr ntwx ntwe; do
+        text=$(printf "%s\n" "$text" | mdin_cap_cntrl_frequency_to_nstlim "$freq_key" "$nstlim_value")
+    done
+    text=$(printf "%s\n" "$text" | mdin_cap_dumpfreq_to_nstlim "$nstlim_value")
     if [[ -n $dumpave_file ]]; then
         text=$(printf "%s\n" "$text" | awk -v dumpave="$dumpave_file" '
             BEGIN{IGNORECASE=1}

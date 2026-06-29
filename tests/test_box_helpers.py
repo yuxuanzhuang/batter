@@ -49,6 +49,30 @@ def test_abfe_diff_charge_ligand_uses_second_pre_fe_ligand(tmp_path: Path) -> No
     )
 
 
+def test_make_residues_nonsteric_adds_private_zero_lj_type() -> None:
+    data_dir = Path(__file__).resolve().parent / "data" / "ligand_params" / "ea7f6bcb5854"
+    first = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
+    second = pmd.load_file(str(data_dir / "lig.prmtop"), str(data_dir / "lig.pdb"))
+    combined = first + second
+
+    original_ntypes = combined.ptr("ntypes")
+    original_charge = sum(atom.charge for atom in combined.residues[1].atoms)
+
+    box._make_residues_nonsteric(combined, [1])
+
+    first_atom = combined.residues[0].atoms[0]
+    duplicate_atom = combined.residues[1].atoms[0]
+
+    assert combined.ptr("ntypes") == original_ntypes + 1
+    assert first_atom.epsilon > 0
+    assert first_atom.rmin > 0
+    assert duplicate_atom.epsilon == 0
+    assert duplicate_atom.rmin == 0
+    assert sum(atom.charge for atom in combined.residues[1].atoms) == pytest.approx(
+        original_charge
+    )
+
+
 def test_save_pre_ring_repair_snapshots_writes_unrepaired_coordinates(
     tmp_path: Path,
 ) -> None:

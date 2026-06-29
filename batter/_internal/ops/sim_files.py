@@ -593,6 +593,22 @@ def _sub_write(src: Path, dst: Path, repl: dict[str, str]) -> None:
     dst.write_text(text)
 
 
+def _force_fe_mini_constraints(line: str) -> str:
+    if re.search(r"\bntf\s*=", line):
+        return "  ntf = 2,\n"
+    if re.search(r"\bntc\s*=", line):
+        return "  ntc = 2,\n"
+    return line
+
+
+def _sub_write_fe_mini(src: Path, dst: Path, repl: dict[str, str]) -> None:
+    text = Path(src).read_text()
+    text = "".join(_force_fe_mini_constraints(line) for line in text.splitlines(True))
+    for k, v in repl.items():
+        text = text.replace(k, v)
+    dst.write_text(text)
+
+
 def _merge_consecutive(indices: Sequence[int]) -> List[Tuple[int, int]]:
     """Merge sorted indices into inclusive consecutive ranges.
 
@@ -969,6 +985,7 @@ def _sim_files_d_sdr_charge_transfer(
     for out_name in ("mini.in", "mini_eq.in"):
         with template_mini.open("rt") as fin, (windows_dir / out_name).open("wt") as fout:
             for line in fin:
+                line = _force_fe_mini_constraints(line)
                 if "restraintmask" in line:
                     line = f"  restraintmask = '{initial_equil_restraint_mask}',\n"
                 elif "gti_bat_sc" in line:
@@ -1272,6 +1289,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             (windows_dir / "mini.in").open("wt") as fout,
         ):
             for line in fin:
+                line = _force_fe_mini_constraints(line)
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("lbd_val", f"{float(weight):6.5f}")
@@ -1402,6 +1420,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
             (windows_dir / "mini.in").open("wt") as fout,
         ):
             for line in fin:
+                line = _force_fe_mini_constraints(line)
                 line = (
                     line.replace("_temperature_", str(temperature))
                     .replace("lbd_val", f"{float(weight):6.5f}")
@@ -1416,6 +1435,7 @@ def sim_files_z(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         (windows_dir / "mini_eq.in").open("wt") as fout,
     ):
         for line in fin:
+            line = _force_fe_mini_constraints(line)
             fout.write(line.replace("_lig_name_", mol))
 
     with (
@@ -1573,8 +1593,8 @@ def sim_files_l(ctx: BuildContext, lambdas: Sequence[float]) -> None:
 
     # Generic equilibration/minimization stages keep nmropt=0; the seed ramp is
     # applied only in eq.in after the usual density/relaxation stages.
-    _sub_write(amber_dir / "mini.in", windows_dir / "mini_eq.in", {"_lig_name_": mol})
-    _sub_write(amber_dir / "mini.in", windows_dir / "mini.in", {"_lig_name_": mol})
+    _sub_write_fe_mini(amber_dir / "mini.in", windows_dir / "mini_eq.in", {"_lig_name_": mol})
+    _sub_write_fe_mini(amber_dir / "mini.in", windows_dir / "mini.in", {"_lig_name_": mol})
 
     eqnpt0_src = amber_dir / (
         "eqnpt0.in" if sim.membrane_simulation else "eqnpt0-water.in"
@@ -1952,6 +1972,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         "wt"
     ) as fout:
         for line in fin:
+            line = _force_fe_mini_constraints(line)
             line = (
                 line.replace("_lig1_name_", mol_ref)
                 .replace("_lig2_name_", mol_alt)
@@ -1970,6 +1991,7 @@ def sim_files_x(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         "wt"
     ) as fout:
         for line in fin:
+            line = _force_fe_mini_constraints(line)
             line = (
                 line.replace("_lig1_name_", mol_ref)
                 .replace("_lig2_name_", mol_alt)
@@ -2030,6 +2052,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         (windows_dir / "mini.in").open("wt") as fout,
     ):
         for line in fin:
+            line = _force_fe_mini_constraints(line)
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("lbd_val", f"{float(weight):6.5f}")
@@ -2044,6 +2067,7 @@ def sim_files_y(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         (windows_dir / "mini_eq.in").open("wt") as fout,
     ):
         for line in fin:
+            line = _force_fe_mini_constraints(line)
             fout.write(line.replace("_lig_name_", mol))
 
     # eqnpt.in / eqnpt0.in from ligand templates
@@ -2193,6 +2217,7 @@ def sim_files_m(ctx: BuildContext, lambdas: Sequence[float]) -> None:
         (windows_dir / "mini_eq.in").open("wt") as fout,
     ):
         for line in fin:
+            line = _force_fe_mini_constraints(line)
             line = (
                 line.replace("_temperature_", str(temperature))
                 .replace("lbd_val", f"{float(weight):6.5f}")

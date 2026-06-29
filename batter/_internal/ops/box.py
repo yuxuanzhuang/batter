@@ -1103,6 +1103,30 @@ def _rename_parmed_residues(
             labels[index] = residue_name
 
 
+def _make_residues_nonsteric(
+    structure: pmd.Structure,
+    residue_indices: list[int] | tuple[int, ...],
+) -> None:
+    """Give selected residues a private zero-LJ atom type while preserving charges."""
+    selected = [0] * len(structure.atoms)
+    for index in residue_indices:
+        if index < 0 or index >= len(structure.residues):
+            continue
+        for atom in structure.residues[index].atoms:
+            selected[atom.idx] = 1
+
+    if not any(selected):
+        return
+
+    from parmed.tools.addljtype import AddLJType
+
+    if getattr(structure, "chamber", False):
+        AddLJType(structure, selected, 0.0, 0.0, 0.0, 0.0)
+    else:
+        AddLJType(structure, selected, 0.0, 0.0, None, None)
+    structure.load_atom_info()
+
+
 def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
     """
     Build ABFE_diff d by reusing pre_fe topology pieces and appending one
@@ -1150,6 +1174,8 @@ def _create_box_d_abfe_diff_from_pre_fe(ctx: BuildContext) -> None:
     vac = vac_p + charge_ligand_p
     _rename_parmed_residues(combined, [charge_ligand_index], mol)
     _rename_parmed_residues(vac, [charge_ligand_index], mol)
+    _make_residues_nonsteric(combined, [charge_ligand_index])
+    _make_residues_nonsteric(vac, [charge_ligand_index])
 
     combined.save(str(window_dir / "full.prmtop"), overwrite=True)
     combined.save(str(window_dir / "full.inpcrd"), overwrite=True)
